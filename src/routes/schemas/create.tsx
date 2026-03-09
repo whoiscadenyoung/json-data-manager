@@ -9,7 +9,7 @@ import { RouterButton } from '#/components/router-button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '#/components/ui/card'
 import { Textarea } from '#/components/ui/textarea'
 import { Label } from '#/components/ui/label'
-import { Upload, FileJson, ArrowLeft } from 'lucide-react'
+import { Upload, FileJson, ArrowLeft, X } from 'lucide-react'
 import { toast } from 'sonner'
 
 export const Route = createFileRoute('/schemas/create')({
@@ -48,6 +48,7 @@ function CreateSchemaPage() {
   const navigate = useNavigate()
   const createSchema = useMutation(api.schemas.create)
   const [fileName, setFileName] = useState<string | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const form = useForm({
@@ -72,15 +73,41 @@ function CreateSchemaPage() {
     },
   })
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+  const loadFile = (file: File) => {
+    if (!file.name.endsWith('.json') && file.type !== 'application/json') {
+      toast.error('Please upload a .json file.')
+      return
+    }
     setFileName(file.name)
     const reader = new FileReader()
     reader.onload = (event) => {
       form.setFieldValue('json', (event.target?.result as string) ?? '')
     }
     reader.readAsText(file)
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) loadFile(file)
+    e.target.value = ''
+  }
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragging(true)
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDragging(false)
+    }
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragging(false)
+    const file = e.dataTransfer.files[0]
+    if (file) loadFile(file)
   }
 
   return (
@@ -123,17 +150,47 @@ function CreateSchemaPage() {
                 className="hidden"
                 onChange={handleFileChange}
               />
-              <div className="flex items-center gap-3">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <FileJson className="h-4 w-4 mr-2" />
-                  Choose File
-                </Button>
-                {fileName && (
-                  <span className="text-sm text-muted-foreground">{fileName}</span>
+              <div
+                role="button"
+                tabIndex={0}
+                aria-label="Drop zone: drag a JSON file here or click to browse"
+                className={[
+                  'flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-6 py-8 text-center transition-colors cursor-pointer',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  isDragging
+                    ? 'border-primary bg-primary/5 text-primary'
+                    : 'border-border text-muted-foreground hover:border-primary/50 hover:bg-muted/50',
+                ].join(' ')}
+                onClick={() => fileInputRef.current?.click()}
+                onKeyDown={(e) => e.key === 'Enter' || e.key === ' ' ? fileInputRef.current?.click() : undefined}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+              >
+                <FileJson className={`h-8 w-8 ${isDragging ? 'text-primary' : 'text-muted-foreground'}`} />
+                {fileName ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-foreground">{fileName}</span>
+                    <button
+                      type="button"
+                      aria-label="Remove file"
+                      className="text-muted-foreground hover:text-foreground"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setFileName(null)
+                        form.setFieldValue('json', '')
+                      }}
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-sm font-medium">
+                      {isDragging ? 'Drop your file here' : 'Drag & drop a JSON file, or click to browse'}
+                    </p>
+                    <p className="text-xs">.json files only</p>
+                  </>
                 )}
               </div>
             </div>
