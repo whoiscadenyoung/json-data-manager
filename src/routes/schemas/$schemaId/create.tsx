@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
+import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb'
 import { useState } from 'react'
 import { useQuery, useMutation } from 'convex/react'
 import { api } from '../../../../convex/_generated/api'
@@ -70,15 +71,21 @@ function CreateEntryPage() {
   return (
     <div className="max-w-4xl mx-auto">
       <div className="mb-8">
-        <nav className="text-sm text-muted-foreground mb-2">
-          <Link to="/schemas" className="hover:underline">Schemas</Link>
-          <span className="mx-2">/</span>
-          <Link to="/schemas/$schemaId" params={{ schemaId }} className="hover:underline">
-            {schema.title}
-          </Link>
-          <span className="mx-2">/</span>
-          <span>Create Entry</span>
-        </nav>
+        <Breadcrumb className="mb-2">
+          <BreadcrumbList>
+            <BreadcrumbItem>
+              <BreadcrumbLink render={<Link to="/schemas" />}>Schemas</BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem>
+              <BreadcrumbLink render={<Link to="/schemas/$schemaId" params={{ schemaId }} />}>{schema.title}</BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem>
+              <BreadcrumbPage>Create Entry</BreadcrumbPage>
+            </BreadcrumbItem>
+          </BreadcrumbList>
+        </Breadcrumb>
         <div className="flex items-center gap-4 mb-4">
           <RouterButton variant="outline" size="sm" to="/schemas/$schemaId" params={{ schemaId }}>
             <ArrowLeft className="h-4 w-4 mr-2" />
