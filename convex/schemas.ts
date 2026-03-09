@@ -23,6 +23,37 @@ export const get = query({
   },
 });
 
+export const update = mutation({
+  args: {
+    schemaId: v.id("schemas"),
+    title: v.optional(v.string()),
+    description: v.optional(v.string()),
+    schema: v.optional(v.any()),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.get(args.schemaId);
+    if (!existing) {
+      throw new ConvexError("Schema not found");
+    }
+
+    const patch: Record<string, unknown> = {};
+
+    if (args.schema !== undefined) {
+      if (!args.schema.title || !args.schema.description) {
+        throw new ConvexError("Schema must have 'title' and 'description' properties");
+      }
+      patch.schema = args.schema;
+      patch.title = args.schema.title;
+      patch.description = args.schema.description;
+    } else {
+      if (args.title !== undefined) patch.title = args.title;
+      if (args.description !== undefined) patch.description = args.description;
+    }
+
+    await ctx.db.patch(args.schemaId, patch);
+  },
+});
+
 export const create = mutation({
   args: {
     schema: v.any(),

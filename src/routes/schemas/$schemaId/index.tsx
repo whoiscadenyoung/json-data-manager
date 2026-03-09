@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { RouterButton } from '@/components/router-button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Plus, Download, Calendar, FileText, FilePlus } from 'lucide-react'
+import { Plus, Download, Calendar, FileText, FilePlus, Pencil, UploadCloud } from 'lucide-react'
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 
 export const Route = createFileRoute('/schemas/$schemaId/')({
@@ -19,19 +19,33 @@ function SchemaDetailPage() {
   const schema = useQuery(api.schemas.get, { schemaId: schemaId as Id<'schemas'> })
   const entries = useQuery(api.entries.list, { schemaId: schemaId as Id<'schemas'> })
 
-  const handleExport = () => {
-    if (!entries) return
-
-    const exportData = entries.map(entry => entry.data)
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
+  const downloadFile = (content: string, filename: string) => {
+    const blob = new Blob([content], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${schema?.title || 'schema'}-entries.json`
+    a.download = filename
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
+  }
+
+  const handleExport = () => {
+    if (!entries || !schema) return
+
+    const slug = schema.title.toLowerCase().replace(/\s+/g, '-')
+    const schemaFilename = `${slug}-schema.json`
+
+    downloadFile(JSON.stringify(schema.schema, null, 2), schemaFilename)
+
+    setTimeout(() => {
+      const entriesData = {
+        $schema: schemaFilename,
+        entries: entries.map((entry) => entry.data),
+      }
+      downloadFile(JSON.stringify(entriesData, null, 2), `${slug}-entries.json`)
+    }, 100)
   }
 
   if (schema === undefined || entries === undefined) {
@@ -74,7 +88,11 @@ function SchemaDetailPage() {
           <h1 className="text-3xl font-bold text-primary">{schema.title}</h1>
           <p className="text-lg text-muted-foreground mt-2">{schema.description}</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-2">
+          <RouterButton variant="outline" to="/schemas/$schemaId/edit" params={{ schemaId }}>
+            <Pencil className="h-4 w-4 mr-2" />
+            Edit
+          </RouterButton>
           <Button
             onClick={handleExport}
             disabled={entries.length === 0}
@@ -83,6 +101,10 @@ function SchemaDetailPage() {
             <Download className="h-4 w-4 mr-2" />
             Export ({entries.length})
           </Button>
+          <RouterButton variant="outline" to="/schemas/$schemaId/bulk-upload" params={{ schemaId }}>
+            <UploadCloud className="h-4 w-4 mr-2" />
+            Bulk Upload
+          </RouterButton>
           <RouterButton to="/schemas/$schemaId/create" params={{ schemaId }}>
             <Plus className="h-4 w-4 mr-2" />
             Create Entry

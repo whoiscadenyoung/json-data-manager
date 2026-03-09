@@ -41,12 +41,33 @@ export const create = mutation({
     if (!schema) {
       throw new Error("Schema not found");
     }
-    
+
     const entryId = await ctx.db.insert("entries", {
       schemaId: args.schemaId,
       data: args.data,
     });
-    
+
     return entryId;
+  },
+});
+
+export const createBulk = mutation({
+  args: {
+    schemaId: v.id("schemas"),
+    dataArray: v.array(v.any()),
+  },
+  handler: async (ctx, args) => {
+    const schema = await ctx.db.get(args.schemaId);
+    if (!schema) {
+      throw new Error("Schema not found");
+    }
+
+    const ids = await Promise.all(
+      args.dataArray.map((data) =>
+        ctx.db.insert("entries", { schemaId: args.schemaId, data })
+      )
+    );
+
+    return ids;
   },
 });

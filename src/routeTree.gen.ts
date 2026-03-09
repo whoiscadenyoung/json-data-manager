@@ -15,7 +15,9 @@ import { Route as SchemasCreateRouteImport } from './routes/schemas/create'
 import { Route as DemoTanstackQueryRouteImport } from './routes/demo/tanstack-query'
 import { Route as DemoConvexRouteImport } from './routes/demo/convex'
 import { Route as SchemasSchemaIdIndexRouteImport } from './routes/schemas/$schemaId/index'
+import { Route as SchemasSchemaIdEditRouteImport } from './routes/schemas/$schemaId/edit'
 import { Route as SchemasSchemaIdCreateRouteImport } from './routes/schemas/$schemaId/create'
+import { Route as SchemasSchemaIdBulkUploadRouteImport } from './routes/schemas/$schemaId/bulk-upload'
 import { Route as SchemasSchemaIdEntryIdRouteImport } from './routes/schemas/$schemaId/$entryId'
 import { Route as DemoFormSimpleRouteImport } from './routes/demo/form.simple'
 import { Route as DemoFormAddressRouteImport } from './routes/demo/form.address'
@@ -50,11 +52,22 @@ const SchemasSchemaIdIndexRoute = SchemasSchemaIdIndexRouteImport.update({
   path: '/schemas/$schemaId/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SchemasSchemaIdEditRoute = SchemasSchemaIdEditRouteImport.update({
+  id: '/schemas/$schemaId/edit',
+  path: '/schemas/$schemaId/edit',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SchemasSchemaIdCreateRoute = SchemasSchemaIdCreateRouteImport.update({
   id: '/schemas/$schemaId/create',
   path: '/schemas/$schemaId/create',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SchemasSchemaIdBulkUploadRoute =
+  SchemasSchemaIdBulkUploadRouteImport.update({
+    id: '/schemas/$schemaId/bulk-upload',
+    path: '/schemas/$schemaId/bulk-upload',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const SchemasSchemaIdEntryIdRoute = SchemasSchemaIdEntryIdRouteImport.update({
   id: '/schemas/$schemaId/$entryId',
   path: '/schemas/$schemaId/$entryId',
@@ -80,7 +93,9 @@ export interface FileRoutesByFullPath {
   '/demo/form/address': typeof DemoFormAddressRoute
   '/demo/form/simple': typeof DemoFormSimpleRoute
   '/schemas/$schemaId/$entryId': typeof SchemasSchemaIdEntryIdRoute
+  '/schemas/$schemaId/bulk-upload': typeof SchemasSchemaIdBulkUploadRoute
   '/schemas/$schemaId/create': typeof SchemasSchemaIdCreateRoute
+  '/schemas/$schemaId/edit': typeof SchemasSchemaIdEditRoute
   '/schemas/$schemaId/': typeof SchemasSchemaIdIndexRoute
 }
 export interface FileRoutesByTo {
@@ -92,7 +107,9 @@ export interface FileRoutesByTo {
   '/demo/form/address': typeof DemoFormAddressRoute
   '/demo/form/simple': typeof DemoFormSimpleRoute
   '/schemas/$schemaId/$entryId': typeof SchemasSchemaIdEntryIdRoute
+  '/schemas/$schemaId/bulk-upload': typeof SchemasSchemaIdBulkUploadRoute
   '/schemas/$schemaId/create': typeof SchemasSchemaIdCreateRoute
+  '/schemas/$schemaId/edit': typeof SchemasSchemaIdEditRoute
   '/schemas/$schemaId': typeof SchemasSchemaIdIndexRoute
 }
 export interface FileRoutesById {
@@ -105,7 +122,9 @@ export interface FileRoutesById {
   '/demo/form/address': typeof DemoFormAddressRoute
   '/demo/form/simple': typeof DemoFormSimpleRoute
   '/schemas/$schemaId/$entryId': typeof SchemasSchemaIdEntryIdRoute
+  '/schemas/$schemaId/bulk-upload': typeof SchemasSchemaIdBulkUploadRoute
   '/schemas/$schemaId/create': typeof SchemasSchemaIdCreateRoute
+  '/schemas/$schemaId/edit': typeof SchemasSchemaIdEditRoute
   '/schemas/$schemaId/': typeof SchemasSchemaIdIndexRoute
 }
 export interface FileRouteTypes {
@@ -119,7 +138,9 @@ export interface FileRouteTypes {
     | '/demo/form/address'
     | '/demo/form/simple'
     | '/schemas/$schemaId/$entryId'
+    | '/schemas/$schemaId/bulk-upload'
     | '/schemas/$schemaId/create'
+    | '/schemas/$schemaId/edit'
     | '/schemas/$schemaId/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -131,7 +152,9 @@ export interface FileRouteTypes {
     | '/demo/form/address'
     | '/demo/form/simple'
     | '/schemas/$schemaId/$entryId'
+    | '/schemas/$schemaId/bulk-upload'
     | '/schemas/$schemaId/create'
+    | '/schemas/$schemaId/edit'
     | '/schemas/$schemaId'
   id:
     | '__root__'
@@ -143,7 +166,9 @@ export interface FileRouteTypes {
     | '/demo/form/address'
     | '/demo/form/simple'
     | '/schemas/$schemaId/$entryId'
+    | '/schemas/$schemaId/bulk-upload'
     | '/schemas/$schemaId/create'
+    | '/schemas/$schemaId/edit'
     | '/schemas/$schemaId/'
   fileRoutesById: FileRoutesById
 }
@@ -156,7 +181,9 @@ export interface RootRouteChildren {
   DemoFormAddressRoute: typeof DemoFormAddressRoute
   DemoFormSimpleRoute: typeof DemoFormSimpleRoute
   SchemasSchemaIdEntryIdRoute: typeof SchemasSchemaIdEntryIdRoute
+  SchemasSchemaIdBulkUploadRoute: typeof SchemasSchemaIdBulkUploadRoute
   SchemasSchemaIdCreateRoute: typeof SchemasSchemaIdCreateRoute
+  SchemasSchemaIdEditRoute: typeof SchemasSchemaIdEditRoute
   SchemasSchemaIdIndexRoute: typeof SchemasSchemaIdIndexRoute
 }
 
@@ -204,11 +231,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SchemasSchemaIdIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/schemas/$schemaId/edit': {
+      id: '/schemas/$schemaId/edit'
+      path: '/schemas/$schemaId/edit'
+      fullPath: '/schemas/$schemaId/edit'
+      preLoaderRoute: typeof SchemasSchemaIdEditRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/schemas/$schemaId/create': {
       id: '/schemas/$schemaId/create'
       path: '/schemas/$schemaId/create'
       fullPath: '/schemas/$schemaId/create'
       preLoaderRoute: typeof SchemasSchemaIdCreateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/schemas/$schemaId/bulk-upload': {
+      id: '/schemas/$schemaId/bulk-upload'
+      path: '/schemas/$schemaId/bulk-upload'
+      fullPath: '/schemas/$schemaId/bulk-upload'
+      preLoaderRoute: typeof SchemasSchemaIdBulkUploadRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/schemas/$schemaId/$entryId': {
@@ -244,7 +285,9 @@ const rootRouteChildren: RootRouteChildren = {
   DemoFormAddressRoute: DemoFormAddressRoute,
   DemoFormSimpleRoute: DemoFormSimpleRoute,
   SchemasSchemaIdEntryIdRoute: SchemasSchemaIdEntryIdRoute,
+  SchemasSchemaIdBulkUploadRoute: SchemasSchemaIdBulkUploadRoute,
   SchemasSchemaIdCreateRoute: SchemasSchemaIdCreateRoute,
+  SchemasSchemaIdEditRoute: SchemasSchemaIdEditRoute,
   SchemasSchemaIdIndexRoute: SchemasSchemaIdIndexRoute,
 }
 export const routeTree = rootRouteImport
