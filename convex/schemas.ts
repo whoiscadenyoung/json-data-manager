@@ -1,5 +1,5 @@
 import { query, mutation } from "./_generated/server";
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 
 export const list = query({
   args: {},
@@ -30,7 +30,7 @@ export const create = mutation({
   handler: async (ctx, args) => {
     // Validate that schema has required fields
     if (!args.schema.title || !args.schema.description) {
-      throw new Error("Schema must have 'title' and 'description' properties");
+      throw new ConvexError("Schema must have 'title' and 'description' properties");
     }
     
     const schemaId = await ctx.db.insert("schemas", {

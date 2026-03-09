@@ -5,7 +5,8 @@ import type { Id } from '../../../../convex/_generated/dataModel'
 import { Button } from '@/components/ui/button'
 import { RouterButton } from '@/components/router-button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Plus, Download, Calendar, FileText } from 'lucide-react'
+import { Plus, Download, Calendar, FileText, FilePlus } from 'lucide-react'
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 
 export const Route = createFileRoute('/schemas/$schemaId/')({
   component: SchemaDetailPage,
@@ -109,15 +110,21 @@ function SchemaDetailPage() {
           </CardHeader>
           <CardContent>
             {entries.length === 0 ? (
-              <div className="text-center py-8">
-                <div className="mx-auto w-12 h-12 bg-muted rounded-full flex items-center justify-center mb-4">
-                  <Plus className="h-6 w-6 text-muted-foreground" />
-                </div>
-                <p className="text-muted-foreground mb-4">No entries created yet</p>
-                <RouterButton to="/schemas/$schemaId/create" params={{ schemaId }}>
-                  Create First Entry
-                </RouterButton>
-              </div>
+              <Empty>
+                <EmptyHeader>
+                  <EmptyMedia variant="icon">
+                    <FilePlus />
+                  </EmptyMedia>
+                  <EmptyTitle>No entries yet</EmptyTitle>
+                  <EmptyDescription>Add your first entry to this schema.</EmptyDescription>
+                </EmptyHeader>
+                <EmptyContent>
+                  <RouterButton to="/schemas/$schemaId/create" params={{ schemaId }}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Create First Entry
+                  </RouterButton>
+                </EmptyContent>
+              </Empty>
             ) : (
               <div className="space-y-3">
                 {entries.map((entry) => (
