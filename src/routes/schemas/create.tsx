@@ -7,8 +7,8 @@ import { api } from '../../../convex/_generated/api'
 import { Button } from '#/components/ui/button'
 import { RouterButton } from '#/components/router-button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '#/components/ui/card'
-import { Textarea } from '#/components/ui/textarea'
 import { Label } from '#/components/ui/label'
+import { JsonEditor } from '#/components/ui/json-editor'
 import { Upload, FileJson, ArrowLeft, X } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -205,26 +205,26 @@ function CreateSchemaPage() {
             <form.Field
               name="json"
               validators={{
+                onChange: schemaJsonValidator,
                 onBlur: schemaJsonValidator,
                 onSubmit: schemaJsonValidator,
               }}
             >
               {(field) => (
                 <div className="space-y-2">
-                  <Label htmlFor="schema-json">Paste JSON Schema</Label>
-                  <Textarea
-                    id="schema-json"
-                    placeholder={'{\n  "title": "My Schema",\n  "description": "...",\n  "type": "object",\n  "properties": {}\n}'}
-                    className="min-h-64 font-mono text-sm"
+                  <Label id="schema-json-label">Paste JSON Schema</Label>
+                  <JsonEditor
                     value={field.state.value}
                     onBlur={field.handleBlur}
-                    onChange={(e) => {
-                      field.handleChange(e.target.value)
+                    onChange={(value) => {
+                      field.handleChange(value)
                       if (fileName) setFileName(null)
                     }}
+                    placeholder={'{\n  "title": "My Schema",\n  "description": "...",\n  "type": "object",\n  "properties": {}\n}'}
+                    aria-labelledby="schema-json-label"
                     aria-describedby="schema-json-errors"
                   />
-                  {field.state.meta.errors.length > 0 && (
+                  {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
                     <ul id="schema-json-errors" className="space-y-1">
                       {field.state.meta.errors.map((error) => (
                         <li
