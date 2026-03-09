@@ -1,4 +1,12 @@
 import { useEffect, useState } from 'react'
+import { Moon, Sun, SunMoon } from 'lucide-react'
+import { buttonVariants } from '#/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '#/components/ui/dropdown-menu'
 
 type ThemeMode = 'light' | 'dark' | 'auto'
 
@@ -54,28 +62,36 @@ export default function ThemeToggle() {
     }
   }, [mode])
 
-  function toggleMode() {
-    const nextMode: ThemeMode =
-      mode === 'light' ? 'dark' : mode === 'dark' ? 'auto' : 'light'
-    setMode(nextMode)
-    applyThemeMode(nextMode)
-    window.localStorage.setItem('theme', nextMode)
+  function selectMode(next: ThemeMode) {
+    setMode(next)
+    applyThemeMode(next)
+    window.localStorage.setItem('theme', next)
   }
 
-  const label =
-    mode === 'auto'
-      ? 'Theme mode: auto (system). Click to switch to light mode.'
-      : `Theme mode: ${mode}. Click to switch mode.`
+  const Icon = mode === 'light' ? Sun : mode === 'dark' ? Moon : SunMoon
 
   return (
-    <button
-      type="button"
-      onClick={toggleMode}
-      aria-label={label}
-      title={label}
-      className="rounded-full border border-(--chip-line) bg-(--chip-bg) px-3 py-1.5 text-sm font-semibold text-(--sea-ink) shadow-[0_8px_22px_rgba(30,90,72,0.08)] transition hover:-translate-y-0.5"
-    >
-      {mode === 'auto' ? 'Auto' : mode === 'dark' ? 'Dark' : 'Light'}
-    </button>
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        className={buttonVariants({ variant: 'ghost', size: 'icon' })}
+        aria-label={`Theme: ${mode}`}
+      >
+        <Icon className="size-4" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={() => selectMode('auto')}>
+          <SunMoon className="mr-2 size-4" />
+          Auto
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => selectMode('light')}>
+          <Sun className="mr-2 size-4" />
+          Light
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => selectMode('dark')}>
+          <Moon className="mr-2 size-4" />
+          Dark
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }

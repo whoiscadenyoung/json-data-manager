@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm dlx shadcn@latest add dropdown-menu --yes)"
+    ]
+  }
+}
