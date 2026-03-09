@@ -1,14 +1,15 @@
-import { defineSchema, defineTable } from 'convex/server'
-import { v } from 'convex/values'
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
 
 export default defineSchema({
-  products: defineTable({
+  schemas: defineTable({
     title: v.string(),
-    imageId: v.string(),
-    price: v.number(),
+    description: v.string(),
+    schema: v.any(), // JSON schema object
   }),
-  todos: defineTable({
-    text: v.string(),
-    completed: v.boolean(),
-  }),
-})
+  
+  entries: defineTable({
+    schemaId: v.id("schemas"),
+    data: v.any(), // Entry data conforming to the schema
+  }).index("by_schema", ["schemaId"]),
+});
