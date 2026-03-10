@@ -5,7 +5,9 @@
       "WebFetch(domain:ui.shadcn.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(npx shadcn@latest add breadcrumb --yes)",
-      "Bash(pnpm exec tsc --noEmit)"
+      "Bash(pnpm exec tsc --noEmit)",
+      "Skill(git-commit)",
+      "Skill(git-commit:*)"
     ]
   }
 }
