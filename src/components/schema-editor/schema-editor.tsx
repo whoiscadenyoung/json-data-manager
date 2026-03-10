@@ -29,8 +29,8 @@ export function SchemaEditor({ initialJson = "", onSave, saveLabel = "Save" }: S
     total: 0,
     failingPaths: new Map(),
   });
-  // External data text to push into the validation pane (e.g. from a dropped data file)
-  const [externalDataText, setExternalDataText] = useState<string | undefined>(undefined);
+  // External data to push into the validation pane. Wrapped in object so re-sending the same content still triggers the effect.
+  const [externalDataText, setExternalDataText] = useState<{ text: string } | undefined>(undefined);
 
   // Drag & drop
   const [isDraggingFile, setIsDraggingFile] = useState(false);
@@ -161,7 +161,7 @@ export function SchemaEditor({ initialJson = "", onSave, saveLabel = "Save" }: S
     if (!pendingFile) return;
     if (pendingFile.isDataArray) {
       // Load into validation pane
-      setExternalDataText(pendingFile.content);
+      setExternalDataText({ text: pendingFile.content });
       toast.success(`Loaded ${pendingFile.file.name} into the validation pane.`);
     } else {
       setSchemaJson(pendingFile.content);

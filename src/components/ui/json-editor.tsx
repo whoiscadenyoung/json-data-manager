@@ -87,6 +87,7 @@ interface JsonEditorProps {
   onBlur?: () => void;
   placeholder?: string;
   height?: string;
+  disableSchemaLinting?: boolean;
   "aria-describedby"?: string;
   "aria-labelledby"?: string;
 }
@@ -97,6 +98,7 @@ export function JsonEditor({
   onBlur,
   placeholder,
   height = "256px",
+  disableSchemaLinting = false,
   "aria-describedby": ariaDescribedBy,
   "aria-labelledby": ariaLabelledBy,
 }: JsonEditorProps) {
@@ -106,14 +108,14 @@ export function JsonEditor({
     () => [
       json(),
       lintGutter(),
-      jsonLinter,
+      ...(disableSchemaLinting ? [] : [jsonLinter]),
       baseTheme,
       EditorView.contentAttributes.of({
         ...(ariaDescribedBy ? { "aria-describedby": ariaDescribedBy } : {}),
         ...(ariaLabelledBy ? { "aria-labelledby": ariaLabelledBy } : {}),
       }),
     ],
-    [ariaDescribedBy, ariaLabelledBy],
+    [ariaDescribedBy, ariaLabelledBy, disableSchemaLinting],
   );
 
   return (

@@ -305,6 +305,7 @@ function BulkUploadPage() {
                 }}
                 placeholder={'[\n  { "field": "value" },\n  { "field": "value" }\n]'}
                 aria-labelledby="json-paste-label"
+                disableSchemaLinting
               />
             </div>
 

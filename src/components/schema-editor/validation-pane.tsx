@@ -13,6 +13,7 @@ import {
 import { Button } from "#/components/ui/button";
 import { JsonEditor } from "#/components/ui/json-editor";
 import { Label } from "#/components/ui/label";
+import { ConfirmDialog } from "#/components/ui/dialog";
 import { cn } from "#/lib/utils";
 import { JsonTree } from "./json-tree";
 import { inferSchemaFromData } from "#/lib/infer-schema";
@@ -24,6 +25,7 @@ export interface ValidationResult {
   valid: boolean;
   failingPaths: Set<string>;
   errors: Map<string, string>;
+  unknownPaths: Set<string>;
 }
 
 export interface ValidationState {
@@ -33,10 +35,41 @@ export interface ValidationState {
 
 interface ValidationPaneProps {
   schemaJson: string;
-  /** Optional externally provided data text (e.g. from a dropped data file) */
-  externalDataText?: string;
+  /** Optional externally provided data (e.g. from a dropped data file). Wrapped in object so re-sending identical content triggers the effect. */
+  externalDataText?: { text: string };
   onInferSchema: (inferredJson: string) => void;
   onStateChange: (state: ValidationState) => void;
+}
+
+function computeUnknownPaths(
+  data: unknown,
+  schema: Record<string, unknown>,
+  pathPrefix = "",
+): Set<string> {
+  const unknown = new Set<string>();
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return unknown;
+  const schemaProps =
+    typeof schema.properties === "object" && schema.properties !== null
+      ? (schema.properties as Record<string, unknown>)
+      : {};
+  for (const key of Object.keys(data as Record<string, unknown>)) {
+    const keyPath = `${pathPrefix}/${key}`;
+    if (!(key in schemaProps)) {
+      unknown.add(keyPath);
+    } else {
+      const nestedSchema = schemaProps[key];
+      if (typeof nestedSchema === "object" && nestedSchema !== null) {
+        const nestedData = (data as Record<string, unknown>)[key];
+        const nested = computeUnknownPaths(
+          nestedData,
+          nestedSchema as Record<string, unknown>,
+          keyPath,
+        );
+        for (const p of nested) unknown.add(p);
+      }
+    }
+  }
+  return unknown;
 }
 
 export function ValidationPane({
@@ -51,12 +84,13 @@ export function ValidationPane({
   const [results, setResults] = useState<ValidationResult[] | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [expandedItems, setExpandedItems] = useState<Set<number>>(new Set());
+  const [isInferConfirmOpen, setIsInferConfirmOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Apply external data when provided
   useEffect(() => {
     if (externalDataText !== undefined) {
-      setDataText(externalDataText);
+      setDataText(externalDataText.text);
       setFileName(null);
     }
   }, [externalDataText]);
@@ -99,6 +133,7 @@ export function ValidationPane({
             valid: false,
             failingPaths: new Set<string>(),
             errors: new Map<string, string>(),
+            unknownPaths: new Set<string>(),
           })),
         );
         setParseError(null);
@@ -131,12 +166,14 @@ export function ValidationPane({
             }
           }
         }
+        const unknownPaths = computeUnknownPaths(item, parsedSchema as Record<string, unknown>);
         return {
           index,
           data: item,
           valid: errors.length === 0,
           failingPaths,
           errors: errorMessages,
+          unknownPaths,
         };
       });
 
@@ -182,8 +219,7 @@ export function ValidationPane({
     onStateChange({ total: 0, failingPaths: new Map() });
   };
 
-  const handleInfer = () => {
-    if (!dataText.trim()) return;
+  const doInfer = () => {
     try {
       const parsed = JSON.parse(dataText);
       if (!Array.isArray(parsed)) {
@@ -194,6 +230,15 @@ export function ValidationPane({
       onInferSchema(JSON.stringify(inferred, null, 2));
     } catch {
       toast.error("Invalid JSON — cannot infer schema.");
+    }
+  };
+
+  const handleInfer = () => {
+    if (!dataText.trim()) return;
+    if (schemaJson.trim()) {
+      setIsInferConfirmOpen(true);
+    } else {
+      doInfer();
     }
   };
 
@@ -210,6 +255,17 @@ export function ValidationPane({
   const hasData = dataText.trim().length > 0;
 
   return (
+    <>
+    <ConfirmDialog
+      open={isInferConfirmOpen}
+      onOpenChange={setIsInferConfirmOpen}
+      title="Replace current schema?"
+      description="Inferring a schema from this data will overwrite your current schema. This cannot be undone."
+      confirmLabel="Replace schema"
+      cancelLabel="Cancel"
+      destructive
+      onConfirm={doInfer}
+    />
     <div className="flex flex-col h-full gap-3">
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
@@ -294,6 +350,7 @@ export function ValidationPane({
               onChange={(v) => setDataText(v)}
               placeholder={'[\n  { "field": "value" }\n]'}
               height="160px"
+              disableSchemaLinting
             />
           </div>
         </div>
@@ -373,7 +430,7 @@ export function ValidationPane({
                     </button>
                     {isExpanded && (
                       <div className="border-t border-border px-2.5 py-2 overflow-x-auto bg-muted/20">
-                        <JsonTree data={r.data} failingPaths={r.failingPaths} errors={r.errors} />
+                        <JsonTree data={r.data} failingPaths={r.failingPaths} errors={r.errors} unknownPaths={r.unknownPaths} />
                       </div>
                     )}
                   </div>
@@ -406,10 +463,11 @@ export function ValidationPane({
                 e.target.value = "";
               }}
             />
-            <JsonEditor value={dataText} onChange={(v) => setDataText(v)} height="140px" />
+            <JsonEditor value={dataText} onChange={(v) => setDataText(v)} height="140px" disableSchemaLinting />
           </div>
         </div>
       )}
     </div>
+    </>
   );
 }

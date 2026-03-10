@@ -6,6 +6,8 @@ interface JsonTreeProps {
   failingPaths: Set<string>;
   /** Map of AJV instancePath → human-readable error message */
   errors: Map<string, string>;
+  /** Set of paths for fields that exist in the data but are not in the schema's properties */
+  unknownPaths?: Set<string>;
   path?: string;
   depth?: number;
 }
@@ -23,7 +25,14 @@ function primitiveColor(value: unknown): string {
   return "text-amber-600 dark:text-amber-400";
 }
 
-export function JsonTree({ data, failingPaths, errors, path = "", depth = 0 }: JsonTreeProps) {
+export function JsonTree({
+  data,
+  failingPaths,
+  errors,
+  unknownPaths,
+  path = "",
+  depth = 0,
+}: JsonTreeProps) {
   const indent = depth * 12;
 
   if (Array.isArray(data)) {
@@ -39,6 +48,7 @@ export function JsonTree({ data, failingPaths, errors, path = "", depth = 0 }: J
                 data={item}
                 failingPaths={failingPaths}
                 errors={errors}
+                unknownPaths={unknownPaths}
                 path={itemPath}
                 depth={depth + 1}
               />
@@ -57,6 +67,7 @@ export function JsonTree({ data, failingPaths, errors, path = "", depth = 0 }: J
         {entries.map(([key, value]) => {
           const keyPath = `${path}/${key}`;
           const isFailing = failingPaths.has(keyPath);
+          const isUnknown = unknownPaths?.has(keyPath) ?? false;
           const errorMsg = errors.get(keyPath);
 
           return (
@@ -65,12 +76,17 @@ export function JsonTree({ data, failingPaths, errors, path = "", depth = 0 }: J
                 className={cn(
                   "flex items-start gap-1 rounded px-1 py-0.5 text-xs font-mono",
                   isFailing && "bg-destructive/10",
+                  isUnknown && !isFailing && "bg-muted/60",
                 )}
               >
                 <span
                   className={cn(
                     "font-medium shrink-0",
-                    isFailing ? "text-destructive" : "text-foreground",
+                    isFailing
+                      ? "text-destructive"
+                      : isUnknown
+                        ? "text-muted-foreground italic"
+                        : "text-foreground",
                   )}
                 >
                   {key}:
@@ -81,13 +97,19 @@ export function JsonTree({ data, failingPaths, errors, path = "", depth = 0 }: J
                       data={value}
                       failingPaths={failingPaths}
                       errors={errors}
+                      unknownPaths={unknownPaths}
                       path={keyPath}
                       depth={depth + 1}
                     />
                   </div>
                 ) : (
-                  <span className={cn(primitiveColor(value), "truncate")}>
+                  <span className={cn(isUnknown ? "text-muted-foreground" : primitiveColor(value), "truncate")}>
                     {formatPrimitive(value)}
+                  </span>
+                )}
+                {isUnknown && (
+                  <span className="ml-auto shrink-0 text-[10px] text-muted-foreground font-sans italic">
+                    not in schema
                   </span>
                 )}
               </div>
