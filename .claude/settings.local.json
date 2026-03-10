@@ -4,7 +4,8 @@
       "Bash(bunx shadcn@latest)",
       "WebFetch(domain:ui.shadcn.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(npx shadcn@latest add breadcrumb --yes)"
+      "Bash(npx shadcn@latest add breadcrumb --yes)",
+      "Bash(pnpm exec tsc --noEmit)"
     ]
   }
 }

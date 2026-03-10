@@ -1,7 +1,7 @@
-import { createFileRoute } from '@tanstack/react-router'
-import { RouterButton } from '#/components/router-button'
+import { createFileRoute } from "@tanstack/react-router";
+import { RouterButton } from "#/components/router-button";
 
-export const Route = createFileRoute('/')({ component: HomePage })
+export const Route = createFileRoute("/")({ component: HomePage });
 
 function HomePage() {
   return (
@@ -10,5 +10,5 @@ function HomePage() {
         Create Schemas
       </RouterButton>
     </main>
-  )
+  );
 }

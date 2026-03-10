@@ -7,7 +7,7 @@ export default defineSchema({
     description: v.string(),
     schema: v.any(), // JSON schema object
   }),
-  
+
   entries: defineTable({
     schemaId: v.id("schemas"),
     data: v.any(), // Entry data conforming to the schema

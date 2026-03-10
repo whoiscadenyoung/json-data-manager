@@ -1,57 +1,64 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
-import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb'
-import { useState } from 'react'
-import { useQuery, useMutation } from 'convex/react'
-import { api } from '../../../../convex/_generated/api'
-import type { Id } from '../../../../convex/_generated/dataModel'
-import Form from '@rjsf/shadcn'
-import validator from '@rjsf/validator-ajv8'
-import { RouterButton } from '@/components/router-button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { ArrowLeft, Check } from 'lucide-react'
-import { toast } from 'sonner'
+import { createFileRoute, Link } from "@tanstack/react-router";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
+import { useState } from "react";
+import { useQuery, useMutation } from "convex/react";
+import { api } from "../../../../convex/_generated/api";
+import type { Id } from "../../../../convex/_generated/dataModel";
+import Form from "@rjsf/shadcn";
+import validator from "@rjsf/validator-ajv8";
+import { RouterButton } from "@/components/router-button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ArrowLeft, Check } from "lucide-react";
+import { toast } from "sonner";
 
-export const Route = createFileRoute('/schemas/$schemaId/create')({
+export const Route = createFileRoute("/schemas/$schemaId/create")({
   component: CreateEntryPage,
-})
+});
 
 function CreateEntryPage() {
-  const { schemaId } = Route.useParams()
-  const schema = useQuery(api.schemas.get, { schemaId: schemaId as Id<'schemas'> })
-  const createEntry = useMutation(api.entries.create)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [lastCreatedEntryId, setLastCreatedEntryId] = useState<string | null>(null)
+  const { schemaId } = Route.useParams();
+  const schema = useQuery(api.schemas.get, { schemaId: schemaId as Id<"schemas"> });
+  const createEntry = useMutation(api.entries.create);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [lastCreatedEntryId, setLastCreatedEntryId] = useState<string | null>(null);
 
   const handleSubmit = async (data: any) => {
-    if (!schemaId || !data.formData) return
-    
-    setIsSubmitting(true)
-    
+    if (!schemaId || !data.formData) return;
+
+    setIsSubmitting(true);
+
     try {
       const entryId = await createEntry({
-        schemaId: schemaId as Id<'schemas'>,
+        schemaId: schemaId as Id<"schemas">,
         data: data.formData,
-      })
-      
-      setLastCreatedEntryId(entryId)
-      toast.success("Entry created successfully!")
-      
+      });
+
+      setLastCreatedEntryId(entryId);
+      toast.success("Entry created successfully!");
+
       // Reset form by forcing re-render
-      window.location.reload()
+      window.location.reload();
     } catch (error) {
-      console.error('Error creating entry:', error)
-      toast.error(error instanceof Error ? error.message : 'Failed to create entry')
+      console.error("Error creating entry:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to create entry");
     } finally {
-      setIsSubmitting(false)
+      setIsSubmitting(false);
     }
-  }
+  };
 
   if (schema === undefined) {
     return (
       <div className="flex justify-center items-center min-h-100">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
       </div>
-    )
+    );
   }
 
   if (!schema) {
@@ -65,7 +72,7 @@ function CreateEntryPage() {
           <RouterButton to="/schemas">Back to Schemas</RouterButton>
         </CardContent>
       </Card>
-    )
+    );
   }
 
   return (
@@ -78,7 +85,9 @@ function CreateEntryPage() {
             </BreadcrumbItem>
             <BreadcrumbSeparator />
             <BreadcrumbItem>
-              <BreadcrumbLink render={<Link to="/schemas/$schemaId" params={{ schemaId }} />}>{schema.title}</BreadcrumbLink>
+              <BreadcrumbLink render={<Link to="/schemas/$schemaId" params={{ schemaId }} />}>
+                {schema.title}
+              </BreadcrumbLink>
             </BreadcrumbItem>
             <BreadcrumbSeparator />
             <BreadcrumbItem>
@@ -104,7 +113,7 @@ function CreateEntryPage() {
             <div className="flex items-center gap-2 text-green-800">
               <Check className="h-4 w-4" />
               <span>
-                Entry created successfully!{' '}
+                Entry created successfully!{" "}
                 <Link
                   to="/schemas/$schemaId/$entryId"
                   params={{ schemaId, entryId: lastCreatedEntryId }}
@@ -121,9 +130,7 @@ function CreateEntryPage() {
       <Card>
         <CardHeader>
           <CardTitle>Entry Form</CardTitle>
-          <CardDescription>
-            Fill out the form below to create a new data entry
-          </CardDescription>
+          <CardDescription>Fill out the form below to create a new data entry</CardDescription>
         </CardHeader>
         <CardContent>
           <Form
@@ -132,18 +139,19 @@ function CreateEntryPage() {
             onSubmit={handleSubmit}
             disabled={isSubmitting}
             uiSchema={{
-              'ui:submitButtonOptions': {
-                submitText: isSubmitting ? 'Creating...' : 'Create Entry',
+              "ui:submitButtonOptions": {
+                submitText: isSubmitting ? "Creating..." : "Create Entry",
                 norender: false,
                 props: {
                   disabled: isSubmitting,
-                  className: 'w-full px-4 py-3 rounded bg-primary text-primary-foreground font-semibold hover:bg-primary/90 transition-colors shadow-sm hover:shadow disabled:opacity-50 disabled:cursor-not-allowed'
-                }
-              }
+                  className:
+                    "w-full px-4 py-3 rounded bg-primary text-primary-foreground font-semibold hover:bg-primary/90 transition-colors shadow-sm hover:shadow disabled:opacity-50 disabled:cursor-not-allowed",
+                },
+              },
             }}
           />
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }

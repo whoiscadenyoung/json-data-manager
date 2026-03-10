@@ -1,14 +1,14 @@
-import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
-import { useState, useRef } from 'react'
-import { useQuery, useMutation } from 'convex/react'
-import { api } from '../../../../convex/_generated/api'
-import type { Id } from '../../../../convex/_generated/dataModel'
-import validator from '@rjsf/validator-ajv8'
-import { RouterButton } from '@/components/router-button'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { JsonEditor } from '@/components/ui/json-editor'
-import { Label } from '@/components/ui/label'
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useState, useRef } from "react";
+import { useQuery, useMutation } from "convex/react";
+import { api } from "../../../../convex/_generated/api";
+import type { Id } from "../../../../convex/_generated/dataModel";
+import validator from "@rjsf/validator-ajv8";
+import { RouterButton } from "@/components/router-button";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { JsonEditor } from "@/components/ui/json-editor";
+import { Label } from "@/components/ui/label";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -16,149 +16,151 @@ import {
   BreadcrumbList,
   BreadcrumbPage,
   BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb'
-import { ArrowLeft, FileJson, Upload, X, CheckCircle, XCircle, AlertTriangle } from 'lucide-react'
-import { toast } from 'sonner'
+} from "@/components/ui/breadcrumb";
+import { ArrowLeft, FileJson, Upload, X, CheckCircle, XCircle, AlertTriangle } from "lucide-react";
+import { toast } from "sonner";
 
-export const Route = createFileRoute('/schemas/$schemaId/bulk-upload')({
+export const Route = createFileRoute("/schemas/$schemaId/bulk-upload")({
   component: BulkUploadPage,
-})
+});
 
 type ValidationResult = {
-  index: number
-  data: unknown
-  valid: boolean
-  errors: string[]
-}
+  index: number;
+  data: unknown;
+  valid: boolean;
+  errors: string[];
+};
 
 function BulkUploadPage() {
-  const { schemaId } = Route.useParams()
-  const navigate = useNavigate()
-  const schema = useQuery(api.schemas.get, { schemaId: schemaId as Id<'schemas'> })
-  const createBulk = useMutation(api.entries.createBulk)
+  const { schemaId } = Route.useParams();
+  const navigate = useNavigate();
+  const schema = useQuery(api.schemas.get, { schemaId: schemaId as Id<"schemas"> });
+  const createBulk = useMutation(api.entries.createBulk);
 
-  const [jsonText, setJsonText] = useState('')
-  const [fileName, setFileName] = useState<string | null>(null)
-  const [isDragging, setIsDragging] = useState(false)
-  const [parseError, setParseError] = useState<string | null>(null)
-  const [validationResults, setValidationResults] = useState<ValidationResult[] | null>(null)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [jsonText, setJsonText] = useState("");
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [validationResults, setValidationResults] = useState<ValidationResult[] | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const validateJson = (text: string) => {
-    if (!schema) return
-    setParseError(null)
-    setValidationResults(null)
+    if (!schema) return;
+    setParseError(null);
+    setValidationResults(null);
 
     if (!text.trim()) {
-      setParseError('Please provide JSON input.')
-      return
+      setParseError("Please provide JSON input.");
+      return;
     }
 
-    let parsed: unknown
+    let parsed: unknown;
     try {
-      parsed = JSON.parse(text)
+      parsed = JSON.parse(text);
     } catch {
-      setParseError('Invalid JSON — please check your input.')
-      return
+      setParseError("Invalid JSON — please check your input.");
+      return;
     }
 
     if (!Array.isArray(parsed)) {
-      setParseError('Input must be a JSON array of objects.')
-      return
+      setParseError("Input must be a JSON array of objects.");
+      return;
     }
 
     if (parsed.length === 0) {
-      setParseError('Array is empty — no entries to upload.')
-      return
+      setParseError("Array is empty — no entries to upload.");
+      return;
     }
 
     const results: ValidationResult[] = parsed.map((item, index) => {
-      const { errors } = validator.validateFormData(item, schema.schema)
+      const { errors } = validator.validateFormData(item, schema.schema);
       return {
         index,
         data: item,
         valid: errors.length === 0,
         errors: errors.map((e) => e.stack ?? e.message ?? String(e)),
-      }
-    })
+      };
+    });
 
-    setValidationResults(results)
-  }
+    setValidationResults(results);
+  };
 
   const loadFile = (file: File) => {
-    if (!file.name.endsWith('.json') && file.type !== 'application/json') {
-      toast.error('Please upload a .json file.')
-      return
+    if (!file.name.endsWith(".json") && file.type !== "application/json") {
+      toast.error("Please upload a .json file.");
+      return;
     }
-    setFileName(file.name)
-    const reader = new FileReader()
+    setFileName(file.name);
+    const reader = new FileReader();
     reader.onload = (event) => {
-      const text = (event.target?.result as string) ?? ''
-      setJsonText(text)
-      validateJson(text)
-    }
-    reader.readAsText(file)
-  }
+      const text = (event.target?.result as string) ?? "";
+      setJsonText(text);
+      validateJson(text);
+    };
+    reader.readAsText(file);
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) loadFile(file)
-    e.target.value = ''
-  }
+    const file = e.target.files?.[0];
+    if (file) loadFile(file);
+    e.target.value = "";
+  };
 
   const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault()
-    setIsDragging(true)
-  }
+    e.preventDefault();
+    setIsDragging(true);
+  };
 
   const handleDragLeave = (e: React.DragEvent) => {
-    if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragging(false)
-  }
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragging(false);
+  };
 
   const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault()
-    setIsDragging(false)
-    const file = e.dataTransfer.files[0]
-    if (file) loadFile(file)
-  }
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) loadFile(file);
+  };
 
   const clearInput = () => {
-    setJsonText('')
-    setFileName(null)
-    setParseError(null)
-    setValidationResults(null)
-  }
+    setJsonText("");
+    setFileName(null);
+    setParseError(null);
+    setValidationResults(null);
+  };
 
   const handleSubmit = async () => {
-    if (!validationResults) return
-    const validEntries = validationResults.filter((r) => r.valid).map((r) => r.data)
+    if (!validationResults) return;
+    const validEntries = validationResults.filter((r) => r.valid).map((r) => r.data);
     if (validEntries.length === 0) {
-      toast.error('No valid entries to upload.')
-      return
+      toast.error("No valid entries to upload.");
+      return;
     }
 
-    setIsSubmitting(true)
+    setIsSubmitting(true);
     try {
       await createBulk({
-        schemaId: schemaId as Id<'schemas'>,
+        schemaId: schemaId as Id<"schemas">,
         dataArray: validEntries,
-      })
-      toast.success(`${validEntries.length} ${validEntries.length === 1 ? 'entry' : 'entries'} uploaded!`)
-      navigate({ to: '/schemas/$schemaId', params: { schemaId } })
+      });
+      toast.success(
+        `${validEntries.length} ${validEntries.length === 1 ? "entry" : "entries"} uploaded!`,
+      );
+      void navigate({ to: "/schemas/$schemaId", params: { schemaId } });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to upload entries.')
+      toast.error(err instanceof Error ? err.message : "Failed to upload entries.");
     } finally {
-      setIsSubmitting(false)
+      setIsSubmitting(false);
     }
-  }
+  };
 
   if (schema === undefined) {
     return (
       <div className="flex justify-center items-center min-h-100">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
       </div>
-    )
+    );
   }
 
   if (!schema) {
@@ -169,11 +171,11 @@ function BulkUploadPage() {
           <RouterButton to="/schemas">Back to Schemas</RouterButton>
         </CardContent>
       </Card>
-    )
+    );
   }
 
-  const validCount = validationResults?.filter((r) => r.valid).length ?? 0
-  const invalidCount = validationResults?.filter((r) => !r.valid).length ?? 0
+  const validCount = validationResults?.filter((r) => r.valid).length ?? 0;
+  const invalidCount = validationResults?.filter((r) => !r.valid).length ?? 0;
 
   return (
     <div className="max-w-2xl mx-auto py-8 px-4 sm:px-0">
@@ -196,7 +198,13 @@ function BulkUploadPage() {
           </BreadcrumbList>
         </Breadcrumb>
         <div className="flex items-center gap-4">
-          <RouterButton variant="ghost" size="sm" to="/schemas/$schemaId" params={{ schemaId }} className="-ml-2">
+          <RouterButton
+            variant="ghost"
+            size="sm"
+            to="/schemas/$schemaId"
+            params={{ schemaId }}
+            className="-ml-2"
+          >
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back
           </RouterButton>
@@ -214,7 +222,8 @@ function BulkUploadPage() {
           <CardHeader>
             <CardTitle>JSON Input</CardTitle>
             <CardDescription>
-              Upload a <code>.json</code> file or paste a JSON array below. Each object will be validated against the <strong>{schema.title}</strong> schema.
+              Upload a <code>.json</code> file or paste a JSON array below. Each object will be
+              validated against the <strong>{schema.title}</strong> schema.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -233,21 +242,23 @@ function BulkUploadPage() {
                 tabIndex={0}
                 aria-label="Drop zone: drag a JSON file here or click to browse"
                 className={[
-                  'flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-6 py-6 text-center transition-colors cursor-pointer',
-                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  "flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-6 py-6 text-center transition-colors cursor-pointer",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   isDragging
-                    ? 'border-primary bg-primary/5 text-primary'
-                    : 'border-border text-muted-foreground hover:border-primary/50 hover:bg-muted/50',
-                ].join(' ')}
+                    ? "border-primary bg-primary/5 text-primary"
+                    : "border-border text-muted-foreground hover:border-primary/50 hover:bg-muted/50",
+                ].join(" ")}
                 onClick={() => fileInputRef.current?.click()}
                 onKeyDown={(e) =>
-                  e.key === 'Enter' || e.key === ' ' ? fileInputRef.current?.click() : undefined
+                  e.key === "Enter" || e.key === " " ? fileInputRef.current?.click() : undefined
                 }
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
               >
-                <FileJson className={`h-7 w-7 ${isDragging ? 'text-primary' : 'text-muted-foreground'}`} />
+                <FileJson
+                  className={`h-7 w-7 ${isDragging ? "text-primary" : "text-muted-foreground"}`}
+                />
                 {fileName ? (
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-foreground">{fileName}</span>
@@ -256,8 +267,8 @@ function BulkUploadPage() {
                       aria-label="Remove file"
                       className="text-muted-foreground hover:text-foreground"
                       onClick={(e) => {
-                        e.stopPropagation()
-                        clearInput()
+                        e.stopPropagation();
+                        clearInput();
                       }}
                     >
                       <X className="h-4 w-4" />
@@ -266,7 +277,9 @@ function BulkUploadPage() {
                 ) : (
                   <>
                     <p className="text-sm font-medium">
-                      {isDragging ? 'Drop your file here' : 'Drag & drop a JSON file, or click to browse'}
+                      {isDragging
+                        ? "Drop your file here"
+                        : "Drag & drop a JSON file, or click to browse"}
                     </p>
                     <p className="text-xs">.json files only</p>
                   </>
@@ -285,10 +298,10 @@ function BulkUploadPage() {
               <JsonEditor
                 value={jsonText}
                 onChange={(value) => {
-                  setJsonText(value)
-                  if (fileName) setFileName(null)
-                  setParseError(null)
-                  setValidationResults(null)
+                  setJsonText(value);
+                  if (fileName) setFileName(null);
+                  setParseError(null);
+                  setValidationResults(null);
                 }}
                 placeholder={'[\n  { "field": "value" },\n  { "field": "value" }\n]'}
                 aria-labelledby="json-paste-label"
@@ -333,7 +346,9 @@ function BulkUploadPage() {
               ) : validCount > 0 ? (
                 <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
                   <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-                  {invalidCount} {invalidCount === 1 ? 'entry has' : 'entries have'} validation errors. Only the {validCount} valid {validCount === 1 ? 'entry' : 'entries'} will be uploaded.
+                  {invalidCount} {invalidCount === 1 ? "entry has" : "entries have"} validation
+                  errors. Only the {validCount} valid {validCount === 1 ? "entry" : "entries"} will
+                  be uploaded.
                 </div>
               ) : (
                 <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
@@ -348,11 +363,16 @@ function BulkUploadPage() {
                   {validationResults
                     .filter((r) => !r.valid)
                     .map((r) => (
-                      <div key={r.index} className="rounded-md border border-destructive/20 bg-muted/50 p-3 text-sm">
+                      <div
+                        key={r.index}
+                        className="rounded-md border border-destructive/20 bg-muted/50 p-3 text-sm"
+                      >
                         <p className="font-medium text-foreground mb-1">Entry {r.index + 1}</p>
                         <ul className="space-y-0.5 text-destructive">
                           {r.errors.map((e, i) => (
-                            <li key={i} className="text-xs">{e}</li>
+                            <li key={i} className="text-xs">
+                              {e}
+                            </li>
                           ))}
                         </ul>
                       </div>
@@ -360,19 +380,16 @@ function BulkUploadPage() {
                 </div>
               )}
 
-              <Button
-                onClick={handleSubmit}
-                disabled={isSubmitting || validCount === 0}
-              >
+              <Button onClick={handleSubmit} disabled={isSubmitting || validCount === 0}>
                 <Upload className="h-4 w-4 mr-2" />
                 {isSubmitting
-                  ? 'Uploading…'
-                  : `Upload ${validCount} Valid ${validCount === 1 ? 'Entry' : 'Entries'}`}
+                  ? "Uploading…"
+                  : `Upload ${validCount} Valid ${validCount === 1 ? "Entry" : "Entries"}`}
               </Button>
             </CardContent>
           </Card>
         )}
       </div>
     </div>
-  )
+  );
 }

@@ -1,13 +1,12 @@
 import { query, mutation } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
 
+const SCHEMA_SIZE_LIMIT = 102400; // 100 KB
+
 export const list = query({
   args: {},
   handler: async (ctx) => {
-    return await ctx.db
-      .query("schemas")
-      .order("desc")
-      .collect();
+    return await ctx.db.query("schemas").order("desc").collect();
   },
 });
 
@@ -18,7 +17,7 @@ export const get = query({
     if (!schema) {
       throw new Error("Schema not found");
     }
-    
+
     return schema;
   },
 });
@@ -42,6 +41,10 @@ export const update = mutation({
       if (!args.schema.title || !args.schema.description) {
         throw new ConvexError("Schema must have 'title' and 'description' properties");
       }
+      const schemaStr = JSON.stringify(args.schema);
+      if (schemaStr.length > SCHEMA_SIZE_LIMIT) {
+        throw new ConvexError("Schema exceeds the 100 KB size limit.");
+      }
       patch.schema = args.schema;
       patch.title = args.schema.title;
       patch.description = args.schema.description;
@@ -59,17 +62,21 @@ export const create = mutation({
     schema: v.any(),
   },
   handler: async (ctx, args) => {
-    // Validate that schema has required fields
     if (!args.schema.title || !args.schema.description) {
       throw new ConvexError("Schema must have 'title' and 'description' properties");
     }
-    
+
+    const schemaStr = JSON.stringify(args.schema);
+    if (schemaStr.length > SCHEMA_SIZE_LIMIT) {
+      throw new ConvexError("Schema exceeds the 100 KB size limit.");
+    }
+
     const schemaId = await ctx.db.insert("schemas", {
       title: args.schema.title,
       description: args.schema.description,
       schema: args.schema,
     });
-    
+
     return schemaId;
   },
 });

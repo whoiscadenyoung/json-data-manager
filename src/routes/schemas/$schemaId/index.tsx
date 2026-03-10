@@ -1,59 +1,73 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
-import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb'
-import { useQuery } from 'convex/react'
-import { api } from '../../../../convex/_generated/api'
-import type { Id } from '../../../../convex/_generated/dataModel'
-import { Button } from '@/components/ui/button'
-import { RouterButton } from '@/components/router-button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Plus, Download, Calendar, FileText, FilePlus, Pencil, UploadCloud } from 'lucide-react'
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
+import { createFileRoute, Link } from "@tanstack/react-router";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
+import { useQuery } from "convex/react";
+import { api } from "../../../../convex/_generated/api";
+import type { Id } from "../../../../convex/_generated/dataModel";
+import { Button } from "@/components/ui/button";
+import { RouterButton } from "@/components/router-button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Plus, Download, Calendar, FileText, FilePlus, Pencil, UploadCloud } from "lucide-react";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
 
-export const Route = createFileRoute('/schemas/$schemaId/')({
+export const Route = createFileRoute("/schemas/$schemaId/")({
   component: SchemaDetailPage,
-})
+});
 
 function SchemaDetailPage() {
-  const { schemaId } = Route.useParams()
-  const schema = useQuery(api.schemas.get, { schemaId: schemaId as Id<'schemas'> })
-  const entries = useQuery(api.entries.list, { schemaId: schemaId as Id<'schemas'> })
+  const { schemaId } = Route.useParams();
+  const schema = useQuery(api.schemas.get, { schemaId: schemaId as Id<"schemas"> });
+  const entries = useQuery(api.entries.list, { schemaId: schemaId as Id<"schemas"> });
 
   const downloadFile = (content: string, filename: string) => {
-    const blob = new Blob([content], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-  }
+    const blob = new Blob([content], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   const handleExport = () => {
-    if (!entries || !schema) return
+    if (!entries || !schema) return;
 
-    const slug = schema.title.toLowerCase().replace(/\s+/g, '-')
-    const schemaFilename = `${slug}-schema.json`
+    const slug = schema.title.toLowerCase().replace(/\s+/g, "-");
+    const schemaFilename = `${slug}-schema.json`;
 
-    downloadFile(JSON.stringify(schema.schema, null, 2), schemaFilename)
+    downloadFile(JSON.stringify(schema.schema, null, 2), schemaFilename);
 
     setTimeout(() => {
       const entriesData = {
         $schema: schemaFilename,
         entries: entries.map((entry) => entry.data),
-      }
-      downloadFile(JSON.stringify(entriesData, null, 2), `${slug}-entries.json`)
-    }, 100)
-  }
+      };
+      downloadFile(JSON.stringify(entriesData, null, 2), `${slug}-entries.json`);
+    }, 100);
+  };
 
   if (schema === undefined || entries === undefined) {
     return (
       <div className="flex justify-center items-center min-h-100">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
       </div>
-    )
+    );
   }
 
   if (!schema) {
@@ -67,7 +81,7 @@ function SchemaDetailPage() {
           <RouterButton to="/schemas">Back to Schemas</RouterButton>
         </CardContent>
       </Card>
-    )
+    );
   }
 
   return (
@@ -93,11 +107,7 @@ function SchemaDetailPage() {
             <Pencil className="h-4 w-4 mr-2" />
             Edit
           </RouterButton>
-          <Button
-            onClick={handleExport}
-            disabled={entries.length === 0}
-            variant="outline"
-          >
+          <Button onClick={handleExport} disabled={entries.length === 0} variant="outline">
             <Download className="h-4 w-4 mr-2" />
             Export ({entries.length})
           </Button>
@@ -121,12 +131,8 @@ function SchemaDetailPage() {
         <TabsContent value="entries">
           <Card>
             <CardHeader>
-              <CardTitle>
-                Entries ({entries.length})
-              </CardTitle>
-              <CardDescription>
-                Data entries created from this schema
-              </CardDescription>
+              <CardTitle>Entries ({entries.length})</CardTitle>
+              <CardDescription>Data entries created from this schema</CardDescription>
             </CardHeader>
             <CardContent>
               {entries.length === 0 ? (
@@ -156,9 +162,14 @@ function SchemaDetailPage() {
                         </div>
                         <div className="text-sm font-mono bg-muted p-2 rounded overflow-x-auto mb-3">
                           {JSON.stringify(entry.data, null, 2).slice(0, 200)}
-                          {JSON.stringify(entry.data).length > 200 && '...'}
+                          {JSON.stringify(entry.data).length > 200 && "..."}
                         </div>
-                        <RouterButton size="sm" className="w-full" to="/schemas/$schemaId/$entryId" params={{ schemaId, entryId: entry._id }}>
+                        <RouterButton
+                          size="sm"
+                          className="w-full"
+                          to="/schemas/$schemaId/$entryId"
+                          params={{ schemaId, entryId: entry._id }}
+                        >
                           View Details
                         </RouterButton>
                       </CardContent>
@@ -180,14 +191,12 @@ function SchemaDetailPage() {
             </CardHeader>
             <CardContent>
               <div className="bg-muted rounded-lg p-4 overflow-x-auto">
-                <pre className="text-sm">
-                  {JSON.stringify(schema.schema, null, 2)}
-                </pre>
+                <pre className="text-sm">{JSON.stringify(schema.schema, null, 2)}</pre>
               </div>
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
     </div>
-  )
+  );
 }
