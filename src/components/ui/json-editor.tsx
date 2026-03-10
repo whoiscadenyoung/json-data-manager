@@ -1,9 +1,11 @@
-import { useMemo } from "react";
+import { useMemo, useRef, useEffect } from "react";
 import ReactCodeMirror, { EditorView } from "@uiw/react-codemirror";
 import { githubLight, githubDark } from "@uiw/codemirror-theme-github";
 import { json } from "@codemirror/lang-json";
 import { linter, lintGutter, type Diagnostic } from "@codemirror/lint";
 import { syntaxTree } from "@codemirror/language";
+import { jsonSchemaLinter, stateExtensions, updateSchema } from "codemirror-json-schema";
+import type { JSONSchema7 } from "json-schema";
 import { useColorScheme } from "#/hooks/use-color-scheme";
 import { cn } from "#/lib/utils";
 
@@ -87,7 +89,10 @@ interface JsonEditorProps {
   onBlur?: () => void;
   placeholder?: string;
   height?: string;
+  /** Suppress the meta-schema linter that checks for object/title/description. Use on data editors. */
   disableSchemaLinting?: boolean;
+  /** When provided, validate the editor content against this JSON Schema using codemirror-json-schema. */
+  jsonSchema?: object;
   "aria-describedby"?: string;
   "aria-labelledby"?: string;
 }
@@ -99,23 +104,36 @@ export function JsonEditor({
   placeholder,
   height = "256px",
   disableSchemaLinting = false,
+  jsonSchema,
   "aria-describedby": ariaDescribedBy,
   "aria-labelledby": ariaLabelledBy,
 }: JsonEditorProps) {
   const colorScheme = useColorScheme();
+  const viewRef = useRef<EditorView | null>(null);
+  const enableJsonSchemaLinting = jsonSchema !== undefined;
+
+  // Update the schema in CodeMirror state whenever it changes
+  useEffect(() => {
+    if (viewRef.current) {
+      updateSchema(viewRef.current, jsonSchema as JSONSchema7 | undefined);
+    }
+  }, [jsonSchema]);
 
   const extensions = useMemo(
     () => [
       json(),
       lintGutter(),
       ...(disableSchemaLinting ? [] : [jsonLinter]),
+      // Add schema-based linting extensions (schema value pushed separately via updateSchema)
+      ...(enableJsonSchemaLinting ? [...stateExtensions(), linter(jsonSchemaLinter())] : []),
       baseTheme,
       EditorView.contentAttributes.of({
         ...(ariaDescribedBy ? { "aria-describedby": ariaDescribedBy } : {}),
         ...(ariaLabelledBy ? { "aria-labelledby": ariaLabelledBy } : {}),
       }),
     ],
-    [ariaDescribedBy, ariaLabelledBy, disableSchemaLinting],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [ariaDescribedBy, ariaLabelledBy, disableSchemaLinting, enableJsonSchemaLinting],
   );
 
   return (
@@ -133,6 +151,13 @@ export function JsonEditor({
         theme={colorScheme === "dark" ? githubDark : githubLight}
         extensions={extensions}
         placeholder={placeholder}
+        onCreateEditor={(view) => {
+          viewRef.current = view;
+          // Set schema immediately on mount so first validation is instant
+          if (jsonSchema !== undefined) {
+            updateSchema(view, jsonSchema as JSONSchema7);
+          }
+        }}
         basicSetup={{
           lineNumbers: true,
           foldGutter: false,

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import validator from "@rjsf/validator-ajv8";
 import {
   CheckCircle,
@@ -86,6 +86,19 @@ export function ValidationPane({
   const [expandedItems, setExpandedItems] = useState<Set<number>>(new Set());
   const [isInferConfirmOpen, setIsInferConfirmOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Wrap the item schema in an array schema for CodeMirror inline linting
+  const arrayJsonSchema = useMemo(() => {
+    try {
+      const parsed = JSON.parse(schemaJson);
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        return { type: "array", items: parsed } as object;
+      }
+    } catch {
+      // invalid schema JSON — no inline linting
+    }
+    return undefined;
+  }, [schemaJson]);
 
   // Apply external data when provided
   useEffect(() => {
@@ -351,6 +364,7 @@ export function ValidationPane({
               placeholder={'[\n  { "field": "value" }\n]'}
               height="160px"
               disableSchemaLinting
+              jsonSchema={arrayJsonSchema}
             />
           </div>
         </div>
@@ -463,7 +477,7 @@ export function ValidationPane({
                 e.target.value = "";
               }}
             />
-            <JsonEditor value={dataText} onChange={(v) => setDataText(v)} height="140px" disableSchemaLinting />
+            <JsonEditor value={dataText} onChange={(v) => setDataText(v)} height="140px" disableSchemaLinting jsonSchema={arrayJsonSchema} />
           </div>
         </div>
       )}

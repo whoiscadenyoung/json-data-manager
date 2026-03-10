@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
@@ -44,6 +44,12 @@ function BulkUploadPage() {
   const [validationResults, setValidationResults] = useState<ValidationResult[] | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Wrap item schema in array schema for inline CodeMirror linting
+  const arrayJsonSchema = useMemo(
+    () => (schema ? ({ type: "array", items: schema.schema } as object) : undefined),
+    [schema],
+  );
 
   const validateJson = (text: string) => {
     if (!schema) return;
@@ -306,6 +312,7 @@ function BulkUploadPage() {
                 placeholder={'[\n  { "field": "value" },\n  { "field": "value" }\n]'}
                 aria-labelledby="json-paste-label"
                 disableSchemaLinting
+                jsonSchema={arrayJsonSchema}
               />
             </div>
 
