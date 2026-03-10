@@ -172,6 +172,11 @@ export function SchemaEditor({ initialJson = "", onSave, saveLabel = "Save" }: S
 
   const handleSwitchToVisual = () => {
     if (activeTab === "code") {
+      // Empty editor is fine — visual builder shows a blank canvas
+      if (!schemaJson.trim()) {
+        setActiveTab("visual");
+        return;
+      }
       try {
         JSON.parse(schemaJson);
         setActiveTab("visual");

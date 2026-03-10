@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { AlertCircle, ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
@@ -568,9 +568,17 @@ export function VisualBuilder({
 }: VisualBuilderProps) {
   const [formData, setFormData] = useState<SchemaFormData | null>(null);
   const [parseError, setParseError] = useState(false);
+  // Track when we ourselves triggered the schemaJson change so we don't
+  // re-parse and rebuild PropertyDef objects (which would remount inputs and
+  // lose keyboard focus on every keystroke).
+  const selfChangedRef = useRef(false);
 
-  // Parse incoming schemaJson into formData
+  // Parse incoming schemaJson into formData — but skip when we were the source
   useEffect(() => {
+    if (selfChangedRef.current) {
+      selfChangedRef.current = false;
+      return;
+    }
     if (!schemaJson.trim()) {
       setFormData({ title: "", description: "", properties: [] });
       setParseError(false);
@@ -587,6 +595,7 @@ export function VisualBuilder({
 
   const handleFormChange = useCallback(
     (updated: SchemaFormData) => {
+      selfChangedRef.current = true;
       setFormData(updated);
       onChange(schemaFormDataToJson(updated));
     },
