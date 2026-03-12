@@ -1,24 +1,31 @@
-import { createFileRoute } from '@tanstack/react-router'
-import { useQuery } from 'convex/react'
-import { api } from '../../../convex/_generated/api'
-import { RouterButton } from '#/components/router-button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '#/components/ui/card'
-import { Calendar, FolderOpen, Plus } from 'lucide-react'
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '#/components/ui/empty'
+import { createFileRoute } from "@tanstack/react-router";
+import { useQuery } from "convex/react";
+import { api } from "../../../convex/_generated/api";
+import { RouterButton } from "#/components/router-button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
+import { Calendar, FolderOpen, Plus } from "lucide-react";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "#/components/ui/empty";
 
-export const Route = createFileRoute('/schemas/')({
+export const Route = createFileRoute("/schemas/")({
   component: SchemasPage,
-})
+});
 
 function SchemasPage() {
-  const schemas = useQuery(api.schemas.list)
+  const schemas = useQuery(api.schemas.list);
 
   if (schemas === undefined) {
     return (
       <div className="flex justify-center items-center min-h-100">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
       </div>
-    )
+    );
   }
 
   return (
@@ -26,9 +33,7 @@ function SchemasPage() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-3xl font-bold text-primary mb-1">Your Schemas</h1>
-          <p className="text-muted-foreground">
-            Manage your JSON schemas and create data entries
-          </p>
+          <p className="text-muted-foreground">Manage your JSON schemas and create data entries</p>
         </div>
         <RouterButton to="/schemas/create">
           <Plus className="h-4 w-4 mr-2" />
@@ -65,7 +70,11 @@ function SchemasPage() {
                   <Calendar className="h-4 w-4 mr-2" />
                   Created {new Date(schema._creationTime).toLocaleDateString()}
                 </div>
-                <RouterButton className="w-full" to="/schemas/$schemaId" params={{ schemaId: schema._id }}>
+                <RouterButton
+                  className="w-full"
+                  to="/schemas/$schemaId"
+                  params={{ schemaId: schema._id }}
+                >
                   View Details
                 </RouterButton>
               </CardContent>
@@ -74,5 +83,5 @@ function SchemasPage() {
         </div>
       )}
     </main>
-  )
+  );
 }

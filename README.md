@@ -1,5 +1,3 @@
-Welcome to your new TanStack Start app! 
-
 # Getting Started
 
 To run this application:
@@ -29,40 +27,13 @@ bun --bun run test
 
 This project uses [Tailwind CSS](https://tailwindcss.com/) for styling.
 
-### Removing Tailwind CSS
+## Shadcn
 
-If you prefer not to use Tailwind CSS:
+Add components using the latest version of [Shadcn](https://ui.shadcn.com/).
 
-1. Remove the demo pages in `src/routes/demo/`
-2. Replace the Tailwind import in `src/styles.css` with your own styles
-3. Remove `tailwindcss()` from the plugins array in `vite.config.ts`
-4. Uninstall the packages: `bun install @tailwindcss/vite tailwindcss -D`
-
-
-## Setting up Convex
-
-- Set the `VITE_CONVEX_URL` and `CONVEX_DEPLOYMENT` environment variables in your `.env.local`. (Or run `bunx --bun convex init` to set them automatically.)
-- Run `bunx --bun convex dev` to start the Convex server.
-
-
-## T3Env
-
-- You can use T3Env to add type safety to your environment variables.
-- Add Environment variables to the `src/env.mjs` file.
-- Use the environment variables in your code.
-
-### Usage
-
-```ts
-import { env } from "#/env";
-
-console.log(env.VITE_APP_TITLE);
+```bash
+bunx --bun shadcn@latest add button
 ```
-
-
-
-
-
 
 ## Routing
 
@@ -205,10 +176,6 @@ function PeopleComponent() {
 ```
 
 Loaders simplify your data fetching logic dramatically. Check out more information in the [Loader documentation](https://tanstack.com/router/latest/docs/framework/react/guide/data-loading#loader-parameters).
-
-# Demo files
-
-Files prefixed with `demo` can be safely deleted. They are there to provide a starting point for you to play around with the features you've installed.
 
 # Learn More
 

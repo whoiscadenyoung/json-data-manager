@@ -1,20 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState } from "react";
 
-export function useColorScheme(): 'light' | 'dark' {
-  const [isDark, setIsDark] = useState(
-    () => document.documentElement.classList.contains('dark'),
-  )
+export function useColorScheme(): "light" | "dark" {
+  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains("dark"));
 
   useEffect(() => {
     const observer = new MutationObserver(() => {
-      setIsDark(document.documentElement.classList.contains('dark'))
-    })
+      setIsDark(document.documentElement.classList.contains("dark"));
+    });
     observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ['class'],
-    })
-    return () => observer.disconnect()
-  }, [])
+      attributeFilter: ["class"],
+    });
+    return () => observer.disconnect();
+  }, []);
 
-  return isDark ? 'dark' : 'light'
+  return isDark ? "dark" : "light";
 }

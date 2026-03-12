@@ -1,27 +1,34 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
-import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb'
-import { useQuery } from 'convex/react'
-import { api } from '../../../../convex/_generated/api'
-import type { Id } from '../../../../convex/_generated/dataModel'
-import { RouterButton } from '@/components/router-button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { ArrowLeft, Calendar, Plus } from 'lucide-react'
+import { createFileRoute, Link } from "@tanstack/react-router";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
+import { useQuery } from "convex/react";
+import { api } from "../../../../convex/_generated/api";
+import type { Id } from "../../../../convex/_generated/dataModel";
+import { RouterButton } from "@/components/router-button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ArrowLeft, Calendar, Plus } from "lucide-react";
 
-export const Route = createFileRoute('/schemas/$schemaId/$entryId')({
+export const Route = createFileRoute("/schemas/$schemaId/$entryId")({
   component: EntryDetailPage,
-})
+});
 
 function EntryDetailPage() {
-  const { schemaId, entryId } = Route.useParams()
-  const entry = useQuery(api.entries.get, { entryId: entryId as Id<'entries'> })
-  const schema = useQuery(api.schemas.get, { schemaId: schemaId as Id<'schemas'> })
+  const { schemaId, entryId } = Route.useParams();
+  const entry = useQuery(api.entries.get, { entryId: entryId as Id<"entries"> });
+  const schema = useQuery(api.schemas.get, { schemaId: schemaId as Id<"schemas"> });
 
   if (entry === undefined || schema === undefined) {
     return (
       <div className="flex justify-center items-center min-h-100">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
       </div>
-    )
+    );
   }
 
   if (!entry || !schema) {
@@ -35,7 +42,7 @@ function EntryDetailPage() {
           <RouterButton to="/schemas">Back to Schemas</RouterButton>
         </CardContent>
       </Card>
-    )
+    );
   }
 
   return (
@@ -48,7 +55,9 @@ function EntryDetailPage() {
             </BreadcrumbItem>
             <BreadcrumbSeparator />
             <BreadcrumbItem>
-              <BreadcrumbLink render={<Link to="/schemas/$schemaId" params={{ schemaId }} />}>{schema.title}</BreadcrumbLink>
+              <BreadcrumbLink render={<Link to="/schemas/$schemaId" params={{ schemaId }} />}>
+                {schema.title}
+              </BreadcrumbLink>
             </BreadcrumbItem>
             <BreadcrumbSeparator />
             <BreadcrumbItem>
@@ -74,15 +83,11 @@ function EntryDetailPage() {
       <Card className="mb-6">
         <CardHeader>
           <CardTitle>Entry Data</CardTitle>
-          <CardDescription>
-            The data stored for this entry
-          </CardDescription>
+          <CardDescription>The data stored for this entry</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="bg-muted rounded-lg p-4 overflow-x-auto">
-            <pre className="text-sm">
-              {JSON.stringify(entry.data, null, 2)}
-            </pre>
+            <pre className="text-sm">{JSON.stringify(entry.data, null, 2)}</pre>
           </div>
         </CardContent>
       </Card>
@@ -97,5 +102,5 @@ function EntryDetailPage() {
         </RouterButton>
       </div>
     </div>
-  )
+  );
 }

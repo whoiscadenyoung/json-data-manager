@@ -9,7 +9,7 @@ export const list = query({
     if (!schema) {
       throw new Error("Schema not found");
     }
-    
+
     return await ctx.db
       .query("entries")
       .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
@@ -25,7 +25,7 @@ export const get = query({
     if (!entry) {
       throw new Error("Entry not found");
     }
-    
+
     return entry;
   },
 });
@@ -63,9 +63,7 @@ export const createBulk = mutation({
     }
 
     const ids = await Promise.all(
-      args.dataArray.map((data) =>
-        ctx.db.insert("entries", { schemaId: args.schemaId, data })
-      )
+      args.dataArray.map((data) => ctx.db.insert("entries", { schemaId: args.schemaId, data })),
     );
 
     return ids;
