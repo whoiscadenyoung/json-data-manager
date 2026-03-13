@@ -2,10 +2,25 @@
 
 ## Overview
 
-Convert the JSON Data Manager backend and frontend into a reusable, publishable Convex component that others can install as a headless CMS. The component will provide:
+Convert the JSON Data Manager into a reusable, publishable Convex component. This involves restructuring the existing repository into a **monorepo** with the component as a package under `packages/json-data-manager/`. The component will provide:
 
 1. **Backend**: Complete Convex component with schema definitions, CRUD operations, and validation
-2. **Frontend (Optional)**: React hooks and unstyled/presentational components that can be imported and customized
+2. **Frontend**: React hooks and unstyled/presentational components that can be imported and customized
+
+**Monorepo Structure**:
+```
+json-data-manager/                 # Root (becomes monorepo root)
+├── packages/
+│   └── json-data-manager/         # The publishable package
+│       ├── convex/                # Convex component files
+│       ├── src/                   # React hooks and components
+│       ├── example/               # Demo app (not published)
+│       └── package.json
+├── convex/                        # Existing app (migrates to use package)
+├── src/                           # Existing app (migrates to use package)
+├── package.json                   # Root workspace configuration
+└── pnpm-workspace.yaml            # pnpm workspace config
+```
 
 ---
 
@@ -460,27 +475,46 @@ export interface PaginatedResult<T> {
 
 ---
 
-## Part 2: Single Package with Subpath Exports
+## Part 2: Package Structure (Monorepo)
 
-Following the pattern used by `@convex-dev/auth` and `@convex-dev/rate-limiter`, we'll use a **single npm package with subpath exports**. This keeps everything in one place while allowing consumers to import exactly what they need.
+The component lives as a package in `packages/json-data-manager/`. Following the pattern used by `@convex-dev/auth` and `@convex-dev/rate-limiter`, we'll use a **single npm package with subpath exports**.
 
-### 2.1 Package Structure
+### 2.1 Monorepo Root Structure
+
+```
+json-data-manager/                 # Monorepo root
+├── packages/
+│   └── json-data-manager/         # The publishable package
+│       ├── convex/                # Convex component files (raw TypeScript)
+│       ├── src/                   # React frontend code (bundled)
+│       ├── example/               # Demo app (not published)
+│       ├── package.json           # Package exports
+│       ├── tsconfig.json          # Build config
+│       └── README.md
+├── convex/                        # Existing app (uses the package)
+├── src/                           # Existing app (uses the package)
+├── package.json                   # Root workspace config
+├── pnpm-workspace.yaml            # pnpm workspaces
+└── ...
+```
+
+### 2.2 Package Internal Structure
 
 ```
 packages/json-data-manager/
-├── convex/                      # Convex component files (raw TypeScript)
-│   ├── schema.ts                # Component schema definitions
+├── convex/                      # Convex component files (raw TypeScript - NOT bundled)
+│   ├── schema.ts                # Component schema definitions (jdm_schemas, jdm_entries)
 │   ├── index.ts                 # Public API exports
 │   ├── schemas.ts               # Schema CRUD functions
 │   ├── entries.ts               # Entry CRUD functions
 │   ├── types.ts                 # Shared TypeScript types
 │   └── validation.ts            # Validation utilities
-├── src/                         # React frontend code (bundled)
+├── src/                         # React frontend code (bundled to dist/)
 │   ├── index.ts                 # Main React exports (hooks + components)
 │   ├── hooks/
-│   │   ├── useSchemas.ts
-│   │   ├── useEntries.ts
-│   │   └── useValidation.ts
+│   │   ├── useSchemas.ts        # Schema-related hooks
+│   │   ├── useEntries.ts        # Entry-related hooks
+│   │   └── useValidation.ts     # Validation hook
 │   ├── components/
 │   │   ├── SchemaEditor.tsx     # Headless schema editor
 │   │   ├── EntryForm.tsx        # Headless entry form
@@ -488,14 +522,13 @@ packages/json-data-manager/
 │   └── lib/
 │       ├── infer-schema.ts      # Schema inference utilities
 │       └── validate.ts          # AJV validation helpers
+├── example/                     # Full working demo (NOT published)
+│   ├── convex/
+│   ├── src/
+│   └── package.json
 ├── package.json                 # Dual export configuration
 ├── tsconfig.json                # Build config (excludes convex/)
-├── README.md
-└── example/                     # Full working demo site (NOT packaged)
-    ├── convex/                  # Example-specific convex code
-    ├── src/                     # Example app routes and UI
-    ├── package.json
-    └── README.md
+└── README.md
 ```
 
 ### 2.2 The `example/` Folder
@@ -513,7 +546,29 @@ The `example/` directory contains a **complete working application** that demons
 
 The `example/` folder is excluded from npm via `.npmignore` or `"files"` whitelist in package.json.
 
-### 2.4 package.json Configuration
+### 2.4 Root Workspace Configuration
+
+**Root `package.json`** (monorepo workspace):
+```json
+{
+  "name": "json-data-manager-root",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "dev": "pnpm --filter json-data-manager dev",
+    "build": "pnpm --filter json-data-manager build",
+    "example": "pnpm --filter example dev"
+  }
+}
+```
+
+**Root `pnpm-workspace.yaml`**:
+```yaml
+packages:
+  - 'packages/*'
+```
+
+### 2.5 Package package.json Configuration
 
 The key is using `exports` to expose both the React code and the Convex component files:
 
