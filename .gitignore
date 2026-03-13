@@ -12,4 +12,3 @@ dist-ssr
 __unconfig*
 todos.json
 *.local.json
-.claude/settings.local.json
