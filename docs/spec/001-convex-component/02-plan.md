@@ -460,62 +460,155 @@ export interface PaginatedResult<T> {
 
 ---
 
-## Part 2: Frontend Integration
+## Part 2: Single Package with Subpath Exports
 
-### 2.1 Approach Options
+Following the pattern used by `@convex-dev/auth` and `@convex-dev/rate-limiter`, we'll use a **single npm package with subpath exports**. This keeps everything in one place while allowing consumers to import exactly what they need.
 
-Since Convex components currently only export backend functions, the frontend components can be distributed in two ways:
-
-| Approach | Pros | Cons |
-|----------|------|------|
-| **A. Monorepo with separate npm package** | Full control, tree-shakeable, versioned | More setup, separate publish workflow |
-| **B. Git submodule/subtree** | Consumer gets code they can modify | Harder to update, duplication |
-| **C. Copy-paste recipe** | Simplest, no build step | No updates, drift from source |
-
-**Recommendation**: Use **Approach A** with a monorepo containing:
-- `packages/convex-component/` - The Convex backend component
-- `packages/react/` - React hooks and headless components
-
-### 2.2 Monorepo Structure
+### 2.1 Package Structure
 
 ```
-json-data-manager/
-├── apps/
-│   └── demo/                    # Demo app (current app becomes demo)
-├── packages/
-│   ├── convex-cms/              # Convex component (published to npm)
-│   │   ├── convex/
-│   │   │   ├── component/
-│   │   │   └── (generated)
-│   │   ├── package.json
-│   │   └── README.md
-│   ├── react-cms/               # React SDK (published to npm)
-│   │   ├── src/
-│   │   │   ├── hooks/
-│   │   │   │   ├── useSchemas.ts
-│   │   │   │   ├── useEntries.ts
-│   │   │   │   └── useSchemaEditor.ts
-│   │   │   ├── components/
-│   │   │   │   ├── SchemaEditor.tsx
-│   │   │   │   ├── SchemaList.tsx
-│   │   │   │   ├── EntryForm.tsx
-│   │   │   │   └── EntryList.tsx
-│   │   │   └── index.ts
-│   │   ├── package.json
-│   │   └── tsconfig.json
-│   └── ui-cms/                  # Optional: shadcn/ui styled components
-│       └── src/
-├── convex/                      # App-specific convex code
-└── package.json                 # Root workspace config
+packages/json-data-manager/
+├── convex/                      # Convex component files (raw TypeScript)
+│   ├── schema.ts                # Component schema definitions
+│   ├── index.ts                 # Public API exports
+│   ├── schemas.ts               # Schema CRUD functions
+│   ├── entries.ts               # Entry CRUD functions
+│   ├── types.ts                 # Shared TypeScript types
+│   └── validation.ts            # Validation utilities
+├── src/                         # React frontend code (bundled)
+│   ├── index.ts                 # Main React exports (hooks + components)
+│   ├── hooks/
+│   │   ├── useSchemas.ts
+│   │   ├── useEntries.ts
+│   │   └── useValidation.ts
+│   ├── components/
+│   │   ├── SchemaEditor.tsx     # Headless schema editor
+│   │   ├── EntryForm.tsx        # Headless entry form
+│   │   └── ValidationPane.tsx   # Data validation component
+│   └── lib/
+│       ├── infer-schema.ts      # Schema inference utilities
+│       └── validate.ts          # AJV validation helpers
+├── package.json                 # Dual export configuration
+├── tsconfig.json                # Build config (excludes convex/)
+├── README.md
+└── example/                     # Full working demo site (NOT packaged)
+    ├── convex/                  # Example-specific convex code
+    ├── src/                     # Example app routes and UI
+    ├── package.json
+    └── README.md
 ```
 
-### 2.3 React Hooks (`packages/react-cms/src/hooks/`)
+### 2.2 The `example/` Folder
+
+The `example/` directory contains a **complete working application** that demonstrates the component in action. This is the current live site, extracted to serve as documentation and a reference implementation.
+
+**Why include an example app:**
+- Shows consumers how to integrate the component into a real app
+- Acts as a manual testing environment during development
+- Common pattern in the Convex ecosystem (`@convex-dev/auth/example`, etc.)
+
+**Important distinction:**
+- `convex/` and `src/` at the package root are **the component** (published to npm)
+- `example/convex/` and `example/src/` are **the demo app** (not published)
+
+The `example/` folder is excluded from npm via `.npmignore` or `"files"` whitelist in package.json.
+
+### 2.4 package.json Configuration
+
+The key is using `exports` to expose both the React code and the Convex component files:
+
+```json
+{
+  "name": "@json-data-manager/cms",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Headless CMS component for Convex with React hooks",
+
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./convex": {
+      "import": "./convex/index.ts"
+    },
+    "./convex/schema": {
+      "import": "./convex/schema.ts"
+    }
+  },
+
+  "files": [
+    "dist",
+    "convex"
+  ],
+
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build"
+  },
+
+  "peerDependencies": {
+    "convex": "^1.0.0",
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0"
+  },
+
+  "dependencies": {
+    "@rjsf/core": "^6.0.0",
+    "@rjsf/validator-ajv8": "^6.0.0",
+    "ajv": "^8.0.0"
+  },
+
+  "devDependencies": {
+    "@types/react": "^18.0.0",
+    "typescript": "^5.0.0"
+  }
+}
+```
+
+### 2.4 TypeScript Configuration
+
+**Important**: The `convex/` directory is excluded from bundling because the Convex CLI processes these files directly in the consumer's project.
+
+```json
+// tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "declaration": true,
+    "declarationMap": true,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "jsx": "react-jsx"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["convex", "node_modules", "dist"]
+}
+```
+
+### 2.5 How the Build Works
+
+1. **`src/` gets bundled** to `dist/` — React hooks, components, and utilities are compiled
+2. **`convex/` stays as raw TypeScript** — Published as-is for the consumer's Convex CLI to process
+3. **Consumer imports**:
+   - `import { useListSchemas } from '@json-data-manager/cms'` → Uses bundled `dist/index.js`
+   - `import cmsSchema from '@json-data-manager/cms/convex/schema'` → Uses raw `convex/schema.ts`
+
+### 2.6 React Hooks (`src/hooks/`)
+
+Hooks are bundled from `src/` and imported from the main package.
 
 #### useSchemas.ts
 
 ```typescript
 import { useQuery, useMutation } from "convex/react";
-import { api } from "@json-data-manager/convex-cms";
+import { api } from "@json-data-manager/cms/convex";
+import type { Id } from "convex/_generated/dataModel";
 
 export function useListSchemas(limit?: number) {
   return useQuery(api.schemas.listSchemas, { limit });
@@ -549,7 +642,9 @@ export function useDeleteSchema() {
 
 ```typescript
 import { useQuery, useMutation } from "convex/react";
-import { api } from "@json-data-manager/convex-cms";
+import { api } from "@json-data-manager/cms/convex";
+import type { Id } from "convex/_generated/dataModel";
+import { useState } from "react";
 
 export function useListEntries(schemaId: string | null, limit?: number) {
   return useQuery(
@@ -563,12 +658,12 @@ export function useListEntriesPaginated(schemaId: string, pageSize: number) {
 
   const result = useQuery(
     api.entries.listEntriesPaginated,
-    { schemaId: schemaId as Id<"jdm_schemas">, pageSize, cursor }
+    { schemaId: schemaId as Id<"jdm_schemas">, pageSize, cursor: cursor || undefined }
   );
 
   return {
     ...result,
-    nextPage: () => setCursor(result?.page?.nextCursor || null),
+    nextPage: () => setCursor(result?.nextCursor || null),
     reset: () => setCursor(null),
   };
 }
@@ -590,7 +685,7 @@ export function useDeleteEntry() {
 }
 ```
 
-### 2.4 Headless Components
+### 2.7 Headless Components
 
 These components handle logic but not styling - consumers bring their own UI.
 
@@ -665,7 +760,7 @@ export function EntryForm({ schema, initialData, onSubmit, render }: EntryFormPr
 }
 ```
 
-### 2.5 Pre-built Styled Components (Optional)
+### 2.8 Pre-built Styled Components (Optional)
 
 For users who want drop-in components with shadcn/ui styling:
 
@@ -694,16 +789,18 @@ export function StyledSchemaEditor(props: Omit<SchemaEditorProps, 'render'>) {
 
 ## Part 3: Installation Guide for Consumers
 
-### 3.1 Backend Setup
+### 3.1 Install the Package
 
 ```bash
-npm install @json-data-manager/convex-cms
+npm install @json-data-manager/cms
 ```
+
+### 3.2 Backend Setup
 
 **In `convex/schema.ts`:**
 ```typescript
 import { defineSchema } from "convex/server";
-import cmsSchema from "@json-data-manager/convex-cms/schema";
+import cmsSchema from "@json-data-manager/cms/convex/schema";
 
 export default defineSchema({
   ...cmsSchema,
@@ -711,25 +808,19 @@ export default defineSchema({
 });
 ```
 
-**In `convex/index.ts` (re-export for convenience):**
-```typescript
-// Re-export all component functions
-export * from "@json-data-manager/convex-cms";
-```
+The Convex CLI will automatically process the files in `@json-data-manager/cms/convex/`. Run `npx convex dev` to generate the types.
 
-### 3.2 Frontend Setup
+### 3.3 Frontend Setup
 
-```bash
-npm install @json-data-manager/react-cms
-```
+Import hooks and components from the main package entry:
 
-**Basic usage:**
 ```typescript
 import {
   useListSchemas,
   useCreateSchema,
-  SchemaEditor
-} from "@json-data-manager/react-cms";
+  SchemaEditor,
+  EntryForm
+} from "@json-data-manager/cms";
 
 function MyCMSPage() {
   const schemas = useListSchemas();
@@ -761,26 +852,29 @@ function MyCMSPage() {
 5. Add proper TypeScript exports
 6. Test component in isolation
 
-### Phase 2: Extract React Hooks (Week 2)
+### Phase 2: Single Package Setup (Week 2)
 
-1. Set up monorepo with pnpm workspaces
-2. Create `packages/react-cms/`
-3. Extract hooks from existing routes
-4. Package and publish to npm
+1. Create `packages/json-data-manager/` with the combined structure
+2. Set up `package.json` with subpath exports
+3. Configure TypeScript to only bundle `src/`, not `convex/`
+4. Extract hooks from existing routes into `src/hooks/`
+5. Test local package linking
 
 ### Phase 3: Component Library (Week 3)
 
-1. Create headless SchemaEditor component
+1. Create headless SchemaEditor component in `src/components/`
 2. Create headless EntryForm component
 3. Create useValidation hook for client-side AJV
-4. Document component APIs
+4. Add pre-styled versions (optional export) using shadcn/ui
+5. Document component APIs
 
-### Phase 4: Styled Components (Week 4)
+### Phase 4: Build & Publish (Week 4)
 
-1. Create `packages/ui-cms/` with shadcn/ui dependencies
-2. Build pre-styled SchemaEditor
-3. Build pre-styled EntryList and EntryForm
-4. Create example templates (dashboard, detail views)
+1. Set up build pipeline (`npm run build` compiles `src/` to `dist/`)
+2. Verify `convex/` files are published as raw TypeScript
+3. Test in a fresh project
+4. Publish to npm
+5. Create example templates (dashboard, detail views)
 
 ### Phase 5: Documentation & Examples (Week 5)
 
@@ -793,8 +887,21 @@ function MyCMSPage() {
 
 ## Part 5: Key Decisions
 
+### Single Package vs. Multiple Packages
+
+**Decision**: Use a single package with subpath exports (`@json-data-manager/cms`) rather than separate packages (`@json-data-manager/convex-cms`, `@json-data-manager/react-cms`).
+
+**Why this pattern**:
+- Follows established Convex ecosystem patterns (`@convex-dev/auth`, `@convex-dev/rate-limiter`)
+- Single version to manage — backend and frontend stay in sync
+- Easier discovery and installation for consumers
+- Simpler publishing workflow
+
+**Trade-off**: Consumers must install React even if they only use the backend (acceptable since most Convex apps use React).
+
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
+| Package structure | Single package, subpath exports | Follows `@convex-dev/*` patterns, simpler maintenance |
 | Table prefix | `jdm_` | Avoids collisions, clearly identifies component tables |
 | Pagination | Cursor-based | Scales to large datasets, Convex best practice |
 | Slug support | Required with auto-generation | Human-friendly URLs, CMS expectation |
@@ -802,6 +909,7 @@ function MyCMSPage() {
 | Component styling | Headless + optional styled | Maximum flexibility for consumers |
 | React version | 18+ (hooks) | Use modern patterns, consumer likely on 18+ |
 | Dependencies | Minimal | Only convex, react; @rjsf as peer dependency |
+| Build approach | `src/` bundled, `convex/` raw TS | Convex CLI processes backend, bundler handles frontend |
 
 ---
 
