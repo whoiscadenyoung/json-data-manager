@@ -2,29 +2,33 @@
 
 ## Overview
 
-Create React hooks that wrap Convex queries and mutations for the JSON Data Manager component. These hooks abstract the Convex API interactions and provide a clean interface for React components.
+Create React hooks that wrap Convex queries and mutations for the JSON CMS component. These hooks are adapted from the existing app's hooks in `src/hooks/` and provide a clean interface for React components.
+
+## Prerequisites
+
+Before starting, ensure the component package structure exists:
+
+```bash
+mkdir -p packages/json-cms/src/hooks
+```
 
 ## Files to Create
 
-### 1. `src/hooks/useSchemas.ts`
+### 1. Copy and Adapt `packages/json-cms/src/hooks/useSchemas.ts`
 
-Schema-related hooks for listing, getting, creating, updating, and deleting schemas.
+Copy from the existing app's patterns in `src/routes/schemas/` and adapt for the component package.
 
 ```typescript
 import { useQuery, useMutation } from "convex/react";
-import { api } from "@json-data-manager/cms/convex";
+import { api } from "@convex-dev/json-cms/convex";
 import type { Id } from "convex/_generated/dataModel";
-import type { SchemaInput } from "../types";
 
 /**
- * Hook to list all schemas with optional pagination.
+ * Hook to list all schemas.
  * Returns schemas ordered by creation time (newest first).
  */
-export function useListSchemas(limit?: number) {
-  return useQuery(
-    api.schemas.listSchemas,
-    limit !== undefined ? { limit } : {}
-  );
+export function useListSchemas() {
+  return useQuery(api.schemas.list);
 }
 
 /**
@@ -33,24 +37,17 @@ export function useListSchemas(limit?: number) {
  */
 export function useGetSchema(schemaId: string | null) {
   return useQuery(
-    api.schemas.getSchema,
-    schemaId ? { schemaId: schemaId as Id<"jdm_schemas"> } : "skip"
+    api.schemas.get,
+    schemaId ? { schemaId: schemaId as Id<"schemas"> } : "skip"
   );
 }
 
 /**
- * Hook to get a schema by its URL-friendly slug.
- */
-export function useGetSchemaBySlug(slug: string) {
-  return useQuery(api.schemas.getSchemaBySlug, { slug });
-}
-
-/**
  * Hook to create a new schema.
- * Returns a mutation function that accepts SchemaInput.
+ * Returns a mutation function that accepts a JSON schema object.
  */
 export function useCreateSchema() {
-  return useMutation(api.schemas.createSchema);
+  return useMutation(api.schemas.create);
 }
 
 /**
@@ -58,84 +55,38 @@ export function useCreateSchema() {
  * Supports partial updates for metadata-only changes.
  */
 export function useUpdateSchema() {
-  return useMutation(api.schemas.updateSchema);
-}
-
-/**
- * Hook to delete a schema and all its associated entries.
- */
-export function useDeleteSchema() {
-  return useMutation(api.schemas.deleteSchema);
+  return useMutation(api.schemas.update);
 }
 ```
 
-### 2. `src/hooks/useEntries.ts`
+### 2. Copy and Adapt `packages/json-cms/src/hooks/useEntries.ts`
 
-Entry-related hooks for managing data entries within schemas.
+Copy from the existing app's patterns in `src/routes/schemas/$schemaId/`.
 
 ```typescript
 import { useQuery, useMutation } from "convex/react";
-import { api } from "@json-data-manager/cms/convex";
+import { api } from "@convex-dev/json-cms/convex";
 import type { Id } from "convex/_generated/dataModel";
-import { useState, useCallback } from "react";
 
 /**
  * Hook to list entries for a specific schema.
  * Pass `null` for schemaId to skip the query.
  */
-export function useListEntries(schemaId: string | null, limit?: number) {
+export function useListEntries(schemaId: string | null) {
   return useQuery(
-    api.entries.listEntries,
-    schemaId ? { schemaId: schemaId as Id<"jdm_schemas">, limit } : "skip"
+    api.entries.list,
+    schemaId ? { schemaId: schemaId as Id<"schemas"> } : "skip"
   );
-}
-
-/**
- * Hook for paginated entry listing with cursor-based pagination.
- * Returns entries, pagination state, and navigation functions.
- */
-export function useListEntriesPaginated(schemaId: string, pageSize: number = 20) {
-  const [cursor, setCursor] = useState<string | null>(null);
-
-  const result = useQuery(
-    api.entries.listEntriesPaginated,
-    { schemaId: schemaId as Id<"jdm_schemas">, pageSize, cursor: cursor || undefined }
-  );
-
-  const nextPage = useCallback(() => {
-    if (result?.nextCursor) {
-      setCursor(result.nextCursor);
-    }
-  }, [result?.nextCursor]);
-
-  const previousPage = useCallback(() => {
-    // For cursor-based pagination, we'd need to store previous cursors
-    // This is a simplified version - consider using a cursor history array
-    setCursor(null);
-  }, []);
-
-  const reset = useCallback(() => {
-    setCursor(null);
-  }, []);
-
-  return {
-    entries: result?.entries ?? [],
-    nextCursor: result?.nextCursor ?? null,
-    hasMore: result?.hasMore ?? false,
-    isLoading: result === undefined,
-    nextPage,
-    previousPage,
-    reset,
-  };
 }
 
 /**
  * Hook to get a single entry by ID.
+ * Pass `null` to skip the query.
  */
 export function useGetEntry(entryId: string | null) {
   return useQuery(
-    api.entries.getEntry,
-    entryId ? { entryId: entryId as Id<"jdm_entries"> } : "skip"
+    api.entries.get,
+    entryId ? { entryId: entryId as Id<"entries"> } : "skip"
   );
 }
 
@@ -143,7 +94,7 @@ export function useGetEntry(entryId: string | null) {
  * Hook to create a new entry.
  */
 export function useCreateEntry() {
-  return useMutation(api.entries.createEntry);
+  return useMutation(api.entries.create);
 }
 
 /**
@@ -151,27 +102,13 @@ export function useCreateEntry() {
  * Useful for importing data.
  */
 export function useCreateBulkEntries() {
-  return useMutation(api.entries.createBulkEntries);
-}
-
-/**
- * Hook to update an existing entry.
- */
-export function useUpdateEntry() {
-  return useMutation(api.entries.updateEntry);
-}
-
-/**
- * Hook to delete an entry.
- */
-export function useDeleteEntry() {
-  return useMutation(api.entries.deleteEntry);
+  return useMutation(api.entries.createBulk);
 }
 ```
 
-### 3. `src/hooks/useValidation.ts`
+### 3. Create `packages/json-cms/src/hooks/useValidation.ts`
 
-Client-side validation hook using AJV for validating data against JSON schemas.
+Client-side validation hook using AJV for validating data against JSON schemas. Adapted from the validation pane in the existing app.
 
 ```typescript
 import { useState, useCallback, useMemo } from "react";
@@ -222,8 +159,8 @@ export function useValidation(options: UseValidationOptions): UseValidationRetur
 
   /**
    * Convert RJSF error property path to JSON Pointer format.
-   * ".email" → "/email"
-   * ".address.city" → "/address/city"
+   * ".email" -> "/email"
+   * ".address.city" -> "/address/city"
    */
   const convertPropertyToPath = useCallback((property: string): string => {
     if (property === ".") return "";
@@ -363,7 +300,7 @@ export function useUnknownPaths(
 }
 ```
 
-### 4. `src/hooks/index.ts`
+### 4. Create `packages/json-cms/src/hooks/index.ts`
 
 Export all hooks from a single entry point.
 
@@ -372,21 +309,16 @@ Export all hooks from a single entry point.
 export {
   useListSchemas,
   useGetSchema,
-  useGetSchemaBySlug,
   useCreateSchema,
   useUpdateSchema,
-  useDeleteSchema,
 } from "./useSchemas";
 
 // Entry hooks
 export {
   useListEntries,
-  useListEntriesPaginated,
   useGetEntry,
   useCreateEntry,
   useCreateBulkEntries,
-  useUpdateEntry,
-  useDeleteEntry,
 } from "./useEntries";
 
 // Validation hooks
@@ -400,12 +332,37 @@ export {
 } from "./useValidation";
 ```
 
+## Dependencies
+
+Add these to the package's `package.json`:
+
+```json
+{
+  "peerDependencies": {
+    "convex": "^1.0.0",
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0"
+  },
+  "dependencies": {
+    "@rjsf/validator-ajv8": "^6.0.0",
+    "@rjsf/utils": "^6.0.0"
+  }
+}
+```
+
+Install dependencies with bun:
+
+```bash
+cd packages/json-cms
+bun install
+```
+
 ## Usage Examples
 
 ### Basic Schema List
 
 ```typescript
-import { useListSchemas, useCreateSchema } from "@json-data-manager/cms";
+import { useListSchemas, useCreateSchema } from "@convex-dev/json-cms";
 
 function SchemaListPage() {
   const schemas = useListSchemas();
@@ -415,7 +372,7 @@ function SchemaListPage() {
 
   return (
     <div>
-      {schemas.schemas.map((schema) => (
+      {schemas.map((schema) => (
         <SchemaCard key={schema._id} schema={schema} />
       ))}
     </div>
@@ -426,7 +383,7 @@ function SchemaListPage() {
 ### Entry Creation with Validation
 
 ```typescript
-import { useCreateEntry, useValidation } from "@json-data-manager/cms";
+import { useCreateEntry, useValidation } from "@convex-dev/json-cms";
 
 function EntryForm({ schema }: { schema: object }) {
   const createEntry = useCreateEntry();
@@ -451,7 +408,7 @@ function EntryForm({ schema }: { schema: object }) {
 ### Bulk Upload with Validation
 
 ```typescript
-import { useCreateBulkEntries, useValidation } from "@json-data-manager/cms";
+import { useCreateBulkEntries, useValidation } from "@convex-dev/json-cms";
 
 function BulkUpload({ schema }: { schema: object }) {
   const createBulk = useCreateBulkEntries();
@@ -481,24 +438,6 @@ function BulkUpload({ schema }: { schema: object }) {
 }
 ```
 
-## Dependencies
-
-Add these to the package's `package.json`:
-
-```json
-{
-  "peerDependencies": {
-    "convex": "^1.0.0",
-    "react": "^18.0.0",
-    "react-dom": "^18.0.0"
-  },
-  "dependencies": {
-    "@rjsf/validator-ajv8": "^6.0.0",
-    "@rjsf/utils": "^6.0.0"
-  }
-}
-```
-
 ## Notes
 
 - All hooks follow Convex's patterns for `useQuery` and `useMutation`
@@ -506,3 +445,4 @@ Add these to the package's `package.json`:
 - Pass `"skip"` or `null` to conditionally skip queries
 - The validation hook uses the same AJV8 validator as RJSF for consistency
 - Error paths use JSON Pointer format (`/property/nested`) for consistency with JSON Schema
+- The hooks are adapted from the existing app's usage in `src/routes/schemas/`

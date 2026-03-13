@@ -1,14 +1,14 @@
 # Task 09: Write Documentation
 
 ## Overview
-Create comprehensive documentation for the convex-json-schema component, including installation instructions, API reference, usage examples, and migration guide.
+Create comprehensive documentation for the `@convex-dev/json-cms` component, including installation instructions, API reference, usage examples, and migration guide.
 
 ## Documentation Outline
 
 ### 1. README.md
 
 #### Installation
-- npm/yarn/pnpm installation commands
+- bun installation commands
 - Convex project setup requirements
 - Required peer dependencies
 - Environment variable configuration
@@ -226,7 +226,7 @@ function ValidationExample() {
 
 **Step 1: Install the Component**
 ```bash
-npm install convex-json-schema
+bun add @convex-dev/json-cms
 ```
 
 **Step 2: Update Convex Configuration**
@@ -235,7 +235,7 @@ npm install convex-json-schema
 ```json
 {
   "components": {
-    "jsonSchema": "convex-json-schema"
+    "jsonCms": "@convex-dev/json-cms"
   }
 }
 ```
@@ -246,7 +246,7 @@ npm install convex-json-schema
 import { api } from '../../convex/_generated/api';
 
 // After
-import { api } from 'convex-json-schema/api';
+import { api } from '@convex-dev/json-cms/api';
 ```
 
 **Step 4: Migrate Data (if needed)**
@@ -260,7 +260,7 @@ import { api } from 'convex-json-schema/api';
 import { SchemaEditor } from '@/components/schema-editor/schema-editor';
 
 // After
-import { SchemaEditor } from 'convex-json-schema/components';
+import { SchemaEditor } from '@convex-dev/json-cms/components';
 ```
 
 **Breaking Changes:**

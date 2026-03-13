@@ -4,6 +4,10 @@
 
 Set up the package.json for the Convex component with proper exports, dependencies, and build configuration.
 
+## Path
+
+`packages/json-cms/`
+
 ## Requirements
 
 ### Subpath Exports
@@ -26,14 +30,14 @@ Only include these directories in the published package:
 - `ajv` - JSON Schema validation
 
 ### Build Scripts
-- `build` - Compile TypeScript to dist/
+- `build` - Compile TypeScript to dist/ using `bunx tsc`
 - `typecheck` - Run TypeScript type checking
 
 ## Package.json
 
 ```json
 {
-  "name": "@json-data-manager/convex-component",
+  "name": "@convex-dev/json-cms",
   "version": "0.1.0",
   "description": "Convex component for JSON Data Manager - schema management and data entry",
   "type": "module",
@@ -56,8 +60,8 @@ Only include these directories in the published package:
     }
   },
   "scripts": {
-    "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "build": "bunx tsc",
+    "typecheck": "bunx tsc --noEmit"
   },
   "peerDependencies": {
     "convex": "^1.0.0",
@@ -84,3 +88,4 @@ Only include these directories in the published package:
 - React 18 and 19 are both supported (the host app uses React 19)
 - The `files` whitelist ensures only necessary files are published
 - Each export has both `types` and `import` for proper TypeScript support
+- Uses `bunx tsc` for building instead of `tsc` directly

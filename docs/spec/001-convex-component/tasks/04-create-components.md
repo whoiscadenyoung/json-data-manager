@@ -1,12 +1,12 @@
 # Task: Create Headless React Components
 
-Create three headless React components for the `@convex-json/react` package. These components should be unstyled (headless) and provide flexible APIs for building schema editors and data entry forms.
+Create three headless React components for the `@convex-dev/json-cms` package. These components should be unstyled (headless) and provide flexible APIs for building schema editors and data entry forms.
 
 ## Files to Create
 
-1. `packages/json-data-manager/src/components/SchemaEditor.tsx`
-2. `packages/json-data-manager/src/components/EntryForm.tsx`
-3. `packages/json-data-manager/src/components/ValidationPane.tsx`
+1. `packages/json-cms/src/components/SchemaEditor.tsx`
+2. `packages/json-cms/src/components/EntryForm.tsx`
+3. `packages/json-cms/src/components/ValidationPane.tsx`
 
 ---
 
@@ -78,7 +78,7 @@ export function SchemaEditor(props: SchemaEditorProps): ReactNode;
 
 ### Implementation Notes
 
-- Reference existing implementation in `src/components/schema-editor/schema-editor.tsx`
+- **Copy from**: `src/components/schema-editor/schema-editor.tsx` in the main app
 - Keep drag-and-drop logic internal (document-level events for full-page overlay)
 - Parse validation: require object with non-empty `title` and `description`
 - File drop handling: detect schema object vs data array via `Array.isArray()`
@@ -137,7 +137,7 @@ export function EntryForm<T = unknown>(props: EntryFormProps<T>): ReactNode;
 ### Usage Example
 
 ```tsx
-import { EntryForm } from "@convex-json/react";
+import { EntryForm } from "@convex-dev/json-cms";
 import Form from "@rjsf/shadcn";
 import validator from "@rjsf/validator-ajv8";
 
@@ -235,7 +235,7 @@ export function ValidationPane(props: ValidationPaneProps): ReactNode;
 
 ### Implementation Notes
 
-- Reference existing implementation in `src/components/schema-editor/validation-pane.tsx`
+- **Copy from**: `src/components/schema-editor/validation-pane.tsx` in the main app
 - Use `@rjsf/validator-ajv8` for validation: `validator.validateFormData(item, schema)`
 - Error path conversion: RJSF `err.property` is JS accessor notation (`.email`, `.address.city`)
   - Convert: `err.property.replace(/^\./, "")` then prepend `/`
@@ -248,7 +248,7 @@ export function ValidationPane(props: ValidationPaneProps): ReactNode;
 
 ## Shared Utilities
 
-Create these utility functions in `packages/json-data-manager/src/lib/`:
+Create these utility functions in `packages/json-cms/src/lib/`:
 
 ### `infer-schema.ts`
 
@@ -277,6 +277,24 @@ export function computeUnknownPaths(
   schema: Record<string, unknown>,
   pathPrefix?: string
 ): Set<string>;
+```
+
+### `json-tree.ts`
+
+```tsx
+/**
+ * Recursively render JSON with per-path error highlighting
+ * Reference: src/components/schema-editor/json-tree.tsx in the main app
+ */
+export interface JsonTreeProps {
+  data: unknown;
+  failingPaths?: Set<string>;
+  unknownPaths?: Set<string>;
+  path?: string;
+  level?: number;
+}
+
+export function JsonTree(props: JsonTreeProps): ReactNode;
 ```
 
 ---
@@ -343,6 +361,21 @@ useEffect(() => {
 
 ---
 
+## Source File Mapping
+
+When copying/refactoring from the main app:
+
+| Source (main app) | Destination (package) | Notes |
+|-------------------|----------------------|-------|
+| `src/components/schema-editor/schema-editor.tsx` | `packages/json-cms/src/components/SchemaEditor.tsx` | Headless component with render props |
+| `src/components/schema-editor/validation-pane.tsx` | `packages/json-cms/src/components/ValidationPane.tsx` | Headless component with render props |
+| `src/components/schema-editor/visual-builder.tsx` | `packages/json-cms/src/components/` (multiple files) | Refactor into smaller pieces |
+| `src/components/schema-editor/json-tree.tsx` | `packages/json-cms/src/lib/json-tree.tsx` | Exported as utility |
+| `src/lib/infer-schema.ts` | `packages/json-cms/src/lib/infer-schema.ts` | Copy as-is |
+| `src/lib/validation.ts` | `packages/json-cms/src/lib/validation.ts` | Copy as-is |
+
+---
+
 ## Dependencies
 
 ```json
@@ -362,6 +395,26 @@ useEffect(() => {
 
 ---
 
+## Build Commands
+
+Use bun for all package management:
+
+```bash
+# Install dependencies
+bun install
+
+# Build the package
+bun run build
+
+# Type check
+bun run typecheck
+
+# Test
+bun test
+```
+
+---
+
 ## Acceptance Criteria
 
 - [ ] `SchemaEditor` exports headless component with render props
@@ -369,5 +422,6 @@ useEffect(() => {
 - [ ] `ValidationPane` exports headless component with validation results via render props
 - [ ] All components are fully typed with TypeScript
 - [ ] No UI styling imported (consumers provide all styling)
-- [ ] Utilities (`inferSchemaFromData`, `computeUnknownPaths`) exported from `lib/`
+- [ ] Utilities (`inferSchemaFromData`, `computeUnknownPaths`, `JsonTree`) exported from `lib/`
 - [ ] Components work with React 18 and 19
+- [ ] Package builds successfully with bun

@@ -6,7 +6,7 @@ Set up TypeScript configuration for bundling the library source code while prope
 
 ## Requirements
 
-1. Create `tsconfig.json` at the project root with the following characteristics:
+1. Create `packages/json-cms/tsconfig.json` with the following characteristics:
    - **Target**: ES2022 for modern JavaScript features
    - **Module**: ESNext with Bundler module resolution
    - **Output**: Declaration files (.d.ts) for library consumers
@@ -54,3 +54,4 @@ Set up TypeScript configuration for bundling the library source code while prope
 - The `convex/` directory must be excluded because Convex uses its own CLI to compile TypeScript files with a custom runtime environment
 - Declaration output is essential for consumers to have proper type inference when importing the library
 - Bundler module resolution is required for compatibility with modern build tools like Vite, Rollup, and esbuild
+- Build the library with `bun run build` (or `bun tsc` for type checking only)

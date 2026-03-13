@@ -8,7 +8,7 @@ Configure the build pipeline for the Convex component package to compile TypeScr
 ### 1. Install Build Dependencies
 
 ```bash
-npm install --save-dev typescript tsc-alias
+bun add -d typescript tsc-alias
 ```
 
 - `typescript` - TypeScript compiler
@@ -16,7 +16,7 @@ npm install --save-dev typescript tsc-alias
 
 ### 2. Configure TypeScript for Build
 
-Create `/Users/cadenyoung/Developer/json-data-manager/packages/convex-json-schema/tsconfig.build.json`:
+Create `/Users/cadenyoung/Developer/json-data-manager/packages/json-cms/tsconfig.build.json`:
 
 ```json
 {
@@ -39,21 +39,21 @@ Create `/Users/cadenyoung/Developer/json-data-manager/packages/convex-json-schem
 
 ### 3. Add Build Scripts to package.json
 
-Edit `/Users/cadenyoung/Developer/json-data-manager/packages/convex-json-schema/package.json`:
+Edit `/Users/cadenyoung/Developer/json-data-manager/packages/json-cms/package.json`:
 
 ```json
 {
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json",
+    "build": "bunx tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json",
     "clean": "rm -rf dist",
-    "prepublishOnly": "npm run clean && npm run build"
+    "prepublishOnly": "bun run clean && bun run build"
   }
 }
 ```
 
 ### 4. Create .npmignore
 
-Create `/Users/cadenyoung/Developer/json-data-manager/packages/convex-json-schema/.npmignore`:
+Create `/Users/cadenyoung/Developer/json-data-manager/packages/json-cms/.npmignore`:
 
 ```
 # Source and dev files
@@ -84,10 +84,11 @@ tsc-alias
 
 ### 5. Update package.json Entry Points
 
-Ensure `/Users/cadenyoung/Developer/json-data-manager/packages/convex-json-schema/package.json` has correct entry points:
+Ensure `/Users/cadenyoung/Developer/json-data-manager/packages/json-cms/package.json` has correct entry points:
 
 ```json
 {
+  "name": "@convex-dev/json-cms",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -109,8 +110,8 @@ Ensure `/Users/cadenyoung/Developer/json-data-manager/packages/convex-json-schem
 ### 6. Test Local Build
 
 ```bash
-cd /Users/cadenyoung/Developer/json-data-manager/packages/convex-json-schema
-npm run build
+cd /Users/cadenyoung/Developer/json-data-manager/packages/json-cms
+bun run build
 ```
 
 Verify:
@@ -118,50 +119,27 @@ Verify:
 - `.js`, `.d.ts`, and `.d.ts.map` files are present
 - Path aliases are resolved (no `@/` or `#/` imports in output)
 
-### 7. Test Local Linking
-
-In the component package:
-
-```bash
-cd /Users/cadenyoung/Developer/json-data-manager/packages/convex-json-schema
-npm link
-```
-
-In the main app (for testing):
-
-```bash
-cd /Users/cadenyoung/Developer/json-data-manager
-npm link @acme/convex-json-schema
-```
-
-Verify the component works in the main app, then unlink:
-
-```bash
-cd /Users/cadenyoung/Developer/json-data-manager
-npm unlink @acme/convex-json-schema
-```
-
-### 8. Publishing Checklist
+### 7. Publishing Checklist
 
 Before publishing to npm:
 
 - [ ] Version bumped in `package.json`
 - [ ] `CHANGELOG.md` updated with version notes
-- [ ] `npm run build` succeeds without errors
-- [ ] `npm pack --dry-run` shows correct files (no `example/`, no `src/`)
+- [ ] `bun run build` succeeds without errors
+- [ ] `bun pm pack --dry-run` shows correct files (no `example/`, no `src/`)
 - [ ] README.md has correct install instructions
 - [ ] `convex.config.js` is included in `files` array
 - [ ] `.npmignore` excludes `example/` directory
 - [ ] Login to npm: `npm login`
 - [ ] Publish: `npm publish --access public`
 
-### 9. Verify Package Contents
+### 8. Verify Package Contents
 
 Dry run before actual publish:
 
 ```bash
-cd /Users/cadenyoung/Developer/json-data-manager/packages/convex-json-schema
-npm pack --dry-run
+cd /Users/cadenyoung/Developer/json-data-manager/packages/json-cms
+bun pm pack --dry-run
 ```
 
 Expected output should NOT include:
@@ -177,8 +155,7 @@ Expected output SHOULD include:
 
 ## Acceptance Criteria
 
-- [ ] `npm run build` compiles TypeScript to `dist/` with declarations
-- [ ] `npm run prepublishOnly` runs clean build before publish
+- [ ] `bun run build` compiles TypeScript to `dist/` with declarations
+- [ ] `bun run prepublishOnly` runs clean build before publish
 - [ ] `.npmignore` excludes `example/` and source files
-- [ ] Local linking with `npm link` works for testing
-- [ ] `npm pack --dry-run` shows correct package contents
+- [ ] `bun pm pack --dry-run` shows correct package contents
