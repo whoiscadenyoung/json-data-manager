@@ -24,31 +24,115 @@ import type { FunctionReference } from "convex/server";
 export type ComponentApi<Name extends string | undefined = string | undefined> =
   {
     lib: {
-      add: FunctionReference<
+      createEntriesBulk: FunctionReference<
         "mutation",
         "internal",
-        { targetId: string; text: string; userId: string },
+        { dataArray: Array<any>; schemaId: string },
+        Array<string>,
+        Name
+      >;
+      createEntry: FunctionReference<
+        "mutation",
+        "internal",
+        { data: any; schemaId: string },
         string,
         Name
       >;
-      list: FunctionReference<
+      createSchema: FunctionReference<
+        "mutation",
+        "internal",
+        { schema: any },
+        string,
+        Name
+      >;
+      deleteEntriesBySchema: FunctionReference<
+        "mutation",
+        "internal",
+        { schemaId: string },
+        number,
+        Name
+      >;
+      deleteEntry: FunctionReference<
+        "mutation",
+        "internal",
+        { entryId: string },
+        any,
+        Name
+      >;
+      deleteSchema: FunctionReference<
+        "mutation",
+        "internal",
+        { schemaId: string },
+        any,
+        Name
+      >;
+      getEntry: FunctionReference<
         "query",
         "internal",
-        { limit?: number; targetId: string },
+        { entryId: string },
+        null | {
+          _creationTime: number;
+          _id: string;
+          data: any;
+          schemaId: string;
+        },
+        Name
+      >;
+      getSchema: FunctionReference<
+        "query",
+        "internal",
+        { schemaId: string },
+        null | {
+          _creationTime: number;
+          _id: string;
+          description: string;
+          schema: any;
+          title: string;
+        },
+        Name
+      >;
+      listEntries: FunctionReference<
+        "query",
+        "internal",
+        { schemaId: string },
         Array<{
           _creationTime: number;
           _id: string;
-          targetId: string;
-          text: string;
-          userId: string;
+          data: any;
+          schemaId: string;
         }>,
         Name
       >;
-      translate: FunctionReference<
-        "action",
+      listSchemas: FunctionReference<
+        "query",
         "internal",
-        { baseUrl: string; commentId: string },
-        string,
+        {},
+        Array<{
+          _creationTime: number;
+          _id: string;
+          description: string;
+          schema: any;
+          title: string;
+        }>,
+        Name
+      >;
+      updateEntry: FunctionReference<
+        "mutation",
+        "internal",
+        { data: any; entryId: string },
+        any,
+        Name
+      >;
+      updateSchema: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          description?: string;
+          schema?: any;
+          schemaId: string;
+          title?: string;
+        },
+        any,
         Name
       >;
     };

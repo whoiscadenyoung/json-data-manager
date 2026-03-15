@@ -1,88 +1,12 @@
-# Convex Component Template
+# Convex JSON CMS Component
 
-This is a Convex component, ready to be published on npm.
+A Convex component for managing JSON schemas and entries. This component provides a flexible content management system where you can define JSON schemas and store entries that conform to those schemas.
 
-To create your own component:
-
-1. Write code in src/component for your component. Component-specific tables,
-   queries, mutations, and actions go here.
-1. Write code in src/client for the Class that interfaces with the component.
-   This is the bridge your users will access to get information into and out of
-   your component
-1. Write example usage in example/convex/example.ts.
-1. Delete the text in this readme until `---` and flesh out the README.
-1. Publish to npm with `npm run alpha` or `npm run release`.
-
-To develop your component run a dev process in the example project:
-
-```sh
-npm i
-npm run dev
-```
-
-`npm i` will do the install and an initial build. `npm run dev` will start a
-file watcher to re-build the component, as well as the example project frontend
-and backend, which does codegen and installs the component.
-
-Modify the schema and index files in src/component/ to define your component.
-
-Write a client for using this component in src/client/index.ts.
-
-If you won't be adding frontend code (e.g. React components) to this component
-you can delete "./react" references in package.json and "src/react/" directory.
-If you will be adding frontend code, add a peer dependency on React in
-package.json.
-
-### Component Directory structure
-
-```
-.
-├── README.md           documentation of your component
-├── package.json        component name, version number, other metadata
-├── package-lock.json   Components are like libraries, package-lock.json
-│                       is .gitignored and ignored by consumers.
-├── src
-│   ├── component/
-│   │   ├── _generated/ Files here are generated for the component.
-│   │   ├── convex.config.ts  Name your component here and use other components
-│   │   ├── lib.ts    Define functions here and in new files in this directory
-│   │   └── schema.ts   schema specific to this component
-│   ├── client/
-│   │   └── index.ts    Code that needs to run in the app that uses the
-│   │                   component. Generally the app interacts directly with
-│   │                   the component's exposed API (src/component/*).
-│   └── react/          Code intended to be used on the frontend goes here.
-│       │               Your are free to delete this if this component
-│       │               does not provide code.
-│       └── index.ts
-├── example/            example Convex app that uses this component
-│   └── convex/
-│       ├── _generated/       Files here are generated for the example app.
-│       ├── convex.config.ts  Imports and uses this component
-│       ├── myFunctions.ts    Functions that use the component
-│       └── schema.ts         Example app schema
-└── dist/               Publishing artifacts will be created here.
-```
-
----
-
-# Convex Json Cms
-
-[![npm version](https://badge.fury.io/js/@example%2Fjson-cms.svg)](https://badge.fury.io/js/@example%2Fjson-cms)
-
-<!-- START: Include on https://convex.dev/components -->
-
-- [ ] What is some compelling syntax as a hook?
-- [ ] Why should you use this component?
-- [ ] Links to docs / other resources?
-
-Found a bug? Feature request?
-[File it here](https://github.com/whoiscadenyoung/json-data-manager/issues).
+[![npm version](https://badge.fury.io/js/@caden%2Fjson-cms.svg)](https://badge.fury.io/js/@caden%2Fjson-cms)
 
 ## Installation
 
-Create a `convex.config.ts` file in your app's `convex/` folder and install the
-component by calling `use`:
+Create a `convex.config.ts` file in your app's `convex/` folder and install the component by calling `use`:
 
 ```ts
 // convex/convex.config.ts
@@ -95,52 +19,193 @@ app.use(jsonCms);
 export default app;
 ```
 
-## Usage
+## Component API
+
+The component exposes the following functions under `components.jsonCms.lib`:
+
+### Schema Operations
+
+- `createSchema({ schema })` - Creates a new schema. Schema must have `title` and `description` properties.
+- `listSchemas()` - Lists all schemas, ordered by creation time (newest first).
+- `getSchema({ schemaId })` - Gets a single schema by ID. Returns `null` if not found.
+- `updateSchema({ schemaId, title?, description?, schema? })` - Updates a schema. If `schema` is provided, it must have `title` and `description`.
+- `deleteSchema({ schemaId })` - Deletes a schema and all its associated entries (cascade delete).
+
+### Entry Operations
+
+- `createEntry({ schemaId, data })` - Creates a new entry for a schema.
+- `listEntries({ schemaId })` - Lists all entries for a schema, ordered by creation time (newest first).
+- `getEntry({ entryId })` - Gets a single entry by ID. Returns `null` if not found.
+- `createEntriesBulk({ schemaId, dataArray })` - Creates multiple entries in bulk.
+- `updateEntry({ entryId, data })` - Updates an entry's data.
+- `deleteEntry({ entryId })` - Deletes a single entry.
+- `deleteEntriesBySchema({ schemaId })` - Deletes all entries for a schema. Returns the count of deleted entries.
+
+### Size Limits
+
+Schemas are limited to 100 KB (102400 bytes) when serialized to JSON. This limit is enforced on both `createSchema` and `updateSchema`.
+
+## Usage Examples
+
+### Direct Component Usage
 
 ```ts
+import { mutation, query } from "./_generated/server";
 import { components } from "./_generated/api";
+import { v } from "convex/values";
 
-export const addComment = mutation({
-  args: { text: v.string(), targetId: v.string() },
+// Create a schema
+export const createSchema = mutation({
+  args: { schema: v.any() },
   handler: async (ctx, args) => {
-    return await ctx.runMutation(components.jsonCms.lib.add, {
-      text: args.text,
-      targetId: args.targetId,
-      userId: await getAuthUserId(ctx),
+    return await ctx.runMutation(components.jsonCms.lib.createSchema, {
+      schema: args.schema,
     });
+  },
+});
+
+// List all schemas
+export const listSchemas = query({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.runQuery(components.jsonCms.lib.listSchemas, {});
+  },
+});
+
+// Create an entry
+export const createEntry = mutation({
+  args: { schemaId: v.id("schemas"), data: v.any() },
+  handler: async (ctx, args) => {
+    return await ctx.runMutation(components.jsonCms.lib.createEntry, args);
+  },
+});
+
+// List entries for a schema
+export const listEntries = query({
+  args: { schemaId: v.id("schemas") },
+  handler: async (ctx, args) => {
+    return await ctx.runQuery(components.jsonCms.lib.listEntries, args);
   },
 });
 ```
 
-See more example usage in [example.ts](./example/convex/example.ts).
+### Using the Client Helper
+
+The component provides an `exposeApi` helper that wraps all component functions with authentication:
+
+```ts
+import { exposeApi } from "@caden/json-cms";
+import { components } from "./_generated/api";
+
+export const {
+  listSchemas,
+  getSchema,
+  createSchema,
+  updateSchema,
+  deleteSchema,
+  listEntries,
+  getEntry,
+  createEntry,
+  createEntriesBulk,
+  updateEntry,
+  deleteEntry,
+  deleteEntriesBySchema,
+} = exposeApi(components.jsonCms, {
+  auth: async (ctx, operation) => {
+    const userId = await getAuthUserId(ctx);
+    // Allow reads for anonymous users
+    if (userId === null && operation.type === "read") {
+      return "anonymous";
+    }
+    // Require auth for mutations
+    if (userId === null) {
+      throw new Error("Unauthorized");
+    }
+    return userId;
+  },
+});
+```
 
 ### HTTP Routes
 
-You can register HTTP routes for the component to expose HTTP endpoints:
+You can also expose HTTP endpoints for the component:
 
 ```ts
 import { httpRouter } from "convex/server";
-import { registerRoutes } from "@caden/json-cms";
+import { httpActionGeneric } from "convex/server";
 import { components } from "./_generated/api";
 
 const http = httpRouter();
 
-registerRoutes(http, components.jsonCms, {
-  pathPrefix: "/comments",
+// GET /schemas - list all schemas
+http.route({
+  path: "/schemas",
+  method: "GET",
+  handler: httpActionGeneric(async (ctx, _request) => {
+    const schemas = await ctx.runQuery(components.jsonCms.lib.listSchemas, {});
+    return new Response(JSON.stringify(schemas), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
+// GET /schemas/:id/entries - list entries for a schema
+http.route({
+  path: "/schemas/:schemaId/entries",
+  method: "GET",
+  handler: httpActionGeneric(async (ctx, request) => {
+    const url = new URL(request.url);
+    const schemaId = url.pathname.split("/")[2] as Id<"schemas">;
+    const entries = await ctx.runQuery(components.jsonCms.lib.listEntries, {
+      schemaId,
+    });
+    return new Response(JSON.stringify(entries), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
 });
 
 export default http;
 ```
 
-This will expose a GET endpoint that returns the most recent comment as JSON.
-The endpoint requires a `targetId` query parameter. See
-[http.ts](./example/convex/http.ts) for a complete example.
+## Schema Definition
 
-<!-- END: Include on https://convex.dev/components -->
+The component defines two tables:
 
-Run the example:
+### `schemas`
+- `title: string` - Schema title (extracted from JSON schema)
+- `description: string` - Schema description (extracted from JSON schema)
+- `schema: any` - The full JSON schema object
+
+### `entries`
+- `schemaId: Id<"schemas">` - Reference to the parent schema
+- `data: any` - The entry data conforming to the schema
+
+The `entries` table has an index `by_schema` on `schemaId` for efficient querying.
+
+## Development
 
 ```sh
+# Install dependencies
 npm i
+
+# Start development (watches for changes)
 npm run dev
+
+# Run tests
+bun run test
+
+# Build the component
+bun run build
+
+# Publish
+npm run alpha    # publish alpha version
+npm run release  # publish stable version
 ```
+
+See more example usage in [example/convex/example.ts](./example/convex/example.ts).
+
+Found a bug? Feature request?
+[File it here](https://github.com/whoiscadenyoung/json-data-manager/issues).

@@ -3,18 +3,29 @@ import { exposeApi } from "./index.js";
 import { anyApi, type ApiFromModules } from "convex/server";
 import { components, initConvexTest } from "./setup.test.js";
 
-export const { add, list } = exposeApi(components.jsonCms, {
+// Type for component table IDs
+type SchemaId = string & { __tableName: "schemas" };
+
+export const {
+  listSchemas,
+  getSchema,
+  createSchema,
+  createEntry,
+  listEntries,
+} = exposeApi(components.jsonCms, {
   auth: async (ctx, _operation) => {
     return (await ctx.auth.getUserIdentity())?.subject ?? "anonymous";
   },
-  baseUrl: "https://pirate.monkeyness.com",
 });
 
 const testApi = (
   anyApi as unknown as ApiFromModules<{
     "index.test": {
-      add: typeof add;
-      list: typeof list;
+      listSchemas: typeof listSchemas;
+      getSchema: typeof getSchema;
+      createSchema: typeof createSchema;
+      createEntry: typeof createEntry;
+      listEntries: typeof listEntries;
     };
   }>
 )["index.test"];
@@ -24,13 +35,33 @@ describe("client tests", () => {
     const t = initConvexTest().withIdentity({
       subject: "user1",
     });
-    const targetId = "test-subject-1";
-    await t.mutation(testApi.add, {
-      text: "My first comment",
-      targetId: targetId,
+
+    const testSchema = {
+      title: "Test Schema",
+      description: "A test schema",
+      type: "object",
+      properties: {
+        name: { type: "string" },
+      },
+    };
+
+    const schemaId = await t.mutation(testApi.createSchema, {
+      schema: testSchema,
+    }) as SchemaId;
+    expect(schemaId).toBeDefined();
+
+    const schemas = await t.query(testApi.listSchemas, {});
+    expect(schemas).toHaveLength(1);
+    expect(schemas[0].title).toBe("Test Schema");
+
+    const entryId = await t.mutation(testApi.createEntry, {
+      schemaId,
+      data: { name: "John" },
     });
-    const comments = await t.query(testApi.list, { targetId });
-    expect(comments).toHaveLength(1);
-    expect(comments[0].text).toBe("My first comment");
+    expect(entryId).toBeDefined();
+
+    const entries = await t.query(testApi.listEntries, { schemaId });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].data).toEqual({ name: "John" });
   });
 });

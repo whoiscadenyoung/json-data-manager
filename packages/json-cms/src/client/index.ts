@@ -16,27 +16,32 @@ import type { ComponentApi } from "../component/_generated/component.js";
 // See the example/convex/example.ts file for how to use this component.
 
 /**
- *
- * @param ctx
- * @param targetId
- */
-export function translate(
-  ctx: ActionCtx,
-  component: ComponentApi,
-  commentId: string,
-) {
-  // By wrapping the function call, we can read from environment variables.
-  const baseUrl = getDefaultBaseUrlUsingEnv();
-  return ctx.runAction(component.lib.translate, { commentId, baseUrl });
-}
-
-/**
  * For re-exporting of an API accessible from React clients.
- * e.g. `export const { list, add, translate } =
- * exposeApi(components.jsonCms, {
- *   auth: async (ctx, operation) => { ... },
- * });`
- * See example/convex/example.ts.
+ * This exposes the full JSON CMS API with authentication.
+ *
+ * Example usage:
+ * ```ts
+ * export const {
+ *   listSchemas,
+ *   getSchema,
+ *   createSchema,
+ *   updateSchema,
+ *   deleteSchema,
+ *   listEntries,
+ *   getEntry,
+ *   createEntry,
+ *   createEntriesBulk,
+ *   updateEntry,
+ *   deleteEntry,
+ *   deleteEntriesBySchema,
+ * } = exposeApi(components.jsonCms, {
+ *   auth: async (ctx, operation) => {
+ *     const userId = await getAuthUserId(ctx);
+ *     if (!userId) throw new Error("Unauthorized");
+ *     return userId;
+ *   },
+ * });
+ * ```
  */
 export function exposeApi(
   component: ComponentApi,
@@ -44,102 +49,120 @@ export function exposeApi(
     /**
      * It's very important to authenticate any functions that users will export.
      * This function should return the authorized user's ID.
+     * For read operations, you may want to allow anonymous access.
      */
     auth: (
       ctx: { auth: Auth },
       operation:
-        | { type: "read"; targetId: string }
-        | { type: "create"; targetId: string }
-        | { type: "update"; commentId: string },
+        | { type: "read"; schemaId?: string; entryId?: string }
+        | { type: "create"; schemaId?: string }
+        | { type: "update"; schemaId?: string; entryId?: string }
+        | { type: "delete"; schemaId?: string; entryId?: string },
     ) => Promise<string>;
-    baseUrl?: string;
   },
 ) {
-  const baseUrl = options.baseUrl ?? getDefaultBaseUrlUsingEnv();
   return {
-    list: queryGeneric({
-      args: { targetId: v.string() },
+    // Schema operations
+    listSchemas: queryGeneric({
+      args: {},
+      handler: async (ctx) => {
+        await options.auth(ctx, { type: "read" });
+        return await ctx.runQuery(component.lib.listSchemas, {});
+      },
+    }),
+    getSchema: queryGeneric({
+      args: { schemaId: v.id("schemas") },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "read", targetId: args.targetId });
-        return await ctx.runQuery(component.lib.list, {
-          targetId: args.targetId,
+        await options.auth(ctx, { type: "read", schemaId: args.schemaId });
+        return await ctx.runQuery(component.lib.getSchema, {
+          schemaId: args.schemaId,
         });
       },
     }),
-    add: mutationGeneric({
-      args: { text: v.string(), targetId: v.string() },
+    createSchema: mutationGeneric({
+      args: { schema: v.any() },
       handler: async (ctx, args) => {
-        const userId = await options.auth(ctx, {
-          type: "create",
-          targetId: args.targetId,
-        });
-        return await ctx.runMutation(component.lib.add, {
-          text: args.text,
-          userId: userId,
-          targetId: args.targetId,
+        await options.auth(ctx, { type: "create" });
+        return await ctx.runMutation(component.lib.createSchema, {
+          schema: args.schema,
         });
       },
     }),
-    translate: actionGeneric({
-      args: { commentId: v.string() },
+    updateSchema: mutationGeneric({
+      args: {
+        schemaId: v.id("schemas"),
+        title: v.optional(v.string()),
+        description: v.optional(v.string()),
+        schema: v.optional(v.any()),
+      },
       handler: async (ctx, args) => {
-        await options.auth(ctx, {
-          type: "update",
-          commentId: args.commentId,
+        await options.auth(ctx, { type: "update", schemaId: args.schemaId });
+        return await ctx.runMutation(component.lib.updateSchema, args);
+      },
+    }),
+    deleteSchema: mutationGeneric({
+      args: { schemaId: v.id("schemas") },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { type: "delete", schemaId: args.schemaId });
+        return await ctx.runMutation(component.lib.deleteSchema, args);
+      },
+    }),
+
+    // Entry operations
+    listEntries: queryGeneric({
+      args: { schemaId: v.id("schemas") },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { type: "read", schemaId: args.schemaId });
+        return await ctx.runQuery(component.lib.listEntries, {
+          schemaId: args.schemaId,
         });
-        return await ctx.runAction(component.lib.translate, {
-          commentId: args.commentId,
-          baseUrl,
+      },
+    }),
+    getEntry: queryGeneric({
+      args: { entryId: v.id("entries") },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { type: "read", entryId: args.entryId });
+        return await ctx.runQuery(component.lib.getEntry, {
+          entryId: args.entryId,
         });
+      },
+    }),
+    createEntry: mutationGeneric({
+      args: { schemaId: v.id("schemas"), data: v.any() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { type: "create", schemaId: args.schemaId });
+        return await ctx.runMutation(component.lib.createEntry, args);
+      },
+    }),
+    createEntriesBulk: mutationGeneric({
+      args: { schemaId: v.id("schemas"), dataArray: v.array(v.any()) },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { type: "create", schemaId: args.schemaId });
+        return await ctx.runMutation(component.lib.createEntriesBulk, args);
+      },
+    }),
+    updateEntry: mutationGeneric({
+      args: { entryId: v.id("entries"), data: v.any() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { type: "update", entryId: args.entryId });
+        return await ctx.runMutation(component.lib.updateEntry, args);
+      },
+    }),
+    deleteEntry: mutationGeneric({
+      args: { entryId: v.id("entries") },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { type: "delete", entryId: args.entryId });
+        return await ctx.runMutation(component.lib.deleteEntry, args);
+      },
+    }),
+    deleteEntriesBySchema: mutationGeneric({
+      args: { schemaId: v.id("schemas") },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { type: "delete", schemaId: args.schemaId });
+        return await ctx.runMutation(component.lib.deleteEntriesBySchema, args);
       },
     }),
   };
-}
-
-/**
- * Register HTTP routes for the component.
- * This allows you to expose HTTP endpoints for the component.
- * See example/convex/http.ts for an example.
- */
-export function registerRoutes(
-  http: HttpRouter,
-  component: ComponentApi,
-  { pathPrefix = "/comments" }: { pathPrefix?: string } = {},
-) {
-  http.route({
-    path: `${pathPrefix}/last`,
-    method: "GET",
-    // Note we use httpActionGeneric here because it will be registered in
-    // the app's http.ts file, which has a different type than our `httpAction`.
-    handler: httpActionGeneric(async (ctx, request) => {
-      const targetId = new URL(request.url).searchParams.get("targetId");
-      if (!targetId) {
-        return new Response(
-          JSON.stringify({ error: "targetId parameter required" }),
-          {
-            status: 400,
-            headers: {
-              "Content-Type": "application/json",
-            },
-          },
-        );
-      }
-      const comments = await ctx.runQuery(component.lib.list, {
-        targetId,
-      });
-      const lastComment = comments[0] ?? null;
-      return new Response(JSON.stringify(lastComment), {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json",
-        },
-      });
-    }),
-  });
-}
-
-function getDefaultBaseUrlUsingEnv() {
-  return process.env.BASE_URL ?? "https://pirate.monkeyness.com";
 }
 
 // Convenient types for `ctx` args, that only include the bare minimum.

@@ -1,6 +1,10 @@
 {
   "name": "json-data-manager",
   "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "type": "module",
   "imports": {
     "#/*": "./src/*"

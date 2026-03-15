@@ -4,55 +4,75 @@ import { exposeApi } from "@caden/json-cms";
 import { v } from "convex/values";
 import { Auth } from "convex/server";
 
-// Environment variables aren't available in the component,
-// so we need to pass it in as an argument to the component when necessary.
-const BASE_URL = process.env.BASE_URL ?? "https://pirate.monkeyness.com";
+async function getAuthUserId(ctx: { auth: Auth }) {
+  return (await ctx.auth.getUserIdentity())?.subject ?? "anonymous";
+}
 
-export const addComment = mutation({
-  args: { text: v.string(), targetId: v.string() },
+// Example: Using the component directly with manual auth
+export const createSchema = mutation({
+  args: { schema: v.any() },
   handler: async (ctx, args) => {
-    return await ctx.runMutation(components.jsonCms.lib.add, {
-      text: args.text,
-      targetId: args.targetId,
-      userId: await getAuthUserId(ctx),
+    return await ctx.runMutation(components.jsonCms.lib.createSchema, {
+      schema: args.schema,
     });
   },
 });
 
-export const listComments = query({
-  args: { targetId: v.string() },
+export const listSchemas = query({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.runQuery(components.jsonCms.lib.listSchemas, {});
+  },
+});
+
+export const getSchema = query({
+  args: { schemaId: v.id("schemas") },
   handler: async (ctx, args) => {
-    return await ctx.runQuery(components.jsonCms.lib.list, {
-      targetId: args.targetId,
+    return await ctx.runQuery(components.jsonCms.lib.getSchema, {
+      schemaId: args.schemaId,
     });
   },
 });
 
-export const translateComment = action({
-  args: { commentId: v.string() },
+export const createEntry = mutation({
+  args: { schemaId: v.id("schemas"), data: v.any() },
   handler: async (ctx, args) => {
-    return await ctx.runAction(components.jsonCms.lib.translate, {
-      baseUrl: BASE_URL,
-      commentId: args.commentId,
-    });
+    return await ctx.runMutation(components.jsonCms.lib.createEntry, args);
   },
 });
 
-// Here is an alternative way to use the component's methods directly by re-exporting
-// the component's API:
-export const { list, add, translate } = exposeApi(components.jsonCms, {
+export const listEntries = query({
+  args: { schemaId: v.id("schemas") },
+  handler: async (ctx, args) => {
+    return await ctx.runQuery(components.jsonCms.lib.listEntries, args);
+  },
+});
+
+// Alternative: Using the exposeApi helper for a complete authenticated API
+export const {
+  listSchemas: listSchemasAuth,
+  getSchema: getSchemaAuth,
+  createSchema: createSchemaAuth,
+  updateSchema,
+  deleteSchema,
+  listEntries: listEntriesAuth,
+  getEntry,
+  createEntry: createEntryAuth,
+  createEntriesBulk,
+  updateEntry,
+  deleteEntry,
+  deleteEntriesBySchema,
+} = exposeApi(components.jsonCms, {
   auth: async (ctx, operation) => {
     const userId = await getAuthUserId(ctx);
-    if (userId === null && operation.type !== "read") {
+    // Allow reads for anonymous users
+    if (userId === "anonymous" && operation.type === "read") {
+      return userId;
+    }
+    // Require auth for mutations
+    if (userId === "anonymous") {
       throw new Error("Unauthorized");
     }
     return userId;
   },
-  baseUrl: BASE_URL,
 });
-
-// You can also register HTTP routes for the component. See http.ts for an example.
-
-async function getAuthUserId(ctx: { auth: Auth }) {
-  return (await ctx.auth.getUserIdentity())?.subject ?? "anonymous";
-}
