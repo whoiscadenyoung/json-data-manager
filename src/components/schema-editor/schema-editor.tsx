@@ -8,6 +8,7 @@ import { inferSchemaFromData } from "#/lib/infer-schema";
 import { toast } from "sonner";
 import { VisualBuilder } from "./visual-builder";
 import { ValidationPane, type ValidationState } from "./validation-pane";
+import { SchemaPreview } from "./schema-preview";
 
 const SCHEMA_SIZE_LIMIT = 102400; // 100 KB
 
@@ -357,6 +358,9 @@ export function SchemaEditor({ initialJson = "", onSave, saveLabel = "Save" }: S
           </div>
         </div>
       </div>
+
+      {/* Preview card - spans full width below the two panels */}
+      <SchemaPreview schemaJson={schemaJson} />
     </div>
   );
 }
