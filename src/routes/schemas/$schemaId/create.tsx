@@ -139,6 +139,7 @@ function CreateEntryPage() {
             onSubmit={handleSubmit}
             disabled={isSubmitting}
             uiSchema={{
+              ...(schema.uiSchema || {}),
               "ui:submitButtonOptions": {
                 submitText: isSubmitting ? "Creating..." : "Create Entry",
                 norender: false,

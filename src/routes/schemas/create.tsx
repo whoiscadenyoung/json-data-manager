@@ -28,9 +28,12 @@ function CreateSchemaPage() {
       </div>
 
       <SchemaEditor
-        onSave={async (_json, parsed) => {
+        onSave={async (_json, parsed, _uiSchemaJson, uiSchemaParsed) => {
           try {
-            const schemaId = await createSchema({ schema: parsed });
+            const schemaId = await createSchema({
+              schema: parsed,
+              uiSchema: Object.keys(uiSchemaParsed).length > 0 ? uiSchemaParsed : undefined,
+            });
             toast.success("Schema created!");
             await navigate({ to: "/schemas/$schemaId", params: { schemaId } });
           } catch (err) {

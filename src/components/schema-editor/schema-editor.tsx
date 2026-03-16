@@ -14,15 +14,22 @@ const SCHEMA_SIZE_LIMIT = 102400; // 100 KB
 
 interface SchemaEditorProps {
   initialJson?: string;
-  onSave: (json: string, parsed: object) => Promise<void>;
+  initialUiSchemaJson?: string;
+  onSave: (json: string, parsed: object, uiSchemaJson: string, uiSchemaParsed: object) => Promise<void>;
   saveLabel?: string;
 }
 
 type PendingFile = { file: File; content: string; isDataArray: boolean };
 
-export function SchemaEditor({ initialJson = "", onSave, saveLabel = "Save" }: SchemaEditorProps) {
+export function SchemaEditor({
+  initialJson = "",
+  initialUiSchemaJson = "",
+  onSave,
+  saveLabel = "Save",
+}: SchemaEditorProps) {
   const [schemaJson, setSchemaJson] = useState(initialJson);
-  const [activeTab, setActiveTab] = useState<"visual" | "code">("visual");
+  const [uiSchemaJson, setUiSchemaJson] = useState(initialUiSchemaJson);
+  const [activeTab, setActiveTab] = useState<"visual" | "code" | "data">("visual");
   const [isSaving, setIsSaving] = useState(false);
 
   // Validation pane state (lifted for visual builder badges)
@@ -187,6 +194,22 @@ export function SchemaEditor({ initialJson = "", onSave, saveLabel = "Save" }: S
     }
   };
 
+  const getUiSchemaParseError = (): string | null => {
+    if (!uiSchemaJson.trim()) return null;
+    try {
+      const parsed = JSON.parse(uiSchemaJson);
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        return "UI Schema must be a JSON object.";
+      }
+      return null;
+    } catch {
+      return "Invalid UI Schema JSON — please check your input.";
+    }
+  };
+
+  const uiSchemaBytes = new Blob([uiSchemaJson]).size;
+  const isUiSchemaOverLimit = uiSchemaBytes > SCHEMA_SIZE_LIMIT;
+
   const handleSave = async () => {
     const err = getParseError();
     if (err) {
@@ -197,15 +220,29 @@ export function SchemaEditor({ initialJson = "", onSave, saveLabel = "Save" }: S
       toast.error(`Schema exceeds the 100 KB limit (${Math.round(schemaBytes / 1024)} KB).`);
       return;
     }
+    const uiSchemaErr = getUiSchemaParseError();
+    if (uiSchemaErr) {
+      toast.error(uiSchemaErr);
+      return;
+    }
+    if (isUiSchemaOverLimit) {
+      toast.error(`UI Schema exceeds the 100 KB limit (${Math.round(uiSchemaBytes / 1024)} KB).`);
+      return;
+    }
     setIsSaving(true);
     try {
-      await onSave(schemaJson, JSON.parse(schemaJson) as object);
+      await onSave(
+        schemaJson,
+        JSON.parse(schemaJson) as object,
+        uiSchemaJson,
+        uiSchemaJson.trim() ? (JSON.parse(uiSchemaJson) as object) : {}
+      );
     } finally {
       setIsSaving(false);
     }
   };
 
-  const canSave = !getParseError() && !isOverLimit;
+  const canSave = !getParseError() && !isOverLimit && !getUiSchemaParseError() && !isUiSchemaOverLimit;
 
   return (
     <div className="relative flex flex-col gap-4">
@@ -280,6 +317,19 @@ export function SchemaEditor({ initialJson = "", onSave, saveLabel = "Save" }: S
                 <Code2 className="h-3.5 w-3.5" />
                 Code
               </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("data")}
+                className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium transition-colors border-l border-border",
+                  activeTab === "data"
+                    ? "bg-background text-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-background/50",
+                )}
+              >
+                <FileJson className="h-3.5 w-3.5" />
+                Data
+              </button>
             </div>
 
             <div className="flex-1" />
@@ -312,25 +362,37 @@ export function SchemaEditor({ initialJson = "", onSave, saveLabel = "Save" }: S
             </Button>
           </div>
 
-          {/* Size warning */}
-          {isOverLimit && (
-            <div className="flex items-center gap-2 border-b border-destructive/30 bg-destructive/10 px-3 py-1.5 text-xs text-destructive shrink-0">
-              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-              Schema exceeds 100 KB limit ({Math.round(schemaBytes / 1024)} KB). Reduce its size
-              before saving.
+          {/* Size warnings */}
+          {(isOverLimit || isUiSchemaOverLimit) && (
+            <div className="flex flex-col gap-1 border-b border-destructive/30 bg-destructive/10 px-3 py-1.5 text-xs text-destructive shrink-0">
+              {isOverLimit && (
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                  Schema exceeds 100 KB limit ({Math.round(schemaBytes / 1024)} KB). Reduce its size
+                  before saving.
+                </div>
+              )}
+              {isUiSchemaOverLimit && (
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                  UI Schema exceeds 100 KB limit ({Math.round(uiSchemaBytes / 1024)} KB). Reduce its
+                  size before saving.
+                </div>
+              )}
             </div>
           )}
 
           {/* Editor content */}
           <div className="flex-1 overflow-auto p-4">
-            {activeTab === "visual" ? (
+            {activeTab === "visual" && (
               <VisualBuilder
                 schemaJson={schemaJson}
                 onChange={setSchemaJson}
                 validationFailingPaths={validationState.failingPaths}
                 totalDataItems={validationState.total}
               />
-            ) : (
+            )}
+            {activeTab === "code" && (
               <JsonEditor
                 value={schemaJson}
                 onChange={setSchemaJson}
@@ -340,27 +402,38 @@ export function SchemaEditor({ initialJson = "", onSave, saveLabel = "Save" }: S
                 height="560px"
               />
             )}
+            {activeTab === "data" && (
+              <ValidationPane
+                schemaJson={schemaJson}
+                externalDataText={externalDataText}
+                onInferSchema={(inferredJson) => {
+                  setSchemaJson(inferredJson);
+                  toast.success("Schema inferred! Fill in title and description to finish.");
+                }}
+                onStateChange={setValidationState}
+              />
+            )}
           </div>
         </div>
 
-        {/* Right panel: validation pane */}
+        {/* Right panel: UI Schema editor */}
         <div className="w-80 xl:w-96 shrink-0 flex flex-col rounded-lg border border-border overflow-hidden">
-          <div className="flex-1 overflow-auto p-4">
-            <ValidationPane
-              schemaJson={schemaJson}
-              externalDataText={externalDataText}
-              onInferSchema={(inferredJson) => {
-                setSchemaJson(inferredJson);
-                toast.success("Schema inferred! Fill in title and description to finish.");
-              }}
-              onStateChange={setValidationState}
+          <div className="flex items-center gap-2 border-b border-border px-3 py-2 bg-muted/30 shrink-0">
+            <span className="text-xs font-medium">UI Schema</span>
+          </div>
+          <div className="flex-1 overflow-auto">
+            <JsonEditor
+              value={uiSchemaJson}
+              onChange={setUiSchemaJson}
+              placeholder={'{\n  "ui:submitButtonOptions": {\n    "submitText": "Create Entry"\n  }\n}'}
+              height="540px"
             />
           </div>
         </div>
       </div>
 
       {/* Preview card - spans full width below the two panels */}
-      <SchemaPreview schemaJson={schemaJson} />
+      <SchemaPreview schemaJson={schemaJson} uiSchemaJson={uiSchemaJson} />
     </div>
   );
 }

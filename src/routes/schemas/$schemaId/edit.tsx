@@ -101,6 +101,7 @@ function EditSchemaPage() {
         <FullSchemaEditForm
           schemaId={schemaId}
           currentSchema={schema.schema}
+          currentUiSchema={schema.uiSchema}
           updateSchema={updateSchema}
           navigate={navigate}
         />
@@ -228,20 +229,27 @@ function MetadataEditForm({
 function FullSchemaEditForm({
   schemaId,
   currentSchema,
+  currentUiSchema,
   updateSchema,
   navigate,
 }: {
   schemaId: string;
   currentSchema: unknown;
+  currentUiSchema?: unknown;
   updateSchema: ReturnType<typeof useMutation<typeof api.schemas.update>>;
   navigate: ReturnType<typeof useNavigate>;
 }) {
   return (
     <SchemaEditor
       initialJson={JSON.stringify(currentSchema, null, 2)}
-      onSave={async (_json, parsed) => {
+      initialUiSchemaJson={currentUiSchema ? JSON.stringify(currentUiSchema, null, 2) : ""}
+      onSave={async (_json, parsed, _uiSchemaJson, uiSchemaParsed) => {
         try {
-          await updateSchema({ schemaId: schemaId as Id<"schemas">, schema: parsed });
+          await updateSchema({
+            schemaId: schemaId as Id<"schemas">,
+            schema: parsed,
+            uiSchema: Object.keys(uiSchemaParsed).length > 0 ? uiSchemaParsed : undefined,
+          });
           toast.success("Schema updated!");
           void navigate({ to: "/schemas/$schemaId", params: { schemaId } });
         } catch (err) {

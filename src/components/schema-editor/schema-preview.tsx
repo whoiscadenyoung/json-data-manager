@@ -7,30 +7,45 @@ import { cn } from "#/lib/utils";
 
 interface SchemaPreviewProps {
   schemaJson: string;
+  uiSchemaJson?: string;
 }
 
-export function SchemaPreview({ schemaJson }: SchemaPreviewProps) {
+export function SchemaPreview({ schemaJson, uiSchemaJson }: SchemaPreviewProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [formData, setFormData] = useState<unknown>({});
 
-  const { schema, error } = useMemo(() => {
+  const { schema, error, uiSchema } = useMemo(() => {
     if (!schemaJson.trim()) {
-      return { schema: null, error: "Schema is empty" };
+      return { schema: null, error: "Schema is empty", uiSchema: {} };
     }
     try {
       const parsed = JSON.parse(schemaJson);
       if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-        return { schema: null, error: "Schema must be a JSON object" };
+        return { schema: null, error: "Schema must be a JSON object", uiSchema: {} };
       }
       // Basic validation: check for required fields
       if (!parsed.title || typeof parsed.title !== "string") {
-        return { schema: null, error: "Schema must have a 'title' property" };
+        return { schema: null, error: "Schema must have a 'title' property", uiSchema: {} };
       }
-      return { schema: parsed, error: null };
+
+      // Parse uiSchema if provided
+      let parsedUiSchema = {};
+      if (uiSchemaJson?.trim()) {
+        try {
+          const uiParsed = JSON.parse(uiSchemaJson);
+          if (typeof uiParsed === "object" && uiParsed !== null && !Array.isArray(uiParsed)) {
+            parsedUiSchema = uiParsed;
+          }
+        } catch {
+          // Ignore invalid UI schema JSON
+        }
+      }
+
+      return { schema: parsed, error: null, uiSchema: parsedUiSchema };
     } catch {
-      return { schema: null, error: "Invalid JSON" };
+      return { schema: null, error: "Invalid JSON", uiSchema: {} };
     }
-  }, [schemaJson]);
+  }, [schemaJson, uiSchemaJson]);
 
   // Collapsed state - show a compact card
   if (!isExpanded) {
@@ -122,6 +137,7 @@ export function SchemaPreview({ schemaJson }: SchemaPreviewProps) {
               onChange={(data) => setFormData(data.formData)}
               onSubmit={(data) => console.log("Preview form submitted:", data.formData)}
               uiSchema={{
+                ...uiSchema,
                 "ui:submitButtonOptions": {
                   submitText: "Create Entry (Preview)",
                   norender: false,

@@ -28,6 +28,7 @@ export const update = mutation({
     title: v.optional(v.string()),
     description: v.optional(v.string()),
     schema: v.optional(v.any()),
+    uiSchema: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db.get(args.schemaId);
@@ -53,6 +54,14 @@ export const update = mutation({
       if (args.description !== undefined) patch.description = args.description;
     }
 
+    if (args.uiSchema !== undefined) {
+      const uiSchemaStr = JSON.stringify(args.uiSchema);
+      if (uiSchemaStr.length > SCHEMA_SIZE_LIMIT) {
+        throw new ConvexError("UI Schema exceeds the 100 KB size limit.");
+      }
+      patch.uiSchema = args.uiSchema;
+    }
+
     await ctx.db.patch(args.schemaId, patch);
   },
 });
@@ -60,6 +69,7 @@ export const update = mutation({
 export const create = mutation({
   args: {
     schema: v.any(),
+    uiSchema: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
     if (!args.schema.title || !args.schema.description) {
@@ -71,10 +81,18 @@ export const create = mutation({
       throw new ConvexError("Schema exceeds the 100 KB size limit.");
     }
 
+    if (args.uiSchema !== undefined) {
+      const uiSchemaStr = JSON.stringify(args.uiSchema);
+      if (uiSchemaStr.length > SCHEMA_SIZE_LIMIT) {
+        throw new ConvexError("UI Schema exceeds the 100 KB size limit.");
+      }
+    }
+
     const schemaId = await ctx.db.insert("schemas", {
       title: args.schema.title,
       description: args.schema.description,
       schema: args.schema,
+      uiSchema: args.uiSchema,
     });
 
     return schemaId;

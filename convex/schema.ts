@@ -6,6 +6,7 @@ export default defineSchema({
     title: v.string(),
     description: v.string(),
     schema: v.any(), // JSON schema object
+    uiSchema: v.optional(v.any()), // RJSF UI schema object
   }),
 
   entries: defineTable({
