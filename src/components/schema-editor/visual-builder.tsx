@@ -31,6 +31,7 @@ export interface PropertyDef {
   itemType: string;
   minItems: string;
   maxItems: string;
+  itemSchema: PropertyDef | null; // For array of objects
   // object
   properties: PropertyDef[];
 }
@@ -76,7 +77,17 @@ function makePropertySchema(prop: PropertyDef): Record<string, unknown> {
   }
 
   if (prop.type === "array") {
-    if (prop.itemType) schema.items = { type: prop.itemType };
+    if (prop.itemType) {
+      if (prop.itemType === "object" && prop.itemSchema) {
+        // Array of objects with defined schema
+        schema.items = makePropertySchema(prop.itemSchema);
+        delete (schema.items as Record<string, unknown>).name;
+        delete (schema.items as Record<string, unknown>).required;
+      } else {
+        // Array of primitives
+        schema.items = { type: prop.itemType };
+      }
+    }
     if (prop.minItems !== "") schema.minItems = Number(prop.minItems);
     if (prop.maxItems !== "") schema.maxItems = Number(prop.maxItems);
   }
@@ -154,6 +165,7 @@ function parsePropertyDef(
         : "",
     minItems: schema.minItems !== undefined ? String(schema.minItems) : "",
     maxItems: schema.maxItems !== undefined ? String(schema.maxItems) : "",
+    itemSchema: null,
     properties: [],
   };
 
@@ -164,6 +176,14 @@ function parsePropertyDef(
     prop.properties = Object.entries(schema.properties as Record<string, unknown>).map(([k, v]) =>
       parsePropertyDef(k, v as Record<string, unknown>, nestedRequired),
     );
+  }
+
+  // Parse array item schema for object arrays
+  if (type === "array" && prop.itemType === "object" && typeof schema.items === "object" && schema.items !== null) {
+    const itemsSchema = schema.items as Record<string, unknown>;
+    if (itemsSchema.type === "object") {
+      prop.itemSchema = parsePropertyDef("item", itemsSchema, new Set());
+    }
   }
 
   return prop;
@@ -214,6 +234,7 @@ function defaultProp(): PropertyDef {
     itemType: "",
     minItems: "",
     maxItems: "",
+    itemSchema: null,
     properties: [],
   };
 }
@@ -464,44 +485,103 @@ function PropertyRow({
 
           {/* Array-specific */}
           {prop.type === "array" && (
-            <div className="grid grid-cols-3 gap-2">
-              <div className="space-y-1">
-                <Label className="text-xs">Item type</Label>
-                <select
-                  value={prop.itemType}
-                  onChange={(e) => set("itemType", e.target.value)}
-                  className="w-full h-6 rounded-md border border-input bg-background px-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-                >
-                  <option value="">(any)</option>
-                  {PROPERTY_TYPES.filter((t) => t !== "array").map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
+            <div className="space-y-3">
+              <div className="grid grid-cols-3 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Item type</Label>
+                  <select
+                    value={prop.itemType}
+                    onChange={(e) => {
+                      const newType = e.target.value;
+                      set("itemType", newType);
+                      // Initialize itemSchema when switching to object type
+                      if (newType === "object" && !prop.itemSchema) {
+                        set("itemSchema", { ...defaultProp(), type: "object" });
+                      }
+                    }}
+                    className="w-full h-6 rounded-md border border-input bg-background px-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                  >
+                    <option value="">(any)</option>
+                    {PROPERTY_TYPES.filter((t) => t !== "array").map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Min items</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={prop.minItems}
+                    onChange={(e) => set("minItems", e.target.value)}
+                    placeholder="0"
+                    className="h-6 text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Max items</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={prop.maxItems}
+                    onChange={(e) => set("maxItems", e.target.value)}
+                    placeholder="∞"
+                    className="h-6 text-xs"
+                  />
+                </div>
               </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Min items</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  value={prop.minItems}
-                  onChange={(e) => set("minItems", e.target.value)}
-                  placeholder="0"
-                  className="h-6 text-xs"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Max items</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  value={prop.maxItems}
-                  onChange={(e) => set("maxItems", e.target.value)}
-                  placeholder="∞"
-                  className="h-6 text-xs"
-                />
-              </div>
+
+              {/* Object item schema editor */}
+              {prop.itemType === "object" && prop.itemSchema && (
+                <div className="space-y-2 pt-2 border-t border-border">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-medium">Item Object Schema</Label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      onClick={() =>
+                        set("itemSchema", {
+                          ...prop.itemSchema!,
+                          properties: [...prop.itemSchema!.properties, defaultProp()],
+                        })
+                      }
+                    >
+                      <Plus className="h-3 w-3 mr-1" />
+                      Add field
+                    </Button>
+                  </div>
+                  {prop.itemSchema.properties.length > 0 && (
+                    <div className="space-y-1.5 pl-2 border-l border-border">
+                      {prop.itemSchema.properties.map((child, i) => (
+                        <PropertyRow
+                          key={child.id}
+                          prop={child}
+                          depth={depth + 1}
+                          failingCount={0}
+                          totalDataItems={0}
+                          onChange={(updated) => {
+                            const next = [...prop.itemSchema!.properties];
+                            next[i] = updated;
+                            set("itemSchema", { ...prop.itemSchema!, properties: next });
+                          }}
+                          onRemove={() => {
+                            const next = prop.itemSchema!.properties.filter((_, j) => j !== i);
+                            set("itemSchema", { ...prop.itemSchema!, properties: next });
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {prop.itemSchema.properties.length === 0 && (
+                    <div className="text-xs text-muted-foreground italic">
+                      No fields defined yet. Click "Add field" to define the object structure.
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
