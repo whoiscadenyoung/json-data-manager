@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/breadcrumb";
 import { useQuery } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
-import type { Id } from "../../../../convex/_generated/dataModel";
+import type { SchemaId, EntryId } from "@caden/json-cms";
 import { RouterButton } from "@/components/router-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrowLeft, Calendar, Plus } from "lucide-react";
@@ -20,8 +20,8 @@ export const Route = createFileRoute("/schemas/$schemaId/$entryId")({
 
 function EntryDetailPage() {
   const { schemaId, entryId } = Route.useParams();
-  const entry = useQuery(api.entries.get, { entryId: entryId as Id<"entries"> });
-  const schema = useQuery(api.schemas.get, { schemaId: schemaId as Id<"schemas"> });
+  const entry = useQuery(api.entries.get, { entryId: entryId as EntryId });
+  const schema = useQuery(api.schemas.get, { schemaId: schemaId as SchemaId });
 
   if (entry === undefined || schema === undefined) {
     return (

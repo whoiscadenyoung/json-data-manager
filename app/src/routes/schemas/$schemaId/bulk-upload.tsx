@@ -2,7 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState, useRef, useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
-import type { Id } from "../../../../convex/_generated/dataModel";
+import type { SchemaId } from "@caden/json-cms";
 import validator from "@rjsf/validator-ajv8";
 import { RouterButton } from "@/components/router-button";
 import { Button } from "@/components/ui/button";
@@ -34,7 +34,7 @@ type ValidationResult = {
 function BulkUploadPage() {
   const { schemaId } = Route.useParams();
   const navigate = useNavigate();
-  const schema = useQuery(api.schemas.get, { schemaId: schemaId as Id<"schemas"> });
+  const schema = useQuery(api.schemas.get, { schemaId: schemaId as SchemaId });
   const createBulk = useMutation(api.entries.createBulk);
 
   const [jsonText, setJsonText] = useState("");
@@ -147,7 +147,7 @@ function BulkUploadPage() {
     setIsSubmitting(true);
     try {
       await createBulk({
-        schemaId: schemaId as Id<"schemas">,
+        schemaId: schemaId as SchemaId,
         dataArray: validEntries,
       });
       toast.success(

@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "convex/react";
 import { useForm } from "@tanstack/react-form";
 import { z } from "zod";
 import { api } from "../../../../convex/_generated/api";
-import type { Id } from "../../../../convex/_generated/dataModel";
+import type { SchemaId } from "@caden/json-cms";
 import { Button } from "@/components/ui/button";
 import { RouterButton } from "@/components/router-button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -29,8 +29,8 @@ export const Route = createFileRoute("/schemas/$schemaId/edit")({
 function EditSchemaPage() {
   const { schemaId } = Route.useParams();
   const navigate = useNavigate();
-  const schema = useQuery(api.schemas.get, { schemaId: schemaId as Id<"schemas"> });
-  const entries = useQuery(api.entries.list, { schemaId: schemaId as Id<"schemas"> });
+  const schema = useQuery(api.schemas.get, { schemaId: schemaId as SchemaId });
+  const entries = useQuery(api.entries.list, { schemaId: schemaId as SchemaId });
   const updateSchema = useMutation(api.schemas.update);
 
   if (schema === undefined || entries === undefined) {
@@ -101,7 +101,9 @@ function EditSchemaPage() {
         <FullSchemaEditForm
           schemaId={schemaId}
           currentSchema={schema.schema}
-          currentUiSchema={schema.uiSchema}
+          // TODO: drop this cast once the component's generated getSchema
+          // return type includes uiSchema (currently stale upstream).
+          currentUiSchema={(schema as { uiSchema?: unknown }).uiSchema}
           updateSchema={updateSchema}
           navigate={navigate}
         />
@@ -128,7 +130,7 @@ function MetadataEditForm({
     onSubmit: async ({ value }) => {
       try {
         await updateSchema({
-          schemaId: schemaId as Id<"schemas">,
+          schemaId: schemaId as SchemaId,
           title: value.title,
           description: value.description,
         });
@@ -246,7 +248,7 @@ function FullSchemaEditForm({
       onSave={async (_json, parsed, _uiSchemaJson, uiSchemaParsed) => {
         try {
           await updateSchema({
-            schemaId: schemaId as Id<"schemas">,
+            schemaId: schemaId as SchemaId,
             schema: parsed,
             uiSchema: Object.keys(uiSchemaParsed).length > 0 ? uiSchemaParsed : undefined,
           });

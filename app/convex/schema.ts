@@ -1,16 +1,5 @@
-import { defineSchema, defineTable } from "convex/server";
-import { v } from "convex/values";
+import { defineSchema } from "convex/server";
 
-export default defineSchema({
-  schemas: defineTable({
-    title: v.string(),
-    description: v.string(),
-    schema: v.any(), // JSON schema object
-    uiSchema: v.optional(v.any()), // RJSF UI schema object
-  }),
-
-  entries: defineTable({
-    schemaId: v.id("schemas"),
-    data: v.any(), // Entry data conforming to the schema
-  }).index("by_schema", ["schemaId"]),
-});
+// Data now lives in the @caden/json-cms component's own tables.
+// Add any app-specific tables here in the future.
+export default defineSchema({});

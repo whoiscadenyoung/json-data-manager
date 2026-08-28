@@ -10,7 +10,7 @@ import {
 import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
-import type { Id } from "../../../../convex/_generated/dataModel";
+import type { SchemaId } from "@caden/json-cms";
 import Form from "@rjsf/shadcn";
 import validator from "@rjsf/validator-ajv8";
 import { RouterButton } from "@/components/router-button";
@@ -24,7 +24,7 @@ export const Route = createFileRoute("/schemas/$schemaId/create")({
 
 function CreateEntryPage() {
   const { schemaId } = Route.useParams();
-  const schema = useQuery(api.schemas.get, { schemaId: schemaId as Id<"schemas"> });
+  const schema = useQuery(api.schemas.get, { schemaId: schemaId as SchemaId });
   const createEntry = useMutation(api.entries.create);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [lastCreatedEntryId, setLastCreatedEntryId] = useState<string | null>(null);
@@ -36,7 +36,7 @@ function CreateEntryPage() {
 
     try {
       const entryId = await createEntry({
-        schemaId: schemaId as Id<"schemas">,
+        schemaId: schemaId as SchemaId,
         data: data.formData,
       });
 
@@ -139,7 +139,9 @@ function CreateEntryPage() {
             onSubmit={handleSubmit}
             disabled={isSubmitting}
             uiSchema={{
-              ...(schema.uiSchema || {}),
+              // TODO: drop this cast once the component's generated getSchema
+              // return type includes uiSchema (currently stale upstream).
+              ...(schema as { uiSchema?: Record<string, unknown> }).uiSchema,
               "ui:submitButtonOptions": {
                 submitText: isSubmitting ? "Creating..." : "Create Entry",
                 norender: false,
