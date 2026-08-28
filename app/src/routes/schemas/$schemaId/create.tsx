@@ -139,9 +139,7 @@ function CreateEntryPage() {
             onSubmit={handleSubmit}
             disabled={isSubmitting}
             uiSchema={{
-              // TODO: drop this cast once the component's generated getSchema
-              // return type includes uiSchema (currently stale upstream).
-              ...(schema as { uiSchema?: Record<string, unknown> }).uiSchema,
+              ...schema.uiSchema,
               "ui:submitButtonOptions": {
                 submitText: isSubmitting ? "Creating..." : "Create Entry",
                 norender: false,

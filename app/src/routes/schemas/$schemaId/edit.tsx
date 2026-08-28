@@ -101,9 +101,7 @@ function EditSchemaPage() {
         <FullSchemaEditForm
           schemaId={schemaId}
           currentSchema={schema.schema}
-          // TODO: drop this cast once the component's generated getSchema
-          // return type includes uiSchema (currently stale upstream).
-          currentUiSchema={(schema as { uiSchema?: unknown }).uiSchema}
+          currentUiSchema={schema.uiSchema}
           updateSchema={updateSchema}
           navigate={navigate}
         />
