@@ -76,7 +76,7 @@ export default defineSchema({
 
   // Store entries for each schema
   jdm_entries: defineTable({
-    schemaId: v.id("jdm_schemas"),
+    schemaId: v.id("schemas"),
     data: v.any(),
     metadata: v.optional(v.record(v.string(), v.any())),
   })
@@ -127,10 +127,10 @@ export const listSchemas = query({
     cursor: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    let q = ctx.db.query("jdm_schemas").order("desc");
+    let q = ctx.db.query("schemas").order("desc");
 
     if (args.cursor) {
-      const cursorDoc = await ctx.db.get(args.cursor as Id<"jdm_schemas">);
+      const cursorDoc = await ctx.db.get(args.cursor as Id<"schemas">);
       if (cursorDoc) {
         q = q.filter((q) => q.lt("_creationTime", cursorDoc._creationTime));
       }
@@ -145,7 +145,7 @@ export const listSchemas = query({
 });
 
 export const getSchema = query({
-  args: { schemaId: v.id("jdm_schemas") },
+  args: { schemaId: v.id("schemas") },
   handler: async (ctx, args) => {
     const schema = await ctx.db.get(args.schemaId);
     if (!schema) throw new ConvexError("Schema not found");
@@ -157,7 +157,7 @@ export const getSchemaBySlug = query({
   args: { slug: v.string() },
   handler: async (ctx, args) => {
     return await ctx.db
-      .query("jdm_schemas")
+      .query("schemas")
       .withIndex("by_slug", (q) => q.eq("slug", args.slug))
       .unique();
   },
@@ -165,7 +165,7 @@ export const getSchemaBySlug = query({
 
 // Internal query for entry operations
 export const _getSchemaInternal = internalQuery({
-  args: { schemaId: v.id("jdm_schemas") },
+  args: { schemaId: v.id("schemas") },
   handler: async (ctx, args) => {
     return await ctx.db.get(args.schemaId);
   },
@@ -195,8 +195,8 @@ export const createSchema = mutation({
     slug: v.optional(v.string()),
     metadata: v.optional(v.record(v.string(), v.any())),
   },
-  returns: v.id("jdm_schemas"),
-  handler: async (ctx, args): Promise<Id<"jdm_schemas">> => {
+  returns: v.id("schemas"),
+  handler: async (ctx, args): Promise<Id<"schemas">> => {
     // Validate required fields
     if (!args.schema || typeof args.schema !== "object") {
       throw new ConvexError("Schema must be a valid object");
@@ -212,7 +212,7 @@ export const createSchema = mutation({
     // Ensure unique slug
     const slug = args.slug || generateSlug(args.title);
     const existing = await ctx.db
-      .query("jdm_schemas")
+      .query("schemas")
       .withIndex("by_slug", (q) => q.eq("slug", slug))
       .unique();
 
@@ -220,7 +220,7 @@ export const createSchema = mutation({
       throw new ConvexError(`Schema with slug "${slug}" already exists`);
     }
 
-    return await ctx.db.insert("jdm_schemas", {
+    return await ctx.db.insert("schemas", {
       title: args.title,
       description: args.description,
       schema: args.schema,
@@ -232,7 +232,7 @@ export const createSchema = mutation({
 
 export const updateSchema = mutation({
   args: {
-    schemaId: v.id("jdm_schemas"),
+    schemaId: v.id("schemas"),
     title: v.optional(v.string()),
     description: v.optional(v.string()),
     schema: v.optional(v.any()),
@@ -249,7 +249,7 @@ export const updateSchema = mutation({
     if (args.schema !== undefined) {
       // Check if entries exist
       const hasEntries = await ctx.db
-        .query("jdm_entries")
+        .query("entries")
         .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
         .take(1)
         .then(r => r.length > 0);
@@ -278,7 +278,7 @@ export const updateSchema = mutation({
     // Slug update with uniqueness check
     if (args.slug !== undefined && args.slug !== existing.slug) {
       const slugTaken = await ctx.db
-        .query("jdm_schemas")
+        .query("schemas")
         .withIndex("by_slug", (q) => q.eq("slug", args.slug!))
         .unique();
       if (slugTaken) {
@@ -292,11 +292,11 @@ export const updateSchema = mutation({
 });
 
 export const deleteSchema = mutation({
-  args: { schemaId: v.id("jdm_schemas") },
+  args: { schemaId: v.id("schemas") },
   handler: async (ctx, args) => {
     // Delete all associated entries first
     const entries = await ctx.db
-      .query("jdm_entries")
+      .query("entries")
       .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
       .collect();
 
@@ -316,20 +316,20 @@ import { v, ConvexError } from "convex/values";
 
 export const listEntries = query({
   args: {
-    schemaId: v.id("jdm_schemas"),
+    schemaId: v.id("schemas"),
     limit: v.optional(v.number()),
     cursor: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     let q = ctx.db
-      .query("jdm_entries")
+      .query("entries")
       .withIndex("by_schema_creation", (q) =>
         q.eq("schemaId", args.schemaId)
       )
       .order("desc");
 
     if (args.cursor) {
-      const cursorDoc = await ctx.db.get(args.cursor as Id<"jdm_entries">);
+      const cursorDoc = await ctx.db.get(args.cursor as Id<"entries">);
       if (cursorDoc) {
         q = q.filter((q) => q.lt("_creationTime", cursorDoc._creationTime));
       }
@@ -345,13 +345,13 @@ export const listEntries = query({
 
 export const listEntriesPaginated = query({
   args: {
-    schemaId: v.id("jdm_schemas"),
+    schemaId: v.id("schemas"),
     pageSize: v.number(),
-    cursor: v.optional(v.id("jdm_entries")),
+    cursor: v.optional(v.id("entries")),
   },
   handler: async (ctx, args) => {
     const entries = await ctx.db
-      .query("jdm_entries")
+      .query("entries")
       .withIndex("by_schema_creation", (q) =>
         q.eq("schemaId", args.schemaId)
       )
@@ -363,7 +363,7 @@ export const listEntriesPaginated = query({
 });
 
 export const getEntry = query({
-  args: { entryId: v.id("jdm_entries") },
+  args: { entryId: v.id("entries") },
   handler: async (ctx, args) => {
     const entry = await ctx.db.get(args.entryId);
     if (!entry) throw new ConvexError("Entry not found");
@@ -375,16 +375,16 @@ export const getEntry = query({
 
 export const createEntry = mutation({
   args: {
-    schemaId: v.id("jdm_schemas"),
+    schemaId: v.id("schemas"),
     data: v.any(),
     metadata: v.optional(v.record(v.string(), v.any())),
   },
-  returns: v.id("jdm_entries"),
-  handler: async (ctx, args): Promise<Id<"jdm_entries">> => {
+  returns: v.id("entries"),
+  handler: async (ctx, args): Promise<Id<"entries">> => {
     const schema = await ctx.db.get(args.schemaId);
     if (!schema) throw new ConvexError("Schema not found");
 
-    return await ctx.db.insert("jdm_entries", {
+    return await ctx.db.insert("entries", {
       schemaId: args.schemaId,
       data: args.data,
       metadata: args.metadata || {},
@@ -394,18 +394,18 @@ export const createEntry = mutation({
 
 export const createBulkEntries = mutation({
   args: {
-    schemaId: v.id("jdm_schemas"),
+    schemaId: v.id("schemas"),
     dataArray: v.array(v.any()),
     metadata: v.optional(v.record(v.string(), v.any())),
   },
-  returns: v.array(v.id("jdm_entries")),
-  handler: async (ctx, args): Promise<Id<"jdm_entries">[]> => {
+  returns: v.array(v.id("entries")),
+  handler: async (ctx, args): Promise<Id<"entries">[]> => {
     const schema = await ctx.db.get(args.schemaId);
     if (!schema) throw new ConvexError("Schema not found");
 
     const ids = await Promise.all(
       args.dataArray.map((data) =>
-        ctx.db.insert("jdm_entries", {
+        ctx.db.insert("entries", {
           schemaId: args.schemaId,
           data,
           metadata: args.metadata || {},
@@ -419,7 +419,7 @@ export const createBulkEntries = mutation({
 
 export const updateEntry = mutation({
   args: {
-    entryId: v.id("jdm_entries"),
+    entryId: v.id("entries"),
     data: v.optional(v.any()),
     metadata: v.optional(v.record(v.string(), v.any())),
   },
@@ -436,7 +436,7 @@ export const updateEntry = mutation({
 });
 
 export const deleteEntry = mutation({
-  args: { entryId: v.id("jdm_entries") },
+  args: { entryId: v.id("entries") },
   handler: async (ctx, args) => {
     await ctx.db.delete(args.entryId);
   },
@@ -449,7 +449,7 @@ export const deleteEntry = mutation({
 import type { Id } from "./_generated/dataModel";
 
 export interface Schema {
-  _id: Id<"jdm_schemas">;
+  _id: Id<"schemas">;
   _creationTime: number;
   title: string;
   description: string;
@@ -459,9 +459,9 @@ export interface Schema {
 }
 
 export interface Entry {
-  _id: Id<"jdm_entries">;
+  _id: Id<"entries">;
   _creationTime: number;
-  schemaId: Id<"jdm_schemas">;
+  schemaId: Id<"schemas">;
   data: unknown;
   metadata?: Record<string, unknown>;
 }
@@ -672,7 +672,7 @@ export function useListSchemas(limit?: number) {
 export function useGetSchema(schemaId: string | null) {
   return useQuery(
     api.schemas.getSchema,
-    schemaId ? { schemaId: schemaId as Id<"jdm_schemas"> } : "skip"
+    schemaId ? { schemaId: schemaId as Id<"schemas"> } : "skip"
   );
 }
 
@@ -704,7 +704,7 @@ import { useState } from "react";
 export function useListEntries(schemaId: string | null, limit?: number) {
   return useQuery(
     api.entries.listEntries,
-    schemaId ? { schemaId: schemaId as Id<"jdm_schemas">, limit } : "skip"
+    schemaId ? { schemaId: schemaId as Id<"schemas">, limit } : "skip"
   );
 }
 
@@ -713,7 +713,7 @@ export function useListEntriesPaginated(schemaId: string, pageSize: number) {
 
   const result = useQuery(
     api.entries.listEntriesPaginated,
-    { schemaId: schemaId as Id<"jdm_schemas">, pageSize, cursor: cursor || undefined }
+    { schemaId: schemaId as Id<"schemas">, pageSize, cursor: cursor || undefined }
   );
 
   return {
@@ -979,7 +979,7 @@ For migrating the existing app to use the component:
    // One-time migration script
    const oldSchemas = await ctx.db.query("schemas").collect();
    for (const s of oldSchemas) {
-     await ctx.db.insert("jdm_schemas", {
+     await ctx.db.insert("schemas", {
        title: s.title,
        description: s.description,
        schema: s.schema,
