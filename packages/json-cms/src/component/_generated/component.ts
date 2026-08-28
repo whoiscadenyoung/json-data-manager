@@ -41,7 +41,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       createSchema: FunctionReference<
         "mutation",
         "internal",
-        { schema: any },
+        { schema: any; uiSchema?: any },
         string,
         Name
       >;
@@ -131,6 +131,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           schema?: any;
           schemaId: string;
           title?: string;
+          uiSchema?: any;
         },
         any,
         Name

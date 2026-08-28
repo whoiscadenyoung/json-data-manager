@@ -124,6 +124,53 @@ describe("json-cms component", () => {
       expect(schema?.description).toEqual("A test schema");
     });
 
+    test("create and get schema with uiSchema", async () => {
+      const t = initConvexTest();
+
+      const testSchema = {
+        title: "Test Schema",
+        description: "A test schema",
+        type: "object",
+        properties: {
+          name: { type: "string" },
+        },
+      };
+      const testUiSchema = {
+        name: { "ui:widget": "textarea" },
+      };
+
+      const schemaId = await t.mutation(api.lib.createSchema, {
+        schema: testSchema,
+        uiSchema: testUiSchema,
+      });
+
+      const schema = await t.query(api.lib.getSchema, { schemaId });
+      expect(schema?.uiSchema).toEqual(testUiSchema);
+    });
+
+    test("update schema's uiSchema", async () => {
+      const t = initConvexTest();
+
+      const schemaId = await t.mutation(api.lib.createSchema, {
+        schema: {
+          title: "Test Schema",
+          description: "A test schema",
+          type: "object",
+        },
+      });
+
+      const uiSchema = { "ui:order": ["name", "age"] };
+      await t.mutation(api.lib.updateSchema, {
+        schemaId,
+        uiSchema,
+      });
+
+      const schema = await t.query(api.lib.getSchema, { schemaId });
+      expect(schema?.uiSchema).toEqual(uiSchema);
+      // Title/description untouched by a uiSchema-only update
+      expect(schema?.title).toEqual("Test Schema");
+    });
+
     test("create schema without title throws error", async () => {
       const t = initConvexTest();
 

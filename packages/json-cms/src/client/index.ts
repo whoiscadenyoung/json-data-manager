@@ -12,6 +12,17 @@ import type {
 } from "convex/server";
 import { v } from "convex/values";
 import type { ComponentApi } from "../component/_generated/component.js";
+import type { Id } from "../component/_generated/dataModel.js";
+
+/**
+ * Branded ID types for the component's tables, re-exported for consumers.
+ *
+ * Because the component owns the `schemas` and `entries` tables (not the host
+ * app), consuming apps don't get `Id<"schemas">` / `Id<"entries">` from their
+ * own generated `dataModel`. Import these instead.
+ */
+export type SchemaId = Id<"schemas">;
+export type EntryId = Id<"entries">;
 
 // See the example/convex/example.ts file for how to use this component.
 
@@ -80,11 +91,12 @@ export function exposeApi(
       },
     }),
     createSchema: mutationGeneric({
-      args: { schema: v.any() },
+      args: { schema: v.any(), uiSchema: v.optional(v.any()) },
       handler: async (ctx, args) => {
         await options.auth(ctx, { type: "create" });
         return await ctx.runMutation(component.lib.createSchema, {
           schema: args.schema,
+          uiSchema: args.uiSchema,
         });
       },
     }),
@@ -94,6 +106,7 @@ export function exposeApi(
         title: v.optional(v.string()),
         description: v.optional(v.string()),
         schema: v.optional(v.any()),
+        uiSchema: v.optional(v.any()),
       },
       handler: async (ctx, args) => {
         await options.auth(ctx, { type: "update", schemaId: args.schemaId });
