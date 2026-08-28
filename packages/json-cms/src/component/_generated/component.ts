@@ -88,6 +88,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           description: string;
           schema: any;
           title: string;
+          uiSchema?: any;
         },
         Name
       >;
@@ -113,6 +114,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           description: string;
           schema: any;
           title: string;
+          uiSchema?: any;
         }>,
         Name
       >;
