@@ -1,5 +1,13 @@
 # System Architecture Guide
 
+> **Note (2026-08):** The repo is now a bun workspace. The application
+> described below lives in the `app/` workspace (paths like `convex/…` and
+> `src/…` are under `app/`), and its data is stored in the `@caden/json-cms`
+> Convex component (`packages/json-cms/`) rather than app-owned tables — the
+> app re-exports the component's API via `exposeApi` under the same function
+> names used here. This document still describes the app's behavior
+> accurately; a full rewrite for the new layout is a follow-up.
+
 ## Overview
 
 A JSON data management application built with React, Convex (backend/database), and TanStack Router. The system enables users to define JSON schemas and create/manage data entries that conform to those schemas.
