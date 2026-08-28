@@ -72,6 +72,11 @@ export function exposeApi(
     ) => Promise<string>;
   },
 ) {
+  // Note: id arguments are validated as `v.string()`, not `v.id(...)`.
+  // These ids reference the component's own tables, which do not exist in
+  // the host app's schema, so `v.id("schemas")`/`v.id("entries")` would be
+  // rejected by the host deployment. The component's `lib` functions
+  // re-validate them as real ids internally.
   return {
     // Schema operations
     listSchemas: queryGeneric({
@@ -82,7 +87,7 @@ export function exposeApi(
       },
     }),
     getSchema: queryGeneric({
-      args: { schemaId: v.id("schemas") },
+      args: { schemaId: v.string() },
       handler: async (ctx, args) => {
         await options.auth(ctx, { type: "read", schemaId: args.schemaId });
         return await ctx.runQuery(component.lib.getSchema, {
@@ -102,7 +107,7 @@ export function exposeApi(
     }),
     updateSchema: mutationGeneric({
       args: {
-        schemaId: v.id("schemas"),
+        schemaId: v.string(),
         title: v.optional(v.string()),
         description: v.optional(v.string()),
         schema: v.optional(v.any()),
@@ -114,7 +119,7 @@ export function exposeApi(
       },
     }),
     deleteSchema: mutationGeneric({
-      args: { schemaId: v.id("schemas") },
+      args: { schemaId: v.string() },
       handler: async (ctx, args) => {
         await options.auth(ctx, { type: "delete", schemaId: args.schemaId });
         return await ctx.runMutation(component.lib.deleteSchema, args);
@@ -123,7 +128,7 @@ export function exposeApi(
 
     // Entry operations
     listEntries: queryGeneric({
-      args: { schemaId: v.id("schemas") },
+      args: { schemaId: v.string() },
       handler: async (ctx, args) => {
         await options.auth(ctx, { type: "read", schemaId: args.schemaId });
         return await ctx.runQuery(component.lib.listEntries, {
@@ -132,7 +137,7 @@ export function exposeApi(
       },
     }),
     getEntry: queryGeneric({
-      args: { entryId: v.id("entries") },
+      args: { entryId: v.string() },
       handler: async (ctx, args) => {
         await options.auth(ctx, { type: "read", entryId: args.entryId });
         return await ctx.runQuery(component.lib.getEntry, {
@@ -141,35 +146,35 @@ export function exposeApi(
       },
     }),
     createEntry: mutationGeneric({
-      args: { schemaId: v.id("schemas"), data: v.any() },
+      args: { schemaId: v.string(), data: v.any() },
       handler: async (ctx, args) => {
         await options.auth(ctx, { type: "create", schemaId: args.schemaId });
         return await ctx.runMutation(component.lib.createEntry, args);
       },
     }),
     createEntriesBulk: mutationGeneric({
-      args: { schemaId: v.id("schemas"), dataArray: v.array(v.any()) },
+      args: { schemaId: v.string(), dataArray: v.array(v.any()) },
       handler: async (ctx, args) => {
         await options.auth(ctx, { type: "create", schemaId: args.schemaId });
         return await ctx.runMutation(component.lib.createEntriesBulk, args);
       },
     }),
     updateEntry: mutationGeneric({
-      args: { entryId: v.id("entries"), data: v.any() },
+      args: { entryId: v.string(), data: v.any() },
       handler: async (ctx, args) => {
         await options.auth(ctx, { type: "update", entryId: args.entryId });
         return await ctx.runMutation(component.lib.updateEntry, args);
       },
     }),
     deleteEntry: mutationGeneric({
-      args: { entryId: v.id("entries") },
+      args: { entryId: v.string() },
       handler: async (ctx, args) => {
         await options.auth(ctx, { type: "delete", entryId: args.entryId });
         return await ctx.runMutation(component.lib.deleteEntry, args);
       },
     }),
     deleteEntriesBySchema: mutationGeneric({
-      args: { schemaId: v.id("schemas") },
+      args: { schemaId: v.string() },
       handler: async (ctx, args) => {
         await options.auth(ctx, { type: "delete", schemaId: args.schemaId });
         return await ctx.runMutation(component.lib.deleteEntriesBySchema, args);
