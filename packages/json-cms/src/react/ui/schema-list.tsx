@@ -1,23 +1,52 @@
 "use client";
 
-import { useSchemas } from "../hooks.js";
-import type { SchemaId } from "../../client/index.js";
 import { Card, CardHeader, CardTitle, CardDescription } from "./primitives/card.js";
 
+/**
+ * The minimal shape `SchemaList` needs to render an item. Any object with
+ * these fields works — a Convex `SchemaDoc` from `@caden/json-cms/react` is
+ * assignable directly.
+ */
+export interface SchemaSummary {
+  _id: string;
+  title: string;
+  description: string;
+}
+
 export interface SchemaListProps {
+  /**
+   * Schemas to render. Pass `undefined` to show the loading state (e.g. while
+   * a query is in flight). This component does no data fetching — fetch the
+   * data however you like and pass it in.
+   */
+  schemas: readonly SchemaSummary[] | undefined;
   /** Called with the clicked schema's id. */
-  onSelect?: (schemaId: SchemaId) => void;
-  /** Message shown when there are no schemas yet. */
+  onSelect?: (schemaId: string) => void;
+  /** Message shown when there are no schemas. */
   emptyMessage?: string;
 }
 
 /**
- * A schema browser driven by the hooks layer's `useSchemas`. Renders a
- * `Card` per schema; pass `onSelect` to react to clicks.
+ * A backend-agnostic schema browser. Renders a `Card` per schema and calls
+ * `onSelect` with the clicked schema's id.
+ *
+ * It deliberately takes `schemas` as a prop rather than fetching them, so it
+ * works with any backend (or none). To wire it to Convex, fetch with the hooks
+ * layer and pass the result down:
+ *
+ * ```tsx
+ * import { useSchemas } from "@caden/json-cms/react";
+ * import { SchemaList } from "@caden/json-cms/react/ui";
+ *
+ * const schemas = useSchemas();
+ * return <SchemaList schemas={schemas} onSelect={onSelect} />;
+ * ```
  */
-export function SchemaList({ onSelect, emptyMessage = "No schemas yet." }: SchemaListProps) {
-  const schemas = useSchemas();
-
+export function SchemaList({
+  schemas,
+  onSelect,
+  emptyMessage = "No schemas yet.",
+}: SchemaListProps) {
   if (schemas === undefined) {
     return <div className="text-xs text-muted-foreground">Loading schemas…</div>;
   }

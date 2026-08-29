@@ -87,4 +87,34 @@ export default [
       ],
     },
   },
+  // react/ui must stay backend-agnostic: presentational components only, no
+  // Convex, hooks-layer, client, or generated-code imports. See
+  // docs/decisions/0001-backend-agnostic-react-ui.md.
+  {
+    files: ["src/react/ui/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: [
+                "convex",
+                "convex/*",
+                "**/hooks",
+                "**/hooks.js",
+                "**/provider",
+                "**/provider.js",
+                "**/client",
+                "**/client/*",
+                "**/_generated/*",
+              ],
+              message:
+                "react/ui must stay backend-agnostic — no imports from Convex, the hooks layer, the client, or generated code. Take data + callbacks as props and let a container (or the consumer) do the fetching.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 ];

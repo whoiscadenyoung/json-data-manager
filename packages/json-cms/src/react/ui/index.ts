@@ -13,7 +13,7 @@ export { JsonTree } from "./json-tree.js";
 export { EntryForm } from "./entry-form.js";
 export type { EntryFormProps } from "./entry-form.js";
 export { SchemaList } from "./schema-list.js";
-export type { SchemaListProps } from "./schema-list.js";
+export type { SchemaListProps, SchemaSummary } from "./schema-list.js";
 
 // Primitives
 export { Button, buttonVariants } from "./primitives/button.js";
