@@ -3,6 +3,10 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/inter";
 
+/* Scan the @caden/json-cms component's compiled UI so Tailwind generates the
+   utility classes its components use (node_modules is not scanned by default). */
+@source "../../packages/json-cms/dist/react";
+
 @custom-variant dark (&:is(.dark *));
 
 :root {

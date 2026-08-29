@@ -18,7 +18,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { SchemaEditor } from "@/components/schema-editor/schema-editor";
+import { SchemaEditor } from "@caden/json-cms/react/ui";
 import { ArrowLeft, Save, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 
