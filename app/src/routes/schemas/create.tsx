@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { RouterButton } from "#/components/router-button";
-import { SchemaEditor } from "#/components/schema-editor/schema-editor";
+import { SchemaEditor } from "@caden/json-cms/react/ui";
 import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 
