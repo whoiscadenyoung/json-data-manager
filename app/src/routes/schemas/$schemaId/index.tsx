@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/breadcrumb";
 import { useQuery } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
-import type { Id } from "../../../../convex/_generated/dataModel";
+import type { SchemaId } from "@caden/json-cms";
 import { Button } from "@/components/ui/button";
 import { RouterButton } from "@/components/router-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,8 +30,8 @@ export const Route = createFileRoute("/schemas/$schemaId/")({
 
 function SchemaDetailPage() {
   const { schemaId } = Route.useParams();
-  const schema = useQuery(api.schemas.get, { schemaId: schemaId as Id<"schemas"> });
-  const entries = useQuery(api.entries.list, { schemaId: schemaId as Id<"schemas"> });
+  const schema = useQuery(api.schemas.get, { schemaId: schemaId as SchemaId });
+  const entries = useQuery(api.entries.list, { schemaId: schemaId as SchemaId });
 
   const downloadFile = (content: string, filename: string) => {
     const blob = new Blob([content], { type: "application/json" });

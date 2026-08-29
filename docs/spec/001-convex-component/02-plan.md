@@ -1,5 +1,35 @@
 # Convex Component Plan: JSON Data Manager
 
+> ## Reconciliation (status vs. plan) — 2026-08
+>
+> This document is the **original** planning artifact. Several details below
+> did not survive contact with the implementation. What actually shipped:
+>
+> - **Table prefixes (`jdm_`) — rejected.** Convex components are
+>   table-namespace isolated, so the component's tables are plain `schemas`
+>   and `entries` (see `packages/json-cms/src/component/schema.ts`). No
+>   prefixing is needed to avoid host-app collisions.
+> - **Package name / path.** The component is published as `@caden/json-cms`
+>   and lives at `packages/json-cms/` (not `packages/json-data-manager/`).
+> - **Not implemented (deferred / out of scope).** `slug` + `by_slug` /
+>   `by_title` indexes, cursor pagination on `listSchemas`, and `metadata`
+>   fields are not built. The current API is straightforward CRUD
+>   (`listSchemas`, `getSchema`, `createSchema`, `updateSchema`,
+>   `deleteSchema`, `listEntries`, `getEntry`, `createEntry`,
+>   `createEntriesBulk`, `updateEntry`, `deleteEntry`,
+>   `deleteEntriesBySchema`), plus `uiSchema` support on schemas.
+> - **Current repo shape.** The root is now a pure bun workspace. The full
+>   reference app lives in its own `app/` workspace and consumes
+>   `@caden/json-cms` through authenticated `exposeApi` re-exports; the
+>   component keeps a minimal internal `example/` as its dev/codegen host.
+> - **Still pending.** The component's React layer
+>   (`packages/json-cms/src/react/` hooks + a `react/ui` component layer) is
+>   not built yet — the app still uses its own local UI. Real auth (the app
+>   currently allows anonymous access) is also a follow-up.
+>
+> The sections below are preserved as originally written for historical
+> context.
+
 ## Overview
 
 Convert the JSON Data Manager into a reusable, publishable Convex component. This involves restructuring the existing repository into a **monorepo** with the component as a package under `packages/json-data-manager/`. The component will provide:

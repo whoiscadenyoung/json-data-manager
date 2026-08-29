@@ -1,6 +1,6 @@
 /* eslint-disable */
 /**
- * Generated `ComponentApi` utility.
+ * Generated `api` utility.
  *
  * THIS CODE IS AUTOMATICALLY GENERATED.
  *
@@ -8,63 +8,86 @@
  * @module
  */
 
-import type { FunctionReference } from "convex/server";
+import type * as auth from "../auth.js";
+import type * as entries from "../entries.js";
+import type * as schemas from "../schemas.js";
+
+import type {
+  ApiFromModules,
+  FilterApi,
+  FunctionReference,
+} from "convex/server";
+
+declare const fullApi: ApiFromModules<{
+  auth: typeof auth;
+  entries: typeof entries;
+  schemas: typeof schemas;
+}>;
 
 /**
- * A utility for referencing a Convex component's exposed API.
+ * A utility for referencing Convex functions in your app's public API.
  *
- * Useful when expecting a parameter like `components.myComponent`.
  * Usage:
- * ```ts
- * async function myFunction(ctx: QueryCtx, component: ComponentApi) {
- *   return ctx.runQuery(component.someFile.someQuery, { ...args });
- * }
+ * ```js
+ * const myFunctionReference = api.myModule.myFunction;
  * ```
  */
-export type ComponentApi<Name extends string | undefined = string | undefined> =
-  {
+export declare const api: FilterApi<
+  typeof fullApi,
+  FunctionReference<any, "public">
+>;
+
+/**
+ * A utility for referencing Convex functions in your app's internal API.
+ *
+ * Usage:
+ * ```js
+ * const myFunctionReference = internal.myModule.myFunction;
+ * ```
+ */
+export declare const internal: FilterApi<
+  typeof fullApi,
+  FunctionReference<any, "internal">
+>;
+
+export declare const components: {
+  jsonCms: {
     lib: {
       createEntriesBulk: FunctionReference<
         "mutation",
         "internal",
         { dataArray: Array<any>; schemaId: string },
-        Array<string>,
-        Name
+        Array<string>
       >;
       createEntry: FunctionReference<
         "mutation",
         "internal",
         { data: any; schemaId: string },
-        string,
-        Name
+        string
       >;
       createSchema: FunctionReference<
         "mutation",
         "internal",
         { schema: any; uiSchema?: any },
-        string,
-        Name
+        string
       >;
       deleteEntriesBySchema: FunctionReference<
         "mutation",
         "internal",
         { schemaId: string },
-        number,
-        Name
+        number
       >;
       deleteEntry: FunctionReference<
         "mutation",
         "internal",
         { entryId: string },
-        any,
-        Name
+        any
       >;
       deleteSchema: FunctionReference<
         "mutation",
         "internal",
         { schemaId: string },
-        any,
-        Name
+        any
       >;
       getEntry: FunctionReference<
         "query",
@@ -75,8 +98,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           _id: string;
           data: any;
           schemaId: string;
-        },
-        Name
+        }
       >;
       getSchema: FunctionReference<
         "query",
@@ -89,8 +111,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           schema: any;
           title: string;
           uiSchema?: any;
-        },
-        Name
+        }
       >;
       listEntries: FunctionReference<
         "query",
@@ -101,8 +122,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           _id: string;
           data: any;
           schemaId: string;
-        }>,
-        Name
+        }>
       >;
       listSchemas: FunctionReference<
         "query",
@@ -115,15 +135,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           schema: any;
           title: string;
           uiSchema?: any;
-        }>,
-        Name
+        }>
       >;
       updateEntry: FunctionReference<
         "mutation",
         "internal",
         { data: any; entryId: string },
-        any,
-        Name
+        any
       >;
       updateSchema: FunctionReference<
         "mutation",
@@ -135,8 +153,8 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           title?: string;
           uiSchema?: any;
         },
-        any,
-        Name
+        any
       >;
     };
   };
+};
