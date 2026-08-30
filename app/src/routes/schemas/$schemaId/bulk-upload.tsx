@@ -1,8 +1,9 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import type { SchemaId } from "@caden/json-cms";
+import { parseDataRows } from "@caden/json-cms/react";
 import validator from "@rjsf/validator-ajv8";
 import { RouterButton } from "@/components/router-button";
 import { Button } from "@/components/ui/button";
@@ -35,7 +36,8 @@ function BulkUploadPage() {
   const { schemaId } = Route.useParams();
   const navigate = useNavigate();
   const schema = useQuery(api.schemas.get, { schemaId: schemaId as SchemaId });
-  const createBulk = useMutation(api.entries.createBulk);
+  const generateUploadUrl = useMutation(api.imports.generateUploadUrl);
+  const startImport = useMutation(api.imports.startImport);
 
   const [jsonText, setJsonText] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
@@ -43,7 +45,27 @@ function BulkUploadPage() {
   const [parseError, setParseError] = useState<string | null>(null);
   const [validationResults, setValidationResults] = useState<ValidationResult[] | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [importId, setImportId] = useState<string | undefined>(undefined);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const importStatus = useQuery(
+    api.imports.getImportStatus,
+    importId ? { importId } : "skip",
+  );
+
+  // Navigate back to the dataset once the batched import finishes.
+  useEffect(() => {
+    if (importStatus?.status === "completed") {
+      toast.success(
+        `${importStatus.total} ${importStatus.total === 1 ? "entry" : "entries"} imported!`,
+      );
+      void navigate({ to: "/schemas/$schemaId", params: { schemaId } });
+    } else if (importStatus?.status === "failed") {
+      toast.error(importStatus.error ?? "Import failed.");
+      setIsSubmitting(false);
+      setImportId(undefined);
+    }
+  }, [importStatus?.status, importStatus?.total, importStatus?.error, navigate, schemaId]);
 
   // Wrap item schema in array schema for inline CodeMirror linting
   const arrayJsonSchema = useMemo(
@@ -61,25 +83,21 @@ function BulkUploadPage() {
       return;
     }
 
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      setParseError("Invalid JSON — please check your input.");
+    const { rows, errors: parseErrors } = parseDataRows(text);
+
+    if (rows.length === 0) {
+      setParseError(
+        parseErrors.length > 0
+          ? "Could not parse any rows — check your JSON/JSONL input."
+          : "No rows found — provide a JSON array or JSONL file.",
+      );
       return;
     }
-
-    if (!Array.isArray(parsed)) {
-      setParseError("Input must be a JSON array of objects.");
-      return;
+    if (parseErrors.length > 0) {
+      toast.warning(`Skipped ${parseErrors.length} malformed line(s).`);
     }
 
-    if (parsed.length === 0) {
-      setParseError("Array is empty — no entries to upload.");
-      return;
-    }
-
-    const results: ValidationResult[] = parsed.map((item, index) => {
+    const results: ValidationResult[] = rows.map((item, index) => {
       const { errors } = validator.validateFormData(item, schema.schema);
       return {
         index,
@@ -93,8 +111,8 @@ function BulkUploadPage() {
   };
 
   const loadFile = (file: File) => {
-    if (!file.name.endsWith(".json") && file.type !== "application/json") {
-      toast.error("Please upload a .json file.");
+    if (!/\.(json|jsonl|ndjson)$/i.test(file.name) && file.type !== "application/json") {
+      toast.error("Please upload a .json or .jsonl file.");
       return;
     }
     setFileName(file.name);
@@ -146,17 +164,24 @@ function BulkUploadPage() {
 
     setIsSubmitting(true);
     try {
-      await createBulk({
-        schemaId: schemaId as SchemaId,
-        dataArray: validEntries,
+      // Upload the valid rows to storage, then run the batched, monitored import.
+      const uploadUrl = await generateUploadUrl({});
+      const res = await fetch(uploadUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(validEntries),
       });
-      toast.success(
-        `${validEntries.length} ${validEntries.length === 1 ? "entry" : "entries"} uploaded!`,
-      );
-      void navigate({ to: "/schemas/$schemaId", params: { schemaId } });
+      if (!res.ok) throw new Error("Failed to upload entries.");
+      const { storageId } = (await res.json()) as { storageId: string };
+      const newImportId = await startImport({
+        schemaId: schemaId as SchemaId,
+        storageId,
+        total: validEntries.length,
+      });
+      setImportId(newImportId);
+      // Navigation happens in the effect watching importStatus.
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to upload entries.");
-    } finally {
       setIsSubmitting(false);
     }
   };
@@ -228,7 +253,8 @@ function BulkUploadPage() {
           <CardHeader>
             <CardTitle>JSON Input</CardTitle>
             <CardDescription>
-              Upload a <code>.json</code> file or paste a JSON array below. Each object will be
+              Upload a <code>.json</code> or <code>.jsonl</code> file or paste a JSON array below.
+              Each object will be
               validated against the <strong>{schema.title}</strong> schema.
             </CardDescription>
           </CardHeader>
@@ -239,7 +265,7 @@ function BulkUploadPage() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".json,application/json"
+                accept=".json,.jsonl,.ndjson,application/json"
                 className="hidden"
                 onChange={handleFileChange}
               />
@@ -287,7 +313,7 @@ function BulkUploadPage() {
                         ? "Drop your file here"
                         : "Drag & drop a JSON file, or click to browse"}
                     </p>
-                    <p className="text-xs">.json files only</p>
+                    <p className="text-xs">.json or .jsonl files</p>
                   </>
                 )}
               </div>
@@ -391,7 +417,9 @@ function BulkUploadPage() {
               <Button onClick={handleSubmit} disabled={isSubmitting || validCount === 0}>
                 <Upload className="h-4 w-4 mr-2" />
                 {isSubmitting
-                  ? "Uploading…"
+                  ? importStatus
+                    ? `Importing… ${importStatus.processed}/${importStatus.total}`
+                    : "Uploading…"
                   : `Upload ${validCount} Valid ${validCount === 1 ? "Entry" : "Entries"}`}
               </Button>
             </CardContent>

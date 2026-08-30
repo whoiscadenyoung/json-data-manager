@@ -17,6 +17,18 @@ interface SchemaEditorProps {
   initialUiSchemaJson?: string;
   onSave: (json: string, parsed: object, uiSchemaJson: string, uiSchemaParsed: object) => Promise<void>;
   saveLabel?: string;
+  /**
+   * Data to seed the validation pane with (a JSON array string). Updating it
+   * re-seeds the pane — used by the dataset importer to push imported rows in
+   * and to re-push them on re-upload without touching the schema.
+   */
+  dataText?: string;
+  /**
+   * When true, saving is blocked unless the seeded data is present and every
+   * row validates against the current schema. Used when the dataset is being
+   * pre-populated, so an invalid schema can't be saved against real data.
+   */
+  requireValidData?: boolean;
 }
 
 type PendingFile = { file: File; content: string; isDataArray: boolean };
@@ -26,19 +38,34 @@ export function SchemaEditor({
   initialUiSchemaJson = "",
   onSave,
   saveLabel = "Save",
+  dataText,
+  requireValidData = false,
 }: SchemaEditorProps) {
   const [schemaJson, setSchemaJson] = useState(initialJson);
   const [uiSchemaJson, setUiSchemaJson] = useState(initialUiSchemaJson);
-  const [activeTab, setActiveTab] = useState<"visual" | "code" | "data">("visual");
+  const [activeTab, setActiveTab] = useState<"visual" | "code" | "data">(
+    requireValidData ? "data" : "visual",
+  );
   const [isSaving, setIsSaving] = useState(false);
 
   // Validation pane state (lifted for visual builder badges)
   const [validationState, setValidationState] = useState<ValidationState>({
     total: 0,
     failingPaths: new Map(),
+    invalidItemCount: 0,
   });
   // External data to push into the validation pane. Wrapped in object so re-sending the same content still triggers the effect.
-  const [externalDataText, setExternalDataText] = useState<{ text: string } | undefined>(undefined);
+  const [externalDataText, setExternalDataText] = useState<{ text: string } | undefined>(
+    dataText !== undefined ? { text: dataText } : undefined,
+  );
+
+  // Re-seed the validation pane whenever the controlled `dataText` prop changes
+  // (initial import + every re-upload).
+  useEffect(() => {
+    if (dataText !== undefined) {
+      setExternalDataText({ text: dataText });
+    }
+  }, [dataText]);
 
   // Drag & drop
   const [isDraggingFile, setIsDraggingFile] = useState(false);
@@ -229,6 +256,14 @@ export function SchemaEditor({
       toast.error(`UI Schema exceeds the 100 KB limit (${Math.round(uiSchemaBytes / 1024)} KB).`);
       return;
     }
+    if (requireValidData && !isDataValid) {
+      toast.error(
+        validationState.total === 0
+          ? "Import some data before saving."
+          : `${validationState.invalidItemCount} row${validationState.invalidItemCount === 1 ? "" : "s"} don't match the schema. Fix the schema or re-upload matching data.`,
+      );
+      return;
+    }
     setIsSaving(true);
     try {
       await onSave(
@@ -242,7 +277,14 @@ export function SchemaEditor({
     }
   };
 
-  const canSave = !getParseError() && !isOverLimit && !getUiSchemaParseError() && !isUiSchemaOverLimit;
+  // When pre-populating a dataset, every imported row must validate.
+  const isDataValid = validationState.total > 0 && validationState.invalidItemCount === 0;
+  const canSave =
+    !getParseError() &&
+    !isOverLimit &&
+    !getUiSchemaParseError() &&
+    !isUiSchemaOverLimit &&
+    (!requireValidData || isDataValid);
 
   return (
     <div className="relative flex flex-col gap-4">
@@ -379,6 +421,16 @@ export function SchemaEditor({
                   size before saving.
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Data-validity warning (import mode) */}
+          {requireValidData && !isDataValid && !getParseError() && (
+            <div className="flex items-center gap-2 border-b border-amber-300/40 bg-amber-50 dark:bg-amber-950/40 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-300 shrink-0">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              {validationState.total === 0
+                ? "Import data to pre-populate this dataset before saving."
+                : `${validationState.invalidItemCount} of ${validationState.total} imported row${validationState.total === 1 ? "" : "s"} don't match the schema. Adjust the schema or re-upload matching data — saving is blocked until every row is valid.`}
             </div>
           )}
 

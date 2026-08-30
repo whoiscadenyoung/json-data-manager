@@ -80,6 +80,8 @@
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/language": "^6.12.2",
     "@codemirror/lint": "^6.9.5",
+    "@convex-dev/workflow": "0.3.12",
+    "@convex-dev/workpool": "0.3.2",
     "@rjsf/core": "^6.4.1",
     "@rjsf/shadcn": "^6.4.1",
     "@rjsf/utils": "^6.4.1",
@@ -89,6 +91,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "codemirror-json-schema": "^0.8.1",
+    "convex-helpers": "^0.1.99",
     "lucide-react": "^0.577.0",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0"

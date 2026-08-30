@@ -66,6 +66,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         any,
         Name
       >;
+      generateUploadUrl: FunctionReference<
+        "mutation",
+        "internal",
+        {},
+        string,
+        Name
+      >;
       getEntry: FunctionReference<
         "query",
         "internal",
@@ -76,6 +83,23 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           data: any;
           schemaId: string;
         },
+        Name
+      >;
+      getImportStatus: FunctionReference<
+        "query",
+        "internal",
+        { importId: string },
+        {
+          _creationTime: number;
+          _id: string;
+          error?: string;
+          processed: number;
+          schemaId: string;
+          status: "pending" | "processing" | "completed" | "failed";
+          storageId: string;
+          total: number;
+          workflowId?: string;
+        } | null,
         Name
       >;
       getSchema: FunctionReference<
@@ -116,6 +140,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           title: string;
           uiSchema?: any;
         }>,
+        Name
+      >;
+      startImport: FunctionReference<
+        "mutation",
+        "internal",
+        { schemaId: string; storageId: string; total: number },
+        string,
         Name
       >;
       updateEntry: FunctionReference<

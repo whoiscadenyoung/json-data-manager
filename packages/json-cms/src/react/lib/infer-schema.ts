@@ -49,20 +49,27 @@ function inferObjectSchema(objects: Record<string, unknown>[]): Record<string, u
     // Determine the inferred type across all objects
     let inferredType: InferredType = "null";
     let presentCount = 0;
+    // Track null separately from the non-null type inference so a column that
+    // is null in some rows and a concrete type in others produces a nullable
+    // schema (e.g. `["string", "null"]`) that stays valid against every row.
+    let sawNull = false;
     const subObjects: Record<string, unknown>[] = [];
     const arrayValues: unknown[][] = [];
 
     for (const obj of objects) {
-      if (key in obj && obj[key] !== undefined && obj[key] !== null) {
-        presentCount++;
-        const t = inferType(obj[key]);
-        inferredType = mergeTypes(inferredType, t);
-        if (t === "object" && obj[key] !== null) {
-          subObjects.push(obj[key] as Record<string, unknown>);
-        }
-        if (t === "array" && Array.isArray(obj[key])) {
-          arrayValues.push(obj[key] as unknown[]);
-        }
+      if (!(key in obj) || obj[key] === undefined) continue;
+      if (obj[key] === null) {
+        sawNull = true;
+        continue;
+      }
+      presentCount++;
+      const t = inferType(obj[key]);
+      inferredType = mergeTypes(inferredType, t);
+      if (t === "object") {
+        subObjects.push(obj[key] as Record<string, unknown>);
+      }
+      if (t === "array" && Array.isArray(obj[key])) {
+        arrayValues.push(obj[key] as unknown[]);
       }
     }
 
@@ -70,32 +77,42 @@ function inferObjectSchema(objects: Record<string, unknown>[]): Record<string, u
     let propSchema: Record<string, unknown> = {};
 
     if (inferredType !== "mixed" && inferredType !== "null") {
+      // A concrete type gets a nullable union when null was also observed.
+      const asType = (t: string): string | string[] => (sawNull ? [t, "null"] : t);
+
       if (inferredType === "object" && subObjects.length > 0) {
         const nested = inferObjectSchema(subObjects);
         propSchema = nested;
-        // Override type explicitly
-        propSchema.type = "object";
+        // Override type explicitly (nullable if null appeared alongside objects)
+        propSchema.type = asType("object");
       } else if (inferredType === "array") {
-        propSchema = { type: "array" };
+        propSchema = { type: asType("array") };
         // Try to infer item type from all array values
         const flatItems = arrayValues.flat();
         if (flatItems.length > 0) {
           let itemType: InferredType = "null";
+          let itemsSawNull = false;
           for (const item of flatItems) {
+            if (item === null) {
+              itemsSawNull = true;
+              continue;
+            }
             itemType = mergeTypes(itemType, inferType(item));
           }
           if (itemType !== "mixed" && itemType !== "null") {
-            propSchema.items = { type: itemType };
+            propSchema.items = { type: itemsSawNull ? [itemType, "null"] : itemType };
           }
         }
       } else {
-        propSchema = { type: inferredType };
+        propSchema = { type: asType(inferredType) };
       }
     }
 
     properties[key] = propSchema;
 
-    // Mark as required if present in all objects and never null
+    // Mark as required only if present (non-null) in every object. A field that
+    // is null in some rows stays optional — and its nullable type still allows
+    // the null occurrences.
     if (presentCount === objects.length) {
       required.push(key);
     }

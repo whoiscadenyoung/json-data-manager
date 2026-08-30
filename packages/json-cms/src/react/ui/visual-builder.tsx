@@ -14,6 +14,8 @@ export interface PropertyDef {
   id: string;
   name: string;
   type: PropertyType;
+  /** When true the field also accepts null (JSON Schema `type: [T, "null"]`). */
+  nullable: boolean;
   title: string;
   description: string;
   required: boolean;
@@ -46,7 +48,7 @@ export interface SchemaFormData {
 
 function makePropertySchema(prop: PropertyDef): Record<string, unknown> {
   const schema: Record<string, unknown> = {};
-  schema.type = prop.type;
+  schema.type = prop.nullable ? [prop.type, "null"] : prop.type;
   if (prop.title) schema.title = prop.title;
   if (prop.description) schema.description = prop.description;
 
@@ -139,15 +141,35 @@ function parsePropertyDef(
   schema: Record<string, unknown>,
   requiredSet: Set<string>,
 ): PropertyDef {
-  const type = (schema.type as PropertyType) ?? "string";
+  // `type` may be a nullable union like ["string", "null"]; split it into a
+  // base type plus a `nullable` flag so the type <select> stays scalar.
+  let type: PropertyType = "string";
+  let nullable = false;
+  if (Array.isArray(schema.type)) {
+    const parts = schema.type as string[];
+    nullable = parts.includes("null");
+    type = (parts.find((t) => t !== "null") as PropertyType) ?? "string";
+  } else if (typeof schema.type === "string") {
+    type = schema.type as PropertyType;
+  }
   const enumVals = Array.isArray(schema.enum)
     ? (schema.enum as unknown[]).map(String).join(", ")
     : "";
+
+  const itemsObj =
+    typeof schema.items === "object" && schema.items !== null
+      ? (schema.items as Record<string, unknown>)
+      : null;
+  const rawItemType = itemsObj?.type;
+  const itemType = Array.isArray(rawItemType)
+    ? ((rawItemType as string[]).find((t) => t !== "null") ?? "")
+    : ((rawItemType as string) ?? "");
 
   const prop: PropertyDef = {
     id: nextId(),
     name,
     type,
+    nullable,
     title: (schema.title as string) ?? "",
     description: (schema.description as string) ?? "",
     required: requiredSet.has(name),
@@ -159,10 +181,7 @@ function parsePropertyDef(
     minimum: schema.minimum !== undefined ? String(schema.minimum) : "",
     maximum: schema.maximum !== undefined ? String(schema.maximum) : "",
     multipleOf: schema.multipleOf !== undefined ? String(schema.multipleOf) : "",
-    itemType:
-      typeof schema.items === "object" && schema.items !== null
-        ? (((schema.items as Record<string, unknown>).type as string) ?? "")
-        : "",
+    itemType,
     minItems: schema.minItems !== undefined ? String(schema.minItems) : "",
     maxItems: schema.maxItems !== undefined ? String(schema.maxItems) : "",
     itemSchema: null,
@@ -220,6 +239,7 @@ function defaultProp(): PropertyDef {
     id: nextId(),
     name: "",
     type: "string",
+    nullable: false,
     title: "",
     description: "",
     required: false,
@@ -323,6 +343,17 @@ function PropertyRow({
             className="h-3 w-3 rounded"
           />
           req
+        </label>
+
+        {/* Nullable toggle */}
+        <label className="flex items-center gap-1 text-xs text-muted-foreground shrink-0 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={prop.nullable}
+            onChange={(e) => set("nullable", e.target.checked)}
+            className="h-3 w-3 rounded"
+          />
+          null
         </label>
 
         {/* Failing badge */}

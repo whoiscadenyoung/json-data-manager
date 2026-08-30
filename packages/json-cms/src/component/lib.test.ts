@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api } from "./_generated/api.js";
+import { api, internal } from "./_generated/api.js";
 import { initConvexTest } from "./setup.test.js";
 
 describe("json-cms component", () => {
@@ -548,6 +548,86 @@ describe("json-cms component", () => {
       expect(entries[0].data.order).toBe(3);
       expect(entries[1].data.order).toBe(2);
       expect(entries[2].data.order).toBe(1);
+    });
+  });
+
+  describe("dataset import", () => {
+    async function createImportSchema(t: ReturnType<typeof initConvexTest>) {
+      return await t.mutation(api.lib.createSchema, {
+        schema: {
+          title: "Import Schema",
+          description: "For import tests",
+          type: "object",
+          properties: { name: { type: "string" } },
+        },
+      });
+    }
+
+    async function storeRows(
+      t: ReturnType<typeof initConvexTest>,
+      rows: unknown[],
+    ) {
+      return await t.run(
+        async (ctx) =>
+          await ctx.storage.store(
+            new Blob([JSON.stringify(rows)], { type: "application/json" }),
+          ),
+      );
+    }
+
+    // NOTE: startImport's happy path and the full workflow *execution*
+    // (importWorkflow driving batches) aren't unit-tested here. The workflow
+    // engine (a) requires registering the nested workflow component, whose
+    // shipped test source is type-incompatible with this repo's convex-test
+    // version, and (b) deletes `global.process` for determinism, which the
+    // convex-test edge-runtime doesn't provide (a step fails with "process is
+    // not defined" under the harness only). The real deployment compiles and
+    // runs it fine. We instead verify the guard plus the batch-insert
+    // primitives the workflow calls.
+    test("insertEntriesChunkInternal inserts a batch of entries", async () => {
+      const t = initConvexTest();
+      const schemaId = await createImportSchema(t);
+      const chunk = Array.from({ length: 300 }, (_, i) => ({ name: `row-${i}` }));
+
+      await t.mutation(internal.lib.insertEntriesChunkInternal, {
+        schemaId,
+        dataArray: chunk,
+      });
+
+      const entries = await t.query(api.lib.listEntries, { schemaId });
+      expect(entries).toHaveLength(chunk.length);
+    });
+
+    test("insertChunkFromStorage reads storage and inserts the requested slice", async () => {
+      const t = initConvexTest();
+      const schemaId = await createImportSchema(t);
+      const rows = Array.from({ length: 1200 }, (_, i) => ({ name: `row-${i}` }));
+      const storageId = await storeRows(t, rows);
+
+      // Insert the middle batch [500, 1000).
+      const inserted = await t.action(internal.lib.insertChunkFromStorage, {
+        schemaId,
+        storageId,
+        offset: 500,
+        limit: 500,
+      });
+      expect(inserted).toBe(500);
+
+      const entries = await t.query(api.lib.listEntries, { schemaId });
+      expect(entries).toHaveLength(500);
+    });
+
+    test("startImport rejects a missing schema", async () => {
+      const t = initConvexTest();
+      const schemaId = await createImportSchema(t);
+      const storageId = await storeRows(t, [{ name: "a" }]);
+
+      // Delete the schema so startImport can't find it.
+      await t.mutation(api.lib.deleteSchema, { schemaId });
+
+      await expect(
+        t.mutation(api.lib.startImport, { schemaId, storageId, total: 1 }),
+      ).rejects.toThrow();
     });
   });
 });

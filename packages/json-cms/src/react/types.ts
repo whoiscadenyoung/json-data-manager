@@ -49,4 +49,23 @@ export interface JsonCmsApi {
   updateEntry: FunctionReference<"mutation">;
   deleteEntry: FunctionReference<"mutation">;
   deleteEntriesBySchema: FunctionReference<"mutation">;
+  // Batched dataset import
+  generateImportUploadUrl: FunctionReference<"mutation">;
+  startImport: FunctionReference<"mutation">;
+  getImportStatus: FunctionReference<"query">;
 }
+
+/**
+ * Live status of a batched dataset import, as returned by `getImportStatus`.
+ */
+export type ImportStatusDoc = {
+  _id: string;
+  _creationTime: number;
+  schemaId: SchemaId;
+  storageId: string;
+  total: number;
+  processed: number;
+  status: "pending" | "processing" | "completed" | "failed";
+  error?: string;
+  workflowId?: string;
+};

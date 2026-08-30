@@ -13,4 +13,21 @@ export default defineSchema({
     schemaId: v.id("schemas"),
     data: v.any(), // Entry data conforming to the schema
   }).index("by_schema", ["schemaId"]),
+
+  // Tracks a batched, workflow-driven import of a dataset's entries so the
+  // client can monitor progress. The payload lives in file storage.
+  imports: defineTable({
+    schemaId: v.id("schemas"),
+    storageId: v.id("_storage"), // uploaded rows payload (JSON array)
+    total: v.number(),
+    processed: v.number(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("processing"),
+      v.literal("completed"),
+      v.literal("failed"),
+    ),
+    error: v.optional(v.string()),
+    workflowId: v.optional(v.string()),
+  }).index("by_schema", ["schemaId"]),
 });

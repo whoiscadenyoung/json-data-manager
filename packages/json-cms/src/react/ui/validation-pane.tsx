@@ -31,6 +31,8 @@ export interface ValidationResult {
 export interface ValidationState {
   total: number;
   failingPaths: Map<string, number>;
+  /** Number of data rows with at least one validation error. */
+  invalidItemCount: number;
 }
 
 interface ValidationPaneProps {
@@ -114,7 +116,7 @@ export function ValidationPane({
       if (!text.trim()) {
         setResults(null);
         setParseError(null);
-        onStateChange({ total: 0, failingPaths: new Map() });
+        onStateChange({ total: 0, failingPaths: new Map(), invalidItemCount: 0 });
         return;
       }
 
@@ -124,14 +126,14 @@ export function ValidationPane({
       } catch {
         setParseError("Invalid JSON — please check your input.");
         setResults(null);
-        onStateChange({ total: 0, failingPaths: new Map() });
+        onStateChange({ total: 0, failingPaths: new Map(), invalidItemCount: 0 });
         return;
       }
 
       if (!Array.isArray(parsedData)) {
         setParseError("Data must be a JSON array of objects.");
         setResults(null);
-        onStateChange({ total: 0, failingPaths: new Map() });
+        onStateChange({ total: 0, failingPaths: new Map(), invalidItemCount: 0 });
         return;
       }
 
@@ -151,7 +153,7 @@ export function ValidationPane({
           })),
         );
         setParseError(null);
-        onStateChange({ total: parsedData.length, failingPaths: new Map() });
+        onStateChange({ total: parsedData.length, failingPaths: new Map(), invalidItemCount: parsedData.length });
         return;
       }
 
@@ -196,12 +198,14 @@ export function ValidationPane({
 
       // Aggregate failing paths across all items
       const aggregated = new Map<string, number>();
+      let invalidItemCount = 0;
       for (const r of newResults) {
+        if (!r.valid) invalidItemCount++;
         for (const path of r.failingPaths) {
           aggregated.set(path, (aggregated.get(path) ?? 0) + 1);
         }
       }
-      onStateChange({ total: parsedData.length, failingPaths: aggregated });
+      onStateChange({ total: parsedData.length, failingPaths: aggregated, invalidItemCount });
     },
     [onStateChange],
   );
@@ -231,7 +235,7 @@ export function ValidationPane({
     setResults(null);
     setParseError(null);
     setExpandedItems(new Set());
-    onStateChange({ total: 0, failingPaths: new Map() });
+    onStateChange({ total: 0, failingPaths: new Map(), invalidItemCount: 0 });
   };
 
   const doInfer = () => {

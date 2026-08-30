@@ -180,6 +180,39 @@ export function exposeApi(
         return await ctx.runMutation(component.lib.deleteEntriesBySchema, args);
       },
     }),
+
+    // Batched dataset import operations
+    generateImportUploadUrl: mutationGeneric({
+      args: {},
+      handler: async (ctx) => {
+        await options.auth(ctx, { type: "create" });
+        return await ctx.runMutation(component.lib.generateUploadUrl, {});
+      },
+    }),
+    startImport: mutationGeneric({
+      args: {
+        schemaId: v.string(),
+        storageId: v.string(),
+        total: v.number(),
+      },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { type: "create", schemaId: args.schemaId });
+        return await ctx.runMutation(component.lib.startImport, {
+          schemaId: args.schemaId,
+          storageId: args.storageId,
+          total: args.total,
+        });
+      },
+    }),
+    getImportStatus: queryGeneric({
+      args: { importId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { type: "read" });
+        return await ctx.runQuery(component.lib.getImportStatus, {
+          importId: args.importId,
+        });
+      },
+    }),
   };
 }
 
