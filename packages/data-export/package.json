@@ -1,0 +1,103 @@
+{
+  "name": "@caden/data-export",
+  "version": "0.1.0",
+  "description": "A generic data export component for Convex — snapshot any tables to flat JSON files in Convex storage, orchestrated durably with workflows and batching.",
+  "keywords": [
+    "backup",
+    "component",
+    "convex",
+    "export",
+    "snapshot"
+  ],
+  "homepage": "https://github.com/whoiscadenyoung/json-data-manager#readme",
+  "bugs": {
+    "url": "https://github.com/whoiscadenyoung/json-data-manager/issues"
+  },
+  "license": "Apache-2.0",
+  "repository": "github:whoiscadenyoung/json-data-manager",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "type": "module",
+  "module": "./dist/client/index.js",
+  "types": "./dist/client/index.d.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/client/index.d.ts",
+      "default": "./dist/client/index.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "default": "./dist/react/index.js"
+    },
+    "./test": "./src/test.ts",
+    "./_generated/component.js": {
+      "types": "./dist/component/_generated/component.d.ts"
+    },
+    "./_generated/component": {
+      "types": "./dist/component/_generated/component.d.ts"
+    },
+    "./convex.config.js": {
+      "types": "./dist/component/convex.config.d.ts",
+      "default": "./dist/component/convex.config.js"
+    },
+    "./convex.config": {
+      "types": "./dist/component/convex.config.d.ts",
+      "default": "./dist/component/convex.config.js"
+    }
+  },
+  "scripts": {
+    "dev": "convex dev --typecheck-components",
+    "dev:local": "CONVEX_AGENT_MODE=anonymous convex dev --configure --dev-deployment local --typecheck-components",
+    "build": "tsc --project ./tsconfig.build.json",
+    "build:codegen": "convex codegen --component-dir ./src/component && npm run build",
+    "build:clean": "rm -rf dist *.tsbuildinfo && npm run build:codegen",
+    "typecheck": "tsc --noEmit && tsc -p example && tsc -p example/convex",
+    "lint": "eslint .",
+    "test": "vitest run --typecheck",
+    "test:watch": "vitest --typecheck --clearScreen false",
+    "test:debug": "vitest --inspect-brk --no-file-parallelism",
+    "test:coverage": "vitest run --coverage --coverage.reporter=text",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "@convex-dev/workflow": "^0.4.6",
+    "@convex-dev/workpool": "^0.4.10",
+    "convex-helpers": "^0.1.104"
+  },
+  "devDependencies": {
+    "@edge-runtime/vm": "^5.0.0",
+    "@eslint/eslintrc": "^3.3.6",
+    "@eslint/js": "9.39.5",
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
+    "chokidar-cli": "3.0.0",
+    "convex": "^1.45.0",
+    "convex-test": "0.0.55",
+    "eslint": "9.39.5",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.3",
+    "globals": "^17.9.0",
+    "prettier": "3.9.6",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.66.0",
+    "vite": "^8.2.0",
+    "vitest": "4.1.10"
+  },
+  "peerDependencies": {
+    "convex": "^1.36.1",
+    "react": "^18.3.1 || ^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  }
+}
