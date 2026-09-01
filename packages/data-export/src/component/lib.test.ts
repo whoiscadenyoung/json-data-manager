@@ -104,4 +104,50 @@ describe("data-export component", () => {
     expect(await t.query(api.lib.getExport, { exportId })).toBeNull();
     expect(await t.query(api.lib.getExportFiles, { exportId })).toHaveLength(0);
   });
+
+  test("captures schema/version on files and reads rows back", async () => {
+    const t = initConvexTest();
+    const exportId = await t.run(async (ctx) => {
+      return await ctx.db.insert("exports", {
+        status: "running" as const,
+        tableNames: ["users"],
+        readerHandle: "function://host#file:reader",
+        format: "jsonl" as const,
+        batchSize: 100,
+        requestedAt: Date.now(),
+        schemaVersion: "v1",
+        schemas: { users: { type: "object" } },
+      });
+    });
+
+    const docs = [
+      { _id: "a", _creationTime: 1, name: "Ada" },
+      { _id: "b", _creationTime: 2, name: "Grace" },
+    ];
+    const content = docs.map((d) => JSON.stringify(d)).join("\n") + "\n";
+    const storageId = await t.run(async (ctx) => await ctx.storage.store(new Blob([content])));
+    await t.mutation(internal.workflows.recordFile, {
+      exportId,
+      tableName: "users",
+      path: "users/documents.jsonl",
+      storageId,
+      rowCount: 2,
+      sizeBytes: content.length,
+    });
+
+    // recordFile copies the export's schema/version onto the file row.
+    const files = await t.query(api.lib.getExportFiles, { exportId });
+    expect(files[0].schemaVersion).toBe("v1");
+    expect(files[0].schema).toEqual({ type: "object" });
+
+    // readTable streams the documents back out of storage.
+    const page = await t.action(api.lib.readTable, {
+      exportId,
+      tableName: "users",
+    });
+    expect(page.rows).toHaveLength(2);
+    expect(page.isDone).toBe(true);
+    expect(page.schemaVersion).toBe("v1");
+    expect((page.rows[0] as { name: string }).name).toBe("Ada");
+  });
 });

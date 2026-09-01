@@ -45,6 +45,14 @@ export default defineSchema({
     totalRows: v.optional(v.number()),
     totalBytes: v.optional(v.number()),
     error: v.optional(v.string()),
+    // Version stamp for the exported shape. An explicit label the caller
+    // passes, or an auto hash of the captured schemas. Read-back upcasters key
+    // off this to migrate old snapshots to the current shape.
+    schemaVersion: v.optional(v.string()),
+    // Per-table declared schema captured at export time: tableName ->
+    // Convex validator JSON (`validator.json`). Makes each snapshot
+    // self-describing even after the live table drifts.
+    schemas: v.optional(v.record(v.string(), v.any())),
   }).index("by_status", ["status"]),
 
   // One row per table file written for an export.
@@ -56,6 +64,9 @@ export default defineSchema({
     storageId: v.id("_storage"),
     rowCount: v.number(),
     sizeBytes: v.number(),
+    // Copied from the export at write time, so each file is self-describing.
+    schemaVersion: v.optional(v.string()),
+    schema: v.optional(v.any()),
   })
     .index("by_export", ["exportId"])
     .index("by_export_table", ["exportId", "tableName"]),

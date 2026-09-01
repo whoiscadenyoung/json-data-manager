@@ -1,8 +1,16 @@
 import { v } from "convex/values";
 import type { Auth } from "convex/server";
-import { exportReader, exposeApi, startExport, type ExportId } from "@caden/data-export";
+import {
+  defineExportCodec,
+  exportReader,
+  exposeApi,
+  readExportTable,
+  startExport,
+  type ExportId,
+} from "@caden/data-export";
 import { components, internal } from "./_generated/api.js";
-import { mutation } from "./_generated/server.js";
+import { action, mutation } from "./_generated/server.js";
+import schema from "./schema.js";
 
 // The host table reader the export component pages through. Registering it as an
 // internal function makes it a real reference we can hand to the component.
@@ -42,8 +50,38 @@ export const runExport = mutation({
     return await startExport(ctx, components.dataExport, {
       tableNames: args.tableNames ?? ["users", "posts"],
       reader: internal.example.readTablePage,
+      // Capture the declared shape of each table for typed read-back later.
+      schema,
       batchSize: args.batchSize,
       label: args.label,
+    });
+  },
+});
+
+// A codec for reading `users` back with a stable, current shape. If a future
+// version of the app splits `name` into `firstName`/`lastName`, add an upcaster
+// keyed by the older snapshot's `schemaVersion` to keep old exports readable.
+const usersCodec = defineExportCodec({
+  current: v.object({
+    _id: v.string(),
+    _creationTime: v.number(),
+    name: v.string(),
+    email: v.string(),
+  }),
+  upcasters: {
+    // Example: a hypothetical old snapshot that stored `email` under `emailAddress`.
+    // deadbeef: (doc) => ({ ...doc, email: doc.emailAddress }),
+  },
+});
+
+// Read an export's `users` back into the backend as typed rows.
+export const readExportedUsers = action({
+  args: { exportId: v.string() },
+  handler: async (ctx, args): Promise<Array<{ name: string; email: string }>> => {
+    return await readExportTable(ctx, components.dataExport, {
+      exportId: args.exportId as ExportId,
+      table: "users",
+      codec: usersCodec,
     });
   },
 });

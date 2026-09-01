@@ -136,14 +136,27 @@ snapshot:
   "exportedAt": 1788220218217,
   "exportedAtISO": "2026-08-31T23:50:18.217Z",
   "format": "jsonl",
+  "schemaVersion": "e523d76e",
   "tables": [
-    { "table": "users", "path": "users/documents.jsonl", "rowCount": 8, "sizeBytes": 975 },
-    { "table": "posts", "path": "posts/documents.jsonl", "rowCount": 8, "sizeBytes": 1373 }
+    {
+      "table": "users",
+      "path": "users/documents.jsonl",
+      "rowCount": 8,
+      "sizeBytes": 975,
+      "schema": {
+        "type": "object",
+        "value": { "email": { "fieldType": { "type": "string" }, "optional": false } }
+      }
+    }
   ],
   "totalRows": 16,
   "totalBytes": 2348
 }
 ```
+
+Each table's `schema` is the Convex validator JSON captured at export time (see
+[Reading exports back & schema evolution](#reading-exports-back--schema-evolution)),
+or `null` for a schemaless table.
 
 ### Manage exports
 
@@ -152,6 +165,87 @@ await convex.query(api.exports.listExports, { status: "completed", limit: 20 });
 await convex.mutation(api.exports.cancelExport, { exportId }); // while running
 await convex.mutation(api.exports.deleteExport, { exportId }); // removes files too
 ```
+
+## Reading exports back & schema evolution
+
+A point-in-time snapshot is only useful later if you know what shape the data
+was in when it was written — tables drift as your app changes. This component
+addresses that in two parts.
+
+### 1. Capture the schema at export time
+
+Pass your `defineSchema(...)` result to `startExport`/`exposeApi`. For each
+exported table the component stores its **Convex validator JSON** (`.json`) plus
+a `schemaVersion` (an explicit label you pass, or an automatic hash of the
+captured shapes). It's recorded on the export row, on each file row, and in
+`_manifest.json` — so every snapshot is self-describing, even years later.
+
+```ts
+import schema from "./schema";
+export const { startExport /* … */ } = exposeApi(components.dataExport, {
+  reader: internal.exports.readTablePage,
+  schema, // capture each table's declared shape
+  auth: async () => {
+    /* … */
+  },
+});
+```
+
+Tables without a declared validator (schemaless) still export — they just have
+no recorded shape.
+
+### 2. Read back with a typed codec + upcasters
+
+`defineExportCodec` gives you a stable, typed view of a table regardless of when
+the snapshot was taken. `current` is a Convex validator (decoded rows are typed
+`Infer<current>` — the "fields I know exist"); `upcasters`, keyed by the
+snapshot's `schemaVersion`, migrate older rows forward.
+
+```ts
+import { defineExportCodec, readExportTable } from "@caden/data-export";
+
+const usersCodec = defineExportCodec({
+  current: v.object({ email: v.string(), fullName: v.string() }),
+  upcasters: {
+    // a snapshot written under this version stored `name` instead of `fullName`
+    a1b2c3d4: (doc) => ({ email: doc.email, fullName: doc.name }),
+  },
+});
+```
+
+**On the backend** — read a table back into a Convex action as typed rows:
+
+```ts
+export const importUsers = action({
+  args: { exportId: v.string() },
+  handler: async (ctx, { exportId }) => {
+    const users = await readExportTable(ctx, components.dataExport, {
+      exportId: exportId as ExportId,
+      table: "users",
+      codec: usersCodec,
+    });
+    // users: { email: string; fullName: string }[] — upcast from whatever
+    // version the snapshot used.
+  },
+});
+```
+
+**On the frontend** — the codec is plain isomorphic TS, so download a file via
+its URL and decode it the same way:
+
+```ts
+import { decodeExportText } from "@caden/data-export";
+
+const res = await fetch(fileUrl);
+const users = decodeExportText(await res.text(), schemaVersion, usersCodec);
+```
+
+`exposeApi` also exposes a `readTable` action so a client can paginate rows
+through the backend (`{ exportId, tableName, cursor?, numItems? }`) and apply the
+codec itself.
+
+> The `readTable` action reads a table's file into memory to slice a page; for
+> very large tables page with a modest `numItems` (or the future part-file mode).
 
 ## How it works
 

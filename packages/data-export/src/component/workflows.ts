@@ -41,6 +41,7 @@ type ManifestFile = {
   path: string;
   rowCount: number;
   sizeBytes: number;
+  schema: unknown;
 };
 
 /**
@@ -120,6 +121,10 @@ export const recordFile = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const exp = await ctx.db.get(args.exportId);
+    // Copy the table's captured schema + version onto the file row, so each
+    // file is self-describing for read-back.
+    const schema = exp?.schemas?.[args.tableName];
     await ctx.db.insert("exportFiles", {
       exportId: args.exportId,
       tableName: args.tableName,
@@ -127,9 +132,10 @@ export const recordFile = internalMutation({
       storageId: args.storageId,
       rowCount: args.rowCount,
       sizeBytes: args.sizeBytes,
+      schemaVersion: exp?.schemaVersion,
+      schema,
     });
 
-    const exp = await ctx.db.get(args.exportId);
     if (exp) {
       await ctx.db.patch(args.exportId, {
         totalRows: (exp.totalRows ?? 0) + args.rowCount,
@@ -159,11 +165,15 @@ export const finalize = internalAction({
       exportedAt: files.exportedAt,
       exportedAtISO: new Date(files.exportedAt).toISOString(),
       format: "jsonl" as const,
+      schemaVersion: files.schemaVersion,
       tables: files.files.map((f: ManifestFile) => ({
         table: f.tableName,
         path: f.path,
         rowCount: f.rowCount,
         sizeBytes: f.sizeBytes,
+        // Convex `validator.json` for the table at export time (null if the
+        // table had no declared schema).
+        schema: f.schema,
       })),
       totalRows: files.files.reduce((n: number, f: ManifestFile) => n + f.rowCount, 0),
       totalBytes: files.files.reduce((n: number, f: ManifestFile) => n + f.sizeBytes, 0),
@@ -186,12 +196,14 @@ export const filesForManifest = internalQuery({
   args: { exportId: v.id("exports") },
   returns: v.object({
     exportedAt: v.number(),
+    schemaVersion: v.union(v.string(), v.null()),
     files: v.array(
       v.object({
         tableName: v.string(),
         path: v.string(),
         rowCount: v.number(),
         sizeBytes: v.number(),
+        schema: v.union(v.any(), v.null()),
       }),
     ),
   }),
@@ -203,11 +215,13 @@ export const filesForManifest = internalQuery({
       .collect();
     return {
       exportedAt: exp?.requestedAt ?? Date.now(),
+      schemaVersion: exp?.schemaVersion ?? null,
       files: files.map((f) => ({
         tableName: f.tableName,
         path: f.path,
         rowCount: f.rowCount,
         sizeBytes: f.sizeBytes,
+        schema: f.schema ?? null,
       })),
     };
   },

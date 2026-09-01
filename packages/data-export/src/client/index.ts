@@ -1,4 +1,5 @@
 import {
+  actionGeneric,
   createFunctionHandle,
   internalQueryGeneric,
   mutationGeneric,
@@ -13,8 +14,36 @@ import type {
   GenericQueryCtx,
 } from "convex/server";
 import { v } from "convex/values";
+import type { Infer, Validator } from "convex/values";
 import type { ComponentApi } from "../component/_generated/component.js";
 import type { Id } from "../component/_generated/dataModel.js";
+
+/**
+ * Structural shape of a Convex `defineSchema(...)` result — enough to read each
+ * table's validator JSON. Passing your schema lets the component record the
+ * declared shape of every exported table.
+ */
+export type SchemaLike = {
+  tables: Record<string, { validator: unknown }>;
+};
+
+/**
+ * Extract per-table validator JSON for the given tables from a schema. Tables
+ * not present in the schema (e.g. schemaless) are simply omitted.
+ *
+ * Convex validators expose a serializable `.json` at runtime even though it
+ * isn't in their public type, hence the cast.
+ */
+export function extractSchemas(schema: SchemaLike, tableNames: string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const name of tableNames) {
+    const table = schema.tables[name];
+    if (table) {
+      out[name] = (table.validator as { json: unknown }).json;
+    }
+  }
+  return out;
+}
 
 /**
  * Branded ID types for the component's own tables, re-exported for consumers.
@@ -83,9 +112,11 @@ export function exportReader() {
  * Start an export snapshot of the given tables. Returns the new export's ID.
  *
  * ```ts
+ * import schema from "./schema";
  * const exportId = await startExport(ctx, components.dataExport, {
  *   tableNames: ["users", "posts"],
  *   reader: internal.exports.readTablePage,
+ *   schema, // capture the declared shape of each table
  *   batchSize: 500,
  *   label: "nightly",
  * });
@@ -99,15 +130,126 @@ export async function startExport(
     reader: ReaderReference;
     batchSize?: number;
     label?: string;
+    /** Your `defineSchema(...)` result — records each table's declared shape. */
+    schema?: SchemaLike;
+    /** Or supply the per-table validator JSON directly. */
+    schemas?: Record<string, unknown>;
+    /** Version label for this shape (defaults to a hash of the schemas). */
+    schemaVersion?: string;
   },
 ): Promise<ExportId> {
   const readerHandle = await createFunctionHandle(args.reader);
+  const schemas =
+    args.schemas ?? (args.schema ? extractSchemas(args.schema, args.tableNames) : undefined);
   return (await ctx.runMutation(component.lib.start, {
     tableNames: args.tableNames,
     readerHandle,
     batchSize: args.batchSize,
     label: args.label,
+    schemas,
+    schemaVersion: args.schemaVersion,
   })) as ExportId;
+}
+
+/**
+ * A codec for reading exported rows back with a stable, typed shape. `current`
+ * is a Convex validator describing today's shape (decoded rows are typed as
+ * `Infer<current>`); `upcasters`, keyed by the `schemaVersion` a snapshot was
+ * written with, migrate older rows forward. The codec is plain isomorphic TS,
+ * so the same instance works on the backend ({@link readExportTable}) and on
+ * the frontend ({@link decodeExportText}).
+ *
+ * ```ts
+ * const usersCodec = defineExportCodec({
+ *   current: v.object({ email: v.string(), fullName: v.string() }),
+ *   upcasters: {
+ *     // a snapshot written under version "a1b2c3d4" only had `name`
+ *     a1b2c3d4: (doc) => ({ email: doc.email, fullName: doc.name }),
+ *   },
+ * });
+ * ```
+ */
+export type ExportCodec<T> = {
+  decode(doc: unknown, schemaVersion: string | null): T;
+};
+
+export function defineExportCodec<V extends Validator<any, any, any>>(config: {
+  current: V;
+  upcasters?: Record<string, (doc: any) => unknown>;
+}): ExportCodec<Infer<V>> {
+  return {
+    decode(doc, schemaVersion) {
+      const upcaster = schemaVersion != null ? config.upcasters?.[schemaVersion] : undefined;
+      return (upcaster ? upcaster(doc) : doc) as Infer<V>;
+    },
+  };
+}
+
+/**
+ * Read a table's exported documents back into your backend, applying an
+ * optional {@link ExportCodec} so you get today's typed shape even from older
+ * snapshots. Must run in an action (it reads file storage).
+ *
+ * ```ts
+ * const users = await readExportTable(ctx, components.dataExport, {
+ *   exportId,
+ *   table: "users",
+ *   codec: usersCodec,
+ * });
+ * // users: { email: string; fullName: string }[]
+ * ```
+ */
+export async function readExportTable<T = unknown>(
+  ctx: ActionCtx,
+  component: ComponentApi,
+  args: {
+    exportId: ExportId;
+    table: string;
+    codec?: ExportCodec<T>;
+    batchSize?: number;
+  },
+): Promise<T[]> {
+  const out: T[] = [];
+  let cursor: string | undefined = undefined;
+  for (;;) {
+    const page: {
+      rows: unknown[];
+      isDone: boolean;
+      continueCursor: string;
+      schemaVersion: string | null;
+      schema: unknown;
+      rowCount: number;
+    } = await ctx.runAction(component.lib.readTable, {
+      exportId: args.exportId,
+      tableName: args.table,
+      cursor,
+      numItems: args.batchSize,
+    });
+    for (const doc of page.rows) {
+      out.push(args.codec ? args.codec.decode(doc, page.schemaVersion) : (doc as T));
+    }
+    if (page.isDone) break;
+    cursor = page.continueCursor;
+  }
+  return out;
+}
+
+/**
+ * Parse a downloaded `.jsonl` file's text into rows, applying an optional
+ * {@link ExportCodec}. For frontend use after fetching a file's download URL.
+ */
+export function decodeExportText<T = unknown>(
+  text: string,
+  schemaVersion: string | null,
+  codec?: ExportCodec<T>,
+): T[] {
+  return text
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const doc = JSON.parse(line) as unknown;
+      return codec ? codec.decode(doc, schemaVersion) : (doc as T);
+    });
 }
 
 export async function cancelExport(
@@ -181,6 +323,13 @@ export function exposeApi(
     /** The host table reader from {@link exportReader}. */
     reader: ReaderReference;
     /**
+     * Your `defineSchema(...)` result. When provided, each export records the
+     * declared shape of the tables it snapshots (for typed read-back).
+     */
+    schema?: SchemaLike;
+    /** Version label for the current schema (defaults to a hash). */
+    schemaVersion?: string;
+    /**
      * Authorize each operation. Exports read your entire tables, so guard them
      * carefully — return the acting user's ID or throw.
      */
@@ -207,11 +356,16 @@ export function exposeApi(
           tableNames: args.tableNames,
         });
         const readerHandle = await createFunctionHandle(options.reader);
+        const schemas = options.schema
+          ? extractSchemas(options.schema, args.tableNames)
+          : undefined;
         return await ctx.runMutation(component.lib.start, {
           tableNames: args.tableNames,
           readerHandle,
           batchSize: args.batchSize,
           label: args.label,
+          schemas,
+          schemaVersion: options.schemaVersion,
         });
       },
     }),
@@ -278,6 +432,25 @@ export function exposeApi(
         await options.auth(ctx, { type: "read", exportId: args.exportId });
         return await ctx.runQuery(component.lib.getDownloadUrls, {
           exportId: args.exportId,
+        });
+      },
+    }),
+    // Read a page of a table's exported rows back. Clients can paginate with
+    // `cursor` and apply an ExportCodec to the returned rows themselves.
+    readTable: actionGeneric({
+      args: {
+        exportId: v.string(),
+        tableName: v.string(),
+        cursor: v.optional(v.string()),
+        numItems: v.optional(v.number()),
+      },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { type: "read", exportId: args.exportId });
+        return await ctx.runAction(component.lib.readTable, {
+          exportId: args.exportId,
+          tableName: args.tableName,
+          cursor: args.cursor,
+          numItems: args.numItems,
         });
       },
     }),

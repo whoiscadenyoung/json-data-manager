@@ -56,6 +56,8 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         manifestStorageId?: string;
         readerHandle: string;
         requestedAt: number;
+        schemaVersion?: string;
+        schemas?: Record<string, any>;
         startedAt?: number;
         status: "pending" | "running" | "completed" | "failed" | "canceled";
         tableNames: Array<string>;
@@ -75,6 +77,8 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         exportId: string;
         path: string;
         rowCount: number;
+        schema?: any;
+        schemaVersion?: string;
         sizeBytes: number;
         storageId: string;
         tableName: string;
@@ -99,6 +103,8 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         manifestStorageId?: string;
         readerHandle: string;
         requestedAt: number;
+        schemaVersion?: string;
+        schemas?: Record<string, any>;
         startedAt?: number;
         status: "pending" | "running" | "completed" | "failed" | "canceled";
         tableNames: Array<string>;
@@ -108,6 +114,25 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       }>,
       Name
     >;
+    readTable: FunctionReference<
+      "action",
+      "internal",
+      {
+        cursor?: string;
+        exportId: string;
+        numItems?: number;
+        tableName: string;
+      },
+      {
+        continueCursor: string;
+        isDone: boolean;
+        rowCount: number;
+        rows: Array<any>;
+        schema: any | null;
+        schemaVersion: string | null;
+      },
+      Name
+    >;
     start: FunctionReference<
       "mutation",
       "internal",
@@ -115,6 +140,8 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         batchSize?: number;
         label?: string;
         readerHandle: string;
+        schemaVersion?: string;
+        schemas?: Record<string, any>;
         tableNames: Array<string>;
       },
       string,
