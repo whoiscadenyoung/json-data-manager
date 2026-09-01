@@ -12,3 +12,9 @@ dist-ssr
 __unconfig*
 todos.json
 *.local.json
+
+# Convex local deployment
+.convex
+
+# tscbuildinfo
+.cache
