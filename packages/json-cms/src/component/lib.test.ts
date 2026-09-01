@@ -163,7 +163,9 @@ describe("json-cms component", () => {
           type: "object",
         };
 
-      await expect(t.mutation(api.lib.createSchema, { schema: badSchema })).rejects.toThrow();
+      await expect(t.mutation(api.lib.createSchema, { schema: badSchema })).rejects.toThrow(
+        "Schema must have 'title' and 'description' properties",
+      );
     });
 
     it("create schema without description throws error", async () => {
@@ -173,7 +175,9 @@ describe("json-cms component", () => {
           type: "object",
         };
 
-      await expect(t.mutation(api.lib.createSchema, { schema: badSchema })).rejects.toThrow();
+      await expect(t.mutation(api.lib.createSchema, { schema: badSchema })).rejects.toThrow(
+        "Schema must have 'title' and 'description' properties",
+      );
     });
 
     it("update non-existent schema throws error", async () => {

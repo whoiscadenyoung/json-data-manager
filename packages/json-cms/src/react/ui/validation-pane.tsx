@@ -460,6 +460,8 @@ export function ValidationPane({
               }}
             />
             <div
+              // Interactive drag-and-drop zone; a plain button can't host the drop affordance.
+              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
               role="button"
               tabIndex={0}
               aria-label="Drop a JSON file here or click to browse"

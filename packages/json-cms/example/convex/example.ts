@@ -3,7 +3,7 @@ import type { Auth } from "convex/server";
 import { v } from "convex/values";
 
 import { components } from "./_generated/api.js";
-import { action, mutation, query } from "./_generated/server.js";
+import { mutation, query } from "./_generated/server.js";
 
 async function getAuthUserId(ctx: { auth: Auth }) {
   return (await ctx.auth.getUserIdentity())?.subject ?? "anonymous";

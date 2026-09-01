@@ -1,5 +1,5 @@
-import { actionGeneric, httpActionGeneric, mutationGeneric, queryGeneric } from "convex/server";
-import type { Auth, GenericActionCtx, GenericDataModel, HttpRouter } from "convex/server";
+import { mutationGeneric, queryGeneric } from "convex/server";
+import type { Auth } from "convex/server";
 import { v } from "convex/values";
 
 import type { ComponentApi } from "../component/_generated/component.js";
@@ -207,11 +207,3 @@ export function exposeApi(
   };
 }
 
-// Convenient types for `ctx` args, that only include the bare minimum.
-
-// Type QueryCtx = Pick<GenericQueryCtx<GenericDataModel>, "runQuery">;
-// Type MutationCtx = Pick<
-//   GenericMutationCtx<GenericDataModel>,
-//   "runQuery" | "runMutation"
-// >;
-type ActionCtx = Pick<GenericActionCtx<GenericDataModel>, "runQuery" | "runMutation" | "runAction">;

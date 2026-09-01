@@ -757,7 +757,8 @@ export function VisualBuilder({
       return;
     }
     if (!schemaJson.trim()) {
-      //
+      // Sync internal form state to the externally controlled schema JSON.
+      // oxlint-disable-next-line react/set-state-in-effect
       setFormData({ description: "", properties: [], title: "" });
       setParseError(false);
       return;

@@ -21,7 +21,7 @@ export function getContext() {
   return context;
 }
 
-export default function TanStackQueryProvider({ children }: { children: ReactNode }) {
+export function TanStackQueryProvider({ children }: { children: ReactNode }) {
   const { queryClient } = getContext();
 
   return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;

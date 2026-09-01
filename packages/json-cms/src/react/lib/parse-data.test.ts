@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { parseDataRows } from "./parse-data.js";
 
-describe(parseDataRows, () => {
+describe("parseDataRows", () => {
   it("parses a JSON array", () => {
     const { rows, errors } = parseDataRows('[{"a":1},{"a":2}]');
     expect(errors).toStrictEqual([]);

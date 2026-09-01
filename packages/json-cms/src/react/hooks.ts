@@ -184,7 +184,7 @@ export function useDatasetImport(): DatasetImportHandle {
         setImportId(newImportId);
         return { importId: newImportId, schemaId: newSchemaId };
       },
-      [createSchema, generateUploadUrl, startImport],
+      [createSchema, generateUploadUrl, startImport, setSchemaId, setImportId],
     );
 
   return { importId, schemaId, start, status };

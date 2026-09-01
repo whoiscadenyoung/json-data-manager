@@ -53,6 +53,7 @@ export function SchemaPreview({ schemaJson, uiSchemaJson }: SchemaPreviewProps) 
       <Card className="mt-4">
         <button
           type="button"
+          aria-label="Expand schema preview"
           onClick={() => {
             setIsExpanded(true);
           }}

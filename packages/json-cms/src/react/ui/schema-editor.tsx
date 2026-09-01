@@ -73,6 +73,8 @@ export function SchemaEditor({
   // (initial import + every re-upload).
   useEffect(() => {
     if (dataText !== undefined) {
+      // Sync the controlled data prop into the validation pane on every re-upload.
+      // oxlint-disable-next-line react/set-state-in-effect
       setExternalDataText({ text: dataText });
     }
   }, [dataText]);

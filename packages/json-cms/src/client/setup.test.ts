@@ -6,7 +6,7 @@ export const modules = import.meta.glob("./**/*.*s");
 
 import { defineSchema, componentsGeneric } from "convex/server";
 import type { GenericSchema, SchemaDefinition } from "convex/server";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 
 import type { ComponentApi } from "../component/_generated/component.js";
 import { register } from "../test.js";
@@ -22,4 +22,6 @@ export const components = componentsGeneric() as unknown as {
   jsonCms: ComponentApi;
 };
 
-test.todo("setup");
+test("initConvexTest builds a harness", () => {
+  expect(initConvexTest()).toBeDefined();
+});

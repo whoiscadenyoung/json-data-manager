@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { inferSchemaFromData } from "./infer-schema.js";
 import { parseDataRows } from "./parse-data.js";
 
-describe(inferSchemaFromData, () => {
+describe("inferSchemaFromData", () => {
   it("infers primitive types across rows", () => {
     const schema = inferSchemaFromData([
         { age: 36, name: "Ada" },

@@ -1,10 +1,11 @@
+// oxlint-disable-next-line import/no-unassigned-import
 import "./App.css";
 import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
 
 import { api } from "../convex/_generated/api";
 
-function App() {
+export function App() {
   const schemas = useQuery(api.example.listSchemas, {}),
     createSchema = useMutation(api.example.createSchema),
     [newSchema, setNewSchema] = useState({
@@ -92,5 +93,3 @@ function App() {
     </>
   );
 }
-
-export default App;

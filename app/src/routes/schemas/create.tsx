@@ -62,6 +62,7 @@ function PathChooser({ onChoose }: { onChoose: (mode: Mode) => void }) {
     <div className="grid gap-4 sm:grid-cols-2 max-w-3xl">
       <button
         type="button"
+        aria-label="Start from schema"
         onClick={() => {
           onChoose("schema");
         }}
@@ -80,6 +81,7 @@ function PathChooser({ onChoose }: { onChoose: (mode: Mode) => void }) {
       </button>
       <button
         type="button"
+        aria-label="Import data"
         onClick={() => {
           onChoose("import");
         }}
@@ -116,8 +118,8 @@ function SchemaFirst() {
           await navigate({ params: { schemaId }, to: "/schemas/$schemaId" });
         } catch (error) {
           const message =
-            error != null &&
             typeof error === "object" &&
+            error !== null &&
             "data" in error &&
             typeof error.data === "string"
               ? error.data

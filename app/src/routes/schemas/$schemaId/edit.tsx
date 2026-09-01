@@ -260,8 +260,8 @@ function FullSchemaEditForm({
           void navigate({ params: { schemaId }, to: "/schemas/$schemaId" });
         } catch (error) {
           const message =
-            error != null &&
             typeof error === "object" &&
+            error !== null &&
             "data" in error &&
             typeof error.data === "string"
               ? error.data

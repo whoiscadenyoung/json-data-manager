@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 import { convexTest } from "convex-test";
-import { test } from "vitest";
+import { expect, test } from "vitest";
 
 import schema from "./schema.js";
 
@@ -12,4 +12,6 @@ export function initConvexTest() {
   return t;
 }
 
-test.todo("setup");
+test("initConvexTest builds a harness", () => {
+  expect(initConvexTest()).toBeDefined();
+});

@@ -5,7 +5,6 @@ import type { Diagnostic } from "@codemirror/lint";
 import { githubDark, githubLight } from "@uiw/codemirror-theme-github";
 import ReactCodeMirror, { EditorView } from "@uiw/react-codemirror";
 import { jsonSchemaLinter, stateExtensions, updateSchema } from "codemirror-json-schema";
-import type { JSONSchema7 } from "json-schema";
 import { useEffect, useMemo, useRef } from "react";
 
 import { useColorScheme } from "../lib/use-color-scheme.js";

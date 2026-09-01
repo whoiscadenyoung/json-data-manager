@@ -40,10 +40,11 @@ function applyThemeMode(mode: ThemeMode) {
   document.documentElement.style.colorScheme = resolved;
 }
 
-export default function ThemeToggle() {
+export function ThemeToggle() {
   const [mode, setMode] = useState<ThemeMode>("auto");
 
   useEffect(() => {
+    // Hydrate from localStorage on mount (unavailable during SSR).
     const initialMode = getInitialMode();
     setMode(initialMode);
     applyThemeMode(initialMode);

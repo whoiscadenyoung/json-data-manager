@@ -58,6 +58,8 @@ function BulkUploadPage() {
       void navigate({ params: { schemaId }, to: "/schemas/$schemaId" });
     } else if (importStatus?.status === "failed") {
       toast.error(importStatus.error ?? "Import failed.");
+      // Reset local UI state in response to the external import subscription.
+      // oxlint-disable-next-line react/set-state-in-effect
       setIsSubmitting(false);
       setImportId(undefined);
     }
@@ -269,6 +271,8 @@ function BulkUploadPage() {
                 onChange={handleFileChange}
               />
               <div
+                // Interactive drag-and-drop zone that also hosts a nested remove button.
+                // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
                 role="button"
                 tabIndex={0}
                 aria-label="Drop zone: drag a JSON file here or click to browse"

@@ -3,12 +3,12 @@ import type { QueryClient } from "@tanstack/react-query";
 import { HeadContent, Scripts, createRootRouteWithContext } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 
-import Header from "../components/header";
-import ConvexProvider from "../integrations/convex/provider";
-import TanStackQueryDevtools from "../integrations/tanstack-query/devtools";
-import TanStackQueryProvider from "../integrations/tanstack-query/root-provider";
+import { Header } from "#/components/header";
+import { AppConvexProvider } from "#/integrations/convex/provider";
+import { tanStackQueryDevtools } from "#/integrations/tanstack-query/devtools";
+import { TanStackQueryProvider } from "#/integrations/tanstack-query/root-provider";
 
-import appCss from "../styles.css?url";
+import appCss from "#/styles.css?url";
 
 interface MyRouterContext {
   queryClient: QueryClient;
@@ -48,7 +48,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <HeadContent />
       </head>
       <body className="font-sans antialiased wrap-anywhere selection:bg-[rgba(79,184,178,0.24)]">
-        <ConvexProvider>
+        <AppConvexProvider>
           <TanStackQueryProvider>
             <Header />
             {children}
@@ -61,11 +61,11 @@ function RootDocument({ children }: { children: React.ReactNode }) {
                   name: "Tanstack Router",
                   render: <TanStackRouterDevtoolsPanel />,
                 },
-                TanStackQueryDevtools,
+                tanStackQueryDevtools,
               ]}
             />
           </TanStackQueryProvider>
-        </ConvexProvider>
+        </AppConvexProvider>
         <Scripts />
       </body>
     </html>
