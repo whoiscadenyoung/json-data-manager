@@ -8,7 +8,6 @@
   "type": "module",
   "scripts": {
     "dev": "bun --filter=app run dev",
-    "dev:backend": "bun --filter=app run dev:backend",
     "build": "bun --filter=app run build",
     "preview": "bun --filter=app run preview",
     "test": "bun --filter=app run test",
@@ -18,9 +17,9 @@
     "fmt:check": "oxfmt --check"
   },
   "devDependencies": {
-    "oxfmt": "^0.36.0",
-    "oxlint": "^1.51.0",
-    "oxlint-tsgolint": "^0.16.0"
+    "oxfmt": "^0.66.0",
+    "oxlint": "^1.81.0",
+    "oxlint-tsgolint": "^7.0.2001"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
