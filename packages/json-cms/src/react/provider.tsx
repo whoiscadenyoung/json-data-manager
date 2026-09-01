@@ -2,6 +2,7 @@
 
 import { createContext, useContext } from "react";
 import type { ReactNode } from "react";
+
 import type { JsonCmsApi } from "./types.js";
 
 const JsonCmsContext = createContext<JsonCmsApi | null>(null);

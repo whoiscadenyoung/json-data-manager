@@ -1,9 +1,10 @@
-import { useState, useMemo } from "react";
 import Form from "@rjsf/shadcn";
 import validator from "@rjsf/validator-ajv8";
-import { Eye, AlertCircle } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "./primitives/card.js";
+import { AlertCircle, Eye } from "lucide-react";
+import { useMemo, useState } from "react";
+
 import { cn } from "./lib/utils.js";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./primitives/card.js";
 
 interface SchemaPreviewProps {
   schemaJson: string;
@@ -11,41 +12,40 @@ interface SchemaPreviewProps {
 }
 
 export function SchemaPreview({ schemaJson, uiSchemaJson }: SchemaPreviewProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [formData, setFormData] = useState<unknown>({});
-
-  const { schema, error, uiSchema } = useMemo(() => {
-    if (!schemaJson.trim()) {
-      return { schema: null, error: "Schema is empty", uiSchema: {} };
-    }
-    try {
-      const parsed = JSON.parse(schemaJson);
-      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-        return { schema: null, error: "Schema must be a JSON object", uiSchema: {} };
+  const [isExpanded, setIsExpanded] = useState(false),
+    [formData, setFormData] = useState<unknown>({}),
+    { schema, error, uiSchema } = useMemo(() => {
+      if (!schemaJson.trim()) {
+        return { error: "Schema is empty", schema: null, uiSchema: {} };
       }
-      // Basic validation: check for required fields
-      if (!parsed.title || typeof parsed.title !== "string") {
-        return { schema: null, error: "Schema must have a 'title' property", uiSchema: {} };
-      }
-
-      // Parse uiSchema if provided
-      let parsedUiSchema = {};
-      if (uiSchemaJson?.trim()) {
-        try {
-          const uiParsed = JSON.parse(uiSchemaJson);
-          if (typeof uiParsed === "object" && uiParsed !== null && !Array.isArray(uiParsed)) {
-            parsedUiSchema = uiParsed;
-          }
-        } catch {
-          // Ignore invalid UI schema JSON
+      try {
+        const parsed = JSON.parse(schemaJson);
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+          return { error: "Schema must be a JSON object", schema: null, uiSchema: {} };
         }
-      }
+        // Basic validation: check for required fields
+        if (!parsed.title || typeof parsed.title !== "string") {
+          return { error: "Schema must have a 'title' property", schema: null, uiSchema: {} };
+        }
 
-      return { schema: parsed, error: null, uiSchema: parsedUiSchema };
-    } catch {
-      return { schema: null, error: "Invalid JSON", uiSchema: {} };
-    }
-  }, [schemaJson, uiSchemaJson]);
+        // Parse uiSchema if provided
+        let parsedUiSchema = {};
+        if (uiSchemaJson?.trim()) {
+          try {
+            const uiParsed = JSON.parse(uiSchemaJson);
+            if (typeof uiParsed === "object" && uiParsed !== null && !Array.isArray(uiParsed)) {
+              parsedUiSchema = uiParsed;
+            }
+          } catch {
+            // Ignore invalid UI schema JSON
+          }
+        }
+
+        return { error: null, schema: parsed, uiSchema: parsedUiSchema };
+      } catch {
+        return { error: "Invalid JSON", schema: null, uiSchema: {} };
+      }
+    }, [schemaJson, uiSchemaJson]);
 
   // Collapsed state - show a compact card
   if (!isExpanded) {
@@ -53,7 +53,9 @@ export function SchemaPreview({ schemaJson, uiSchemaJson }: SchemaPreviewProps) 
       <Card className="mt-4">
         <button
           type="button"
-          onClick={() => setIsExpanded(true)}
+          onClick={() => {
+            setIsExpanded(true);
+          }}
           className="w-full text-left"
         >
           <CardHeader className="py-3">
@@ -84,7 +86,9 @@ export function SchemaPreview({ schemaJson, uiSchemaJson }: SchemaPreviewProps) 
           </div>
           <button
             type="button"
-            onClick={() => setIsExpanded(false)}
+            onClick={() => {
+              setIsExpanded(false);
+            }}
             className="text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             Collapse
@@ -131,20 +135,24 @@ export function SchemaPreview({ schemaJson, uiSchemaJson }: SchemaPreviewProps) 
             )}
           >
             <Form
-              schema={schema!}
+              schema={schema}
               validator={validator}
               formData={formData}
-              onChange={(data) => setFormData(data.formData)}
-              onSubmit={(data) => console.log("Preview form submitted:", data.formData)}
+              onChange={(data) => {
+                setFormData(data.formData);
+              }}
+              onSubmit={(data) => {
+                console.log("Preview form submitted:", data.formData);
+              }}
               uiSchema={{
                 ...uiSchema,
                 "ui:submitButtonOptions": {
-                  submitText: "Create Entry (Preview)",
                   norender: false,
                   props: {
-                    disabled: true,
                     className: "w-full opacity-50 cursor-not-allowed",
+                    disabled: true,
                   },
+                  submitText: "Create Entry (Preview)",
                 },
               }}
             />

@@ -1,5 +1,6 @@
-import { ConvexProvider } from "convex/react";
 import { ConvexQueryClient } from "@convex-dev/react-query";
+import { ConvexProvider } from "convex/react";
+
 import { env } from "#/env";
 
 const convexQueryClient = new ConvexQueryClient(env.VITE_CONVEX_URL);

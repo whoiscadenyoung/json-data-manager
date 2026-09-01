@@ -215,9 +215,7 @@ export const createBulkEntries = mutation({
     }
 
     const ids = await Promise.all(
-      args.dataArray.map((data) =>
-        ctx.db.insert("entries", { schemaId: args.schemaId, data })
-      ),
+      args.dataArray.map((data) => ctx.db.insert("entries", { schemaId: args.schemaId, data })),
     );
 
     return ids;
@@ -265,9 +263,7 @@ Create the package.json for the component:
       "import": "./convex/index.ts"
     }
   },
-  "files": [
-    "convex"
-  ],
+  "files": ["convex"],
   "peerDependencies": {
     "convex": "^1.0.0"
   },
@@ -281,6 +277,7 @@ Create the package.json for the component:
 ## Steps to Complete
 
 1. Create the directory structure:
+
    ```bash
    mkdir -p packages/json-cms/convex
    ```
@@ -303,6 +300,7 @@ Create the package.json for the component:
 ## Key Refactoring Notes
 
 ### From `convex/schemas.ts` (existing app):
+
 - Keep table name as `schemas` (not prefixed) since this is a standalone component
 - Preserve the 100 KB size limit check
 - Maintain validation for required `title` and `description` fields
@@ -311,6 +309,7 @@ Create the package.json for the component:
 - Rename `create`/`update` to `createSchema`/`updateSchema`
 
 ### From `convex/entries.ts` (existing app):
+
 - Keep table name as `entries` (not prefixed)
 - Add `by_schema_creation` compound index for efficient pagination
 - Rename `list` to `listEntries`

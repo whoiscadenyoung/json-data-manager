@@ -1,13 +1,15 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
 import type { SchemaId } from "@caden/json-cms";
-import { SchemaEditor, DatasetImporter } from "@caden/json-cms/react/ui";
+import { DatasetImporter, SchemaEditor } from "@caden/json-cms/react/ui";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useMutation, useQuery } from "convex/react";
+import { ArrowLeft, FilePlus2, Upload } from "lucide-react";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
+
 import { RouterButton } from "#/components/router-button";
 import { Card, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
-import { ArrowLeft, FilePlus2, Upload } from "lucide-react";
-import { toast } from "sonner";
+
+import { api } from "../../../convex/_generated/api";
 
 export const Route = createFileRoute("/schemas/create")({
   component: CreateDatasetPage,
@@ -29,7 +31,9 @@ function CreateDatasetPage() {
         ) : (
           <button
             type="button"
-            onClick={() => setMode("choose")}
+            onClick={() => {
+              setMode("choose");
+            }}
             className="mb-4 -ml-2 inline-flex items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground hover:text-foreground"
           >
             <ArrowLeft className="h-4 w-4" />
@@ -56,19 +60,31 @@ function CreateDatasetPage() {
 function PathChooser({ onChoose }: { onChoose: (mode: Mode) => void }) {
   return (
     <div className="grid gap-4 sm:grid-cols-2 max-w-3xl">
-      <button type="button" onClick={() => onChoose("schema")} className="text-left">
+      <button
+        type="button"
+        onClick={() => {
+          onChoose("schema");
+        }}
+        className="text-left"
+      >
         <Card className="h-full transition-shadow hover:shadow-md">
           <CardHeader>
             <FilePlus2 className="h-6 w-6 text-primary mb-2" />
             <CardTitle>Start from schema</CardTitle>
             <CardDescription>
-              Define the shape of an empty dataset with the visual or code editor. Optionally upload a
-              JSON Schema to start from.
+              Define the shape of an empty dataset with the visual or code editor. Optionally upload
+              a JSON Schema to start from.
             </CardDescription>
           </CardHeader>
         </Card>
       </button>
-      <button type="button" onClick={() => onChoose("import")} className="text-left">
+      <button
+        type="button"
+        onClick={() => {
+          onChoose("import");
+        }}
+        className="text-left"
+      >
         <Card className="h-full transition-shadow hover:shadow-md">
           <CardHeader>
             <Upload className="h-6 w-6 text-primary mb-2" />
@@ -85,8 +101,8 @@ function PathChooser({ onChoose }: { onChoose: (mode: Mode) => void }) {
 }
 
 function SchemaFirst() {
-  const navigate = useNavigate();
-  const createSchema = useMutation(api.schemas.create);
+  const navigate = useNavigate(),
+    createSchema = useMutation(api.schemas.create);
 
   return (
     <SchemaEditor
@@ -97,16 +113,19 @@ function SchemaFirst() {
             uiSchema: Object.keys(uiSchemaParsed).length > 0 ? uiSchemaParsed : undefined,
           });
           toast.success("Schema created!");
-          await navigate({ to: "/schemas/$schemaId", params: { schemaId } });
-        } catch (err) {
+          await navigate({ params: { schemaId }, to: "/schemas/$schemaId" });
+        } catch (error) {
           const message =
-            err != null && typeof err === "object" && "data" in err && typeof err.data === "string"
-              ? err.data
-              : err instanceof Error
-                ? err.message
+            error != null &&
+            typeof error === "object" &&
+            "data" in error &&
+            typeof error.data === "string"
+              ? error.data
+              : error instanceof Error
+                ? error.message
                 : "Failed to create schema.";
           toast.error(message);
-          throw err;
+          throw error;
         }
       }}
       saveLabel="Create schema"
@@ -115,30 +134,28 @@ function SchemaFirst() {
 }
 
 function ImportFirst() {
-  const navigate = useNavigate();
-  const createSchema = useMutation(api.schemas.create);
-  const generateUploadUrl = useMutation(api.imports.generateUploadUrl);
-  const startImport = useMutation(api.imports.startImport);
-
-  const [importId, setImportId] = useState<string | undefined>(undefined);
-  const [schemaId, setSchemaId] = useState<SchemaId | undefined>(undefined);
-
-  const status = useQuery(api.imports.getImportStatus, importId ? { importId } : "skip");
+  const navigate = useNavigate(),
+    createSchema = useMutation(api.schemas.create),
+    generateUploadUrl = useMutation(api.imports.generateUploadUrl),
+    startImport = useMutation(api.imports.startImport),
+    [importId, setImportId] = useState<string | undefined>(),
+    [schemaId, setSchemaId] = useState<SchemaId | undefined>(),
+    status = useQuery(api.imports.getImportStatus, importId ? { importId } : "skip");
 
   // Navigate to the new dataset once the import finishes.
   useEffect(() => {
     if (status?.status === "completed" && schemaId) {
       toast.success("Dataset imported!");
-      void navigate({ to: "/schemas/$schemaId", params: { schemaId } });
+      void navigate({ params: { schemaId }, to: "/schemas/$schemaId" });
     }
   }, [status?.status, schemaId, navigate]);
 
   const progress = status
     ? {
-        status: status.status,
-        processed: status.processed,
-        total: status.total,
         error: status.error,
+        processed: status.processed,
+        status: status.status,
+        total: status.total,
       }
     : null;
 
@@ -147,22 +164,24 @@ function ImportFirst() {
       progress={progress}
       onImport={async (_json, parsedSchema, _uiJson, parsedUiSchema, rows) => {
         const newSchemaId = (await createSchema({
-          schema: parsedSchema,
-          uiSchema: Object.keys(parsedUiSchema).length > 0 ? parsedUiSchema : undefined,
-        })) as SchemaId;
-        const uploadUrl = await generateUploadUrl({});
-        const res = await fetch(uploadUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(rows),
-        });
-        if (!res.ok) throw new Error("Failed to upload import data.");
-        const { storageId } = (await res.json()) as { storageId: string };
-        const newImportId = await startImport({
-          schemaId: newSchemaId,
-          storageId,
-          total: rows.length,
-        });
+            schema: parsedSchema,
+            uiSchema: Object.keys(parsedUiSchema).length > 0 ? parsedUiSchema : undefined,
+          })) as SchemaId,
+          uploadUrl = await generateUploadUrl({}),
+          res = await fetch(uploadUrl, {
+            body: JSON.stringify(rows),
+            headers: { "Content-Type": "application/json" },
+            method: "POST",
+          });
+        if (!res.ok) {
+          throw new Error("Failed to upload import data.");
+        }
+        const { storageId } = (await res.json()) as { storageId: string },
+          newImportId = await startImport({
+            schemaId: newSchemaId,
+            storageId,
+            total: rows.length,
+          });
         setSchemaId(newSchemaId);
         setImportId(newImportId);
       }}

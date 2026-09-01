@@ -1,51 +1,44 @@
-import { v, ConvexError } from "convex/values";
 import { WorkflowManager } from "@convex-dev/workflow";
-import {
-  query,
-  mutation,
-  internalQuery,
-  internalMutation,
-  internalAction,
-} from "./_generated/server.js";
-import { internal, components } from "./_generated/api.js";
+import { ConvexError, v } from "convex/values";
+
+import { components, internal } from "./_generated/api.js";
 import type { Id } from "./_generated/dataModel.js";
+import {
+  internalAction,
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from "./_generated/server.js";
 import schema from "./schema.js";
 
-const SCHEMA_SIZE_LIMIT = 102400; // 100 KB
-
-// Number of entries inserted per batch/workflow step. Kept well under Convex's
-// per-transaction write limit so a single dataset can be arbitrarily large.
-const IMPORT_BATCH_SIZE = 500;
-
-// Durable workflow engine (nested component) that drives batched imports.
-const workflow = new WorkflowManager(components.workflow);
-
-const schemaValidator = schema.tables.schemas.validator.extend({
-  _id: v.id("schemas"),
-  _creationTime: v.number(),
-});
-
-const entryValidator = schema.tables.entries.validator.extend({
-  _id: v.id("entries"),
-  _creationTime: v.number(),
-});
+const SCHEMA_SIZE_LIMIT = 102_400, // 100 KB
+  // Number of entries inserted per batch/workflow step. Kept well under Convex's
+  // Per-transaction write limit so a single dataset can be arbitrarily large.
+  IMPORT_BATCH_SIZE = 500,
+  // Durable workflow engine (nested component) that drives batched imports.
+  workflow = new WorkflowManager(components.workflow),
+  schemaValidator = schema.tables.schemas.validator.extend({
+    _creationTime: v.number(),
+    _id: v.id("schemas"),
+  }),
+  entryValidator = schema.tables.entries.validator.extend({
+    _creationTime: v.number(),
+    _id: v.id("entries"),
+  });
 
 // Schema queries
 
 export const listSchemas = query({
   args: {},
+  handler: async (ctx) => ctx.db.query("schemas").order("desc").collect(),
   returns: v.array(schemaValidator),
-  handler: async (ctx) => {
-    return await ctx.db.query("schemas").order("desc").collect();
-  },
 });
 
 export const getSchema = query({
   args: { schemaId: v.id("schemas") },
+  handler: async (ctx, args) => ctx.db.get(args.schemaId),
   returns: v.union(v.null(), schemaValidator),
-  handler: async (ctx, args) => {
-    return await ctx.db.get(args.schemaId);
-  },
 });
 
 // Schema mutations
@@ -55,12 +48,9 @@ export const createSchema = mutation({
     schema: v.any(),
     uiSchema: v.optional(v.any()),
   },
-  returns: v.id("schemas"),
   handler: async (ctx, args) => {
     if (!args.schema.title || !args.schema.description) {
-      throw new ConvexError(
-        "Schema must have 'title' and 'description' properties",
-      );
+      throw new ConvexError("Schema must have 'title' and 'description' properties");
     }
 
     const schemaStr = JSON.stringify(args.schema);
@@ -76,22 +66,23 @@ export const createSchema = mutation({
     }
 
     const schemaId = await ctx.db.insert("schemas", {
-      title: args.schema.title,
       description: args.schema.description,
       schema: args.schema,
+      title: args.schema.title,
       uiSchema: args.uiSchema,
     });
 
     return schemaId;
   },
+  returns: v.id("schemas"),
 });
 
 export const updateSchema = mutation({
   args: {
-    schemaId: v.id("schemas"),
-    title: v.optional(v.string()),
     description: v.optional(v.string()),
     schema: v.optional(v.any()),
+    schemaId: v.id("schemas"),
+    title: v.optional(v.string()),
     uiSchema: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
@@ -102,11 +93,16 @@ export const updateSchema = mutation({
 
     const patch: Record<string, unknown> = {};
 
-    if (args.schema !== undefined) {
+    if (args.schema === undefined) {
+      if (args.title !== undefined) {
+        patch.title = args.title;
+      }
+      if (args.description !== undefined) {
+        patch.description = args.description;
+      }
+    } else {
       if (!args.schema.title || !args.schema.description) {
-        throw new ConvexError(
-          "Schema must have 'title' and 'description' properties",
-        );
+        throw new ConvexError("Schema must have 'title' and 'description' properties");
       }
       const schemaStr = JSON.stringify(args.schema);
       if (schemaStr.length > SCHEMA_SIZE_LIMIT) {
@@ -115,9 +111,6 @@ export const updateSchema = mutation({
       patch.schema = args.schema;
       patch.title = args.schema.title;
       patch.description = args.schema.description;
-    } else {
-      if (args.title !== undefined) patch.title = args.title;
-      if (args.description !== undefined) patch.description = args.description;
     }
 
     if (args.uiSchema !== undefined) {
@@ -160,7 +153,6 @@ export const deleteSchema = mutation({
 
 export const listEntries = query({
   args: { schemaId: v.id("schemas") },
-  returns: v.array(entryValidator),
   handler: async (ctx, args) => {
     // Verify schema exists
     const schema = await ctx.db.get(args.schemaId);
@@ -168,48 +160,42 @@ export const listEntries = query({
       throw new ConvexError("Schema not found");
     }
 
-    return await ctx.db
+    return ctx.db
       .query("entries")
       .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
       .order("desc")
       .collect();
   },
+  returns: v.array(entryValidator),
 });
 
 export const getEntry = query({
   args: { entryId: v.id("entries") },
+  handler: async (ctx, args) => ctx.db.get(args.entryId),
   returns: v.union(v.null(), entryValidator),
-  handler: async (ctx, args) => {
-    return await ctx.db.get(args.entryId);
-  },
 });
 
 // Internal queries/mutations for use within the component
 
 export const getSchemaInternal = internalQuery({
   args: { schemaId: v.id("schemas") },
+  handler: async (ctx, args) => ctx.db.get(args.schemaId),
   returns: v.union(v.null(), schemaValidator),
-  handler: async (ctx, args) => {
-    return await ctx.db.get(args.schemaId);
-  },
 });
 
 export const getEntryInternal = internalQuery({
   args: { entryId: v.id("entries") },
+  handler: async (ctx, args) => ctx.db.get(args.entryId),
   returns: v.union(v.null(), entryValidator),
-  handler: async (ctx, args) => {
-    return await ctx.db.get(args.entryId);
-  },
 });
 
 // Entry mutations
 
 export const createEntry = mutation({
   args: {
-    schemaId: v.id("schemas"),
     data: v.any(),
+    schemaId: v.id("schemas"),
   },
-  returns: v.id("entries"),
   handler: async (ctx, args) => {
     // Verify schema exists
     const schema = await ctx.db.get(args.schemaId);
@@ -218,20 +204,20 @@ export const createEntry = mutation({
     }
 
     const entryId = await ctx.db.insert("entries", {
-      schemaId: args.schemaId,
       data: args.data,
+      schemaId: args.schemaId,
     });
 
     return entryId;
   },
+  returns: v.id("entries"),
 });
 
 export const createEntriesBulk = mutation({
   args: {
-    schemaId: v.id("schemas"),
     dataArray: v.array(v.any()),
+    schemaId: v.id("schemas"),
   },
-  returns: v.array(v.id("entries")),
   handler: async (ctx, args) => {
     const schema = await ctx.db.get(args.schemaId);
     if (!schema) {
@@ -239,19 +225,20 @@ export const createEntriesBulk = mutation({
     }
 
     const ids = await Promise.all(
-      args.dataArray.map((data) =>
-        ctx.db.insert("entries", { schemaId: args.schemaId, data }),
+      args.dataArray.map(async (data) =>
+        ctx.db.insert("entries", { data, schemaId: args.schemaId }),
       ),
     );
 
     return ids;
   },
+  returns: v.array(v.id("entries")),
 });
 
 export const updateEntry = mutation({
   args: {
-    entryId: v.id("entries"),
     data: v.any(),
+    entryId: v.id("entries"),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db.get(args.entryId);
@@ -281,7 +268,6 @@ export const deleteEntriesBySchema = mutation({
   args: {
     schemaId: v.id("schemas"),
   },
-  returns: v.number(),
   handler: async (ctx, args) => {
     const schema = await ctx.db.get(args.schemaId);
     if (!schema) {
@@ -299,30 +285,31 @@ export const deleteEntriesBySchema = mutation({
 
     return entries.length;
   },
+  returns: v.number(),
 });
 
 // Internal mutations for advanced use cases
 
 export const insertEntryInternal = internalMutation({
   args: {
-    schemaId: v.id("schemas"),
     data: v.any(),
+    schemaId: v.id("schemas"),
   },
-  returns: v.id("entries"),
   handler: async (ctx, args) => {
     const entryId = await ctx.db.insert("entries", {
-      schemaId: args.schemaId,
       data: args.data,
+      schemaId: args.schemaId,
     });
 
     return entryId;
   },
+  returns: v.id("entries"),
 });
 
 export const patchEntryInternal = internalMutation({
   args: {
-    entryId: v.id("entries"),
     data: v.any(),
+    entryId: v.id("entries"),
   },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.entryId, { data: args.data });
@@ -342,32 +329,28 @@ export const deleteEntryInternal = internalMutation({
 // Batched, monitored dataset import
 //
 // The client uploads the row payload to file storage and calls `startImport`,
-// which records an `imports` status doc and kicks off a durable workflow. The
-// workflow inserts entries in batches (each an independently-retried step) and
-// updates the status doc so the client can render live progress.
+// Which records an `imports` status doc and kicks off a durable workflow. The
+// Workflow inserts entries in batches (each an independently-retried step) and
+// Updates the status doc so the client can render live progress.
 // ---------------------------------------------------------------------------
 
 const importValidator = schema.tables.imports.validator.extend({
-  _id: v.id("imports"),
   _creationTime: v.number(),
+  _id: v.id("imports"),
 });
 
 /** Generate a short-lived URL the client POSTs the serialized rows to. */
 export const generateUploadUrl = mutation({
   args: {},
+  handler: async (ctx) => ctx.storage.generateUploadUrl(),
   returns: v.string(),
-  handler: async (ctx) => {
-    return await ctx.storage.generateUploadUrl();
-  },
 });
 
 /** Read the import status doc (client subscribes to this for progress). */
 export const getImportStatus = query({
   args: { importId: v.id("imports") },
+  handler: async (ctx, args) => ctx.db.get(args.importId),
   returns: v.union(importValidator, v.null()),
-  handler: async (ctx, args) => {
-    return await ctx.db.get(args.importId);
-  },
 });
 
 /** Create the status doc and start the durable import workflow. */
@@ -377,7 +360,6 @@ export const startImport = mutation({
     storageId: v.id("_storage"),
     total: v.number(),
   },
-  returns: v.id("imports"),
   handler: async (ctx, args) => {
     const targetSchema = await ctx.db.get(args.schemaId);
     if (!targetSchema) {
@@ -385,32 +367,32 @@ export const startImport = mutation({
     }
 
     const importId = await ctx.db.insert("imports", {
-      schemaId: args.schemaId,
-      storageId: args.storageId,
-      total: args.total,
-      processed: 0,
-      status: "pending",
-    });
-
-    const workflowId = await workflow.start(
-      ctx,
-      internal.lib.importWorkflow,
-      {
-        importId,
+        processed: 0,
         schemaId: args.schemaId,
+        status: "pending",
         storageId: args.storageId,
         total: args.total,
-      },
-      {
-        onComplete: internal.lib.handleImportComplete,
-        context: { importId },
-        startAsync: true,
-      },
-    );
+      }),
+      workflowId = await workflow.start(
+        ctx,
+        internal.lib.importWorkflow,
+        {
+          importId,
+          schemaId: args.schemaId,
+          storageId: args.storageId,
+          total: args.total,
+        },
+        {
+          context: { importId },
+          onComplete: internal.lib.handleImportComplete,
+          startAsync: true,
+        },
+      );
 
     await ctx.db.patch(importId, { workflowId });
     return importId;
   },
+  returns: v.id("imports"),
 });
 
 /**
@@ -419,20 +401,24 @@ export const startImport = mutation({
  */
 export const handleImportComplete = internalMutation({
   args: {
-    workflowId: v.string(),
     context: v.any(),
     result: v.any(),
+    workflowId: v.string(),
   },
   handler: async (ctx, args) => {
-    if (args.result?.kind === "success") return;
+    if (args.result?.kind === "success") {
+      return;
+    }
     const importId = args.context?.importId;
-    if (!importId) return;
+    if (!importId) {
+      return;
+    }
     await ctx.db.patch(importId, {
-      status: "failed",
       error:
         args.result?.kind === "canceled"
           ? "Import was canceled."
           : (args.result?.error ?? "Import failed."),
+      status: "failed",
     });
   },
 });
@@ -440,6 +426,7 @@ export const handleImportComplete = internalMutation({
 /** Patch import progress/status. Called between workflow steps. */
 export const updateImportProgress = internalMutation({
   args: {
+    error: v.optional(v.string()),
     importId: v.id("imports"),
     processed: v.optional(v.number()),
     status: v.optional(
@@ -450,13 +437,18 @@ export const updateImportProgress = internalMutation({
         v.literal("failed"),
       ),
     ),
-    error: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const patch: Record<string, unknown> = {};
-    if (args.processed !== undefined) patch.processed = args.processed;
-    if (args.status !== undefined) patch.status = args.status;
-    if (args.error !== undefined) patch.error = args.error;
+    if (args.processed !== undefined) {
+      patch.processed = args.processed;
+    }
+    if (args.status !== undefined) {
+      patch.status = args.status;
+    }
+    if (args.error !== undefined) {
+      patch.error = args.error;
+    }
     await ctx.db.patch(args.importId, patch);
   },
 });
@@ -470,42 +462,44 @@ export const insertChunkFromStorage = internalAction({
   args: {
     schemaId: v.id("schemas"),
     // A `_storage` id — passed as a plain string because system-table ids can't
-    // be journaled/validated as `v.id("_storage")` through the workflow engine.
+    // Be journaled/validated as `v.id("_storage")` through the workflow engine.
     storageId: v.string(),
     offset: v.number(),
     limit: v.number(),
   },
-  returns: v.number(),
   handler: async (ctx, args) => {
     const blob = await ctx.storage.get(args.storageId as Id<"_storage">);
     if (!blob) {
       throw new ConvexError("Import payload not found in storage");
     }
-    const rows = JSON.parse(await blob.text()) as unknown[];
-    const chunk = rows.slice(args.offset, args.offset + args.limit);
-    if (chunk.length === 0) return 0;
+    const rows = JSON.parse(await blob.text()) as unknown[],
+      chunk = rows.slice(args.offset, args.offset + args.limit);
+    if (chunk.length === 0) {
+      return 0;
+    }
 
     await ctx.runMutation(internal.lib.insertEntriesChunkInternal, {
-      schemaId: args.schemaId,
       dataArray: chunk,
+      schemaId: args.schemaId,
     });
     return chunk.length;
   },
+  returns: v.number(),
 });
 
 /** Insert one chunk of entries in a single transaction. */
 export const insertEntriesChunkInternal = internalMutation({
   args: {
-    schemaId: v.id("schemas"),
     dataArray: v.array(v.any()),
+    schemaId: v.id("schemas"),
   },
-  returns: v.null(),
   handler: async (ctx, args) => {
     for (const data of args.dataArray) {
-      await ctx.db.insert("entries", { schemaId: args.schemaId, data });
+      await ctx.db.insert("entries", { data, schemaId: args.schemaId });
     }
     return null;
   },
+  returns: v.null(),
 });
 
 /** Durable workflow: insert all rows in batches, updating progress as it goes. */
@@ -519,17 +513,17 @@ export const importWorkflow = workflow.define({
   handler: async (step, args): Promise<void> => {
     await step.runMutation(internal.lib.updateImportProgress, {
       importId: args.importId,
-      status: "processing",
       processed: 0,
+      status: "processing",
     });
 
     let processed = 0;
     for (let offset = 0; offset < args.total; offset += IMPORT_BATCH_SIZE) {
       const inserted = await step.runAction(internal.lib.insertChunkFromStorage, {
+        limit: IMPORT_BATCH_SIZE,
+        offset,
         schemaId: args.schemaId,
         storageId: args.storageId,
-        offset,
-        limit: IMPORT_BATCH_SIZE,
       });
       processed += inserted;
       await step.runMutation(internal.lib.updateImportProgress, {

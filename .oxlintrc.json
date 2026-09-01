@@ -1,8 +1,28 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": [],
-  "categories": {},
-  "rules": {},
+  "plugins": [
+    "eslint",
+    "typescript",
+    "unicorn",
+    "oxc",
+    "jsdoc",
+    "react",
+    "import",
+    "promise",
+    "jsx-a11y"
+  ],
+  "categories": {
+    "correctness": "error",
+    "perf": "warn",
+    "pedantic": "off",
+    "style": "off",
+    "restriction": "off",
+    "suspicious": "warn"
+  },
+  "rules": {
+    "react/react-in-jsx-scope": "off",
+    "unicorn/no-empty-file": "warn"
+  },
   "settings": {
     "jsx-a11y": {
       "components": {},
@@ -23,14 +43,27 @@
       "implementsReplacesDocs": false,
       "exemptDestructuredRootsFromChecks": false,
       "tagNamePreference": {}
-    },
-    "vitest": {
-      "typecheck": false
     }
   },
   "env": {
     "builtin": true
   },
   "globals": {},
-  "ignorePatterns": []
+  "ignorePatterns": ["app/src/components/ui"],
+  "overrides": [
+    {
+      "files": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx"],
+      "plugins": [
+        "eslint",
+        "typescript",
+        "unicorn",
+        "oxc",
+        "jsdoc",
+        "react",
+        "vitest",
+        "import",
+        "promise"
+      ]
+    }
+  ]
 }

@@ -1,16 +1,7 @@
-import {
-  actionGeneric,
-  httpActionGeneric,
-  mutationGeneric,
-  queryGeneric,
-} from "convex/server";
-import type {
-  Auth,
-  GenericActionCtx,
-  GenericDataModel,
-  HttpRouter,
-} from "convex/server";
+import { actionGeneric, httpActionGeneric, mutationGeneric, queryGeneric } from "convex/server";
+import type { Auth, GenericActionCtx, GenericDataModel, HttpRouter } from "convex/server";
 import { v } from "convex/values";
+
 import type { ComponentApi } from "../component/_generated/component.js";
 import type { Id } from "../component/_generated/dataModel.js";
 
@@ -74,23 +65,23 @@ export function exposeApi(
 ) {
   // Note: id arguments are validated as `v.string()`, not `v.id(...)`.
   // These ids reference the component's own tables, which do not exist in
-  // the host app's schema, so `v.id("schemas")`/`v.id("entries")` would be
-  // rejected by the host deployment. The component's `lib` functions
-  // re-validate them as real ids internally.
+  // The host app's schema, so `v.id("schemas")`/`v.id("entries")` would be
+  // Rejected by the host deployment. The component's `lib` functions
+  // Re-validate them as real ids internally.
   return {
     // Schema operations
     listSchemas: queryGeneric({
       args: {},
       handler: async (ctx) => {
         await options.auth(ctx, { type: "read" });
-        return await ctx.runQuery(component.lib.listSchemas, {});
+        return ctx.runQuery(component.lib.listSchemas, {});
       },
     }),
     getSchema: queryGeneric({
       args: { schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "read", schemaId: args.schemaId });
-        return await ctx.runQuery(component.lib.getSchema, {
+        await options.auth(ctx, { schemaId: args.schemaId, type: "read" });
+        return ctx.runQuery(component.lib.getSchema, {
           schemaId: args.schemaId,
         });
       },
@@ -99,7 +90,7 @@ export function exposeApi(
       args: { schema: v.any(), uiSchema: v.optional(v.any()) },
       handler: async (ctx, args) => {
         await options.auth(ctx, { type: "create" });
-        return await ctx.runMutation(component.lib.createSchema, {
+        return ctx.runMutation(component.lib.createSchema, {
           schema: args.schema,
           uiSchema: args.uiSchema,
         });
@@ -107,22 +98,22 @@ export function exposeApi(
     }),
     updateSchema: mutationGeneric({
       args: {
-        schemaId: v.string(),
-        title: v.optional(v.string()),
         description: v.optional(v.string()),
         schema: v.optional(v.any()),
+        schemaId: v.string(),
+        title: v.optional(v.string()),
         uiSchema: v.optional(v.any()),
       },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "update", schemaId: args.schemaId });
-        return await ctx.runMutation(component.lib.updateSchema, args);
+        await options.auth(ctx, { schemaId: args.schemaId, type: "update" });
+        return ctx.runMutation(component.lib.updateSchema, args);
       },
     }),
     deleteSchema: mutationGeneric({
       args: { schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "delete", schemaId: args.schemaId });
-        return await ctx.runMutation(component.lib.deleteSchema, args);
+        await options.auth(ctx, { schemaId: args.schemaId, type: "delete" });
+        return ctx.runMutation(component.lib.deleteSchema, args);
       },
     }),
 
@@ -130,8 +121,8 @@ export function exposeApi(
     listEntries: queryGeneric({
       args: { schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "read", schemaId: args.schemaId });
-        return await ctx.runQuery(component.lib.listEntries, {
+        await options.auth(ctx, { schemaId: args.schemaId, type: "read" });
+        return ctx.runQuery(component.lib.listEntries, {
           schemaId: args.schemaId,
         });
       },
@@ -139,45 +130,45 @@ export function exposeApi(
     getEntry: queryGeneric({
       args: { entryId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "read", entryId: args.entryId });
-        return await ctx.runQuery(component.lib.getEntry, {
+        await options.auth(ctx, { entryId: args.entryId, type: "read" });
+        return ctx.runQuery(component.lib.getEntry, {
           entryId: args.entryId,
         });
       },
     }),
     createEntry: mutationGeneric({
-      args: { schemaId: v.string(), data: v.any() },
+      args: { data: v.any(), schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "create", schemaId: args.schemaId });
-        return await ctx.runMutation(component.lib.createEntry, args);
+        await options.auth(ctx, { schemaId: args.schemaId, type: "create" });
+        return ctx.runMutation(component.lib.createEntry, args);
       },
     }),
     createEntriesBulk: mutationGeneric({
-      args: { schemaId: v.string(), dataArray: v.array(v.any()) },
+      args: { dataArray: v.array(v.any()), schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "create", schemaId: args.schemaId });
-        return await ctx.runMutation(component.lib.createEntriesBulk, args);
+        await options.auth(ctx, { schemaId: args.schemaId, type: "create" });
+        return ctx.runMutation(component.lib.createEntriesBulk, args);
       },
     }),
     updateEntry: mutationGeneric({
-      args: { entryId: v.string(), data: v.any() },
+      args: { data: v.any(), entryId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "update", entryId: args.entryId });
-        return await ctx.runMutation(component.lib.updateEntry, args);
+        await options.auth(ctx, { entryId: args.entryId, type: "update" });
+        return ctx.runMutation(component.lib.updateEntry, args);
       },
     }),
     deleteEntry: mutationGeneric({
       args: { entryId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "delete", entryId: args.entryId });
-        return await ctx.runMutation(component.lib.deleteEntry, args);
+        await options.auth(ctx, { entryId: args.entryId, type: "delete" });
+        return ctx.runMutation(component.lib.deleteEntry, args);
       },
     }),
     deleteEntriesBySchema: mutationGeneric({
       args: { schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "delete", schemaId: args.schemaId });
-        return await ctx.runMutation(component.lib.deleteEntriesBySchema, args);
+        await options.auth(ctx, { schemaId: args.schemaId, type: "delete" });
+        return ctx.runMutation(component.lib.deleteEntriesBySchema, args);
       },
     }),
 
@@ -186,7 +177,7 @@ export function exposeApi(
       args: {},
       handler: async (ctx) => {
         await options.auth(ctx, { type: "create" });
-        return await ctx.runMutation(component.lib.generateUploadUrl, {});
+        return ctx.runMutation(component.lib.generateUploadUrl, {});
       },
     }),
     startImport: mutationGeneric({
@@ -196,8 +187,8 @@ export function exposeApi(
         total: v.number(),
       },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "create", schemaId: args.schemaId });
-        return await ctx.runMutation(component.lib.startImport, {
+        await options.auth(ctx, { schemaId: args.schemaId, type: "create" });
+        return ctx.runMutation(component.lib.startImport, {
           schemaId: args.schemaId,
           storageId: args.storageId,
           total: args.total,
@@ -208,7 +199,7 @@ export function exposeApi(
       args: { importId: v.string() },
       handler: async (ctx, args) => {
         await options.auth(ctx, { type: "read" });
-        return await ctx.runQuery(component.lib.getImportStatus, {
+        return ctx.runQuery(component.lib.getImportStatus, {
           importId: args.importId,
         });
       },
@@ -218,12 +209,9 @@ export function exposeApi(
 
 // Convenient types for `ctx` args, that only include the bare minimum.
 
-// type QueryCtx = Pick<GenericQueryCtx<GenericDataModel>, "runQuery">;
-// type MutationCtx = Pick<
+// Type QueryCtx = Pick<GenericQueryCtx<GenericDataModel>, "runQuery">;
+// Type MutationCtx = Pick<
 //   GenericMutationCtx<GenericDataModel>,
 //   "runQuery" | "runMutation"
 // >;
-type ActionCtx = Pick<
-  GenericActionCtx<GenericDataModel>,
-  "runQuery" | "runMutation" | "runAction"
->;
+type ActionCtx = Pick<GenericActionCtx<GenericDataModel>, "runQuery" | "runMutation" | "runAction">;

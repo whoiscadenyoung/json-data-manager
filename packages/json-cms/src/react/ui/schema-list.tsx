@@ -1,6 +1,6 @@
 "use client";
 
-import { Card, CardHeader, CardTitle, CardDescription } from "./primitives/card.js";
+import { Card, CardDescription, CardHeader, CardTitle } from "./primitives/card.js";
 
 /**
  * The minimal shape `SchemaList` needs to render an item. Any object with

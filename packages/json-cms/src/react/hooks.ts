@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import type { SchemaId, EntryId } from "../client/index.js";
-import type { SchemaDoc, EntryDoc, ImportStatusDoc } from "./types.js";
+import { useCallback, useState } from "react";
+
+import type { EntryId, SchemaId } from "../client/index.js";
 import { useJsonCmsApi } from "./provider.js";
+import type { EntryDoc, ImportStatusDoc, SchemaDoc } from "./types.js";
 
 // --- Schema queries ---
 
@@ -20,10 +21,7 @@ export function useSchemas(): SchemaDoc[] | undefined {
  */
 export function useSchema(schemaId: SchemaId | undefined): SchemaDoc | null | undefined {
   const api = useJsonCmsApi();
-  return useQuery(api.getSchema, schemaId ? { schemaId } : "skip") as
-    | SchemaDoc
-    | null
-    | undefined;
+  return useQuery(api.getSchema, schemaId ? { schemaId } : "skip") as SchemaDoc | null | undefined;
 }
 
 // --- Entry queries ---
@@ -43,20 +41,20 @@ export function useEntry(entryId: EntryId | undefined): EntryDoc | null | undefi
 // --- Schema mutations ---
 
 export function useCreateSchema() {
-  const api = useJsonCmsApi();
-  const fn = useMutation(api.createSchema);
+  const api = useJsonCmsApi(),
+    fn = useMutation(api.createSchema);
   return useCallback(
-    (args: { schema: unknown; uiSchema?: unknown }): Promise<SchemaId> =>
+    async (args: { schema: unknown; uiSchema?: unknown }): Promise<SchemaId> =>
       fn(args) as Promise<SchemaId>,
     [fn],
   );
 }
 
 export function useUpdateSchema() {
-  const api = useJsonCmsApi();
-  const fn = useMutation(api.updateSchema);
+  const api = useJsonCmsApi(),
+    fn = useMutation(api.updateSchema);
   return useCallback(
-    (args: {
+    async (args: {
       schemaId: SchemaId;
       title?: string;
       description?: string;
@@ -68,10 +66,10 @@ export function useUpdateSchema() {
 }
 
 export function useDeleteSchema() {
-  const api = useJsonCmsApi();
-  const fn = useMutation(api.deleteSchema);
+  const api = useJsonCmsApi(),
+    fn = useMutation(api.deleteSchema);
   return useCallback(
-    (args: { schemaId: SchemaId }): Promise<null> => fn(args) as Promise<null>,
+    async (args: { schemaId: SchemaId }): Promise<null> => fn(args) as Promise<null>,
     [fn],
   );
 }
@@ -79,47 +77,48 @@ export function useDeleteSchema() {
 // --- Entry mutations ---
 
 export function useCreateEntry() {
-  const api = useJsonCmsApi();
-  const fn = useMutation(api.createEntry);
+  const api = useJsonCmsApi(),
+    fn = useMutation(api.createEntry);
   return useCallback(
-    (args: { schemaId: SchemaId; data: unknown }): Promise<EntryId> => fn(args) as Promise<EntryId>,
+    async (args: { schemaId: SchemaId; data: unknown }): Promise<EntryId> =>
+      fn(args) as Promise<EntryId>,
     [fn],
   );
 }
 
 export function useCreateEntriesBulk() {
-  const api = useJsonCmsApi();
-  const fn = useMutation(api.createEntriesBulk);
+  const api = useJsonCmsApi(),
+    fn = useMutation(api.createEntriesBulk);
   return useCallback(
-    (args: { schemaId: SchemaId; dataArray: unknown[] }): Promise<EntryId[]> =>
+    async (args: { schemaId: SchemaId; dataArray: unknown[] }): Promise<EntryId[]> =>
       fn(args) as Promise<EntryId[]>,
     [fn],
   );
 }
 
 export function useUpdateEntry() {
-  const api = useJsonCmsApi();
-  const fn = useMutation(api.updateEntry);
+  const api = useJsonCmsApi(),
+    fn = useMutation(api.updateEntry);
   return useCallback(
-    (args: { entryId: EntryId; data: unknown }): Promise<null> => fn(args) as Promise<null>,
+    async (args: { entryId: EntryId; data: unknown }): Promise<null> => fn(args) as Promise<null>,
     [fn],
   );
 }
 
 export function useDeleteEntry() {
-  const api = useJsonCmsApi();
-  const fn = useMutation(api.deleteEntry);
+  const api = useJsonCmsApi(),
+    fn = useMutation(api.deleteEntry);
   return useCallback(
-    (args: { entryId: EntryId }): Promise<null> => fn(args) as Promise<null>,
+    async (args: { entryId: EntryId }): Promise<null> => fn(args) as Promise<null>,
     [fn],
   );
 }
 
 export function useDeleteEntriesBySchema() {
-  const api = useJsonCmsApi();
-  const fn = useMutation(api.deleteEntriesBySchema);
+  const api = useJsonCmsApi(),
+    fn = useMutation(api.deleteEntriesBySchema);
   return useCallback(
-    (args: { schemaId: SchemaId }): Promise<number> => fn(args) as Promise<number>,
+    async (args: { schemaId: SchemaId }): Promise<number> => fn(args) as Promise<number>,
     [fn],
   );
 }
@@ -153,42 +152,40 @@ export interface DatasetImportHandle {
  * subscribes to its live progress.
  */
 export function useDatasetImport(): DatasetImportHandle {
-  const api = useJsonCmsApi();
-  const createSchema = useMutation(api.createSchema);
-  const generateUploadUrl = useMutation(api.generateImportUploadUrl);
-  const startImport = useMutation(api.startImport);
-  const [schemaId, setSchemaId] = useState<SchemaId | undefined>(undefined);
-  const [importId, setImportId] = useState<string | undefined>(undefined);
+  const api = useJsonCmsApi(),
+    createSchema = useMutation(api.createSchema),
+    generateUploadUrl = useMutation(api.generateImportUploadUrl),
+    startImport = useMutation(api.startImport),
+    [schemaId, setSchemaId] = useState<SchemaId | undefined>(),
+    [importId, setImportId] = useState<string | undefined>(),
+    status = useQuery(api.getImportStatus, importId ? { importId } : "skip") as
+      | ImportStatusDoc
+      | null
+      | undefined,
+    start = useCallback(
+      async ({ schema, uiSchema, rows }: StartDatasetImportArgs) => {
+        const newSchemaId = (await createSchema({ schema, uiSchema })) as SchemaId,
+          uploadUrl = (await generateUploadUrl({})) as string,
+          res = await fetch(uploadUrl, {
+            body: JSON.stringify(rows),
+            headers: { "Content-Type": "application/json" },
+            method: "POST",
+          });
+        if (!res.ok) {
+          throw new Error("Failed to upload import data.");
+        }
+        const { storageId } = (await res.json()) as { storageId: string },
+          newImportId = (await startImport({
+            schemaId: newSchemaId,
+            storageId,
+            total: rows.length,
+          })) as string;
+        setSchemaId(newSchemaId);
+        setImportId(newImportId);
+        return { importId: newImportId, schemaId: newSchemaId };
+      },
+      [createSchema, generateUploadUrl, startImport],
+    );
 
-  const status = useQuery(api.getImportStatus, importId ? { importId } : "skip") as
-    | ImportStatusDoc
-    | null
-    | undefined;
-
-  const start = useCallback(
-    async ({ schema, uiSchema, rows }: StartDatasetImportArgs) => {
-      const newSchemaId = (await createSchema({ schema, uiSchema })) as SchemaId;
-      const uploadUrl = (await generateUploadUrl({})) as string;
-      const res = await fetch(uploadUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(rows),
-      });
-      if (!res.ok) {
-        throw new Error("Failed to upload import data.");
-      }
-      const { storageId } = (await res.json()) as { storageId: string };
-      const newImportId = (await startImport({
-        schemaId: newSchemaId,
-        storageId,
-        total: rows.length,
-      })) as string;
-      setSchemaId(newSchemaId);
-      setImportId(newImportId);
-      return { schemaId: newSchemaId, importId: newImportId };
-    },
-    [createSchema, generateUploadUrl, startImport],
-  );
-
-  return { schemaId, importId, status, start };
+  return { importId, schemaId, start, status };
 }

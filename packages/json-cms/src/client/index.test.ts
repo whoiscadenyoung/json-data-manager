@@ -1,22 +1,19 @@
-import { describe, expect, test } from "vitest";
+import { anyApi } from "convex/server";
+import type { ApiFromModules } from "convex/server";
+import { describe, expect, it } from "vitest";
+
 import { exposeApi } from "./index.js";
-import { anyApi, type ApiFromModules } from "convex/server";
 import { components, initConvexTest } from "./setup.test.js";
 
 // Type for component table IDs
 type SchemaId = string & { __tableName: "schemas" };
 
-export const {
-  listSchemas,
-  getSchema,
-  createSchema,
-  createEntry,
-  listEntries,
-} = exposeApi(components.jsonCms, {
-  auth: async (ctx, _operation) => {
-    return (await ctx.auth.getUserIdentity())?.subject ?? "anonymous";
+export const { listSchemas, getSchema, createSchema, createEntry, listEntries } = exposeApi(
+  components.jsonCms,
+  {
+    auth: async (ctx, _operation) => (await ctx.auth.getUserIdentity())?.subject ?? "anonymous",
   },
-});
+);
 
 const testApi = (
   anyApi as unknown as ApiFromModules<{
@@ -31,23 +28,21 @@ const testApi = (
 )["index.test"];
 
 describe("client tests", () => {
-  test("should be able to use client", async () => {
+  it("should be able to use client", async () => {
     const t = initConvexTest().withIdentity({
-      subject: "user1",
-    });
-
-    const testSchema = {
-      title: "Test Schema",
-      description: "A test schema",
-      type: "object",
-      properties: {
-        name: { type: "string" },
+        subject: "user1",
+      }),
+      testSchema = {
+        description: "A test schema",
+        properties: {
+          name: { type: "string" },
+        },
+        title: "Test Schema",
+        type: "object",
       },
-    };
-
-    const schemaId = await t.mutation(testApi.createSchema, {
-      schema: testSchema,
-    }) as SchemaId;
+      schemaId = (await t.mutation(testApi.createSchema, {
+        schema: testSchema,
+      })) as SchemaId;
     expect(schemaId).toBeDefined();
 
     const schemas = await t.query(testApi.listSchemas, {});
@@ -55,13 +50,13 @@ describe("client tests", () => {
     expect(schemas[0].title).toBe("Test Schema");
 
     const entryId = await t.mutation(testApi.createEntry, {
-      schemaId,
       data: { name: "John" },
+      schemaId,
     });
     expect(entryId).toBeDefined();
 
     const entries = await t.query(testApi.listEntries, { schemaId });
     expect(entries).toHaveLength(1);
-    expect(entries[0].data).toEqual({ name: "John" });
+    expect(entries[0].data).toStrictEqual({ name: "John" });
   });
 });

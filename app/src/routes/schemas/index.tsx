@@ -1,9 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { Calendar, FolderOpen, Plus } from "lucide-react";
+
 import { RouterButton } from "#/components/router-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
-import { Calendar, FolderOpen, Plus } from "lucide-react";
 import {
   Empty,
   EmptyContent,
@@ -12,6 +12,8 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "#/components/ui/empty";
+
+import { api } from "../../../convex/_generated/api";
 
 export const Route = createFileRoute("/schemas/")({
   component: SchemasPage,

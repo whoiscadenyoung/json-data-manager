@@ -11,25 +11,31 @@ Set up the package.json for the Convex component with proper exports, dependenci
 ## Requirements
 
 ### Subpath Exports
+
 - `.` - Main entry point for React components and hooks
 - `./convex` - Convex functions (queries, mutations, actions)
 - `./convex/schema` - Schema definition
 
 ### Files Whitelist
+
 Only include these directories in the published package:
+
 - `dist/` - Compiled JavaScript output
 - `convex/` - Convex function definitions
 
 ### Peer Dependencies
+
 - `convex` - The Convex SDK (required)
 - `react` - React for UI components
 - `react-dom` - React DOM for UI components
 
 ### Dependencies
+
 - `@rjsf/core` - React JSON Schema Form core
 - `ajv` - JSON Schema validation
 
 ### Build Scripts
+
 - `build` - Compile TypeScript to dist/ using `bunx tsc`
 - `typecheck` - Run TypeScript type checking
 
@@ -41,10 +47,7 @@ Only include these directories in the published package:
   "version": "0.1.0",
   "description": "Convex component for JSON Data Manager - schema management and data entry",
   "type": "module",
-  "files": [
-    "dist/",
-    "convex/"
-  ],
+  "files": ["dist/", "convex/"],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

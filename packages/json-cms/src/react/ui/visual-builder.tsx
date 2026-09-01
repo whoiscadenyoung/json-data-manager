@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from "react";
 import { AlertCircle, ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import { cn } from "./lib/utils.js";
 import { Button } from "./primitives/button.js";
 import { Input } from "./primitives/input.js";
 import { Label } from "./primitives/label.js";
 import { Textarea } from "./primitives/textarea.js";
-import { cn } from "./lib/utils.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -19,22 +20,22 @@ export interface PropertyDef {
   title: string;
   description: string;
   required: boolean;
-  // string
+  // String
   format: string;
   minLength: string;
   maxLength: string;
   pattern: string;
   enum: string;
-  // number/integer
+  // Number/integer
   minimum: string;
   maximum: string;
   multipleOf: string;
-  // array
+  // Array
   itemType: string;
   minItems: string;
   maxItems: string;
   itemSchema: PropertyDef | null; // For array of objects
-  // object
+  // Object
   properties: PropertyDef[];
 }
 
@@ -49,14 +50,26 @@ export interface SchemaFormData {
 function makePropertySchema(prop: PropertyDef): Record<string, unknown> {
   const schema: Record<string, unknown> = {};
   schema.type = prop.nullable ? [prop.type, "null"] : prop.type;
-  if (prop.title) schema.title = prop.title;
-  if (prop.description) schema.description = prop.description;
+  if (prop.title) {
+    schema.title = prop.title;
+  }
+  if (prop.description) {
+    schema.description = prop.description;
+  }
 
   if (prop.type === "string") {
-    if (prop.format) schema.format = prop.format;
-    if (prop.minLength !== "") schema.minLength = Number(prop.minLength);
-    if (prop.maxLength !== "") schema.maxLength = Number(prop.maxLength);
-    if (prop.pattern) schema.pattern = prop.pattern;
+    if (prop.format) {
+      schema.format = prop.format;
+    }
+    if (prop.minLength !== "") {
+      schema.minLength = Number(prop.minLength);
+    }
+    if (prop.maxLength !== "") {
+      schema.maxLength = Number(prop.maxLength);
+    }
+    if (prop.pattern) {
+      schema.pattern = prop.pattern;
+    }
     if (prop.enum.trim()) {
       schema.enum = prop.enum
         .split(",")
@@ -66,9 +79,15 @@ function makePropertySchema(prop: PropertyDef): Record<string, unknown> {
   }
 
   if (prop.type === "number" || prop.type === "integer") {
-    if (prop.minimum !== "") schema.minimum = Number(prop.minimum);
-    if (prop.maximum !== "") schema.maximum = Number(prop.maximum);
-    if (prop.multipleOf !== "") schema.multipleOf = Number(prop.multipleOf);
+    if (prop.minimum !== "") {
+      schema.minimum = Number(prop.minimum);
+    }
+    if (prop.maximum !== "") {
+      schema.maximum = Number(prop.maximum);
+    }
+    if (prop.multipleOf !== "") {
+      schema.multipleOf = Number(prop.multipleOf);
+    }
     if (prop.enum.trim()) {
       schema.enum = prop.enum
         .split(",")
@@ -90,41 +109,55 @@ function makePropertySchema(prop: PropertyDef): Record<string, unknown> {
         schema.items = { type: prop.itemType };
       }
     }
-    if (prop.minItems !== "") schema.minItems = Number(prop.minItems);
-    if (prop.maxItems !== "") schema.maxItems = Number(prop.maxItems);
+    if (prop.minItems !== "") {
+      schema.minItems = Number(prop.minItems);
+    }
+    if (prop.maxItems !== "") {
+      schema.maxItems = Number(prop.maxItems);
+    }
   }
 
   if (prop.type === "object" && prop.properties.length > 0) {
-    const nestedProps: Record<string, unknown> = {};
-    const nestedRequired: string[] = [];
+    const nestedProps: Record<string, unknown> = {},
+      nestedRequired: string[] = [];
     for (const child of prop.properties) {
       nestedProps[child.name] = makePropertySchema(child);
-      if (child.required) nestedRequired.push(child.name);
+      if (child.required) {
+        nestedRequired.push(child.name);
+      }
     }
     schema.properties = nestedProps;
-    if (nestedRequired.length > 0) schema.required = nestedRequired;
+    if (nestedRequired.length > 0) {
+      schema.required = nestedRequired;
+    }
   }
 
   return schema;
 }
 
 export function schemaFormDataToJson(data: SchemaFormData): string {
-  const properties: Record<string, unknown> = {};
-  const required: string[] = [];
+  const properties: Record<string, unknown> = {},
+    required: string[] = [];
 
   for (const prop of data.properties) {
-    if (!prop.name.trim()) continue;
+    if (!prop.name.trim()) {
+      continue;
+    }
     properties[prop.name] = makePropertySchema(prop);
-    if (prop.required) required.push(prop.name);
+    if (prop.required) {
+      required.push(prop.name);
+    }
   }
 
   const schema: Record<string, unknown> = {
-    type: "object",
-    title: data.title,
     description: data.description,
     properties,
+    title: data.title,
+    type: "object",
   };
-  if (required.length > 0) schema.required = required;
+  if (required.length > 0) {
+    schema.required = required;
+  }
 
   return JSON.stringify(schema, null, 2);
 }
@@ -142,9 +175,9 @@ function parsePropertyDef(
   requiredSet: Set<string>,
 ): PropertyDef {
   // `type` may be a nullable union like ["string", "null"]; split it into a
-  // base type plus a `nullable` flag so the type <select> stays scalar.
-  let type: PropertyType = "string";
-  let nullable = false;
+  // Base type plus a `nullable` flag so the type <select> stays scalar.
+  let nullable = false,
+    type: PropertyType = "string";
   if (Array.isArray(schema.type)) {
     const parts = schema.type as string[];
     nullable = parts.includes("null");
@@ -153,40 +186,38 @@ function parsePropertyDef(
     type = schema.type as PropertyType;
   }
   const enumVals = Array.isArray(schema.enum)
-    ? (schema.enum as unknown[]).map(String).join(", ")
-    : "";
-
-  const itemsObj =
-    typeof schema.items === "object" && schema.items !== null
-      ? (schema.items as Record<string, unknown>)
-      : null;
-  const rawItemType = itemsObj?.type;
-  const itemType = Array.isArray(rawItemType)
-    ? ((rawItemType as string[]).find((t) => t !== "null") ?? "")
-    : ((rawItemType as string) ?? "");
-
-  const prop: PropertyDef = {
-    id: nextId(),
-    name,
-    type,
-    nullable,
-    title: (schema.title as string) ?? "",
-    description: (schema.description as string) ?? "",
-    required: requiredSet.has(name),
-    format: (schema.format as string) ?? "",
-    minLength: schema.minLength !== undefined ? String(schema.minLength) : "",
-    maxLength: schema.maxLength !== undefined ? String(schema.maxLength) : "",
-    pattern: (schema.pattern as string) ?? "",
-    enum: enumVals,
-    minimum: schema.minimum !== undefined ? String(schema.minimum) : "",
-    maximum: schema.maximum !== undefined ? String(schema.maximum) : "",
-    multipleOf: schema.multipleOf !== undefined ? String(schema.multipleOf) : "",
-    itemType,
-    minItems: schema.minItems !== undefined ? String(schema.minItems) : "",
-    maxItems: schema.maxItems !== undefined ? String(schema.maxItems) : "",
-    itemSchema: null,
-    properties: [],
-  };
+      ? (schema.enum as unknown[]).map(String).join(", ")
+      : "",
+    itemsObj =
+      typeof schema.items === "object" && schema.items !== null
+        ? (schema.items as Record<string, unknown>)
+        : null,
+    rawItemType = itemsObj?.type,
+    itemType = Array.isArray(rawItemType)
+      ? ((rawItemType as string[]).find((t) => t !== "null") ?? "")
+      : ((rawItemType as string) ?? ""),
+    prop: PropertyDef = {
+      description: (schema.description as string) ?? "",
+      enum: enumVals,
+      format: (schema.format as string) ?? "",
+      id: nextId(),
+      itemSchema: null,
+      itemType,
+      maxItems: schema.maxItems === undefined ? "" : JSON.stringify(schema.maxItems),
+      maxLength: schema.maxLength === undefined ? "" : JSON.stringify(schema.maxLength),
+      maximum: schema.maximum === undefined ? "" : JSON.stringify(schema.maximum),
+      minItems: schema.minItems === undefined ? "" : JSON.stringify(schema.minItems),
+      minLength: schema.minLength === undefined ? "" : JSON.stringify(schema.minLength),
+      minimum: schema.minimum === undefined ? "" : JSON.stringify(schema.minimum),
+      multipleOf: schema.multipleOf === undefined ? "" : JSON.stringify(schema.multipleOf),
+      name,
+      nullable,
+      pattern: (schema.pattern as string) ?? "",
+      properties: [],
+      required: requiredSet.has(name),
+      title: (schema.title as string) ?? "",
+      type,
+    };
 
   if (type === "object" && typeof schema.properties === "object" && schema.properties !== null) {
     const nestedRequired = new Set<string>(
@@ -198,7 +229,12 @@ function parsePropertyDef(
   }
 
   // Parse array item schema for object arrays
-  if (type === "array" && prop.itemType === "object" && typeof schema.items === "object" && schema.items !== null) {
+  if (
+    type === "array" &&
+    prop.itemType === "object" &&
+    typeof schema.items === "object" &&
+    schema.items !== null
+  ) {
     const itemsSchema = schema.items as Record<string, unknown>;
     if (itemsSchema.type === "object") {
       prop.itemSchema = parsePropertyDef("item", itemsSchema, new Set());
@@ -211,21 +247,21 @@ function parsePropertyDef(
 export function jsonToSchemaFormData(json: string): SchemaFormData | null {
   try {
     const parsed = JSON.parse(json);
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
-    const obj = parsed as Record<string, unknown>;
-    const requiredSet = new Set<string>(
-      Array.isArray(obj.required) ? (obj.required as string[]) : [],
-    );
-    const properties =
-      typeof obj.properties === "object" && obj.properties !== null
-        ? Object.entries(obj.properties as Record<string, unknown>).map(([k, v]) =>
-            parsePropertyDef(k, v as Record<string, unknown>, requiredSet),
-          )
-        : [];
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return null;
+    }
+    const obj = parsed as Record<string, unknown>,
+      requiredSet = new Set<string>(Array.isArray(obj.required) ? (obj.required as string[]) : []),
+      properties =
+        typeof obj.properties === "object" && obj.properties !== null
+          ? Object.entries(obj.properties as Record<string, unknown>).map(([k, v]) =>
+              parsePropertyDef(k, v as Record<string, unknown>, requiredSet),
+            )
+          : [];
     return {
-      title: (obj.title as string) ?? "",
       description: (obj.description as string) ?? "",
       properties,
+      title: (obj.title as string) ?? "",
     };
   } catch {
     return null;
@@ -236,40 +272,33 @@ export function jsonToSchemaFormData(json: string): SchemaFormData | null {
 
 function defaultProp(): PropertyDef {
   return {
-    id: nextId(),
-    name: "",
-    type: "string",
-    nullable: false,
-    title: "",
     description: "",
-    required: false,
-    format: "",
-    minLength: "",
-    maxLength: "",
-    pattern: "",
     enum: "",
-    minimum: "",
-    maximum: "",
-    multipleOf: "",
-    itemType: "",
-    minItems: "",
-    maxItems: "",
+    format: "",
+    id: nextId(),
     itemSchema: null,
+    itemType: "",
+    maxItems: "",
+    maxLength: "",
+    maximum: "",
+    minItems: "",
+    minLength: "",
+    minimum: "",
+    multipleOf: "",
+    name: "",
+    nullable: false,
+    pattern: "",
     properties: [],
+    required: false,
+    title: "",
+    type: "string",
   };
 }
 
 // ─── PropertyRow ──────────────────────────────────────────────────────────────
 
-const STRING_FORMATS = ["", "email", "uri", "date", "date-time", "time", "password", "hostname"];
-const PROPERTY_TYPES: PropertyType[] = [
-  "string",
-  "number",
-  "integer",
-  "boolean",
-  "object",
-  "array",
-];
+const STRING_FORMATS = ["", "email", "uri", "date", "date-time", "time", "password", "hostname"],
+  PROPERTY_TYPES: PropertyType[] = ["string", "number", "integer", "boolean", "object", "array"];
 
 function PropertyRow({
   prop,
@@ -286,12 +315,11 @@ function PropertyRow({
   totalDataItems: number;
   depth?: number;
 }) {
-  const [expanded, setExpanded] = useState(false);
-
-  const set = <K extends keyof PropertyDef>(key: K, value: PropertyDef[K]) =>
-    onChange({ ...prop, [key]: value });
-
-  const hasFailures = failingCount > 0;
+  const [expanded, setExpanded] = useState(false),
+    set = <K extends keyof PropertyDef>(key: K, value: PropertyDef[K]) => {
+      onChange({ ...prop, [key]: value });
+    },
+    hasFailures = failingCount > 0;
 
   return (
     <div className={cn("rounded-md border border-border bg-card", depth > 0 && "bg-muted/30")}>
@@ -299,7 +327,9 @@ function PropertyRow({
       <div className="flex items-center gap-2 px-3 py-2">
         <button
           type="button"
-          onClick={() => setExpanded(!expanded)}
+          onClick={() => {
+            setExpanded(!expanded);
+          }}
           className="text-muted-foreground hover:text-foreground flex-shrink-0"
         >
           {expanded ? (
@@ -312,7 +342,9 @@ function PropertyRow({
         {/* Property name */}
         <Input
           value={prop.name}
-          onChange={(e) => set("name", e.target.value)}
+          onChange={(e) => {
+            set("name", e.target.value);
+          }}
           placeholder="property_name"
           className="h-6 text-xs font-mono flex-1 min-w-0"
         />
@@ -320,7 +352,9 @@ function PropertyRow({
         {/* Type selector */}
         <select
           value={prop.type}
-          onChange={(e) => set("type", e.target.value as PropertyType)}
+          onChange={(e) => {
+            set("type", e.target.value as PropertyType);
+          }}
           className={cn(
             "h-6 rounded-md border border-input bg-background px-1.5 text-xs",
             "focus:outline-none focus:ring-1 focus:ring-ring",
@@ -339,7 +373,9 @@ function PropertyRow({
           <input
             type="checkbox"
             checked={prop.required}
-            onChange={(e) => set("required", e.target.checked)}
+            onChange={(e) => {
+              set("required", e.target.checked);
+            }}
             className="h-3 w-3 rounded"
           />
           req
@@ -350,7 +386,9 @@ function PropertyRow({
           <input
             type="checkbox"
             checked={prop.nullable}
-            onChange={(e) => set("nullable", e.target.checked)}
+            onChange={(e) => {
+              set("nullable", e.target.checked);
+            }}
             className="h-3 w-3 rounded"
           />
           null
@@ -388,7 +426,9 @@ function PropertyRow({
               <Label className="text-xs">Title</Label>
               <Input
                 value={prop.title}
-                onChange={(e) => set("title", e.target.value)}
+                onChange={(e) => {
+                  set("title", e.target.value);
+                }}
                 placeholder="Display name"
                 className="h-6 text-xs"
               />
@@ -397,7 +437,9 @@ function PropertyRow({
               <Label className="text-xs">Description</Label>
               <Input
                 value={prop.description}
-                onChange={(e) => set("description", e.target.value)}
+                onChange={(e) => {
+                  set("description", e.target.value);
+                }}
                 placeholder="Field description"
                 className="h-6 text-xs"
               />
@@ -412,7 +454,9 @@ function PropertyRow({
                   <Label className="text-xs">Format</Label>
                   <select
                     value={prop.format}
-                    onChange={(e) => set("format", e.target.value)}
+                    onChange={(e) => {
+                      set("format", e.target.value);
+                    }}
                     className="w-full h-6 rounded-md border border-input bg-background px-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
                   >
                     {STRING_FORMATS.map((f) => (
@@ -426,7 +470,9 @@ function PropertyRow({
                   <Label className="text-xs">Pattern (regex)</Label>
                   <Input
                     value={prop.pattern}
-                    onChange={(e) => set("pattern", e.target.value)}
+                    onChange={(e) => {
+                      set("pattern", e.target.value);
+                    }}
                     placeholder="^[a-z]+$"
                     className="h-6 text-xs font-mono"
                   />
@@ -437,7 +483,9 @@ function PropertyRow({
                     type="number"
                     min={0}
                     value={prop.minLength}
-                    onChange={(e) => set("minLength", e.target.value)}
+                    onChange={(e) => {
+                      set("minLength", e.target.value);
+                    }}
                     placeholder="0"
                     className="h-6 text-xs"
                   />
@@ -448,7 +496,9 @@ function PropertyRow({
                     type="number"
                     min={0}
                     value={prop.maxLength}
-                    onChange={(e) => set("maxLength", e.target.value)}
+                    onChange={(e) => {
+                      set("maxLength", e.target.value);
+                    }}
                     placeholder="∞"
                     className="h-6 text-xs"
                   />
@@ -458,7 +508,9 @@ function PropertyRow({
                 <Label className="text-xs">Enum values (comma-separated)</Label>
                 <Input
                   value={prop.enum}
-                  onChange={(e) => set("enum", e.target.value)}
+                  onChange={(e) => {
+                    set("enum", e.target.value);
+                  }}
                   placeholder="option1, option2, option3"
                   className="h-6 text-xs"
                 />
@@ -475,7 +527,9 @@ function PropertyRow({
                   <Input
                     type="number"
                     value={prop.minimum}
-                    onChange={(e) => set("minimum", e.target.value)}
+                    onChange={(e) => {
+                      set("minimum", e.target.value);
+                    }}
                     placeholder="−∞"
                     className="h-6 text-xs"
                   />
@@ -485,7 +539,9 @@ function PropertyRow({
                   <Input
                     type="number"
                     value={prop.maximum}
-                    onChange={(e) => set("maximum", e.target.value)}
+                    onChange={(e) => {
+                      set("maximum", e.target.value);
+                    }}
                     placeholder="+∞"
                     className="h-6 text-xs"
                   />
@@ -496,7 +552,9 @@ function PropertyRow({
                     type="number"
                     min={0}
                     value={prop.multipleOf}
-                    onChange={(e) => set("multipleOf", e.target.value)}
+                    onChange={(e) => {
+                      set("multipleOf", e.target.value);
+                    }}
                     placeholder="—"
                     className="h-6 text-xs"
                   />
@@ -506,7 +564,9 @@ function PropertyRow({
                 <Label className="text-xs">Enum values (comma-separated numbers)</Label>
                 <Input
                   value={prop.enum}
-                  onChange={(e) => set("enum", e.target.value)}
+                  onChange={(e) => {
+                    set("enum", e.target.value);
+                  }}
                   placeholder="1, 2, 3"
                   className="h-6 text-xs"
                 />
@@ -546,7 +606,9 @@ function PropertyRow({
                     type="number"
                     min={0}
                     value={prop.minItems}
-                    onChange={(e) => set("minItems", e.target.value)}
+                    onChange={(e) => {
+                      set("minItems", e.target.value);
+                    }}
                     placeholder="0"
                     className="h-6 text-xs"
                   />
@@ -557,7 +619,9 @@ function PropertyRow({
                     type="number"
                     min={0}
                     value={prop.maxItems}
-                    onChange={(e) => set("maxItems", e.target.value)}
+                    onChange={(e) => {
+                      set("maxItems", e.target.value);
+                    }}
                     placeholder="∞"
                     className="h-6 text-xs"
                   />
@@ -573,12 +637,12 @@ function PropertyRow({
                       type="button"
                       variant="ghost"
                       size="xs"
-                      onClick={() =>
+                      onClick={() => {
                         set("itemSchema", {
                           ...prop.itemSchema!,
                           properties: [...prop.itemSchema!.properties, defaultProp()],
-                        })
-                      }
+                        });
+                      }}
                     >
                       <Plus className="h-3 w-3 mr-1" />
                       Add field
@@ -625,7 +689,9 @@ function PropertyRow({
                   type="button"
                   variant="ghost"
                   size="xs"
-                  onClick={() => set("properties", [...prop.properties, defaultProp()])}
+                  onClick={() => {
+                    set("properties", [...prop.properties, defaultProp()]);
+                  }}
                 >
                   <Plus className="h-3 w-3 mr-1" />
                   Add
@@ -666,7 +732,7 @@ function PropertyRow({
 interface VisualBuilderProps {
   schemaJson: string;
   onChange: (json: string) => void;
-  /** path → count of data items failing at that path */
+  /** Path → count of data items failing at that path */
   validationFailingPaths: Map<string, number>;
   totalDataItems: number;
 }
@@ -677,12 +743,12 @@ export function VisualBuilder({
   validationFailingPaths,
   totalDataItems,
 }: VisualBuilderProps) {
-  const [formData, setFormData] = useState<SchemaFormData | null>(null);
-  const [parseError, setParseError] = useState(false);
-  // Track when we ourselves triggered the schemaJson change so we don't
-  // re-parse and rebuild PropertyDef objects (which would remount inputs and
-  // lose keyboard focus on every keystroke).
-  const selfChangedRef = useRef(false);
+  const [formData, setFormData] = useState<SchemaFormData | null>(null),
+    [parseError, setParseError] = useState(false),
+    // Track when we ourselves triggered the schemaJson change so we don't
+    // Re-parse and rebuild PropertyDef objects (which would remount inputs and
+    // Lose keyboard focus on every keystroke).
+    selfChangedRef = useRef(false);
 
   // Parse incoming schemaJson into formData — but skip when we were the source
   useEffect(() => {
@@ -691,8 +757,8 @@ export function VisualBuilder({
       return;
     }
     if (!schemaJson.trim()) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- syncs internal form state to the externally-controlled schemaJson prop; guarded above to skip when this component itself was the source of the change.
-      setFormData({ title: "", description: "", properties: [] });
+      //
+      setFormData({ description: "", properties: [], title: "" });
       setParseError(false);
       return;
     }
@@ -726,7 +792,9 @@ export function VisualBuilder({
     );
   }
 
-  if (!formData) return null;
+  if (!formData) {
+    return null;
+  }
 
   const set = <K extends keyof SchemaFormData>(key: K, value: SchemaFormData[K]) => {
     handleFormChange({ ...formData, [key]: value });
@@ -743,7 +811,9 @@ export function VisualBuilder({
           <Input
             id="vb-title"
             value={formData.title}
-            onChange={(e) => set("title", e.target.value)}
+            onChange={(e) => {
+              set("title", e.target.value);
+            }}
             placeholder="My Schema"
             className="h-7 text-sm"
           />
@@ -755,7 +825,9 @@ export function VisualBuilder({
           <Textarea
             id="vb-description"
             value={formData.description}
-            onChange={(e) => set("description", e.target.value)}
+            onChange={(e) => {
+              set("description", e.target.value);
+            }}
             placeholder="Describe what this schema represents…"
             rows={2}
             className="text-sm resize-none"
@@ -776,7 +848,9 @@ export function VisualBuilder({
             type="button"
             variant="outline"
             size="xs"
-            onClick={() => set("properties", [...formData.properties, defaultProp()])}
+            onClick={() => {
+              set("properties", [...formData.properties, defaultProp()]);
+            }}
           >
             <Plus className="h-3 w-3 mr-1" />
             Add property

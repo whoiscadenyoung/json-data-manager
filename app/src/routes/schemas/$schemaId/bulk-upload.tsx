@@ -1,15 +1,12 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState, useRef, useMemo, useEffect } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "../../../../convex/_generated/api";
-import type { SchemaId } from "@caden/json-cms";
 import { parseDataRows } from "@caden/json-cms/react";
 import validator from "@rjsf/validator-ajv8";
+import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useMutation, useQuery } from "convex/react";
+import { AlertTriangle, ArrowLeft, CheckCircle, FileJson, Upload, X, XCircle } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+
 import { RouterButton } from "@/components/router-button";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { JsonEditor } from "@/components/ui/json-editor";
-import { Label } from "@/components/ui/label";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -18,40 +15,39 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { ArrowLeft, FileJson, Upload, X, CheckCircle, XCircle, AlertTriangle } from "lucide-react";
-import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { JsonEditor } from "@/components/ui/json-editor";
+import { Label } from "@/components/ui/label";
+
+import { api } from "../../../../convex/_generated/api";
 
 export const Route = createFileRoute("/schemas/$schemaId/bulk-upload")({
   component: BulkUploadPage,
 });
 
-type ValidationResult = {
+interface ValidationResult {
   index: number;
   data: unknown;
   valid: boolean;
   errors: string[];
-};
+}
 
 function BulkUploadPage() {
-  const { schemaId } = Route.useParams();
-  const navigate = useNavigate();
-  const schema = useQuery(api.schemas.get, { schemaId: schemaId as SchemaId });
-  const generateUploadUrl = useMutation(api.imports.generateUploadUrl);
-  const startImport = useMutation(api.imports.startImport);
-
-  const [jsonText, setJsonText] = useState("");
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [parseError, setParseError] = useState<string | null>(null);
-  const [validationResults, setValidationResults] = useState<ValidationResult[] | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [importId, setImportId] = useState<string | undefined>(undefined);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const importStatus = useQuery(
-    api.imports.getImportStatus,
-    importId ? { importId } : "skip",
-  );
+  const { schemaId } = Route.useParams(),
+    navigate = useNavigate(),
+    schema = useQuery(api.schemas.get, { schemaId }),
+    generateUploadUrl = useMutation(api.imports.generateUploadUrl),
+    startImport = useMutation(api.imports.startImport),
+    [jsonText, setJsonText] = useState(""),
+    [fileName, setFileName] = useState<string | null>(null),
+    [isDragging, setIsDragging] = useState(false),
+    [parseError, setParseError] = useState<string | null>(null),
+    [validationResults, setValidationResults] = useState<ValidationResult[] | null>(null),
+    [isSubmitting, setIsSubmitting] = useState(false),
+    [importId, setImportId] = useState<string | undefined>(),
+    fileInputRef = useRef<HTMLInputElement>(null),
+    importStatus = useQuery(api.imports.getImportStatus, importId ? { importId } : "skip");
 
   // Navigate back to the dataset once the batched import finishes.
   useEffect(() => {
@@ -59,7 +55,7 @@ function BulkUploadPage() {
       toast.success(
         `${importStatus.total} ${importStatus.total === 1 ? "entry" : "entries"} imported!`,
       );
-      void navigate({ to: "/schemas/$schemaId", params: { schemaId } });
+      void navigate({ params: { schemaId }, to: "/schemas/$schemaId" });
     } else if (importStatus?.status === "failed") {
       toast.error(importStatus.error ?? "Import failed.");
       setIsSubmitting(false);
@@ -69,122 +65,126 @@ function BulkUploadPage() {
 
   // Wrap item schema in array schema for inline CodeMirror linting
   const arrayJsonSchema = useMemo(
-    () => (schema ? ({ type: "array", items: schema.schema } as object) : undefined),
-    [schema],
-  );
+      () => (schema ? { items: schema.schema, type: "array" } : undefined),
+      [schema],
+    ),
+    validateJson = (text: string) => {
+      if (!schema) {
+        return;
+      }
+      setParseError(null);
+      setValidationResults(null);
 
-  const validateJson = (text: string) => {
-    if (!schema) return;
-    setParseError(null);
-    setValidationResults(null);
+      if (!text.trim()) {
+        setParseError("Please provide JSON input.");
+        return;
+      }
 
-    if (!text.trim()) {
-      setParseError("Please provide JSON input.");
-      return;
-    }
+      const { rows, errors: parseErrors } = parseDataRows(text);
 
-    const { rows, errors: parseErrors } = parseDataRows(text);
+      if (rows.length === 0) {
+        setParseError(
+          parseErrors.length > 0
+            ? "Could not parse any rows — check your JSON/JSONL input."
+            : "No rows found — provide a JSON array or JSONL file.",
+        );
+        return;
+      }
+      if (parseErrors.length > 0) {
+        toast.warning(`Skipped ${parseErrors.length} malformed line(s).`);
+      }
 
-    if (rows.length === 0) {
-      setParseError(
-        parseErrors.length > 0
-          ? "Could not parse any rows — check your JSON/JSONL input."
-          : "No rows found — provide a JSON array or JSONL file.",
-      );
-      return;
-    }
-    if (parseErrors.length > 0) {
-      toast.warning(`Skipped ${parseErrors.length} malformed line(s).`);
-    }
+      const results: ValidationResult[] = rows.map((item, index) => {
+        const { errors } = validator.validateFormData(item, schema.schema);
+        return {
+          data: item,
+          errors: errors.map((e) => e.stack ?? e.message ?? JSON.stringify(e)),
+          index,
+          valid: errors.length === 0,
+        };
+      });
 
-    const results: ValidationResult[] = rows.map((item, index) => {
-      const { errors } = validator.validateFormData(item, schema.schema);
-      return {
-        index,
-        data: item,
-        valid: errors.length === 0,
-        errors: errors.map((e) => e.stack ?? e.message ?? String(e)),
+      setValidationResults(results);
+    },
+    loadFile = (file: File) => {
+      if (!/\.(json|jsonl|ndjson)$/i.test(file.name) && file.type !== "application/json") {
+        toast.error("Please upload a .json or .jsonl file.");
+        return;
+      }
+      setFileName(file.name);
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const text = (event.target?.result as string) ?? "";
+        setJsonText(text);
+        validateJson(text);
       };
-    });
+      reader.readAsText(file);
+    },
+    handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) {
+        loadFile(file);
+      }
+      e.target.value = "";
+    },
+    handleDragOver = (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDragging(true);
+    },
+    handleDragLeave = (e: React.DragEvent) => {
+      if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+        setIsDragging(false);
+      }
+    },
+    handleDrop = (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDragging(false);
+      const file = e.dataTransfer.files[0];
+      if (file) {
+        loadFile(file);
+      }
+    },
+    clearInput = () => {
+      setJsonText("");
+      setFileName(null);
+      setParseError(null);
+      setValidationResults(null);
+    },
+    handleSubmit = async () => {
+      if (!validationResults) {
+        return;
+      }
+      const validEntries = validationResults.filter((r) => r.valid).map((r) => r.data);
+      if (validEntries.length === 0) {
+        toast.error("No valid entries to upload.");
+        return;
+      }
 
-    setValidationResults(results);
-  };
-
-  const loadFile = (file: File) => {
-    if (!/\.(json|jsonl|ndjson)$/i.test(file.name) && file.type !== "application/json") {
-      toast.error("Please upload a .json or .jsonl file.");
-      return;
-    }
-    setFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const text = (event.target?.result as string) ?? "";
-      setJsonText(text);
-      validateJson(text);
+      setIsSubmitting(true);
+      try {
+        // Upload the valid rows to storage, then run the batched, monitored import.
+        const uploadUrl = await generateUploadUrl({}),
+          res = await fetch(uploadUrl, {
+            body: JSON.stringify(validEntries),
+            headers: { "Content-Type": "application/json" },
+            method: "POST",
+          });
+        if (!res.ok) {
+          throw new Error("Failed to upload entries.");
+        }
+        const { storageId } = (await res.json()) as { storageId: string },
+          newImportId = await startImport({
+            schemaId,
+            storageId,
+            total: validEntries.length,
+          });
+        setImportId(newImportId);
+        // Navigation happens in the effect watching importStatus.
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to upload entries.");
+        setIsSubmitting(false);
+      }
     };
-    reader.readAsText(file);
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) loadFile(file);
-    e.target.value = "";
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragging(false);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file) loadFile(file);
-  };
-
-  const clearInput = () => {
-    setJsonText("");
-    setFileName(null);
-    setParseError(null);
-    setValidationResults(null);
-  };
-
-  const handleSubmit = async () => {
-    if (!validationResults) return;
-    const validEntries = validationResults.filter((r) => r.valid).map((r) => r.data);
-    if (validEntries.length === 0) {
-      toast.error("No valid entries to upload.");
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      // Upload the valid rows to storage, then run the batched, monitored import.
-      const uploadUrl = await generateUploadUrl({});
-      const res = await fetch(uploadUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(validEntries),
-      });
-      if (!res.ok) throw new Error("Failed to upload entries.");
-      const { storageId } = (await res.json()) as { storageId: string };
-      const newImportId = await startImport({
-        schemaId: schemaId as SchemaId,
-        storageId,
-        total: validEntries.length,
-      });
-      setImportId(newImportId);
-      // Navigation happens in the effect watching importStatus.
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to upload entries.");
-      setIsSubmitting(false);
-    }
-  };
 
   if (schema === undefined) {
     return (
@@ -205,8 +205,8 @@ function BulkUploadPage() {
     );
   }
 
-  const validCount = validationResults?.filter((r) => r.valid).length ?? 0;
-  const invalidCount = validationResults?.filter((r) => !r.valid).length ?? 0;
+  const validCount = validationResults?.filter((r) => r.valid).length ?? 0,
+    invalidCount = validationResults?.filter((r) => !r.valid).length ?? 0;
 
   return (
     <div className="max-w-2xl mx-auto py-8 px-4 sm:px-0">
@@ -254,8 +254,7 @@ function BulkUploadPage() {
             <CardTitle>JSON Input</CardTitle>
             <CardDescription>
               Upload a <code>.json</code> or <code>.jsonl</code> file or paste a JSON array below.
-              Each object will be
-              validated against the <strong>{schema.title}</strong> schema.
+              Each object will be validated against the <strong>{schema.title}</strong> schema.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -331,7 +330,9 @@ function BulkUploadPage() {
                 value={jsonText}
                 onChange={(value) => {
                   setJsonText(value);
-                  if (fileName) setFileName(null);
+                  if (fileName) {
+                    setFileName(null);
+                  }
                   setParseError(null);
                   setValidationResults(null);
                 }}
@@ -345,7 +346,9 @@ function BulkUploadPage() {
             <Button
               type="button"
               variant="outline"
-              onClick={() => validateJson(jsonText)}
+              onClick={() => {
+                validateJson(jsonText);
+              }}
               disabled={!jsonText.trim()}
             >
               Validate Entries

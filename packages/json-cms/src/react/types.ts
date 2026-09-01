@@ -1,10 +1,11 @@
 import type { FunctionReference } from "convex/server";
-import type { SchemaId, EntryId } from "../client/index.js";
+
+import type { EntryId, SchemaId } from "../client/index.js";
 
 /**
  * A stored JSON schema document, as returned by the component's queries.
  */
-export type SchemaDoc = {
+export interface SchemaDoc {
   _id: SchemaId;
   _creationTime: number;
   title: string;
@@ -13,18 +14,18 @@ export type SchemaDoc = {
   schema: unknown;
   /** Optional RJSF UI schema object. */
   uiSchema?: unknown;
-};
+}
 
 /**
  * A stored data entry document, as returned by the component's queries.
  */
-export type EntryDoc = {
+export interface EntryDoc {
   _id: EntryId;
   _creationTime: number;
   schemaId: SchemaId;
   /** Entry data conforming to the referenced schema. */
   data: unknown;
-};
+}
 
 /**
  * The set of function references a host app exposes for the JSON CMS
@@ -58,7 +59,7 @@ export interface JsonCmsApi {
 /**
  * Live status of a batched dataset import, as returned by `getImportStatus`.
  */
-export type ImportStatusDoc = {
+export interface ImportStatusDoc {
   _id: string;
   _creationTime: number;
   schemaId: SchemaId;
@@ -68,4 +69,4 @@ export type ImportStatusDoc = {
   status: "pending" | "processing" | "completed" | "failed";
   error?: string;
   workflowId?: string;
-};
+}

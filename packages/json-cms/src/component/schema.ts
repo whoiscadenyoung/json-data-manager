@@ -3,31 +3,31 @@ import { v } from "convex/values";
 
 export default defineSchema({
   schemas: defineTable({
-    title: v.string(),
     description: v.string(),
     schema: v.any(), // JSON schema object
+    title: v.string(),
     uiSchema: v.optional(v.any()), // RJSF UI schema object
   }),
 
   entries: defineTable({
-    schemaId: v.id("schemas"),
     data: v.any(), // Entry data conforming to the schema
+    schemaId: v.id("schemas"),
   }).index("by_schema", ["schemaId"]),
 
   // Tracks a batched, workflow-driven import of a dataset's entries so the
-  // client can monitor progress. The payload lives in file storage.
+  // Client can monitor progress. The payload lives in file storage.
   imports: defineTable({
-    schemaId: v.id("schemas"),
-    storageId: v.id("_storage"), // uploaded rows payload (JSON array)
-    total: v.number(),
+    error: v.optional(v.string()),
     processed: v.number(),
+    schemaId: v.id("schemas"),
     status: v.union(
       v.literal("pending"),
       v.literal("processing"),
       v.literal("completed"),
       v.literal("failed"),
     ),
-    error: v.optional(v.string()),
+    storageId: v.id("_storage"), // Uploaded rows payload (JSON array)
+    total: v.number(),
     workflowId: v.optional(v.string()),
   }).index("by_schema", ["schemaId"]),
 });

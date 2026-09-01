@@ -1,87 +1,92 @@
-import { useMemo, useRef, useEffect } from "react";
-import ReactCodeMirror, { EditorView } from "@uiw/react-codemirror";
-import { githubLight, githubDark } from "@uiw/codemirror-theme-github";
 import { json } from "@codemirror/lang-json";
-import { linter, lintGutter, type Diagnostic } from "@codemirror/lint";
 import { syntaxTree } from "@codemirror/language";
+import { lintGutter, linter } from "@codemirror/lint";
+import type { Diagnostic } from "@codemirror/lint";
+import { githubDark, githubLight } from "@uiw/codemirror-theme-github";
+import ReactCodeMirror, { EditorView } from "@uiw/react-codemirror";
 import { jsonSchemaLinter, stateExtensions, updateSchema } from "codemirror-json-schema";
 import type { JSONSchema7 } from "json-schema";
+import { useEffect, useMemo, useRef } from "react";
+
 import { useColorScheme } from "../lib/use-color-scheme.js";
 import { cn } from "../lib/utils.js";
 
 const jsonLinter = linter((view): Diagnostic[] => {
-  const diagnostics: Diagnostic[] = [];
-  const doc = view.state.doc.toString();
+    const diagnostics: Diagnostic[] = [],
+      doc = view.state.doc.toString();
 
-  if (!doc.trim()) return diagnostics;
-
-  // Surface parse errors from the lezer syntax tree
-  syntaxTree(view.state)
-    .cursor()
-    .iterate((node) => {
-      if (node.type.isError) {
-        diagnostics.push({
-          from: node.from,
-          to: Math.max(node.to, node.from + 1),
-          severity: "error",
-          message: "JSON syntax error",
-        });
-      }
-    });
-
-  if (diagnostics.length > 0) return diagnostics;
-
-  // Semantic validation (title / description)
-  try {
-    const parsed = JSON.parse(doc);
-
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      diagnostics.push({
-        from: 0,
-        to: doc.length,
-        severity: "error",
-        message: "Schema must be a JSON object",
-      });
+    if (!doc.trim()) {
       return diagnostics;
     }
 
-    const obj = parsed as Record<string, unknown>;
-
-    if (!obj.title || typeof obj.title !== "string" || !obj.title.trim()) {
-      diagnostics.push({
-        from: 0,
-        to: doc.length,
-        severity: "warning",
-        message: 'Schema must have a non-empty "title" property',
+    // Surface parse errors from the lezer syntax tree
+    syntaxTree(view.state)
+      .cursor()
+      .iterate((node) => {
+        if (node.type.isError) {
+          diagnostics.push({
+            from: node.from,
+            message: "JSON syntax error",
+            severity: "error",
+            to: Math.max(node.to, node.from + 1),
+          });
+        }
       });
+
+    if (diagnostics.length > 0) {
+      return diagnostics;
     }
 
-    if (!obj.description || typeof obj.description !== "string" || !obj.description.trim()) {
-      diagnostics.push({
-        from: 0,
-        to: doc.length,
-        severity: "warning",
-        message: 'Schema must have a non-empty "description" property',
-      });
+    // Semantic validation (title / description)
+    try {
+      const parsed = JSON.parse(doc);
+
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        diagnostics.push({
+          from: 0,
+          message: "Schema must be a JSON object",
+          severity: "error",
+          to: doc.length,
+        });
+        return diagnostics;
+      }
+
+      const obj = parsed as Record<string, unknown>;
+
+      if (!obj.title || typeof obj.title !== "string" || !obj.title.trim()) {
+        diagnostics.push({
+          from: 0,
+          message: 'Schema must have a non-empty "title" property',
+          severity: "warning",
+          to: doc.length,
+        });
+      }
+
+      if (!obj.description || typeof obj.description !== "string" || !obj.description.trim()) {
+        diagnostics.push({
+          from: 0,
+          message: 'Schema must have a non-empty "description" property',
+          severity: "warning",
+          to: doc.length,
+        });
+      }
+    } catch {
+      // Parse errors already surfaced via syntax tree above
     }
-  } catch {
-    // parse errors already surfaced via syntax tree above
-  }
 
-  return diagnostics;
-});
-
-// Blend CodeMirror's internals with the site's design tokens
-const baseTheme = EditorView.theme({
-  "&": {
-    fontSize: "0.875rem",
-    fontFamily:
-      'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-  },
-  ".cm-scroller": { overflow: "auto" },
-  ".cm-gutters": { borderRight: "1px solid var(--border)" },
-  ".cm-lineNumbers .cm-gutterElement": { minWidth: "2.5rem", paddingRight: "0.5rem" },
-});
+    return diagnostics;
+  }),
+  // Blend CodeMirror's internals with the site's design tokens
+  baseTheme = EditorView.theme({
+    "&": {
+      fontFamily:
+        'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+      fontSize: "0.875rem",
+    },
+    ".cm-gutters": { borderRight: "1px solid var(--border)" },
+    ".cm-lineNumbers .cm-gutterElement": { minWidth: "2.5rem", paddingRight: "0.5rem" },
+    ".cm-scroller": { overflow: "auto" },
+  });
 
 interface JsonEditorProps {
   value: string;
@@ -108,14 +113,14 @@ export function JsonEditor({
   "aria-describedby": ariaDescribedBy,
   "aria-labelledby": ariaLabelledBy,
 }: JsonEditorProps) {
-  const colorScheme = useColorScheme();
-  const viewRef = useRef<EditorView | null>(null);
-  const enableJsonSchemaLinting = jsonSchema !== undefined;
+  const colorScheme = useColorScheme(),
+    viewRef = useRef<EditorView | null>(null),
+    enableJsonSchemaLinting = jsonSchema !== undefined;
 
   // Update the schema in CodeMirror state whenever it changes
   useEffect(() => {
     if (viewRef.current) {
-      updateSchema(viewRef.current, jsonSchema as JSONSchema7 | undefined);
+      updateSchema(viewRef.current, jsonSchema);
     }
   }, [jsonSchema]);
 
@@ -154,19 +159,19 @@ export function JsonEditor({
           viewRef.current = view;
           // Set schema immediately on mount so first validation is instant
           if (jsonSchema !== undefined) {
-            updateSchema(view, jsonSchema as JSONSchema7);
+            updateSchema(view, jsonSchema);
           }
         }}
         basicSetup={{
-          lineNumbers: true,
-          foldGutter: false,
-          dropCursor: false,
           allowMultipleSelections: false,
-          indentOnInput: true,
-          closeBrackets: true,
           autocompletion: false,
+          closeBrackets: true,
+          dropCursor: false,
+          foldGutter: false,
           highlightActiveLine: false,
           highlightActiveLineGutter: false,
+          indentOnInput: true,
+          lineNumbers: true,
         }}
       />
     </div>

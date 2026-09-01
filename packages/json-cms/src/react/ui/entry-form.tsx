@@ -1,9 +1,11 @@
 "use client";
 
+import type { IChangeEvent } from "@rjsf/core";
 import Form from "@rjsf/shadcn";
 import validator from "@rjsf/validator-ajv8";
-import type { IChangeEvent } from "@rjsf/core";
-import { mergeUiSchemas, type UiSchema } from "../lib/ui-schema.js";
+
+import { mergeUiSchemas } from "../lib/ui-schema.js";
+import type { UiSchema } from "../lib/ui-schema.js";
 
 export interface EntryFormProps {
   /** JSON Schema describing the entry's shape. */
@@ -34,18 +36,15 @@ export function EntryForm({
   onSubmit,
 }: EntryFormProps) {
   const mergedUiSchema: UiSchema = mergeUiSchemas(uiSchema as UiSchema | undefined, {
-    "ui:submitButtonOptions": {
-      submitText,
-      norender: false,
-      props: {
-        disabled,
+      "ui:submitButtonOptions": {
+        norender: false,
+        props: {
+          disabled,
+        },
+        submitText,
       },
-    },
-  });
-
-  const handleSubmit = (data: IChangeEvent) => {
-    return onSubmit(data.formData);
-  };
+    }),
+    handleSubmit = (data: IChangeEvent) => onSubmit(data.formData);
 
   return (
     <Form

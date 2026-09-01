@@ -34,8 +34,4 @@ export {
   mergeUiSchemas,
   DEFAULT_SUBMIT_BUTTON_OPTIONS,
 } from "./lib/ui-schema.js";
-export type {
-  UiSchema,
-  UiOptions,
-  UiSchemaSubmitButtonOptions,
-} from "./lib/ui-schema.js";
+export type { UiSchema, UiOptions, UiSchemaSubmitButtonOptions } from "./lib/ui-schema.js";

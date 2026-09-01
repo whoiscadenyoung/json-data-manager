@@ -1,4 +1,12 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { Form } from "@rjsf/shadcn";
+import validator from "@rjsf/validator-ajv8";
+import { Link, createFileRoute } from "@tanstack/react-router";
+import { useMutation, useQuery } from "convex/react";
+import { ArrowLeft, Check } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
+
+import { RouterButton } from "@/components/router-button";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -7,56 +15,50 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { useState } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "../../../../convex/_generated/api";
-import type { SchemaId } from "@caden/json-cms";
-import Form from "@rjsf/shadcn";
-import validator from "@rjsf/validator-ajv8";
-import { RouterButton } from "@/components/router-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, Check } from "lucide-react";
-import { toast } from "sonner";
+
+import { api } from "../../../../convex/_generated/api";
 
 export const Route = createFileRoute("/schemas/$schemaId/create")({
   component: CreateEntryPage,
 });
 
 function CreateEntryPage() {
-  const { schemaId } = Route.useParams();
-  const schema = useQuery(api.schemas.get, { schemaId: schemaId as SchemaId });
-  const createEntry = useMutation(api.entries.create);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [lastCreatedEntryId, setLastCreatedEntryId] = useState<string | null>(null);
+  const { schemaId } = Route.useParams(),
+    schema = useQuery(api.schemas.get, { schemaId }),
+    createEntry = useMutation(api.entries.create),
+    [isSubmitting, setIsSubmitting] = useState(false),
+    [lastCreatedEntryId, setLastCreatedEntryId] = useState<string | null>(null),
+    handleSubmit = async (data: any) => {
+      if (!schemaId || !data.formData) {
+        return;
+      }
 
-  const handleSubmit = async (data: any) => {
-    if (!schemaId || !data.formData) return;
+      setIsSubmitting(true);
 
-    setIsSubmitting(true);
+      try {
+        const entryId = await createEntry({
+          data: data.formData,
+          schemaId,
+        });
 
-    try {
-      const entryId = await createEntry({
-        schemaId: schemaId as SchemaId,
-        data: data.formData,
-      });
+        setLastCreatedEntryId(entryId);
+        toast.success("Entry created successfully!");
 
-      setLastCreatedEntryId(entryId);
-      toast.success("Entry created successfully!");
-
-      // Reset form by forcing re-render
-      window.location.reload();
-    } catch (error) {
-      console.error("Error creating entry:", error);
-      toast.error(error instanceof Error ? error.message : "Failed to create entry");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+        // Reset form by forcing re-render
+        window.location.reload();
+      } catch (error) {
+        console.error("Error creating entry:", error);
+        toast.error(error instanceof Error ? error.message : "Failed to create entry");
+      } finally {
+        setIsSubmitting(false);
+      }
+    };
 
   if (schema === undefined) {
     return (
       <div className="flex justify-center items-center min-h-100">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
       </div>
     );
   }
@@ -116,7 +118,7 @@ function CreateEntryPage() {
                 Entry created successfully!{" "}
                 <Link
                   to="/schemas/$schemaId/$entryId"
-                  params={{ schemaId, entryId: lastCreatedEntryId }}
+                  params={{ entryId: lastCreatedEntryId, schemaId }}
                   className="font-semibold underline hover:no-underline"
                 >
                   View entry
@@ -141,13 +143,13 @@ function CreateEntryPage() {
             uiSchema={{
               ...schema.uiSchema,
               "ui:submitButtonOptions": {
-                submitText: isSubmitting ? "Creating..." : "Create Entry",
                 norender: false,
                 props: {
-                  disabled: isSubmitting,
                   className:
                     "w-full px-4 py-3 rounded bg-primary text-primary-foreground font-semibold hover:bg-primary/90 transition-colors shadow-sm hover:shadow disabled:opacity-50 disabled:cursor-not-allowed",
+                  disabled: isSubmitting,
                 },
+                submitText: isSubmitting ? "Creating..." : "Create Entry",
               },
             }}
           />
