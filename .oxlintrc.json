@@ -21,7 +21,8 @@
   },
   "rules": {
     "react/react-in-jsx-scope": "off",
-    "unicorn/no-empty-file": "warn"
+    "unicorn/no-empty-file": "warn",
+    "no-underscore-dangle": "off"
   },
   "settings": {
     "jsx-a11y": {

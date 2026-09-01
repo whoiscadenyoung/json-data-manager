@@ -8,190 +8,191 @@
 // You should NOT make any changes in this file as it will be overwritten.
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
-import { Route as rootRouteImport } from "./routes/__root";
-import { Route as IndexRouteImport } from "./routes/index";
-import { Route as SchemasSchemaIdEntryIdRouteImport } from "./routes/schemas/$schemaId/$entryId";
-import { Route as SchemasSchemaIdBulkUploadRouteImport } from "./routes/schemas/$schemaId/bulk-upload";
-import { Route as SchemasSchemaIdCreateRouteImport } from "./routes/schemas/$schemaId/create";
-import { Route as SchemasSchemaIdEditRouteImport } from "./routes/schemas/$schemaId/edit";
-import { Route as SchemasSchemaIdIndexRouteImport } from "./routes/schemas/$schemaId/index";
-import { Route as SchemasCreateRouteImport } from "./routes/schemas/create";
-import { Route as SchemasIndexRouteImport } from "./routes/schemas/index";
+import { Route as rootRouteImport } from './routes/__root'
+import { Route as IndexRouteImport } from './routes/index'
+import { Route as SchemasIndexRouteImport } from './routes/schemas/index'
+import { Route as SchemasCreateRouteImport } from './routes/schemas/create'
+import { Route as SchemasSchemaIdIndexRouteImport } from './routes/schemas/$schemaId/index'
+import { Route as SchemasSchemaIdEntryIdRouteImport } from './routes/schemas/$schemaId/$entryId'
+import { Route as SchemasSchemaIdBulkUploadRouteImport } from './routes/schemas/$schemaId/bulk-upload'
+import { Route as SchemasSchemaIdCreateRouteImport } from './routes/schemas/$schemaId/create'
+import { Route as SchemasSchemaIdEditRouteImport } from './routes/schemas/$schemaId/edit'
 
 const IndexRoute = IndexRouteImport.update({
-  id: "/",
-  path: "/",
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 const SchemasIndexRoute = SchemasIndexRouteImport.update({
-  id: "/schemas/",
-  path: "/schemas/",
+  id: '/schemas/',
+  path: '/schemas/',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 const SchemasCreateRoute = SchemasCreateRouteImport.update({
-  id: "/schemas/create",
-  path: "/schemas/create",
+  id: '/schemas/create',
+  path: '/schemas/create',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 const SchemasSchemaIdIndexRoute = SchemasSchemaIdIndexRouteImport.update({
-  id: "/schemas/$schemaId/",
-  path: "/schemas/$schemaId/",
+  id: '/schemas/$schemaId/',
+  path: '/schemas/$schemaId/',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 const SchemasSchemaIdEntryIdRoute = SchemasSchemaIdEntryIdRouteImport.update({
-  id: "/schemas/$schemaId/$entryId",
-  path: "/schemas/$schemaId/$entryId",
+  id: '/schemas/$schemaId/$entryId',
+  path: '/schemas/$schemaId/$entryId',
   getParentRoute: () => rootRouteImport,
-} as any);
-const SchemasSchemaIdBulkUploadRoute = SchemasSchemaIdBulkUploadRouteImport.update({
-  id: "/schemas/$schemaId/bulk-upload",
-  path: "/schemas/$schemaId/bulk-upload",
-  getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
+const SchemasSchemaIdBulkUploadRoute =
+  SchemasSchemaIdBulkUploadRouteImport.update({
+    id: '/schemas/$schemaId/bulk-upload',
+    path: '/schemas/$schemaId/bulk-upload',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const SchemasSchemaIdCreateRoute = SchemasSchemaIdCreateRouteImport.update({
-  id: "/schemas/$schemaId/create",
-  path: "/schemas/$schemaId/create",
+  id: '/schemas/$schemaId/create',
+  path: '/schemas/$schemaId/create',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 const SchemasSchemaIdEditRoute = SchemasSchemaIdEditRouteImport.update({
-  id: "/schemas/$schemaId/edit",
-  path: "/schemas/$schemaId/edit",
+  id: '/schemas/$schemaId/edit',
+  path: '/schemas/$schemaId/edit',
   getParentRoute: () => rootRouteImport,
-} as any);
+} as any)
 
 export interface FileRoutesByFullPath {
-  "/": typeof IndexRoute;
-  "/schemas/create": typeof SchemasCreateRoute;
-  "/schemas/": typeof SchemasIndexRoute;
-  "/schemas/$schemaId/$entryId": typeof SchemasSchemaIdEntryIdRoute;
-  "/schemas/$schemaId/bulk-upload": typeof SchemasSchemaIdBulkUploadRoute;
-  "/schemas/$schemaId/create": typeof SchemasSchemaIdCreateRoute;
-  "/schemas/$schemaId/edit": typeof SchemasSchemaIdEditRoute;
-  "/schemas/$schemaId/": typeof SchemasSchemaIdIndexRoute;
+  '/': typeof IndexRoute
+  '/schemas/create': typeof SchemasCreateRoute
+  '/schemas/': typeof SchemasIndexRoute
+  '/schemas/$schemaId/$entryId': typeof SchemasSchemaIdEntryIdRoute
+  '/schemas/$schemaId/bulk-upload': typeof SchemasSchemaIdBulkUploadRoute
+  '/schemas/$schemaId/create': typeof SchemasSchemaIdCreateRoute
+  '/schemas/$schemaId/edit': typeof SchemasSchemaIdEditRoute
+  '/schemas/$schemaId/': typeof SchemasSchemaIdIndexRoute
 }
 export interface FileRoutesByTo {
-  "/": typeof IndexRoute;
-  "/schemas/create": typeof SchemasCreateRoute;
-  "/schemas": typeof SchemasIndexRoute;
-  "/schemas/$schemaId/$entryId": typeof SchemasSchemaIdEntryIdRoute;
-  "/schemas/$schemaId/bulk-upload": typeof SchemasSchemaIdBulkUploadRoute;
-  "/schemas/$schemaId/create": typeof SchemasSchemaIdCreateRoute;
-  "/schemas/$schemaId/edit": typeof SchemasSchemaIdEditRoute;
-  "/schemas/$schemaId": typeof SchemasSchemaIdIndexRoute;
+  '/': typeof IndexRoute
+  '/schemas/create': typeof SchemasCreateRoute
+  '/schemas': typeof SchemasIndexRoute
+  '/schemas/$schemaId/$entryId': typeof SchemasSchemaIdEntryIdRoute
+  '/schemas/$schemaId/bulk-upload': typeof SchemasSchemaIdBulkUploadRoute
+  '/schemas/$schemaId/create': typeof SchemasSchemaIdCreateRoute
+  '/schemas/$schemaId/edit': typeof SchemasSchemaIdEditRoute
+  '/schemas/$schemaId': typeof SchemasSchemaIdIndexRoute
 }
 export interface FileRoutesById {
-  __root__: typeof rootRouteImport;
-  "/": typeof IndexRoute;
-  "/schemas/create": typeof SchemasCreateRoute;
-  "/schemas/": typeof SchemasIndexRoute;
-  "/schemas/$schemaId/$entryId": typeof SchemasSchemaIdEntryIdRoute;
-  "/schemas/$schemaId/bulk-upload": typeof SchemasSchemaIdBulkUploadRoute;
-  "/schemas/$schemaId/create": typeof SchemasSchemaIdCreateRoute;
-  "/schemas/$schemaId/edit": typeof SchemasSchemaIdEditRoute;
-  "/schemas/$schemaId/": typeof SchemasSchemaIdIndexRoute;
+  __root__: typeof rootRouteImport
+  '/': typeof IndexRoute
+  '/schemas/create': typeof SchemasCreateRoute
+  '/schemas/': typeof SchemasIndexRoute
+  '/schemas/$schemaId/$entryId': typeof SchemasSchemaIdEntryIdRoute
+  '/schemas/$schemaId/bulk-upload': typeof SchemasSchemaIdBulkUploadRoute
+  '/schemas/$schemaId/create': typeof SchemasSchemaIdCreateRoute
+  '/schemas/$schemaId/edit': typeof SchemasSchemaIdEditRoute
+  '/schemas/$schemaId/': typeof SchemasSchemaIdIndexRoute
 }
 export interface FileRouteTypes {
-  fileRoutesByFullPath: FileRoutesByFullPath;
+  fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    | "/"
-    | "/schemas/create"
-    | "/schemas/"
-    | "/schemas/$schemaId/$entryId"
-    | "/schemas/$schemaId/bulk-upload"
-    | "/schemas/$schemaId/create"
-    | "/schemas/$schemaId/edit"
-    | "/schemas/$schemaId/";
-  fileRoutesByTo: FileRoutesByTo;
+    | '/'
+    | '/schemas/create'
+    | '/schemas/'
+    | '/schemas/$schemaId/$entryId'
+    | '/schemas/$schemaId/bulk-upload'
+    | '/schemas/$schemaId/create'
+    | '/schemas/$schemaId/edit'
+    | '/schemas/$schemaId/'
+  fileRoutesByTo: FileRoutesByTo
   to:
-    | "/"
-    | "/schemas/create"
-    | "/schemas"
-    | "/schemas/$schemaId/$entryId"
-    | "/schemas/$schemaId/bulk-upload"
-    | "/schemas/$schemaId/create"
-    | "/schemas/$schemaId/edit"
-    | "/schemas/$schemaId";
+    | '/'
+    | '/schemas/create'
+    | '/schemas'
+    | '/schemas/$schemaId/$entryId'
+    | '/schemas/$schemaId/bulk-upload'
+    | '/schemas/$schemaId/create'
+    | '/schemas/$schemaId/edit'
+    | '/schemas/$schemaId'
   id:
-    | "__root__"
-    | "/"
-    | "/schemas/create"
-    | "/schemas/"
-    | "/schemas/$schemaId/$entryId"
-    | "/schemas/$schemaId/bulk-upload"
-    | "/schemas/$schemaId/create"
-    | "/schemas/$schemaId/edit"
-    | "/schemas/$schemaId/";
-  fileRoutesById: FileRoutesById;
+    | '__root__'
+    | '/'
+    | '/schemas/create'
+    | '/schemas/'
+    | '/schemas/$schemaId/$entryId'
+    | '/schemas/$schemaId/bulk-upload'
+    | '/schemas/$schemaId/create'
+    | '/schemas/$schemaId/edit'
+    | '/schemas/$schemaId/'
+  fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute;
-  SchemasCreateRoute: typeof SchemasCreateRoute;
-  SchemasIndexRoute: typeof SchemasIndexRoute;
-  SchemasSchemaIdEntryIdRoute: typeof SchemasSchemaIdEntryIdRoute;
-  SchemasSchemaIdBulkUploadRoute: typeof SchemasSchemaIdBulkUploadRoute;
-  SchemasSchemaIdCreateRoute: typeof SchemasSchemaIdCreateRoute;
-  SchemasSchemaIdEditRoute: typeof SchemasSchemaIdEditRoute;
-  SchemasSchemaIdIndexRoute: typeof SchemasSchemaIdIndexRoute;
+  IndexRoute: typeof IndexRoute
+  SchemasCreateRoute: typeof SchemasCreateRoute
+  SchemasIndexRoute: typeof SchemasIndexRoute
+  SchemasSchemaIdEntryIdRoute: typeof SchemasSchemaIdEntryIdRoute
+  SchemasSchemaIdBulkUploadRoute: typeof SchemasSchemaIdBulkUploadRoute
+  SchemasSchemaIdCreateRoute: typeof SchemasSchemaIdCreateRoute
+  SchemasSchemaIdEditRoute: typeof SchemasSchemaIdEditRoute
+  SchemasSchemaIdIndexRoute: typeof SchemasSchemaIdIndexRoute
 }
 
-declare module "@tanstack/react-router" {
+declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    "/": {
-      id: "/";
-      path: "/";
-      fullPath: "/";
-      preLoaderRoute: typeof IndexRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/schemas/": {
-      id: "/schemas/";
-      path: "/schemas";
-      fullPath: "/schemas/";
-      preLoaderRoute: typeof SchemasIndexRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/schemas/create": {
-      id: "/schemas/create";
-      path: "/schemas/create";
-      fullPath: "/schemas/create";
-      preLoaderRoute: typeof SchemasCreateRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/schemas/$schemaId/": {
-      id: "/schemas/$schemaId/";
-      path: "/schemas/$schemaId";
-      fullPath: "/schemas/$schemaId/";
-      preLoaderRoute: typeof SchemasSchemaIdIndexRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/schemas/$schemaId/$entryId": {
-      id: "/schemas/$schemaId/$entryId";
-      path: "/schemas/$schemaId/$entryId";
-      fullPath: "/schemas/$schemaId/$entryId";
-      preLoaderRoute: typeof SchemasSchemaIdEntryIdRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/schemas/$schemaId/bulk-upload": {
-      id: "/schemas/$schemaId/bulk-upload";
-      path: "/schemas/$schemaId/bulk-upload";
-      fullPath: "/schemas/$schemaId/bulk-upload";
-      preLoaderRoute: typeof SchemasSchemaIdBulkUploadRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/schemas/$schemaId/create": {
-      id: "/schemas/$schemaId/create";
-      path: "/schemas/$schemaId/create";
-      fullPath: "/schemas/$schemaId/create";
-      preLoaderRoute: typeof SchemasSchemaIdCreateRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
-    "/schemas/$schemaId/edit": {
-      id: "/schemas/$schemaId/edit";
-      path: "/schemas/$schemaId/edit";
-      fullPath: "/schemas/$schemaId/edit";
-      preLoaderRoute: typeof SchemasSchemaIdEditRouteImport;
-      parentRoute: typeof rootRouteImport;
-    };
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/schemas/': {
+      id: '/schemas/'
+      path: '/schemas'
+      fullPath: '/schemas/'
+      preLoaderRoute: typeof SchemasIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/schemas/create': {
+      id: '/schemas/create'
+      path: '/schemas/create'
+      fullPath: '/schemas/create'
+      preLoaderRoute: typeof SchemasCreateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/schemas/$schemaId/': {
+      id: '/schemas/$schemaId/'
+      path: '/schemas/$schemaId'
+      fullPath: '/schemas/$schemaId/'
+      preLoaderRoute: typeof SchemasSchemaIdIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/schemas/$schemaId/$entryId': {
+      id: '/schemas/$schemaId/$entryId'
+      path: '/schemas/$schemaId/$entryId'
+      fullPath: '/schemas/$schemaId/$entryId'
+      preLoaderRoute: typeof SchemasSchemaIdEntryIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/schemas/$schemaId/bulk-upload': {
+      id: '/schemas/$schemaId/bulk-upload'
+      path: '/schemas/$schemaId/bulk-upload'
+      fullPath: '/schemas/$schemaId/bulk-upload'
+      preLoaderRoute: typeof SchemasSchemaIdBulkUploadRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/schemas/$schemaId/create': {
+      id: '/schemas/$schemaId/create'
+      path: '/schemas/$schemaId/create'
+      fullPath: '/schemas/$schemaId/create'
+      preLoaderRoute: typeof SchemasSchemaIdCreateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/schemas/$schemaId/edit': {
+      id: '/schemas/$schemaId/edit'
+      path: '/schemas/$schemaId/edit'
+      fullPath: '/schemas/$schemaId/edit'
+      preLoaderRoute: typeof SchemasSchemaIdEditRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -204,17 +205,16 @@ const rootRouteChildren: RootRouteChildren = {
   SchemasSchemaIdCreateRoute: SchemasSchemaIdCreateRoute,
   SchemasSchemaIdEditRoute: SchemasSchemaIdEditRoute,
   SchemasSchemaIdIndexRoute: SchemasSchemaIdIndexRoute,
-};
+}
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
-  ._addFileTypes<FileRouteTypes>();
+  ._addFileTypes<FileRouteTypes>()
 
-import type { createStart } from "@tanstack/react-start";
-
-import type { getRouter } from "./router.tsx";
-declare module "@tanstack/react-start" {
+import type { getRouter } from './router.tsx'
+import type { createStart } from '@tanstack/react-start'
+declare module '@tanstack/react-start' {
   interface Register {
-    ssr: true;
-    router: Awaited<ReturnType<typeof getRouter>>;
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
   }
 }
