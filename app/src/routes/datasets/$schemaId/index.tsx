@@ -1,16 +1,8 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
-import {
-  Calendar,
-  Code2,
-  Download,
-  FilePlus,
-  Pencil,
-  Plus,
-  UploadCloud,
-  Workflow,
-} from "lucide-react";
+import { Code2, Download, FilePlus, Pencil, Plus, UploadCloud, Workflow } from "lucide-react";
 
+import { EntriesTable } from "@/components/entries-table";
 import { RouterButton } from "@/components/router-button";
 import { SchemaVisualizer } from "@/components/schema-visualizer";
 import {
@@ -169,30 +161,11 @@ function SchemaDetailPage() {
                   </EmptyContent>
                 </Empty>
               ) : (
-                <div className="space-y-3">
-                  {entries.map((entry) => (
-                    <Card key={entry._id} className="hover:shadow-md transition-shadow">
-                      <CardContent className="p-4">
-                        <div className="flex items-center text-sm text-muted-foreground mb-2">
-                          <Calendar className="h-4 w-4 mr-2" />
-                          {new Date(entry._creationTime).toLocaleString()}
-                        </div>
-                        <div className="text-sm font-mono bg-muted p-2 rounded overflow-x-auto mb-3">
-                          {JSON.stringify(entry.data, null, 2).slice(0, 200)}
-                          {JSON.stringify(entry.data).length > 200 && "..."}
-                        </div>
-                        <RouterButton
-                          size="sm"
-                          className="w-full"
-                          to="/datasets/$schemaId/$entryId"
-                          params={{ entryId: entry._id, schemaId }}
-                        >
-                          View Details
-                        </RouterButton>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
+                <EntriesTable
+                  schemaId={schemaId}
+                  properties={Object.keys(schema.schema.properties ?? {})}
+                  entries={entries}
+                />
               )}
             </CardContent>
           </Card>
