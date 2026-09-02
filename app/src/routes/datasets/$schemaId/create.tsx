@@ -19,7 +19,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 
 import { api } from "../../../../convex/_generated/api";
 
-export const Route = createFileRoute("/schemas/$schemaId/create")({
+export const Route = createFileRoute("/datasets/$schemaId/create")({
   component: CreateEntryPage,
 });
 
@@ -67,11 +67,11 @@ function CreateEntryPage() {
     return (
       <Card className="text-center py-12">
         <CardContent className="pt-6">
-          <CardTitle className="mb-2">Schema Not Found</CardTitle>
+          <CardTitle className="mb-2">Dataset Not Found</CardTitle>
           <CardDescription className="mb-4">
             The schema you're looking for doesn't exist or has been deleted.
           </CardDescription>
-          <RouterButton to="/schemas">Back to Schemas</RouterButton>
+          <RouterButton to="/datasets">Back to Datasets</RouterButton>
         </CardContent>
       </Card>
     );
@@ -83,11 +83,11 @@ function CreateEntryPage() {
         <Breadcrumb className="mb-2">
           <BreadcrumbList>
             <BreadcrumbItem>
-              <BreadcrumbLink render={<Link to="/schemas" />}>Schemas</BreadcrumbLink>
+              <BreadcrumbLink render={<Link to="/datasets" />}>Datasets</BreadcrumbLink>
             </BreadcrumbItem>
             <BreadcrumbSeparator />
             <BreadcrumbItem>
-              <BreadcrumbLink render={<Link to="/schemas/$schemaId" params={{ schemaId }} />}>
+              <BreadcrumbLink render={<Link to="/datasets/$schemaId" params={{ schemaId }} />}>
                 {schema.title}
               </BreadcrumbLink>
             </BreadcrumbItem>
@@ -98,7 +98,7 @@ function CreateEntryPage() {
           </BreadcrumbList>
         </Breadcrumb>
         <div className="flex items-center gap-4 mb-4">
-          <RouterButton variant="outline" size="sm" to="/schemas/$schemaId" params={{ schemaId }}>
+          <RouterButton variant="outline" size="sm" to="/datasets/$schemaId" params={{ schemaId }}>
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back
           </RouterButton>
@@ -117,7 +117,7 @@ function CreateEntryPage() {
               <span>
                 Entry created successfully!{" "}
                 <Link
-                  to="/schemas/$schemaId/$entryId"
+                  to="/datasets/$schemaId/$entryId"
                   params={{ entryId: lastCreatedEntryId, schemaId }}
                   className="font-semibold underline hover:no-underline"
                 >

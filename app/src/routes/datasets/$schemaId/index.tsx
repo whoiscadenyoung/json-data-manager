@@ -1,8 +1,10 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
-import { Calendar, Download, FilePlus, FileText, Pencil, Plus, UploadCloud } from "lucide-react";
+import { Code2, Download, FilePlus, Pencil, Plus, UploadCloud, Workflow } from "lucide-react";
 
+import { EntriesTable } from "@/components/entries-table";
 import { RouterButton } from "@/components/router-button";
+import { SchemaVisualizer } from "@/components/schema-visualizer";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -25,7 +27,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { api } from "../../../../convex/_generated/api";
 
-export const Route = createFileRoute("/schemas/$schemaId/")({
+export const Route = createFileRoute("/datasets/$schemaId/")({
   component: SchemaDetailPage,
 });
 
@@ -77,11 +79,11 @@ function SchemaDetailPage() {
     return (
       <Card className="text-center py-12">
         <CardContent className="pt-6">
-          <CardTitle className="mb-2">Schema Not Found</CardTitle>
+          <CardTitle className="mb-2">Dataset Not Found</CardTitle>
           <CardDescription className="mb-4">
-            The schema you're looking for doesn't exist or has been deleted.
+            The dataset you're looking for doesn't exist or has been deleted.
           </CardDescription>
-          <RouterButton to="/schemas">Back to Schemas</RouterButton>
+          <RouterButton to="/datasets">Back to Datasets</RouterButton>
         </CardContent>
       </Card>
     );
@@ -94,7 +96,7 @@ function SchemaDetailPage() {
           <Breadcrumb className="mb-2">
             <BreadcrumbList>
               <BreadcrumbItem>
-                <BreadcrumbLink render={<Link to="/schemas" />}>Schemas</BreadcrumbLink>
+                <BreadcrumbLink render={<Link to="/datasets" />}>Datasets</BreadcrumbLink>
               </BreadcrumbItem>
               <BreadcrumbSeparator />
               <BreadcrumbItem>
@@ -106,7 +108,7 @@ function SchemaDetailPage() {
           <p className="text-lg text-muted-foreground mt-2">{schema.description}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <RouterButton variant="outline" to="/schemas/$schemaId/edit" params={{ schemaId }}>
+          <RouterButton variant="outline" to="/datasets/$schemaId/edit" params={{ schemaId }}>
             <Pencil className="h-4 w-4 mr-2" />
             Edit
           </RouterButton>
@@ -114,11 +116,15 @@ function SchemaDetailPage() {
             <Download className="h-4 w-4 mr-2" />
             Export ({entries.length})
           </Button>
-          <RouterButton variant="outline" to="/schemas/$schemaId/bulk-upload" params={{ schemaId }}>
+          <RouterButton
+            variant="outline"
+            to="/datasets/$schemaId/bulk-upload"
+            params={{ schemaId }}
+          >
             <UploadCloud className="h-4 w-4 mr-2" />
             Bulk Upload
           </RouterButton>
-          <RouterButton to="/schemas/$schemaId/create" params={{ schemaId }}>
+          <RouterButton to="/datasets/$schemaId/create" params={{ schemaId }}>
             <Plus className="h-4 w-4 mr-2" />
             Create Entry
           </RouterButton>
@@ -148,48 +154,42 @@ function SchemaDetailPage() {
                     <EmptyDescription>Add your first entry to this schema.</EmptyDescription>
                   </EmptyHeader>
                   <EmptyContent>
-                    <RouterButton to="/schemas/$schemaId/create" params={{ schemaId }}>
+                    <RouterButton to="/datasets/$schemaId/create" params={{ schemaId }}>
                       <Plus className="h-4 w-4 mr-2" />
                       Create First Entry
                     </RouterButton>
                   </EmptyContent>
                 </Empty>
               ) : (
-                <div className="space-y-3">
-                  {entries.map((entry) => (
-                    <Card key={entry._id} className="hover:shadow-md transition-shadow">
-                      <CardContent className="p-4">
-                        <div className="flex items-center text-sm text-muted-foreground mb-2">
-                          <Calendar className="h-4 w-4 mr-2" />
-                          {new Date(entry._creationTime).toLocaleString()}
-                        </div>
-                        <div className="text-sm font-mono bg-muted p-2 rounded overflow-x-auto mb-3">
-                          {JSON.stringify(entry.data, null, 2).slice(0, 200)}
-                          {JSON.stringify(entry.data).length > 200 && "..."}
-                        </div>
-                        <RouterButton
-                          size="sm"
-                          className="w-full"
-                          to="/schemas/$schemaId/$entryId"
-                          params={{ entryId: entry._id, schemaId }}
-                        >
-                          View Details
-                        </RouterButton>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
+                <EntriesTable
+                  schemaId={schemaId}
+                  properties={Object.keys(schema.schema.properties ?? {})}
+                  entries={entries}
+                />
               )}
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="schema">
+        <TabsContent value="schema" className="space-y-6">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <FileText className="h-5 w-5" />
-                Schema Definition
+                <Workflow className="h-5 w-5" />
+                Schema Structure
+              </CardTitle>
+              <CardDescription>A visual breakdown of this dataset's fields</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <SchemaVisualizer schema={schema.schema} />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Code2 className="h-5 w-5" />
+                JSON Definition
               </CardTitle>
             </CardHeader>
             <CardContent>

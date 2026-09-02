@@ -22,7 +22,7 @@ import { Label } from "@/components/ui/label";
 
 import { api } from "../../../../convex/_generated/api";
 
-export const Route = createFileRoute("/schemas/$schemaId/bulk-upload")({
+export const Route = createFileRoute("/datasets/$schemaId/bulk-upload")({
   component: BulkUploadPage,
 });
 
@@ -320,7 +320,7 @@ function BulkUploadPage() {
   useEffect(() => {
     if (importStatusValue === "completed") {
       toast.success(`${importTotal} ${importTotal === 1 ? "entry" : "entries"} imported!`);
-      void navigate({ params: { schemaId }, to: "/schemas/$schemaId" });
+      void navigate({ params: { schemaId }, to: "/datasets/$schemaId" });
     } else if (importStatusValue === "failed") {
       toast.error(importErrorMsg);
       // Reset local UI state in response to the external import subscription.
@@ -476,8 +476,8 @@ function BulkUploadPage() {
     return (
       <Card className="text-center py-12">
         <CardContent className="pt-6">
-          <p className="text-muted-foreground mb-4">Schema not found.</p>
-          <RouterButton to="/schemas">Back to Schemas</RouterButton>
+          <p className="text-muted-foreground mb-4">Dataset not found.</p>
+          <RouterButton to="/datasets">Back to Datasets</RouterButton>
         </CardContent>
       </Card>
     );
@@ -491,11 +491,11 @@ function BulkUploadPage() {
         <Breadcrumb className="mb-4">
           <BreadcrumbList>
             <BreadcrumbItem>
-              <BreadcrumbLink render={<Link to="/schemas" />}>Schemas</BreadcrumbLink>
+              <BreadcrumbLink render={<Link to="/datasets" />}>Datasets</BreadcrumbLink>
             </BreadcrumbItem>
             <BreadcrumbSeparator />
             <BreadcrumbItem>
-              <BreadcrumbLink render={<Link to="/schemas/$schemaId" params={{ schemaId }} />}>
+              <BreadcrumbLink render={<Link to="/datasets/$schemaId" params={{ schemaId }} />}>
                 {schema.title}
               </BreadcrumbLink>
             </BreadcrumbItem>
@@ -509,7 +509,7 @@ function BulkUploadPage() {
           <RouterButton
             variant="ghost"
             size="sm"
-            to="/schemas/$schemaId"
+            to="/datasets/$schemaId"
             params={{ schemaId }}
             className="-ml-2"
           >

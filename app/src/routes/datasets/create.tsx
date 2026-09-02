@@ -10,7 +10,7 @@ import { Card, CardDescription, CardHeader, CardTitle } from "#/components/ui/ca
 
 import { api } from "../../../convex/_generated/api";
 
-export const Route = createFileRoute("/schemas/create")({
+export const Route = createFileRoute("/datasets/create")({
   component: CreateDatasetPage,
 });
 
@@ -23,9 +23,9 @@ function CreateDatasetPage() {
     <main className="mx-auto max-w-7xl px-4 py-8">
       <div className="mb-6">
         {mode === "choose" ? (
-          <RouterButton variant="ghost" to="/schemas" className="mb-4 -ml-2">
+          <RouterButton variant="ghost" to="/datasets" className="mb-4 -ml-2">
             <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Schemas
+            Back to Datasets
           </RouterButton>
         ) : (
           <button
@@ -113,8 +113,8 @@ function SchemaFirst() {
             schema: parsed,
             uiSchema: Object.keys(uiSchemaParsed).length > 0 ? uiSchemaParsed : undefined,
           });
-          toast.success("Schema created!");
-          await navigate({ params: { schemaId }, to: "/schemas/$schemaId" });
+          toast.success("Dataset created!");
+          await navigate({ params: { schemaId }, to: "/datasets/$schemaId" });
         } catch (error) {
           const message =
             typeof error === "object" &&
@@ -148,7 +148,7 @@ function ImportFirst() {
   useEffect(() => {
     if (importStatus === "completed" && schemaId) {
       toast.success("Dataset imported!");
-      void navigate({ params: { schemaId }, to: "/schemas/$schemaId" });
+      void navigate({ params: { schemaId }, to: "/datasets/$schemaId" });
     }
   }, [importStatus, schemaId, navigate]);
 
