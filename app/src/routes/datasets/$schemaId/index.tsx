@@ -1,8 +1,18 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
-import { Calendar, Download, FilePlus, FileText, Pencil, Plus, UploadCloud } from "lucide-react";
+import {
+  Calendar,
+  Code2,
+  Download,
+  FilePlus,
+  Pencil,
+  Plus,
+  UploadCloud,
+  Workflow,
+} from "lucide-react";
 
 import { RouterButton } from "@/components/router-button";
+import { SchemaVisualizer } from "@/components/schema-visualizer";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -25,7 +35,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { api } from "../../../../convex/_generated/api";
 
-export const Route = createFileRoute("/schemas/$schemaId/")({
+export const Route = createFileRoute("/datasets/$schemaId/")({
   component: SchemaDetailPage,
 });
 
@@ -77,11 +87,11 @@ function SchemaDetailPage() {
     return (
       <Card className="text-center py-12">
         <CardContent className="pt-6">
-          <CardTitle className="mb-2">Schema Not Found</CardTitle>
+          <CardTitle className="mb-2">Dataset Not Found</CardTitle>
           <CardDescription className="mb-4">
-            The schema you're looking for doesn't exist or has been deleted.
+            The dataset you're looking for doesn't exist or has been deleted.
           </CardDescription>
-          <RouterButton to="/schemas">Back to Schemas</RouterButton>
+          <RouterButton to="/datasets">Back to Datasets</RouterButton>
         </CardContent>
       </Card>
     );
@@ -94,7 +104,7 @@ function SchemaDetailPage() {
           <Breadcrumb className="mb-2">
             <BreadcrumbList>
               <BreadcrumbItem>
-                <BreadcrumbLink render={<Link to="/schemas" />}>Schemas</BreadcrumbLink>
+                <BreadcrumbLink render={<Link to="/datasets" />}>Datasets</BreadcrumbLink>
               </BreadcrumbItem>
               <BreadcrumbSeparator />
               <BreadcrumbItem>
@@ -106,7 +116,7 @@ function SchemaDetailPage() {
           <p className="text-lg text-muted-foreground mt-2">{schema.description}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <RouterButton variant="outline" to="/schemas/$schemaId/edit" params={{ schemaId }}>
+          <RouterButton variant="outline" to="/datasets/$schemaId/edit" params={{ schemaId }}>
             <Pencil className="h-4 w-4 mr-2" />
             Edit
           </RouterButton>
@@ -114,11 +124,15 @@ function SchemaDetailPage() {
             <Download className="h-4 w-4 mr-2" />
             Export ({entries.length})
           </Button>
-          <RouterButton variant="outline" to="/schemas/$schemaId/bulk-upload" params={{ schemaId }}>
+          <RouterButton
+            variant="outline"
+            to="/datasets/$schemaId/bulk-upload"
+            params={{ schemaId }}
+          >
             <UploadCloud className="h-4 w-4 mr-2" />
             Bulk Upload
           </RouterButton>
-          <RouterButton to="/schemas/$schemaId/create" params={{ schemaId }}>
+          <RouterButton to="/datasets/$schemaId/create" params={{ schemaId }}>
             <Plus className="h-4 w-4 mr-2" />
             Create Entry
           </RouterButton>
@@ -148,7 +162,7 @@ function SchemaDetailPage() {
                     <EmptyDescription>Add your first entry to this schema.</EmptyDescription>
                   </EmptyHeader>
                   <EmptyContent>
-                    <RouterButton to="/schemas/$schemaId/create" params={{ schemaId }}>
+                    <RouterButton to="/datasets/$schemaId/create" params={{ schemaId }}>
                       <Plus className="h-4 w-4 mr-2" />
                       Create First Entry
                     </RouterButton>
@@ -170,7 +184,7 @@ function SchemaDetailPage() {
                         <RouterButton
                           size="sm"
                           className="w-full"
-                          to="/schemas/$schemaId/$entryId"
+                          to="/datasets/$schemaId/$entryId"
                           params={{ entryId: entry._id, schemaId }}
                         >
                           View Details
@@ -184,12 +198,25 @@ function SchemaDetailPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="schema">
+        <TabsContent value="schema" className="space-y-6">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <FileText className="h-5 w-5" />
-                Schema Definition
+                <Workflow className="h-5 w-5" />
+                Schema Structure
+              </CardTitle>
+              <CardDescription>A visual breakdown of this dataset's fields</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <SchemaVisualizer schema={schema.schema} />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Code2 className="h-5 w-5" />
+                JSON Definition
               </CardTitle>
             </CardHeader>
             <CardContent>

@@ -15,7 +15,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 
 import { api } from "../../../../convex/_generated/api";
 
-export const Route = createFileRoute("/schemas/$schemaId/$entryId")({
+export const Route = createFileRoute("/datasets/$schemaId/$entryId")({
   component: EntryDetailPage,
 });
 
@@ -40,7 +40,7 @@ function EntryDetailPage() {
           <CardDescription className="mb-4">
             The entry you're looking for doesn't exist or has been deleted.
           </CardDescription>
-          <RouterButton to="/schemas">Back to Schemas</RouterButton>
+          <RouterButton to="/datasets">Back to Datasets</RouterButton>
         </CardContent>
       </Card>
     );
@@ -52,11 +52,11 @@ function EntryDetailPage() {
         <Breadcrumb className="mb-2">
           <BreadcrumbList>
             <BreadcrumbItem>
-              <BreadcrumbLink render={<Link to="/schemas" />}>Schemas</BreadcrumbLink>
+              <BreadcrumbLink render={<Link to="/datasets" />}>Datasets</BreadcrumbLink>
             </BreadcrumbItem>
             <BreadcrumbSeparator />
             <BreadcrumbItem>
-              <BreadcrumbLink render={<Link to="/schemas/$schemaId" params={{ schemaId }} />}>
+              <BreadcrumbLink render={<Link to="/datasets/$schemaId" params={{ schemaId }} />}>
                 {schema.title}
               </BreadcrumbLink>
             </BreadcrumbItem>
@@ -67,9 +67,9 @@ function EntryDetailPage() {
           </BreadcrumbList>
         </Breadcrumb>
         <div className="flex items-center gap-4 mb-4">
-          <RouterButton variant="outline" size="sm" to="/schemas/$schemaId" params={{ schemaId }}>
+          <RouterButton variant="outline" size="sm" to="/datasets/$schemaId" params={{ schemaId }}>
             <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Schema
+            Back to Dataset
           </RouterButton>
           <div>
             <h1 className="text-3xl font-bold text-primary">Entry Details</h1>
@@ -94,10 +94,10 @@ function EntryDetailPage() {
       </Card>
 
       <div className="flex justify-center gap-4">
-        <RouterButton variant="outline" to="/schemas/$schemaId" params={{ schemaId }}>
-          Back to Schema Details
+        <RouterButton variant="outline" to="/datasets/$schemaId" params={{ schemaId }}>
+          Back to Dataset Details
         </RouterButton>
-        <RouterButton to="/schemas/$schemaId/create" params={{ schemaId }}>
+        <RouterButton to="/datasets/$schemaId/create" params={{ schemaId }}>
           <Plus className="h-4 w-4 mr-2" />
           Create Another Entry
         </RouterButton>

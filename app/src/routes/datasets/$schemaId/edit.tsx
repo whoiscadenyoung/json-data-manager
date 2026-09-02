@@ -22,7 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
-export const Route = createFileRoute("/schemas/$schemaId/edit")({
+export const Route = createFileRoute("/datasets/$schemaId/edit")({
   component: EditSchemaPage,
 });
 
@@ -59,8 +59,8 @@ function EditSchemaPage() {
     return (
       <Card className="text-center py-12">
         <CardContent className="pt-6">
-          <p className="text-muted-foreground mb-4">Schema not found.</p>
-          <RouterButton to="/schemas">Back to Schemas</RouterButton>
+          <p className="text-muted-foreground mb-4">Dataset not found.</p>
+          <RouterButton to="/datasets">Back to Datasets</RouterButton>
         </CardContent>
       </Card>
     );
@@ -74,11 +74,11 @@ function EditSchemaPage() {
         <Breadcrumb className="mb-4">
           <BreadcrumbList>
             <BreadcrumbItem>
-              <BreadcrumbLink render={<Link to="/schemas" />}>Schemas</BreadcrumbLink>
+              <BreadcrumbLink render={<Link to="/datasets" />}>Datasets</BreadcrumbLink>
             </BreadcrumbItem>
             <BreadcrumbSeparator />
             <BreadcrumbItem>
-              <BreadcrumbLink render={<Link to="/schemas/$schemaId" params={{ schemaId }} />}>
+              <BreadcrumbLink render={<Link to="/datasets/$schemaId" params={{ schemaId }} />}>
                 {schema.title}
               </BreadcrumbLink>
             </BreadcrumbItem>
@@ -92,14 +92,14 @@ function EditSchemaPage() {
           <RouterButton
             variant="ghost"
             size="sm"
-            to="/schemas/$schemaId"
+            to="/datasets/$schemaId"
             params={{ schemaId }}
             className="-ml-2"
           >
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back
           </RouterButton>
-          <h1 className="text-3xl font-bold text-primary">Edit Schema</h1>
+          <h1 className="text-3xl font-bold text-primary">Edit Dataset</h1>
         </div>
       </div>
 
@@ -146,10 +146,10 @@ function MetadataEditForm({
           schemaId,
           title: value.title,
         });
-        toast.success("Schema updated!");
-        void navigate({ params: { schemaId }, to: "/schemas/$schemaId" });
+        toast.success("Dataset updated!");
+        void navigate({ params: { schemaId }, to: "/datasets/$schemaId" });
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to update schema.");
+        toast.error(error instanceof Error ? error.message : "Failed to update dataset.");
       }
     },
   });
@@ -157,7 +157,7 @@ function MetadataEditForm({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Schema Info</CardTitle>
+        <CardTitle>Dataset Info</CardTitle>
         <CardDescription>
           <span className="flex items-start gap-2">
             <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
@@ -268,8 +268,8 @@ function FullSchemaEditForm({
             schemaId,
             uiSchema: Object.keys(uiSchemaParsed).length > 0 ? uiSchemaParsed : undefined,
           });
-          toast.success("Schema updated!");
-          void navigate({ params: { schemaId }, to: "/schemas/$schemaId" });
+          toast.success("Dataset updated!");
+          void navigate({ params: { schemaId }, to: "/datasets/$schemaId" });
         } catch (error) {
           const message =
             typeof error === "object" &&
@@ -279,12 +279,12 @@ function FullSchemaEditForm({
               ? error.data
               : error instanceof Error
                 ? error.message
-                : "Failed to update schema.";
+                : "Failed to update dataset.";
           toast.error(message);
           throw error;
         }
       }}
-      saveLabel="Save Schema"
+      saveLabel="Save Dataset"
     />
   );
 }
