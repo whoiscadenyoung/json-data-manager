@@ -10,6 +10,8 @@ export { SchemaPreview } from "./schema-preview.js";
 export { JsonTree } from "./json-tree.js";
 
 // New batteries-included components
+export { DatasetImporter } from "./dataset-importer.js";
+export type { DatasetImporterProps, DatasetImportProgress } from "./dataset-importer.js";
 export { EntryForm } from "./entry-form.js";
 export type { EntryFormProps } from "./entry-form.js";
 export { SchemaList } from "./schema-list.js";

@@ -1,51 +1,45 @@
-import { action, mutation, query } from "./_generated/server.js";
-import { components } from "./_generated/api.js";
 import { exposeApi } from "@caden/json-cms";
+import type { Auth } from "convex/server";
 import { v } from "convex/values";
-import { Auth } from "convex/server";
+
+import { components } from "./_generated/api.js";
+import { mutation, query } from "./_generated/server.js";
 
 async function getAuthUserId(ctx: { auth: Auth }) {
-  return (await ctx.auth.getUserIdentity())?.subject ?? "anonymous";
+  const identity = await ctx.auth.getUserIdentity();
+  return identity ? identity.subject : "anonymous";
 }
 
 // Example: Using the component directly with manual auth
 export const createSchema = mutation({
   args: { schema: v.any() },
-  handler: async (ctx, args) => {
-    return await ctx.runMutation(components.jsonCms.lib.createSchema, {
+  handler: async (ctx, args) =>
+    ctx.runMutation(components.jsonCms.lib.createSchema, {
       schema: args.schema,
-    });
-  },
+    }),
 });
 
 export const listSchemas = query({
   args: {},
-  handler: async (ctx) => {
-    return await ctx.runQuery(components.jsonCms.lib.listSchemas, {});
-  },
+  handler: async (ctx) => ctx.runQuery(components.jsonCms.lib.listSchemas, {}),
 });
 
 export const getSchema = query({
   args: { schemaId: v.id("schemas") },
-  handler: async (ctx, args) => {
-    return await ctx.runQuery(components.jsonCms.lib.getSchema, {
+  handler: async (ctx, args) =>
+    ctx.runQuery(components.jsonCms.lib.getSchema, {
       schemaId: args.schemaId,
-    });
-  },
+    }),
 });
 
 export const createEntry = mutation({
-  args: { schemaId: v.id("schemas"), data: v.any() },
-  handler: async (ctx, args) => {
-    return await ctx.runMutation(components.jsonCms.lib.createEntry, args);
-  },
+  args: { data: v.any(), schemaId: v.id("schemas") },
+  handler: async (ctx, args) => ctx.runMutation(components.jsonCms.lib.createEntry, args),
 });
 
 export const listEntries = query({
   args: { schemaId: v.id("schemas") },
-  handler: async (ctx, args) => {
-    return await ctx.runQuery(components.jsonCms.lib.listEntries, args);
-  },
+  handler: async (ctx, args) => ctx.runQuery(components.jsonCms.lib.listEntries, args),
 });
 
 // Alternative: Using the exposeApi helper for a complete authenticated API

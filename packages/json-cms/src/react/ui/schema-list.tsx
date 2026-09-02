@@ -1,6 +1,6 @@
 "use client";
 
-import { Card, CardHeader, CardTitle, CardDescription } from "./primitives/card.js";
+import { Card, CardDescription, CardHeader, CardTitle } from "./primitives/card.js";
 
 /**
  * The minimal shape `SchemaList` needs to render an item. Any object with
@@ -59,7 +59,16 @@ export function SchemaList({
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {schemas.map((schema) => (
         <Card key={schema._id} className="p-0">
-          <button type="button" className="w-full text-left" onClick={() => onSelect?.(schema._id)}>
+          <button
+            type="button"
+            aria-label={`Select ${schema.title}`}
+            className="w-full text-left"
+            onClick={() => {
+              if (onSelect) {
+                onSelect(schema._id);
+              }
+            }}
+          >
             <CardHeader className="py-3">
               <CardTitle className="text-sm">{schema.title}</CardTitle>
               <CardDescription className="text-xs">{schema.description}</CardDescription>

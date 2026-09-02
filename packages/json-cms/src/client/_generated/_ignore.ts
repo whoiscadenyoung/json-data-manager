@@ -1,1 +1,2 @@
-// This is only here so convex-test can detect a _generated folder
+// Present so convex-test can detect the _generated folder.
+export const generatedFolderMarker = true;

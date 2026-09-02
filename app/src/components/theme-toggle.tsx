@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
 import { Moon, Sun, SunMoon } from "lucide-react";
+import { useEffect, useSyncExternalStore } from "react";
+
 import { buttonVariants } from "#/components/ui/button";
 import {
   DropdownMenu,
@@ -24,37 +25,59 @@ function getInitialMode(): ThemeMode {
 }
 
 function applyThemeMode(mode: ThemeMode) {
-  const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-  const resolved = mode === "auto" ? (prefersDark ? "dark" : "light") : mode;
+  const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches,
+    resolved = mode === "auto" ? (prefersDark ? "dark" : "light") : mode;
 
   document.documentElement.classList.remove("light", "dark");
   document.documentElement.classList.add(resolved);
 
   if (mode === "auto") {
-    document.documentElement.removeAttribute("data-theme");
+    delete document.documentElement.dataset.theme;
   } else {
-    document.documentElement.setAttribute("data-theme", mode);
+    document.documentElement.dataset.theme = mode;
   }
 
   document.documentElement.style.colorScheme = resolved;
 }
 
-export default function ThemeToggle() {
-  const [mode, setMode] = useState<ThemeMode>("auto");
+// Minimal external store so the toggle reads the persisted theme without a
+// mount effect (the DOM theme itself is applied by the inline script in the
+// root document, so we only track the value here).
+const themeListeners = new Set<() => void>();
 
-  useEffect(() => {
-    const initialMode = getInitialMode();
-    setMode(initialMode);
-    applyThemeMode(initialMode);
-  }, []);
+function subscribeTheme(callback: () => void) {
+  themeListeners.add(callback);
+  window.addEventListener("storage", callback);
+  return () => {
+    themeListeners.delete(callback);
+    window.removeEventListener("storage", callback);
+  };
+}
+
+function setStoredTheme(mode: ThemeMode) {
+  window.localStorage.setItem("theme", mode);
+  applyThemeMode(mode);
+  for (const listener of themeListeners) {
+    listener();
+  }
+}
+
+function getServerTheme(): ThemeMode {
+  return "auto";
+}
+
+export function ThemeToggle() {
+  const mode = useSyncExternalStore(subscribeTheme, getInitialMode, getServerTheme);
 
   useEffect(() => {
     if (mode !== "auto") {
-      return;
+      return undefined;
     }
 
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = () => applyThemeMode("auto");
+    const media = window.matchMedia("(prefers-color-scheme: dark)"),
+      onChange = () => {
+        applyThemeMode("auto");
+      };
 
     media.addEventListener("change", onChange);
     return () => {
@@ -63,9 +86,7 @@ export default function ThemeToggle() {
   }, [mode]);
 
   function selectMode(next: ThemeMode) {
-    setMode(next);
-    applyThemeMode(next);
-    window.localStorage.setItem("theme", next);
+    setStoredTheme(next);
   }
 
   const Icon = mode === "light" ? Sun : mode === "dark" ? Moon : SunMoon;
@@ -73,21 +94,33 @@ export default function ThemeToggle() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        className={buttonVariants({ variant: "ghost", size: "icon" })}
+        className={buttonVariants({ size: "icon", variant: "ghost" })}
         aria-label={`Theme: ${mode}`}
       >
         <Icon className="size-4" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem onClick={() => selectMode("auto")}>
+        <DropdownMenuItem
+          onClick={() => {
+            selectMode("auto");
+          }}
+        >
           <SunMoon className="mr-2 size-4" />
           Auto
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => selectMode("light")}>
+        <DropdownMenuItem
+          onClick={() => {
+            selectMode("light");
+          }}
+        >
           <Sun className="mr-2 size-4" />
           Light
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => selectMode("dark")}>
+        <DropdownMenuItem
+          onClick={() => {
+            selectMode("dark");
+          }}
+        >
           <Moon className="mr-2 size-4" />
           Dark
         </DropdownMenuItem>

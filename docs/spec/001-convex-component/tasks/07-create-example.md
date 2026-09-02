@@ -1,6 +1,7 @@
 # Task 07: Create Example Application
 
 ## Objective
+
 Create a complete example application that demonstrates how to consume the `@convex-dev/json-cms` component in a real project. The example is a full TanStack Start app that recreates the existing frontend functionality but uses the component.
 
 ## Directory Structure
@@ -36,6 +37,7 @@ packages/json-cms/example/
 ## Key Files
 
 ### convex/convex.config.ts
+
 ```typescript
 import { defineConfig } from "convex/server";
 import jsonCms from "@convex-dev/json-cms/convex.config";
@@ -48,6 +50,7 @@ export default defineConfig({
 ```
 
 ### convex/schema.ts
+
 ```typescript
 import { defineSchema } from "convex/server";
 
@@ -57,6 +60,7 @@ export default defineSchema({});
 ```
 
 ### package.json
+
 ```json
 {
   "name": "@convex-dev/json-cms-example",
@@ -98,6 +102,7 @@ export default defineSchema({});
 ```
 
 ### vite.config.ts
+
 ```typescript
 import { defineConfig } from "vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
@@ -116,6 +121,7 @@ export default defineConfig({
 ```
 
 ### src/routes/__root.tsx
+
 ```typescript
 import { HeadContent, Scripts, createRootRoute } from "@tanstack/react-router";
 import { ConvexProvider, ConvexReactClient } from "convex/react";
@@ -157,11 +163,13 @@ import { Outlet } from "@tanstack/react-router";
 ```
 
 ### src/styles.css
+
 ```css
 @import "tailwindcss";
 ```
 
 ### src/routes/index.tsx
+
 ```typescript
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
@@ -219,6 +227,7 @@ function HomePage() {
 ```
 
 ### src/routes/schemas/index.tsx
+
 ```typescript
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
@@ -270,6 +279,7 @@ function SchemasListPage() {
 ```
 
 ### src/routes/schemas/create.tsx
+
 ```typescript
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { SchemaEditor } from "@convex-dev/json-cms";
@@ -298,6 +308,7 @@ function CreateSchemaPage() {
 ```
 
 ### src/routes/schemas/$schemaId/index.tsx
+
 ```typescript
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
@@ -353,6 +364,7 @@ function ViewSchemaPage() {
 ```
 
 ### src/routes/schemas/$schemaId/edit.tsx
+
 ```typescript
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
@@ -394,7 +406,8 @@ function EditSchemaPage() {
 ```
 
 ### README.md
-```markdown
+
+````markdown
 # JSON CMS Example
 
 This example demonstrates how to use the `@convex-dev/json-cms` component in a TanStack Start application.
@@ -405,8 +418,10 @@ This example demonstrates how to use the `@convex-dev/json-cms` component in a T
    ```bash
    bun install
    ```
+````
 
 2. Set up Convex:
+
    ```bash
    bunx convex dev
    ```
@@ -456,7 +471,7 @@ import { SchemaEditor } from "@convex-dev/json-cms";
 ```tsx
 import { DataManager } from "@convex-dev/json-cms";
 
-<DataManager schemaId="xxx" />
+<DataManager schemaId="xxx" />;
 ```
 
 ## Project Structure
@@ -466,6 +481,7 @@ This is a standard TanStack Start app with Vinxi:
 - `src/routes/` - File-based routing
 - `convex/` - Convex backend configuration
 - Uses the `@convex-dev/json-cms` component for all CMS functionality
+
 ```
 
 ## Acceptance Criteria
@@ -477,3 +493,4 @@ This is a standard TanStack Start app with Vinxi:
 - [ ] Workspace reference to `@convex-dev/json-cms` works correctly
 - [ ] Convex component is properly configured and functional
 - [ ] App structure mirrors the existing root app (TanStack Start + Vinxi)
+```

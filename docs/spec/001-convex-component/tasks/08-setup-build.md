@@ -1,6 +1,7 @@
 # Task 08: Setup Build Pipeline
 
 ## Objective
+
 Configure the build pipeline for the Convex component package to compile TypeScript from `src/` to `dist/` and prepare for npm publishing.
 
 ## Steps
@@ -98,12 +99,7 @@ Ensure `/Users/cadenyoung/Developer/json-data-manager/packages/json-cms/package.
     },
     "./convex.config.js": "./convex.config.js"
   },
-  "files": [
-    "dist",
-    "convex.config.js",
-    "README.md",
-    "LICENSE"
-  ]
+  "files": ["dist", "convex.config.js", "README.md", "LICENSE"]
 }
 ```
 
@@ -115,6 +111,7 @@ bun run build
 ```
 
 Verify:
+
 - `dist/` directory is created
 - `.js`, `.d.ts`, and `.d.ts.map` files are present
 - Path aliases are resolved (no `@/` or `#/` imports in output)
@@ -143,11 +140,13 @@ bun pm pack --dry-run
 ```
 
 Expected output should NOT include:
+
 - `example/`
 - `src/`
 - `tsconfig*.json`
 
 Expected output SHOULD include:
+
 - `dist/`
 - `convex.config.js`
 - `README.md`

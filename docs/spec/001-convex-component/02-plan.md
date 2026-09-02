@@ -38,6 +38,7 @@ Convert the JSON Data Manager into a reusable, publishable Convex component. Thi
 2. **Frontend**: React hooks and unstyled/presentational components that can be imported and customized
 
 **Monorepo Structure**:
+
 ```
 json-data-manager/                 # Root (becomes monorepo root)
 ├── packages/
@@ -74,6 +75,7 @@ convex/
 ### 1.2 Component Configuration
 
 **`convex/component/convex.json`**:
+
 ```json
 {
   "name": "@json-data-manager/cms",
@@ -98,8 +100,8 @@ export default defineSchema({
     title: v.string(),
     description: v.string(),
     schema: v.any(),
-    slug: v.string(),  // URL-friendly identifier
-    metadata: v.optional(v.record(v.string(), v.any())),  // Extensible metadata
+    slug: v.string(), // URL-friendly identifier
+    metadata: v.optional(v.record(v.string(), v.any())), // Extensible metadata
   })
     .index("by_slug", ["slug"])
     .index("by_title", ["title"]),
@@ -282,12 +284,12 @@ export const updateSchema = mutation({
         .query("entries")
         .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
         .take(1)
-        .then(r => r.length > 0);
+        .then((r) => r.length > 0);
 
       if (hasEntries) {
         throw new ConvexError(
           "Cannot modify schema structure when entries exist. " +
-          "Delete all entries first or update metadata only."
+            "Delete all entries first or update metadata only.",
         );
       }
 
@@ -330,7 +332,7 @@ export const deleteSchema = mutation({
       .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
       .collect();
 
-    await Promise.all(entries.map(e => ctx.db.delete(e._id)));
+    await Promise.all(entries.map((e) => ctx.db.delete(e._id)));
     await ctx.db.delete(args.schemaId);
   },
 });
@@ -353,9 +355,7 @@ export const listEntries = query({
   handler: async (ctx, args) => {
     let q = ctx.db
       .query("entries")
-      .withIndex("by_schema_creation", (q) =>
-        q.eq("schemaId", args.schemaId)
-      )
+      .withIndex("by_schema_creation", (q) => q.eq("schemaId", args.schemaId))
       .order("desc");
 
     if (args.cursor) {
@@ -382,9 +382,7 @@ export const listEntriesPaginated = query({
   handler: async (ctx, args) => {
     const entries = await ctx.db
       .query("entries")
-      .withIndex("by_schema_creation", (q) =>
-        q.eq("schemaId", args.schemaId)
-      )
+      .withIndex("by_schema_creation", (q) => q.eq("schemaId", args.schemaId))
       .order("desc")
       .paginate(args);
 
@@ -439,8 +437,8 @@ export const createBulkEntries = mutation({
           schemaId: args.schemaId,
           data,
           metadata: args.metadata || {},
-        })
-      )
+        }),
+      ),
     );
 
     return ids;
@@ -566,11 +564,13 @@ packages/json-data-manager/
 The `example/` directory contains a **complete working application** that demonstrates the component in action. This is the current live site, extracted to serve as documentation and a reference implementation.
 
 **Why include an example app:**
+
 - Shows consumers how to integrate the component into a real app
 - Acts as a manual testing environment during development
 - Common pattern in the Convex ecosystem (`@convex-dev/auth/example`, etc.)
 
 **Important distinction:**
+
 - `convex/` and `src/` at the package root are **the component** (published to npm)
 - `example/convex/` and `example/src/` are **the demo app** (not published)
 
@@ -579,6 +579,7 @@ The `example/` folder is excluded from npm via `.npmignore` or `"files"` whiteli
 ### 2.4 Root Workspace Configuration
 
 **Root `package.json`** (monorepo workspace):
+
 ```json
 {
   "name": "json-data-manager-root",
@@ -593,9 +594,10 @@ The `example/` folder is excluded from npm via `.npmignore` or `"files"` whiteli
 ```
 
 **Root `pnpm-workspace.yaml`**:
+
 ```yaml
 packages:
-  - 'packages/*'
+  - "packages/*"
 ```
 
 ### 2.5 Package package.json Configuration
@@ -622,10 +624,7 @@ The key is using `exports` to expose both the React code and the Convex componen
     }
   },
 
-  "files": [
-    "dist",
-    "convex"
-  ],
+  "files": ["dist", "convex"],
 
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -702,7 +701,7 @@ export function useListSchemas(limit?: number) {
 export function useGetSchema(schemaId: string | null) {
   return useQuery(
     api.schemas.getSchema,
-    schemaId ? { schemaId: schemaId as Id<"schemas"> } : "skip"
+    schemaId ? { schemaId: schemaId as Id<"schemas"> } : "skip",
   );
 }
 
@@ -734,17 +733,18 @@ import { useState } from "react";
 export function useListEntries(schemaId: string | null, limit?: number) {
   return useQuery(
     api.entries.listEntries,
-    schemaId ? { schemaId: schemaId as Id<"schemas">, limit } : "skip"
+    schemaId ? { schemaId: schemaId as Id<"schemas">, limit } : "skip",
   );
 }
 
 export function useListEntriesPaginated(schemaId: string, pageSize: number) {
   const [cursor, setCursor] = useState<string | null>(null);
 
-  const result = useQuery(
-    api.entries.listEntriesPaginated,
-    { schemaId: schemaId as Id<"schemas">, pageSize, cursor: cursor || undefined }
-  );
+  const result = useQuery(api.entries.listEntriesPaginated, {
+    schemaId: schemaId as Id<"schemas">,
+    pageSize,
+    cursor: cursor || undefined,
+  });
 
   return {
     ...result,
@@ -826,10 +826,10 @@ export function SchemaEditor({ initialSchema, onSave, render }: SchemaEditorProp
 
 ```typescript
 interface EntryFormProps {
-  schema: unknown;  // JSON Schema
+  schema: unknown; // JSON Schema
   initialData?: unknown;
   onSubmit: (data: unknown) => Promise<void>;
-  validator?: Validator;  // AJV8 or custom
+  validator?: Validator; // AJV8 or custom
   render: (props: {
     formData: unknown;
     setFormData: (data: unknown) => void;
@@ -883,6 +883,7 @@ npm install @json-data-manager/cms
 ### 3.2 Backend Setup
 
 **In `convex/schema.ts`:**
+
 ```typescript
 import { defineSchema } from "convex/server";
 import cmsSchema from "@json-data-manager/cms/convex/schema";
@@ -977,6 +978,7 @@ function MyCMSPage() {
 **Decision**: Use a single package with subpath exports (`@json-data-manager/cms`) rather than separate packages (`@json-data-manager/convex-cms`, `@json-data-manager/react-cms`).
 
 **Why this pattern**:
+
 - Follows established Convex ecosystem patterns (`@convex-dev/auth`, `@convex-dev/rate-limiter`)
 - Single version to manage — backend and frontend stay in sync
 - Easier discovery and installation for consumers
@@ -984,17 +986,17 @@ function MyCMSPage() {
 
 **Trade-off**: Consumers must install React even if they only use the backend (acceptable since most Convex apps use React).
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Package structure | Single package, subpath exports | Follows `@convex-dev/*` patterns, simpler maintenance |
-| Table prefix | `jdm_` | Avoids collisions, clearly identifies component tables |
-| Pagination | Cursor-based | Scales to large datasets, Convex best practice |
-| Slug support | Required with auto-generation | Human-friendly URLs, CMS expectation |
-| Entry updates | Supported | Unlike current app, component should be full CRUD |
-| Component styling | Headless + optional styled | Maximum flexibility for consumers |
-| React version | 18+ (hooks) | Use modern patterns, consumer likely on 18+ |
-| Dependencies | Minimal | Only convex, react; @rjsf as peer dependency |
-| Build approach | `src/` bundled, `convex/` raw TS | Convex CLI processes backend, bundler handles frontend |
+| Decision          | Choice                           | Rationale                                              |
+| ----------------- | -------------------------------- | ------------------------------------------------------ |
+| Package structure | Single package, subpath exports  | Follows `@convex-dev/*` patterns, simpler maintenance  |
+| Table prefix      | `jdm_`                           | Avoids collisions, clearly identifies component tables |
+| Pagination        | Cursor-based                     | Scales to large datasets, Convex best practice         |
+| Slug support      | Required with auto-generation    | Human-friendly URLs, CMS expectation                   |
+| Entry updates     | Supported                        | Unlike current app, component should be full CRUD      |
+| Component styling | Headless + optional styled       | Maximum flexibility for consumers                      |
+| React version     | 18+ (hooks)                      | Use modern patterns, consumer likely on 18+            |
+| Dependencies      | Minimal                          | Only convex, react; @rjsf as peer dependency           |
+| Build approach    | `src/` bundled, `convex/` raw TS | Convex CLI processes backend, bundler handles frontend |
 
 ---
 

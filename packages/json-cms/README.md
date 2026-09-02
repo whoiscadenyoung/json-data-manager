@@ -175,11 +175,13 @@ export default http;
 The component defines two tables:
 
 ### `schemas`
+
 - `title: string` - Schema title (extracted from JSON schema)
 - `description: string` - Schema description (extracted from JSON schema)
 - `schema: any` - The full JSON schema object
 
 ### `entries`
+
 - `schemaId: Id<"schemas">` - Reference to the parent schema
 - `data: any` - The entry data conforming to the schema
 

@@ -1,4 +1,24 @@
 {
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
-  "ignorePatterns": []
+  "ignorePatterns": ["**/_generated", "**/routeTree.gen.ts"],
+  "sortImports": true,
+  "sortPackageJson": true,
+  "overrides": [
+    {
+      "files": ["packages/json-cms"],
+      "options": {
+        "sortTailwindcss": {
+          "config": "packages/json-cms/src/react/ui/styles.css"
+        }
+      }
+    },
+    {
+      "files": ["app"],
+      "options": {
+        "sortTailwindcss": {
+          "config": "app/src/styles.css"
+        }
+      }
+    }
+  ]
 }

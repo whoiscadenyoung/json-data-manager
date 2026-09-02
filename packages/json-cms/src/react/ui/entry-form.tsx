@@ -1,15 +1,15 @@
 "use client";
 
-import Form from "@rjsf/shadcn";
-import validator from "@rjsf/validator-ajv8";
 import type { IChangeEvent } from "@rjsf/core";
-import { mergeUiSchemas, type UiSchema } from "../lib/ui-schema.js";
+import RjsfForm from "@rjsf/shadcn";
+import type { UiSchema } from "@rjsf/utils";
+import validator from "@rjsf/validator-ajv8";
 
 export interface EntryFormProps {
   /** JSON Schema describing the entry's shape. */
   schema: object;
   /** Optional RJSF UI schema (e.g. loaded from a `SchemaDoc.uiSchema`). */
-  uiSchema?: object;
+  uiSchema?: UiSchema;
   /** Initial/controlled form data. */
   formData?: unknown;
   /** Disables all fields and the submit button, e.g. while saving. */
@@ -33,24 +33,24 @@ export function EntryForm({
   submitText = "Submit",
   onSubmit,
 }: EntryFormProps) {
-  const mergedUiSchema: UiSchema = mergeUiSchemas(uiSchema as UiSchema | undefined, {
-    "ui:submitButtonOptions": {
-      submitText,
-      norender: false,
-      props: {
-        disabled,
+  const mergedUiSchema: UiSchema = {
+      ...uiSchema,
+      "ui:submitButtonOptions": {
+        norender: false,
+        props: {
+          disabled,
+        },
+        submitText,
       },
     },
-  });
-
-  const handleSubmit = (data: IChangeEvent) => {
-    return onSubmit(data.formData);
-  };
+    handleSubmit = (data: IChangeEvent): void => {
+      void onSubmit(data.formData);
+    };
 
   return (
-    <Form
+    <RjsfForm
       schema={schema}
-      uiSchema={mergedUiSchema as any}
+      uiSchema={mergedUiSchema}
       validator={validator}
       formData={formData}
       disabled={disabled}

@@ -1,8 +1,47 @@
+import { it, afterEach, describe, expect, beforeEach, vi } from "vitest";
 /// <reference types="vite/client" />
 
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api } from "./_generated/api.js";
+import { api, internal } from "./_generated/api.js";
 import { initConvexTest } from "./setup.test.js";
+
+type TestCtx = ReturnType<typeof initConvexTest>;
+
+function assertDefined<T>(value: T): asserts value is NonNullable<T> {
+  if (value === null || value === undefined) {
+    throw new Error("Expected value to be defined");
+  }
+}
+
+async function createTestSchema(t: TestCtx) {
+  return t.mutation(api.lib.createSchema, {
+    schema: {
+      description: "A test schema",
+      properties: {
+        age: { type: "number" },
+        name: { type: "string" },
+      },
+      title: "Test Schema",
+      type: "object",
+    },
+  });
+}
+
+async function createImportSchema(t: TestCtx) {
+  return t.mutation(api.lib.createSchema, {
+    schema: {
+      description: "For import tests",
+      properties: { name: { type: "string" } },
+      title: "Import Schema",
+      type: "object",
+    },
+  });
+}
+
+async function storeRows(t: TestCtx, rows: unknown[]) {
+  return t.run(async (ctx) =>
+    ctx.storage.store(new Blob([JSON.stringify(rows)], { type: "application/json" })),
+  );
+}
 
 describe("json-cms component", () => {
   beforeEach(async () => {
@@ -13,60 +52,54 @@ describe("json-cms component", () => {
   });
 
   describe("schema operations", () => {
-    test("create and list schemas", async () => {
-      const t = initConvexTest();
-
-      const testSchema = {
-        title: "Test Schema",
-        description: "A test schema",
-        type: "object",
-        properties: {
-          name: { type: "string" },
+    it("create and list schemas", async () => {
+      const t = initConvexTest(),
+        testSchema = {
+          description: "A test schema",
+          properties: {
+            name: { type: "string" },
+          },
+          title: "Test Schema",
+          type: "object",
         },
-      };
-
-      const schemaId = await t.mutation(api.lib.createSchema, {
-        schema: testSchema,
-      });
+        schemaId = await t.mutation(api.lib.createSchema, {
+          schema: testSchema,
+        });
       expect(schemaId).toBeDefined();
 
       const schemas = await t.query(api.lib.listSchemas, {});
       expect(schemas).toHaveLength(1);
-      expect(schemas[0].title).toEqual("Test Schema");
-      expect(schemas[0].description).toEqual("A test schema");
+      expect(schemas[0].title).toBe("Test Schema");
+      expect(schemas[0].description).toBe("A test schema");
     });
 
-    test("get schema", async () => {
-      const t = initConvexTest();
-
-      const testSchema = {
-        title: "Test Schema",
-        description: "A test schema",
-        type: "object",
-      };
-
-      const schemaId = await t.mutation(api.lib.createSchema, {
-        schema: testSchema,
-      });
-
-      const schema = await t.query(api.lib.getSchema, { schemaId });
-      expect(schema).toBeDefined();
-      expect(schema?.title).toEqual("Test Schema");
-      expect(schema?.description).toEqual("A test schema");
+    it("get schema", async () => {
+      const t = initConvexTest(),
+        testSchema = {
+          description: "A test schema",
+          title: "Test Schema",
+          type: "object",
+        },
+        schemaId = await t.mutation(api.lib.createSchema, {
+          schema: testSchema,
+        }),
+        schema = await t.query(api.lib.getSchema, { schemaId });
+      assertDefined(schema);
+      expect(schema.title).toBe("Test Schema");
+      expect(schema.description).toBe("A test schema");
     });
 
-    test("get schema returns null for non-existent", async () => {
-      const t = initConvexTest();
-
-      // Create a schema, get its ID, then delete it
-      const testSchema = {
-        title: "Temp Schema",
-        description: "Will be deleted",
-        type: "object",
-      };
-      const schemaId = await t.mutation(api.lib.createSchema, {
-        schema: testSchema,
-      });
+    it("get schema returns null for non-existent", async () => {
+      const t = initConvexTest(),
+        // Create a schema, get its ID, then delete it
+        testSchema = {
+          description: "Will be deleted",
+          title: "Temp Schema",
+          type: "object",
+        },
+        schemaId = await t.mutation(api.lib.createSchema, {
+          schema: testSchema,
+        });
       await t.mutation(api.lib.deleteSchema, { schemaId });
 
       // Now the ID should return null
@@ -74,45 +107,42 @@ describe("json-cms component", () => {
       expect(schema).toBeNull();
     });
 
-    test("update schema with new schema object", async () => {
-      const t = initConvexTest();
-
-      const testSchema = {
-        title: "Test Schema",
-        description: "A test schema",
-        type: "object",
-      };
-
-      const schemaId = await t.mutation(api.lib.createSchema, {
-        schema: testSchema,
-      });
-
-      await t.mutation(api.lib.updateSchema, {
-        schemaId,
-        schema: {
-          title: "Updated Schema",
-          description: "An updated schema",
+    it("update schema with new schema object", async () => {
+      const t = initConvexTest(),
+        testSchema = {
+          description: "A test schema",
+          title: "Test Schema",
           type: "object",
         },
+        schemaId = await t.mutation(api.lib.createSchema, {
+          schema: testSchema,
+        });
+
+      await t.mutation(api.lib.updateSchema, {
+        schema: {
+          description: "An updated schema",
+          title: "Updated Schema",
+          type: "object",
+        },
+        schemaId,
       });
 
       const schema = await t.query(api.lib.getSchema, { schemaId });
-      expect(schema?.title).toEqual("Updated Schema");
-      expect(schema?.description).toEqual("An updated schema");
+      assertDefined(schema);
+      expect(schema.title).toBe("Updated Schema");
+      expect(schema.description).toBe("An updated schema");
     });
 
-    test("update schema with only title/description", async () => {
-      const t = initConvexTest();
-
-      const testSchema = {
-        title: "Test Schema",
-        description: "A test schema",
-        type: "object",
-      };
-
-      const schemaId = await t.mutation(api.lib.createSchema, {
-        schema: testSchema,
-      });
+    it("update schema with only title/description", async () => {
+      const t = initConvexTest(),
+        testSchema = {
+          description: "A test schema",
+          title: "Test Schema",
+          type: "object",
+        },
+        schemaId = await t.mutation(api.lib.createSchema, {
+          schema: testSchema,
+        });
 
       await t.mutation(api.lib.updateSchema, {
         schemaId,
@@ -120,95 +150,90 @@ describe("json-cms component", () => {
       });
 
       const schema = await t.query(api.lib.getSchema, { schemaId });
-      expect(schema?.title).toEqual("Updated Title");
-      expect(schema?.description).toEqual("A test schema");
+      assertDefined(schema);
+      expect(schema.title).toBe("Updated Title");
+      expect(schema.description).toBe("A test schema");
     });
 
-    test("create and get schema with uiSchema", async () => {
-      const t = initConvexTest();
-
-      const testSchema = {
-        title: "Test Schema",
-        description: "A test schema",
-        type: "object",
-        properties: {
-          name: { type: "string" },
-        },
-      };
-      const testUiSchema = {
-        name: { "ui:widget": "textarea" },
-      };
-
-      const schemaId = await t.mutation(api.lib.createSchema, {
-        schema: testSchema,
-        uiSchema: testUiSchema,
-      });
-
-      const schema = await t.query(api.lib.getSchema, { schemaId });
-      expect(schema?.uiSchema).toEqual(testUiSchema);
-    });
-
-    test("update schema's uiSchema", async () => {
-      const t = initConvexTest();
-
-      const schemaId = await t.mutation(api.lib.createSchema, {
-        schema: {
-          title: "Test Schema",
+    it("create and get schema with uiSchema", async () => {
+      const t = initConvexTest(),
+        testSchema = {
           description: "A test schema",
+          properties: {
+            name: { type: "string" },
+          },
+          title: "Test Schema",
           type: "object",
         },
-      });
+        testUiSchema = {
+          name: { "ui:widget": "textarea" },
+        },
+        schemaId = await t.mutation(api.lib.createSchema, {
+          schema: testSchema,
+          uiSchema: testUiSchema,
+        }),
+        schema = await t.query(api.lib.getSchema, { schemaId });
+      assertDefined(schema);
+      expect(schema.uiSchema).toStrictEqual(testUiSchema);
+    });
 
-      const uiSchema = { "ui:order": ["name", "age"] };
+    it("update schema's uiSchema", async () => {
+      const t = initConvexTest(),
+        schemaId = await t.mutation(api.lib.createSchema, {
+          schema: {
+            description: "A test schema",
+            title: "Test Schema",
+            type: "object",
+          },
+        }),
+        uiSchema = { "ui:order": ["name", "age"] };
       await t.mutation(api.lib.updateSchema, {
         schemaId,
         uiSchema,
       });
 
       const schema = await t.query(api.lib.getSchema, { schemaId });
-      expect(schema?.uiSchema).toEqual(uiSchema);
+      assertDefined(schema);
+      expect(schema.uiSchema).toStrictEqual(uiSchema);
       // Title/description untouched by a uiSchema-only update
-      expect(schema?.title).toEqual("Test Schema");
+      expect(schema.title).toBe("Test Schema");
     });
 
-    test("create schema without title throws error", async () => {
-      const t = initConvexTest();
+    it("create schema without title throws error", async () => {
+      const t = initConvexTest(),
+        badSchema = {
+          description: "A test schema",
+          type: "object",
+        };
 
-      const badSchema = {
-        description: "A test schema",
-        type: "object",
-      };
-
-      await expect(
-        t.mutation(api.lib.createSchema, { schema: badSchema }),
-      ).rejects.toThrow();
+      await expect(t.mutation(api.lib.createSchema, { schema: badSchema })).rejects.toThrow(
+        "Schema must have 'title' and 'description' properties",
+      );
     });
 
-    test("create schema without description throws error", async () => {
-      const t = initConvexTest();
+    it("create schema without description throws error", async () => {
+      const t = initConvexTest(),
+        badSchema = {
+          title: "Test Schema",
+          type: "object",
+        };
 
-      const badSchema = {
-        title: "Test Schema",
-        type: "object",
-      };
-
-      await expect(
-        t.mutation(api.lib.createSchema, { schema: badSchema }),
-      ).rejects.toThrow();
+      await expect(t.mutation(api.lib.createSchema, { schema: badSchema })).rejects.toThrow(
+        "Schema must have 'title' and 'description' properties",
+      );
     });
 
-    test("update non-existent schema throws error", async () => {
-      const t = initConvexTest();
-
-      // Create a schema, get its ID, then delete it
-      const testSchema = {
-        title: "Temp Schema",
-        description: "Will be deleted",
-        type: "object",
-      };
-      const schemaId = await t.mutation(api.lib.createSchema, {
-        schema: testSchema,
-      });
+    it("update non-existent schema throws error", async () => {
+      const t = initConvexTest(),
+        // Create a schema, get its ID, then delete it
+        testSchema = {
+          description: "Will be deleted",
+          title: "Temp Schema",
+          type: "object",
+        },
+        schemaId = await t.mutation(api.lib.createSchema, {
+          schema: testSchema,
+        });
       await t.mutation(api.lib.deleteSchema, { schemaId });
 
       // Now updating the deleted ID should throw
@@ -220,27 +245,23 @@ describe("json-cms component", () => {
       ).rejects.toThrow("Schema not found");
     });
 
-    test("delete schema removes schema and entries", async () => {
-      const t = initConvexTest();
-
-      const testSchema = {
-        title: "Test Schema",
-        description: "A test schema",
-        type: "object",
-      };
-
-      const schemaId = await t.mutation(api.lib.createSchema, {
-        schema: testSchema,
-      });
-
-      // Create an entry for this schema and remember its ID
-      const entryId = await t.mutation(api.lib.createEntry, {
-        schemaId,
-        data: { name: "test" },
-      });
-
-      // Verify entry exists before deletion
-      const entryBefore = await t.query(api.lib.getEntry, { entryId });
+    it("delete schema removes schema and entries", async () => {
+      const t = initConvexTest(),
+        testSchema = {
+          description: "A test schema",
+          title: "Test Schema",
+          type: "object",
+        },
+        schemaId = await t.mutation(api.lib.createSchema, {
+          schema: testSchema,
+        }),
+        // Create an entry for this schema and remember its ID
+        entryId = await t.mutation(api.lib.createEntry, {
+          data: { name: "test" },
+          schemaId,
+        }),
+        // Verify entry exists before deletion
+        entryBefore = await t.query(api.lib.getEntry, { entryId });
       expect(entryBefore).toBeDefined();
 
       await t.mutation(api.lib.deleteSchema, { schemaId });
@@ -254,81 +275,62 @@ describe("json-cms component", () => {
       expect(entryAfter).toBeNull();
     });
 
-    test("delete non-existent schema throws error", async () => {
-      const t = initConvexTest();
-
-      // Create a schema, get its ID, then delete it
-      const testSchema = {
-        title: "Temp Schema",
-        description: "Will be deleted",
-        type: "object",
-      };
-      const schemaId = await t.mutation(api.lib.createSchema, {
-        schema: testSchema,
-      });
+    it("delete non-existent schema throws error", async () => {
+      const t = initConvexTest(),
+        // Create a schema, get its ID, then delete it
+        testSchema = {
+          description: "Will be deleted",
+          title: "Temp Schema",
+          type: "object",
+        },
+        schemaId = await t.mutation(api.lib.createSchema, {
+          schema: testSchema,
+        });
       await t.mutation(api.lib.deleteSchema, { schemaId });
 
       // Now deleting again should throw
-      await expect(
-        t.mutation(api.lib.deleteSchema, { schemaId }),
-      ).rejects.toThrow("Schema not found");
+      await expect(t.mutation(api.lib.deleteSchema, { schemaId })).rejects.toThrow(
+        "Schema not found",
+      );
     });
   });
 
   describe("entry operations", () => {
-    async function createTestSchema(t: ReturnType<typeof initConvexTest>) {
-      return await t.mutation(api.lib.createSchema, {
-        schema: {
-          title: "Test Schema",
-          description: "A test schema",
-          type: "object",
-          properties: {
-            name: { type: "string" },
-            age: { type: "number" },
-          },
-        },
-      });
-    }
-
-    test("create and list entries", async () => {
-      const t = initConvexTest();
-      const schemaId = await createTestSchema(t);
-
-      const entryId = await t.mutation(api.lib.createEntry, {
-        schemaId,
-        data: { name: "John", age: 30 },
-      });
+    it("create and list entries", async () => {
+      const t = initConvexTest(),
+        schemaId = await createTestSchema(t),
+        entryId = await t.mutation(api.lib.createEntry, {
+          data: { age: 30, name: "John" },
+          schemaId,
+        });
       expect(entryId).toBeDefined();
 
       const entries = await t.query(api.lib.listEntries, { schemaId });
       expect(entries).toHaveLength(1);
-      expect(entries[0].data).toEqual({ name: "John", age: 30 });
-      expect(entries[0].schemaId).toEqual(schemaId);
+      expect(entries[0].data).toStrictEqual({ age: 30, name: "John" });
+      expect(entries[0].schemaId).toStrictEqual(schemaId);
     });
 
-    test("get entry", async () => {
-      const t = initConvexTest();
-      const schemaId = await createTestSchema(t);
-
-      const entryId = await t.mutation(api.lib.createEntry, {
-        schemaId,
-        data: { name: "John" },
-      });
-
-      const entry = await t.query(api.lib.getEntry, { entryId });
-      expect(entry).toBeDefined();
-      expect(entry?.data).toEqual({ name: "John" });
+    it("get entry", async () => {
+      const t = initConvexTest(),
+        schemaId = await createTestSchema(t),
+        entryId = await t.mutation(api.lib.createEntry, {
+          data: { name: "John" },
+          schemaId,
+        }),
+        entry = await t.query(api.lib.getEntry, { entryId });
+      assertDefined(entry);
+      expect(entry.data).toStrictEqual({ name: "John" });
     });
 
-    test("get entry returns null for non-existent", async () => {
-      const t = initConvexTest();
-      const schemaId = await createTestSchema(t);
-
-      // Create and delete an entry
-      const entryId = await t.mutation(api.lib.createEntry, {
-        schemaId,
-        data: { name: "test" },
-      });
+    it("get entry returns null for non-existent", async () => {
+      const t = initConvexTest(),
+        schemaId = await createTestSchema(t),
+        // Create and delete an entry
+        entryId = await t.mutation(api.lib.createEntry, {
+          data: { name: "test" },
+          schemaId,
+        });
       await t.mutation(api.lib.deleteEntry, { entryId });
 
       // Now the ID should return null
@@ -336,46 +338,44 @@ describe("json-cms component", () => {
       expect(entry).toBeNull();
     });
 
-    test("create entries in bulk", async () => {
-      const t = initConvexTest();
-      const schemaId = await createTestSchema(t);
-
-      const ids = await t.mutation(api.lib.createEntriesBulk, {
-        schemaId,
-        dataArray: [{ name: "John" }, { name: "Jane" }, { name: "Bob" }],
-      });
+    it("create entries in bulk", async () => {
+      const t = initConvexTest(),
+        schemaId = await createTestSchema(t),
+        ids = await t.mutation(api.lib.createEntriesBulk, {
+          dataArray: [{ name: "John" }, { name: "Jane" }, { name: "Bob" }],
+          schemaId,
+        });
       expect(ids).toHaveLength(3);
 
       const entries = await t.query(api.lib.listEntries, { schemaId });
       expect(entries).toHaveLength(3);
     });
 
-    test("update entry", async () => {
-      const t = initConvexTest();
-      const schemaId = await createTestSchema(t);
-
-      const entryId = await t.mutation(api.lib.createEntry, {
-        schemaId,
-        data: { name: "John", age: 30 },
-      });
+    it("update entry", async () => {
+      const t = initConvexTest(),
+        schemaId = await createTestSchema(t),
+        entryId = await t.mutation(api.lib.createEntry, {
+          data: { age: 30, name: "John" },
+          schemaId,
+        });
 
       await t.mutation(api.lib.updateEntry, {
+        data: { age: 31, name: "John" },
         entryId,
-        data: { name: "John", age: 31 },
       });
 
       const entry = await t.query(api.lib.getEntry, { entryId });
-      expect(entry?.data).toEqual({ name: "John", age: 31 });
+      assertDefined(entry);
+      expect(entry.data).toStrictEqual({ age: 31, name: "John" });
     });
 
-    test("delete entry", async () => {
-      const t = initConvexTest();
-      const schemaId = await createTestSchema(t);
-
-      const entryId = await t.mutation(api.lib.createEntry, {
-        schemaId,
-        data: { name: "John" },
-      });
+    it("delete entry", async () => {
+      const t = initConvexTest(),
+        schemaId = await createTestSchema(t),
+        entryId = await t.mutation(api.lib.createEntry, {
+          data: { name: "John" },
+          schemaId,
+        });
 
       await t.mutation(api.lib.deleteEntry, { entryId });
 
@@ -383,17 +383,17 @@ describe("json-cms component", () => {
       expect(entry).toBeNull();
     });
 
-    test("delete entries by schema", async () => {
-      const t = initConvexTest();
-      const schemaId = await createTestSchema(t);
+    it("delete entries by schema", async () => {
+      const t = initConvexTest(),
+        schemaId = await createTestSchema(t);
 
       await t.mutation(api.lib.createEntry, {
-        schemaId,
         data: { name: "John" },
+        schemaId,
       });
       await t.mutation(api.lib.createEntry, {
-        schemaId,
         data: { name: "Jane" },
+        schemaId,
       });
 
       const count = await t.mutation(api.lib.deleteEntriesBySchema, {
@@ -404,142 +404,134 @@ describe("json-cms component", () => {
       const entries = await t.query(api.lib.listEntries, { schemaId });
       expect(entries).toHaveLength(0);
     });
-
   });
 
   describe("schema size limit", () => {
-    test("schema exceeding 100KB throws error", async () => {
-      const t = initConvexTest();
-
-      // Create a large schema that exceeds 100KB
-      const largeSchema = {
-        title: "Large Schema",
-        description: "A very large schema",
-        type: "object",
-        properties: {} as Record<string, any>,
-      };
+    it("schema exceeding 100KB throws error", async () => {
+      const t = initConvexTest(),
+        // Create a large schema that exceeds 100KB
+        largeSchema = {
+          description: "A very large schema",
+          properties: {} as Record<string, any>,
+          title: "Large Schema",
+          type: "object",
+        };
 
       // Add enough properties to exceed 100KB
-      for (let i = 0; i < 5000; i++) {
+      for (let i = 0; i < 5000; i += 1) {
         largeSchema.properties[`field${i}`] = {
-          type: "string",
           description: `This is a very long description for field ${i} that will help us reach the 100KB limit faster by adding more characters to the JSON string`,
+          type: "string",
         };
       }
 
-      await expect(
-        t.mutation(api.lib.createSchema, { schema: largeSchema }),
-      ).rejects.toThrow("Schema exceeds the 100 KB size limit");
+      await expect(t.mutation(api.lib.createSchema, { schema: largeSchema })).rejects.toThrow(
+        "Schema exceeds the 100 KB size limit",
+      );
     });
 
-    test("update with schema exceeding 100KB throws error", async () => {
-      const t = initConvexTest();
+    it("update with schema exceeding 100KB throws error", async () => {
+      const t = initConvexTest(),
+        testSchema = {
+          description: "A test schema",
+          title: "Test Schema",
+          type: "object",
+        },
+        schemaId = await t.mutation(api.lib.createSchema, {
+          schema: testSchema,
+        }),
+        largeSchema = {
+          description: "A very large schema",
+          properties: {} as Record<string, any>,
+          title: "Large Schema",
+          type: "object",
+        };
 
-      const testSchema = {
-        title: "Test Schema",
-        description: "A test schema",
-        type: "object",
-      };
-
-      const schemaId = await t.mutation(api.lib.createSchema, {
-        schema: testSchema,
-      });
-
-      const largeSchema = {
-        title: "Large Schema",
-        description: "A very large schema",
-        type: "object",
-        properties: {} as Record<string, any>,
-      };
-
-      for (let i = 0; i < 5000; i++) {
+      for (let i = 0; i < 5000; i += 1) {
         largeSchema.properties[`field${i}`] = {
-          type: "string",
           description: `This is a very long description for field ${i} that will help us reach the 100KB limit faster by adding more characters to the JSON string`,
+          type: "string",
         };
       }
 
       await expect(
         t.mutation(api.lib.updateSchema, {
-          schemaId,
           schema: largeSchema,
+          schemaId,
         }),
       ).rejects.toThrow("Schema exceeds the 100 KB size limit");
     });
   });
 
   describe("integration", () => {
-    test("multiple schemas with entries are isolated", async () => {
-      const t = initConvexTest();
-
-      const schemaId1 = await t.mutation(api.lib.createSchema, {
-        schema: {
-          title: "Schema 1",
-          description: "First schema",
-          type: "object",
-        },
-      });
-
-      const schemaId2 = await t.mutation(api.lib.createSchema, {
-        schema: {
-          title: "Schema 2",
-          description: "Second schema",
-          type: "object",
-        },
-      });
+    it("multiple schemas with entries are isolated", async () => {
+      const t = initConvexTest(),
+        schemaId1 = await t.mutation(api.lib.createSchema, {
+          schema: {
+            description: "First schema",
+            title: "Schema 1",
+            type: "object",
+          },
+        }),
+        schemaId2 = await t.mutation(api.lib.createSchema, {
+          schema: {
+            description: "Second schema",
+            title: "Schema 2",
+            type: "object",
+          },
+        });
 
       await t.mutation(api.lib.createEntry, {
-        schemaId: schemaId1,
         data: { source: "schema1" },
+        schemaId: schemaId1,
       });
 
       await t.mutation(api.lib.createEntry, {
-        schemaId: schemaId2,
         data: { source: "schema2" },
+        schemaId: schemaId2,
       });
 
       const entries1 = await t.query(api.lib.listEntries, {
-        schemaId: schemaId1,
-      });
-      const entries2 = await t.query(api.lib.listEntries, {
-        schemaId: schemaId2,
-      });
+          schemaId: schemaId1,
+        }),
+        entries2 = await t.query(api.lib.listEntries, {
+          schemaId: schemaId2,
+        });
 
       expect(entries1).toHaveLength(1);
       expect(entries2).toHaveLength(1);
-      expect(entries1[0].data.source).toEqual("schema1");
-      expect(entries2[0].data.source).toEqual("schema2");
+      expect(entries1[0].data.source).toBe("schema1");
+      expect(entries2[0].data.source).toBe("schema2");
     });
 
-    test("entries are ordered by creation time descending", async () => {
-      const t = initConvexTest();
-
-      const schemaId = await t.mutation(api.lib.createSchema, {
-        schema: {
-          title: "Test Schema",
-          description: "A test schema",
-          type: "object",
-        },
-      });
+    it("entries are ordered by creation time descending", async () => {
+      const t = initConvexTest(),
+        schemaId = await t.mutation(api.lib.createSchema, {
+          schema: {
+            description: "A test schema",
+            title: "Test Schema",
+            type: "object",
+          },
+        });
 
       // Create entries with timestamps
       await t.mutation(api.lib.createEntry, {
-        schemaId,
         data: { order: 1 },
+        schemaId,
       });
 
       vi.advanceTimersByTime(1000);
 
       await t.mutation(api.lib.createEntry, {
-        schemaId,
         data: { order: 2 },
+        schemaId,
       });
 
       vi.advanceTimersByTime(1000);
 
       await t.mutation(api.lib.createEntry, {
-        schemaId,
         data: { order: 3 },
+        schemaId,
       });
 
       const entries = await t.query(api.lib.listEntries, { schemaId });
@@ -548,6 +540,62 @@ describe("json-cms component", () => {
       expect(entries[0].data.order).toBe(3);
       expect(entries[1].data.order).toBe(2);
       expect(entries[2].data.order).toBe(1);
+    });
+  });
+
+  describe("dataset import", () => {
+    // NOTE: startImport's happy path and the full workflow *execution*
+    // (importWorkflow driving batches) aren't unit-tested here. The workflow
+    // Engine (a) requires registering the nested workflow component, whose
+    // Shipped test source is type-incompatible with this repo's convex-test
+    // Version, and (b) deletes `global.process` for determinism, which the
+    // Convex-test edge-runtime doesn't provide (a step fails with "process is
+    // Not defined" under the harness only). The real deployment compiles and
+    // Runs it fine. We instead verify the guard plus the batch-insert
+    // Primitives the workflow calls.
+    it("insertEntriesChunkInternal inserts a batch of entries", async () => {
+      const t = initConvexTest(),
+        schemaId = await createImportSchema(t),
+        chunk = Array.from({ length: 300 }, (_, i) => ({ name: `row-${i}` }));
+
+      await t.mutation(internal.lib.insertEntriesChunkInternal, {
+        dataArray: chunk,
+        schemaId,
+      });
+
+      const entries = await t.query(api.lib.listEntries, { schemaId });
+      expect(entries).toHaveLength(chunk.length);
+    });
+
+    it("insertChunkFromStorage reads storage and inserts the requested slice", async () => {
+      const t = initConvexTest(),
+        schemaId = await createImportSchema(t),
+        rows = Array.from({ length: 1200 }, (_, i) => ({ name: `row-${i}` })),
+        storageId = await storeRows(t, rows),
+        // Insert the middle batch [500, 1000).
+        inserted = await t.action(internal.lib.insertChunkFromStorage, {
+          limit: 500,
+          offset: 500,
+          schemaId,
+          storageId,
+        });
+      expect(inserted).toBe(500);
+
+      const entries = await t.query(api.lib.listEntries, { schemaId });
+      expect(entries).toHaveLength(500);
+    });
+
+    it("startImport rejects a missing schema", async () => {
+      const t = initConvexTest(),
+        schemaId = await createImportSchema(t),
+        storageId = await storeRows(t, [{ name: "a" }]);
+
+      // Delete the schema so startImport can't find it.
+      await t.mutation(api.lib.deleteSchema, { schemaId });
+
+      await expect(
+        t.mutation(api.lib.startImport, { schemaId, storageId, total: 1 }),
+      ).rejects.toThrow("Schema not found");
     });
   });
 });

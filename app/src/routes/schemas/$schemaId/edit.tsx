@@ -1,15 +1,13 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useQuery, useMutation } from "convex/react";
+import { SchemaEditor } from "@caden/json-cms/react/ui";
 import { useForm } from "@tanstack/react-form";
+import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useMutation, useQuery } from "convex/react";
+import { AlertCircle, ArrowLeft, Save } from "lucide-react";
+import { toast } from "sonner";
 import { z } from "zod";
-import { api } from "../../../../convex/_generated/api";
-import type { SchemaId } from "@caden/json-cms";
-import { Button } from "@/components/ui/button";
+
+import { api } from "#convex/_generated/api";
 import { RouterButton } from "@/components/router-button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -18,20 +16,36 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { SchemaEditor } from "@caden/json-cms/react/ui";
-import { ArrowLeft, Save, AlertCircle } from "lucide-react";
-import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
 export const Route = createFileRoute("/schemas/$schemaId/edit")({
   component: EditSchemaPage,
 });
 
+/** First validation error's message, falling back to its JSON form. */
+function firstFieldError(errors: readonly unknown[]): string {
+  const first = errors[0];
+  if (
+    first &&
+    typeof first === "object" &&
+    "message" in first &&
+    typeof first.message === "string"
+  ) {
+    return first.message;
+  }
+  return JSON.stringify(first);
+}
+
 function EditSchemaPage() {
-  const { schemaId } = Route.useParams();
-  const navigate = useNavigate();
-  const schema = useQuery(api.schemas.get, { schemaId: schemaId as SchemaId });
-  const entries = useQuery(api.entries.list, { schemaId: schemaId as SchemaId });
-  const updateSchema = useMutation(api.schemas.update);
+  const { schemaId } = Route.useParams(),
+    navigate = useNavigate(),
+    schema = useQuery(api.schemas.get, { schemaId }),
+    entries = useQuery(api.entries.list, { schemaId }),
+    updateSchema = useMutation(api.schemas.update);
 
   if (schema === undefined || entries === undefined) {
     return (
@@ -124,18 +138,18 @@ function MetadataEditForm({
   navigate: ReturnType<typeof useNavigate>;
 }) {
   const form = useForm({
-    defaultValues: { title, description },
+    defaultValues: { description, title },
     onSubmit: async ({ value }) => {
       try {
         await updateSchema({
-          schemaId: schemaId as SchemaId,
-          title: value.title,
           description: value.description,
+          schemaId,
+          title: value.title,
         });
         toast.success("Schema updated!");
-        navigate({ to: "/schemas/$schemaId", params: { schemaId } });
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Failed to update schema.");
+        void navigate({ params: { schemaId }, to: "/schemas/$schemaId" });
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to update schema.");
       }
     },
   });
@@ -157,15 +171,15 @@ function MetadataEditForm({
           onSubmit={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            form.handleSubmit();
+            void form.handleSubmit();
           }}
           className="space-y-4"
         >
           <form.Field
             name="title"
             validators={{
-              onChange: z.string().min(1, "Title is required."),
               onBlur: z.string().min(1, "Title is required."),
+              onChange: z.string().min(1, "Title is required."),
             }}
           >
             {(field) => (
@@ -174,12 +188,14 @@ function MetadataEditForm({
                 <Input
                   id="title"
                   value={field.state.value}
-                  onChange={(e) => field.handleChange(e.target.value)}
+                  onChange={(e) => {
+                    field.handleChange(e.target.value);
+                  }}
                   onBlur={field.handleBlur}
                 />
                 {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
                   <p className="text-sm text-destructive">
-                    {field.state.meta.errors[0]?.message ?? String(field.state.meta.errors[0])}
+                    {firstFieldError(field.state.meta.errors)}
                   </p>
                 )}
               </div>
@@ -189,8 +205,8 @@ function MetadataEditForm({
           <form.Field
             name="description"
             validators={{
-              onChange: z.string().min(1, "Description is required."),
               onBlur: z.string().min(1, "Description is required."),
+              onChange: z.string().min(1, "Description is required."),
             }}
           >
             {(field) => (
@@ -199,13 +215,15 @@ function MetadataEditForm({
                 <Textarea
                   id="description"
                   value={field.state.value}
-                  onChange={(e) => field.handleChange(e.target.value)}
+                  onChange={(e) => {
+                    field.handleChange(e.target.value);
+                  }}
                   onBlur={field.handleBlur}
                   rows={3}
                 />
                 {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
                   <p className="text-sm text-destructive">
-                    {field.state.meta.errors[0]?.message ?? String(field.state.meta.errors[0])}
+                    {firstFieldError(field.state.meta.errors)}
                   </p>
                 )}
               </div>
@@ -246,21 +264,24 @@ function FullSchemaEditForm({
       onSave={async (_json, parsed, _uiSchemaJson, uiSchemaParsed) => {
         try {
           await updateSchema({
-            schemaId: schemaId as SchemaId,
             schema: parsed,
+            schemaId,
             uiSchema: Object.keys(uiSchemaParsed).length > 0 ? uiSchemaParsed : undefined,
           });
           toast.success("Schema updated!");
-          void navigate({ to: "/schemas/$schemaId", params: { schemaId } });
-        } catch (err) {
+          void navigate({ params: { schemaId }, to: "/schemas/$schemaId" });
+        } catch (error) {
           const message =
-            err != null && typeof err === "object" && "data" in err && typeof err.data === "string"
-              ? err.data
-              : err instanceof Error
-                ? err.message
+            typeof error === "object" &&
+            error !== null &&
+            "data" in error &&
+            typeof error.data === "string"
+              ? error.data
+              : error instanceof Error
+                ? error.message
                 : "Failed to update schema.";
           toast.error(message);
-          throw err;
+          throw error;
         }
       }}
       saveLabel="Save Schema"

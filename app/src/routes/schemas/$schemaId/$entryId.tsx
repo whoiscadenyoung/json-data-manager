@@ -1,4 +1,8 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { Link, createFileRoute } from "@tanstack/react-router";
+import { useQuery } from "convex/react";
+import { ArrowLeft, Calendar, Plus } from "lucide-react";
+
+import { RouterButton } from "@/components/router-button";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -7,26 +11,23 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { useQuery } from "convex/react";
-import { api } from "../../../../convex/_generated/api";
-import type { SchemaId, EntryId } from "@caden/json-cms";
-import { RouterButton } from "@/components/router-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, Calendar, Plus } from "lucide-react";
+
+import { api } from "../../../../convex/_generated/api";
 
 export const Route = createFileRoute("/schemas/$schemaId/$entryId")({
   component: EntryDetailPage,
 });
 
 function EntryDetailPage() {
-  const { schemaId, entryId } = Route.useParams();
-  const entry = useQuery(api.entries.get, { entryId: entryId as EntryId });
-  const schema = useQuery(api.schemas.get, { schemaId: schemaId as SchemaId });
+  const { schemaId, entryId } = Route.useParams(),
+    entry = useQuery(api.entries.get, { entryId }),
+    schema = useQuery(api.schemas.get, { schemaId });
 
   if (entry === undefined || schema === undefined) {
     return (
       <div className="flex justify-center items-center min-h-100">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
       </div>
     );
   }
