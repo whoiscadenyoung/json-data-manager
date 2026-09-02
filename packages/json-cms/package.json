@@ -58,7 +58,7 @@
     "predev": "path-exists .env.local dist || (bun run build && convex dev --once)",
     "build": "tsc --project ./tsconfig.build.json",
     "build:codegen": "npx convex codegen --component-dir ./src/component && bun run build",
-    "build:clean": "rm -rf dist *.tsbuildinfo && bun run build:codegen",
+    "build:clean": "rm -rf dist *.tsbuildinfo .cache/*.tsbuildinfo && bun run build:codegen",
     "typecheck": "tsc --noEmit && tsc -p example && tsc -p example/convex",
     "all": "run-p -r 'dev:*' 'test:watch'",
     "test": "vitest run --typecheck",
