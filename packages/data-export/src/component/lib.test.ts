@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+
 import { api, internal } from "./_generated/api.js";
 import { initConvexTest } from "./setup.test.js";
 
@@ -46,8 +47,9 @@ describe("data-export component", () => {
     });
 
     const exp = await t.query(api.lib.getExport, { exportId });
-    expect(exp?.totalRows).toBe(3);
-    expect(exp?.totalBytes).toBe(42);
+    if (!exp) throw new Error("expected export to exist");
+    expect(exp.totalRows).toBe(3);
+    expect(exp.totalBytes).toBe(42);
 
     const files = await t.query(api.lib.getExportFiles, { exportId });
     expect(files).toHaveLength(1);

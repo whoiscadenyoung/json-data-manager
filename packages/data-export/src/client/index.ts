@@ -15,6 +15,7 @@ import type {
 } from "convex/server";
 import { v } from "convex/values";
 import type { Infer, Validator } from "convex/values";
+
 import type { ComponentApi } from "../component/_generated/component.js";
 import type { Id } from "../component/_generated/dataModel.js";
 
@@ -179,8 +180,9 @@ export function defineExportCodec<V extends Validator<any, any, any>>(config: {
 }): ExportCodec<Infer<V>> {
   return {
     decode(doc, schemaVersion) {
-      const upcaster = schemaVersion != null ? config.upcasters?.[schemaVersion] : undefined;
-      return (upcaster ? upcaster(doc) : doc) as Infer<V>;
+      const upcaster =
+        schemaVersion !== null && config.upcasters ? config.upcasters[schemaVersion] : undefined;
+      return upcaster ? upcaster(doc) : doc;
     },
   };
 }
@@ -285,8 +287,8 @@ export async function listExports(
   },
 ) {
   return await ctx.runQuery(component.lib.listExports, {
-    status: args?.status,
-    limit: args?.limit,
+    status: args ? args.status : undefined,
+    limit: args ? args.limit : undefined,
   });
 }
 

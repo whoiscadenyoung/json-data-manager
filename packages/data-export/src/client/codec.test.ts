@@ -1,8 +1,9 @@
 /// <reference types="vite/client" />
 
-import { describe, expect, test } from "vitest";
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { describe, expect, test } from "vitest";
+
 import { decodeExportText, defineExportCodec, extractSchemas } from "./index.js";
 
 describe("export codec + helpers", () => {

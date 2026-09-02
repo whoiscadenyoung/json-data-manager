@@ -1,5 +1,3 @@
-import { v } from "convex/values";
-import type { Auth } from "convex/server";
 import {
   defineExportCodec,
   exportReader,
@@ -8,6 +6,9 @@ import {
   startExport,
   type ExportId,
 } from "@caden/data-export";
+import type { Auth } from "convex/server";
+import { v } from "convex/values";
+
 import { components, internal } from "./_generated/api.js";
 import { action, mutation } from "./_generated/server.js";
 import schema from "./schema.js";
@@ -17,7 +18,8 @@ import schema from "./schema.js";
 export const readTablePage = exportReader();
 
 async function getAuthUserId(ctx: { auth: Auth }) {
-  return (await ctx.auth.getUserIdentity())?.subject ?? "anonymous";
+  const identity = await ctx.auth.getUserIdentity();
+  return identity ? identity.subject : "anonymous";
 }
 
 // Seed some data so there's something to export (example/demo only).
@@ -25,7 +27,7 @@ export const seed = mutation({
   args: { users: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const count = args.users ?? 3;
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < count; i += 1) {
       const userId = await ctx.db.insert("users", {
         name: `User ${i}`,
         email: `user${i}@example.com`,

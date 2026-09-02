@@ -1,11 +1,12 @@
-/// <reference types="vite/client" />
-import { test } from "vitest";
 import { convexTest } from "convex-test";
+/// <reference types="vite/client" />
+import { expect, test } from "vitest";
 export const modules = import.meta.glob("./**/*.*s");
 
 import { defineSchema, type GenericSchema, type SchemaDefinition } from "convex/server";
-import { type ComponentApi } from "../component/_generated/component.js";
 import { componentsGeneric } from "convex/server";
+
+import { type ComponentApi } from "../component/_generated/component.js";
 import { register } from "../test.js";
 
 export function initConvexTest<Schema extends SchemaDefinition<GenericSchema, boolean>>(
@@ -19,4 +20,6 @@ export const components = componentsGeneric() as unknown as {
   dataExport: ComponentApi;
 };
 
-test("setup", () => {});
+test("initConvexTest builds a harness", () => {
+  expect(initConvexTest()).toBeDefined();
+});

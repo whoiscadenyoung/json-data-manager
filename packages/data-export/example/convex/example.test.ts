@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { initConvexTest } from "./setup.test";
+
 import { api, internal } from "./_generated/api";
+import { initConvexTest } from "./setup.test";
 
 // NOTE: The export workflow (@convex-dev/workflow) can't be driven to
 // completion under convex-test — it patches the shared JS global scope, so the
@@ -48,11 +49,11 @@ describe("data export example", () => {
     expect(exportId).toBeDefined();
 
     const exp = await t.query(api.example.getExport, { exportId });
-    expect(exp).not.toBeNull();
-    expect(exp!.status).toBe("running");
-    expect(exp!.tableNames).toEqual(["users", "posts"]);
-    expect(exp!.workflowId).toBeDefined();
-    expect(exp!.requestedAt).toBeGreaterThan(0);
+    if (!exp) throw new Error("expected export to exist");
+    expect(exp.status).toBe("running");
+    expect(exp.tableNames).toEqual(["users", "posts"]);
+    expect(exp.workflowId).toBeDefined();
+    expect(exp.requestedAt).toBeGreaterThan(0);
 
     const list = await t.query(api.example.listExports, {});
     expect(list.length).toBeGreaterThanOrEqual(1);

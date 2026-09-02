@@ -1,8 +1,9 @@
-/// <reference types="vite/client" />
-import { test } from "vitest";
-import { convexTest } from "convex-test";
-import schema from "./schema.js";
 import component from "@caden/data-export/test";
+import { convexTest } from "convex-test";
+/// <reference types="vite/client" />
+import { expect, test } from "vitest";
+
+import schema from "./schema.js";
 
 const modules = import.meta.glob("./**/*.*s");
 // When users want to write tests that use your component, they need to
@@ -13,4 +14,6 @@ export function initConvexTest() {
   return t;
 }
 
-test("setup", () => {});
+test("initConvexTest builds a harness", () => {
+  expect(initConvexTest()).toBeDefined();
+});

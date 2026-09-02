@@ -1,6 +1,5 @@
 /// <reference types="vite/client" />
 
-import { describe, expect, test } from "vitest";
 import {
   anyApi,
   defineSchema,
@@ -9,6 +8,8 @@ import {
   type ApiFromModules,
 } from "convex/server";
 import { v } from "convex/values";
+import { describe, expect, test } from "vitest";
+
 import { exportReader, exposeApi, type ReaderReference } from "./index.js";
 import { components, initConvexTest } from "./setup.test.js";
 
@@ -67,8 +68,9 @@ describe("client API", () => {
       tableNames: ["things"],
     });
     const exp = await t.query(testApi.getExport, { exportId });
-    expect(exp?.status).toBe("running");
-    expect(exp?.tableNames).toEqual(["things"]);
+    if (!exp) throw new Error("expected export to exist");
+    expect(exp.status).toBe("running");
+    expect(exp.tableNames).toEqual(["things"]);
 
     const list = await t.query(testApi.listExports, {});
     expect(list.length).toBeGreaterThanOrEqual(1);

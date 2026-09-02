@@ -1,6 +1,7 @@
 import { cancel, getStatus, start as startWorkflow } from "@convex-dev/workflow";
 import type { WorkflowId } from "@convex-dev/workflow";
 import { ConvexError, v } from "convex/values";
+
 import { components, internal } from "./_generated/api.js";
 import { action, internalQuery, mutation, query } from "./_generated/server.js";
 import schema from "./schema.js";
@@ -13,10 +14,12 @@ const MAX_BATCH_SIZE = 8192;
 // captured schemas into a default `schemaVersion` when none is supplied.
 function hashString(str: string): string {
   let hash = 0x811c9dc5;
-  for (let i = 0; i < str.length; i++) {
+  for (let i = 0; i < str.length; i += 1) {
+    // oxlint-disable-next-line eslint/no-bitwise -- FNV-1a mixing requires XOR.
     hash ^= str.charCodeAt(i);
     hash = Math.imul(hash, 0x01000193);
   }
+  // oxlint-disable-next-line eslint/no-bitwise -- coerces to an unsigned 32-bit int before formatting.
   return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
@@ -220,7 +223,8 @@ export const getDownloadUrls = query({
       .collect();
 
     return {
-      manifestUrl: exp?.manifestStorageId ? await ctx.storage.getUrl(exp.manifestStorageId) : null,
+      manifestUrl:
+        exp && exp.manifestStorageId ? await ctx.storage.getUrl(exp.manifestStorageId) : null,
       files: await Promise.all(
         files.map(async (f) => ({
           tableName: f.tableName,
@@ -306,7 +310,7 @@ export const readTable = action({
     const text = blob ? await blob.text() : "";
     const lines = text.length > 0 ? text.split("\n").filter((l) => l.length > 0) : [];
 
-    const start = args.cursor ? parseInt(args.cursor, 10) || 0 : 0;
+    const start = args.cursor ? Number.parseInt(args.cursor, 10) || 0 : 0;
     const numItems = Math.max(1, args.numItems ?? 1000);
     const end = Math.min(start + numItems, lines.length);
     const rows = lines.slice(start, end).map((l) => JSON.parse(l) as unknown);

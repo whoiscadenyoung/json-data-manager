@@ -1,8 +1,9 @@
 import { WorkflowManager } from "@convex-dev/workflow";
 import { vWorkflowId } from "@convex-dev/workflow";
 import { vResultValidator } from "@convex-dev/workpool";
-import { v } from "convex/values";
 import type { FunctionReference } from "convex/server";
+import { v } from "convex/values";
+
 import { internal, components } from "./_generated/api.js";
 import type { Id } from "./_generated/dataModel.js";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server.js";
@@ -82,7 +83,7 @@ export const exportTable = internalAction({
       });
       for (const doc of result.page) {
         lines.push(JSON.stringify(doc));
-        rowCount++;
+        rowCount += 1;
       }
       if (result.isDone) break;
       cursor = result.continueCursor;
@@ -124,7 +125,7 @@ export const recordFile = internalMutation({
     const exp = await ctx.db.get(args.exportId);
     // Copy the table's captured schema + version onto the file row, so each
     // file is self-describing for read-back.
-    const schema = exp?.schemas?.[args.tableName];
+    const schema = exp && exp.schemas ? exp.schemas[args.tableName] : undefined;
     await ctx.db.insert("exportFiles", {
       exportId: args.exportId,
       tableName: args.tableName,
@@ -132,7 +133,7 @@ export const recordFile = internalMutation({
       storageId: args.storageId,
       rowCount: args.rowCount,
       sizeBytes: args.sizeBytes,
-      schemaVersion: exp?.schemaVersion,
+      schemaVersion: exp ? exp.schemaVersion : undefined,
       schema,
     });
 
@@ -214,8 +215,8 @@ export const filesForManifest = internalQuery({
       .withIndex("by_export", (q) => q.eq("exportId", args.exportId))
       .collect();
     return {
-      exportedAt: exp?.requestedAt ?? Date.now(),
-      schemaVersion: exp?.schemaVersion ?? null,
+      exportedAt: exp ? exp.requestedAt : Date.now(),
+      schemaVersion: exp ? (exp.schemaVersion ?? null) : null,
       files: files.map((f) => ({
         tableName: f.tableName,
         path: f.path,

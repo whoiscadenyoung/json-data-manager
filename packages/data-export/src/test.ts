@@ -1,7 +1,8 @@
+import workflow from "@convex-dev/workflow/test";
 /// <reference types="vite/client" />
 import type { TestConvex } from "convex-test";
 import type { GenericSchema, SchemaDefinition } from "convex/server";
-import workflow from "@convex-dev/workflow/test";
+
 import schema from "./component/schema.js";
 const modules = import.meta.glob("./component/**/*.ts");
 
