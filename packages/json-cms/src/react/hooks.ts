@@ -5,7 +5,7 @@ import { useCallback, useState } from "react";
 
 import type { EntryId, SchemaId } from "../client/index.js";
 import { useJsonCmsApi } from "./provider.js";
-import type { EntryDoc, ImportStatusDoc, SchemaDoc } from "./types.js";
+import type { EntryDoc, GeometryDoc, ImportStatusDoc, SchemaDoc } from "./types.js";
 
 // --- Schema queries ---
 
@@ -36,6 +36,17 @@ export function useEntries(schemaId: SchemaId | undefined): EntryDoc[] | undefin
 export function useEntry(entryId: EntryId | undefined): EntryDoc | null | undefined {
   const api = useJsonCmsApi();
   return useQuery(api.getEntry, entryId ? { entryId } : "skip");
+}
+
+/**
+ * List the full-geometry rows for a schema — the only place that pulls full
+ * coordinate payloads (e.g. for a map view). `useEntries` never touches this
+ * data, so rendering a properties table never pays for it. Pass `undefined`
+ * to skip.
+ */
+export function useGeometries(schemaId: SchemaId | undefined): GeometryDoc[] | undefined {
+  const api = useJsonCmsApi();
+  return useQuery(api.listGeometries, schemaId ? { schemaId } : "skip");
 }
 
 // --- Schema mutations ---
@@ -76,7 +87,8 @@ export function useCreateEntry() {
   const api = useJsonCmsApi(),
     fn = useMutation(api.createEntry);
   return useCallback(
-    async (args: { schemaId: SchemaId; data: unknown }): Promise<EntryId> => fn(args),
+    async (args: { schemaId: SchemaId; data: unknown; geometry?: unknown }): Promise<EntryId> =>
+      fn(args),
     [fn],
   );
 }
@@ -85,7 +97,10 @@ export function useCreateEntriesBulk() {
   const api = useJsonCmsApi(),
     fn = useMutation(api.createEntriesBulk);
   return useCallback(
-    async (args: { schemaId: SchemaId; dataArray: unknown[] }): Promise<EntryId[]> => fn(args),
+    async (args: {
+      schemaId: SchemaId;
+      entries: Array<{ data: unknown; geometry?: unknown }>;
+    }): Promise<EntryId[]> => fn(args),
     [fn],
   );
 }
@@ -94,7 +109,9 @@ export function useUpdateEntry() {
   const api = useJsonCmsApi(),
     fn = useMutation(api.updateEntry);
   return useCallback(
-    async (args: { entryId: EntryId; data: unknown }): Promise<null> => fn(args),
+    // `geometry: null` explicitly clears the entry's geometry; `undefined`/omitted leaves it untouched.
+    async (args: { entryId: EntryId; data: unknown; geometry?: unknown }): Promise<null> =>
+      fn(args),
     [fn],
   );
 }
@@ -116,7 +133,16 @@ export function useDeleteEntriesBySchema() {
 export interface StartDatasetImportArgs {
   schema: unknown;
   uiSchema?: unknown;
-  rows: unknown[];
+  /** Dataset kind. Omit for a standard (plain JSON-schema) dataset. */
+  kind?: "standard" | "geospatial";
+  /**
+   * The geometry type this dataset is locked to. Required when
+   * `kind === "geospatial"`. Kept loosely typed as `string` here — the
+   * component validates it for real; this package doesn't need the geometry
+   * validator types just to thread the value through.
+   */
+  geometryType?: string;
+  rows: Array<{ data: unknown; geometry?: unknown }>;
 }
 
 export interface DatasetImportHandle {
@@ -148,8 +174,8 @@ export function useDatasetImport(): DatasetImportHandle {
     [importId, setImportId] = useState<string | undefined>(),
     status = useQuery(api.getImportStatus, importId ? { importId } : "skip"),
     start = useCallback(
-      async ({ schema, uiSchema, rows }: StartDatasetImportArgs) => {
-        const newSchemaId = await createSchema({ schema, uiSchema }),
+      async ({ schema, uiSchema, kind, geometryType, rows }: StartDatasetImportArgs) => {
+        const newSchemaId = await createSchema({ geometryType, kind, schema, uiSchema }),
           uploadUrl = await generateUploadUrl({}),
           res = await fetch(uploadUrl, {
             body: JSON.stringify(rows),

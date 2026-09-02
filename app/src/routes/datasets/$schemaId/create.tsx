@@ -1,7 +1,10 @@
+import type { Geometry } from "@caden/json-cms/react";
+import { assertGeometry, isGeometryCompatibleWithDatasetType } from "@caden/json-cms/react";
 import { Form } from "@rjsf/shadcn";
 import validator from "@rjsf/validator-ajv8";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { ArrowLeft, Check } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -16,6 +19,7 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
 
 import { api } from "../../../../convex/_generated/api";
 
@@ -23,22 +27,65 @@ export const Route = createFileRoute("/datasets/$schemaId/create")({
   component: CreateEntryPage,
 });
 
+type Schema = NonNullable<FunctionReturnType<typeof api.schemas.get>>;
+
+interface GeometryParseResult {
+  geometry?: Geometry;
+  error?: string;
+}
+
+/** Parses + validates the pasted geometry textarea against the dataset's locked geometry type. Pulled out of `handleSubmit` to keep its own cyclomatic complexity down. */
+function parseGeometryInput(text: string, schema: Schema): GeometryParseResult {
+  const trimmed = text.trim();
+  if (schema.kind !== "geospatial" || !trimmed) {
+    return {};
+  }
+  try {
+    const parsedJson: unknown = JSON.parse(trimmed),
+      geometry = assertGeometry(parsedJson);
+    if (schema.geometryType === undefined) {
+      return { geometry };
+    }
+    if (!isGeometryCompatibleWithDatasetType(geometry.type, schema.geometryType)) {
+      return {
+        error: `Geometry type "${geometry.type}" is not compatible with this dataset's "${schema.geometryType}" geometry type.`,
+      };
+    }
+    return { geometry };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Invalid geometry JSON." };
+  }
+}
+
 function CreateEntryPage() {
   const { schemaId } = Route.useParams(),
     schema = useQuery(api.schemas.get, { schemaId }),
     createEntry = useMutation(api.entries.create),
     [isSubmitting, setIsSubmitting] = useState(false),
     [lastCreatedEntryId, setLastCreatedEntryId] = useState<string | null>(null),
-    handleSubmit = async (data: any) => {
+    [geometryText, setGeometryText] = useState(""),
+    [geometryError, setGeometryError] = useState<string | null>(null),
+    handleSubmit = async (data: any, currentSchema: Schema) => {
       if (!schemaId || !data.formData) {
         return;
       }
+
+      const { geometry, error: geometryParseError } = parseGeometryInput(
+        geometryText,
+        currentSchema,
+      );
+      if (geometryParseError !== undefined) {
+        setGeometryError(geometryParseError);
+        return;
+      }
+      setGeometryError(null);
 
       setIsSubmitting(true);
 
       try {
         const entryId = await createEntry({
           data: data.formData,
+          geometry,
           schemaId,
         });
 
@@ -129,6 +176,30 @@ function CreateEntryPage() {
         </Card>
       )}
 
+      {schema.kind === "geospatial" && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Geometry (GeoJSON, optional)</CardTitle>
+            <CardDescription>
+              This dataset requires {schema.geometryType} geometry. Leave blank for no geometry.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Textarea
+              value={geometryText}
+              onChange={(e) => {
+                setGeometryText(e.target.value);
+                setGeometryError(null);
+              }}
+              placeholder='{"type": "Point", "coordinates": [-122.4, 37.8]}'
+              rows={6}
+              className="font-mono text-sm"
+            />
+            {geometryError && <p className="mt-2 text-sm text-destructive">{geometryError}</p>}
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle>Entry Form</CardTitle>
@@ -138,7 +209,9 @@ function CreateEntryPage() {
           <Form
             schema={schema.schema}
             validator={validator}
-            onSubmit={handleSubmit}
+            onSubmit={(data) => {
+              void handleSubmit(data, schema);
+            }}
             disabled={isSubmitting}
             uiSchema={{
               ...schema.uiSchema,

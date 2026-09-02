@@ -1,7 +1,18 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
-import { Code2, Download, FilePlus, Pencil, Plus, UploadCloud, Workflow } from "lucide-react";
+import type { FunctionReturnType } from "convex/server";
+import {
+  Code2,
+  Download,
+  FilePlus,
+  MapIcon,
+  Pencil,
+  Plus,
+  UploadCloud,
+  Workflow,
+} from "lucide-react";
 
+import { EntriesMap } from "@/components/entries-map";
 import { EntriesTable } from "@/components/entries-table";
 import { RouterButton } from "@/components/router-button";
 import { SchemaVisualizer } from "@/components/schema-visualizer";
@@ -31,6 +42,53 @@ export const Route = createFileRoute("/datasets/$schemaId/")({
   component: SchemaDetailPage,
 });
 
+type Schema = NonNullable<FunctionReturnType<typeof api.schemas.get>>;
+type Geometry = FunctionReturnType<typeof api.geometries.list>[number];
+
+/** Fetches this dataset's geometries — only when it's actually geospatial, `"skip"` otherwise. */
+function useGeometriesForSchema(schema: Schema | null | undefined, schemaId: string) {
+  const shouldFetch = schema ? schema.kind === "geospatial" : false;
+  return useQuery(api.geometries.list, shouldFetch ? { schemaId } : "skip");
+}
+
+/** "N features with geometry" line — extracted so its `??`/ternary don't count against the page's own complexity. */
+function FeatureCountBadge({ schema }: { schema: Schema }) {
+  if (schema.kind !== "geospatial") {
+    return null;
+  }
+  const count = schema.featureCount ?? 0;
+  return (
+    <p className="mb-3 flex items-center gap-1.5 text-sm text-muted-foreground">
+      <MapIcon className="h-3.5 w-3.5" />
+      {count} {count === 1 ? "feature" : "features"} with geometry
+    </p>
+  );
+}
+
+function MapTabTrigger({ schema }: { schema: Schema }) {
+  if (schema.kind !== "geospatial") {
+    return null;
+  }
+  return <TabsTrigger value="map">Map</TabsTrigger>;
+}
+
+function MapTabContent({
+  schema,
+  geometries,
+}: {
+  schema: Schema;
+  geometries: Geometry[] | undefined;
+}) {
+  if (schema.kind !== "geospatial") {
+    return null;
+  }
+  return (
+    <TabsContent value="map">
+      <EntriesMap geometries={geometries ?? []} />
+    </TabsContent>
+  );
+}
+
 /** Trigger a browser download of `content` as a file named `filename`. */
 function downloadFile(content: string, filename: string) {
   const blob = new Blob([content], { type: "application/json" }),
@@ -48,6 +106,7 @@ function SchemaDetailPage() {
   const { schemaId } = Route.useParams(),
     schema = useQuery(api.schemas.get, { schemaId }),
     entries = useQuery(api.entries.list, { schemaId }),
+    geometries = useGeometriesForSchema(schema, schemaId),
     handleExport = () => {
       if (!entries || !schema) {
         return;
@@ -131,10 +190,13 @@ function SchemaDetailPage() {
         </div>
       </div>
 
+      <FeatureCountBadge schema={schema} />
+
       <Tabs defaultValue="entries">
         <TabsList>
           <TabsTrigger value="entries">Entries ({entries.length})</TabsTrigger>
           <TabsTrigger value="schema">Schema</TabsTrigger>
+          <MapTabTrigger schema={schema} />
         </TabsList>
 
         <TabsContent value="entries">
@@ -165,11 +227,14 @@ function SchemaDetailPage() {
                   schemaId={schemaId}
                   properties={Object.keys(schema.schema.properties ?? {})}
                   entries={entries}
+                  isGeospatial={schema.kind === "geospatial"}
                 />
               )}
             </CardContent>
           </Card>
         </TabsContent>
+
+        <MapTabContent schema={schema} geometries={geometries} />
 
         <TabsContent value="schema" className="space-y-6">
           <Card>

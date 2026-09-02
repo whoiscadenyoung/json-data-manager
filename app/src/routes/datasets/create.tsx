@@ -1,3 +1,4 @@
+import type { GeometryType } from "@caden/json-cms/react";
 import { DatasetImporter, SchemaEditor } from "@caden/json-cms/react/ui";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
@@ -103,13 +104,21 @@ function PathChooser({ onChoose }: { onChoose: (mode: Mode) => void }) {
 
 function SchemaFirst() {
   const navigate = useNavigate(),
-    createSchema = useMutation(api.schemas.create);
+    createSchema = useMutation(api.schemas.create),
+    [datasetKind, setDatasetKind] = useState<"standard" | "geospatial">("standard"),
+    [geometryType, setGeometryType] = useState<GeometryType | undefined>(undefined);
 
   return (
     <SchemaEditor
+      datasetKind={datasetKind}
+      onDatasetKindChange={setDatasetKind}
+      geometryType={geometryType}
+      onGeometryTypeChange={setGeometryType}
       onSave={async (_json, parsed, _uiSchemaJson, uiSchemaParsed) => {
         try {
           const schemaId = await createSchema({
+            geometryType: datasetKind === "geospatial" ? geometryType : undefined,
+            kind: datasetKind === "geospatial" ? "geospatial" : undefined,
             schema: parsed,
             uiSchema: Object.keys(uiSchemaParsed).length > 0 ? uiSchemaParsed : undefined,
           });
@@ -164,8 +173,10 @@ function ImportFirst() {
   return (
     <DatasetImporter
       progress={progress}
-      onImport={async (_json, parsedSchema, _uiJson, parsedUiSchema, rows) => {
+      onImport={async (_json, parsedSchema, _uiJson, parsedUiSchema, rows, kind, geometryType) => {
         const newSchemaId = await createSchema({
+            geometryType: kind === "geospatial" ? geometryType : undefined,
+            kind: kind === "geospatial" ? "geospatial" : undefined,
             schema: parsedSchema,
             uiSchema: Object.keys(parsedUiSchema).length > 0 ? parsedUiSchema : undefined,
           }),

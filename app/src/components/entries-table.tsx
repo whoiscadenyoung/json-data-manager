@@ -47,6 +47,13 @@ function ValueCell({ value }: { value: unknown }) {
   );
 }
 
+function GeometryCell({ geometryType }: { geometryType: string | undefined }) {
+  if (geometryType === undefined) {
+    return <span className="text-xs italic text-muted-foreground">No geometry</span>;
+  }
+  return <span className="font-mono text-xs text-muted-foreground">{geometryType}</span>;
+}
+
 function RowActions({ schemaId, entry }: { schemaId: string; entry: Entry }) {
   const copyAsJson = () => {
     void navigator.clipboard.writeText(JSON.stringify(entry.data, null, 2));
@@ -77,7 +84,11 @@ function RowActions({ schemaId, entry }: { schemaId: string; entry: Entry }) {
   );
 }
 
-function buildColumns(schemaId: string, properties: string[]): ColumnDef<Entry>[] {
+function buildColumns(
+  schemaId: string,
+  properties: string[],
+  isGeospatial: boolean,
+): ColumnDef<Entry>[] {
   const propertyColumns: ColumnDef<Entry>[] = properties.map((name) => ({
     accessorFn: (entry) => entry.data[name],
     cell: (info) => <ValueCell value={info.getValue()} />,
@@ -85,7 +96,18 @@ function buildColumns(schemaId: string, properties: string[]): ColumnDef<Entry>[
     id: name,
   }));
 
+  const geometryColumn: ColumnDef<Entry>[] = isGeospatial
+    ? [
+        {
+          cell: (info) => <GeometryCell geometryType={info.row.original.geometryType} />,
+          header: "Geometry",
+          id: "geometry",
+        },
+      ]
+    : [];
+
   return [
+    ...geometryColumn,
     ...propertyColumns,
     {
       cell: (info) => new Date(info.row.original._creationTime).toLocaleString(),
@@ -105,12 +127,17 @@ export function EntriesTable({
   schemaId,
   properties,
   entries,
+  isGeospatial,
 }: {
   schemaId: string;
   properties: string[];
   entries: Entry[];
+  isGeospatial: boolean;
 }) {
-  const columns = useMemo(() => buildColumns(schemaId, properties), [schemaId, properties]),
+  const columns = useMemo(
+      () => buildColumns(schemaId, properties, isGeospatial),
+      [schemaId, properties, isGeospatial],
+    ),
     // TanStack Table's returned instance always has fresh method references; this is inherent to the library.
     // oxlint-disable-next-line react/incompatible-library
     table = useReactTable({ columns, data: entries, getCoreRowModel: getCoreRowModel() });
@@ -123,7 +150,13 @@ export function EntriesTable({
             {headerGroup.headers.map((header) => (
               <TableHead
                 key={header.id}
-                className={header.column.id === "actions" ? "w-10" : "font-mono"}
+                className={
+                  header.column.id === "actions"
+                    ? "w-10"
+                    : header.column.id === "geometry"
+                      ? undefined
+                      : "font-mono"
+                }
               >
                 {header.isPlaceholder
                   ? null
