@@ -1,4 +1,8 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { Link, createFileRoute } from "@tanstack/react-router";
+import { useQuery } from "convex/react";
+import { Calendar, Download, FilePlus, FileText, Pencil, Plus, UploadCloud } from "lucide-react";
+
+import { RouterButton } from "@/components/router-button";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -7,14 +11,8 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { useQuery } from "convex/react";
-import { api } from "../../../../convex/_generated/api";
-import type { SchemaId } from "@caden/json-cms";
 import { Button } from "@/components/ui/button";
-import { RouterButton } from "@/components/router-button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Download, Calendar, FileText, FilePlus, Pencil, UploadCloud } from "lucide-react";
 import {
   Empty,
   EmptyContent,
@@ -23,49 +21,54 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
+import { api } from "../../../../convex/_generated/api";
 
 export const Route = createFileRoute("/schemas/$schemaId/")({
   component: SchemaDetailPage,
 });
 
+/** Trigger a browser download of `content` as a file named `filename`. */
+function downloadFile(content: string, filename: string) {
+  const blob = new Blob([content], { type: "application/json" }),
+    url = URL.createObjectURL(blob),
+    a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 function SchemaDetailPage() {
-  const { schemaId } = Route.useParams();
-  const schema = useQuery(api.schemas.get, { schemaId: schemaId as SchemaId });
-  const entries = useQuery(api.entries.list, { schemaId: schemaId as SchemaId });
+  const { schemaId } = Route.useParams(),
+    schema = useQuery(api.schemas.get, { schemaId }),
+    entries = useQuery(api.entries.list, { schemaId }),
+    handleExport = () => {
+      if (!entries || !schema) {
+        return;
+      }
 
-  const downloadFile = (content: string, filename: string) => {
-    const blob = new Blob([content], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
+      const slug = schema.title.toLowerCase().replaceAll(/\s+/g, "-"),
+        schemaFilename = `${slug}-schema.json`;
 
-  const handleExport = () => {
-    if (!entries || !schema) return;
+      downloadFile(JSON.stringify(schema.schema, null, 2), schemaFilename);
 
-    const slug = schema.title.toLowerCase().replace(/\s+/g, "-");
-    const schemaFilename = `${slug}-schema.json`;
-
-    downloadFile(JSON.stringify(schema.schema, null, 2), schemaFilename);
-
-    setTimeout(() => {
-      const entriesData = {
-        $schema: schemaFilename,
-        entries: entries.map((entry) => entry.data),
-      };
-      downloadFile(JSON.stringify(entriesData, null, 2), `${slug}-entries.json`);
-    }, 100);
-  };
+      setTimeout(() => {
+        const entriesData = {
+          $schema: schemaFilename,
+          entries: entries.map((entry) => entry.data),
+        };
+        downloadFile(JSON.stringify(entriesData, null, 2), `${slug}-entries.json`);
+      }, 100);
+    };
 
   if (schema === undefined || entries === undefined) {
     return (
       <div className="flex justify-center items-center min-h-100">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
       </div>
     );
   }
@@ -168,7 +171,7 @@ function SchemaDetailPage() {
                           size="sm"
                           className="w-full"
                           to="/schemas/$schemaId/$entryId"
-                          params={{ schemaId, entryId: entry._id }}
+                          params={{ entryId: entry._id, schemaId }}
                         >
                           View Details
                         </RouterButton>

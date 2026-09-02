@@ -4,8 +4,7 @@ import { components } from "./_generated/api";
 import { auth } from "./auth";
 
 export const {
-  listEntries: list,
-  getEntry: get,
-  createEntry: create,
-  createEntriesBulk: createBulk,
+  generateImportUploadUrl: generateUploadUrl,
+  startImport,
+  getImportStatus,
 } = exposeApi(components.jsonCms, { auth });

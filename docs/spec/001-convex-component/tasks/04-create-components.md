@@ -121,7 +121,18 @@ export interface EntryFormProps<T = unknown> {
   /**
    * Additional props to pass through to the underlying Form component
    */
-  formProps?: Omit<RJSFFormProps<T>, "schema" | "uiSchema" | "formData" | "onSubmit" | "onChange" | "onError" | "validator" | "disabled" | "readonly">;
+  formProps?: Omit<
+    RJSFFormProps<T>,
+    | "schema"
+    | "uiSchema"
+    | "formData"
+    | "onSubmit"
+    | "onChange"
+    | "onError"
+    | "validator"
+    | "disabled"
+    | "readonly"
+  >;
 }
 
 export function EntryForm<T = unknown>(props: EntryFormProps<T>): ReactNode;
@@ -275,7 +286,7 @@ export function rjsfPropertyToPath(property: string): string;
 export function computeUnknownPaths(
   data: unknown,
   schema: Record<string, unknown>,
-  pathPrefix?: string
+  pathPrefix?: string,
 ): Set<string>;
 ```
 
@@ -315,11 +326,14 @@ useEffect(() => {
   // Parse incoming JSON
 }, [schemaJson]);
 
-const handleFormChange = useCallback((updated: SchemaFormData) => {
-  selfChangedRef.current = true;
-  setFormData(updated);
-  onChange(schemaFormDataToJson(updated));
-}, [onChange]);
+const handleFormChange = useCallback(
+  (updated: SchemaFormData) => {
+    selfChangedRef.current = true;
+    setFormData(updated);
+    onChange(schemaFormDataToJson(updated));
+  },
+  [onChange],
+);
 ```
 
 ### Validation Error Path Handling
@@ -365,14 +379,14 @@ useEffect(() => {
 
 When copying/refactoring from the main app:
 
-| Source (main app) | Destination (package) | Notes |
-|-------------------|----------------------|-------|
-| `src/components/schema-editor/schema-editor.tsx` | `packages/json-cms/src/components/SchemaEditor.tsx` | Headless component with render props |
+| Source (main app)                                  | Destination (package)                                 | Notes                                |
+| -------------------------------------------------- | ----------------------------------------------------- | ------------------------------------ |
+| `src/components/schema-editor/schema-editor.tsx`   | `packages/json-cms/src/components/SchemaEditor.tsx`   | Headless component with render props |
 | `src/components/schema-editor/validation-pane.tsx` | `packages/json-cms/src/components/ValidationPane.tsx` | Headless component with render props |
-| `src/components/schema-editor/visual-builder.tsx` | `packages/json-cms/src/components/` (multiple files) | Refactor into smaller pieces |
-| `src/components/schema-editor/json-tree.tsx` | `packages/json-cms/src/lib/json-tree.tsx` | Exported as utility |
-| `src/lib/infer-schema.ts` | `packages/json-cms/src/lib/infer-schema.ts` | Copy as-is |
-| `src/lib/validation.ts` | `packages/json-cms/src/lib/validation.ts` | Copy as-is |
+| `src/components/schema-editor/visual-builder.tsx`  | `packages/json-cms/src/components/` (multiple files)  | Refactor into smaller pieces         |
+| `src/components/schema-editor/json-tree.tsx`       | `packages/json-cms/src/lib/json-tree.tsx`             | Exported as utility                  |
+| `src/lib/infer-schema.ts`                          | `packages/json-cms/src/lib/infer-schema.ts`           | Copy as-is                           |
+| `src/lib/validation.ts`                            | `packages/json-cms/src/lib/validation.ts`             | Copy as-is                           |
 
 ---
 

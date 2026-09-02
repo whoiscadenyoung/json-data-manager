@@ -100,19 +100,17 @@ export interface UiSchema {
  * Default submit button options
  */
 export const DEFAULT_SUBMIT_BUTTON_OPTIONS: UiSchemaSubmitButtonOptions = {
-  submitText: "Submit",
   norender: false,
   props: {
     disabled: false,
   },
+  submitText: "Submit",
 };
 
 /**
  * Create a default UiSchema with submit button options
  */
-export function createDefaultUiSchema(
-  options?: Partial<UiSchemaSubmitButtonOptions>
-): UiSchema {
+export function createDefaultUiSchema(options?: Partial<UiSchemaSubmitButtonOptions>): UiSchema {
   return {
     "ui:submitButtonOptions": {
       ...DEFAULT_SUBMIT_BUTTON_OPTIONS,
@@ -126,8 +124,11 @@ export function createDefaultUiSchema(
  * Later schemas take precedence
  */
 export function mergeUiSchemas(...schemas: (UiSchema | undefined)[]): UiSchema {
-  return schemas.reduce<UiSchema>((acc, schema) => {
-    if (!schema) return acc;
-    return { ...acc, ...schema };
-  }, {});
+  const merged: UiSchema = {};
+  for (const schema of schemas) {
+    if (schema) {
+      Object.assign(merged, schema);
+    }
+  }
+  return merged;
 }

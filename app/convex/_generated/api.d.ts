@@ -10,6 +10,7 @@
 
 import type * as auth from "../auth.js";
 import type * as entries from "../entries.js";
+import type * as imports from "../imports.js";
 import type * as schemas from "../schemas.js";
 
 import type {
@@ -21,6 +22,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   entries: typeof entries;
+  imports: typeof imports;
   schemas: typeof schemas;
 }>;
 
@@ -89,6 +91,7 @@ export declare const components: {
         { schemaId: string },
         any
       >;
+      generateUploadUrl: FunctionReference<"mutation", "internal", {}, string>;
       getEntry: FunctionReference<
         "query",
         "internal",
@@ -99,6 +102,22 @@ export declare const components: {
           data: any;
           schemaId: string;
         }
+      >;
+      getImportStatus: FunctionReference<
+        "query",
+        "internal",
+        { importId: string },
+        {
+          _creationTime: number;
+          _id: string;
+          error?: string;
+          processed: number;
+          schemaId: string;
+          status: "pending" | "processing" | "completed" | "failed";
+          storageId: string;
+          total: number;
+          workflowId?: string;
+        } | null
       >;
       getSchema: FunctionReference<
         "query",
@@ -136,6 +155,12 @@ export declare const components: {
           title: string;
           uiSchema?: any;
         }>
+      >;
+      startImport: FunctionReference<
+        "mutation",
+        "internal",
+        { schemaId: string; storageId: string; total: number },
+        string
       >;
       updateEntry: FunctionReference<
         "mutation",

@@ -1,4 +1,5 @@
 {
+  "$schema": "https://json.schemastore.org/tsconfig",
   "compilerOptions": {
     "allowJs": true,
     "checkJs": true,
@@ -21,7 +22,9 @@
     "rootDir": "./src",
     "outDir": "./dist",
     "verbatimModuleSyntax": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+
+    "tsBuildInfoFile": "${configDir}/.cache/tsconfig.tsbuildinfo"
   },
   "include": ["./src/**/*"]
 }

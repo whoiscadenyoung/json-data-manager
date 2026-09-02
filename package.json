@@ -8,19 +8,25 @@
   "type": "module",
   "scripts": {
     "dev": "bun --filter=app run dev",
-    "dev:backend": "bun --filter=app run dev:backend",
     "build": "bun --filter=app run build",
     "preview": "bun --filter=app run preview",
     "test": "bun --filter=app run test",
     "lint": "oxlint --type-aware --type-check",
     "lint:fix": "oxlint --type-aware --type-check --fix",
     "fmt": "oxfmt",
-    "fmt:check": "oxfmt --check"
+    "fmt:check": "oxfmt --check",
+    "clean": "find . -name 'node_modules' -type d -prune -exec rm -rf '{}' +"
   },
   "devDependencies": {
-    "oxfmt": "^0.36.0",
-    "oxlint": "^1.51.0",
-    "oxlint-tsgolint": "^0.16.0"
+    "oxfmt": "^0.66.0",
+    "oxlint": "^1.81.0",
+    "oxlint-tsgolint": "^7.0.2001"
+  },
+  "overrides": {
+    "@codemirror/language": "6.12.4",
+    "@codemirror/lint": "6.9.7",
+    "@codemirror/state": "6.7.2",
+    "@codemirror/view": "6.43.10"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

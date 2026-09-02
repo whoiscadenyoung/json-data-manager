@@ -13,10 +13,10 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as SchemasIndexRouteImport } from './routes/schemas/index'
 import { Route as SchemasCreateRouteImport } from './routes/schemas/create'
 import { Route as SchemasSchemaIdIndexRouteImport } from './routes/schemas/$schemaId/index'
-import { Route as SchemasSchemaIdEditRouteImport } from './routes/schemas/$schemaId/edit'
-import { Route as SchemasSchemaIdCreateRouteImport } from './routes/schemas/$schemaId/create'
-import { Route as SchemasSchemaIdBulkUploadRouteImport } from './routes/schemas/$schemaId/bulk-upload'
 import { Route as SchemasSchemaIdEntryIdRouteImport } from './routes/schemas/$schemaId/$entryId'
+import { Route as SchemasSchemaIdBulkUploadRouteImport } from './routes/schemas/$schemaId/bulk-upload'
+import { Route as SchemasSchemaIdCreateRouteImport } from './routes/schemas/$schemaId/create'
+import { Route as SchemasSchemaIdEditRouteImport } from './routes/schemas/$schemaId/edit'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -38,14 +38,9 @@ const SchemasSchemaIdIndexRoute = SchemasSchemaIdIndexRouteImport.update({
   path: '/schemas/$schemaId/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SchemasSchemaIdEditRoute = SchemasSchemaIdEditRouteImport.update({
-  id: '/schemas/$schemaId/edit',
-  path: '/schemas/$schemaId/edit',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SchemasSchemaIdCreateRoute = SchemasSchemaIdCreateRouteImport.update({
-  id: '/schemas/$schemaId/create',
-  path: '/schemas/$schemaId/create',
+const SchemasSchemaIdEntryIdRoute = SchemasSchemaIdEntryIdRouteImport.update({
+  id: '/schemas/$schemaId/$entryId',
+  path: '/schemas/$schemaId/$entryId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SchemasSchemaIdBulkUploadRoute =
@@ -54,9 +49,14 @@ const SchemasSchemaIdBulkUploadRoute =
     path: '/schemas/$schemaId/bulk-upload',
     getParentRoute: () => rootRouteImport,
   } as any)
-const SchemasSchemaIdEntryIdRoute = SchemasSchemaIdEntryIdRouteImport.update({
-  id: '/schemas/$schemaId/$entryId',
-  path: '/schemas/$schemaId/$entryId',
+const SchemasSchemaIdCreateRoute = SchemasSchemaIdCreateRouteImport.update({
+  id: '/schemas/$schemaId/create',
+  path: '/schemas/$schemaId/create',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SchemasSchemaIdEditRoute = SchemasSchemaIdEditRouteImport.update({
+  id: '/schemas/$schemaId/edit',
+  path: '/schemas/$schemaId/edit',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -165,18 +165,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SchemasSchemaIdIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/schemas/$schemaId/edit': {
-      id: '/schemas/$schemaId/edit'
-      path: '/schemas/$schemaId/edit'
-      fullPath: '/schemas/$schemaId/edit'
-      preLoaderRoute: typeof SchemasSchemaIdEditRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/schemas/$schemaId/create': {
-      id: '/schemas/$schemaId/create'
-      path: '/schemas/$schemaId/create'
-      fullPath: '/schemas/$schemaId/create'
-      preLoaderRoute: typeof SchemasSchemaIdCreateRouteImport
+    '/schemas/$schemaId/$entryId': {
+      id: '/schemas/$schemaId/$entryId'
+      path: '/schemas/$schemaId/$entryId'
+      fullPath: '/schemas/$schemaId/$entryId'
+      preLoaderRoute: typeof SchemasSchemaIdEntryIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/schemas/$schemaId/bulk-upload': {
@@ -186,11 +179,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SchemasSchemaIdBulkUploadRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/schemas/$schemaId/$entryId': {
-      id: '/schemas/$schemaId/$entryId'
-      path: '/schemas/$schemaId/$entryId'
-      fullPath: '/schemas/$schemaId/$entryId'
-      preLoaderRoute: typeof SchemasSchemaIdEntryIdRouteImport
+    '/schemas/$schemaId/create': {
+      id: '/schemas/$schemaId/create'
+      path: '/schemas/$schemaId/create'
+      fullPath: '/schemas/$schemaId/create'
+      preLoaderRoute: typeof SchemasSchemaIdCreateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/schemas/$schemaId/edit': {
+      id: '/schemas/$schemaId/edit'
+      path: '/schemas/$schemaId/edit'
+      fullPath: '/schemas/$schemaId/edit'
+      preLoaderRoute: typeof SchemasSchemaIdEditRouteImport
       parentRoute: typeof rootRouteImport
     }
   }

@@ -1,5 +1,6 @@
-import { Link, type LinkProps } from "@tanstack/react-router";
-import { type VariantProps } from "class-variance-authority";
+import { Link } from "@tanstack/react-router";
+import type { LinkProps } from "@tanstack/react-router";
+import type { VariantProps } from "class-variance-authority";
 
 import { buttonVariants } from "#/components/ui/button";
 import { cn } from "#/lib/utils";
@@ -12,7 +13,7 @@ type RouterButtonProps = LinkProps &
 
 function RouterButton({ className, variant, size, children, ...props }: RouterButtonProps) {
   return (
-    <Link className={cn(buttonVariants({ variant, size, className }))} {...props}>
+    <Link className={cn(buttonVariants({ className, size, variant }))} {...props}>
       {children}
     </Link>
   );

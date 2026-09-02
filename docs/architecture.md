@@ -14,16 +14,16 @@ A JSON data management application built with React, Convex (backend/database), 
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|------------|
-| Frontend | React 19, TypeScript |
-| Routing | TanStack Router (file-based) |
-| Data Fetching | Convex React SDK + TanStack Query |
-| Backend/DB | Convex (serverless) |
-| UI Components | shadcn/ui, Base UI |
-| Forms | @rjsf/shadcn (schema-based), TanStack Form |
-| Styling | Tailwind CSS v4 |
-| Validation | AJV8 (via @rjsf/validator-ajv8) |
+| Layer         | Technology                                 |
+| ------------- | ------------------------------------------ |
+| Frontend      | React 19, TypeScript                       |
+| Routing       | TanStack Router (file-based)               |
+| Data Fetching | Convex React SDK + TanStack Query          |
+| Backend/DB    | Convex (serverless)                        |
+| UI Components | shadcn/ui, Base UI                         |
+| Forms         | @rjsf/shadcn (schema-based), TanStack Form |
+| Styling       | Tailwind CSS v4                            |
+| Validation    | AJV8 (via @rjsf/validator-ajv8)            |
 
 ---
 
@@ -35,9 +35,9 @@ Convex tables defined in `convex/schema.ts`:
 
 ```typescript
 {
-  title: string;           // Display name
-  description: string;     // Human-readable description
-  schema: any;             // JSON Schema Draft-07 object
+  title: string; // Display name
+  description: string; // Human-readable description
+  schema: any; // JSON Schema Draft-07 object
 }
 ```
 
@@ -48,7 +48,7 @@ Stores JSON schema definitions that describe the structure of data entries.
 ```typescript
 {
   schemaId: Id<"schemas">; // Foreign key to schemas table
-  data: any;               // Entry data conforming to the schema
+  data: any; // Entry data conforming to the schema
 }
 // Index: by_schema (for efficient schema-based queries)
 ```
@@ -61,21 +61,21 @@ Stores actual data entries. Each entry references a schema and stores arbitrary 
 
 ### Schema Management (`convex/schemas.ts`)
 
-| Function | Type | Description |
-|----------|------|-------------|
-| `list` | query | Returns all schemas ordered by creation time (desc) |
-| `get` | query | Retrieves a single schema by ID; throws if not found |
-| `create` | mutation | Inserts new schema; validates `title` and `description` required; enforces 100KB size limit |
+| Function | Type     | Description                                                                                                                                         |
+| -------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list`   | query    | Returns all schemas ordered by creation time (desc)                                                                                                 |
+| `get`    | query    | Retrieves a single schema by ID; throws if not found                                                                                                |
+| `create` | mutation | Inserts new schema; validates `title` and `description` required; enforces 100KB size limit                                                         |
 | `update` | mutation | Patches schema fields; full schema updates only allowed when no entries exist (to preserve data integrity); metadata-only updates allowed otherwise |
 
 ### Entry Management (`convex/entries.ts`)
 
-| Function | Type | Description |
-|----------|------|-------------|
-| `list` | query | Returns all entries for a given schema ID (uses `by_schema` index) |
-| `get` | query | Retrieves single entry by ID |
-| `create` | mutation | Inserts single entry; verifies schema exists |
-| `createBulk` | mutation | Batch inserts multiple entries; single transaction |
+| Function     | Type     | Description                                                        |
+| ------------ | -------- | ------------------------------------------------------------------ |
+| `list`       | query    | Returns all entries for a given schema ID (uses `by_schema` index) |
+| `get`        | query    | Retrieves single entry by ID                                       |
+| `create`     | mutation | Inserts single entry; verifies schema exists                       |
+| `createBulk` | mutation | Batch inserts multiple entries; single transaction                 |
 
 ### Key Backend Patterns
 
@@ -125,12 +125,14 @@ File-based routing in `src/routes/`:
 ### Convex Integration
 
 **Provider** (`src/integrations/convex/provider.tsx`):
+
 ```typescript
 const convexQueryClient = new ConvexQueryClient(env.VITE_CONVEX_URL);
 <ConvexProvider client={convexQueryClient.convexClient}>
 ```
 
 **Usage in Components**:
+
 ```typescript
 // Queries
 const schemas = useQuery(api.schemas.list);
@@ -160,12 +162,14 @@ Dual-mode JSON schema editor:
 ### Entry Creation Flow
 
 **Single Entry** (`/schemas/$schemaId/create.tsx`):
+
 ```typescript
 // Uses @rjsf/shadcn to render dynamic form from JSON schema
 <Form schema={schema.schema} validator={validator} onSubmit={handleSubmit} />
 ```
 
 **Bulk Upload** (`/schemas/$schemaId/bulk-upload.tsx`):
+
 1. Accepts JSON array via file upload or paste
 2. Client-side validation against schema using AJV8
 3. Displays per-entry validation results
@@ -178,7 +182,7 @@ When a schema has entries, editing is restricted to metadata only (`title`, `des
 ```typescript
 // In edit.tsx
 const hasEntries = entries.length > 0;
-hasEntries 
+hasEntries
   ? <MetadataEditForm />   // Title/description only
   : <FullSchemaEditForm /> // Full schema editor
 ```
@@ -197,7 +201,7 @@ Infers JSON Schema Draft-07 from an array of plain objects:
 - Required field detection (present in all objects, non-null)
 
 ```typescript
-export function inferSchemaFromData(data: unknown[]): Record<string, unknown>
+export function inferSchemaFromData(data: unknown[]): Record<string, unknown>;
 ```
 
 ---
@@ -241,11 +245,11 @@ export function inferSchemaFromData(data: unknown[]): Record<string, unknown>
 
 ## Key Design Decisions
 
-| Decision | Rationale |
-|----------|-----------|
-| Schema stored as `any` type | JSON Schemas are self-describing; strict typing would be overly complex |
-| No entry update/delete | MVP scope; entries are append-only for simplicity |
-| Schema edit restrictions | Prevents data corruption; existing entries must remain valid |
-| Client-side validation first | Fast feedback; server validates as secondary defense |
-| TanStack Query + Convex | Caching, devtools, and optimistic updates via proven patterns |
-| File-based routing | Colocation of routes with components; automatic route tree generation |
+| Decision                     | Rationale                                                               |
+| ---------------------------- | ----------------------------------------------------------------------- |
+| Schema stored as `any` type  | JSON Schemas are self-describing; strict typing would be overly complex |
+| No entry update/delete       | MVP scope; entries are append-only for simplicity                       |
+| Schema edit restrictions     | Prevents data corruption; existing entries must remain valid            |
+| Client-side validation first | Fast feedback; server validates as secondary defense                    |
+| TanStack Query + Convex      | Caching, devtools, and optimistic updates via proven patterns           |
+| File-based routing           | Colocation of routes with components; automatic route tree generation   |

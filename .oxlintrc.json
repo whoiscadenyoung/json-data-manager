@@ -1,18 +1,72 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": null,
-  "categories": {},
-  "rules": {},
+  "plugins": [
+    "eslint",
+    "typescript",
+    "unicorn",
+    "oxc",
+    "jsdoc",
+    "react",
+    "import",
+    "promise",
+    "jsx-a11y"
+  ],
+  "categories": {
+    "correctness": "error",
+    "perf": "warn",
+    "pedantic": "off",
+    "style": "off",
+    "restriction": "off",
+    "suspicious": "warn"
+  },
+  "rules": {
+    "react/react-in-jsx-scope": "off",
+    "unicorn/no-empty-file": "warn",
+    "no-underscore-dangle": "off",
+    "typescript/no-dynamic-delete": "error",
+    "import/no-dynamic-require": "error",
+    "react/button-has-type": "warn",
+    "complexity": ["warn", { "max": 10 }],
+    "jsdoc/empty-tags": "warn",
+    "eslint/no-alert": "error",
+    "unicorn/no-array-for-each": "error",
+    "oxc/no-barrel-file": "error",
+    "eslint/no-bitwise": "error",
+    "react/no-clone-element": "error",
+    "oxc/no-const-enum": "error",
+    "no-empty": ["warn", { "allowEmptyCatch": true }],
+    "no-eq-null": "error",
+    "typescript/no-invalid-void-type": "error",
+    "typescript/no-non-null-assertion": "error",
+    "oxc/no-optional-chaining": "error",
+    "eslint/no-param-reassign": "error",
+    "node/no-path-concat": "error",
+    "no-plusplus": "error",
+    "react/no-react-children": "error",
+    "no-regex-spaces": "error",
+    // "import/no-relative-parent-imports": "error",
+    "typescript/no-require-imports": "error",
+    "react/no-unknown-property": "error",
+    // "no-use-before-define": ["warn", { "allowNamedExports": true }],
+    "no-var": "error",
+    "react/prefer-function-component": "error",
+    "unicorn/prefer-number-properties": "error",
+    "import/no-named-as-default-member": "off",
+    "typescript/promise-function-async": "error",
+    "promise/spec-only": "error",
+    "react/syntax": "error",
+    "react/unsupported-syntax": "warn",
+    "typescript/use-unknown-in-catch-callback-variable": "error"
+  },
   "settings": {
     "jsx-a11y": {
-      "polymorphicPropName": null,
       "components": {},
       "attributes": {}
     },
     "react": {
       "formComponents": [],
       "linkComponents": [],
-      "version": null,
+      "version": "19.8.2",
       "componentWrapperFunctions": []
     },
     "jsdoc": {
@@ -24,14 +78,36 @@
       "implementsReplacesDocs": false,
       "exemptDestructuredRootsFromChecks": false,
       "tagNamePreference": {}
-    },
-    "vitest": {
-      "typecheck": false
     }
   },
   "env": {
     "builtin": true
   },
   "globals": {},
-  "ignorePatterns": []
+  "ignorePatterns": ["app/src/components/ui"],
+  "overrides": [
+    {
+      "files": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx"],
+      "plugins": [
+        "eslint",
+        "typescript",
+        "unicorn",
+        "oxc",
+        "jsdoc",
+        "react",
+        "vitest",
+        "import",
+        "promise"
+      ],
+      "rules": {
+        "typescript/no-unsafe-type-assertion": "off"
+      }
+    },
+    {
+      "files": ["**/*.tsx"],
+      "rules": {
+        "import/no-default-export": "error"
+      }
+    }
+  ]
 }

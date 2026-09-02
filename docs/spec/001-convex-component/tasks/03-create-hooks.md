@@ -36,10 +36,7 @@ export function useListSchemas() {
  * Pass `null` to skip the query (useful when ID is not yet available).
  */
 export function useGetSchema(schemaId: string | null) {
-  return useQuery(
-    api.schemas.get,
-    schemaId ? { schemaId: schemaId as Id<"schemas"> } : "skip"
-  );
+  return useQuery(api.schemas.get, schemaId ? { schemaId: schemaId as Id<"schemas"> } : "skip");
 }
 
 /**
@@ -73,10 +70,7 @@ import type { Id } from "convex/_generated/dataModel";
  * Pass `null` for schemaId to skip the query.
  */
 export function useListEntries(schemaId: string | null) {
-  return useQuery(
-    api.entries.list,
-    schemaId ? { schemaId: schemaId as Id<"schemas"> } : "skip"
-  );
+  return useQuery(api.entries.list, schemaId ? { schemaId: schemaId as Id<"schemas"> } : "skip");
 }
 
 /**
@@ -84,10 +78,7 @@ export function useListEntries(schemaId: string | null) {
  * Pass `null` to skip the query.
  */
 export function useGetEntry(entryId: string | null) {
-  return useQuery(
-    api.entries.get,
-    entryId ? { entryId: entryId as Id<"entries"> } : "skip"
-  );
+  return useQuery(api.entries.get, entryId ? { entryId: entryId as Id<"entries"> } : "skip");
 }
 
 /**
@@ -136,7 +127,9 @@ export interface UseValidationReturn {
   /** Validate a single data object */
   validate: (data: unknown) => ValidationResult;
   /** Validate an array of data objects */
-  validateArray: (dataArray: unknown[]) => Array<ValidationResult & { index: number; data: unknown }>;
+  validateArray: (
+    dataArray: unknown[],
+  ) => Array<ValidationResult & { index: number; data: unknown }>;
   /** Last validation result */
   lastResult: ValidationResult | null;
   /** Whether the last validation passed */
@@ -170,64 +163,76 @@ export function useValidation(options: UseValidationOptions): UseValidationRetur
   /**
    * Convert RJSF validation errors to our ValidationError format.
    */
-  const convertErrors = useCallback((errors: RJSFValidationError[]): ValidationError[] => {
-    const result: ValidationError[] = [];
+  const convertErrors = useCallback(
+    (errors: RJSFValidationError[]): ValidationError[] => {
+      const result: ValidationError[] = [];
 
-    for (const err of errors) {
-      let path: string;
+      for (const err of errors) {
+        let path: string;
 
-      // Handle required field errors
-      if (err.name === "required" && err.params && typeof err.params === "object") {
-        const missingProperty = (err.params as Record<string, string>).missingProperty;
-        path = missingProperty ? `/${missingProperty}` : "";
-      } else if (err.property) {
-        path = convertPropertyToPath(err.property);
-      } else {
-        path = "";
+        // Handle required field errors
+        if (err.name === "required" && err.params && typeof err.params === "object") {
+          const missingProperty = (err.params as Record<string, string>).missingProperty;
+          path = missingProperty ? `/${missingProperty}` : "";
+        } else if (err.property) {
+          path = convertPropertyToPath(err.property);
+        } else {
+          path = "";
+        }
+
+        result.push({
+          path,
+          message: err.message ?? "Validation error",
+        });
       }
 
-      result.push({
-        path,
-        message: err.message ?? "Validation error",
-      });
-    }
-
-    return result;
-  }, [convertPropertyToPath]);
+      return result;
+    },
+    [convertPropertyToPath],
+  );
 
   /**
    * Validate a single data object against the schema.
    */
-  const validate = useCallback((data: unknown): ValidationResult => {
-    if (!schema) {
-      const result: ValidationResult = { valid: false, errors: [{ path: "", message: "No schema provided" }] };
+  const validate = useCallback(
+    (data: unknown): ValidationResult => {
+      if (!schema) {
+        const result: ValidationResult = {
+          valid: false,
+          errors: [{ path: "", message: "No schema provided" }],
+        };
+        setLastResult(result);
+        return result;
+      }
+
+      const { errors } = validator.validateFormData(data, schema);
+      const convertedErrors = convertErrors(errors);
+
+      const result: ValidationResult = {
+        valid: errors.length === 0,
+        errors: convertedErrors,
+      };
+
       setLastResult(result);
       return result;
-    }
-
-    const { errors } = validator.validateFormData(data, schema);
-    const convertedErrors = convertErrors(errors);
-
-    const result: ValidationResult = {
-      valid: errors.length === 0,
-      errors: convertedErrors,
-    };
-
-    setLastResult(result);
-    return result;
-  }, [schema, validator, convertErrors]);
+    },
+    [schema, validator, convertErrors],
+  );
 
   /**
    * Validate an array of data objects.
    * Returns individual results for each item.
    */
-  const validateArray = useCallback((dataArray: unknown[]): Array<ValidationResult & { index: number; data: unknown }> => {
-    return dataArray.map((data, index) => ({
-      index,
-      data,
-      ...validate(data),
-    }));
-  }, [validate]);
+  const validateArray = useCallback(
+    (dataArray: unknown[]): Array<ValidationResult & { index: number; data: unknown }> => {
+      return dataArray.map((data, index) => ({
+        index,
+        data,
+        ...validate(data),
+      }));
+    },
+    [validate],
+  );
 
   /**
    * Clear the last validation result.
@@ -251,7 +256,7 @@ export function useValidation(options: UseValidationOptions): UseValidationRetur
  */
 export function useUnknownPaths(
   data: unknown,
-  schema: Record<string, unknown> | undefined
+  schema: Record<string, unknown> | undefined,
 ): Set<string> {
   return useMemo(() => {
     if (!schema || typeof data !== "object" || data === null || Array.isArray(data)) {
@@ -267,7 +272,7 @@ export function useUnknownPaths(
     function computeUnknown(
       obj: Record<string, unknown>,
       props: Record<string, unknown>,
-      prefix = ""
+      prefix = "",
     ): void {
       for (const key of Object.keys(obj)) {
         const keyPath = prefix ? `${prefix}/${key}` : `/${key}`;
@@ -306,20 +311,10 @@ Export all hooks from a single entry point.
 
 ```typescript
 // Schema hooks
-export {
-  useListSchemas,
-  useGetSchema,
-  useCreateSchema,
-  useUpdateSchema,
-} from "./useSchemas";
+export { useListSchemas, useGetSchema, useCreateSchema, useUpdateSchema } from "./useSchemas";
 
 // Entry hooks
-export {
-  useListEntries,
-  useGetEntry,
-  useCreateEntry,
-  useCreateBulkEntries,
-} from "./useEntries";
+export { useListEntries, useGetEntry, useCreateEntry, useCreateBulkEntries } from "./useEntries";
 
 // Validation hooks
 export {
