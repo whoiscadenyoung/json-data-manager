@@ -8,12 +8,14 @@ import type { Id } from "../component/_generated/dataModel.js";
 /**
  * Branded ID types for the component's tables, re-exported for consumers.
  *
- * Because the component owns the `schemas` and `entries` tables (not the host
- * app), consuming apps don't get `Id<"schemas">` / `Id<"entries">` from their
- * own generated `dataModel`. Import these instead.
+ * Because the component owns the `schemas`, `entries`, and `geometries`
+ * tables (not the host app), consuming apps don't get `Id<"schemas">` /
+ * `Id<"entries">` / `Id<"geometries">` from their own generated `dataModel`.
+ * Import these instead.
  */
 export type SchemaId = Id<"schemas">;
 export type EntryId = Id<"entries">;
+export type GeometryId = Id<"geometries">;
 
 // See the example/convex/example.ts file for how to use this component.
 
@@ -31,6 +33,7 @@ export type EntryId = Id<"entries">;
  *   deleteSchema,
  *   listEntries,
  *   getEntry,
+ *   listGeometries,
  *   createEntry,
  *   createEntriesBulk,
  *   updateEntry,
@@ -87,10 +90,26 @@ export function exposeApi(
       },
     }),
     createSchema: mutationGeneric({
-      args: { schema: v.any(), uiSchema: v.optional(v.any()) },
+      args: {
+        geometryType: v.optional(
+          v.union(
+            v.literal("Point"),
+            v.literal("MultiPoint"),
+            v.literal("LineString"),
+            v.literal("MultiLineString"),
+            v.literal("Polygon"),
+            v.literal("MultiPolygon"),
+          ),
+        ),
+        kind: v.optional(v.union(v.literal("standard"), v.literal("geospatial"))),
+        schema: v.any(),
+        uiSchema: v.optional(v.any()),
+      },
       handler: async (ctx, args) => {
         await options.auth(ctx, { type: "create" });
         return ctx.runMutation(component.lib.createSchema, {
+          geometryType: args.geometryType,
+          kind: args.kind,
           schema: args.schema,
           uiSchema: args.uiSchema,
         });
@@ -136,22 +155,36 @@ export function exposeApi(
         });
       },
     }),
+    // The only read path that pulls full geometry coordinates — reserved for
+    // map rendering. `listEntries` never touches this table.
+    listGeometries: queryGeneric({
+      args: { schemaId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { schemaId: args.schemaId, type: "read" });
+        return ctx.runQuery(component.lib.listGeometries, {
+          schemaId: args.schemaId,
+        });
+      },
+    }),
     createEntry: mutationGeneric({
-      args: { data: v.any(), schemaId: v.string() },
+      args: { data: v.any(), geometry: v.optional(v.any()), schemaId: v.string() },
       handler: async (ctx, args) => {
         await options.auth(ctx, { schemaId: args.schemaId, type: "create" });
         return ctx.runMutation(component.lib.createEntry, args);
       },
     }),
     createEntriesBulk: mutationGeneric({
-      args: { dataArray: v.array(v.any()), schemaId: v.string() },
+      args: {
+        entries: v.array(v.object({ data: v.any(), geometry: v.optional(v.any()) })),
+        schemaId: v.string(),
+      },
       handler: async (ctx, args) => {
         await options.auth(ctx, { schemaId: args.schemaId, type: "create" });
         return ctx.runMutation(component.lib.createEntriesBulk, args);
       },
     }),
     updateEntry: mutationGeneric({
-      args: { data: v.any(), entryId: v.string() },
+      args: { data: v.any(), entryId: v.string(), geometry: v.optional(v.any()) },
       handler: async (ctx, args) => {
         await options.auth(ctx, { entryId: args.entryId, type: "update" });
         return ctx.runMutation(component.lib.updateEntry, args);
