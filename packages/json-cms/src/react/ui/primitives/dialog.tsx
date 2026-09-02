@@ -52,6 +52,7 @@ function ConfirmDialog({
               {cancelLabel}
             </Dialog.Close>
             <button
+              type="button"
               onClick={() => {
                 onConfirm();
                 onOpenChange(false);

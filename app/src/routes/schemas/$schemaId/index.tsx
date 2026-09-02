@@ -29,21 +29,23 @@ export const Route = createFileRoute("/schemas/$schemaId/")({
   component: SchemaDetailPage,
 });
 
+/** Trigger a browser download of `content` as a file named `filename`. */
+function downloadFile(content: string, filename: string) {
+  const blob = new Blob([content], { type: "application/json" }),
+    url = URL.createObjectURL(blob),
+    a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 function SchemaDetailPage() {
   const { schemaId } = Route.useParams(),
     schema = useQuery(api.schemas.get, { schemaId }),
     entries = useQuery(api.entries.list, { schemaId }),
-    downloadFile = (content: string, filename: string) => {
-      const blob = new Blob([content], { type: "application/json" }),
-        url = URL.createObjectURL(blob),
-        a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.append(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    },
     handleExport = () => {
       if (!entries || !schema) {
         return;

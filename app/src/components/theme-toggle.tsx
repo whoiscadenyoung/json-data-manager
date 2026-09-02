@@ -1,5 +1,5 @@
 import { Moon, Sun, SunMoon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 
 import { buttonVariants } from "#/components/ui/button";
 import {
@@ -40,15 +40,34 @@ function applyThemeMode(mode: ThemeMode) {
   document.documentElement.style.colorScheme = resolved;
 }
 
-export function ThemeToggle() {
-  const [mode, setMode] = useState<ThemeMode>("auto");
+// Minimal external store so the toggle reads the persisted theme without a
+// mount effect (the DOM theme itself is applied by the inline script in the
+// root document, so we only track the value here).
+const themeListeners = new Set<() => void>();
 
-  useEffect(() => {
-    // Hydrate from localStorage on mount (unavailable during SSR).
-    const initialMode = getInitialMode();
-    setMode(initialMode);
-    applyThemeMode(initialMode);
-  }, []);
+function subscribeTheme(callback: () => void) {
+  themeListeners.add(callback);
+  window.addEventListener("storage", callback);
+  return () => {
+    themeListeners.delete(callback);
+    window.removeEventListener("storage", callback);
+  };
+}
+
+function setStoredTheme(mode: ThemeMode) {
+  window.localStorage.setItem("theme", mode);
+  applyThemeMode(mode);
+  for (const listener of themeListeners) {
+    listener();
+  }
+}
+
+function getServerTheme(): ThemeMode {
+  return "auto";
+}
+
+export function ThemeToggle() {
+  const mode = useSyncExternalStore(subscribeTheme, getInitialMode, getServerTheme);
 
   useEffect(() => {
     if (mode !== "auto") {
@@ -67,9 +86,7 @@ export function ThemeToggle() {
   }, [mode]);
 
   function selectMode(next: ThemeMode) {
-    setMode(next);
-    applyThemeMode(next);
-    window.localStorage.setItem("theme", next);
+    setStoredTheme(next);
   }
 
   const Icon = mode === "light" ? Sun : mode === "dark" ? Moon : SunMoon;

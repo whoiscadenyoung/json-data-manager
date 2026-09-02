@@ -26,6 +26,20 @@ export const Route = createFileRoute("/schemas/$schemaId/edit")({
   component: EditSchemaPage,
 });
 
+/** First validation error's message, falling back to its JSON form. */
+function firstFieldError(errors: readonly unknown[]): string {
+  const first = errors[0];
+  if (
+    first &&
+    typeof first === "object" &&
+    "message" in first &&
+    typeof first.message === "string"
+  ) {
+    return first.message;
+  }
+  return JSON.stringify(first);
+}
+
 function EditSchemaPage() {
   const { schemaId } = Route.useParams(),
     navigate = useNavigate(),
@@ -181,8 +195,7 @@ function MetadataEditForm({
                 />
                 {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
                   <p className="text-sm text-destructive">
-                    {field.state.meta.errors[0]?.message ??
-                      JSON.stringify(field.state.meta.errors[0])}
+                    {firstFieldError(field.state.meta.errors)}
                   </p>
                 )}
               </div>
@@ -210,8 +223,7 @@ function MetadataEditForm({
                 />
                 {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
                   <p className="text-sm text-destructive">
-                    {field.state.meta.errors[0]?.message ??
-                      JSON.stringify(field.state.meta.errors[0])}
+                    {firstFieldError(field.state.meta.errors)}
                   </p>
                 )}
               </div>

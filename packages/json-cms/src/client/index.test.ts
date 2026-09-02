@@ -11,7 +11,10 @@ type SchemaId = string & { __tableName: "schemas" };
 export const { listSchemas, getSchema, createSchema, createEntry, listEntries } = exposeApi(
   components.jsonCms,
   {
-    auth: async (ctx, _operation) => (await ctx.auth.getUserIdentity())?.subject ?? "anonymous",
+    auth: async (ctx, _operation) => {
+      const identity = await ctx.auth.getUserIdentity();
+      return identity ? identity.subject : "anonymous";
+    },
   },
 );
 

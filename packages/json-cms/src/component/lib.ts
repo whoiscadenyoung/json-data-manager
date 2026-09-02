@@ -141,9 +141,7 @@ export const deleteSchema = mutation({
       .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
       .collect();
 
-    for (const entry of entries) {
-      await ctx.db.delete(entry._id);
-    }
+    await Promise.all(entries.map(async (entry) => ctx.db.delete(entry._id)));
 
     await ctx.db.delete(args.schemaId);
   },
@@ -155,8 +153,8 @@ export const listEntries = query({
   args: { schemaId: v.id("schemas") },
   handler: async (ctx, args) => {
     // Verify schema exists
-    const schema = await ctx.db.get(args.schemaId);
-    if (!schema) {
+    const schemaDoc = await ctx.db.get(args.schemaId);
+    if (!schemaDoc) {
       throw new ConvexError("Schema not found");
     }
 
@@ -198,8 +196,8 @@ export const createEntry = mutation({
   },
   handler: async (ctx, args) => {
     // Verify schema exists
-    const schema = await ctx.db.get(args.schemaId);
-    if (!schema) {
+    const schemaDoc = await ctx.db.get(args.schemaId);
+    if (!schemaDoc) {
       throw new ConvexError("Schema not found");
     }
 
@@ -219,8 +217,8 @@ export const createEntriesBulk = mutation({
     schemaId: v.id("schemas"),
   },
   handler: async (ctx, args) => {
-    const schema = await ctx.db.get(args.schemaId);
-    if (!schema) {
+    const schemaDoc = await ctx.db.get(args.schemaId);
+    if (!schemaDoc) {
       throw new ConvexError("Schema not found");
     }
 
@@ -269,8 +267,8 @@ export const deleteEntriesBySchema = mutation({
     schemaId: v.id("schemas"),
   },
   handler: async (ctx, args) => {
-    const schema = await ctx.db.get(args.schemaId);
-    if (!schema) {
+    const schemaDoc = await ctx.db.get(args.schemaId);
+    if (!schemaDoc) {
       throw new ConvexError("Schema not found");
     }
 
@@ -279,9 +277,7 @@ export const deleteEntriesBySchema = mutation({
       .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
       .collect();
 
-    for (const entry of entries) {
-      await ctx.db.delete(entry._id);
-    }
+    await Promise.all(entries.map(async (entry) => ctx.db.delete(entry._id)));
 
     return entries.length;
   },
@@ -406,20 +402,21 @@ export const handleImportComplete = internalMutation({
     workflowId: v.string(),
   },
   handler: async (ctx, args) => {
-    if (args.result?.kind === "success") {
+    const result = args.result;
+    if (result && result.kind === "success") {
       return;
     }
-    const importId = args.context?.importId;
+    const importId = args.context ? args.context.importId : undefined;
     if (!importId) {
       return;
     }
-    await ctx.db.patch(importId, {
-      error:
-        args.result?.kind === "canceled"
-          ? "Import was canceled."
-          : (args.result?.error ?? "Import failed."),
-      status: "failed",
-    });
+    let error = "Import failed.";
+    if (result && result.kind === "canceled") {
+      error = "Import was canceled.";
+    } else if (result && typeof result.error === "string") {
+      error = result.error;
+    }
+    await ctx.db.patch(importId, { error, status: "failed" });
   },
 });
 
@@ -468,11 +465,15 @@ export const insertChunkFromStorage = internalAction({
     limit: v.number(),
   },
   handler: async (ctx, args) => {
+    // `storageId` arrives as a string (system-table ids can't be journaled as
+    // `v.id` through the workflow); actions have no `normalizeId`, so brand it here.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
     const blob = await ctx.storage.get(args.storageId as Id<"_storage">);
     if (!blob) {
       throw new ConvexError("Import payload not found in storage");
     }
-    const rows = JSON.parse(await blob.text()) as unknown[],
+    const parsed: unknown = JSON.parse(await blob.text()),
+      rows = Array.isArray(parsed) ? parsed : [],
       chunk = rows.slice(args.offset, args.offset + args.limit);
     if (chunk.length === 0) {
       return 0;
@@ -494,9 +495,11 @@ export const insertEntriesChunkInternal = internalMutation({
     schemaId: v.id("schemas"),
   },
   handler: async (ctx, args) => {
-    for (const data of args.dataArray) {
-      await ctx.db.insert("entries", { data, schemaId: args.schemaId });
-    }
+    await Promise.all(
+      args.dataArray.map(async (data) =>
+        ctx.db.insert("entries", { data, schemaId: args.schemaId }),
+      ),
+    );
     return null;
   },
   returns: v.null(),
@@ -518,7 +521,10 @@ export const importWorkflow = workflow.define({
     });
 
     let processed = 0;
+    // Batches run sequentially so memory stays bounded and progress lands
+    // incrementally; parallelizing the steps would defeat both.
     for (let offset = 0; offset < args.total; offset += IMPORT_BATCH_SIZE) {
+      // oxlint-disable-next-line no-await-in-loop
       const inserted = await step.runAction(internal.lib.insertChunkFromStorage, {
         limit: IMPORT_BATCH_SIZE,
         offset,
@@ -526,6 +532,7 @@ export const importWorkflow = workflow.define({
         storageId: args.storageId,
       });
       processed += inserted;
+      // oxlint-disable-next-line no-await-in-loop
       await step.runMutation(internal.lib.updateImportProgress, {
         importId: args.importId,
         processed,

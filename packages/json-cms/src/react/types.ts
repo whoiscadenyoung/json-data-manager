@@ -27,33 +27,71 @@ export interface EntryDoc {
   data: unknown;
 }
 
+type Empty = Record<string, never>;
+
 /**
  * The set of function references a host app exposes for the JSON CMS
  * component (via `exposeApi`). Map your app's exposed functions to this
  * shape and hand it to `<JsonCmsProvider api={...} />`.
  *
- * The references are intentionally loosely typed here so that any app's
- * generated function references are assignable regardless of how their
- * `Id` types are branded. The hooks re-apply the concrete `SchemaDoc` /
- * `EntryDoc` result types on top.
+ * The references carry their arg and return types so the hooks infer results
+ * without casting. Ids are typed as plain strings here (the component exposes
+ * them as `v.string()` at the trust boundary); the hooks re-brand them as
+ * `SchemaId` / `EntryId` on the way out.
  */
 export interface JsonCmsApi {
-  listSchemas: FunctionReference<"query">;
-  getSchema: FunctionReference<"query">;
-  createSchema: FunctionReference<"mutation">;
-  updateSchema: FunctionReference<"mutation">;
-  deleteSchema: FunctionReference<"mutation">;
-  listEntries: FunctionReference<"query">;
-  getEntry: FunctionReference<"query">;
-  createEntry: FunctionReference<"mutation">;
-  createEntriesBulk: FunctionReference<"mutation">;
-  updateEntry: FunctionReference<"mutation">;
-  deleteEntry: FunctionReference<"mutation">;
-  deleteEntriesBySchema: FunctionReference<"mutation">;
+  listSchemas: FunctionReference<"query", "public", Empty, SchemaDoc[]>;
+  getSchema: FunctionReference<"query", "public", { schemaId: string }, SchemaDoc | null>;
+  createSchema: FunctionReference<
+    "mutation",
+    "public",
+    { schema: unknown; uiSchema?: unknown },
+    SchemaId
+  >;
+  updateSchema: FunctionReference<
+    "mutation",
+    "public",
+    {
+      schemaId: string;
+      title?: string;
+      description?: string;
+      schema?: unknown;
+      uiSchema?: unknown;
+    },
+    null
+  >;
+  deleteSchema: FunctionReference<"mutation", "public", { schemaId: string }, null>;
+  listEntries: FunctionReference<"query", "public", { schemaId: string }, EntryDoc[]>;
+  getEntry: FunctionReference<"query", "public", { entryId: string }, EntryDoc | null>;
+  createEntry: FunctionReference<
+    "mutation",
+    "public",
+    { schemaId: string; data: unknown },
+    EntryId
+  >;
+  createEntriesBulk: FunctionReference<
+    "mutation",
+    "public",
+    { schemaId: string; dataArray: unknown[] },
+    EntryId[]
+  >;
+  updateEntry: FunctionReference<"mutation", "public", { entryId: string; data: unknown }, null>;
+  deleteEntry: FunctionReference<"mutation", "public", { entryId: string }, null>;
+  deleteEntriesBySchema: FunctionReference<"mutation", "public", { schemaId: string }, number>;
   // Batched dataset import
-  generateImportUploadUrl: FunctionReference<"mutation">;
-  startImport: FunctionReference<"mutation">;
-  getImportStatus: FunctionReference<"query">;
+  generateImportUploadUrl: FunctionReference<"mutation", "public", Empty, string>;
+  startImport: FunctionReference<
+    "mutation",
+    "public",
+    { schemaId: string; storageId: string; total: number },
+    string
+  >;
+  getImportStatus: FunctionReference<
+    "query",
+    "public",
+    { importId: string },
+    ImportStatusDoc | null
+  >;
 }
 
 /**

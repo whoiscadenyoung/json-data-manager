@@ -6,7 +6,8 @@ import { components } from "./_generated/api.js";
 import { mutation, query } from "./_generated/server.js";
 
 async function getAuthUserId(ctx: { auth: Auth }) {
-  return (await ctx.auth.getUserIdentity())?.subject ?? "anonymous";
+  const identity = await ctx.auth.getUserIdentity();
+  return identity ? identity.subject : "anonymous";
 }
 
 // Example: Using the component directly with manual auth

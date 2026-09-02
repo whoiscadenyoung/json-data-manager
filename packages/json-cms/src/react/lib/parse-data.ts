@@ -49,8 +49,8 @@ export function parseDataRows(text: string): ParseDataResult {
     errors: ParseError[] = [],
     lines = trimmed.split(/\r?\n/);
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
+  for (const [i, rawLine] of lines.entries()) {
+    const line = rawLine.trim();
     if (!line) {
       continue;
     }

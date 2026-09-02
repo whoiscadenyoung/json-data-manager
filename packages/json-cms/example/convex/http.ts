@@ -18,21 +18,20 @@ http.route({
   path: "/schemas",
 });
 
-// Example: GET /schemas/:id/entries - list entries for a schema
+// Example: GET /schemas/<id>/entries - list entries for a schema.
+// `httpRouter` has no `:param` support, so match a prefix and parse the path.
 http.route({
   handler: httpActionGeneric(async (ctx, request) => {
-    const url = new URL(request.url),
-      schemaId = url.pathname.split("/")[2] as any,
-      entries = await ctx.runQuery(components.jsonCms.lib.listEntries, {
-        schemaId,
-      });
+    const segments = new URL(request.url).pathname.split("/"),
+      schemaId = segments[2] ?? "",
+      entries = await ctx.runQuery(components.jsonCms.lib.listEntries, { schemaId });
     return new Response(JSON.stringify(entries), {
       headers: { "Content-Type": "application/json" },
       status: 200,
     });
   }),
   method: "GET",
-  path: "/schemas/:schemaId/entries",
+  pathPrefix: "/schemas/",
 });
 
 export default http;

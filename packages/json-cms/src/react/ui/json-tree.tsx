@@ -35,6 +35,84 @@ function primitiveColor(value: unknown): string {
   return "text-amber-600 dark:text-amber-400";
 }
 
+function rowClass(isFailing: boolean, isUnknown: boolean): string {
+  return cn(
+    "flex items-start gap-1 rounded px-1 py-0.5 text-xs font-mono",
+    isFailing && "bg-destructive/10",
+    isUnknown && !isFailing && "bg-muted/60",
+  );
+}
+
+function nameClass(isFailing: boolean, isUnknown: boolean): string {
+  return cn(
+    "font-medium shrink-0",
+    isFailing ? "text-destructive" : isUnknown ? "text-muted-foreground italic" : "text-foreground",
+  );
+}
+
+/** A single key/value row of an object node, with error/unknown highlighting. */
+function JsonTreeEntry({
+  name,
+  value,
+  keyPath,
+  failingPaths,
+  errors,
+  unknownPaths,
+  depth,
+}: {
+  name: string;
+  value: unknown;
+  keyPath: string;
+  failingPaths: Set<string>;
+  errors: Map<string, string>;
+  unknownPaths: Set<string> | undefined;
+  depth: number;
+}) {
+  const isFailing = failingPaths.has(keyPath),
+    isUnknown = unknownPaths ? unknownPaths.has(keyPath) : false,
+    errorMsg = errors.get(keyPath),
+    isNested = typeof value === "object" && value !== null;
+
+  return (
+    <div style={{ marginLeft: depth * 12 }}>
+      <div className={rowClass(isFailing, isUnknown)}>
+        <span className={nameClass(isFailing, isUnknown)}>{name}:</span>
+        {isNested ? (
+          <div className="min-w-0">
+            <JsonTree
+              data={value}
+              failingPaths={failingPaths}
+              errors={errors}
+              unknownPaths={unknownPaths}
+              path={keyPath}
+              depth={depth + 1}
+            />
+          </div>
+        ) : (
+          <span
+            className={cn(isUnknown ? "text-muted-foreground" : primitiveColor(value), "truncate")}
+          >
+            {formatPrimitive(value)}
+          </span>
+        )}
+        {isUnknown && (
+          <span className="ml-auto shrink-0 text-[10px] text-muted-foreground font-sans italic">
+            not in schema
+          </span>
+        )}
+      </div>
+      {isFailing && errorMsg && (
+        <div
+          style={{ marginLeft: depth * 12 + 4 }}
+          className="text-[10px] text-destructive px-1 pb-0.5 leading-tight"
+        >
+          {errorMsg}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function JsonTree({
   data,
   failingPaths,
@@ -54,7 +132,7 @@ export function JsonTree({
         {data.map((item, i) => {
           const itemPath = `${path}/${i}`;
           return (
-            <div key={i} style={{ marginLeft: indent > 0 ? 0 : undefined }}>
+            <div key={itemPath} style={{ marginLeft: indent > 0 ? 0 : undefined }}>
               <span className="text-muted-foreground text-xs mr-1">{i}:</span>
               <JsonTree
                 data={item}
@@ -72,77 +150,24 @@ export function JsonTree({
   }
 
   if (typeof data === "object" && data !== null) {
-    const entries = Object.entries(data as Record<string, unknown>);
+    const entries = Object.entries(data);
     if (entries.length === 0) {
       return <span className="text-muted-foreground text-xs">{"{}"}</span>;
     }
     return (
       <div className="space-y-0.5">
-        {entries.map(([key, value]) => {
-          const keyPath = `${path}/${key}`,
-            isFailing = failingPaths.has(keyPath),
-            isUnknown = unknownPaths?.has(keyPath) ?? false,
-            errorMsg = errors.get(keyPath);
-
-          return (
-            <div key={key} style={{ marginLeft: depth * 12 }}>
-              <div
-                className={cn(
-                  "flex items-start gap-1 rounded px-1 py-0.5 text-xs font-mono",
-                  isFailing && "bg-destructive/10",
-                  isUnknown && !isFailing && "bg-muted/60",
-                )}
-              >
-                <span
-                  className={cn(
-                    "font-medium shrink-0",
-                    isFailing
-                      ? "text-destructive"
-                      : isUnknown
-                        ? "text-muted-foreground italic"
-                        : "text-foreground",
-                  )}
-                >
-                  {key}:
-                </span>
-                {typeof value === "object" && value !== null ? (
-                  <div className="min-w-0">
-                    <JsonTree
-                      data={value}
-                      failingPaths={failingPaths}
-                      errors={errors}
-                      unknownPaths={unknownPaths}
-                      path={keyPath}
-                      depth={depth + 1}
-                    />
-                  </div>
-                ) : (
-                  <span
-                    className={cn(
-                      isUnknown ? "text-muted-foreground" : primitiveColor(value),
-                      "truncate",
-                    )}
-                  >
-                    {formatPrimitive(value)}
-                  </span>
-                )}
-                {isUnknown && (
-                  <span className="ml-auto shrink-0 text-[10px] text-muted-foreground font-sans italic">
-                    not in schema
-                  </span>
-                )}
-              </div>
-              {isFailing && errorMsg && (
-                <div
-                  style={{ marginLeft: depth * 12 + 4 }}
-                  className="text-[10px] text-destructive px-1 pb-0.5 leading-tight"
-                >
-                  {errorMsg}
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {entries.map(([key, value]) => (
+          <JsonTreeEntry
+            key={key}
+            name={key}
+            value={value}
+            keyPath={`${path}/${key}`}
+            failingPaths={failingPaths}
+            errors={errors}
+            unknownPaths={unknownPaths}
+            depth={depth}
+          />
+        ))}
       </div>
     );
   }

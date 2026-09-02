@@ -1,4 +1,4 @@
-import Form from "@rjsf/shadcn";
+import RjsfForm from "@rjsf/shadcn";
 import validator from "@rjsf/validator-ajv8";
 import { AlertCircle, Eye } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -11,41 +11,49 @@ interface SchemaPreviewProps {
   uiSchemaJson?: string;
 }
 
+interface ParsedPreview {
+  schema: object;
+  error: string | null;
+  uiSchema: object;
+}
+
+function parseUiSchema(uiSchemaJson: string | undefined): object {
+  if (!uiSchemaJson || !uiSchemaJson.trim()) {
+    return {};
+  }
+  try {
+    const parsed: unknown = JSON.parse(uiSchemaJson);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function parsePreview(schemaJson: string, uiSchemaJson: string | undefined): ParsedPreview {
+  if (!schemaJson.trim()) {
+    return { error: "Schema is empty", schema: {}, uiSchema: {} };
+  }
+  try {
+    const parsed: unknown = JSON.parse(schemaJson);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return { error: "Schema must be a JSON object", schema: {}, uiSchema: {} };
+    }
+    if (!("title" in parsed) || typeof parsed.title !== "string") {
+      return { error: "Schema must have a 'title' property", schema: {}, uiSchema: {} };
+    }
+    return { error: null, schema: parsed, uiSchema: parseUiSchema(uiSchemaJson) };
+  } catch {
+    return { error: "Invalid JSON", schema: {}, uiSchema: {} };
+  }
+}
+
 export function SchemaPreview({ schemaJson, uiSchemaJson }: SchemaPreviewProps) {
   const [isExpanded, setIsExpanded] = useState(false),
     [formData, setFormData] = useState<unknown>({}),
-    { schema, error, uiSchema } = useMemo(() => {
-      if (!schemaJson.trim()) {
-        return { error: "Schema is empty", schema: null, uiSchema: {} };
-      }
-      try {
-        const parsed = JSON.parse(schemaJson);
-        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-          return { error: "Schema must be a JSON object", schema: null, uiSchema: {} };
-        }
-        // Basic validation: check for required fields
-        if (!parsed.title || typeof parsed.title !== "string") {
-          return { error: "Schema must have a 'title' property", schema: null, uiSchema: {} };
-        }
-
-        // Parse uiSchema if provided
-        let parsedUiSchema = {};
-        if (uiSchemaJson?.trim()) {
-          try {
-            const uiParsed = JSON.parse(uiSchemaJson);
-            if (typeof uiParsed === "object" && uiParsed !== null && !Array.isArray(uiParsed)) {
-              parsedUiSchema = uiParsed;
-            }
-          } catch {
-            // Ignore invalid UI schema JSON
-          }
-        }
-
-        return { error: null, schema: parsed, uiSchema: parsedUiSchema };
-      } catch {
-        return { error: "Invalid JSON", schema: null, uiSchema: {} };
-      }
-    }, [schemaJson, uiSchemaJson]);
+    { schema, error, uiSchema } = useMemo(
+      () => parsePreview(schemaJson, uiSchemaJson),
+      [schemaJson, uiSchemaJson],
+    );
 
   // Collapsed state - show a compact card
   if (!isExpanded) {
@@ -135,7 +143,7 @@ export function SchemaPreview({ schemaJson, uiSchemaJson }: SchemaPreviewProps) 
               "[&_.error-detail]:text-xs [&_.error-detail]:text-destructive",
             )}
           >
-            <Form
+            <RjsfForm
               schema={schema}
               validator={validator}
               formData={formData}

@@ -63,7 +63,11 @@ export function SchemaList({
             type="button"
             aria-label={`Select ${schema.title}`}
             className="w-full text-left"
-            onClick={() => onSelect?.(schema._id)}
+            onClick={() => {
+              if (onSelect) {
+                onSelect(schema._id);
+              }
+            }}
           >
             <CardHeader className="py-3">
               <CardTitle className="text-sm">{schema.title}</CardTitle>

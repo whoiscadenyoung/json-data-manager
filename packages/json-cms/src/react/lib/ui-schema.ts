@@ -124,10 +124,11 @@ export function createDefaultUiSchema(options?: Partial<UiSchemaSubmitButtonOpti
  * Later schemas take precedence
  */
 export function mergeUiSchemas(...schemas: (UiSchema | undefined)[]): UiSchema {
-  return schemas.reduce<UiSchema>((acc, schema) => {
-    if (!schema) {
-      return acc;
+  const merged: UiSchema = {};
+  for (const schema of schemas) {
+    if (schema) {
+      Object.assign(merged, schema);
     }
-    return { ...acc, ...schema };
-  }, {});
+  }
+  return merged;
 }

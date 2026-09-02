@@ -4,6 +4,45 @@ import { it, afterEach, describe, expect, beforeEach, vi } from "vitest";
 import { api, internal } from "./_generated/api.js";
 import { initConvexTest } from "./setup.test.js";
 
+type TestCtx = ReturnType<typeof initConvexTest>;
+
+function assertDefined<T>(value: T): asserts value is NonNullable<T> {
+  if (value === null || value === undefined) {
+    throw new Error("Expected value to be defined");
+  }
+}
+
+async function createTestSchema(t: TestCtx) {
+  return t.mutation(api.lib.createSchema, {
+    schema: {
+      description: "A test schema",
+      properties: {
+        age: { type: "number" },
+        name: { type: "string" },
+      },
+      title: "Test Schema",
+      type: "object",
+    },
+  });
+}
+
+async function createImportSchema(t: TestCtx) {
+  return t.mutation(api.lib.createSchema, {
+    schema: {
+      description: "For import tests",
+      properties: { name: { type: "string" } },
+      title: "Import Schema",
+      type: "object",
+    },
+  });
+}
+
+async function storeRows(t: TestCtx, rows: unknown[]) {
+  return t.run(async (ctx) =>
+    ctx.storage.store(new Blob([JSON.stringify(rows)], { type: "application/json" })),
+  );
+}
+
 describe("json-cms component", () => {
   beforeEach(async () => {
     vi.useFakeTimers();
@@ -45,9 +84,9 @@ describe("json-cms component", () => {
           schema: testSchema,
         }),
         schema = await t.query(api.lib.getSchema, { schemaId });
-      expect(schema).toBeDefined();
-      expect(schema?.title).toBe("Test Schema");
-      expect(schema?.description).toBe("A test schema");
+      assertDefined(schema);
+      expect(schema.title).toBe("Test Schema");
+      expect(schema.description).toBe("A test schema");
     });
 
     it("get schema returns null for non-existent", async () => {
@@ -89,8 +128,9 @@ describe("json-cms component", () => {
       });
 
       const schema = await t.query(api.lib.getSchema, { schemaId });
-      expect(schema?.title).toBe("Updated Schema");
-      expect(schema?.description).toBe("An updated schema");
+      assertDefined(schema);
+      expect(schema.title).toBe("Updated Schema");
+      expect(schema.description).toBe("An updated schema");
     });
 
     it("update schema with only title/description", async () => {
@@ -110,8 +150,9 @@ describe("json-cms component", () => {
       });
 
       const schema = await t.query(api.lib.getSchema, { schemaId });
-      expect(schema?.title).toBe("Updated Title");
-      expect(schema?.description).toBe("A test schema");
+      assertDefined(schema);
+      expect(schema.title).toBe("Updated Title");
+      expect(schema.description).toBe("A test schema");
     });
 
     it("create and get schema with uiSchema", async () => {
@@ -132,7 +173,8 @@ describe("json-cms component", () => {
           uiSchema: testUiSchema,
         }),
         schema = await t.query(api.lib.getSchema, { schemaId });
-      expect(schema?.uiSchema).toStrictEqual(testUiSchema);
+      assertDefined(schema);
+      expect(schema.uiSchema).toStrictEqual(testUiSchema);
     });
 
     it("update schema's uiSchema", async () => {
@@ -151,9 +193,10 @@ describe("json-cms component", () => {
       });
 
       const schema = await t.query(api.lib.getSchema, { schemaId });
-      expect(schema?.uiSchema).toStrictEqual(uiSchema);
+      assertDefined(schema);
+      expect(schema.uiSchema).toStrictEqual(uiSchema);
       // Title/description untouched by a uiSchema-only update
-      expect(schema?.title).toBe("Test Schema");
+      expect(schema.title).toBe("Test Schema");
     });
 
     it("create schema without title throws error", async () => {
@@ -253,20 +296,6 @@ describe("json-cms component", () => {
   });
 
   describe("entry operations", () => {
-    async function createTestSchema(t: ReturnType<typeof initConvexTest>) {
-      return t.mutation(api.lib.createSchema, {
-        schema: {
-          description: "A test schema",
-          properties: {
-            age: { type: "number" },
-            name: { type: "string" },
-          },
-          title: "Test Schema",
-          type: "object",
-        },
-      });
-    }
-
     it("create and list entries", async () => {
       const t = initConvexTest(),
         schemaId = await createTestSchema(t),
@@ -290,8 +319,8 @@ describe("json-cms component", () => {
           schemaId,
         }),
         entry = await t.query(api.lib.getEntry, { entryId });
-      expect(entry).toBeDefined();
-      expect(entry?.data).toStrictEqual({ name: "John" });
+      assertDefined(entry);
+      expect(entry.data).toStrictEqual({ name: "John" });
     });
 
     it("get entry returns null for non-existent", async () => {
@@ -336,7 +365,8 @@ describe("json-cms component", () => {
       });
 
       const entry = await t.query(api.lib.getEntry, { entryId });
-      expect(entry?.data).toStrictEqual({ age: 31, name: "John" });
+      assertDefined(entry);
+      expect(entry.data).toStrictEqual({ age: 31, name: "John" });
     });
 
     it("delete entry", async () => {
@@ -388,7 +418,7 @@ describe("json-cms component", () => {
         };
 
       // Add enough properties to exceed 100KB
-      for (let i = 0; i < 5000; i++) {
+      for (let i = 0; i < 5000; i += 1) {
         largeSchema.properties[`field${i}`] = {
           description: `This is a very long description for field ${i} that will help us reach the 100KB limit faster by adding more characters to the JSON string`,
           type: "string",
@@ -417,7 +447,7 @@ describe("json-cms component", () => {
           type: "object",
         };
 
-      for (let i = 0; i < 5000; i++) {
+      for (let i = 0; i < 5000; i += 1) {
         largeSchema.properties[`field${i}`] = {
           description: `This is a very long description for field ${i} that will help us reach the 100KB limit faster by adding more characters to the JSON string`,
           type: "string",
@@ -514,23 +544,6 @@ describe("json-cms component", () => {
   });
 
   describe("dataset import", () => {
-    async function createImportSchema(t: ReturnType<typeof initConvexTest>) {
-      return t.mutation(api.lib.createSchema, {
-        schema: {
-          description: "For import tests",
-          properties: { name: { type: "string" } },
-          title: "Import Schema",
-          type: "object",
-        },
-      });
-    }
-
-    async function storeRows(t: ReturnType<typeof initConvexTest>, rows: unknown[]) {
-      return t.run(async (ctx) =>
-        ctx.storage.store(new Blob([JSON.stringify(rows)], { type: "application/json" })),
-      );
-    }
-
     // NOTE: startImport's happy path and the full workflow *execution*
     // (importWorkflow driving batches) aren't unit-tested here. The workflow
     // Engine (a) requires registering the nested workflow component, whose

@@ -23,10 +23,10 @@
     "oxlint-tsgolint": "^7.0.2001"
   },
   "overrides": {
-    "@codemirror/state": "6.7.2",
-    "@codemirror/view": "6.43.10",
+    "@codemirror/language": "6.12.4",
     "@codemirror/lint": "6.9.7",
-    "@codemirror/language": "6.12.4"
+    "@codemirror/state": "6.7.2",
+    "@codemirror/view": "6.43.10"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

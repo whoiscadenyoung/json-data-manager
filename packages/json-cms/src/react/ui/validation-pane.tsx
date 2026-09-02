@@ -1,3 +1,4 @@
+import type { RJSFValidationError } from "@rjsf/utils";
 import validator from "@rjsf/validator-ajv8";
 import {
   CheckCircle,
@@ -44,39 +45,167 @@ interface ValidationPaneProps {
   onStateChange: (state: ValidationState) => void;
 }
 
-function computeUnknownPaths(
-  data: unknown,
-  schema: Record<string, unknown>,
-  pathPrefix = "",
-): Set<string> {
-  const unknown = new Set<string>();
-  if (typeof data !== "object" || data === null || Array.isArray(data)) {
-    return unknown;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      resolve(typeof reader.result === "string" ? reader.result : "");
+    });
+    reader.addEventListener("error", () => {
+      reject(reader.error ?? new Error("Failed to read file"));
+    });
+    reader.readAsText(file);
+  });
+}
+
+/** First file from an input's FileList, or undefined. */
+function firstFile(list: FileList | null): File | undefined {
+  return list && list.length > 0 ? list[0] : undefined;
+}
+
+/** Map an RJSF validation error to a JSON-pointer-ish path, or null. */
+function errorToPath(err: RJSFValidationError): string | null {
+  if (
+    err.name === "required" &&
+    isRecord(err.params) &&
+    typeof err.params.missingProperty === "string"
+  ) {
+    return `/${err.params.missingProperty}`;
   }
-  const schemaProps =
-    typeof schema.properties === "object" && schema.properties !== null
-      ? (schema.properties as Record<string, unknown>)
-      : {};
+  if (err.property && err.property !== ".") {
+    // ".email" → "/email", ".address.city" → "/address/city"
+    const raw = err.property.replace(/^\./, "");
+    return raw.startsWith("/") ? raw : `/${raw}`;
+  }
+  return null;
+}
+
+function computeUnknownPaths(data: unknown, schema: unknown, pathPrefix = ""): Set<string> {
+  const unknownPaths = new Set<string>();
+  if (!isRecord(data)) {
+    return unknownPaths;
+  }
+  const schemaProps = isRecord(schema) && isRecord(schema.properties) ? schema.properties : {};
   for (const key of Object.keys(data)) {
     const keyPath = `${pathPrefix}/${key}`;
     if (key in schemaProps) {
       const nestedSchema = schemaProps[key];
-      if (typeof nestedSchema === "object" && nestedSchema !== null) {
-        const nestedData = (data as Record<string, unknown>)[key],
-          nested = computeUnknownPaths(
-            nestedData,
-            nestedSchema as Record<string, unknown>,
-            keyPath,
-          );
-        for (const p of nested) {
-          unknown.add(p);
+      if (isRecord(nestedSchema)) {
+        for (const p of computeUnknownPaths(data[key], nestedSchema, keyPath)) {
+          unknownPaths.add(p);
         }
       }
     } else {
-      unknown.add(keyPath);
+      unknownPaths.add(keyPath);
     }
   }
-  return unknown;
+  return unknownPaths;
+}
+
+/** Upload / paste entry point shown before any data is loaded. */
+function EmptyDataState({
+  dataText,
+  onDataText,
+  onFile,
+  arrayJsonSchema,
+}: {
+  dataText: string;
+  onDataText: (value: string) => void;
+  onFile: (file: File) => void;
+  arrayJsonSchema: object | undefined;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null),
+    [isDragging, setIsDragging] = useState(false),
+    openPicker = () => {
+      if (inputRef.current) {
+        inputRef.current.click();
+      }
+    };
+  return (
+    <div className="flex flex-col gap-3">
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        onChange={(e) => {
+          const file = firstFile(e.target.files);
+          if (file) {
+            onFile(file);
+          }
+          e.target.value = "";
+        }}
+      />
+      <div
+        // Interactive drag-and-drop zone; a plain button can't host the drop affordance.
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
+        role="button"
+        tabIndex={0}
+        aria-label="Drop a JSON file here or click to browse"
+        className={cn(
+          "flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-4 py-6 text-center transition-colors cursor-pointer",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          isDragging
+            ? "border-primary bg-primary/5 text-primary"
+            : "border-border text-muted-foreground hover:border-primary/50 hover:bg-muted/50",
+        )}
+        onClick={openPicker}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            openPicker();
+          }
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setIsDragging(true);
+        }}
+        onDragLeave={(e) => {
+          const related = e.relatedTarget;
+          if (!(related instanceof Node) || !e.currentTarget.contains(related)) {
+            setIsDragging(false);
+          }
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setIsDragging(false);
+          const file = e.dataTransfer.files[0];
+          if (file) {
+            onFile(file);
+          }
+        }}
+      >
+        <FileJson
+          className={cn("h-6 w-6", isDragging ? "text-primary" : "text-muted-foreground")}
+        />
+        <p className="text-xs font-medium">
+          {isDragging ? "Drop your data file here" : "Upload a JSON array to test your schema"}
+        </p>
+        <p className="text-[11px] opacity-70">Drag & drop, or click to browse</p>
+      </div>
+
+      <div className="relative flex items-center gap-2">
+        <div className="flex-1 border-t border-border" />
+        <span className="text-[10px] text-muted-foreground uppercase tracking-wide">or paste</span>
+        <div className="flex-1 border-t border-border" />
+      </div>
+
+      <div className="space-y-1">
+        <Label className="text-xs">JSON Array</Label>
+        <JsonEditor
+          value={dataText}
+          onChange={onDataText}
+          placeholder={'[\n  { "field": "value" }\n]'}
+          height="160px"
+          disableSchemaLinting
+          jsonSchema={arrayJsonSchema}
+        />
+      </div>
+    </div>
+  );
 }
 
 export function ValidationPane({
@@ -87,7 +216,6 @@ export function ValidationPane({
 }: ValidationPaneProps) {
   const [dataText, setDataText] = useState(""),
     [fileName, setFileName] = useState<string | null>(null),
-    [isDragging, setIsDragging] = useState(false),
     [results, setResults] = useState<ValidationResult[] | null>(null),
     [parseError, setParseError] = useState<string | null>(null),
     [expandedItems, setExpandedItems] = useState<Set<number>>(new Set()),
@@ -103,7 +231,7 @@ export function ValidationPane({
       } catch {
         // Invalid schema JSON — no inline linting
       }
-      return;
+      return undefined;
     }, [schemaJson]);
 
   // Apply external data when provided
@@ -141,7 +269,7 @@ export function ValidationPane({
         return;
       }
 
-      let parsedSchema: unknown;
+      let parsedSchema: object;
       try {
         parsedSchema = JSON.parse(schemaStr);
       } catch {
@@ -166,25 +294,11 @@ export function ValidationPane({
       }
 
       const newResults: ValidationResult[] = parsedData.map((item, index) => {
-        const { errors } = validator.validateFormData(item, parsedSchema as object),
+        const { errors } = validator.validateFormData(item, parsedSchema),
           failingPaths = new Set<string>(),
           errorMessages = new Map<string, string>();
         for (const err of errors) {
-          // RJSF property is JS accessor notation: ".email", ".address.city", "."
-          // For required errors, params.missingProperty gives the key
-          let path: string | null = null;
-
-          if (err.name === "required" && err.params && typeof err.params === "object") {
-            const missing = (err.params as Record<string, string>).missingProperty;
-            if (missing) {
-              path = `/${missing}`;
-            }
-          } else if (err.property && err.property !== ".") {
-            // ".email" → "/email", ".address.city" → "/address/city"
-            const raw = err.property.replace(/^\./, "");
-            path = raw.startsWith("/") ? raw : `/${raw}`;
-          }
-
+          const path = errorToPath(err);
           if (path) {
             failingPaths.add(path);
             if (!errorMessages.has(path)) {
@@ -192,7 +306,7 @@ export function ValidationPane({
             }
           }
         }
-        const unknownPaths = computeUnknownPaths(item, parsedSchema as Record<string, unknown>);
+        const unknownPaths = computeUnknownPaths(item, parsedSchema);
         return {
           data: item,
           errors: errorMessages,
@@ -211,7 +325,7 @@ export function ValidationPane({
       let invalidItemCount = 0;
       for (const r of newResults) {
         if (!r.valid) {
-          invalidItemCount++;
+          invalidItemCount += 1;
         }
         for (const path of r.failingPaths) {
           aggregated.set(path, (aggregated.get(path) ?? 0) + 1);
@@ -227,18 +341,17 @@ export function ValidationPane({
     validate(dataText, schemaJson);
   }, [schemaJson, dataText, validate]);
 
-  const loadFile = (file: File) => {
+  const loadFile = async (file: File) => {
       if (!file.name.endsWith(".json") && file.type !== "application/json") {
         toast.error("Please upload a .json file.");
         return;
       }
       setFileName(file.name);
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const text = (e.target?.result as string) ?? "";
-        setDataText(text);
-      };
-      reader.readAsText(file);
+      try {
+        setDataText(await readFileAsText(file));
+      } catch {
+        toast.error("Could not read that file.");
+      }
     },
     clearData = () => {
       setDataText("");
@@ -282,7 +395,7 @@ export function ValidationPane({
         return next;
       });
     },
-    validCount = results?.filter((r) => r.valid).length ?? 0,
+    validCount = results ? results.filter((r) => r.valid).length : 0,
     hasData = dataText.trim().length > 0;
 
   return (
@@ -413,7 +526,11 @@ export function ValidationPane({
                 <button
                   type="button"
                   className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-0.5"
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={() => {
+                    if (fileInputRef.current) {
+                      fileInputRef.current.click();
+                    }
+                  }}
                 >
                   <Upload className="h-3 w-3" />
                   Replace
@@ -425,9 +542,9 @@ export function ValidationPane({
                 accept=".json,application/json"
                 className="hidden"
                 onChange={(e) => {
-                  const file = e.target.files?.[0];
+                  const file = firstFile(e.target.files);
                   if (file) {
-                    loadFile(file);
+                    void loadFile(file);
                   }
                   e.target.value = "";
                 }}
@@ -444,89 +561,12 @@ export function ValidationPane({
             </div>
           </div>
         ) : (
-          /* ── Empty state ─────────────────────────────────── */
-          <div className="flex flex-col gap-3">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".json,application/json"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  loadFile(file);
-                }
-                e.target.value = "";
-              }}
-            />
-            <div
-              // Interactive drag-and-drop zone; a plain button can't host the drop affordance.
-              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
-              role="button"
-              tabIndex={0}
-              aria-label="Drop a JSON file here or click to browse"
-              className={cn(
-                "flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-4 py-6 text-center transition-colors cursor-pointer",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                isDragging
-                  ? "border-primary bg-primary/5 text-primary"
-                  : "border-border text-muted-foreground hover:border-primary/50 hover:bg-muted/50",
-              )}
-              onClick={() => fileInputRef.current?.click()}
-              onKeyDown={(e) =>
-                e.key === "Enter" || e.key === " " ? fileInputRef.current?.click() : undefined
-              }
-              onDragOver={(e) => {
-                e.preventDefault();
-                setIsDragging(true);
-              }}
-              onDragLeave={(e) => {
-                if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-                  setIsDragging(false);
-                }
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                setIsDragging(false);
-                const file = e.dataTransfer.files[0];
-                if (file) {
-                  loadFile(file);
-                }
-              }}
-            >
-              <FileJson
-                className={cn("h-6 w-6", isDragging ? "text-primary" : "text-muted-foreground")}
-              />
-              <p className="text-xs font-medium">
-                {isDragging
-                  ? "Drop your data file here"
-                  : "Upload a JSON array to test your schema"}
-              </p>
-              <p className="text-[11px] opacity-70">Drag & drop, or click to browse</p>
-            </div>
-
-            <div className="relative flex items-center gap-2">
-              <div className="flex-1 border-t border-border" />
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wide">
-                or paste
-              </span>
-              <div className="flex-1 border-t border-border" />
-            </div>
-
-            <div className="space-y-1">
-              <Label className="text-xs">JSON Array</Label>
-              <JsonEditor
-                value={dataText}
-                onChange={(v) => {
-                  setDataText(v);
-                }}
-                placeholder={'[\n  { "field": "value" }\n]'}
-                height="160px"
-                disableSchemaLinting
-                jsonSchema={arrayJsonSchema}
-              />
-            </div>
-          </div>
+          <EmptyDataState
+            dataText={dataText}
+            onDataText={setDataText}
+            onFile={(file) => void loadFile(file)}
+            arrayJsonSchema={arrayJsonSchema}
+          />
         )}
       </div>
     </>

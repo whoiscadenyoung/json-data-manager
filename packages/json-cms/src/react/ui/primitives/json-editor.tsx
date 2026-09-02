@@ -10,20 +10,59 @@ import { useEffect, useMemo, useRef } from "react";
 import { useColorScheme } from "../lib/use-color-scheme.js";
 import { cn } from "../lib/utils.js";
 
-const jsonLinter = linter((view): Diagnostic[] => {
-    const diagnostics: Diagnostic[] = [],
-      doc = view.state.doc.toString();
+function objectMetaWarnings(parsed: object, docLength: number): Diagnostic[] {
+  const out: Diagnostic[] = [];
+  if (!("title" in parsed) || typeof parsed.title !== "string" || !parsed.title.trim()) {
+    out.push({
+      from: 0,
+      message: 'Schema must have a non-empty "title" property',
+      severity: "warning",
+      to: docLength,
+    });
+  }
+  if (
+    !("description" in parsed) ||
+    typeof parsed.description !== "string" ||
+    !parsed.description.trim()
+  ) {
+    out.push({
+      from: 0,
+      message: 'Schema must have a non-empty "description" property',
+      severity: "warning",
+      to: docLength,
+    });
+  }
+  return out;
+}
 
+function semanticJsonDiagnostics(doc: string): Diagnostic[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(doc);
+  } catch {
+    return []; // Syntax errors are already surfaced via the lezer tree.
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return [
+      { from: 0, message: "Schema must be a JSON object", severity: "error", to: doc.length },
+    ];
+  }
+  return objectMetaWarnings(parsed, doc.length);
+}
+
+const jsonLinter = linter((view): Diagnostic[] => {
+    const doc = view.state.doc.toString();
     if (!doc.trim()) {
-      return diagnostics;
+      return [];
     }
 
-    // Surface parse errors from the lezer syntax tree
+    // Surface parse errors from the lezer syntax tree first.
+    const syntaxErrors: Diagnostic[] = [];
     syntaxTree(view.state)
       .cursor()
       .iterate((node) => {
         if (node.type.isError) {
-          diagnostics.push({
+          syntaxErrors.push({
             from: node.from,
             message: "JSON syntax error",
             severity: "error",
@@ -31,49 +70,11 @@ const jsonLinter = linter((view): Diagnostic[] => {
           });
         }
       });
-
-    if (diagnostics.length > 0) {
-      return diagnostics;
+    if (syntaxErrors.length > 0) {
+      return syntaxErrors;
     }
 
-    // Semantic validation (title / description)
-    try {
-      const parsed = JSON.parse(doc);
-
-      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-        diagnostics.push({
-          from: 0,
-          message: "Schema must be a JSON object",
-          severity: "error",
-          to: doc.length,
-        });
-        return diagnostics;
-      }
-
-      const obj = parsed as Record<string, unknown>;
-
-      if (!obj.title || typeof obj.title !== "string" || !obj.title.trim()) {
-        diagnostics.push({
-          from: 0,
-          message: 'Schema must have a non-empty "title" property',
-          severity: "warning",
-          to: doc.length,
-        });
-      }
-
-      if (!obj.description || typeof obj.description !== "string" || !obj.description.trim()) {
-        diagnostics.push({
-          from: 0,
-          message: 'Schema must have a non-empty "description" property',
-          severity: "warning",
-          to: doc.length,
-        });
-      }
-    } catch {
-      // Parse errors already surfaced via syntax tree above
-    }
-
-    return diagnostics;
+    return semanticJsonDiagnostics(doc);
   }),
   // Blend CodeMirror's internals with the site's design tokens
   baseTheme = EditorView.theme({

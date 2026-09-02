@@ -1,4 +1,3 @@
-import type { SchemaId } from "@caden/json-cms";
 import { DatasetImporter, SchemaEditor } from "@caden/json-cms/react/ui";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
@@ -141,16 +140,17 @@ function ImportFirst() {
     generateUploadUrl = useMutation(api.imports.generateUploadUrl),
     startImport = useMutation(api.imports.startImport),
     [importId, setImportId] = useState<string | undefined>(),
-    [schemaId, setSchemaId] = useState<SchemaId | undefined>(),
-    status = useQuery(api.imports.getImportStatus, importId ? { importId } : "skip");
+    [schemaId, setSchemaId] = useState<string | undefined>(),
+    status = useQuery(api.imports.getImportStatus, importId ? { importId } : "skip"),
+    importStatus = status ? status.status : undefined;
 
   // Navigate to the new dataset once the import finishes.
   useEffect(() => {
-    if (status?.status === "completed" && schemaId) {
+    if (importStatus === "completed" && schemaId) {
       toast.success("Dataset imported!");
       void navigate({ params: { schemaId }, to: "/schemas/$schemaId" });
     }
-  }, [status?.status, schemaId, navigate]);
+  }, [importStatus, schemaId, navigate]);
 
   const progress = status
     ? {
@@ -165,10 +165,10 @@ function ImportFirst() {
     <DatasetImporter
       progress={progress}
       onImport={async (_json, parsedSchema, _uiJson, parsedUiSchema, rows) => {
-        const newSchemaId = (await createSchema({
+        const newSchemaId = await createSchema({
             schema: parsedSchema,
             uiSchema: Object.keys(parsedUiSchema).length > 0 ? parsedUiSchema : undefined,
-          })) as SchemaId,
+          }),
           uploadUrl = await generateUploadUrl({}),
           res = await fetch(uploadUrl, {
             body: JSON.stringify(rows),
@@ -178,7 +178,16 @@ function ImportFirst() {
         if (!res.ok) {
           throw new Error("Failed to upload import data.");
         }
-        const { storageId } = (await res.json()) as { storageId: string },
+        const body: unknown = await res.json();
+        if (
+          typeof body !== "object" ||
+          body === null ||
+          !("storageId" in body) ||
+          typeof body.storageId !== "string"
+        ) {
+          throw new Error("Import upload did not return a storageId.");
+        }
+        const storageId = body.storageId,
           newImportId = await startImport({
             schemaId: newSchemaId,
             storageId,

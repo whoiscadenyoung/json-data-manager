@@ -1,5 +1,5 @@
 import { AlertCircle, ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 
 import { cn } from "./lib/utils.js";
 import { Button } from "./primitives/button.js";
@@ -47,6 +47,82 @@ export interface SchemaFormData {
 
 // ─── Serialization ───────────────────────────────────────────────────────────
 
+function splitEnum(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function stringConstraints(prop: PropertyDef, schema: Record<string, unknown>): void {
+  if (prop.format) {
+    schema.format = prop.format;
+  }
+  if (prop.minLength !== "") {
+    schema.minLength = Number(prop.minLength);
+  }
+  if (prop.maxLength !== "") {
+    schema.maxLength = Number(prop.maxLength);
+  }
+  if (prop.pattern) {
+    schema.pattern = prop.pattern;
+  }
+  if (prop.enum.trim()) {
+    schema.enum = splitEnum(prop.enum);
+  }
+}
+
+function numberConstraints(prop: PropertyDef, schema: Record<string, unknown>): void {
+  if (prop.minimum !== "") {
+    schema.minimum = Number(prop.minimum);
+  }
+  if (prop.maximum !== "") {
+    schema.maximum = Number(prop.maximum);
+  }
+  if (prop.multipleOf !== "") {
+    schema.multipleOf = Number(prop.multipleOf);
+  }
+  if (prop.enum.trim()) {
+    schema.enum = splitEnum(prop.enum).map(Number);
+  }
+}
+
+function arrayConstraints(prop: PropertyDef, schema: Record<string, unknown>): void {
+  if (prop.itemType) {
+    if (prop.itemType === "object" && prop.itemSchema) {
+      // Array of objects with defined schema
+      const itemSchema = makePropertySchema(prop.itemSchema);
+      delete itemSchema.name;
+      delete itemSchema.required;
+      schema.items = itemSchema;
+    } else {
+      // Array of primitives
+      schema.items = { type: prop.itemType };
+    }
+  }
+  if (prop.minItems !== "") {
+    schema.minItems = Number(prop.minItems);
+  }
+  if (prop.maxItems !== "") {
+    schema.maxItems = Number(prop.maxItems);
+  }
+}
+
+function objectConstraints(prop: PropertyDef, schema: Record<string, unknown>): void {
+  const nestedProps: Record<string, unknown> = {},
+    nestedRequired: string[] = [];
+  for (const child of prop.properties) {
+    nestedProps[child.name] = makePropertySchema(child);
+    if (child.required) {
+      nestedRequired.push(child.name);
+    }
+  }
+  schema.properties = nestedProps;
+  if (nestedRequired.length > 0) {
+    schema.required = nestedRequired;
+  }
+}
+
 function makePropertySchema(prop: PropertyDef): Record<string, unknown> {
   const schema: Record<string, unknown> = {};
   schema.type = prop.nullable ? [prop.type, "null"] : prop.type;
@@ -58,78 +134,13 @@ function makePropertySchema(prop: PropertyDef): Record<string, unknown> {
   }
 
   if (prop.type === "string") {
-    if (prop.format) {
-      schema.format = prop.format;
-    }
-    if (prop.minLength !== "") {
-      schema.minLength = Number(prop.minLength);
-    }
-    if (prop.maxLength !== "") {
-      schema.maxLength = Number(prop.maxLength);
-    }
-    if (prop.pattern) {
-      schema.pattern = prop.pattern;
-    }
-    if (prop.enum.trim()) {
-      schema.enum = prop.enum
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-    }
-  }
-
-  if (prop.type === "number" || prop.type === "integer") {
-    if (prop.minimum !== "") {
-      schema.minimum = Number(prop.minimum);
-    }
-    if (prop.maximum !== "") {
-      schema.maximum = Number(prop.maximum);
-    }
-    if (prop.multipleOf !== "") {
-      schema.multipleOf = Number(prop.multipleOf);
-    }
-    if (prop.enum.trim()) {
-      schema.enum = prop.enum
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .map(Number);
-    }
-  }
-
-  if (prop.type === "array") {
-    if (prop.itemType) {
-      if (prop.itemType === "object" && prop.itemSchema) {
-        // Array of objects with defined schema
-        schema.items = makePropertySchema(prop.itemSchema);
-        delete (schema.items as Record<string, unknown>).name;
-        delete (schema.items as Record<string, unknown>).required;
-      } else {
-        // Array of primitives
-        schema.items = { type: prop.itemType };
-      }
-    }
-    if (prop.minItems !== "") {
-      schema.minItems = Number(prop.minItems);
-    }
-    if (prop.maxItems !== "") {
-      schema.maxItems = Number(prop.maxItems);
-    }
-  }
-
-  if (prop.type === "object" && prop.properties.length > 0) {
-    const nestedProps: Record<string, unknown> = {},
-      nestedRequired: string[] = [];
-    for (const child of prop.properties) {
-      nestedProps[child.name] = makePropertySchema(child);
-      if (child.required) {
-        nestedRequired.push(child.name);
-      }
-    }
-    schema.properties = nestedProps;
-    if (nestedRequired.length > 0) {
-      schema.required = nestedRequired;
-    }
+    stringConstraints(prop, schema);
+  } else if (prop.type === "number" || prop.type === "integer") {
+    numberConstraints(prop, schema);
+  } else if (prop.type === "array") {
+    arrayConstraints(prop, schema);
+  } else if (prop.type === "object" && prop.properties.length > 0) {
+    objectConstraints(prop, schema);
   }
 
   return schema;
@@ -164,80 +175,98 @@ export function schemaFormDataToJson(data: SchemaFormData): string {
 
 // ─── Deserialization ──────────────────────────────────────────────────────────
 
-let propIdCounter = 0;
-function nextId() {
-  return `prop_${++propIdCounter}`;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function parsePropertyDef(
-  name: string,
-  schema: Record<string, unknown>,
-  requiredSet: Set<string>,
-): PropertyDef {
-  // `type` may be a nullable union like ["string", "null"]; split it into a
-  // Base type plus a `nullable` flag so the type <select> stays scalar.
-  let nullable = false,
-    type: PropertyType = "string";
-  if (Array.isArray(schema.type)) {
-    const parts = schema.type as string[];
-    nullable = parts.includes("null");
-    type = (parts.find((t) => t !== "null") as PropertyType) ?? "string";
-  } else if (typeof schema.type === "string") {
-    type = schema.type as PropertyType;
+function isPropertyType(value: unknown): value is PropertyType {
+  return typeof value === "string" && PROPERTY_TYPES.some((t) => t === value);
+}
+
+/** A string field, or "" when the value isn't a string. */
+function asString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+/** Serialize a numeric constraint to its text-input form ("" when absent). */
+function numToInput(value: unknown): string {
+  return value === undefined ? "" : JSON.stringify(value);
+}
+
+/** Split a possibly-nullable JSON-Schema `type` into a base type + nullable flag. */
+function parseTypeInfo(rawType: unknown): { type: PropertyType; nullable: boolean } {
+  if (Array.isArray(rawType)) {
+    const base = rawType.find((t) => t !== "null");
+    return { nullable: rawType.includes("null"), type: isPropertyType(base) ? base : "string" };
   }
-  const enumVals = Array.isArray(schema.enum)
-      ? (schema.enum as unknown[]).map(String).join(", ")
-      : "",
-    itemsObj =
-      typeof schema.items === "object" && schema.items !== null
-        ? (schema.items as Record<string, unknown>)
-        : null,
-    rawItemType = itemsObj?.type,
-    itemType = Array.isArray(rawItemType)
-      ? ((rawItemType as string[]).find((t) => t !== "null") ?? "")
-      : ((rawItemType as string) ?? ""),
+  return { nullable: false, type: isPropertyType(rawType) ? rawType : "string" };
+}
+
+/** Derive the array item type (a plain string) from a schema's `items`. */
+function parseItemType(items: unknown): string {
+  if (!isRecord(items)) {
+    return "";
+  }
+  const raw = items.type;
+  if (Array.isArray(raw)) {
+    const base = raw.find((t) => t !== "null");
+    return typeof base === "string" ? base : "";
+  }
+  return typeof raw === "string" ? raw : "";
+}
+
+let propIdCounter = 0;
+function nextId() {
+  propIdCounter += 1;
+  return `prop_${propIdCounter}`;
+}
+
+function parseChildProperties(
+  properties: Record<string, unknown>,
+  required: unknown,
+): PropertyDef[] {
+  const requiredSet = new Set<string>(
+    Array.isArray(required) ? required.filter((r): r is string => typeof r === "string") : [],
+  );
+  return Object.entries(properties).map(([k, v]) => parsePropertyDef(k, v, requiredSet));
+}
+
+function parsePropertyDef(name: string, rawSchema: unknown, requiredSet: Set<string>): PropertyDef {
+  const schema = isRecord(rawSchema) ? rawSchema : {},
+    // `type` may be a nullable union like ["string", "null"]; split it into a
+    // base type plus a `nullable` flag so the type <select> stays scalar.
+    { type, nullable } = parseTypeInfo(schema.type),
     prop: PropertyDef = {
-      description: (schema.description as string) ?? "",
-      enum: enumVals,
-      format: (schema.format as string) ?? "",
+      description: asString(schema.description),
+      enum: Array.isArray(schema.enum) ? schema.enum.map(String).join(", ") : "",
+      format: asString(schema.format),
       id: nextId(),
       itemSchema: null,
-      itemType,
-      maxItems: schema.maxItems === undefined ? "" : JSON.stringify(schema.maxItems),
-      maxLength: schema.maxLength === undefined ? "" : JSON.stringify(schema.maxLength),
-      maximum: schema.maximum === undefined ? "" : JSON.stringify(schema.maximum),
-      minItems: schema.minItems === undefined ? "" : JSON.stringify(schema.minItems),
-      minLength: schema.minLength === undefined ? "" : JSON.stringify(schema.minLength),
-      minimum: schema.minimum === undefined ? "" : JSON.stringify(schema.minimum),
-      multipleOf: schema.multipleOf === undefined ? "" : JSON.stringify(schema.multipleOf),
+      itemType: parseItemType(schema.items),
+      maxItems: numToInput(schema.maxItems),
+      maxLength: numToInput(schema.maxLength),
+      maximum: numToInput(schema.maximum),
+      minItems: numToInput(schema.minItems),
+      minLength: numToInput(schema.minLength),
+      minimum: numToInput(schema.minimum),
+      multipleOf: numToInput(schema.multipleOf),
       name,
       nullable,
-      pattern: (schema.pattern as string) ?? "",
+      pattern: asString(schema.pattern),
       properties: [],
       required: requiredSet.has(name),
-      title: (schema.title as string) ?? "",
+      title: asString(schema.title),
       type,
     };
 
-  if (type === "object" && typeof schema.properties === "object" && schema.properties !== null) {
-    const nestedRequired = new Set<string>(
-      Array.isArray(schema.required) ? (schema.required as string[]) : [],
-    );
-    prop.properties = Object.entries(schema.properties as Record<string, unknown>).map(([k, v]) =>
-      parsePropertyDef(k, v as Record<string, unknown>, nestedRequired),
-    );
+  if (type === "object" && isRecord(schema.properties)) {
+    prop.properties = parseChildProperties(schema.properties, schema.required);
   }
 
   // Parse array item schema for object arrays
-  if (
-    type === "array" &&
-    prop.itemType === "object" &&
-    typeof schema.items === "object" &&
-    schema.items !== null
-  ) {
-    const itemsSchema = schema.items as Record<string, unknown>;
-    if (itemsSchema.type === "object") {
-      prop.itemSchema = parsePropertyDef("item", itemsSchema, new Set());
+  if (type === "array" && prop.itemType === "object" && isRecord(schema.items)) {
+    if (schema.items.type === "object") {
+      prop.itemSchema = parsePropertyDef("item", schema.items, new Set());
     }
   }
 
@@ -245,27 +274,22 @@ function parsePropertyDef(
 }
 
 export function jsonToSchemaFormData(json: string): SchemaFormData | null {
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(json);
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      return null;
-    }
-    const obj = parsed as Record<string, unknown>,
-      requiredSet = new Set<string>(Array.isArray(obj.required) ? (obj.required as string[]) : []),
-      properties =
-        typeof obj.properties === "object" && obj.properties !== null
-          ? Object.entries(obj.properties as Record<string, unknown>).map(([k, v]) =>
-              parsePropertyDef(k, v as Record<string, unknown>, requiredSet),
-            )
-          : [];
-    return {
-      description: (obj.description as string) ?? "",
-      properties,
-      title: (obj.title as string) ?? "",
-    };
+    parsed = JSON.parse(json);
   } catch {
     return null;
   }
+  if (!isRecord(parsed)) {
+    return null;
+  }
+  return {
+    description: asString(parsed.description),
+    properties: isRecord(parsed.properties)
+      ? parseChildProperties(parsed.properties, parsed.required)
+      : [],
+    title: asString(parsed.title),
+  };
 }
 
 // ─── Default property ─────────────────────────────────────────────────────────
@@ -300,6 +324,386 @@ function defaultProp(): PropertyDef {
 const STRING_FORMATS = ["", "email", "uri", "date", "date-time", "time", "password", "hostname"],
   PROPERTY_TYPES: PropertyType[] = ["string", "number", "integer", "boolean", "object", "array"];
 
+function ItemObjectSchemaEditor({
+  itemSchema,
+  depth,
+  onChange,
+}: {
+  itemSchema: PropertyDef;
+  depth: number;
+  onChange: (next: PropertyDef) => void;
+}) {
+  return (
+    <div className="space-y-2 pt-2 border-t border-border">
+      <div className="flex items-center justify-between">
+        <Label className="text-xs font-medium">Item Object Schema</Label>
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          onClick={() => {
+            onChange({ ...itemSchema, properties: [...itemSchema.properties, defaultProp()] });
+          }}
+        >
+          <Plus className="h-3 w-3 mr-1" />
+          Add field
+        </Button>
+      </div>
+      {itemSchema.properties.length > 0 && (
+        <div className="space-y-1.5 pl-2 border-l border-border">
+          {itemSchema.properties.map((child, i) => (
+            <PropertyRow
+              key={child.id}
+              prop={child}
+              depth={depth + 1}
+              failingCount={0}
+              totalDataItems={0}
+              onChange={(updated) => {
+                const next = [...itemSchema.properties];
+                next[i] = updated;
+                onChange({ ...itemSchema, properties: next });
+              }}
+              onRemove={() => {
+                onChange({
+                  ...itemSchema,
+                  properties: itemSchema.properties.filter((_, j) => j !== i),
+                });
+              }}
+            />
+          ))}
+        </div>
+      )}
+      {itemSchema.properties.length === 0 && (
+        <div className="text-xs text-muted-foreground italic">
+          No fields defined yet. Click "Add field" to define the object structure.
+        </div>
+      )}
+    </div>
+  );
+}
+
+type PropSetter = <K extends keyof PropertyDef>(key: K, value: PropertyDef[K]) => void;
+
+function PropertyRowHeader({
+  prop,
+  set,
+  expanded,
+  onToggle,
+  onRemove,
+  failingCount,
+  totalDataItems,
+}: {
+  prop: PropertyDef;
+  set: PropSetter;
+  expanded: boolean;
+  onToggle: () => void;
+  onRemove: () => void;
+  failingCount: number;
+  totalDataItems: number;
+}) {
+  const hasFailures = failingCount > 0;
+  return (
+    <div className="flex items-center gap-2 px-3 py-2">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="text-muted-foreground hover:text-foreground flex-shrink-0"
+      >
+        {expanded ? (
+          <ChevronDown className="h-3.5 w-3.5" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5" />
+        )}
+      </button>
+
+      {/* Property name */}
+      <Input
+        value={prop.name}
+        onChange={(e) => {
+          set("name", e.target.value);
+        }}
+        placeholder="property_name"
+        className="h-6 text-xs font-mono flex-1 min-w-0"
+      />
+
+      {/* Type selector */}
+      <select
+        value={prop.type}
+        onChange={(e) => {
+          if (isPropertyType(e.target.value)) {
+            set("type", e.target.value);
+          }
+        }}
+        className={cn(
+          "h-6 rounded-md border border-input bg-background px-1.5 text-xs",
+          "focus:outline-none focus:ring-1 focus:ring-ring",
+          "shrink-0",
+        )}
+      >
+        {PROPERTY_TYPES.map((t) => (
+          <option key={t} value={t}>
+            {t}
+          </option>
+        ))}
+      </select>
+
+      {/* Required toggle */}
+      <label className="flex items-center gap-1 text-xs text-muted-foreground shrink-0 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={prop.required}
+          onChange={(e) => {
+            set("required", e.target.checked);
+          }}
+          className="h-3 w-3 rounded"
+        />
+        req
+      </label>
+
+      {/* Nullable toggle */}
+      <label className="flex items-center gap-1 text-xs text-muted-foreground shrink-0 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={prop.nullable}
+          onChange={(e) => {
+            set("nullable", e.target.checked);
+          }}
+          className="h-3 w-3 rounded"
+        />
+        null
+      </label>
+
+      {/* Failing badge */}
+      {totalDataItems > 0 && (
+        <span
+          className={cn(
+            "text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0",
+            hasFailures
+              ? "bg-destructive/15 text-destructive"
+              : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400",
+          )}
+        >
+          {hasFailures ? `${failingCount}/${totalDataItems} fail` : `${totalDataItems} pass`}
+        </span>
+      )}
+
+      {/* Remove */}
+      <button
+        type="button"
+        onClick={onRemove}
+        className="text-muted-foreground hover:text-destructive flex-shrink-0"
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+function StringConstraints({ prop, set }: { prop: PropertyDef; set: PropSetter }) {
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <Label className="text-xs">Format</Label>
+          <select
+            value={prop.format}
+            onChange={(e) => {
+              set("format", e.target.value);
+            }}
+            className="w-full h-6 rounded-md border border-input bg-background px-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+          >
+            {STRING_FORMATS.map((f) => (
+              <option key={f} value={f}>
+                {f || "(none)"}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Pattern (regex)</Label>
+          <Input
+            value={prop.pattern}
+            onChange={(e) => {
+              set("pattern", e.target.value);
+            }}
+            placeholder="^[a-z]+$"
+            className="h-6 text-xs font-mono"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Min length</Label>
+          <Input
+            type="number"
+            min={0}
+            value={prop.minLength}
+            onChange={(e) => {
+              set("minLength", e.target.value);
+            }}
+            placeholder="0"
+            className="h-6 text-xs"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Max length</Label>
+          <Input
+            type="number"
+            min={0}
+            value={prop.maxLength}
+            onChange={(e) => {
+              set("maxLength", e.target.value);
+            }}
+            placeholder="∞"
+            className="h-6 text-xs"
+          />
+        </div>
+      </div>
+      <div className="space-y-1">
+        <Label className="text-xs">Enum values (comma-separated)</Label>
+        <Input
+          value={prop.enum}
+          onChange={(e) => {
+            set("enum", e.target.value);
+          }}
+          placeholder="option1, option2, option3"
+          className="h-6 text-xs"
+        />
+      </div>
+    </div>
+  );
+}
+
+function NumberConstraints({ prop, set }: { prop: PropertyDef; set: PropSetter }) {
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-3 gap-2">
+        <div className="space-y-1">
+          <Label className="text-xs">Minimum</Label>
+          <Input
+            type="number"
+            value={prop.minimum}
+            onChange={(e) => {
+              set("minimum", e.target.value);
+            }}
+            placeholder="−∞"
+            className="h-6 text-xs"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Maximum</Label>
+          <Input
+            type="number"
+            value={prop.maximum}
+            onChange={(e) => {
+              set("maximum", e.target.value);
+            }}
+            placeholder="+∞"
+            className="h-6 text-xs"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Multiple of</Label>
+          <Input
+            type="number"
+            min={0}
+            value={prop.multipleOf}
+            onChange={(e) => {
+              set("multipleOf", e.target.value);
+            }}
+            placeholder="—"
+            className="h-6 text-xs"
+          />
+        </div>
+      </div>
+      <div className="space-y-1">
+        <Label className="text-xs">Enum values (comma-separated numbers)</Label>
+        <Input
+          value={prop.enum}
+          onChange={(e) => {
+            set("enum", e.target.value);
+          }}
+          placeholder="1, 2, 3"
+          className="h-6 text-xs"
+        />
+      </div>
+    </div>
+  );
+}
+
+function ArrayConstraints({
+  prop,
+  set,
+  depth,
+}: {
+  prop: PropertyDef;
+  set: PropSetter;
+  depth: number;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-3 gap-2">
+        <div className="space-y-1">
+          <Label className="text-xs">Item type</Label>
+          <select
+            value={prop.itemType}
+            onChange={(e) => {
+              const newType = e.target.value;
+              set("itemType", newType);
+              // Initialize itemSchema when switching to object type
+              if (newType === "object" && !prop.itemSchema) {
+                set("itemSchema", { ...defaultProp(), type: "object" });
+              }
+            }}
+            className="w-full h-6 rounded-md border border-input bg-background px-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+          >
+            <option value="">(any)</option>
+            {PROPERTY_TYPES.filter((t) => t !== "array").map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Min items</Label>
+          <Input
+            type="number"
+            min={0}
+            value={prop.minItems}
+            onChange={(e) => {
+              set("minItems", e.target.value);
+            }}
+            placeholder="0"
+            className="h-6 text-xs"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Max items</Label>
+          <Input
+            type="number"
+            min={0}
+            value={prop.maxItems}
+            onChange={(e) => {
+              set("maxItems", e.target.value);
+            }}
+            placeholder="∞"
+            className="h-6 text-xs"
+          />
+        </div>
+      </div>
+
+      {prop.itemType === "object" && prop.itemSchema && (
+        <ItemObjectSchemaEditor
+          itemSchema={prop.itemSchema}
+          depth={depth}
+          onChange={(next) => {
+            set("itemSchema", next);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
 function PropertyRow({
   prop,
   onChange,
@@ -318,105 +722,21 @@ function PropertyRow({
   const [expanded, setExpanded] = useState(false),
     set = <K extends keyof PropertyDef>(key: K, value: PropertyDef[K]) => {
       onChange({ ...prop, [key]: value });
-    },
-    hasFailures = failingCount > 0;
+    };
 
   return (
     <div className={cn("rounded-md border border-border bg-card", depth > 0 && "bg-muted/30")}>
-      {/* Header row */}
-      <div className="flex items-center gap-2 px-3 py-2">
-        <button
-          type="button"
-          onClick={() => {
-            setExpanded(!expanded);
-          }}
-          className="text-muted-foreground hover:text-foreground flex-shrink-0"
-        >
-          {expanded ? (
-            <ChevronDown className="h-3.5 w-3.5" />
-          ) : (
-            <ChevronRight className="h-3.5 w-3.5" />
-          )}
-        </button>
-
-        {/* Property name */}
-        <Input
-          value={prop.name}
-          onChange={(e) => {
-            set("name", e.target.value);
-          }}
-          placeholder="property_name"
-          className="h-6 text-xs font-mono flex-1 min-w-0"
-        />
-
-        {/* Type selector */}
-        <select
-          value={prop.type}
-          onChange={(e) => {
-            set("type", e.target.value as PropertyType);
-          }}
-          className={cn(
-            "h-6 rounded-md border border-input bg-background px-1.5 text-xs",
-            "focus:outline-none focus:ring-1 focus:ring-ring",
-            "shrink-0",
-          )}
-        >
-          {PROPERTY_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
-
-        {/* Required toggle */}
-        <label className="flex items-center gap-1 text-xs text-muted-foreground shrink-0 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={prop.required}
-            onChange={(e) => {
-              set("required", e.target.checked);
-            }}
-            className="h-3 w-3 rounded"
-          />
-          req
-        </label>
-
-        {/* Nullable toggle */}
-        <label className="flex items-center gap-1 text-xs text-muted-foreground shrink-0 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={prop.nullable}
-            onChange={(e) => {
-              set("nullable", e.target.checked);
-            }}
-            className="h-3 w-3 rounded"
-          />
-          null
-        </label>
-
-        {/* Failing badge */}
-        {totalDataItems > 0 && (
-          <span
-            className={cn(
-              "text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0",
-              hasFailures
-                ? "bg-destructive/15 text-destructive"
-                : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400",
-            )}
-          >
-            {hasFailures ? `${failingCount}/${totalDataItems} fail` : `${totalDataItems} pass`}
-          </span>
-        )}
-
-        {/* Remove */}
-        <button
-          type="button"
-          onClick={onRemove}
-          className="text-muted-foreground hover:text-destructive flex-shrink-0"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
-      </div>
+      <PropertyRowHeader
+        prop={prop}
+        set={set}
+        expanded={expanded}
+        onToggle={() => {
+          setExpanded(!expanded);
+        }}
+        onRemove={onRemove}
+        failingCount={failingCount}
+        totalDataItems={totalDataItems}
+      />
 
       {/* Expanded: advanced options */}
       {expanded && (
@@ -447,238 +767,15 @@ function PropertyRow({
           </div>
 
           {/* String-specific */}
-          {prop.type === "string" && (
-            <div className="space-y-2">
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <Label className="text-xs">Format</Label>
-                  <select
-                    value={prop.format}
-                    onChange={(e) => {
-                      set("format", e.target.value);
-                    }}
-                    className="w-full h-6 rounded-md border border-input bg-background px-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-                  >
-                    {STRING_FORMATS.map((f) => (
-                      <option key={f} value={f}>
-                        {f || "(none)"}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Pattern (regex)</Label>
-                  <Input
-                    value={prop.pattern}
-                    onChange={(e) => {
-                      set("pattern", e.target.value);
-                    }}
-                    placeholder="^[a-z]+$"
-                    className="h-6 text-xs font-mono"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Min length</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    value={prop.minLength}
-                    onChange={(e) => {
-                      set("minLength", e.target.value);
-                    }}
-                    placeholder="0"
-                    className="h-6 text-xs"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Max length</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    value={prop.maxLength}
-                    onChange={(e) => {
-                      set("maxLength", e.target.value);
-                    }}
-                    placeholder="∞"
-                    className="h-6 text-xs"
-                  />
-                </div>
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Enum values (comma-separated)</Label>
-                <Input
-                  value={prop.enum}
-                  onChange={(e) => {
-                    set("enum", e.target.value);
-                  }}
-                  placeholder="option1, option2, option3"
-                  className="h-6 text-xs"
-                />
-              </div>
-            </div>
-          )}
+          {prop.type === "string" && <StringConstraints prop={prop} set={set} />}
 
           {/* Number/integer-specific */}
           {(prop.type === "number" || prop.type === "integer") && (
-            <div className="space-y-2">
-              <div className="grid grid-cols-3 gap-2">
-                <div className="space-y-1">
-                  <Label className="text-xs">Minimum</Label>
-                  <Input
-                    type="number"
-                    value={prop.minimum}
-                    onChange={(e) => {
-                      set("minimum", e.target.value);
-                    }}
-                    placeholder="−∞"
-                    className="h-6 text-xs"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Maximum</Label>
-                  <Input
-                    type="number"
-                    value={prop.maximum}
-                    onChange={(e) => {
-                      set("maximum", e.target.value);
-                    }}
-                    placeholder="+∞"
-                    className="h-6 text-xs"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Multiple of</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    value={prop.multipleOf}
-                    onChange={(e) => {
-                      set("multipleOf", e.target.value);
-                    }}
-                    placeholder="—"
-                    className="h-6 text-xs"
-                  />
-                </div>
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Enum values (comma-separated numbers)</Label>
-                <Input
-                  value={prop.enum}
-                  onChange={(e) => {
-                    set("enum", e.target.value);
-                  }}
-                  placeholder="1, 2, 3"
-                  className="h-6 text-xs"
-                />
-              </div>
-            </div>
+            <NumberConstraints prop={prop} set={set} />
           )}
 
           {/* Array-specific */}
-          {prop.type === "array" && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-3 gap-2">
-                <div className="space-y-1">
-                  <Label className="text-xs">Item type</Label>
-                  <select
-                    value={prop.itemType}
-                    onChange={(e) => {
-                      const newType = e.target.value;
-                      set("itemType", newType);
-                      // Initialize itemSchema when switching to object type
-                      if (newType === "object" && !prop.itemSchema) {
-                        set("itemSchema", { ...defaultProp(), type: "object" });
-                      }
-                    }}
-                    className="w-full h-6 rounded-md border border-input bg-background px-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-                  >
-                    <option value="">(any)</option>
-                    {PROPERTY_TYPES.filter((t) => t !== "array").map((t) => (
-                      <option key={t} value={t}>
-                        {t}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Min items</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    value={prop.minItems}
-                    onChange={(e) => {
-                      set("minItems", e.target.value);
-                    }}
-                    placeholder="0"
-                    className="h-6 text-xs"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Max items</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    value={prop.maxItems}
-                    onChange={(e) => {
-                      set("maxItems", e.target.value);
-                    }}
-                    placeholder="∞"
-                    className="h-6 text-xs"
-                  />
-                </div>
-              </div>
-
-              {/* Object item schema editor */}
-              {prop.itemType === "object" && prop.itemSchema && (
-                <div className="space-y-2 pt-2 border-t border-border">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs font-medium">Item Object Schema</Label>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="xs"
-                      onClick={() => {
-                        set("itemSchema", {
-                          ...prop.itemSchema!,
-                          properties: [...prop.itemSchema!.properties, defaultProp()],
-                        });
-                      }}
-                    >
-                      <Plus className="h-3 w-3 mr-1" />
-                      Add field
-                    </Button>
-                  </div>
-                  {prop.itemSchema.properties.length > 0 && (
-                    <div className="space-y-1.5 pl-2 border-l border-border">
-                      {prop.itemSchema.properties.map((child, i) => (
-                        <PropertyRow
-                          key={child.id}
-                          prop={child}
-                          depth={depth + 1}
-                          failingCount={0}
-                          totalDataItems={0}
-                          onChange={(updated) => {
-                            const next = [...prop.itemSchema!.properties];
-                            next[i] = updated;
-                            set("itemSchema", { ...prop.itemSchema!, properties: next });
-                          }}
-                          onRemove={() => {
-                            const next = prop.itemSchema!.properties.filter((_, j) => j !== i);
-                            set("itemSchema", { ...prop.itemSchema!, properties: next });
-                          }}
-                        />
-                      ))}
-                    </div>
-                  )}
-                  {prop.itemSchema.properties.length === 0 && (
-                    <div className="text-xs text-muted-foreground italic">
-                      No fields defined yet. Click "Add field" to define the object structure.
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+          {prop.type === "array" && <ArrayConstraints prop={prop} set={set} depth={depth} />}
 
           {/* Object: nested properties */}
           {prop.type === "object" && (
@@ -745,38 +842,36 @@ export function VisualBuilder({
 }: VisualBuilderProps) {
   const [formData, setFormData] = useState<SchemaFormData | null>(null),
     [parseError, setParseError] = useState(false),
-    // Track when we ourselves triggered the schemaJson change so we don't
-    // Re-parse and rebuild PropertyDef objects (which would remount inputs and
-    // Lose keyboard focus on every keystroke).
-    selfChangedRef = useRef(false);
+    // The last `schemaJson` value reflected in `formData`. `handleFormChange`
+    // records the JSON it emits here, so a change that originated in this
+    // component is recognized and skipped below — inputs keep focus instead of
+    // being rebuilt. Any other (external) change re-parses.
+    [syncedJson, setSyncedJson] = useState<string | undefined>(undefined);
 
-  // Parse incoming schemaJson into formData — but skip when we were the source
-  useEffect(() => {
-    if (selfChangedRef.current) {
-      selfChangedRef.current = false;
-      return;
-    }
-    if (!schemaJson.trim()) {
-      // Sync internal form state to the externally controlled schema JSON.
-      // oxlint-disable-next-line react/set-state-in-effect
+  // Sync the externally-controlled `schemaJson` into form state during render
+  // (not an effect, so a self-originated change never rebuilds the inputs).
+  if (schemaJson !== syncedJson) {
+    setSyncedJson(schemaJson);
+    if (schemaJson.trim()) {
+      const parsed = jsonToSchemaFormData(schemaJson);
+      if (parsed) {
+        setFormData(parsed);
+        setParseError(false);
+      } else {
+        setParseError(true);
+      }
+    } else {
       setFormData({ description: "", properties: [], title: "" });
       setParseError(false);
-      return;
     }
-    const parsed = jsonToSchemaFormData(schemaJson);
-    if (parsed) {
-      setFormData(parsed);
-      setParseError(false);
-    } else {
-      setParseError(true);
-    }
-  }, [schemaJson]);
+  }
 
   const handleFormChange = useCallback(
     (updated: SchemaFormData) => {
-      selfChangedRef.current = true;
+      const json = schemaFormDataToJson(updated);
       setFormData(updated);
-      onChange(schemaFormDataToJson(updated));
+      setSyncedJson(json);
+      onChange(json);
     },
     [onChange],
   );

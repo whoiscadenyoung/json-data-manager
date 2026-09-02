@@ -49,7 +49,6 @@
     "react/no-unknown-property": "error",
     // "no-use-before-define": ["warn", { "allowNamedExports": true }],
     "no-var": "error",
-    "react/only-export-components": ["error", { "allowConstantExport": true }],
     "react/prefer-function-component": "error",
     "unicorn/prefer-number-properties": "error",
     "import/no-named-as-default-member": "off",

@@ -11,9 +11,7 @@ import { expect, test } from "vitest";
 import type { ComponentApi } from "../component/_generated/component.js";
 import { register } from "../test.js";
 
-export function initConvexTest<Schema extends SchemaDefinition<GenericSchema, boolean>>(
-  schema?: Schema,
-) {
+export function initConvexTest(schema?: SchemaDefinition<GenericSchema, boolean>) {
   const t = convexTest(schema ?? defineSchema({}), modules);
   register(t);
   return t;

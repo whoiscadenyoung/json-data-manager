@@ -50,15 +50,17 @@ export function App() {
             }}
             style={{ marginRight: "0.5rem", padding: "0.5rem" }}
           />
-          <button onClick={handleCreateSchema}>Create Schema</button>
+          <button type="button" onClick={handleCreateSchema}>
+            Create Schema
+          </button>
         </div>
 
         <h2>Schemas</h2>
-        {schemas?.length === 0 && (
+        {schemas && schemas.length === 0 && (
           <p style={{ color: "rgba(128, 128, 128, 0.8)" }}>No schemas yet. Create one above!</p>
         )}
         <ul style={{ listStyle: "none", padding: 0 }}>
-          {schemas?.map((schema) => (
+          {(schemas ?? []).map((schema) => (
             <li
               key={schema._id}
               style={{
