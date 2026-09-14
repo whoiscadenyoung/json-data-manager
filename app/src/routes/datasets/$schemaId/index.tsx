@@ -44,6 +44,7 @@ export const Route = createFileRoute("/datasets/$schemaId/")({
 
 type Schema = NonNullable<FunctionReturnType<typeof api.schemas.get>>;
 type Geometry = FunctionReturnType<typeof api.geometries.list>[number];
+type Entry = FunctionReturnType<typeof api.entries.list>[number];
 
 /** Fetches this dataset's geometries — only when it's actually geospatial, `"skip"` otherwise. */
 function useGeometriesForSchema(schema: Schema | null | undefined, schemaId: string) {
@@ -75,16 +76,18 @@ function MapTabTrigger({ schema }: { schema: Schema }) {
 function MapTabContent({
   schema,
   geometries,
+  entries,
 }: {
   schema: Schema;
   geometries: Geometry[] | undefined;
+  entries: Entry[];
 }) {
   if (schema.kind !== "geospatial") {
     return null;
   }
   return (
     <TabsContent value="map">
-      <EntriesMap geometries={geometries ?? []} />
+      <EntriesMap geometries={geometries ?? []} entries={entries} />
     </TabsContent>
   );
 }
@@ -234,7 +237,7 @@ function SchemaDetailPage() {
           </Card>
         </TabsContent>
 
-        <MapTabContent schema={schema} geometries={geometries} />
+        <MapTabContent schema={schema} geometries={geometries} entries={entries} />
 
         <TabsContent value="schema" className="space-y-6">
           <Card>
