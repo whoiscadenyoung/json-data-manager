@@ -4,12 +4,18 @@ import { toast } from "sonner";
 
 import type { GeometryType } from "../../shared/geojson/types.js";
 import { looksLikeGeoJson, parseGeoJsonFeatures } from "../lib/geojson-import.js";
+import {
+  enabledAcceptString,
+  enabledExtensionsHint,
+  findImportParser,
+} from "../lib/import-parsers/registry.js";
+import type { ImportParseResult, ParsedSheet } from "../lib/import-parsers/types.js";
 import { inferSchemaFromData } from "../lib/infer-schema.js";
-import { parseDataRows } from "../lib/parse-data.js";
 import { cn } from "./lib/utils.js";
 import { Button } from "./primitives/button.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./primitives/card.js";
 import { SchemaEditor } from "./schema-editor.js";
+import { SheetPicker } from "./sheet-picker.js";
 
 /** Live import status, mirrored from the backend (see `ImportStatusDoc`). */
 export interface DatasetImportProgress {
@@ -44,14 +50,12 @@ export interface DatasetImporterProps {
   saveLabel?: string;
 }
 
-const ACCEPT = ".json,.jsonl,.ndjson,application/json";
+const ACCEPT = enabledAcceptString(),
+  EXTENSIONS_HINT = enabledExtensionsHint();
 
-function isSupportedFile(file: File): boolean {
-  return (
-    /\.(json|jsonl|ndjson)$/i.test(file.name) ||
-    file.type === "application/json" ||
-    file.type === "application/x-ndjson"
-  );
+/** Whether this file is JSON-shaped enough to be worth sniffing for GeoJSON before falling through to the generic parser registry (GeoJSON detection needs the raw parsed document, not a registry parser's already-flattened rows). */
+function looksLikeJsonFile(file: File): boolean {
+  return /\.(json|jsonl|ndjson)$/i.test(file.name) || file.type === "application/json";
 }
 
 async function readFileAsText(file: File): Promise<string> {
@@ -186,8 +190,8 @@ function DatasetDropzone({ onFile }: { onFile: (file: File) => void }) {
       <CardHeader>
         <CardTitle>Import data</CardTitle>
         <CardDescription>
-          Upload a <code>.json</code> or <code>.jsonl</code> file. Every row is read to infer a
-          schema that&apos;s valid against your data; you can refine it before saving.
+          Upload a JSON, CSV, or Excel file. Every row is read to infer a schema that&apos;s valid
+          against your data; you can refine it before saving.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -209,7 +213,7 @@ function DatasetDropzone({ onFile }: { onFile: (file: File) => void }) {
           // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
           role="button"
           tabIndex={0}
-          aria-label="Drop a JSON or JSONL file here or click to browse"
+          aria-label="Drop a data file here or click to browse"
           className={cn(
             "flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-6 py-10 text-center transition-colors cursor-pointer",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -248,7 +252,7 @@ function DatasetDropzone({ onFile }: { onFile: (file: File) => void }) {
           <p className="text-sm font-medium">
             {isDragging ? "Drop your file here" : "Drag & drop a data file, or click to browse"}
           </p>
-          <p className="text-xs">.json or .jsonl</p>
+          <p className="text-xs">{EXTENSIONS_HINT}</p>
         </div>
       </CardContent>
     </Card>
@@ -372,6 +376,11 @@ export function DatasetImporter({
     // actual GeoJSON import (not hand-picked via the toggle).
     [geometryTypeReadOnly, setGeometryTypeReadOnly] = useState(false),
     [geometryTypeSummary, setGeometryTypeSummary] = useState<string | undefined>(undefined),
+    // Set only while a just-uploaded workbook has more than one sheet and the
+    // user hasn't picked one yet.
+    [workbookSheets, setWorkbookSheets] = useState<ParsedSheet[] | null>(null),
+    [workbookFileName, setWorkbookFileName] = useState(""),
+    [workbookKeepSchema, setWorkbookKeepSchema] = useState(false),
     // A FeatureCollection / bare Feature array: geometry is split out into its
     // own rows shape and never enters the inferred JSON Schema.
     ingestGeoJson = (parsedJson: unknown, file: File, keepSchema: boolean) => {
@@ -411,67 +420,105 @@ export function DatasetImporter({
         toast.success(`Inferred a schema from ${result.rows.length} features in ${file.name}.`);
       }
     },
-    // The existing plain-data flow, untouched beyond wrapping each row as `{ data }`.
-    ingestStandard = (text: string, file: File, keepSchema: boolean) => {
-      const { rows: parsedRows, errors } = parseDataRows(text);
+    // Apply one already-parsed sheet of plain rows (from any registry
+    // parser — JSON, CSV, or Excel) as the dataset's rows, wrapping each as
+    // `{ data }`. Shared by the single-sheet and post-sheet-picker paths.
+    applySheet = (sheet: ParsedSheet, sourceName: string, keepSchema: boolean) => {
+      const parsedRows = sheet.rows;
       if (parsedRows.length === 0) {
-        toast.error(
-          errors.length > 0
-            ? `No valid rows found (${errors.length} malformed line(s)).`
-            : "That file has no data rows.",
-        );
+        toast.error("That sheet has no data rows.");
         return;
       }
-      if (errors.length > 0) {
-        toast.warning(
-          `Skipped ${errors.length} malformed line(s); imported ${parsedRows.length} rows.`,
-        );
-      }
       setRows(parsedRows.map((data) => ({ data })));
-      setFileName(file.name);
+      setFileName(sourceName);
       setDataText(JSON.stringify(parsedRows, null, 2));
       setDatasetKind("standard");
       setGeometryType(undefined);
       setGeometryTypeReadOnly(false);
       setGeometryTypeSummary(undefined);
+      setWorkbookSheets(null);
       if (keepSchema) {
-        toast.success(`Reloaded ${parsedRows.length} rows from ${file.name}.`);
+        toast.success(`Reloaded ${parsedRows.length} rows from ${sourceName}.`);
       } else {
         setInferredJson(JSON.stringify(inferSchemaFromData(parsedRows), null, 2));
-        toast.success(`Inferred a schema from ${parsedRows.length} rows in ${file.name}.`);
+        toast.success(`Inferred a schema from ${parsedRows.length} rows in ${sourceName}.`);
       }
     },
+    // A registry parser's result may have zero sheets (nothing usable),
+    // exactly one (the common case — apply it directly), or several (an
+    // Excel workbook with multiple tabs — let the user pick one first).
+    applyParseResult = (result: ImportParseResult, sourceName: string, keepSchema: boolean) => {
+      if (result.sheets.length === 0) {
+        toast.error(
+          result.errors.length > 0
+            ? `Could not parse ${sourceName} (${result.errors.length} error(s)).`
+            : `${sourceName} has no data rows.`,
+        );
+        return;
+      }
+      if (result.errors.length > 0) {
+        toast.warning(
+          `Skipped ${result.errors.length} row(s) with errors while parsing ${sourceName}.`,
+        );
+      }
+      if (result.sheets.length > 1) {
+        setWorkbookSheets(result.sheets);
+        setWorkbookFileName(sourceName);
+        setWorkbookKeepSchema(keepSchema);
+        return;
+      }
+      applySheet(result.sheets[0], sourceName, keepSchema);
+    },
     // Parse a file into rows. `keepSchema` is true for a re-upload (don't
-    // re-infer the schema, just refresh the validation data). A whole-text
-    // JSON.parse that succeeds and looks GeoJSON-shaped takes the geometry
-    // path; everything else (including a failed whole-text parse, which is
-    // `parseDataRows`'s own JSONL fallback territory) takes the standard path.
+    // re-infer the schema, just refresh the validation data). A JSON-shaped
+    // file is sniffed for GeoJSON first (it needs the raw parsed document,
+    // before any parser flattens it into rows); everything else — including
+    // a JSON file that isn't GeoJSON-shaped — goes through the generic
+    // parser registry (JSON/JSONL, CSV, Excel; see `import-parsers/registry.ts`).
     ingest = async (file: File, keepSchema: boolean) => {
-      if (!isSupportedFile(file)) {
-        toast.error("Please upload a .json or .jsonl file.");
-        return;
-      }
-      let text: string;
-      try {
-        text = await readFileAsText(file);
-      } catch {
-        toast.error("Could not read that file.");
-        return;
+      if (looksLikeJsonFile(file)) {
+        let text: string;
+        try {
+          text = await readFileAsText(file);
+        } catch {
+          toast.error("Could not read that file.");
+          return;
+        }
+        let wholeTextParsed: unknown;
+        try {
+          wholeTextParsed = JSON.parse(text);
+        } catch {
+          wholeTextParsed = undefined;
+        }
+        if (wholeTextParsed !== undefined && looksLikeGeoJson(wholeTextParsed)) {
+          ingestGeoJson(wholeTextParsed, file, keepSchema);
+          return;
+        }
       }
 
-      let wholeTextParsed: unknown;
-      try {
-        wholeTextParsed = JSON.parse(text);
-      } catch {
-        ingestStandard(text, file, keepSchema);
+      const parser = findImportParser(file);
+      if (!parser) {
+        toast.error(`Please upload a supported file (${enabledExtensionsHint()}).`);
         return;
       }
-
-      if (looksLikeGeoJson(wholeTextParsed)) {
-        ingestGeoJson(wholeTextParsed, file, keepSchema);
-      } else {
-        ingestStandard(text, file, keepSchema);
+      let result: ImportParseResult;
+      try {
+        result = await parser.parse(file);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not read that file.");
+        return;
       }
+      applyParseResult(result, file.name, keepSchema);
+    },
+    handleSheetSelect = (sheetName: string) => {
+      if (!workbookSheets) {
+        return;
+      }
+      const sheet = workbookSheets.find((s) => s.name === sheetName);
+      if (!sheet) {
+        return;
+      }
+      applySheet(sheet, workbookFileName, workbookKeepSchema);
     },
     handleSave: SchemaEditorSave = async (
       schemaJson,
@@ -504,6 +551,19 @@ export function DatasetImporter({
 
   if (importing || status === "completed") {
     return <ImportProgressView progress={progress} fallbackTotal={rows ? rows.length : 0} />;
+  }
+
+  if (workbookSheets) {
+    return (
+      <SheetPicker
+        fileName={workbookFileName}
+        sheets={workbookSheets.map((sheet) => ({ name: sheet.name, rowCount: sheet.rows.length }))}
+        onSelect={handleSheetSelect}
+        onCancel={() => {
+          setWorkbookSheets(null);
+        }}
+      />
+    );
   }
 
   if (rows) {

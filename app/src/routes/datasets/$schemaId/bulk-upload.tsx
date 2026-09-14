@@ -1,10 +1,20 @@
 import {
+  enabledAcceptString,
+  enabledExtensionsHint,
+  findImportParser,
   isGeometryCompatibleWithDatasetType,
   looksLikeGeoJson,
   parseDataRows,
   parseGeoJsonFeatures,
 } from "@caden/json-cms/react";
-import type { Geometry, GeometryType, GeoJsonRow } from "@caden/json-cms/react";
+import type {
+  Geometry,
+  GeometryType,
+  GeoJsonRow,
+  ImportParseResult,
+  ParsedSheet,
+} from "@caden/json-cms/react";
+import { SheetPicker } from "@caden/json-cms/react/ui";
 import validator from "@rjsf/validator-ajv8";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
@@ -185,6 +195,72 @@ function isGeospatialSchema(schema: { kind?: string } | null | undefined): boole
   return schema ? schema.kind === "geospatial" : false;
 }
 
+type LoadFileOutcome =
+  | { kind: "text"; text: string }
+  | { kind: "parsed"; result: ImportParseResult }
+  | { kind: "error"; message: string };
+
+/**
+ * Reads and parses one uploaded file, without touching any component state —
+ * extracted (like the validators above) to keep `BulkUploadPage`'s own
+ * complexity down. A JSON/JSONL/GeoJSON-shaped file is handled by the
+ * existing text-based GeoJSON-sniffing + AJV pipeline (`kind: "text"`);
+ * everything else goes through the pluggable parser registry (CSV, Excel).
+ */
+/**
+ * What to do with a registry parser's result: zero sheets is an error, one
+ * sheet applies directly, and more than one goes to the sheet picker.
+ * Extracted (like `loadImportedFile`) to keep `BulkUploadPage`'s own
+ * complexity down — the component just dispatches on `kind`.
+ */
+type ParsedResultOutcome =
+  | { kind: "error"; message: string }
+  | { kind: "single"; sheet: ParsedSheet }
+  | { kind: "multiple"; sheets: ParsedSheet[] };
+
+function resolveParsedResult(result: ImportParseResult, sourceName: string): ParsedResultOutcome {
+  if (result.sheets.length === 0) {
+    return {
+      kind: "error",
+      message:
+        result.errors.length > 0
+          ? `Could not parse ${sourceName} (${result.errors.length} error(s)).`
+          : `${sourceName} has no data rows.`,
+    };
+  }
+  if (result.sheets.length > 1) {
+    return { kind: "multiple", sheets: result.sheets };
+  }
+  return { kind: "single", sheet: result.sheets[0] };
+}
+
+async function loadImportedFile(file: File, isGeospatial: boolean): Promise<LoadFileOutcome> {
+  const jsonLikePattern = isGeospatial
+    ? /\.(json|jsonl|ndjson|geojson)$/i
+    : /\.(json|jsonl|ndjson)$/i;
+  if (jsonLikePattern.test(file.name) || file.type === "application/json") {
+    try {
+      return { kind: "text", text: await readFileAsText(file) };
+    } catch {
+      return { kind: "error", message: "Could not read that file." };
+    }
+  }
+
+  const parser = findImportParser(file);
+  if (!parser) {
+    const hint = isGeospatial ? `.geojson, ${enabledExtensionsHint()}` : enabledExtensionsHint();
+    return { kind: "error", message: `Please upload a supported file (${hint}).` };
+  }
+  try {
+    return { kind: "parsed", result: await parser.parse(file) };
+  } catch (error) {
+    return {
+      kind: "error",
+      message: error instanceof Error ? error.message : "Could not read that file.",
+    };
+  }
+}
+
 function countResults(results: ValidationResult[] | null): {
   validCount: number;
   invalidCount: number;
@@ -218,6 +294,52 @@ interface UploadCardProps {
   isGeospatial: boolean;
 }
 
+interface SheetPickerHandoff {
+  fileName: string;
+  sheets: ParsedSheet[];
+  onSelect: (sheetName: string) => void;
+  onCancel: () => void;
+}
+
+/** `null` when there's no pending multi-sheet workbook to pick from — extracted so this ternary lives outside `BulkUploadPage`'s own body. */
+function buildSheetPickerHandoff(
+  sheets: ParsedSheet[] | null,
+  fileName: string,
+  onSelect: (sheetName: string) => void,
+  onCancel: () => void,
+): SheetPickerHandoff | null {
+  return sheets ? { fileName, onCancel, onSelect, sheets } : null;
+}
+
+/**
+ * Either the sheet picker (a just-uploaded workbook has more than one sheet
+ * and none is chosen yet) or the normal upload card. Extracted as its own
+ * component — rather than an inline ternary in `BulkUploadPage`'s JSX — so
+ * the branch doesn't add to that component's own cyclomatic complexity.
+ */
+function ImportSourcePanel({
+  sheetPicker,
+  uploadCard,
+}: {
+  sheetPicker: SheetPickerHandoff | null;
+  uploadCard: UploadCardProps;
+}) {
+  if (sheetPicker) {
+    return (
+      <SheetPicker
+        fileName={sheetPicker.fileName}
+        sheets={sheetPicker.sheets.map((sheet) => ({
+          name: sheet.name,
+          rowCount: sheet.rows.length,
+        }))}
+        onSelect={sheetPicker.onSelect}
+        onCancel={sheetPicker.onCancel}
+      />
+    );
+  }
+  return <UploadCard {...uploadCard} />;
+}
+
 function UploadCard({
   schemaTitle,
   jsonText,
@@ -237,23 +359,19 @@ function UploadCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>JSON Input</CardTitle>
+        <CardTitle>Data Input</CardTitle>
         <CardDescription>
-          Upload a <code>.json</code> or <code>.jsonl</code> file or paste a JSON array below. Each
-          object will be validated against the <strong>{schemaTitle}</strong> schema.
+          Upload a JSON, CSV, or Excel file, or paste a JSON array below. Each object will be
+          validated against the <strong>{schemaTitle}</strong> schema.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2">
-          <Label>Upload JSON File</Label>
+          <Label>Upload Data File</Label>
           <input
             ref={fileInputRef}
             type="file"
-            accept={
-              isGeospatial
-                ? ".json,.jsonl,.ndjson,.geojson,application/json"
-                : ".json,.jsonl,.ndjson,application/json"
-            }
+            accept={isGeospatial ? `.geojson,${enabledAcceptString()}` : enabledAcceptString()}
             className="hidden"
             onChange={onFileChange}
           />
@@ -262,7 +380,7 @@ function UploadCard({
             // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
             role="button"
             tabIndex={0}
-            aria-label="Drop zone: drag a JSON file here or click to browse"
+            aria-label="Drop zone: drag a data file here or click to browse"
             className={[
               "flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-6 py-6 text-center transition-colors cursor-pointer",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -307,10 +425,10 @@ function UploadCard({
                 <p className="text-sm font-medium">
                   {isDragging
                     ? "Drop your file here"
-                    : "Drag & drop a JSON file, or click to browse"}
+                    : "Drag & drop a data file, or click to browse"}
                 </p>
                 <p className="text-xs">
-                  {isGeospatial ? ".json, .jsonl, or .geojson files" : ".json or .jsonl files"}
+                  {isGeospatial ? `.geojson, ${enabledExtensionsHint()}` : enabledExtensionsHint()}
                 </p>
               </>
             )}
@@ -452,6 +570,10 @@ function BulkUploadPage() {
     [validationResults, setValidationResults] = useState<ValidationResult[] | null>(null),
     [isSubmitting, setIsSubmitting] = useState(false),
     [importId, setImportId] = useState<string | undefined>(),
+    // Set only while a just-uploaded workbook has more than one sheet and the
+    // user hasn't picked one yet.
+    [workbookSheets, setWorkbookSheets] = useState<ParsedSheet[] | null>(null),
+    [workbookFileName, setWorkbookFileName] = useState(""),
     fileInputRef = useRef<HTMLInputElement>(null),
     importStatus = useQuery(api.imports.getImportStatus, importId ? { importId } : "skip"),
     importStatusValue = importStatus ? importStatus.status : undefined,
@@ -508,28 +630,52 @@ function BulkUploadPage() {
       setValidationResults(outcome.results ?? []);
     },
     isGeospatial = isGeospatialSchema(schema),
-    loadFile = async (file: File) => {
-      const extensionPattern = isGeospatial
-        ? /\.(json|jsonl|ndjson|geojson)$/i
-        : /\.(json|jsonl|ndjson)$/i;
-      if (!extensionPattern.test(file.name) && file.type !== "application/json") {
-        toast.error(
-          isGeospatial
-            ? "Please upload a .json, .jsonl, or .geojson file."
-            : "Please upload a .json or .jsonl file.",
-        );
-        return;
-      }
-      setFileName(file.name);
-      let text: string;
-      try {
-        text = await readFileAsText(file);
-      } catch {
-        toast.error("Could not read that file.");
-        return;
-      }
+    // Convert one already-parsed sheet of plain rows (from a CSV or Excel
+    // parser) into JSON text and feed it through the exact same
+    // validate/upload pipeline a pasted or uploaded JSON array already uses.
+    applySheetText = (sheet: ParsedSheet, name: string) => {
+      setFileName(name);
+      const text = JSON.stringify(sheet.rows, null, 2);
       setJsonText(text);
+      setWorkbookSheets(null);
       validateJson(text);
+    },
+    loadFile = async (file: File) => {
+      const outcome = await loadImportedFile(file, isGeospatial);
+      if (outcome.kind === "error") {
+        toast.error(outcome.message);
+        return;
+      }
+      if (outcome.kind === "text") {
+        setFileName(file.name);
+        setJsonText(outcome.text);
+        validateJson(outcome.text);
+        return;
+      }
+      if (outcome.result.errors.length > 0) {
+        toast.warning(
+          `Skipped ${outcome.result.errors.length} row(s) with errors while parsing ${file.name}.`,
+        );
+      }
+      const resolved = resolveParsedResult(outcome.result, file.name);
+      if (resolved.kind === "error") {
+        toast.error(resolved.message);
+      } else if (resolved.kind === "multiple") {
+        setWorkbookSheets(resolved.sheets);
+        setWorkbookFileName(file.name);
+      } else {
+        applySheetText(resolved.sheet, file.name);
+      }
+    },
+    handleSheetSelect = (sheetName: string) => {
+      if (!workbookSheets) {
+        return;
+      }
+      const sheet = workbookSheets.find((s) => s.name === sheetName);
+      if (!sheet) {
+        return;
+      }
+      applySheetText(sheet, workbookFileName);
     },
     handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = firstFile(e.target.files);
@@ -561,6 +707,7 @@ function BulkUploadPage() {
       setFileName(null);
       setParseError(null);
       setValidationResults(null);
+      setWorkbookSheets(null);
     },
     handleSubmit = async () => {
       if (!validationResults) {
@@ -663,37 +810,47 @@ function BulkUploadPage() {
           <div>
             <h1 className="text-3xl font-bold text-primary">Bulk Upload</h1>
             <p className="text-muted-foreground mt-1">
-              Upload a JSON array of objects to create multiple entries at once.
+              Upload a JSON, CSV, or Excel file to create multiple entries at once.
             </p>
           </div>
         </div>
       </div>
 
       <div className="space-y-4">
-        <UploadCard
-          schemaTitle={schema.title}
-          jsonText={jsonText}
-          onJsonText={(value) => {
-            setJsonText(value);
-            if (fileName) {
-              setFileName(null);
-            }
-            setParseError(null);
-            setValidationResults(null);
+        <ImportSourcePanel
+          sheetPicker={buildSheetPickerHandoff(
+            workbookSheets,
+            workbookFileName,
+            handleSheetSelect,
+            () => {
+              setWorkbookSheets(null);
+            },
+          )}
+          uploadCard={{
+            arrayJsonSchema,
+            fileInputRef,
+            fileName,
+            isDragging,
+            isGeospatial,
+            jsonText,
+            onClear: clearInput,
+            onDragLeave: handleDragLeave,
+            onDragOver: handleDragOver,
+            onDrop: handleDrop,
+            onFileChange: handleFileChange,
+            onJsonText: (value) => {
+              setJsonText(value);
+              if (fileName) {
+                setFileName(null);
+              }
+              setParseError(null);
+              setValidationResults(null);
+            },
+            onValidate: () => {
+              validateJson(jsonText);
+            },
+            schemaTitle: schema.title,
           }}
-          fileName={fileName}
-          isDragging={isDragging}
-          fileInputRef={fileInputRef}
-          onFileChange={handleFileChange}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          onClear={clearInput}
-          onValidate={() => {
-            validateJson(jsonText);
-          }}
-          arrayJsonSchema={arrayJsonSchema}
-          isGeospatial={isGeospatial}
         />
 
         {/* Parse error */}

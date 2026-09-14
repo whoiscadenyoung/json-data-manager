@@ -27,6 +27,8 @@ export { EntryForm } from "./entry-form.js";
 export type { EntryFormProps } from "./entry-form.js";
 export { SchemaList } from "./schema-list.js";
 export type { SchemaListProps, SchemaSummary } from "./schema-list.js";
+export { SheetPicker } from "./sheet-picker.js";
+export type { SheetPickerProps, SheetPickerSheet } from "./sheet-picker.js";
 
 // Primitives
 export { Button, buttonVariants } from "./primitives/button.js";
