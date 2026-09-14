@@ -307,6 +307,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       any,
       Name
     >;
+    startGeospatialConversion: FunctionReference<
+      "mutation",
+      "internal",
+      { latField: string; lonField: string; schemaId: string; total: number },
+      string,
+      Name
+    >;
     startImport: FunctionReference<
       "mutation",
       "internal",

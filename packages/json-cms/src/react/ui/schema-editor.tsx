@@ -1,5 +1,6 @@
 import { AlertCircle, Code2, FileJson, LayoutTemplate, Save, Upload } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { toast } from "sonner";
 
 import { GEOMETRY_TYPES } from "../../shared/geojson/types.js";
@@ -117,6 +118,8 @@ interface SchemaEditorProps {
   geometryTypeSummary?: string;
   /** Other datasets the Visual builder's "reference" property type can link to. Omit/empty to hide that capability. */
   availableDatasets?: ReferenceDatasetOption[];
+  /** Extra chrome rendered below the "Dataset Type" section — e.g. the dataset importer's coordinate-column picker. Opt-in; renders nothing when omitted. */
+  editorChrome?: ReactNode;
 }
 
 interface PendingFile {
@@ -607,6 +610,7 @@ export function SchemaEditor({
   geometryTypeReadOnly,
   geometryTypeSummary,
   availableDatasets,
+  editorChrome,
 }: SchemaEditorProps) {
   const [schemaJson, setSchemaJson] = useState(initialJson),
     [uiSchemaJson, setUiSchemaJson] = useState(initialUiSchemaJson),
@@ -802,6 +806,8 @@ export function SchemaEditor({
             geometryTypeReadOnly={geometryTypeReadOnly}
             geometryTypeSummary={geometryTypeSummary}
           />
+
+          {editorChrome}
 
           <SizeWarnings
             schemaOver={isOverLimit}

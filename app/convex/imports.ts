@@ -7,4 +7,5 @@ export const {
   generateImportUploadUrl: generateUploadUrl,
   startImport,
   getImportStatus,
+  startGeospatialConversion,
 } = exposeApi(components.jsonCms, { auth });
