@@ -2,6 +2,8 @@ import { AlertTriangle, CheckCircle, FileJson, Loader2, Upload, XCircle } from "
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 
+import type { GeometryType } from "../../shared/geojson/types.js";
+import { looksLikeGeoJson, parseGeoJsonFeatures } from "../lib/geojson-import.js";
 import { inferSchemaFromData } from "../lib/infer-schema.js";
 import { parseDataRows } from "../lib/parse-data.js";
 import { cn } from "./lib/utils.js";
@@ -17,6 +19,12 @@ export interface DatasetImportProgress {
   error?: string;
 }
 
+/** One row headed for `useDatasetImport().start` — matches `StartDatasetImportArgs.rows`. */
+export interface DatasetImportRow {
+  data: unknown;
+  geometry?: unknown;
+}
+
 export interface DatasetImporterProps {
   /**
    * Create the schema + entries from the reviewed schema and imported rows.
@@ -27,7 +35,9 @@ export interface DatasetImporterProps {
     parsedSchema: object,
     uiSchemaJson: string,
     parsedUiSchema: object,
-    rows: unknown[],
+    rows: DatasetImportRow[],
+    kind: "standard" | "geospatial",
+    geometryType: GeometryType | undefined,
   ) => Promise<void>;
   /** Live progress of the running import (drives the progress bar). */
   progress?: DatasetImportProgress | null;
@@ -60,6 +70,36 @@ async function readFileAsText(file: File): Promise<string> {
 /** First file from an input's FileList, or undefined. */
 function firstFile(list: FileList | null): File | undefined {
   return list && list.length > 0 ? list[0] : undefined;
+}
+
+/**
+ * A short summary of the pre-coalesce geometry type breakdown, e.g.
+ * "142 Polygon + 8 MultiPolygon → coalesced to MultiPolygon · 3 rows have no
+ * geometry". Shown next to the resolved (read-only) geometry type after a
+ * GeoJSON import.
+ */
+function summarizeGeometryTypes(
+  typeCounts: Record<string, number>,
+  geometryType: GeometryType | null,
+  geometrylessCount: number,
+): string {
+  const entries =
+      // oxlint-disable-next-line unicorn/no-array-sort -- `.toSorted()` needs ES2023 lib; this repo targets ES2021, and `Object.entries()` already returns a fresh array so mutating it in place is harmless.
+      Object.entries(typeCounts).sort(([a], [b]) => a.localeCompare(b)),
+    parts: string[] = [];
+  if (entries.length > 0) {
+    const countsPart = entries.map(([type, count]) => `${count} ${type}`).join(" + ");
+    parts.push(
+      entries.length > 1 && geometryType !== null
+        ? `${countsPart} → coalesced to ${geometryType}`
+        : countsPart,
+    );
+  }
+  if (geometrylessCount > 0) {
+    const verb = geometrylessCount === 1 ? "has" : "have";
+    parts.push(`${geometrylessCount} row${geometrylessCount === 1 ? "" : "s"} ${verb} no geometry`);
+  }
+  return parts.join(" · ");
 }
 
 function statusIcon(failed: boolean, done: boolean) {
@@ -224,14 +264,26 @@ function DatasetReview({
   saveLabel,
   onReupload,
   onSave,
+  datasetKind,
+  onDatasetKindChange,
+  geometryType,
+  onGeometryTypeChange,
+  geometryTypeReadOnly,
+  geometryTypeSummary,
 }: {
-  rows: unknown[];
+  rows: DatasetImportRow[];
   fileName: string | null;
   inferredJson: string;
   dataText: string;
   saveLabel: string;
   onReupload: (file: File) => void;
   onSave: SchemaEditorSave;
+  datasetKind: "standard" | "geospatial";
+  onDatasetKindChange: (kind: "standard" | "geospatial") => void;
+  geometryType: GeometryType | undefined;
+  onGeometryTypeChange: (type: GeometryType) => void;
+  geometryTypeReadOnly: boolean;
+  geometryTypeSummary: string | undefined;
 }) {
   const reuploadInputRef = useRef<HTMLInputElement>(null);
   return (
@@ -284,6 +336,12 @@ function DatasetReview({
         requireValidData
         saveLabel={saveLabel}
         onSave={onSave}
+        datasetKind={datasetKind}
+        onDatasetKindChange={onDatasetKindChange}
+        geometryType={geometryType}
+        onGeometryTypeChange={onGeometryTypeChange}
+        geometryTypeReadOnly={geometryTypeReadOnly}
+        geometryTypeSummary={geometryTypeSummary}
       />
     </div>
   );
@@ -301,25 +359,60 @@ export function DatasetImporter({
   progress,
   saveLabel = "Create dataset",
 }: DatasetImporterProps) {
-  const [rows, setRows] = useState<unknown[] | null>(null),
+  const [rows, setRows] = useState<DatasetImportRow[] | null>(null),
     [inferredJson, setInferredJson] = useState(""),
     [dataText, setDataText] = useState(""),
     [fileName, setFileName] = useState<string | null>(null),
     [submitting, setSubmitting] = useState(false),
-    // Parse a file into rows. `keepSchema` is true for a re-upload (don't
-    // Re-infer the schema, just refresh the validation data).
-    ingest = async (file: File, keepSchema: boolean) => {
-      if (!isSupportedFile(file)) {
-        toast.error("Please upload a .json or .jsonl file.");
+    // Dataset-level kind/geometry state, owned here and threaded into
+    // `SchemaEditor`'s controlled "Dataset Type" section (see schema-editor.tsx).
+    [datasetKind, setDatasetKind] = useState<"standard" | "geospatial">("standard"),
+    [geometryType, setGeometryType] = useState<GeometryType | undefined>(undefined),
+    // True only while the current geometryType was computed by coalescing an
+    // actual GeoJSON import (not hand-picked via the toggle).
+    [geometryTypeReadOnly, setGeometryTypeReadOnly] = useState(false),
+    [geometryTypeSummary, setGeometryTypeSummary] = useState<string | undefined>(undefined),
+    // A FeatureCollection / bare Feature array: geometry is split out into its
+    // own rows shape and never enters the inferred JSON Schema.
+    ingestGeoJson = (parsedJson: unknown, file: File, keepSchema: boolean) => {
+      const result = parseGeoJsonFeatures(parsedJson);
+      if (result.coalesceError !== undefined) {
+        toast.error(result.coalesceError);
         return;
       }
-      let text: string;
-      try {
-        text = await readFileAsText(file);
-      } catch {
-        toast.error("Could not read that file.");
+      if (result.rows.length === 0) {
+        toast.error(
+          result.errors.length > 0
+            ? `No valid features found (${result.errors.length} malformed feature(s)).`
+            : "That file has no features.",
+        );
         return;
       }
+      if (result.errors.length > 0) {
+        toast.warning(
+          `Skipped ${result.errors.length} malformed feature(s); imported ${result.rows.length} features.`,
+        );
+      }
+      const geometrylessCount = result.rows.filter((row) => row.geometry === undefined).length,
+        properties = result.rows.map((row) => row.data);
+      setRows(result.rows.map((row) => ({ data: row.data, geometry: row.geometry })));
+      setFileName(file.name);
+      setDataText(JSON.stringify(properties, null, 2));
+      setDatasetKind("geospatial");
+      setGeometryType(result.geometryType ?? undefined);
+      setGeometryTypeReadOnly(true);
+      setGeometryTypeSummary(
+        summarizeGeometryTypes(result.typeCounts, result.geometryType, geometrylessCount),
+      );
+      if (keepSchema) {
+        toast.success(`Reloaded ${result.rows.length} features from ${file.name}.`);
+      } else {
+        setInferredJson(JSON.stringify(inferSchemaFromData(properties), null, 2));
+        toast.success(`Inferred a schema from ${result.rows.length} features in ${file.name}.`);
+      }
+    },
+    // The existing plain-data flow, untouched beyond wrapping each row as `{ data }`.
+    ingestStandard = (text: string, file: File, keepSchema: boolean) => {
       const { rows: parsedRows, errors } = parseDataRows(text);
       if (parsedRows.length === 0) {
         toast.error(
@@ -334,14 +427,50 @@ export function DatasetImporter({
           `Skipped ${errors.length} malformed line(s); imported ${parsedRows.length} rows.`,
         );
       }
-      setRows(parsedRows);
+      setRows(parsedRows.map((data) => ({ data })));
       setFileName(file.name);
       setDataText(JSON.stringify(parsedRows, null, 2));
+      setDatasetKind("standard");
+      setGeometryType(undefined);
+      setGeometryTypeReadOnly(false);
+      setGeometryTypeSummary(undefined);
       if (keepSchema) {
         toast.success(`Reloaded ${parsedRows.length} rows from ${file.name}.`);
       } else {
         setInferredJson(JSON.stringify(inferSchemaFromData(parsedRows), null, 2));
         toast.success(`Inferred a schema from ${parsedRows.length} rows in ${file.name}.`);
+      }
+    },
+    // Parse a file into rows. `keepSchema` is true for a re-upload (don't
+    // re-infer the schema, just refresh the validation data). A whole-text
+    // JSON.parse that succeeds and looks GeoJSON-shaped takes the geometry
+    // path; everything else (including a failed whole-text parse, which is
+    // `parseDataRows`'s own JSONL fallback territory) takes the standard path.
+    ingest = async (file: File, keepSchema: boolean) => {
+      if (!isSupportedFile(file)) {
+        toast.error("Please upload a .json or .jsonl file.");
+        return;
+      }
+      let text: string;
+      try {
+        text = await readFileAsText(file);
+      } catch {
+        toast.error("Could not read that file.");
+        return;
+      }
+
+      let wholeTextParsed: unknown;
+      try {
+        wholeTextParsed = JSON.parse(text);
+      } catch {
+        ingestStandard(text, file, keepSchema);
+        return;
+      }
+
+      if (looksLikeGeoJson(wholeTextParsed)) {
+        ingestGeoJson(wholeTextParsed, file, keepSchema);
+      } else {
+        ingestStandard(text, file, keepSchema);
       }
     },
     handleSave: SchemaEditorSave = async (
@@ -355,7 +484,15 @@ export function DatasetImporter({
       }
       setSubmitting(true);
       try {
-        await onImport(schemaJson, parsedSchema, uiSchemaJson, parsedUiSchema, rows);
+        await onImport(
+          schemaJson,
+          parsedSchema,
+          uiSchemaJson,
+          parsedUiSchema,
+          rows,
+          datasetKind,
+          geometryType,
+        );
       } catch (error) {
         setSubmitting(false);
         toast.error(error instanceof Error ? error.message : "Failed to start import.");
@@ -379,6 +516,12 @@ export function DatasetImporter({
         saveLabel={saveLabel}
         onReupload={(file) => void ingest(file, true)}
         onSave={handleSave}
+        datasetKind={datasetKind}
+        onDatasetKindChange={setDatasetKind}
+        geometryType={geometryType}
+        onGeometryTypeChange={setGeometryType}
+        geometryTypeReadOnly={geometryTypeReadOnly}
+        geometryTypeSummary={geometryTypeSummary}
       />
     );
   }

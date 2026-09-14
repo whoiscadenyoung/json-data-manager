@@ -101,6 +101,11 @@ function EditSchemaPage() {
           </RouterButton>
           <h1 className="text-3xl font-bold text-primary">Edit Dataset</h1>
         </div>
+        {schema.kind === "geospatial" && (
+          <p className="mt-2 text-sm text-muted-foreground">
+            Geospatial dataset · {schema.geometryType} geometry
+          </p>
+        )}
       </div>
 
       {hasEntries ? (

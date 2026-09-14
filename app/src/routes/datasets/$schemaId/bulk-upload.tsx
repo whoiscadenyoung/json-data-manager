@@ -1,4 +1,10 @@
-import { parseDataRows } from "@caden/json-cms/react";
+import {
+  isGeometryCompatibleWithDatasetType,
+  looksLikeGeoJson,
+  parseDataRows,
+  parseGeoJsonFeatures,
+} from "@caden/json-cms/react";
+import type { Geometry, GeometryType, GeoJsonRow } from "@caden/json-cms/react";
 import validator from "@rjsf/validator-ajv8";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
@@ -29,6 +35,7 @@ export const Route = createFileRoute("/datasets/$schemaId/bulk-upload")({
 interface ValidationResult {
   index: number;
   data: unknown;
+  geometry?: unknown;
   valid: boolean;
   errors: string[];
 }
@@ -49,6 +56,133 @@ async function readFileAsText(file: File): Promise<string> {
 /** First file from an input's FileList, or undefined. */
 function firstFile(list: FileList | null): File | undefined {
   return list && list.length > 0 ? list[0] : undefined;
+}
+
+/** AJV property-validation errors for one row's data against the dataset's JSON Schema. */
+function ajvErrorsFor(data: unknown, jsonSchema: object): string[] {
+  const { errors } = validator.validateFormData(data, jsonSchema);
+  return errors.map((e) => e.stack ?? e.message ?? JSON.stringify(e));
+}
+
+/**
+ * Geometry-compatibility error for one row's geometry against the dataset's
+ * already-locked geometry type, or none. A row with no geometry is always
+ * fine — entries without geometry are allowed.
+ */
+function geometryErrorsFor(
+  geometry: Geometry | undefined,
+  datasetGeometryType: string | undefined,
+): string[] {
+  if (geometry === undefined || datasetGeometryType === undefined) {
+    return [];
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- `SchemaDoc.geometryType` is widened to `string`, but a geospatial schema's value is always a real `GeometryType` (enforced by the component's validator at write time).
+  const lockedType = datasetGeometryType as GeometryType;
+  return isGeometryCompatibleWithDatasetType(geometry.type, lockedType)
+    ? []
+    : [
+        `Geometry type "${geometry.type}" is not compatible with this dataset's "${lockedType}" geometry type.`,
+      ];
+}
+
+/** Validates a batch of GeoJSON-derived rows: AJV on `data` plus geometry-compatibility on `geometry`. */
+function validateGeoJsonRows(
+  rows: GeoJsonRow[],
+  jsonSchema: object,
+  datasetGeometryType: string | undefined,
+): ValidationResult[] {
+  return rows.map((item, index) => {
+    const errors = [
+      ...ajvErrorsFor(item.data, jsonSchema),
+      ...geometryErrorsFor(item.geometry, datasetGeometryType),
+    ];
+    return { data: item.data, errors, geometry: item.geometry, index, valid: errors.length === 0 };
+  });
+}
+
+/** Whole-text JSON.parse + GeoJSON shape check, collapsed to one call. `undefined` when either fails. */
+function tryParseGeoJson(text: string): unknown {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  return looksLikeGeoJson(parsed) ? parsed : undefined;
+}
+
+interface GeoJsonValidationOutcome {
+  /** Set when the text was GeoJSON-shaped, whether or not it fully validated — the caller should stop and use this outcome instead of falling through to the plain row parser. */
+  handled: boolean;
+  parseError?: string;
+  warning?: string;
+  results?: ValidationResult[];
+}
+
+/**
+ * Attempts to validate `text` as GeoJSON for a geospatial-kind schema.
+ * Returns `{ handled: false }` when the text isn't GeoJSON-shaped (or fails to
+ * parse at all) so the caller falls through to the standard row parser.
+ */
+function tryValidateGeoJson(
+  text: string,
+  jsonSchema: object,
+  geometryType: string | undefined,
+): GeoJsonValidationOutcome {
+  const geoJsonCandidate = tryParseGeoJson(text);
+  if (geoJsonCandidate === undefined) {
+    return { handled: false };
+  }
+
+  const result = parseGeoJsonFeatures(geoJsonCandidate);
+  if (result.rows.length === 0) {
+    const parseError =
+      result.errors.length > 0
+        ? "Could not parse any features — check your GeoJSON input."
+        : "No features found — provide a FeatureCollection or Feature array.";
+    return { handled: true, parseError };
+  }
+
+  const warning =
+    result.errors.length > 0 ? `Skipped ${result.errors.length} malformed feature(s).` : undefined;
+  return {
+    handled: true,
+    results: validateGeoJsonRows(result.rows, jsonSchema, geometryType),
+    warning,
+  };
+}
+
+interface RowValidationOutcome {
+  parseError?: string;
+  warning?: string;
+  results?: ValidationResult[];
+}
+
+/** Validates plain JSON/JSONL row text (the standard, non-GeoJSON path) against the dataset's schema. */
+function validateStandardRows(text: string, jsonSchema: object): RowValidationOutcome {
+  const { rows, errors: parseErrors } = parseDataRows(text);
+
+  if (rows.length === 0) {
+    const parseError =
+      parseErrors.length > 0
+        ? "Could not parse any rows — check your JSON/JSONL input."
+        : "No rows found — provide a JSON array or JSONL file.";
+    return { parseError };
+  }
+
+  const warning =
+      parseErrors.length > 0 ? `Skipped ${parseErrors.length} malformed line(s).` : undefined,
+    results: ValidationResult[] = rows.map((item, index) => {
+      const errors = ajvErrorsFor(item, jsonSchema);
+      return { data: item, errors, index, valid: errors.length === 0 };
+    });
+
+  return { results, warning };
+}
+
+/** Extracted so this ternary doesn't add to `BulkUploadPage`'s own cyclomatic complexity. */
+function isGeospatialSchema(schema: { kind?: string } | null | undefined): boolean {
+  return schema ? schema.kind === "geospatial" : false;
 }
 
 function countResults(results: ValidationResult[] | null): {
@@ -81,6 +215,7 @@ interface UploadCardProps {
   onClear: () => void;
   onValidate: () => void;
   arrayJsonSchema: object | undefined;
+  isGeospatial: boolean;
 }
 
 function UploadCard({
@@ -97,6 +232,7 @@ function UploadCard({
   onClear,
   onValidate,
   arrayJsonSchema,
+  isGeospatial,
 }: UploadCardProps) {
   return (
     <Card>
@@ -113,7 +249,11 @@ function UploadCard({
           <input
             ref={fileInputRef}
             type="file"
-            accept=".json,.jsonl,.ndjson,application/json"
+            accept={
+              isGeospatial
+                ? ".json,.jsonl,.ndjson,.geojson,application/json"
+                : ".json,.jsonl,.ndjson,application/json"
+            }
             className="hidden"
             onChange={onFileChange}
           />
@@ -169,7 +309,9 @@ function UploadCard({
                     ? "Drop your file here"
                     : "Drag & drop a JSON file, or click to browse"}
                 </p>
-                <p className="text-xs">.json or .jsonl files</p>
+                <p className="text-xs">
+                  {isGeospatial ? ".json, .jsonl, or .geojson files" : ".json or .jsonl files"}
+                </p>
               </>
             )}
           </div>
@@ -347,35 +489,35 @@ function BulkUploadPage() {
         return;
       }
 
-      const { rows, errors: parseErrors } = parseDataRows(text);
+      const geoOutcome =
+        schema.kind === "geospatial"
+          ? tryValidateGeoJson(text, schema.schema, schema.geometryType)
+          : { handled: false as const };
+      // Not GeoJSON-shaped (or the whole-text parse failed, or the dataset isn't
+      // geospatial) falls through to the standard row parser; rows just won't
+      // carry geometry.
+      const outcome = geoOutcome.handled ? geoOutcome : validateStandardRows(text, schema.schema);
 
-      if (rows.length === 0) {
-        setParseError(
-          parseErrors.length > 0
-            ? "Could not parse any rows — check your JSON/JSONL input."
-            : "No rows found — provide a JSON array or JSONL file.",
-        );
+      if (outcome.parseError !== undefined) {
+        setParseError(outcome.parseError);
         return;
       }
-      if (parseErrors.length > 0) {
-        toast.warning(`Skipped ${parseErrors.length} malformed line(s).`);
+      if (outcome.warning !== undefined) {
+        toast.warning(outcome.warning);
       }
-
-      const results: ValidationResult[] = rows.map((item, index) => {
-        const { errors } = validator.validateFormData(item, schema.schema);
-        return {
-          data: item,
-          errors: errors.map((e) => e.stack ?? e.message ?? JSON.stringify(e)),
-          index,
-          valid: errors.length === 0,
-        };
-      });
-
-      setValidationResults(results);
+      setValidationResults(outcome.results ?? []);
     },
+    isGeospatial = isGeospatialSchema(schema),
     loadFile = async (file: File) => {
-      if (!/\.(json|jsonl|ndjson)$/i.test(file.name) && file.type !== "application/json") {
-        toast.error("Please upload a .json or .jsonl file.");
+      const extensionPattern = isGeospatial
+        ? /\.(json|jsonl|ndjson|geojson)$/i
+        : /\.(json|jsonl|ndjson)$/i;
+      if (!extensionPattern.test(file.name) && file.type !== "application/json") {
+        toast.error(
+          isGeospatial
+            ? "Please upload a .json, .jsonl, or .geojson file."
+            : "Please upload a .json or .jsonl file.",
+        );
         return;
       }
       setFileName(file.name);
@@ -424,7 +566,9 @@ function BulkUploadPage() {
       if (!validationResults) {
         return;
       }
-      const validEntries = validationResults.filter((r) => r.valid).map((r) => r.data);
+      const validEntries = validationResults
+        .filter((r) => r.valid)
+        .map((r) => ({ data: r.data, geometry: r.geometry }));
       if (validEntries.length === 0) {
         toast.error("No valid entries to upload.");
         return;
@@ -549,6 +693,7 @@ function BulkUploadPage() {
             validateJson(jsonText);
           }}
           arrayJsonSchema={arrayJsonSchema}
+          isGeospatial={isGeospatial}
         />
 
         {/* Parse error */}

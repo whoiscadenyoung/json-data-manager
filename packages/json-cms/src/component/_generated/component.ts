@@ -10,6 +10,14 @@
 
 import type { FunctionReference } from "convex/server";
 
+type GeometryTypeLiteral =
+  | "Point"
+  | "MultiPoint"
+  | "LineString"
+  | "MultiLineString"
+  | "Polygon"
+  | "MultiPolygon";
+
 /**
  * A utility for referencing a Convex component's exposed API.
  *
@@ -26,21 +34,26 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
     createEntriesBulk: FunctionReference<
       "mutation",
       "internal",
-      { dataArray: Array<any>; schemaId: string },
+      { entries: Array<{ data: any; geometry?: any }>; schemaId: string },
       Array<string>,
       Name
     >;
     createEntry: FunctionReference<
       "mutation",
       "internal",
-      { data: any; schemaId: string },
+      { data: any; geometry?: any; schemaId: string },
       string,
       Name
     >;
     createSchema: FunctionReference<
       "mutation",
       "internal",
-      { schema: any; uiSchema?: any },
+      {
+        geometryType?: GeometryTypeLiteral;
+        kind?: "standard" | "geospatial";
+        schema: any;
+        uiSchema?: any;
+      },
       string,
       Name
     >;
@@ -62,6 +75,8 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         _creationTime: number;
         _id: string;
         data: any;
+        geometryId?: string;
+        geometryType?: GeometryTypeLiteral;
         schemaId: string;
       },
       Name
@@ -90,7 +105,11 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       null | {
         _creationTime: number;
         _id: string;
+        boundingBox?: Array<number>;
         description: string;
+        featureCount?: number;
+        geometryType?: GeometryTypeLiteral;
+        kind?: "standard" | "geospatial";
         schema: any;
         title: string;
         uiSchema?: any;
@@ -105,7 +124,24 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         _creationTime: number;
         _id: string;
         data: any;
+        geometryId?: string;
+        geometryType?: GeometryTypeLiteral;
         schemaId: string;
+      }>,
+      Name
+    >;
+    listGeometries: FunctionReference<
+      "query",
+      "internal",
+      { schemaId: string },
+      Array<{
+        _creationTime: number;
+        _id: string;
+        bbox?: Array<number>;
+        entryId: string;
+        geometry: any;
+        schemaId: string;
+        type: GeometryTypeLiteral;
       }>,
       Name
     >;
@@ -116,7 +152,11 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       Array<{
         _creationTime: number;
         _id: string;
+        boundingBox?: Array<number>;
         description: string;
+        featureCount?: number;
+        geometryType?: GeometryTypeLiteral;
+        kind?: "standard" | "geospatial";
         schema: any;
         title: string;
         uiSchema?: any;
@@ -133,7 +173,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
     updateEntry: FunctionReference<
       "mutation",
       "internal",
-      { data: any; entryId: string },
+      { data: any; entryId: string; geometry?: any },
       any,
       Name
     >;

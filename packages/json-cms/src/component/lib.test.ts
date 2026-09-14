@@ -1,6 +1,7 @@
 import { it, afterEach, describe, expect, beforeEach, vi } from "vitest";
 /// <reference types="vite/client" />
 
+import type { GeometryArgs, GeometryTypeArg } from "../shared/geojson/validators.js";
 import { api, internal } from "./_generated/api.js";
 import { initConvexTest } from "./setup.test.js";
 
@@ -41,6 +42,18 @@ async function storeRows(t: TestCtx, rows: unknown[]) {
   return t.run(async (ctx) =>
     ctx.storage.store(new Blob([JSON.stringify(rows)], { type: "application/json" })),
   );
+}
+
+async function createGeospatialSchema(t: TestCtx, geometryType: GeometryTypeArg) {
+  return t.mutation(api.lib.createSchema, {
+    geometryType,
+    kind: "geospatial",
+    schema: {
+      description: "A geospatial test schema",
+      title: "Geospatial Schema",
+      type: "object",
+    },
+  });
 }
 
 describe("json-cms component", () => {
@@ -295,6 +308,245 @@ describe("json-cms component", () => {
     });
   });
 
+  describe("geospatial datasets", () => {
+    const validPolygon: GeometryArgs = {
+        coordinates: [
+          [
+            [0, 0],
+            [1, 0],
+            [1, 1],
+            [0, 0],
+          ],
+        ],
+        type: "Polygon",
+      },
+      validMultiPolygon: GeometryArgs = {
+        coordinates: [
+          [
+            [
+              [0, 0],
+              [1, 0],
+              [1, 1],
+              [0, 0],
+            ],
+          ],
+        ],
+        type: "MultiPolygon",
+      },
+      invalidPoint: GeometryArgs = { coordinates: [200, 20], type: "Point" };
+
+    it("createSchema with kind 'geospatial' but no geometryType throws", async () => {
+      const t = initConvexTest();
+
+      await expect(
+        t.mutation(api.lib.createSchema, {
+          kind: "geospatial",
+          schema: {
+            description: "A geospatial test schema",
+            title: "Geospatial Schema",
+            type: "object",
+          },
+        }),
+      ).rejects.toThrow("A geospatial dataset must specify a geometryType.");
+    });
+
+    it("createSchema with kind 'geospatial' and geometryType 'Polygon' succeeds", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Polygon"),
+        schemaDoc = await t.query(api.lib.getSchema, { schemaId });
+      assertDefined(schemaDoc);
+      expect(schemaDoc.kind).toBe("geospatial");
+      expect(schemaDoc.geometryType).toBe("Polygon");
+    });
+
+    it("createEntry on a standard-kind schema with a geometry arg throws", async () => {
+      const t = initConvexTest(),
+        schemaId = await createTestSchema(t);
+
+      await expect(
+        t.mutation(api.lib.createEntry, {
+          data: { name: "test" },
+          geometry: validPolygon,
+          schemaId,
+        }),
+      ).rejects.toThrow("Cannot attach geometry to a standard dataset.");
+    });
+
+    it("createEntry on a MultiPolygon-locked schema accepts a Polygon geometry (asymmetric compatibility)", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "MultiPolygon"),
+        entryId = await t.mutation(api.lib.createEntry, {
+          data: { name: "test" },
+          geometry: validPolygon,
+          schemaId,
+        }),
+        entry = await t.query(api.lib.getEntry, { entryId });
+      assertDefined(entry);
+      // Stored as a pointer, not inline: `entries` never carries coordinates.
+      expect(entry).not.toHaveProperty("geometry");
+      expect(entry.geometryType).toBe("Polygon");
+      assertDefined(entry.geometryId);
+
+      // The real coordinates live only in `geometries`.
+      const geometries = await t.query(api.lib.listGeometries, { schemaId }),
+        geometryDoc = geometries.find((g) => g._id === entry.geometryId);
+      assertDefined(geometryDoc);
+      expect(geometryDoc.geometry).toStrictEqual(validPolygon);
+      expect(geometryDoc.type).toBe("Polygon");
+      expect(geometryDoc.entryId).toBe(entryId);
+    });
+
+    it("createEntry on a Polygon-locked schema rejects a MultiPolygon geometry (other direction of the asymmetry)", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Polygon");
+
+      await expect(
+        t.mutation(api.lib.createEntry, {
+          data: { name: "test" },
+          geometry: validMultiPolygon,
+          schemaId,
+        }),
+      ).rejects.toThrow(
+        'Geometry type "MultiPolygon" is not compatible with this dataset\'s "Polygon" geometry type.',
+      );
+    });
+
+    it("createEntry on a geospatial schema with a structurally invalid geometry throws", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Point");
+
+      await expect(
+        t.mutation(api.lib.createEntry, {
+          data: { name: "test" },
+          geometry: invalidPoint,
+          schemaId,
+        }),
+      ).rejects.toThrow("longitude must be a finite number in [-180, 180]");
+    });
+
+    it("featureCount/boundingBox track create -> update (replace) -> delete", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Point"),
+        pointA: GeometryArgs = { coordinates: [0, 0], type: "Point" },
+        pointB: GeometryArgs = { coordinates: [10, 10], type: "Point" },
+        pointC: GeometryArgs = { coordinates: [-5, -5], type: "Point" },
+        entryId = await t.mutation(api.lib.createEntry, {
+          data: {},
+          geometry: pointA,
+          schemaId,
+        });
+
+      let schemaDoc = await t.query(api.lib.getSchema, { schemaId });
+      assertDefined(schemaDoc);
+      expect(schemaDoc.featureCount).toBe(1);
+      expect(schemaDoc.boundingBox).toStrictEqual([0, 0, 0, 0]);
+
+      // Replace the geometry with one further out: bbox grows, count is unchanged
+      // (a replace, not an add), and the SAME `geometries` row is reused in place.
+      await t.mutation(api.lib.updateEntry, { data: {}, entryId, geometry: pointB });
+
+      schemaDoc = await t.query(api.lib.getSchema, { schemaId });
+      assertDefined(schemaDoc);
+      expect(schemaDoc.featureCount).toBe(1);
+      expect(schemaDoc.boundingBox).toStrictEqual([0, 0, 10, 10]);
+
+      const geometriesAfterUpdate = await t.query(api.lib.listGeometries, { schemaId });
+      expect(geometriesAfterUpdate).toHaveLength(1);
+      expect(geometriesAfterUpdate[0].geometry).toStrictEqual(pointB);
+
+      // A second entry elsewhere, to prove the bbox stays monotonic through a later delete.
+      await t.mutation(api.lib.createEntry, { data: {}, geometry: pointC, schemaId });
+
+      schemaDoc = await t.query(api.lib.getSchema, { schemaId });
+      assertDefined(schemaDoc);
+      expect(schemaDoc.featureCount).toBe(2);
+      expect(schemaDoc.boundingBox).toStrictEqual([-5, -5, 10, 10]);
+
+      // Delete the first entry: featureCount decrements exactly; bbox does NOT
+      // shrink back (monotonic-growth contract — see schema.ts).
+      await t.mutation(api.lib.deleteEntry, { entryId });
+
+      schemaDoc = await t.query(api.lib.getSchema, { schemaId });
+      assertDefined(schemaDoc);
+      expect(schemaDoc.featureCount).toBe(1);
+      expect(schemaDoc.boundingBox).toStrictEqual([-5, -5, 10, 10]);
+
+      const geometriesAfterDelete = await t.query(api.lib.listGeometries, { schemaId });
+      expect(geometriesAfterDelete).toHaveLength(1);
+    });
+
+    it("updateEntry with geometry: null explicitly clears geometry and decrements featureCount", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Point"),
+        entryId = await t.mutation(api.lib.createEntry, {
+          data: {},
+          geometry: { coordinates: [1, 1], type: "Point" },
+          schemaId,
+        });
+
+      await t.mutation(api.lib.updateEntry, { data: {}, entryId, geometry: null });
+
+      const entry = await t.query(api.lib.getEntry, { entryId });
+      assertDefined(entry);
+      expect(entry.geometryId).toBeUndefined();
+      expect(entry.geometryType).toBeUndefined();
+
+      const schemaDoc = await t.query(api.lib.getSchema, { schemaId });
+      assertDefined(schemaDoc);
+      expect(schemaDoc.featureCount).toBe(0);
+
+      const geometries = await t.query(api.lib.listGeometries, { schemaId });
+      expect(geometries).toHaveLength(0);
+    });
+
+    it("deleteSchema cascades geometries too", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Point");
+
+      await t.mutation(api.lib.createEntry, {
+        data: {},
+        geometry: { coordinates: [1, 1], type: "Point" },
+        schemaId,
+      });
+      // Sanity: the geometries row exists before deletion.
+      expect(await t.query(api.lib.listGeometries, { schemaId })).toHaveLength(1);
+
+      await t.mutation(api.lib.deleteSchema, { schemaId });
+
+      // `listGeometries` 404s on the deleted schemaId (it checks schema
+      // existence first), so inspect storage directly for orphans.
+      const orphanedGeometries = await t.run(async (ctx) =>
+        ctx.db
+          .query("geometries")
+          .withIndex("by_schema", (q) => q.eq("schemaId", schemaId))
+          .collect(),
+      );
+      expect(orphanedGeometries).toHaveLength(0);
+    });
+
+    it("createEntriesBulk computes the aggregate featureCount/boundingBox in a single schemas patch", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Point");
+
+      await t.mutation(api.lib.createEntriesBulk, {
+        entries: [
+          { data: { n: 1 }, geometry: { coordinates: [0, 0], type: "Point" } },
+          { data: { n: 2 } }, // No geometry — should not affect featureCount/boundingBox.
+          { data: { n: 3 }, geometry: { coordinates: [5, 5], type: "Point" } },
+        ],
+        schemaId,
+      });
+
+      const schemaDoc = await t.query(api.lib.getSchema, { schemaId });
+      assertDefined(schemaDoc);
+      expect(schemaDoc.featureCount).toBe(2);
+      expect(schemaDoc.boundingBox).toStrictEqual([0, 0, 5, 5]);
+
+      const geometries = await t.query(api.lib.listGeometries, { schemaId });
+      expect(geometries).toHaveLength(2);
+    });
+  });
+
   describe("entry operations", () => {
     it("create and list entries", async () => {
       const t = initConvexTest(),
@@ -342,7 +594,11 @@ describe("json-cms component", () => {
       const t = initConvexTest(),
         schemaId = await createTestSchema(t),
         ids = await t.mutation(api.lib.createEntriesBulk, {
-          dataArray: [{ name: "John" }, { name: "Jane" }, { name: "Bob" }],
+          entries: [
+            { data: { name: "John" } },
+            { data: { name: "Jane" } },
+            { data: { name: "Bob" } },
+          ],
           schemaId,
         });
       expect(ids).toHaveLength(3);
@@ -556,7 +812,7 @@ describe("json-cms component", () => {
     it("insertEntriesChunkInternal inserts a batch of entries", async () => {
       const t = initConvexTest(),
         schemaId = await createImportSchema(t),
-        chunk = Array.from({ length: 300 }, (_, i) => ({ name: `row-${i}` }));
+        chunk = Array.from({ length: 300 }, (_, i) => ({ data: { name: `row-${i}` } }));
 
       await t.mutation(internal.lib.insertEntriesChunkInternal, {
         dataArray: chunk,
@@ -570,7 +826,7 @@ describe("json-cms component", () => {
     it("insertChunkFromStorage reads storage and inserts the requested slice", async () => {
       const t = initConvexTest(),
         schemaId = await createImportSchema(t),
-        rows = Array.from({ length: 1200 }, (_, i) => ({ name: `row-${i}` })),
+        rows = Array.from({ length: 1200 }, (_, i) => ({ data: { name: `row-${i}` } })),
         storageId = await storeRows(t, rows),
         // Insert the middle batch [500, 1000).
         inserted = await t.action(internal.lib.insertChunkFromStorage, {

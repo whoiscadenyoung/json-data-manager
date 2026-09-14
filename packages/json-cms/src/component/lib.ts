@@ -1,6 +1,14 @@
 import { WorkflowManager } from "@convex-dev/workflow";
 import { ConvexError, v } from "convex/values";
 
+import { isGeometryCompatibleWithDatasetType } from "../shared/geojson/coalesce.js";
+import { GeoParseError, GeometryError } from "../shared/geojson/error.js";
+import { computeBbox, unionBbox } from "../shared/geojson/geometry.js";
+import { assertGeometry } from "../shared/geojson/geometry.js";
+import type { BoundingBox } from "../shared/geojson/geometry.js";
+import type { Geometry } from "../shared/geojson/types.js";
+import { geometryArgsValidator, geometryTypeValidator } from "../shared/geojson/validators.js";
+import type { GeometryTypeArg } from "../shared/geojson/validators.js";
 import { components, internal } from "./_generated/api.js";
 import type { Id } from "./_generated/dataModel.js";
 import {
@@ -10,6 +18,7 @@ import {
   mutation,
   query,
 } from "./_generated/server.js";
+import type { MutationCtx } from "./_generated/server.js";
 import schema from "./schema.js";
 
 const SCHEMA_SIZE_LIMIT = 102_400, // 100 KB
@@ -25,6 +34,10 @@ const SCHEMA_SIZE_LIMIT = 102_400, // 100 KB
   entryValidator = schema.tables.entries.validator.extend({
     _creationTime: v.number(),
     _id: v.id("entries"),
+  }),
+  geometryValidator = schema.tables.geometries.validator.extend({
+    _creationTime: v.number(),
+    _id: v.id("geometries"),
   });
 
 // Schema queries
@@ -43,8 +56,23 @@ export const getSchema = query({
 
 // Schema mutations
 
+/** Throws unless a `kind`/`geometryType` pair is a valid combination for a schema doc. */
+function assertKindAndGeometryType(
+  kind: "standard" | "geospatial" | undefined,
+  geometryType: GeometryTypeArg | undefined,
+): void {
+  if (kind === "geospatial" && geometryType === undefined) {
+    throw new ConvexError("A geospatial dataset must specify a geometryType.");
+  }
+  if (kind !== "geospatial" && geometryType !== undefined) {
+    throw new ConvexError("A standard dataset cannot specify a geometryType.");
+  }
+}
+
 export const createSchema = mutation({
   args: {
+    geometryType: v.optional(geometryTypeValidator),
+    kind: v.optional(v.union(v.literal("standard"), v.literal("geospatial"))),
     schema: v.any(),
     uiSchema: v.optional(v.any()),
   },
@@ -52,6 +80,8 @@ export const createSchema = mutation({
     if (!args.schema.title || !args.schema.description) {
       throw new ConvexError("Schema must have 'title' and 'description' properties");
     }
+
+    assertKindAndGeometryType(args.kind, args.geometryType);
 
     const schemaStr = JSON.stringify(args.schema);
     if (schemaStr.length > SCHEMA_SIZE_LIMIT) {
@@ -66,7 +96,11 @@ export const createSchema = mutation({
     }
 
     const schemaId = await ctx.db.insert("schemas", {
+      boundingBox: undefined,
       description: args.schema.description,
+      featureCount: args.kind === "geospatial" ? 0 : undefined,
+      geometryType: args.geometryType,
+      kind: args.kind,
       schema: args.schema,
       title: args.schema.title,
       uiSchema: args.uiSchema,
@@ -135,13 +169,22 @@ export const deleteSchema = mutation({
       throw new ConvexError("Schema not found");
     }
 
-    // Delete all entries associated with this schema first
-    const entries = await ctx.db
-      .query("entries")
-      .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
-      .collect();
+    // Delete all entries and geometries associated with this schema first
+    const [entries, geometries] = await Promise.all([
+      ctx.db
+        .query("entries")
+        .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
+        .collect(),
+      ctx.db
+        .query("geometries")
+        .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
+        .collect(),
+    ]);
 
-    await Promise.all(entries.map(async (entry) => ctx.db.delete(entry._id)));
+    await Promise.all([
+      ...entries.map(async (entry) => ctx.db.delete(entry._id)),
+      ...geometries.map(async (geometry) => ctx.db.delete(geometry._id)),
+    ]);
 
     await ctx.db.delete(args.schemaId);
   },
@@ -167,6 +210,27 @@ export const listEntries = query({
   returns: v.array(entryValidator),
 });
 
+/**
+ * List the full-geometry rows for a schema — the ONLY read path that pulls
+ * full coordinate payloads. Reserved for map rendering; the properties table
+ * (`listEntries`) never touches this table.
+ */
+export const listGeometries = query({
+  args: { schemaId: v.id("schemas") },
+  handler: async (ctx, args) => {
+    const schemaDoc = await ctx.db.get(args.schemaId);
+    if (!schemaDoc) {
+      throw new ConvexError("Schema not found");
+    }
+
+    return ctx.db
+      .query("geometries")
+      .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
+      .collect();
+  },
+  returns: v.array(geometryValidator),
+});
+
 export const getEntry = query({
   args: { entryId: v.id("entries") },
   handler: async (ctx, args) => ctx.db.get(args.entryId),
@@ -188,10 +252,226 @@ export const getEntryInternal = internalQuery({
 });
 
 // Entry mutations
+//
+// Geometry is never stored inline on `entries` — only a pointer
+// (`geometryId`) plus a denormalized `geometryType` string live there. The
+// heavy coordinate payload lives in the `geometries` table (see schema.ts),
+// so reading a page of entries (the properties table) never pulls full
+// geometries along for the ride. Every mutation below that adds/replaces/
+// removes a geometry also keeps the owning schema's denormalized
+// `featureCount`/`boundingBox` summary up to date (see schema.ts for the
+// exact contract on each field).
+
+/**
+ * Wraps `assertGeometry`, translating its custom error classes into a
+ * `ConvexError` — `GeometryError`/`GeoParseError` don't serialize usefully
+ * across the Convex function boundary, `ConvexError` does.
+ */
+function assertGeometryForConvex(geometry: unknown): Geometry {
+  try {
+    return assertGeometry(geometry);
+  } catch (err) {
+    if (err instanceof GeometryError || err instanceof GeoParseError) {
+      throw new ConvexError(err.message);
+    }
+    throw err;
+  }
+}
+
+/**
+ * Validates `geometry` against the schema doc's `kind`/`geometryType` and
+ * returns the parsed `Geometry`, or `undefined` when no geometry was
+ * provided. Absent geometry is always fine; a standard (non-geospatial)
+ * schema can never carry one; a geospatial schema requires the geometry to
+ * structurally validate and be compatible with the schema's locked
+ * `geometryType`.
+ */
+function validateEntryGeometry(
+  geometry: unknown,
+  schemaDoc: { kind?: "standard" | "geospatial"; geometryType?: GeometryTypeArg },
+): Geometry | undefined {
+  if (geometry === undefined) {
+    return undefined;
+  }
+  const kind = schemaDoc.kind ?? "standard";
+  if (kind !== "geospatial" || schemaDoc.geometryType === undefined) {
+    throw new ConvexError("Cannot attach geometry to a standard dataset.");
+  }
+  const parsed = assertGeometryForConvex(geometry);
+  if (!isGeometryCompatibleWithDatasetType(parsed.type, schemaDoc.geometryType)) {
+    throw new ConvexError(
+      `Geometry type "${parsed.type}" is not compatible with this dataset's "${schemaDoc.geometryType}" geometry type.`,
+    );
+  }
+  return parsed;
+}
+
+/**
+ * `schemas.boundingBox` is a plain `v.array(v.number())` (Convex validators
+ * can't express a fixed-length tuple), but every write to it always stores
+ * exactly 4 numbers (see `applyGeometryStatsDelta`). This narrows the read
+ * side back to the tuple shape `unionBbox` expects.
+ */
+function asBoundingBox(value: number[] | undefined): BoundingBox | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- always written as a 4-tuple by `applyGeometryStatsDelta`; the array validator can't express that statically.
+  return value as BoundingBox;
+}
+
+/**
+ * Folds a geometry add/remove/replace into a schema doc's denormalized
+ * `featureCount`/`boundingBox` summary and patches it. `featureCount` is
+ * kept exactly accurate (clamped at 0). `boundingBox` only ever grows (via
+ * `unionBbox`) — see the field's doc comment in schema.ts for why deletes
+ * don't shrink it back down.
+ */
+async function applyGeometryStatsDelta(
+  ctx: MutationCtx,
+  schemaId: Id<"schemas">,
+  schemaDoc: { featureCount?: number; boundingBox?: number[] },
+  countDelta: number,
+  newBbox: BoundingBox | undefined,
+): Promise<void> {
+  const featureCount = Math.max(0, (schemaDoc.featureCount ?? 0) + countDelta),
+    boundingBox = unionBbox(asBoundingBox(schemaDoc.boundingBox), newBbox);
+  await ctx.db.patch(schemaId, { boundingBox, featureCount });
+}
+
+/**
+ * Inserts a `geometries` row for `entryId` and patches the entry's pointer
+ * fields (`geometryId`/`geometryType`) to reference it. Returns the new
+ * row's own bbox for the caller to fold into the schema's summary.
+ */
+async function attachGeometry(
+  ctx: MutationCtx,
+  entryId: Id<"entries">,
+  schemaId: Id<"schemas">,
+  geometry: Geometry,
+): Promise<BoundingBox | undefined> {
+  const bbox = computeBbox(geometry),
+    geometryId = await ctx.db.insert("geometries", {
+      bbox,
+      entryId,
+      geometry,
+      schemaId,
+      type: geometry.type,
+    });
+  await ctx.db.patch(entryId, { geometryId, geometryType: geometry.type });
+  return bbox;
+}
+
+/**
+ * Inserts a batch of `{data, geometry?}` rows as entries, attaching a
+ * `geometries` row for any row that has one, and folds the whole batch's
+ * count-added/bbox-expansion into a single `schemas` patch at the end
+ * (not one patch per row). Every row's geometry is validated up front, so
+ * the whole batch fails atomically before any inserts happen if one is bad.
+ * Returns the inserted entry ids in the same order as `rows`.
+ */
+async function insertEntryBatch(
+  ctx: MutationCtx,
+  schemaId: Id<"schemas">,
+  schemaDoc: {
+    kind?: "standard" | "geospatial";
+    geometryType?: GeometryTypeArg;
+    featureCount?: number;
+    boundingBox?: number[];
+  },
+  rows: Array<{ data: unknown; geometry?: unknown }>,
+): Promise<Array<Id<"entries">>> {
+  const parsedGeometries = rows.map((row) => validateEntryGeometry(row.geometry, schemaDoc));
+
+  let addedCount = 0,
+    unionedBbox: BoundingBox | undefined;
+
+  const ids = await Promise.all(
+    rows.map(async ({ data }, i) => {
+      const entryId = await ctx.db.insert("entries", { data, schemaId }),
+        parsed = parsedGeometries[i];
+      if (parsed !== undefined) {
+        const bbox = await attachGeometry(ctx, entryId, schemaId, parsed);
+        addedCount += 1;
+        unionedBbox = unionBbox(unionedBbox, bbox);
+      }
+      return entryId;
+    }),
+  );
+
+  if (addedCount > 0) {
+    await applyGeometryStatsDelta(ctx, schemaId, schemaDoc, addedCount, unionedBbox);
+  }
+
+  return ids;
+}
+
+/**
+ * Deletes an entry and, if it has one, its associated `geometries` row —
+ * decrementing the owning schema's `featureCount` (bbox left untouched, see
+ * its doc comment). Silently no-ops if the entry doesn't exist.
+ */
+async function deleteEntryCascading(ctx: MutationCtx, entryId: Id<"entries">): Promise<void> {
+  const existing = await ctx.db.get(entryId);
+  if (!existing) {
+    return;
+  }
+  if (existing.geometryId !== undefined) {
+    const schemaDoc = await ctx.db.get(existing.schemaId);
+    await ctx.db.delete(existing.geometryId);
+    if (schemaDoc) {
+      await applyGeometryStatsDelta(ctx, existing.schemaId, schemaDoc, -1, undefined);
+    }
+  }
+  await ctx.db.delete(entryId);
+}
+
+/**
+ * Deletes the entry's existing `geometries` row (if any), clears its
+ * pointer fields, and decrements the schema's `featureCount`. No-ops if the
+ * entry has no geometry. Bbox is left untouched (see its doc comment).
+ */
+async function clearEntryGeometry(
+  ctx: MutationCtx,
+  entry: { _id: Id<"entries">; schemaId: Id<"schemas">; geometryId?: Id<"geometries"> },
+  schemaDoc: { featureCount?: number; boundingBox?: number[] },
+): Promise<void> {
+  if (entry.geometryId === undefined) {
+    return;
+  }
+  await ctx.db.delete(entry.geometryId);
+  await ctx.db.patch(entry._id, { geometryId: undefined, geometryType: undefined });
+  await applyGeometryStatsDelta(ctx, entry.schemaId, schemaDoc, -1, undefined);
+}
+
+/**
+ * Replaces (or newly attaches) an entry's geometry with `parsed`. Patches
+ * the existing `geometries` row in place when the entry already had one
+ * (no `featureCount` change, since this is a replace, not an add);
+ * otherwise attaches a new one and increments `featureCount`. Either way
+ * expands the schema's `boundingBox`.
+ */
+async function replaceEntryGeometry(
+  ctx: MutationCtx,
+  entry: { _id: Id<"entries">; schemaId: Id<"schemas">; geometryId?: Id<"geometries"> },
+  schemaDoc: { featureCount?: number; boundingBox?: number[] },
+  parsed: Geometry,
+): Promise<void> {
+  if (entry.geometryId !== undefined) {
+    const bbox = computeBbox(parsed);
+    await ctx.db.patch(entry.geometryId, { bbox, geometry: parsed, type: parsed.type });
+    await ctx.db.patch(entry._id, { geometryType: parsed.type });
+    await applyGeometryStatsDelta(ctx, entry.schemaId, schemaDoc, 0, bbox);
+    return;
+  }
+  const bbox = await attachGeometry(ctx, entry._id, entry.schemaId, parsed);
+  await applyGeometryStatsDelta(ctx, entry.schemaId, schemaDoc, 1, bbox);
+}
 
 export const createEntry = mutation({
   args: {
     data: v.any(),
+    geometry: v.optional(geometryArgsValidator),
     schemaId: v.id("schemas"),
   },
   handler: async (ctx, args) => {
@@ -201,10 +481,9 @@ export const createEntry = mutation({
       throw new ConvexError("Schema not found");
     }
 
-    const entryId = await ctx.db.insert("entries", {
-      data: args.data,
-      schemaId: args.schemaId,
-    });
+    const [entryId] = await insertEntryBatch(ctx, args.schemaId, schemaDoc, [
+      { data: args.data, geometry: args.geometry },
+    ]);
 
     return entryId;
   },
@@ -213,7 +492,7 @@ export const createEntry = mutation({
 
 export const createEntriesBulk = mutation({
   args: {
-    dataArray: v.array(v.any()),
+    entries: v.array(v.object({ data: v.any(), geometry: v.optional(geometryArgsValidator) })),
     schemaId: v.id("schemas"),
   },
   handler: async (ctx, args) => {
@@ -222,13 +501,7 @@ export const createEntriesBulk = mutation({
       throw new ConvexError("Schema not found");
     }
 
-    const ids = await Promise.all(
-      args.dataArray.map(async (data) =>
-        ctx.db.insert("entries", { data, schemaId: args.schemaId }),
-      ),
-    );
-
-    return ids;
+    return insertEntryBatch(ctx, args.schemaId, schemaDoc, args.entries);
   },
   returns: v.array(v.id("entries")),
 });
@@ -237,6 +510,7 @@ export const updateEntry = mutation({
   args: {
     data: v.any(),
     entryId: v.id("entries"),
+    geometry: v.optional(v.union(geometryArgsValidator, v.null())),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db.get(args.entryId);
@@ -245,6 +519,25 @@ export const updateEntry = mutation({
     }
 
     await ctx.db.patch(args.entryId, { data: args.data });
+
+    if (args.geometry === undefined) {
+      return;
+    }
+
+    const schemaDoc = await ctx.db.get(existing.schemaId);
+    if (!schemaDoc) {
+      throw new ConvexError("Schema not found");
+    }
+
+    if (args.geometry === null) {
+      await clearEntryGeometry(ctx, existing, schemaDoc);
+      return;
+    }
+
+    const parsed = validateEntryGeometry(args.geometry, schemaDoc);
+    if (parsed !== undefined) {
+      await replaceEntryGeometry(ctx, existing, schemaDoc, parsed);
+    }
   },
 });
 
@@ -258,7 +551,7 @@ export const deleteEntry = mutation({
       throw new ConvexError("Entry not found");
     }
 
-    await ctx.db.delete(args.entryId);
+    await deleteEntryCascading(ctx, args.entryId);
   },
 });
 
@@ -272,12 +565,28 @@ export const deleteEntriesBySchema = mutation({
       throw new ConvexError("Schema not found");
     }
 
-    const entries = await ctx.db
-      .query("entries")
-      .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
-      .collect();
+    const [entries, geometries] = await Promise.all([
+      ctx.db
+        .query("entries")
+        .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
+        .collect(),
+      ctx.db
+        .query("geometries")
+        .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
+        .collect(),
+    ]);
 
-    await Promise.all(entries.map(async (entry) => ctx.db.delete(entry._id)));
+    await Promise.all([
+      ...entries.map(async (entry) => ctx.db.delete(entry._id)),
+      ...geometries.map(async (geometry) => ctx.db.delete(geometry._id)),
+    ]);
+
+    // The whole dataset's entries/geometries are gone, so — unlike a single
+    // entry delete — the exact reset (rather than only-grow) is safe here.
+    await ctx.db.patch(args.schemaId, {
+      boundingBox: undefined,
+      featureCount: schemaDoc.kind === "geospatial" ? 0 : undefined,
+    });
 
     return entries.length;
   },
@@ -289,13 +598,18 @@ export const deleteEntriesBySchema = mutation({
 export const insertEntryInternal = internalMutation({
   args: {
     data: v.any(),
+    geometry: v.optional(geometryArgsValidator),
     schemaId: v.id("schemas"),
   },
   handler: async (ctx, args) => {
-    const entryId = await ctx.db.insert("entries", {
-      data: args.data,
-      schemaId: args.schemaId,
-    });
+    const schemaDoc = await ctx.db.get(args.schemaId);
+    if (!schemaDoc) {
+      throw new ConvexError("Schema not found");
+    }
+
+    const [entryId] = await insertEntryBatch(ctx, args.schemaId, schemaDoc, [
+      { data: args.data, geometry: args.geometry },
+    ]);
 
     return entryId;
   },
@@ -317,7 +631,7 @@ export const deleteEntryInternal = internalMutation({
     entryId: v.id("entries"),
   },
   handler: async (ctx, args) => {
-    await ctx.db.delete(args.entryId);
+    await deleteEntryCascading(ctx, args.entryId);
   },
 });
 
@@ -472,6 +786,9 @@ export const insertChunkFromStorage = internalAction({
     if (!blob) {
       throw new ConvexError("Import payload not found in storage");
     }
+    // The uploaded blob is always an array of `{ data, geometry? }` rows —
+    // Uniform regardless of dataset kind; a standard dataset's rows simply
+    // Never carry `geometry`.
     const parsed: unknown = JSON.parse(await blob.text()),
       rows = Array.isArray(parsed) ? parsed : [],
       chunk = rows.slice(args.offset, args.offset + args.limit);
@@ -488,18 +805,25 @@ export const insertChunkFromStorage = internalAction({
   returns: v.number(),
 });
 
-/** Insert one chunk of entries in a single transaction. */
+/**
+ * Insert one chunk of entries in a single transaction. Each row's geometry is
+ * validated server-side too (defense-in-depth: the client is expected to
+ * have already validated before uploading) — the whole chunk is rejected if
+ * any row's geometry is invalid or incompatible, rather than silently
+ * dropping bad rows.
+ */
 export const insertEntriesChunkInternal = internalMutation({
   args: {
-    dataArray: v.array(v.any()),
+    dataArray: v.array(v.object({ data: v.any(), geometry: v.optional(v.any()) })),
     schemaId: v.id("schemas"),
   },
   handler: async (ctx, args) => {
-    await Promise.all(
-      args.dataArray.map(async (data) =>
-        ctx.db.insert("entries", { data, schemaId: args.schemaId }),
-      ),
-    );
+    const schemaDoc = await ctx.db.get(args.schemaId);
+    if (!schemaDoc) {
+      throw new ConvexError("Schema not found");
+    }
+
+    await insertEntryBatch(ctx, args.schemaId, schemaDoc, args.dataArray);
     return null;
   },
   returns: v.null(),

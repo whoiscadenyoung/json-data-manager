@@ -2,6 +2,8 @@ import { AlertCircle, Code2, FileJson, LayoutTemplate, Save, Upload } from "luci
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { GEOMETRY_TYPES } from "../../shared/geojson/types.js";
+import type { GeometryType } from "../../shared/geojson/types.js";
 import { inferSchemaFromData } from "../lib/infer-schema.js";
 import { cn } from "./lib/utils.js";
 import { Button } from "./primitives/button.js";
@@ -97,6 +99,21 @@ interface SchemaEditorProps {
    * pre-populated, so an invalid schema can't be saved against real data.
    */
   requireValidData?: boolean;
+  /**
+   * Dataset-level kind: a plain JSON-schema dataset, or a geospatial one
+   * backed by a locked geometry type. Controlled — the "Dataset Type"
+   * section only renders when `onDatasetKindChange` is passed, so nothing
+   * changes for a consumer that doesn't opt in.
+   */
+  datasetKind?: "standard" | "geospatial";
+  onDatasetKindChange?: (kind: "standard" | "geospatial") => void;
+  /** The geometry type this dataset is locked to. Only relevant when `datasetKind === "geospatial"`. */
+  geometryType?: GeometryType;
+  onGeometryTypeChange?: (type: GeometryType) => void;
+  /** True during import review, where `geometryType` was computed by coalescing rather than hand-picked — renders as read-only text instead of a dropdown. */
+  geometryTypeReadOnly?: boolean;
+  /** e.g. "142 Polygon + 8 MultiPolygon → coalesced to MultiPolygon · 3 rows have no geometry" — shown next to the resolved type when `geometryTypeReadOnly`. */
+  geometryTypeSummary?: string;
 }
 
 interface PendingFile {
@@ -409,6 +426,118 @@ function DataValidityWarning({
   );
 }
 
+function isGeometryType(value: string): value is GeometryType {
+  return (GEOMETRY_TYPES as readonly string[]).includes(value);
+}
+
+/** Editable dropdown of the 6 geometry types, or a read-only resolved type + summary when computed from an import. */
+function GeometryTypeControl({
+  geometryType,
+  onGeometryTypeChange,
+  readOnly,
+  summary,
+}: {
+  geometryType: GeometryType | undefined;
+  onGeometryTypeChange: ((type: GeometryType) => void) | undefined;
+  readOnly: boolean;
+  summary: string | undefined;
+}) {
+  if (readOnly) {
+    return (
+      <div className="flex flex-col leading-tight">
+        <span className="text-xs font-medium">{geometryType ?? "—"}</span>
+        {summary !== undefined && (
+          <span className="text-[11px] text-muted-foreground">{summary}</span>
+        )}
+      </div>
+    );
+  }
+  return (
+    <select
+      value={geometryType ?? ""}
+      onChange={(e) => {
+        if (onGeometryTypeChange && isGeometryType(e.target.value)) {
+          onGeometryTypeChange(e.target.value);
+        }
+      }}
+      className={cn(
+        "h-6 rounded-md border border-input bg-background px-1.5 text-xs",
+        "focus:outline-none focus:ring-1 focus:ring-ring",
+        "shrink-0",
+      )}
+    >
+      <option value="" disabled>
+        Select geometry type
+      </option>
+      {GEOMETRY_TYPES.map((t) => (
+        <option key={t} value={t}>
+          {t}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/**
+ * Dataset-level "Standard | Geospatial" toggle, dataset-wide chrome rendered
+ * above the Visual/Code/Data tabs. Opt-in: renders nothing when
+ * `onDatasetKindChange` isn't passed, so `SchemaEditor` can render this
+ * unconditionally and keep the opt-in check (and prop defaulting) out of its
+ * own complexity budget.
+ */
+function DatasetTypeSection({
+  datasetKind = "standard",
+  onDatasetKindChange,
+  geometryType,
+  onGeometryTypeChange,
+  geometryTypeReadOnly = false,
+  geometryTypeSummary,
+}: {
+  datasetKind: "standard" | "geospatial" | undefined;
+  onDatasetKindChange: ((kind: "standard" | "geospatial") => void) | undefined;
+  geometryType: GeometryType | undefined;
+  onGeometryTypeChange: ((type: GeometryType) => void) | undefined;
+  geometryTypeReadOnly: boolean | undefined;
+  geometryTypeSummary: string | undefined;
+}) {
+  if (!onDatasetKindChange) {
+    return null;
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-3 border-b border-border px-3 py-2 bg-muted/30 shrink-0">
+      <span className="text-xs font-medium text-muted-foreground">Dataset Type</span>
+      <div className="flex rounded-md border border-border overflow-hidden">
+        <button
+          type="button"
+          onClick={() => {
+            onDatasetKindChange("standard");
+          }}
+          className={tabClass(datasetKind === "standard")}
+        >
+          Standard
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            onDatasetKindChange("geospatial");
+          }}
+          className={cn(tabClass(datasetKind === "geospatial"), "border-l border-border")}
+        >
+          Geospatial
+        </button>
+      </div>
+      {datasetKind === "geospatial" && (
+        <GeometryTypeControl
+          geometryType={geometryType}
+          onGeometryTypeChange={onGeometryTypeChange}
+          readOnly={geometryTypeReadOnly}
+          summary={geometryTypeSummary}
+        />
+      )}
+    </div>
+  );
+}
+
 function EditorTabPanel({
   activeTab,
   schemaJson,
@@ -465,6 +594,12 @@ export function SchemaEditor({
   saveLabel = "Save",
   dataText,
   requireValidData = false,
+  datasetKind,
+  onDatasetKindChange,
+  geometryType,
+  onGeometryTypeChange,
+  geometryTypeReadOnly,
+  geometryTypeSummary,
 }: SchemaEditorProps) {
   const [schemaJson, setSchemaJson] = useState(initialJson),
     [uiSchemaJson, setUiSchemaJson] = useState(initialUiSchemaJson),
@@ -650,6 +785,15 @@ export function SchemaEditor({
             canSave={canSave}
             isSaving={isSaving}
             saveLabel={saveLabel}
+          />
+
+          <DatasetTypeSection
+            datasetKind={datasetKind}
+            onDatasetKindChange={onDatasetKindChange}
+            geometryType={geometryType}
+            onGeometryTypeChange={onGeometryTypeChange}
+            geometryTypeReadOnly={geometryTypeReadOnly}
+            geometryTypeSummary={geometryTypeSummary}
           />
 
           <SizeWarnings
