@@ -338,6 +338,7 @@ function SchemaDetailPage() {
               ) : (
                 <EntriesTable
                   schemaId={schemaId}
+                  schema={schema.schema}
                   properties={Object.keys(schema.schema.properties ?? {})}
                   entries={entries}
                   isGeospatial={schema.kind === "geospatial"}

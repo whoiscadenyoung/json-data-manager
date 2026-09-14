@@ -105,11 +105,18 @@ function PathChooser({ onChoose }: { onChoose: (mode: Mode) => void }) {
 function SchemaFirst() {
   const navigate = useNavigate(),
     createSchema = useMutation(api.schemas.create),
+    schemas = useQuery(api.schemas.list),
+    availableDatasets = (schemas ?? []).map((s) => ({
+      id: s._id,
+      schema: s.schema,
+      title: s.title,
+    })),
     [datasetKind, setDatasetKind] = useState<"standard" | "geospatial">("standard"),
     [geometryType, setGeometryType] = useState<GeometryType | undefined>(undefined);
 
   return (
     <SchemaEditor
+      availableDatasets={availableDatasets}
       datasetKind={datasetKind}
       onDatasetKindChange={setDatasetKind}
       geometryType={geometryType}

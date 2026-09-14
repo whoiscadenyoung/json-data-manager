@@ -9,6 +9,8 @@ export {
   useSchema,
   useEntries,
   useEntry,
+  useEntriesForSchemas,
+  useReferencingEntries,
   useGeometries,
   useCreateSchema,
   useUpdateSchema,
@@ -23,8 +25,33 @@ export {
 export type { StartDatasetImportArgs, DatasetImportHandle } from "./hooks.js";
 
 // Types
-export type { JsonCmsApi, SchemaDoc, EntryDoc, GeometryDoc, ImportStatusDoc } from "./types.js";
+export type {
+  JsonCmsApi,
+  SchemaDoc,
+  EntryDoc,
+  GeometryDoc,
+  ImportStatusDoc,
+  ReferencingEntryDoc,
+} from "./types.js";
 export type { SchemaId, EntryId, GeometryId } from "../client/index.js";
+
+// Foreign-reference (relation) utilities — link one dataset's entries to
+// another's (see ../shared/reference.ts for the underlying JSON Schema
+// convention).
+export {
+  REFERENCE_KEYWORD,
+  getReferenceFields,
+  extractReferenceIds,
+  extractReferences,
+  isReferenceMeta,
+} from "../shared/reference.js";
+export type {
+  ReferenceMeta,
+  ReferenceField,
+  ExtractedReference,
+  ReferenceCandidate,
+} from "../shared/reference.js";
+export { buildReferenceUiSchema, buildReferenceCandidates } from "./lib/reference-ui-schema.js";
 
 // Framework-agnostic utilities
 export { inferSchemaFromData } from "./lib/infer-schema.js";

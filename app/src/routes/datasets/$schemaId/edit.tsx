@@ -262,8 +262,16 @@ function FullSchemaEditForm({
   updateSchema: ReturnType<typeof useMutation<typeof api.schemas.update>>;
   navigate: ReturnType<typeof useNavigate>;
 }) {
+  const schemas = useQuery(api.schemas.list),
+    availableDatasets = (schemas ?? []).map((s) => ({
+      id: s._id,
+      schema: s.schema,
+      title: s.title,
+    }));
+
   return (
     <SchemaEditor
+      availableDatasets={availableDatasets}
       initialJson={JSON.stringify(currentSchema, null, 2)}
       initialUiSchemaJson={currentUiSchema ? JSON.stringify(currentUiSchema, null, 2) : ""}
       onSave={async (_json, parsed, _uiSchemaJson, uiSchemaParsed) => {

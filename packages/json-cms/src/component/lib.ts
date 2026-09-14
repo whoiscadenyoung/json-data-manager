@@ -9,6 +9,7 @@ import type { BoundingBox } from "../shared/geojson/geometry.js";
 import type { Geometry } from "../shared/geojson/types.js";
 import { geometryArgsValidator, geometryTypeValidator } from "../shared/geojson/validators.js";
 import type { GeometryTypeArg } from "../shared/geojson/validators.js";
+import { extractReferences } from "../shared/reference.js";
 import { components, internal } from "./_generated/api.js";
 import type { Id } from "./_generated/dataModel.js";
 import {
@@ -46,6 +47,11 @@ const SCHEMA_SIZE_LIMIT = 102_400, // 100 KB
   geometryValidator = schema.tables.geometries.validator.extend({
     _creationTime: v.number(),
     _id: v.id("geometries"),
+  }),
+  entryReferenceValidator = v.object({
+    fieldName: v.string(),
+    sourceEntry: entryValidator,
+    sourceSchemaId: v.id("schemas"),
   });
 
 // Schema queries
@@ -192,6 +198,7 @@ export const deleteSchema = mutation({
     await Promise.all([
       ...entries.map(async (entry) => ctx.db.delete(entry._id)),
       ...geometries.map(async (geometry) => ctx.db.delete(geometry._id)),
+      deleteReferencesForSchema(ctx, args.schemaId),
     ]);
 
     await ctx.db.delete(args.schemaId);
@@ -498,10 +505,7 @@ export const listGeometries = query({
 });
 
 /** The `_id`s of every geospatial dataset directly or (via a group) indirectly in a collection. */
-async function listGeospatialSchemaIdsByCollection(
-  ctx: QueryCtx,
-  collectionId: Id<"collections">,
-) {
+async function listGeospatialSchemaIdsByCollection(ctx: QueryCtx, collectionId: Id<"collections">) {
   const schemas = await ctx.db
     .query("schemas")
     .withIndex("by_collection", (q) => q.eq("collectionId", collectionId))
@@ -556,6 +560,53 @@ export const getEntry = query({
   args: { entryId: v.id("entries") },
   handler: async (ctx, args) => ctx.db.get(args.entryId),
   returns: v.union(v.null(), entryValidator),
+});
+
+/**
+ * Entries from several datasets at once, flattened into one list (each row
+ * still carries its own `schemaId`). Powers building a reference field's
+ * candidate picker without one round trip per referenced dataset.
+ */
+export const listEntriesForSchemas = query({
+  args: { schemaIds: v.array(v.id("schemas")) },
+  handler: async (ctx, args) => {
+    const unique = [...new Set(args.schemaIds)],
+      rows = await Promise.all(
+        unique.map(async (schemaId) =>
+          ctx.db
+            .query("entries")
+            .withIndex("by_schema", (q) => q.eq("schemaId", schemaId))
+            .collect(),
+        ),
+      );
+    return rows.flat();
+  },
+  returns: v.array(entryValidator),
+});
+
+/**
+ * Reverse lookup: every other dataset's entry that currently references
+ * `entryId`, via the `references` index (see schema.ts) — an indexed
+ * lookup rather than a scan of every other dataset's entries.
+ */
+export const listReferencingEntries = query({
+  args: { entryId: v.id("entries") },
+  handler: async (ctx, args) => {
+    const refs = await ctx.db
+        .query("references")
+        .withIndex("by_target_entry", (q) => q.eq("targetEntryId", args.entryId))
+        .collect(),
+      results = await Promise.all(
+        refs.map(async (ref) => {
+          const sourceEntry = await ctx.db.get(ref.sourceEntryId);
+          return sourceEntry
+            ? { fieldName: ref.fieldName, sourceEntry, sourceSchemaId: ref.sourceSchemaId }
+            : null;
+        }),
+      );
+    return results.filter((r): r is NonNullable<typeof r> => r !== null);
+  },
+  returns: v.array(entryReferenceValidator),
 });
 
 // Internal queries/mutations for use within the component
@@ -684,6 +735,113 @@ async function attachGeometry(
 }
 
 /**
+ * Deletes every `references` row for `schemaId`, on either side of the
+ * pointer: rows sourced from one of this schema's own entries (gone with
+ * the schema), and rows targeting one of its entries from some other
+ * dataset's entry (which would otherwise dangle, pointing at a deleted
+ * entry). A row can appear in both queries for a schema that
+ * self-references, hence the de-dupe.
+ */
+async function deleteReferencesForSchema(ctx: MutationCtx, schemaId: Id<"schemas">): Promise<void> {
+  const [asSource, asTarget] = await Promise.all([
+    ctx.db
+      .query("references")
+      .withIndex("by_source_schema", (q) => q.eq("sourceSchemaId", schemaId))
+      .collect(),
+    ctx.db
+      .query("references")
+      .withIndex("by_target_schema", (q) => q.eq("targetSchemaId", schemaId))
+      .collect(),
+  ]);
+  const seen = new Set<Id<"references">>();
+  await Promise.all(
+    [...asSource, ...asTarget]
+      .filter((row) => {
+        if (seen.has(row._id)) {
+          return false;
+        }
+        seen.add(row._id);
+        return true;
+      })
+      .map(async (row) => ctx.db.delete(row._id)),
+  );
+}
+
+/** Same as {@link deleteReferencesForSchema}, scoped to a single entry (both as source and as target). */
+async function deleteReferencesForEntry(ctx: MutationCtx, entryId: Id<"entries">): Promise<void> {
+  const [asSource, asTarget] = await Promise.all([
+    ctx.db
+      .query("references")
+      .withIndex("by_source_entry", (q) => q.eq("sourceEntryId", entryId))
+      .collect(),
+    ctx.db
+      .query("references")
+      .withIndex("by_target_entry", (q) => q.eq("targetEntryId", entryId))
+      .collect(),
+  ]);
+  const seen = new Set<Id<"references">>();
+  await Promise.all(
+    [...asSource, ...asTarget]
+      .filter((row) => {
+        if (seen.has(row._id)) {
+          return false;
+        }
+        seen.add(row._id);
+        return true;
+      })
+      .map(async (row) => ctx.db.delete(row._id)),
+  );
+}
+
+/**
+ * Re-derives an entry's outgoing `references` rows from its current `data`
+ * against its schema's reference fields (see ../shared/reference.ts).
+ * Simplest-correct approach: wipe this entry's existing rows and reinsert
+ * from scratch, rather than diffing — a dataset entry only ever has a
+ * handful of reference fields, so this is cheap and can't drift.
+ *
+ * A referenced id that doesn't normalize to a real `entries`/`schemas` id,
+ * or whose target entry doesn't actually belong to the declared target
+ * schema, is silently skipped — a stale/malformed reference in `data`
+ * (e.g. the target entry was since deleted) shouldn't block saving the
+ * source entry.
+ */
+async function syncEntryReferences(
+  ctx: MutationCtx,
+  entryId: Id<"entries">,
+  sourceSchemaId: Id<"schemas">,
+  schemaDoc: { schema: unknown },
+  data: unknown,
+): Promise<void> {
+  const existing = await ctx.db
+    .query("references")
+    .withIndex("by_source_entry", (q) => q.eq("sourceEntryId", entryId))
+    .collect();
+  await Promise.all(existing.map(async (row) => ctx.db.delete(row._id)));
+
+  await Promise.all(
+    extractReferences(schemaDoc.schema, data).map(async (ref) => {
+      const targetSchemaId = ctx.db.normalizeId("schemas", ref.targetSchemaId),
+        targetEntryId = ctx.db.normalizeId("entries", ref.targetEntryId);
+      if (!targetSchemaId || !targetEntryId) {
+        return;
+      }
+      const targetEntry = await ctx.db.get(targetEntryId);
+      if (!targetEntry || targetEntry.schemaId !== targetSchemaId) {
+        return;
+      }
+      await ctx.db.insert("references", {
+        fieldName: ref.fieldName,
+        sourceEntryId: entryId,
+        sourceSchemaId,
+        targetEntryId,
+        targetSchemaId,
+      });
+    }),
+  );
+}
+
+/**
  * Inserts a batch of `{data, geometry?}` rows as entries, attaching a
  * `geometries` row for any row that has one, and folds the whole batch's
  * count-added/bbox-expansion into a single `schemas` patch at the end
@@ -695,6 +853,7 @@ async function insertEntryBatch(
   ctx: MutationCtx,
   schemaId: Id<"schemas">,
   schemaDoc: {
+    schema: unknown;
     kind?: "standard" | "geospatial";
     geometryType?: GeometryTypeArg;
     featureCount?: number;
@@ -716,6 +875,7 @@ async function insertEntryBatch(
         addedCount += 1;
         unionedBbox = unionBbox(unionedBbox, bbox);
       }
+      await syncEntryReferences(ctx, entryId, schemaId, schemaDoc, data);
       return entryId;
     }),
   );
@@ -744,6 +904,7 @@ async function deleteEntryCascading(ctx: MutationCtx, entryId: Id<"entries">): P
       await applyGeometryStatsDelta(ctx, existing.schemaId, schemaDoc, -1, undefined);
     }
   }
+  await deleteReferencesForEntry(ctx, entryId);
   await ctx.db.delete(entryId);
 }
 
@@ -841,13 +1002,14 @@ export const updateEntry = mutation({
 
     await ctx.db.patch(args.entryId, { data: args.data });
 
-    if (args.geometry === undefined) {
-      return;
-    }
-
     const schemaDoc = await ctx.db.get(existing.schemaId);
     if (!schemaDoc) {
       throw new ConvexError("Schema not found");
+    }
+    await syncEntryReferences(ctx, args.entryId, existing.schemaId, schemaDoc, args.data);
+
+    if (args.geometry === undefined) {
+      return;
     }
 
     if (args.geometry === null) {
@@ -900,6 +1062,7 @@ export const deleteEntriesBySchema = mutation({
     await Promise.all([
       ...entries.map(async (entry) => ctx.db.delete(entry._id)),
       ...geometries.map(async (geometry) => ctx.db.delete(geometry._id)),
+      deleteReferencesForSchema(ctx, args.schemaId),
     ]);
 
     // The whole dataset's entries/geometries are gone, so — unlike a single
@@ -943,7 +1106,15 @@ export const patchEntryInternal = internalMutation({
     entryId: v.id("entries"),
   },
   handler: async (ctx, args) => {
+    const existing = await ctx.db.get(args.entryId);
     await ctx.db.patch(args.entryId, { data: args.data });
+    if (!existing) {
+      return;
+    }
+    const schemaDoc = await ctx.db.get(existing.schemaId);
+    if (schemaDoc) {
+      await syncEntryReferences(ctx, args.entryId, existing.schemaId, schemaDoc, args.data);
+    }
   },
 });
 

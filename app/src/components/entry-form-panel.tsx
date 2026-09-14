@@ -1,8 +1,15 @@
-import type { Geometry } from "@caden/json-cms/react";
-import { assertGeometry, isGeometryCompatibleWithDatasetType } from "@caden/json-cms/react";
+import type { Geometry, ReferenceCandidate } from "@caden/json-cms/react";
+import {
+  assertGeometry,
+  buildReferenceCandidates,
+  buildReferenceUiSchema,
+  getReferenceFields,
+  isGeometryCompatibleWithDatasetType,
+} from "@caden/json-cms/react";
+import { ReferenceWidget } from "@caden/json-cms/react/ui";
 import { Form } from "@rjsf/shadcn";
 import validator from "@rjsf/validator-ajv8";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { Maximize2, Minimize2 } from "lucide-react";
 import { useState } from "react";
@@ -56,6 +63,39 @@ function geometryToText(geometry: Geometry | undefined): string {
   return geometry ? JSON.stringify(geometry, null, 2) : "";
 }
 
+/**
+ * Builds the `uiSchema` fragment wiring `schema`'s reference fields (see
+ * `@caden/json-cms/react`'s reference utilities) to a live candidate picker —
+ * one `listEntriesForSchemas` query covers every referenced dataset at once,
+ * regardless of how many reference fields the schema has.
+ */
+function useReferenceUiSchema(schema: Schema): Record<string, unknown> {
+  const referenceFields = getReferenceFields(schema.schema),
+    targetSchemaIds = [...new Set(referenceFields.map((f) => f.meta.datasetId))],
+    candidateEntries = useQuery(
+      api.entries.listEntriesForSchemas,
+      targetSchemaIds.length > 0 ? { schemaIds: targetSchemaIds } : "skip",
+    );
+
+  if (referenceFields.length === 0) {
+    return {};
+  }
+  const entriesBySchema = new Map<string, Array<{ _id: string; data: unknown }>>();
+  for (const candidateEntry of candidateEntries ?? []) {
+    const list = entriesBySchema.get(candidateEntry.schemaId) ?? [];
+    list.push(candidateEntry);
+    entriesBySchema.set(candidateEntry.schemaId, list);
+  }
+  const candidatesByField: Record<string, ReferenceCandidate[]> = {};
+  for (const field of referenceFields) {
+    candidatesByField[field.name] = buildReferenceCandidates(
+      entriesBySchema.get(field.meta.datasetId) ?? [],
+      field.meta.displayProperty,
+    );
+  }
+  return buildReferenceUiSchema(schema.schema, candidatesByField);
+}
+
 /** The geometry textarea + RJSF form, keyed by target entry so switching entries (or a fresh create) starts clean. */
 function EntryFormBody({
   schemaId,
@@ -73,6 +113,7 @@ function EntryFormBody({
   const isEditing = entry !== undefined,
     createEntry = useMutation(api.entries.create),
     updateEntry = useMutation(api.entries.update),
+    referenceUiSchema = useReferenceUiSchema(schema),
     [formKey, setFormKey] = useState(0),
     [geometryText, setGeometryText] = useState(() => geometryToText(initialGeometry)),
     [geometryError, setGeometryError] = useState<string | null>(null),
@@ -146,7 +187,9 @@ function EntryFormBody({
           void handleSubmit(data);
         }}
         disabled={isSubmitting}
+        widgets={{ reference: ReferenceWidget }}
         uiSchema={{
+          ...referenceUiSchema,
           ...schema.uiSchema,
           "ui:submitButtonOptions": {
             norender: false,

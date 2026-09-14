@@ -35,6 +35,8 @@ export type GroupId = Id<"groups">;
  *   deleteSchema,
  *   listEntries,
  *   getEntry,
+ *   listEntriesForSchemas,
+ *   listReferencingEntries,
  *   listGeometries,
  *   createEntry,
  *   createEntriesBulk,
@@ -321,6 +323,28 @@ export function exposeApi(
       handler: async (ctx, args) => {
         await options.auth(ctx, { entryId: args.entryId, type: "read" });
         return ctx.runQuery(component.lib.getEntry, {
+          entryId: args.entryId,
+        });
+      },
+    }),
+    // Entries from several datasets at once — e.g. building a reference
+    // field's candidate picker without one round trip per dataset.
+    listEntriesForSchemas: queryGeneric({
+      args: { schemaIds: v.array(v.string()) },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { type: "read" });
+        return ctx.runQuery(component.lib.listEntriesForSchemas, {
+          schemaIds: args.schemaIds,
+        });
+      },
+    }),
+    // Reverse lookup: every other dataset's entry that currently references
+    // `entryId` via a foreign-reference field.
+    listReferencingEntries: queryGeneric({
+      args: { entryId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { entryId: args.entryId, type: "read" });
+        return ctx.runQuery(component.lib.listReferencingEntries, {
           entryId: args.entryId,
         });
       },

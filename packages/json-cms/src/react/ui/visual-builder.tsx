@@ -1,6 +1,7 @@
 import { AlertCircle, ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { useCallback, useState } from "react";
 
+import { REFERENCE_KEYWORD, isReferenceMeta } from "../../shared/reference.js";
 import { cn } from "./lib/utils.js";
 import { Button } from "./primitives/button.js";
 import { Input } from "./primitives/input.js";
@@ -9,7 +10,22 @@ import { Textarea } from "./primitives/textarea.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export type PropertyType = "string" | "number" | "integer" | "boolean" | "object" | "array";
+export type PropertyType =
+  | "string"
+  | "number"
+  | "integer"
+  | "boolean"
+  | "object"
+  | "array"
+  | "reference";
+
+/** A dataset the visual builder can offer as a reference field's target. */
+export interface ReferenceDatasetOption {
+  id: string;
+  title: string;
+  /** The target dataset's JSON schema — introspected for its property names (the display-property picker). */
+  schema: unknown;
+}
 
 export interface PropertyDef {
   id: string;
@@ -37,6 +53,10 @@ export interface PropertyDef {
   itemSchema: PropertyDef | null; // For array of objects
   // Object
   properties: PropertyDef[];
+  // Reference (foreign key into another dataset — see ../../shared/reference.ts)
+  referenceDatasetId: string;
+  referenceDisplayProperty: string;
+  referenceMultiple: boolean;
 }
 
 export interface SchemaFormData {
@@ -123,16 +143,28 @@ function objectConstraints(prop: PropertyDef, schema: Record<string, unknown>): 
   }
 }
 
-function makePropertySchema(prop: PropertyDef): Record<string, unknown> {
-  const schema: Record<string, unknown> = {};
-  schema.type = prop.nullable ? [prop.type, "null"] : prop.type;
-  if (prop.title) {
-    schema.title = prop.title;
+/**
+ * A reference field is a plain `string` (single) or `array` of `string`
+ * (many) property annotated with `x-reference` — see ../../shared/reference.ts.
+ * `schema.type` is set here rather than by the generic assignment in
+ * `makePropertySchema`, since it depends on `referenceMultiple` rather than
+ * on `prop.type` directly.
+ */
+function referenceConstraints(prop: PropertyDef, schema: Record<string, unknown>): void {
+  if (prop.referenceMultiple) {
+    schema.type = prop.nullable ? ["array", "null"] : "array";
+    schema.items = { type: "string" };
+  } else {
+    schema.type = prop.nullable ? ["string", "null"] : "string";
   }
-  if (prop.description) {
-    schema.description = prop.description;
-  }
+  schema[REFERENCE_KEYWORD] = {
+    cardinality: prop.referenceMultiple ? "many" : "one",
+    datasetId: prop.referenceDatasetId,
+    ...(prop.referenceDisplayProperty ? { displayProperty: prop.referenceDisplayProperty } : {}),
+  };
+}
 
+function applyTypeConstraints(prop: PropertyDef, schema: Record<string, unknown>): void {
   if (prop.type === "string") {
     stringConstraints(prop, schema);
   } else if (prop.type === "number" || prop.type === "integer") {
@@ -142,7 +174,24 @@ function makePropertySchema(prop: PropertyDef): Record<string, unknown> {
   } else if (prop.type === "object" && prop.properties.length > 0) {
     objectConstraints(prop, schema);
   }
+}
 
+function makePropertySchema(prop: PropertyDef): Record<string, unknown> {
+  const schema: Record<string, unknown> = {};
+  if (prop.title) {
+    schema.title = prop.title;
+  }
+  if (prop.description) {
+    schema.description = prop.description;
+  }
+
+  if (prop.type === "reference") {
+    referenceConstraints(prop, schema);
+    return schema;
+  }
+
+  schema.type = prop.nullable ? [prop.type, "null"] : prop.type;
+  applyTypeConstraints(prop, schema);
   return schema;
 }
 
@@ -231,6 +280,39 @@ function parseChildProperties(
   return Object.entries(properties).map(([k, v]) => parsePropertyDef(k, v, requiredSet));
 }
 
+/** If `schema` carries `x-reference`, overrides `prop` to a reference field in place and returns `true`. */
+function applyReferenceOverride(prop: PropertyDef, schema: Record<string, unknown>): boolean {
+  const meta = schema[REFERENCE_KEYWORD];
+  if (!isReferenceMeta(meta)) {
+    return false;
+  }
+  prop.type = "reference";
+  prop.referenceDatasetId = meta.datasetId;
+  prop.referenceDisplayProperty = meta.displayProperty ?? "";
+  prop.referenceMultiple = meta.cardinality === "many";
+  return true;
+}
+
+/** Parses an object's nested properties, or an array-of-objects' item schema, into `prop` in place. */
+function applyNestedSchema(
+  prop: PropertyDef,
+  type: PropertyType,
+  schema: Record<string, unknown>,
+): void {
+  if (type === "object" && isRecord(schema.properties)) {
+    prop.properties = parseChildProperties(schema.properties, schema.required);
+    return;
+  }
+  if (
+    type === "array" &&
+    prop.itemType === "object" &&
+    isRecord(schema.items) &&
+    schema.items.type === "object"
+  ) {
+    prop.itemSchema = parsePropertyDef("item", schema.items, new Set());
+  }
+}
+
 function parsePropertyDef(name: string, rawSchema: unknown, requiredSet: Set<string>): PropertyDef {
   const schema = isRecord(rawSchema) ? rawSchema : {},
     // `type` may be a nullable union like ["string", "null"]; split it into a
@@ -254,22 +336,19 @@ function parsePropertyDef(name: string, rawSchema: unknown, requiredSet: Set<str
       nullable,
       pattern: asString(schema.pattern),
       properties: [],
+      referenceDatasetId: "",
+      referenceDisplayProperty: "",
+      referenceMultiple: false,
       required: requiredSet.has(name),
       title: asString(schema.title),
       type,
     };
 
-  if (type === "object" && isRecord(schema.properties)) {
-    prop.properties = parseChildProperties(schema.properties, schema.required);
+  if (applyReferenceOverride(prop, schema)) {
+    return prop;
   }
 
-  // Parse array item schema for object arrays
-  if (type === "array" && prop.itemType === "object" && isRecord(schema.items)) {
-    if (schema.items.type === "object") {
-      prop.itemSchema = parsePropertyDef("item", schema.items, new Set());
-    }
-  }
-
+  applyNestedSchema(prop, type, schema);
   return prop;
 }
 
@@ -313,6 +392,9 @@ function defaultProp(): PropertyDef {
     nullable: false,
     pattern: "",
     properties: [],
+    referenceDatasetId: "",
+    referenceDisplayProperty: "",
+    referenceMultiple: false,
     required: false,
     title: "",
     type: "string",
@@ -322,7 +404,24 @@ function defaultProp(): PropertyDef {
 // ─── PropertyRow ──────────────────────────────────────────────────────────────
 
 const STRING_FORMATS = ["", "email", "uri", "date", "date-time", "time", "password", "hostname"],
-  PROPERTY_TYPES: PropertyType[] = ["string", "number", "integer", "boolean", "object", "array"];
+  PROPERTY_TYPES: PropertyType[] = [
+    "string",
+    "number",
+    "integer",
+    "boolean",
+    "object",
+    "array",
+    "reference",
+  ],
+  // A reference field's target/display-property picker needs the source
+  // property to sit directly in `data` (top-level), so array items and
+  // nested-object fields can't be reference fields themselves.
+  ARRAY_ITEM_TYPES = PROPERTY_TYPES.filter((t) => t !== "array" && t !== "reference"),
+  NESTED_PROPERTY_TYPES = PROPERTY_TYPES.filter((t) => t !== "reference"),
+  // Stable empty-array reference for the `availableDatasets` prop's default —
+  // a fresh `[]` literal on every render would break memoization/referential
+  // equality for consumers that don't pass their own.
+  EMPTY_REFERENCE_DATASETS: ReferenceDatasetOption[] = [];
 
 function ItemObjectSchemaEditor({
   itemSchema,
@@ -392,6 +491,7 @@ function PropertyRowHeader({
   onRemove,
   failingCount,
   totalDataItems,
+  typeOptions,
 }: {
   prop: PropertyDef;
   set: PropSetter;
@@ -400,6 +500,7 @@ function PropertyRowHeader({
   onRemove: () => void;
   failingCount: number;
   totalDataItems: number;
+  typeOptions: PropertyType[];
 }) {
   const hasFailures = failingCount > 0;
   return (
@@ -440,7 +541,7 @@ function PropertyRowHeader({
           "shrink-0",
         )}
       >
-        {PROPERTY_TYPES.map((t) => (
+        {typeOptions.map((t) => (
           <option key={t} value={t}>
             {t}
           </option>
@@ -656,7 +757,7 @@ function ArrayConstraints({
             className="w-full h-6 rounded-md border border-input bg-background px-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
           >
             <option value="">(any)</option>
-            {PROPERTY_TYPES.filter((t) => t !== "array").map((t) => (
+            {ARRAY_ITEM_TYPES.map((t) => (
               <option key={t} value={t}>
                 {t}
               </option>
@@ -704,6 +805,189 @@ function ArrayConstraints({
   );
 }
 
+/** Top-level property names of a candidate target dataset's schema — the display-property picker's options. */
+function targetDatasetProperties(dataset: ReferenceDatasetOption | undefined): string[] {
+  if (!dataset || !isRecord(dataset.schema)) {
+    return [];
+  }
+  const props = dataset.schema.properties;
+  return isRecord(props) ? Object.keys(props) : [];
+}
+
+function ReferenceConstraints({
+  prop,
+  set,
+  availableDatasets,
+}: {
+  prop: PropertyDef;
+  set: PropSetter;
+  availableDatasets: ReferenceDatasetOption[];
+}) {
+  const selectedDataset = availableDatasets.find((d) => d.id === prop.referenceDatasetId),
+    displayPropertyOptions = targetDatasetProperties(selectedDataset);
+
+  if (availableDatasets.length === 0) {
+    return (
+      <div className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
+        No other datasets exist yet to link to. Create one first, then come back to reference it.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <Label className="text-xs">Target dataset</Label>
+          <select
+            value={prop.referenceDatasetId}
+            onChange={(e) => {
+              // Not also resetting `referenceDisplayProperty` here is deliberate:
+              // `set` replaces the whole prop from its own single render-time
+              // snapshot, so a second `set` call in this handler would
+              // silently undo the first (see PropertyRow's `set`). A
+              // display-property value that no longer matches the new
+              // dataset's fields just falls back to showing the raw entry id
+              // — self-healing, not a correctness issue — until the user
+              // picks a new one.
+              set("referenceDatasetId", e.target.value);
+            }}
+            className="w-full h-6 rounded-md border border-input bg-background px-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+          >
+            <option value="" disabled>
+              Select a dataset
+            </option>
+            {availableDatasets.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.title}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs">Display property</Label>
+          <select
+            value={prop.referenceDisplayProperty}
+            disabled={!selectedDataset}
+            onChange={(e) => {
+              set("referenceDisplayProperty", e.target.value);
+            }}
+            className={cn(
+              "w-full h-6 rounded-md border border-input bg-background px-1.5 text-xs",
+              "focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50",
+            )}
+          >
+            <option value="">(entry ID)</option>
+            {displayPropertyOptions.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+        <input
+          type="checkbox"
+          checked={prop.referenceMultiple}
+          onChange={(e) => {
+            set("referenceMultiple", e.target.checked);
+          }}
+          className="h-3 w-3 rounded"
+        />
+        Allow linking to multiple entries
+      </label>
+      {!prop.referenceDatasetId && (
+        <p className="text-[11px] text-amber-600 dark:text-amber-400">
+          Choose a target dataset — required for this field to work.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Add/edit/remove an object property's own nested fields — recurses into `PropertyRow`. */
+function NestedProperties({
+  prop,
+  set,
+  depth,
+}: {
+  prop: PropertyDef;
+  set: PropSetter;
+  depth: number;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <Label className="text-xs">Nested properties</Label>
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          onClick={() => {
+            set("properties", [...prop.properties, defaultProp()]);
+          }}
+        >
+          <Plus className="h-3 w-3 mr-1" />
+          Add
+        </Button>
+      </div>
+      {prop.properties.length > 0 && (
+        <div className="space-y-1.5 pl-2 border-l border-border">
+          {prop.properties.map((child, i) => (
+            <PropertyRow
+              key={child.id}
+              prop={child}
+              depth={depth + 1}
+              failingCount={0}
+              totalDataItems={0}
+              onChange={(updated) => {
+                const next = [...prop.properties];
+                next[i] = updated;
+                set("properties", next);
+              }}
+              onRemove={() => {
+                const next = prop.properties.filter((_, j) => j !== i);
+                set("properties", next);
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Dispatches to the constraints editor for `prop`'s type — one branch per {@link PropertyType}. */
+function PropertyTypeConstraints({
+  prop,
+  set,
+  depth,
+  availableDatasets,
+}: {
+  prop: PropertyDef;
+  set: PropSetter;
+  depth: number;
+  availableDatasets: ReferenceDatasetOption[];
+}) {
+  if (prop.type === "string") {
+    return <StringConstraints prop={prop} set={set} />;
+  }
+  if (prop.type === "number" || prop.type === "integer") {
+    return <NumberConstraints prop={prop} set={set} />;
+  }
+  if (prop.type === "array") {
+    return <ArrayConstraints prop={prop} set={set} depth={depth} />;
+  }
+  if (prop.type === "reference") {
+    return <ReferenceConstraints prop={prop} set={set} availableDatasets={availableDatasets} />;
+  }
+  if (prop.type === "object") {
+    return <NestedProperties prop={prop} set={set} depth={depth} />;
+  }
+  return null;
+}
+
 function PropertyRow({
   prop,
   onChange,
@@ -711,6 +995,7 @@ function PropertyRow({
   failingCount,
   totalDataItems,
   depth = 0,
+  availableDatasets = EMPTY_REFERENCE_DATASETS,
 }: {
   prop: PropertyDef;
   onChange: (updated: PropertyDef) => void;
@@ -718,6 +1003,7 @@ function PropertyRow({
   failingCount: number;
   totalDataItems: number;
   depth?: number;
+  availableDatasets?: ReferenceDatasetOption[];
 }) {
   const [expanded, setExpanded] = useState(false),
     set = <K extends keyof PropertyDef>(key: K, value: PropertyDef[K]) => {
@@ -736,6 +1022,7 @@ function PropertyRow({
         onRemove={onRemove}
         failingCount={failingCount}
         totalDataItems={totalDataItems}
+        typeOptions={depth === 0 ? PROPERTY_TYPES : NESTED_PROPERTY_TYPES}
       />
 
       {/* Expanded: advanced options */}
@@ -766,58 +1053,12 @@ function PropertyRow({
             </div>
           </div>
 
-          {/* String-specific */}
-          {prop.type === "string" && <StringConstraints prop={prop} set={set} />}
-
-          {/* Number/integer-specific */}
-          {(prop.type === "number" || prop.type === "integer") && (
-            <NumberConstraints prop={prop} set={set} />
-          )}
-
-          {/* Array-specific */}
-          {prop.type === "array" && <ArrayConstraints prop={prop} set={set} depth={depth} />}
-
-          {/* Object: nested properties */}
-          {prop.type === "object" && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs">Nested properties</Label>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => {
-                    set("properties", [...prop.properties, defaultProp()]);
-                  }}
-                >
-                  <Plus className="h-3 w-3 mr-1" />
-                  Add
-                </Button>
-              </div>
-              {prop.properties.length > 0 && (
-                <div className="space-y-1.5 pl-2 border-l border-border">
-                  {prop.properties.map((child, i) => (
-                    <PropertyRow
-                      key={child.id}
-                      prop={child}
-                      depth={depth + 1}
-                      failingCount={0}
-                      totalDataItems={0}
-                      onChange={(updated) => {
-                        const next = [...prop.properties];
-                        next[i] = updated;
-                        set("properties", next);
-                      }}
-                      onRemove={() => {
-                        const next = prop.properties.filter((_, j) => j !== i);
-                        set("properties", next);
-                      }}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          <PropertyTypeConstraints
+            prop={prop}
+            set={set}
+            depth={depth}
+            availableDatasets={availableDatasets}
+          />
         </div>
       )}
     </div>
@@ -832,6 +1073,8 @@ interface VisualBuilderProps {
   /** Path → count of data items failing at that path */
   validationFailingPaths: Map<string, number>;
   totalDataItems: number;
+  /** Other datasets a "reference" property can link to. Omit/empty to hide that capability entirely. */
+  availableDatasets?: ReferenceDatasetOption[];
 }
 
 export function VisualBuilder({
@@ -839,6 +1082,7 @@ export function VisualBuilder({
   onChange,
   validationFailingPaths,
   totalDataItems,
+  availableDatasets = EMPTY_REFERENCE_DATASETS,
 }: VisualBuilderProps) {
   const [formData, setFormData] = useState<SchemaFormData | null>(null),
     [parseError, setParseError] = useState(false),
@@ -968,6 +1212,7 @@ export function VisualBuilder({
                 prop={prop}
                 failingCount={failingCount}
                 totalDataItems={totalDataItems}
+                availableDatasets={availableDatasets}
                 onChange={(updated) => {
                   const next = [...formData.properties];
                   next[i] = updated;

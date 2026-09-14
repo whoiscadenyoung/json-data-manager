@@ -5,7 +5,13 @@ import { useCallback, useState } from "react";
 
 import type { EntryId, SchemaId } from "../client/index.js";
 import { useJsonCmsApi } from "./provider.js";
-import type { EntryDoc, GeometryDoc, ImportStatusDoc, SchemaDoc } from "./types.js";
+import type {
+  EntryDoc,
+  GeometryDoc,
+  ImportStatusDoc,
+  ReferencingEntryDoc,
+  SchemaDoc,
+} from "./types.js";
 
 // --- Schema queries ---
 
@@ -36,6 +42,30 @@ export function useEntries(schemaId: SchemaId | undefined): EntryDoc[] | undefin
 export function useEntry(entryId: EntryId | undefined): EntryDoc | null | undefined {
   const api = useJsonCmsApi();
   return useQuery(api.getEntry, entryId ? { entryId } : "skip");
+}
+
+/**
+ * Entries from several datasets at once, flattened into one list. Useful for
+ * building a foreign-reference field's candidate picker without one query
+ * per referenced dataset. Pass `undefined`/`[]` to skip.
+ */
+export function useEntriesForSchemas(schemaIds: SchemaId[] | undefined): EntryDoc[] | undefined {
+  const api = useJsonCmsApi();
+  return useQuery(
+    api.listEntriesForSchemas,
+    schemaIds && schemaIds.length > 0 ? { schemaIds } : "skip",
+  );
+}
+
+/**
+ * Reverse lookup: every other dataset's entry that currently references
+ * `entryId` via a foreign-reference field. Pass `undefined` to skip.
+ */
+export function useReferencingEntries(
+  entryId: EntryId | undefined,
+): ReferencingEntryDoc[] | undefined {
+  const api = useJsonCmsApi();
+  return useQuery(api.listReferencingEntries, entryId ? { entryId } : "skip");
 }
 
 /**

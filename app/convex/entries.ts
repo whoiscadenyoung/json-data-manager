@@ -6,6 +6,8 @@ import { auth } from "./auth";
 export const {
   listEntries: list,
   getEntry: get,
+  listEntriesForSchemas,
+  listReferencingEntries,
   createEntry: create,
   createEntriesBulk: createBulk,
   updateEntry: update,

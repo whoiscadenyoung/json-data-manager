@@ -55,6 +55,19 @@ export interface EntryDoc {
 }
 
 /**
+ * One entry that references a given target entry via a foreign-reference
+ * field (see the `react` package's reference utilities), as returned by
+ * `listReferencingEntries`.
+ */
+export interface ReferencingEntryDoc {
+  /** The property name on `sourceEntry.data` holding the reference. */
+  fieldName: string;
+  /** The dataset the referencing entry belongs to. */
+  sourceSchemaId: SchemaId;
+  sourceEntry: EntryDoc;
+}
+
+/**
  * A stored geometry document, as returned by `listGeometries`. Holds the
  * heavy coordinate payload — the only place it lives.
  */
@@ -112,6 +125,13 @@ export interface JsonCmsApi {
   deleteSchema: FunctionReference<"mutation", "public", { schemaId: string }, null>;
   listEntries: FunctionReference<"query", "public", { schemaId: string }, EntryDoc[]>;
   getEntry: FunctionReference<"query", "public", { entryId: string }, EntryDoc | null>;
+  listEntriesForSchemas: FunctionReference<"query", "public", { schemaIds: string[] }, EntryDoc[]>;
+  listReferencingEntries: FunctionReference<
+    "query",
+    "public",
+    { entryId: string },
+    ReferencingEntryDoc[]
+  >;
   listGeometries: FunctionReference<"query", "public", { schemaId: string }, GeometryDoc[]>;
   createEntry: FunctionReference<
     "mutation",

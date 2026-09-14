@@ -86,6 +86,32 @@ export default defineSchema({
     .index("by_entry", ["entryId"])
     .index("by_schema", ["schemaId"]),
 
+  // Denormalized index of every outgoing foreign reference (see
+  // ../shared/reference.ts): one row per `{sourceEntry, field, targetEntry}`
+  // pointer, kept in sync with `entries.data` by the entry mutations in
+  // lib.ts (deleted and re-derived from scratch on every create/update of the
+  // source entry — reference fields per entry are few, so this is cheap).
+  // Exists purely so "what references this entry?" (reverse lookup) is an
+  // indexed query instead of a full scan of every other dataset's entries.
+  references: defineTable({
+    // The source entry's property name holding the reference(s) — lets a
+    // reverse-lookup UI label which field on the source entry points here.
+    fieldName: v.string(),
+    sourceEntryId: v.id("entries"),
+    // Denormalized from the source entry, for bulk cleanup when a whole
+    // dataset is deleted without loading every one of its entries first.
+    sourceSchemaId: v.id("schemas"),
+    targetEntryId: v.id("entries"),
+    // Denormalized from the target entry, for bulk cleanup when the target
+    // dataset is deleted (its entries vanish, so anything pointing at them
+    // must too, even though the pointers themselves live on other datasets).
+    targetSchemaId: v.id("schemas"),
+  })
+    .index("by_source_entry", ["sourceEntryId"])
+    .index("by_source_schema", ["sourceSchemaId"])
+    .index("by_target_entry", ["targetEntryId"])
+    .index("by_target_schema", ["targetSchemaId"]),
+
   // Tracks a batched, workflow-driven import of a dataset's entries so the
   // Client can monitor progress. The payload lives in file storage.
   imports: defineTable({
