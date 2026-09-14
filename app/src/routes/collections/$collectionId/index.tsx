@@ -2,12 +2,22 @@ import { ConfirmDialog } from "@caden/json-cms/react/ui";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
-import { FolderOpen, Layers, MoreHorizontal, Pencil, Plus, Trash2, Ungroup } from "lucide-react";
+import {
+  FolderOpen,
+  Layers,
+  Map as MapIcon,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Trash2,
+  Ungroup,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { CollectionFormPanel } from "#/components/collection-form-panel";
 import { DatasetPickerSheet } from "#/components/dataset-picker-sheet";
+import { DatasetsMap } from "#/components/datasets-map";
 import { GroupFormPanel } from "#/components/group-form-panel";
 import {
   Breadcrumb,
@@ -30,6 +40,8 @@ import {
   DropdownMenuTrigger,
 } from "#/components/ui/dropdown-menu";
 import { Empty, EmptyDescription, EmptyTitle } from "#/components/ui/empty";
+import { Select } from "#/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "#/components/ui/tabs";
 import { api } from "#convex/_generated/api";
 
 type GroupDoc = FunctionReturnType<typeof api.groups.list>[number];
@@ -258,6 +270,78 @@ function UngroupedDatasetsCard({
   );
 }
 
+const MAP_FILTER_ALL = "all",
+  MAP_FILTER_UNGROUPED = "ungrouped";
+
+/** Extracted so the group/ungrouped branches don't nest into the caller's ternary complexity. */
+function filterDatasetsByGroup(datasets: Dataset[], groupFilter: string): Dataset[] {
+  if (groupFilter === MAP_FILTER_ALL) {
+    return datasets;
+  }
+  if (groupFilter === MAP_FILTER_UNGROUPED) {
+    return datasets.filter((dataset) => dataset.groupId === undefined);
+  }
+  return datasets.filter((dataset) => dataset.groupId === groupFilter);
+}
+
+/** Combined map of every geospatial dataset in the collection, with an optional group filter. */
+function CollectionMapTab({
+  collectionId,
+  datasets,
+  groups,
+}: {
+  collectionId: string;
+  datasets: Dataset[];
+  groups: GroupDoc[];
+}) {
+  const geometries = useQuery(api.collections.listGeometriesByCollection, { collectionId }),
+    entries = useQuery(api.collections.listEntriesByCollection, { collectionId }),
+    [groupFilter, setGroupFilter] = useState(MAP_FILTER_ALL);
+
+  if (geometries === undefined || entries === undefined) {
+    return (
+      <div className="flex justify-center items-center min-h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    );
+  }
+
+  const filteredDatasets = filterDatasetsByGroup(datasets, groupFilter),
+    filteredSchemaIds = new Set(filteredDatasets.map((dataset) => dataset._id)),
+    filteredGeometries = geometries.filter((geometry) => filteredSchemaIds.has(geometry.schemaId)),
+    filteredEntries = entries.filter((entry) => filteredSchemaIds.has(entry.schemaId));
+
+  return (
+    <div className="flex flex-col gap-4">
+      {groups.length > 0 && (
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">Show</span>
+          <Select
+            className="w-auto"
+            value={groupFilter}
+            onChange={(e) => {
+              setGroupFilter(e.target.value);
+            }}
+          >
+            <option value={MAP_FILTER_ALL}>All datasets</option>
+            {groups.map((group) => (
+              <option key={group._id} value={group._id}>
+                {group.name}
+              </option>
+            ))}
+            <option value={MAP_FILTER_UNGROUPED}>Ungrouped</option>
+          </Select>
+        </div>
+      )}
+      <DatasetsMap
+        datasets={filteredDatasets}
+        geometries={filteredGeometries}
+        entries={filteredEntries}
+      />
+    </div>
+  );
+}
+
 type AddDatasetTarget = "collection" | GroupDoc | undefined;
 
 /** Hosts the "add dataset" side panel — extracted so its title/candidates ternaries don't count against the page's own complexity. */
@@ -456,41 +540,59 @@ function CollectionDetailPage() {
         </div>
       </div>
 
-      <div className="flex flex-col gap-6">
-        {groups.map((group) => (
-          <GroupCard
-            key={group._id}
-            group={group}
-            groups={groups}
-            datasets={collectionDatasets.filter((dataset) => dataset.groupId === group._id)}
-            onEdit={(target) => {
-              setEditingGroup(target);
-              setGroupFormOpen(true);
-            }}
-            onDelete={setPendingDeleteGroup}
-            onAddDataset={setAddDatasetTarget}
-            onMoveToGroup={(dataset, groupId) => {
-              void handleMoveToGroup(dataset, groupId);
-            }}
-            onRemoveFromCollection={(dataset) => {
-              void handleRemoveFromCollection(dataset);
-            }}
-          />
-        ))}
+      <Tabs defaultValue="datasets">
+        <TabsList>
+          <TabsTrigger value="datasets">Datasets</TabsTrigger>
+          {collectionDatasets.some((dataset) => dataset.kind === "geospatial") && (
+            <TabsTrigger value="map">
+              <MapIcon className="h-3.5 w-3.5" />
+              Map
+            </TabsTrigger>
+          )}
+        </TabsList>
 
-        <UngroupedDatasetsCard
-          hasGroups={groups.length > 0}
-          collectionDatasets={collectionDatasets}
-          ungrouped={ungrouped}
-          groups={groups}
-          onMoveToGroup={(dataset, groupId) => {
-            void handleMoveToGroup(dataset, groupId);
-          }}
-          onRemoveFromCollection={(dataset) => {
-            void handleRemoveFromCollection(dataset);
-          }}
-        />
-      </div>
+        <TabsContent value="datasets">
+          <div className="flex flex-col gap-6">
+            {groups.map((group) => (
+              <GroupCard
+                key={group._id}
+                group={group}
+                groups={groups}
+                datasets={collectionDatasets.filter((dataset) => dataset.groupId === group._id)}
+                onEdit={(target) => {
+                  setEditingGroup(target);
+                  setGroupFormOpen(true);
+                }}
+                onDelete={setPendingDeleteGroup}
+                onAddDataset={setAddDatasetTarget}
+                onMoveToGroup={(dataset, groupId) => {
+                  void handleMoveToGroup(dataset, groupId);
+                }}
+                onRemoveFromCollection={(dataset) => {
+                  void handleRemoveFromCollection(dataset);
+                }}
+              />
+            ))}
+
+            <UngroupedDatasetsCard
+              hasGroups={groups.length > 0}
+              collectionDatasets={collectionDatasets}
+              ungrouped={ungrouped}
+              groups={groups}
+              onMoveToGroup={(dataset, groupId) => {
+                void handleMoveToGroup(dataset, groupId);
+              }}
+              onRemoveFromCollection={(dataset) => {
+                void handleRemoveFromCollection(dataset);
+              }}
+            />
+          </div>
+        </TabsContent>
+
+        <TabsContent value="map">
+          <CollectionMapTab collectionId={collectionId} datasets={collectionDatasets} groups={groups} />
+        </TabsContent>
+      </Tabs>
 
       <CollectionFormPanel
         collection={collection}

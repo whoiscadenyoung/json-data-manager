@@ -52,6 +52,8 @@ export type GroupId = Id<"groups">;
  *   updateGroup,
  *   deleteGroup,
  *   listSchemasByCollection,
+ *   listGeometriesByCollection,
+ *   listEntriesByCollection,
  *   setSchemaCollection,
  *   setSchemaGroup,
  * } = exposeApi(components.jsonCms, {
@@ -265,6 +267,26 @@ export function exposeApi(
       handler: async (ctx, args) => {
         await options.auth(ctx, { collectionId: args.collectionId, type: "read" });
         return ctx.runQuery(component.lib.listSchemasByCollection, {
+          collectionId: args.collectionId,
+        });
+      },
+    }),
+    // Aggregated across every geospatial dataset in a collection (grouped
+    // datasets included) — powers the collection-level map view.
+    listGeometriesByCollection: queryGeneric({
+      args: { collectionId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { collectionId: args.collectionId, type: "read" });
+        return ctx.runQuery(component.lib.listGeometriesByCollection, {
+          collectionId: args.collectionId,
+        });
+      },
+    }),
+    listEntriesByCollection: queryGeneric({
+      args: { collectionId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { collectionId: args.collectionId, type: "read" });
+        return ctx.runQuery(component.lib.listEntriesByCollection, {
           collectionId: args.collectionId,
         });
       },

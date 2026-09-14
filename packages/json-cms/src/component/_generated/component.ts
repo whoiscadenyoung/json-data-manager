@@ -175,10 +175,39 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       }>,
       Name
     >;
+    listEntriesByCollection: FunctionReference<
+      "query",
+      "internal",
+      { collectionId: string },
+      Array<{
+        _creationTime: number;
+        _id: string;
+        data: any;
+        geometryId?: string;
+        geometryType?: GeometryTypeLiteral;
+        schemaId: string;
+      }>,
+      Name
+    >;
     listGeometries: FunctionReference<
       "query",
       "internal",
       { schemaId: string },
+      Array<{
+        _creationTime: number;
+        _id: string;
+        bbox?: Array<number>;
+        entryId: string;
+        geometry: any;
+        schemaId: string;
+        type: GeometryTypeLiteral;
+      }>,
+      Name
+    >;
+    listGeometriesByCollection: FunctionReference<
+      "query",
+      "internal",
+      { collectionId: string },
       Array<{
         _creationTime: number;
         _id: string;

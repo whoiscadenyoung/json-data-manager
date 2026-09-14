@@ -18,7 +18,7 @@ import {
   mutation,
   query,
 } from "./_generated/server.js";
-import type { MutationCtx } from "./_generated/server.js";
+import type { MutationCtx, QueryCtx } from "./_generated/server.js";
 import schema from "./schema.js";
 
 const SCHEMA_SIZE_LIMIT = 102_400, // 100 KB
@@ -495,6 +495,61 @@ export const listGeometries = query({
       .collect();
   },
   returns: v.array(geometryValidator),
+});
+
+/** The `_id`s of every geospatial dataset directly or (via a group) indirectly in a collection. */
+async function listGeospatialSchemaIdsByCollection(
+  ctx: QueryCtx,
+  collectionId: Id<"collections">,
+) {
+  const schemas = await ctx.db
+    .query("schemas")
+    .withIndex("by_collection", (q) => q.eq("collectionId", collectionId))
+    .collect();
+  return schemas.filter((schemaDoc) => schemaDoc.kind === "geospatial").map((s) => s._id);
+}
+
+/**
+ * Aggregated geometry rows for every geospatial dataset in a collection —
+ * powers the collection-level map view (grouped datasets included, since
+ * `collectionId` is denormalized onto every dataset regardless of group).
+ */
+export const listGeometriesByCollection = query({
+  args: { collectionId: v.id("collections") },
+  handler: async (ctx, args) => {
+    const schemaIds = await listGeospatialSchemaIdsByCollection(ctx, args.collectionId),
+      rows = await Promise.all(
+        schemaIds.map(async (schemaId) =>
+          ctx.db
+            .query("geometries")
+            .withIndex("by_schema", (q) => q.eq("schemaId", schemaId))
+            .collect(),
+        ),
+      );
+    return rows.flat();
+  },
+  returns: v.array(geometryValidator),
+});
+
+/**
+ * Aggregated entry rows for every geospatial dataset in a collection — joined
+ * client-side against `listGeometriesByCollection` for feature-detail popups.
+ */
+export const listEntriesByCollection = query({
+  args: { collectionId: v.id("collections") },
+  handler: async (ctx, args) => {
+    const schemaIds = await listGeospatialSchemaIdsByCollection(ctx, args.collectionId),
+      rows = await Promise.all(
+        schemaIds.map(async (schemaId) =>
+          ctx.db
+            .query("entries")
+            .withIndex("by_schema", (q) => q.eq("schemaId", schemaId))
+            .collect(),
+        ),
+      );
+    return rows.flat();
+  },
+  returns: v.array(entryValidator),
 });
 
 export const getEntry = query({

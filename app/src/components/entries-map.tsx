@@ -24,7 +24,7 @@ const FEATURE_FILL_PAINT = { "fill-color": "#3b82f6", "fill-opacity": 0.2 },
   FEATURE_LINE_PAINT = { "line-color": "#3b82f6", "line-width": 2 },
   FEATURE_FILL_HOVER_PAINT = { "fill-opacity": 0.35 };
 
-function formatPropertyValue(value: unknown): string {
+export function formatPropertyValue(value: unknown): string {
   if (value === null || value === undefined) return "—";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
