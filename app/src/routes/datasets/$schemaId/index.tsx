@@ -5,14 +5,17 @@ import {
   Code2,
   Download,
   FilePlus,
+  FolderTree,
   MapIcon,
   Pencil,
   Plus,
   UploadCloud,
   Workflow,
 } from "lucide-react";
+import { useState } from "react";
 import { z } from "zod";
 
+import { DatasetOrganizePanel } from "@/components/dataset-organize-panel";
 import { EntriesMap } from "@/components/entries-map";
 import { EntriesTable } from "@/components/entries-table";
 import { EntryFormPanel } from "@/components/entry-form-panel";
@@ -110,6 +113,33 @@ function EntryPanelHost({
   );
 }
 
+/** Shows which collection/group this dataset belongs to, if any, each linking back to its page. */
+function OrganizationBadge({ schema }: { schema: Schema }) {
+  const collection = useQuery(
+      api.collections.get,
+      schema.collectionId ? { collectionId: schema.collectionId } : "skip",
+    ),
+    group = useQuery(api.groups.get, schema.groupId ? { groupId: schema.groupId } : "skip");
+
+  if (!collection) {
+    return null;
+  }
+
+  return (
+    <p className="mb-3 flex items-center gap-1.5 text-sm text-muted-foreground">
+      <FolderTree className="h-3.5 w-3.5" />
+      <Link
+        to="/collections/$collectionId"
+        params={{ collectionId: collection._id }}
+        className="hover:underline"
+      >
+        {collection.name}
+      </Link>
+      {group && <span>/ {group.name}</span>}
+    </p>
+  );
+}
+
 /** "N features with geometry" line — extracted so its `??`/ternary don't count against the page's own complexity. */
 function FeatureCountBadge({ schema }: { schema: Schema }) {
   if (schema.kind !== "geospatial") {
@@ -170,6 +200,7 @@ function SchemaDetailPage() {
     schema = useQuery(api.schemas.get, { schemaId }),
     entries = useQuery(api.entries.list, { schemaId }),
     geometries = useGeometriesForSchema(schema, schemaId),
+    [organizeOpen, setOrganizeOpen] = useState(false),
     openCreatePanel = async () => {
       await navigate({ search: { panel: "create" } });
     },
@@ -243,6 +274,15 @@ function SchemaDetailPage() {
             <Pencil className="h-4 w-4 mr-2" />
             Edit
           </RouterButton>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setOrganizeOpen(true);
+            }}
+          >
+            <FolderTree className="h-4 w-4 mr-2" />
+            Organize
+          </Button>
           <Button onClick={handleExport} disabled={entries.length === 0} variant="outline">
             <Download className="h-4 w-4 mr-2" />
             Export ({entries.length})
@@ -262,6 +302,7 @@ function SchemaDetailPage() {
         </div>
       </div>
 
+      <OrganizationBadge schema={schema} />
       <FeatureCountBadge schema={schema} />
 
       <Tabs defaultValue="entries">
@@ -350,6 +391,14 @@ function SchemaDetailPage() {
             void closePanel();
           }
         }}
+      />
+
+      <DatasetOrganizePanel
+        schemaId={schemaId}
+        currentCollectionId={schema.collectionId}
+        currentGroupId={schema.groupId}
+        open={organizeOpen}
+        onOpenChange={setOrganizeOpen}
       />
     </div>
   );

@@ -9,8 +9,10 @@
  */
 
 import type * as auth from "../auth.js";
+import type * as collections from "../collections.js";
 import type * as entries from "../entries.js";
 import type * as geometries from "../geometries.js";
+import type * as groups from "../groups.js";
 import type * as imports from "../imports.js";
 import type * as schemas from "../schemas.js";
 
@@ -22,8 +24,10 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
+  collections: typeof collections;
   entries: typeof entries;
   geometries: typeof geometries;
+  groups: typeof groups;
   imports: typeof imports;
   schemas: typeof schemas;
 }>;

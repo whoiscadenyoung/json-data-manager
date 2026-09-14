@@ -16,6 +16,8 @@ import type { Id } from "../component/_generated/dataModel.js";
 export type SchemaId = Id<"schemas">;
 export type EntryId = Id<"entries">;
 export type GeometryId = Id<"geometries">;
+export type CollectionId = Id<"collections">;
+export type GroupId = Id<"groups">;
 
 // See the example/convex/example.ts file for how to use this component.
 
@@ -39,6 +41,19 @@ export type GeometryId = Id<"geometries">;
  *   updateEntry,
  *   deleteEntry,
  *   deleteEntriesBySchema,
+ *   listCollections,
+ *   getCollection,
+ *   createCollection,
+ *   updateCollection,
+ *   deleteCollection,
+ *   listGroups,
+ *   getGroup,
+ *   createGroup,
+ *   updateGroup,
+ *   deleteGroup,
+ *   listSchemasByCollection,
+ *   setSchemaCollection,
+ *   setSchemaGroup,
  * } = exposeApi(components.jsonCms, {
  *   auth: async (ctx, operation) => {
  *     const userId = await getAuthUserId(ctx);
@@ -59,10 +74,28 @@ export function exposeApi(
     auth: (
       ctx: { auth: Auth },
       operation:
-        | { type: "read"; schemaId?: string; entryId?: string }
-        | { type: "create"; schemaId?: string }
-        | { type: "update"; schemaId?: string; entryId?: string }
-        | { type: "delete"; schemaId?: string; entryId?: string },
+        | {
+            type: "read";
+            schemaId?: string;
+            entryId?: string;
+            collectionId?: string;
+            groupId?: string;
+          }
+        | { type: "create"; schemaId?: string; collectionId?: string; groupId?: string }
+        | {
+            type: "update";
+            schemaId?: string;
+            entryId?: string;
+            collectionId?: string;
+            groupId?: string;
+          }
+        | {
+            type: "delete";
+            schemaId?: string;
+            entryId?: string;
+            collectionId?: string;
+            groupId?: string;
+          },
     ) => Promise<string>;
   },
 ) {
@@ -133,6 +166,121 @@ export function exposeApi(
       handler: async (ctx, args) => {
         await options.auth(ctx, { schemaId: args.schemaId, type: "delete" });
         return ctx.runMutation(component.lib.deleteSchema, args);
+      },
+    }),
+
+    // Collection operations
+    listCollections: queryGeneric({
+      args: {},
+      handler: async (ctx) => {
+        await options.auth(ctx, { type: "read" });
+        return ctx.runQuery(component.lib.listCollections, {});
+      },
+    }),
+    getCollection: queryGeneric({
+      args: { collectionId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { collectionId: args.collectionId, type: "read" });
+        return ctx.runQuery(component.lib.getCollection, {
+          collectionId: args.collectionId,
+        });
+      },
+    }),
+    createCollection: mutationGeneric({
+      args: { description: v.optional(v.string()), name: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { type: "create" });
+        return ctx.runMutation(component.lib.createCollection, args);
+      },
+    }),
+    updateCollection: mutationGeneric({
+      args: {
+        collectionId: v.string(),
+        description: v.optional(v.string()),
+        name: v.optional(v.string()),
+      },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { collectionId: args.collectionId, type: "update" });
+        return ctx.runMutation(component.lib.updateCollection, args);
+      },
+    }),
+    deleteCollection: mutationGeneric({
+      args: { collectionId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { collectionId: args.collectionId, type: "delete" });
+        return ctx.runMutation(component.lib.deleteCollection, args);
+      },
+    }),
+
+    // Group operations
+    listGroups: queryGeneric({
+      args: { collectionId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { collectionId: args.collectionId, type: "read" });
+        return ctx.runQuery(component.lib.listGroups, {
+          collectionId: args.collectionId,
+        });
+      },
+    }),
+    getGroup: queryGeneric({
+      args: { groupId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { groupId: args.groupId, type: "read" });
+        return ctx.runQuery(component.lib.getGroup, { groupId: args.groupId });
+      },
+    }),
+    createGroup: mutationGeneric({
+      args: {
+        collectionId: v.string(),
+        description: v.optional(v.string()),
+        name: v.string(),
+      },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { collectionId: args.collectionId, type: "create" });
+        return ctx.runMutation(component.lib.createGroup, args);
+      },
+    }),
+    updateGroup: mutationGeneric({
+      args: {
+        description: v.optional(v.string()),
+        groupId: v.string(),
+        name: v.optional(v.string()),
+      },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { groupId: args.groupId, type: "update" });
+        return ctx.runMutation(component.lib.updateGroup, args);
+      },
+    }),
+    deleteGroup: mutationGeneric({
+      args: { groupId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { groupId: args.groupId, type: "delete" });
+        return ctx.runMutation(component.lib.deleteGroup, args);
+      },
+    }),
+
+    // Dataset <-> collection/group association
+    listSchemasByCollection: queryGeneric({
+      args: { collectionId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { collectionId: args.collectionId, type: "read" });
+        return ctx.runQuery(component.lib.listSchemasByCollection, {
+          collectionId: args.collectionId,
+        });
+      },
+    }),
+    setSchemaCollection: mutationGeneric({
+      args: { collectionId: v.union(v.string(), v.null()), schemaId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { schemaId: args.schemaId, type: "update" });
+        return ctx.runMutation(component.lib.setSchemaCollection, args);
+      },
+    }),
+    setSchemaGroup: mutationGeneric({
+      args: { groupId: v.union(v.string(), v.null()), schemaId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { schemaId: args.schemaId, type: "update" });
+        return ctx.runMutation(component.lib.setSchemaGroup, args);
       },
     }),
 

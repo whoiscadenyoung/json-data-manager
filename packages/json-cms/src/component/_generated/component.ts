@@ -38,10 +38,24 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       Array<string>,
       Name
     >;
+    createCollection: FunctionReference<
+      "mutation",
+      "internal",
+      { description?: string; name: string },
+      string,
+      Name
+    >;
     createEntry: FunctionReference<
       "mutation",
       "internal",
       { data: any; geometry?: any; schemaId: string },
+      string,
+      Name
+    >;
+    createGroup: FunctionReference<
+      "mutation",
+      "internal",
+      { collectionId: string; description?: string; name: string },
       string,
       Name
     >;
@@ -57,6 +71,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       string,
       Name
     >;
+    deleteCollection: FunctionReference<
+      "mutation",
+      "internal",
+      { collectionId: string },
+      any,
+      Name
+    >;
     deleteEntriesBySchema: FunctionReference<
       "mutation",
       "internal",
@@ -65,8 +86,16 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       Name
     >;
     deleteEntry: FunctionReference<"mutation", "internal", { entryId: string }, any, Name>;
+    deleteGroup: FunctionReference<"mutation", "internal", { groupId: string }, any, Name>;
     deleteSchema: FunctionReference<"mutation", "internal", { schemaId: string }, any, Name>;
     generateUploadUrl: FunctionReference<"mutation", "internal", {}, string, Name>;
+    getCollection: FunctionReference<
+      "query",
+      "internal",
+      { collectionId: string },
+      null | { _creationTime: number; _id: string; description?: string; name: string },
+      Name
+    >;
     getEntry: FunctionReference<
       "query",
       "internal",
@@ -79,6 +108,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         geometryType?: GeometryTypeLiteral;
         schemaId: string;
       },
+      Name
+    >;
+    getGroup: FunctionReference<
+      "query",
+      "internal",
+      { groupId: string },
+      null | { _creationTime: number; _id: string; collectionId: string; description?: string; name: string },
       Name
     >;
     getImportStatus: FunctionReference<
@@ -106,14 +142,23 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         _creationTime: number;
         _id: string;
         boundingBox?: Array<number>;
+        collectionId?: string;
         description: string;
         featureCount?: number;
         geometryType?: GeometryTypeLiteral;
+        groupId?: string;
         kind?: "standard" | "geospatial";
         schema: any;
         title: string;
         uiSchema?: any;
       },
+      Name
+    >;
+    listCollections: FunctionReference<
+      "query",
+      "internal",
+      {},
+      Array<{ _creationTime: number; _id: string; description?: string; name: string }>,
       Name
     >;
     listEntries: FunctionReference<
@@ -145,6 +190,19 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       }>,
       Name
     >;
+    listGroups: FunctionReference<
+      "query",
+      "internal",
+      { collectionId: string },
+      Array<{
+        _creationTime: number;
+        _id: string;
+        collectionId: string;
+        description?: string;
+        name: string;
+      }>,
+      Name
+    >;
     listSchemas: FunctionReference<
       "query",
       "internal",
@@ -153,14 +211,50 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         _creationTime: number;
         _id: string;
         boundingBox?: Array<number>;
+        collectionId?: string;
         description: string;
         featureCount?: number;
         geometryType?: GeometryTypeLiteral;
+        groupId?: string;
         kind?: "standard" | "geospatial";
         schema: any;
         title: string;
         uiSchema?: any;
       }>,
+      Name
+    >;
+    listSchemasByCollection: FunctionReference<
+      "query",
+      "internal",
+      { collectionId: string },
+      Array<{
+        _creationTime: number;
+        _id: string;
+        boundingBox?: Array<number>;
+        collectionId?: string;
+        description: string;
+        featureCount?: number;
+        geometryType?: GeometryTypeLiteral;
+        groupId?: string;
+        kind?: "standard" | "geospatial";
+        schema: any;
+        title: string;
+        uiSchema?: any;
+      }>,
+      Name
+    >;
+    setSchemaCollection: FunctionReference<
+      "mutation",
+      "internal",
+      { collectionId: string | null; schemaId: string },
+      any,
+      Name
+    >;
+    setSchemaGroup: FunctionReference<
+      "mutation",
+      "internal",
+      { groupId: string | null; schemaId: string },
+      any,
       Name
     >;
     startImport: FunctionReference<
@@ -170,10 +264,24 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       string,
       Name
     >;
+    updateCollection: FunctionReference<
+      "mutation",
+      "internal",
+      { collectionId: string; description?: string; name?: string },
+      any,
+      Name
+    >;
     updateEntry: FunctionReference<
       "mutation",
       "internal",
       { data: any; entryId: string; geometry?: any },
+      any,
+      Name
+    >;
+    updateGroup: FunctionReference<
+      "mutation",
+      "internal",
+      { description?: string; groupId: string; name?: string },
       any,
       Name
     >;

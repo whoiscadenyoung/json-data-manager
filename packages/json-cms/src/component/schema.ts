@@ -4,11 +4,35 @@ import { v } from "convex/values";
 import { geometryArgsValidator, geometryTypeValidator } from "../shared/geojson/validators.js";
 
 export default defineSchema({
+  // A named grouping of datasets. Top-level organizational unit — e.g. "Grant
+  // data" holding every dataset for a multi-year grant program.
+  collections: defineTable({
+    description: v.optional(v.string()),
+    name: v.string(),
+  }),
+
+  // A tighter-coupled sub-collection within one `collections` doc — e.g.
+  // "SMART Grant 2025" holding just that year's polygons + points datasets.
+  // Always belongs to exactly one collection; never nests inside another group.
+  groups: defineTable({
+    collectionId: v.id("collections"),
+    description: v.optional(v.string()),
+    name: v.string(),
+  }).index("by_collection", ["collectionId"]),
+
   schemas: defineTable({
+    // Denormalized from the owning group (kept in sync by setSchemaGroup) so a
+    // grouped dataset can still be queried/filtered by its collection directly,
+    // without joining through `groups`. Cleared alongside `groupId` whenever a
+    // dataset is moved to a different collection or ungrouped entirely.
+    collectionId: v.optional(v.id("collections")),
     description: v.string(),
     // Absent/undefined means "standard" (a plain JSON-schema dataset). No
     // Migration needed for existing docs — they simply have no `kind`.
     geometryType: v.optional(geometryTypeValidator), // Only meaningful when kind === "geospatial"
+    // A dataset can belong to at most one group. Setting this always implies
+    // `collectionId` equals the group's own `collectionId` — see setSchemaGroup.
+    groupId: v.optional(v.id("groups")),
     kind: v.optional(v.union(v.literal("standard"), v.literal("geospatial"))),
     // Denormalized dataset-level summary, maintained incrementally by the
     // entry/geometry mutations in component/lib.ts (never recomputed from a
@@ -26,7 +50,9 @@ export default defineSchema({
     schema: v.any(), // JSON schema object
     title: v.string(),
     uiSchema: v.optional(v.any()), // RJSF UI schema object
-  }),
+  })
+    .index("by_collection", ["collectionId"])
+    .index("by_group", ["groupId"]),
 
   entries: defineTable({
     data: v.any(), // Entry data conforming to the schema
