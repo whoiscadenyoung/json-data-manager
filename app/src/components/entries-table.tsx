@@ -2,7 +2,7 @@ import { Link } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
 import { flexRender, getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import type { FunctionReturnType } from "convex/server";
-import { Copy, Eye, MoreHorizontal } from "lucide-react";
+import { Copy, Eye, MoreHorizontal, Pencil } from "lucide-react";
 import { useMemo } from "react";
 import { toast } from "sonner";
 
@@ -54,7 +54,15 @@ function GeometryCell({ geometryType }: { geometryType: string | undefined }) {
   return <span className="font-mono text-xs text-muted-foreground">{geometryType}</span>;
 }
 
-function RowActions({ schemaId, entry }: { schemaId: string; entry: Entry }) {
+function RowActions({
+  schemaId,
+  entry,
+  onEdit,
+}: {
+  schemaId: string;
+  entry: Entry;
+  onEdit: (entry: Entry) => void;
+}) {
   const copyAsJson = () => {
     void navigator.clipboard.writeText(JSON.stringify(entry.data, null, 2));
     toast.success("Copied entry as JSON.");
@@ -74,6 +82,10 @@ function RowActions({ schemaId, entry }: { schemaId: string; entry: Entry }) {
           <Eye className="h-3.5 w-3.5" />
           View Details
         </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => onEdit(entry)}>
+          <Pencil className="h-3.5 w-3.5" />
+          Edit Entry
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={copyAsJson}>
           <Copy className="h-3.5 w-3.5" />
@@ -88,6 +100,7 @@ function buildColumns(
   schemaId: string,
   properties: string[],
   isGeospatial: boolean,
+  onEdit: (entry: Entry) => void,
 ): ColumnDef<Entry>[] {
   const propertyColumns: ColumnDef<Entry>[] = properties.map((name) => ({
     accessorFn: (entry) => entry.data[name],
@@ -115,7 +128,7 @@ function buildColumns(
       id: "_creationTime",
     },
     {
-      cell: (info) => <RowActions schemaId={schemaId} entry={info.row.original} />,
+      cell: (info) => <RowActions schemaId={schemaId} entry={info.row.original} onEdit={onEdit} />,
       header: "",
       id: "actions",
     },
@@ -128,15 +141,17 @@ export function EntriesTable({
   properties,
   entries,
   isGeospatial,
+  onEdit,
 }: {
   schemaId: string;
   properties: string[];
   entries: Entry[];
   isGeospatial: boolean;
+  onEdit: (entry: Entry) => void;
 }) {
   const columns = useMemo(
-      () => buildColumns(schemaId, properties, isGeospatial),
-      [schemaId, properties, isGeospatial],
+      () => buildColumns(schemaId, properties, isGeospatial, onEdit),
+      [schemaId, properties, isGeospatial, onEdit],
     ),
     // TanStack Table's returned instance always has fresh method references; this is inherent to the library.
     // oxlint-disable-next-line react/incompatible-library

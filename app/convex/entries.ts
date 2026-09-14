@@ -8,4 +8,5 @@ export const {
   getEntry: get,
   createEntry: create,
   createEntriesBulk: createBulk,
+  updateEntry: update,
 } = exposeApi(components.jsonCms, { auth });

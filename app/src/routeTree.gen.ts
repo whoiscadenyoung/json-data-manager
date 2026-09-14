@@ -15,7 +15,6 @@ import { Route as DatasetsCreateRouteImport } from './routes/datasets/create'
 import { Route as DatasetsSchemaIdIndexRouteImport } from './routes/datasets/$schemaId/index'
 import { Route as DatasetsSchemaIdEntryIdRouteImport } from './routes/datasets/$schemaId/$entryId'
 import { Route as DatasetsSchemaIdBulkUploadRouteImport } from './routes/datasets/$schemaId/bulk-upload'
-import { Route as DatasetsSchemaIdCreateRouteImport } from './routes/datasets/$schemaId/create'
 import { Route as DatasetsSchemaIdEditRouteImport } from './routes/datasets/$schemaId/edit'
 
 const IndexRoute = IndexRouteImport.update({
@@ -49,11 +48,6 @@ const DatasetsSchemaIdBulkUploadRoute =
     path: '/datasets/$schemaId/bulk-upload',
     getParentRoute: () => rootRouteImport,
   } as any)
-const DatasetsSchemaIdCreateRoute = DatasetsSchemaIdCreateRouteImport.update({
-  id: '/datasets/$schemaId/create',
-  path: '/datasets/$schemaId/create',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const DatasetsSchemaIdEditRoute = DatasetsSchemaIdEditRouteImport.update({
   id: '/datasets/$schemaId/edit',
   path: '/datasets/$schemaId/edit',
@@ -66,7 +60,6 @@ export interface FileRoutesByFullPath {
   '/datasets/': typeof DatasetsIndexRoute
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
   '/datasets/$schemaId/bulk-upload': typeof DatasetsSchemaIdBulkUploadRoute
-  '/datasets/$schemaId/create': typeof DatasetsSchemaIdCreateRoute
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
   '/datasets/$schemaId/': typeof DatasetsSchemaIdIndexRoute
 }
@@ -76,7 +69,6 @@ export interface FileRoutesByTo {
   '/datasets': typeof DatasetsIndexRoute
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
   '/datasets/$schemaId/bulk-upload': typeof DatasetsSchemaIdBulkUploadRoute
-  '/datasets/$schemaId/create': typeof DatasetsSchemaIdCreateRoute
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
   '/datasets/$schemaId': typeof DatasetsSchemaIdIndexRoute
 }
@@ -87,7 +79,6 @@ export interface FileRoutesById {
   '/datasets/': typeof DatasetsIndexRoute
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
   '/datasets/$schemaId/bulk-upload': typeof DatasetsSchemaIdBulkUploadRoute
-  '/datasets/$schemaId/create': typeof DatasetsSchemaIdCreateRoute
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
   '/datasets/$schemaId/': typeof DatasetsSchemaIdIndexRoute
 }
@@ -99,7 +90,6 @@ export interface FileRouteTypes {
     | '/datasets/'
     | '/datasets/$schemaId/$entryId'
     | '/datasets/$schemaId/bulk-upload'
-    | '/datasets/$schemaId/create'
     | '/datasets/$schemaId/edit'
     | '/datasets/$schemaId/'
   fileRoutesByTo: FileRoutesByTo
@@ -109,7 +99,6 @@ export interface FileRouteTypes {
     | '/datasets'
     | '/datasets/$schemaId/$entryId'
     | '/datasets/$schemaId/bulk-upload'
-    | '/datasets/$schemaId/create'
     | '/datasets/$schemaId/edit'
     | '/datasets/$schemaId'
   id:
@@ -119,7 +108,6 @@ export interface FileRouteTypes {
     | '/datasets/'
     | '/datasets/$schemaId/$entryId'
     | '/datasets/$schemaId/bulk-upload'
-    | '/datasets/$schemaId/create'
     | '/datasets/$schemaId/edit'
     | '/datasets/$schemaId/'
   fileRoutesById: FileRoutesById
@@ -130,7 +118,6 @@ export interface RootRouteChildren {
   DatasetsIndexRoute: typeof DatasetsIndexRoute
   DatasetsSchemaIdEntryIdRoute: typeof DatasetsSchemaIdEntryIdRoute
   DatasetsSchemaIdBulkUploadRoute: typeof DatasetsSchemaIdBulkUploadRoute
-  DatasetsSchemaIdCreateRoute: typeof DatasetsSchemaIdCreateRoute
   DatasetsSchemaIdEditRoute: typeof DatasetsSchemaIdEditRoute
   DatasetsSchemaIdIndexRoute: typeof DatasetsSchemaIdIndexRoute
 }
@@ -179,13 +166,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DatasetsSchemaIdBulkUploadRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/datasets/$schemaId/create': {
-      id: '/datasets/$schemaId/create'
-      path: '/datasets/$schemaId/create'
-      fullPath: '/datasets/$schemaId/create'
-      preLoaderRoute: typeof DatasetsSchemaIdCreateRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/datasets/$schemaId/edit': {
       id: '/datasets/$schemaId/edit'
       path: '/datasets/$schemaId/edit'
@@ -202,7 +182,6 @@ const rootRouteChildren: RootRouteChildren = {
   DatasetsIndexRoute: DatasetsIndexRoute,
   DatasetsSchemaIdEntryIdRoute: DatasetsSchemaIdEntryIdRoute,
   DatasetsSchemaIdBulkUploadRoute: DatasetsSchemaIdBulkUploadRoute,
-  DatasetsSchemaIdCreateRoute: DatasetsSchemaIdCreateRoute,
   DatasetsSchemaIdEditRoute: DatasetsSchemaIdEditRoute,
   DatasetsSchemaIdIndexRoute: DatasetsSchemaIdIndexRoute,
 }

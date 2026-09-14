@@ -11,9 +11,11 @@ import {
   UploadCloud,
   Workflow,
 } from "lucide-react";
+import { z } from "zod";
 
 import { EntriesMap } from "@/components/entries-map";
 import { EntriesTable } from "@/components/entries-table";
+import { EntryFormPanel } from "@/components/entry-form-panel";
 import { RouterButton } from "@/components/router-button";
 import { SchemaVisualizer } from "@/components/schema-visualizer";
 import {
@@ -38,18 +40,74 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { api } from "../../../../convex/_generated/api";
 
+const entryPanelSearchSchema = z.object({
+  entryId: z.string().optional(),
+  panel: z.enum(["create", "edit"]).optional(),
+});
+
 export const Route = createFileRoute("/datasets/$schemaId/")({
   component: SchemaDetailPage,
+  validateSearch: entryPanelSearchSchema,
 });
 
 type Schema = NonNullable<FunctionReturnType<typeof api.schemas.get>>;
 type Geometry = FunctionReturnType<typeof api.geometries.list>[number];
 type Entry = FunctionReturnType<typeof api.entries.list>[number];
+type EntryPanelSearch = z.infer<typeof entryPanelSearchSchema>;
 
 /** Fetches this dataset's geometries — only when it's actually geospatial, `"skip"` otherwise. */
 function useGeometriesForSchema(schema: Schema | null | undefined, schemaId: string) {
   const shouldFetch = schema ? schema.kind === "geospatial" : false;
   return useQuery(api.geometries.list, shouldFetch ? { schemaId } : "skip");
+}
+
+/** The full GeoJSON geometry already on file for `entryId`, looked up from the schema's already-fetched geometries rather than a new query. */
+function findEntryGeometry(geometries: Geometry[] | undefined, entryId: string) {
+  if (geometries === undefined) {
+    return undefined;
+  }
+  const match = geometries.find((geometry) => geometry.entryId === entryId);
+  return match === undefined ? undefined : match.geometry;
+}
+
+/** The entry an `edit` panel search targets, or `undefined` for a `create` panel (or a stale/deleted entryId). */
+function resolveEntryForPanel(entries: Entry[], search: EntryPanelSearch): Entry | undefined {
+  if (search.panel !== "edit" || search.entryId === undefined) {
+    return undefined;
+  }
+  return entries.find((entry) => entry._id === search.entryId);
+}
+
+/** Hosts the create/edit side panel — extracted so its target-resolution ternaries don't count against the page's own complexity. Panel visibility lives in the URL's search params so it survives a reload. */
+function EntryPanelHost({
+  schemaId,
+  schema,
+  entries,
+  geometries,
+  search,
+  onOpenChange,
+}: {
+  schemaId: string;
+  schema: Schema;
+  entries: Entry[];
+  geometries: Geometry[] | undefined;
+  search: EntryPanelSearch;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const entry = resolveEntryForPanel(entries, search),
+    isOpen = search.panel === "create" || entry !== undefined,
+    initialGeometry = entry === undefined ? undefined : findEntryGeometry(geometries, entry._id);
+
+  return (
+    <EntryFormPanel
+      schemaId={schemaId}
+      schema={schema}
+      entry={entry}
+      initialGeometry={initialGeometry}
+      open={isOpen}
+      onOpenChange={onOpenChange}
+    />
+  );
 }
 
 /** "N features with geometry" line — extracted so its `??`/ternary don't count against the page's own complexity. */
@@ -107,9 +165,20 @@ function downloadFile(content: string, filename: string) {
 
 function SchemaDetailPage() {
   const { schemaId } = Route.useParams(),
+    search = Route.useSearch(),
+    navigate = Route.useNavigate(),
     schema = useQuery(api.schemas.get, { schemaId }),
     entries = useQuery(api.entries.list, { schemaId }),
     geometries = useGeometriesForSchema(schema, schemaId),
+    openCreatePanel = async () => {
+      await navigate({ search: { panel: "create" } });
+    },
+    openEditPanel = async (entry: Entry) => {
+      await navigate({ search: { entryId: entry._id, panel: "edit" } });
+    },
+    closePanel = async () => {
+      await navigate({ search: {} });
+    },
     handleExport = () => {
       if (!entries || !schema) {
         return;
@@ -186,10 +255,10 @@ function SchemaDetailPage() {
             <UploadCloud className="h-4 w-4 mr-2" />
             Bulk Upload
           </RouterButton>
-          <RouterButton to="/datasets/$schemaId/create" params={{ schemaId }}>
+          <Button onClick={openCreatePanel}>
             <Plus className="h-4 w-4 mr-2" />
             Create Entry
-          </RouterButton>
+          </Button>
         </div>
       </div>
 
@@ -219,10 +288,10 @@ function SchemaDetailPage() {
                     <EmptyDescription>Add your first entry to this schema.</EmptyDescription>
                   </EmptyHeader>
                   <EmptyContent>
-                    <RouterButton to="/datasets/$schemaId/create" params={{ schemaId }}>
+                    <Button onClick={openCreatePanel}>
                       <Plus className="h-4 w-4 mr-2" />
                       Create First Entry
-                    </RouterButton>
+                    </Button>
                   </EmptyContent>
                 </Empty>
               ) : (
@@ -231,6 +300,7 @@ function SchemaDetailPage() {
                   properties={Object.keys(schema.schema.properties ?? {})}
                   entries={entries}
                   isGeospatial={schema.kind === "geospatial"}
+                  onEdit={openEditPanel}
                 />
               )}
             </CardContent>
@@ -268,6 +338,19 @@ function SchemaDetailPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <EntryPanelHost
+        schemaId={schemaId}
+        schema={schema}
+        entries={entries}
+        geometries={geometries}
+        search={search}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) {
+            void closePanel();
+          }
+        }}
+      />
     </div>
   );
 }
