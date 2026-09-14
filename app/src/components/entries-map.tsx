@@ -1,4 +1,4 @@
-import { buildFeatureCollection, computeBbox } from "@caden/json-cms/react";
+import { buildFeatureCollection, computeBbox, useResolvedGeometries } from "@caden/json-cms/react";
 import type { Geometry } from "@caden/json-cms/react";
 import type { FunctionReturnType } from "convex/server";
 import { Map as MapIcon, X } from "lucide-react";
@@ -12,10 +12,15 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "#/components/ui/empty";
-import { Map, MapGeoJSON } from "#/components/ui/map";
+import { Map, MapClusterLayer, MapGeoJSON } from "#/components/ui/map";
+import { buildPointFeatureCollection, splitPointLikeGeometries } from "#/lib/point-geometry";
 import { api } from "#convex/_generated/api";
 
-type GeometryEntry = FunctionReturnType<typeof api.geometries.list>[number];
+// `listGeometries` is paginated (see its doc comment in the component) — the
+// per-item shape is still `PaginationResult["page"][number]`. `geometries`
+// below is a flat array the caller already assembled from every page (see
+// `useGeometriesForSchema` in the dataset detail route).
+type GeometryEntry = FunctionReturnType<typeof api.geometries.list>["page"][number];
 type EntryDoc = FunctionReturnType<typeof api.entries.list>[number];
 
 type FeatureProperties = { entryId: string };
@@ -64,6 +69,21 @@ function FeatureDetailsPanel({
 }
 
 /**
+ * Builds a map-renderable feature row for one geometry entry, given its
+ * already-resolved `Geometry` (see `useResolvedGeometries` — most rows
+ * resolve synchronously from inline `geometryJson`; a rare large geometry
+ * stored externally resolves via an async `fetch` instead, so a row can
+ * briefly be absent from `resolved` right after the query first loads).
+ */
+function toFeatureRow(g: GeometryEntry, resolved: Geometry) {
+  return {
+    id: g.entryId,
+    geometry: resolved,
+    properties: { entryId: g.entryId },
+  };
+}
+
+/**
  * A "dumb" presentational map view of a dataset's geometries — receives data
  * as a prop rather than querying internally, matching `EntriesTable`'s own
  * pattern.
@@ -79,7 +99,19 @@ export function EntriesMap({
     () => new globalThis.Map(entries.map((entry) => [entry._id, entry])),
     [entries],
   );
-  const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
+  const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null),
+    resolvedGeometries = useResolvedGeometries(geometries),
+    // Most rows resolve synchronously (inline `geometryJson`); a row backed
+    // by external storage is simply absent from `resolvedGeometries` until
+    // its `fetch` completes, so it's excluded here rather than crashing.
+    resolvableGeometries = useMemo(
+      () =>
+        geometries.flatMap((g) => {
+          const resolved = resolvedGeometries.get(g._id);
+          return resolved === undefined ? [] : [{ g, resolved }];
+        }),
+      [geometries, resolvedGeometries],
+    );
 
   if (geometries.length === 0) {
     return (
@@ -95,31 +127,48 @@ export function EntriesMap({
     );
   }
 
-  const collection = buildFeatureCollection<FeatureProperties>(
-      geometries.map((g) => ({
-        id: g.entryId,
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- `GeometryDoc.geometry` is widened to `unknown`, but every row in the `geometries` table was validated as a real `Geometry` at write time.
-        geometry: g.geometry as Geometry,
-        properties: { entryId: g.entryId },
-      })),
-    ),
+  const featureRows = resolvableGeometries.map(({ g, resolved }) => toFeatureRow(g, resolved)),
+    collection = buildFeatureCollection<FeatureProperties>(featureRows),
     // `collection.bbox` is typed as the `geojson` package's wider `BBox` (4- or
     // 6-tuple); `computeBbox` has its own narrower `BoundingBox` (always 4)
     // return type, which is what MapLibre's `LngLatBoundsLike` actually accepts.
+    // Computed from the full `geometries` array (point-like and not) so the
+    // viewport still fits everything, regardless of which layer renders each row.
     bbox = computeBbox(collection),
+    // `MapGeoJSON` renders `fill`/`line` layers, which draw nothing for
+    // Point/MultiPoint geometries — those go to `MapClusterLayer` instead,
+    // which renders `circle` layers. Split by entryId (rather than feeding
+    // `featureRows` straight into `splitPointLikeGeometries`) so each side
+    // still carries its already-resolved `Geometry`.
+    { pointRows } = splitPointLikeGeometries(resolvableGeometries.map(({ g }) => g)),
+    pointRowIds = new Set(pointRows.map((row) => row.entryId)),
+    pointCollection = buildPointFeatureCollection<FeatureProperties>(
+      featureRows.filter((row) => pointRowIds.has(row.properties.entryId)),
+    ),
+    otherCollection = buildFeatureCollection<FeatureProperties>(
+      featureRows.filter((row) => !pointRowIds.has(row.properties.entryId)),
+    ),
     selectedEntry = selectedEntryId ? entryById.get(selectedEntryId) : undefined;
 
   return (
     <div className="relative h-[500px] w-full overflow-hidden rounded-lg border border-border">
       <Map bounds={bbox} className="h-full w-full">
-        <MapGeoJSON
-          data={collection}
-          interactive
-          fillPaint={FEATURE_FILL_PAINT}
-          linePaint={FEATURE_LINE_PAINT}
-          fillHoverPaint={FEATURE_FILL_HOVER_PAINT}
-          onClick={(e) => setSelectedEntryId(e.feature.properties.entryId)}
-        />
+        {otherCollection.features.length > 0 && (
+          <MapGeoJSON
+            data={otherCollection}
+            interactive
+            fillPaint={FEATURE_FILL_PAINT}
+            linePaint={FEATURE_LINE_PAINT}
+            fillHoverPaint={FEATURE_FILL_HOVER_PAINT}
+            onClick={(e) => setSelectedEntryId(e.feature.properties.entryId)}
+          />
+        )}
+        {pointCollection.features.length > 0 && (
+          <MapClusterLayer<FeatureProperties>
+            data={pointCollection}
+            onPointClick={(feature) => setSelectedEntryId(feature.properties.entryId)}
+          />
+        )}
       </Map>
       {selectedEntry && (
         <FeatureDetailsPanel entry={selectedEntry} onClose={() => setSelectedEntryId(null)} />

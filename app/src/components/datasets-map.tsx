@@ -1,8 +1,8 @@
-import { buildFeatureCollection, computeBbox } from "@caden/json-cms/react";
+import { buildFeatureCollection, computeBbox, useResolvedGeometries } from "@caden/json-cms/react";
 import type { Geometry } from "@caden/json-cms/react";
 import type { FunctionReturnType } from "convex/server";
 import { Map as MapIcon, X } from "lucide-react";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
 import { formatPropertyValue } from "#/components/entries-map";
 import { Button } from "#/components/ui/button";
@@ -13,10 +13,18 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "#/components/ui/empty";
-import { Map, MapGeoJSON } from "#/components/ui/map";
+import { Map, MapClusterLayer, MapGeoJSON } from "#/components/ui/map";
+import { buildPointFeatureCollection, splitPointLikeGeometries } from "#/lib/point-geometry";
 import { api } from "#convex/_generated/api";
 
-type GeometryEntry = FunctionReturnType<typeof api.collections.listGeometriesByCollection>[number];
+// There is no server-side "all geometries in this collection" query — see
+// the collection detail route's `SchemaGeometriesLoader` doc comment for
+// why (Convex allows at most one `.paginate()` call per query execution).
+// The caller fetches each geospatial schema's geometries separately (via
+// the paginated `listGeometries`) and merges them into one flat array
+// before passing it down here — this type just describes one of those
+// already-merged rows.
+type GeometryEntry = FunctionReturnType<typeof api.geometries.list>["page"][number];
 type EntryDoc = FunctionReturnType<typeof api.collections.listEntriesByCollection>[number];
 type Dataset = FunctionReturnType<typeof api.schemas.list>[number];
 
@@ -119,6 +127,15 @@ function MapLegend({ datasets }: { datasets: { schemaId: string; title: string; 
   );
 }
 
+/** Builds a map-renderable feature row given its already-resolved `Geometry` (see `useResolvedGeometries`). */
+function toFeatureRow(geometry: GeometryEntry, resolved: Geometry) {
+  return {
+    id: geometry.entryId,
+    geometry: resolved,
+    properties: { entryId: geometry.entryId, schemaId: geometry.schemaId },
+  };
+}
+
 /**
  * A combined map view across multiple datasets — one color-coded `MapGeoJSON`
  * layer per dataset, all sharing a single viewport fit to their union bbox.
@@ -136,8 +153,20 @@ export function DatasetsMap({
 }) {
   const entryById = new globalThis.Map(entries.map((entry) => [entry._id, entry])),
     datasetById = new globalThis.Map(datasets.map((dataset) => [dataset._id, dataset])),
-    geometriesBySchema = groupGeometriesBySchema(geometries),
+    resolvedGeometries = useResolvedGeometries(geometries),
+    // Most rows resolve synchronously (inline `geometryJson`); a row backed
+    // by external storage is simply absent until its `fetch` completes.
+    // (Left for React Compiler's own automatic memoization rather than a
+    // manual `useMemo` here — `resolvedGeometries` is a `Map`, whose
+    // reference identity the compiler can't statically prove is stable
+    // against a hand-written dependency array.)
+    resolvableGeometries = geometries.flatMap((g) => {
+      const resolved = resolvedGeometries.get(g._id);
+      return resolved === undefined ? [] : [{ g, resolved }];
+    }),
+    geometriesBySchema = groupGeometriesBySchema(resolvableGeometries.map(({ g }) => g)),
     schemaIds = [...geometriesBySchema.keys()],
+    resolvedById = new globalThis.Map(resolvableGeometries.map(({ g, resolved }) => [g._id, resolved])),
     [selected, setSelected] = useState<FeatureProperties | null>(null);
 
   if (geometries.length === 0) {
@@ -157,12 +186,7 @@ export function DatasetsMap({
   }
 
   const combined = buildFeatureCollection<FeatureProperties>(
-      geometries.map((geometry) => ({
-        id: geometry.entryId,
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- `GeometryDoc.geometry` is widened to `unknown`, but every row in the `geometries` table was validated as a real `Geometry` at write time.
-        geometry: geometry.geometry as Geometry,
-        properties: { entryId: geometry.entryId, schemaId: geometry.schemaId },
-      })),
+      resolvableGeometries.map(({ g, resolved }) => toFeatureRow(g, resolved)),
     ),
     bbox = computeBbox(combined),
     legendDatasets = schemaIds.map((schemaId, index) => ({
@@ -181,29 +205,43 @@ export function DatasetsMap({
           {schemaIds.map((schemaId, index) => {
             const color = colorForIndex(index),
               schemaGeometries = geometriesBySchema.get(schemaId) ?? [],
-              collection = buildFeatureCollection<FeatureProperties>(
-                schemaGeometries.map((geometry) => ({
-                  id: geometry.entryId,
-                  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- see above.
-                  geometry: geometry.geometry as Geometry,
-                  properties: { entryId: geometry.entryId, schemaId: geometry.schemaId },
-                })),
-              );
+              // `MapGeoJSON` renders `fill`/`line` layers, which draw nothing
+              // for Point/MultiPoint geometries — those go to
+              // `MapClusterLayer` instead, which renders `circle` layers.
+              { pointRows, otherRows } = splitPointLikeGeometries(schemaGeometries),
+              withResolved = (rows: GeometryEntry[]) =>
+                rows.flatMap((g) => {
+                  const resolved = resolvedById.get(g._id);
+                  return resolved === undefined ? [] : [toFeatureRow(g, resolved)];
+                }),
+              otherCollection = buildFeatureCollection<FeatureProperties>(withResolved(otherRows)),
+              pointCollection = buildPointFeatureCollection<FeatureProperties>(
+                withResolved(pointRows),
+              ),
+              handleFeatureSelect = (properties: FeatureProperties) => {
+                setSelected(properties);
+              };
             return (
-              <MapGeoJSON<FeatureProperties>
-                key={schemaId}
-                data={collection}
-                interactive
-                fillPaint={{ "fill-color": color, "fill-opacity": 0.2 }}
-                linePaint={{ "line-color": color, "line-width": 2 }}
-                fillHoverPaint={{ "fill-opacity": 0.35 }}
-                onClick={(e) => {
-                  setSelected({
-                    entryId: e.feature.properties.entryId,
-                    schemaId: e.feature.properties.schemaId,
-                  });
-                }}
-              />
+              <Fragment key={schemaId}>
+                {otherCollection.features.length > 0 && (
+                  <MapGeoJSON<FeatureProperties>
+                    data={otherCollection}
+                    interactive
+                    fillPaint={{ "fill-color": color, "fill-opacity": 0.2 }}
+                    linePaint={{ "line-color": color, "line-width": 2 }}
+                    fillHoverPaint={{ "fill-opacity": 0.35 }}
+                    onClick={(e) => handleFeatureSelect(e.feature.properties)}
+                  />
+                )}
+                {pointCollection.features.length > 0 && (
+                  <MapClusterLayer<FeatureProperties>
+                    data={pointCollection}
+                    pointColor={color}
+                    clusterColors={[color, color, color]}
+                    onPointClick={(feature) => handleFeatureSelect(feature.properties)}
+                  />
+                )}
+              </Fragment>
             );
           })}
         </Map>

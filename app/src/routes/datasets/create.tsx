@@ -1,4 +1,5 @@
 import type { GeometryType } from "@caden/json-cms/react";
+import { chunkRowsForImport } from "@caden/json-cms/react";
 import { DatasetImporter, SchemaEditor } from "@caden/json-cms/react/ui";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
@@ -182,35 +183,49 @@ function ImportFirst() {
       progress={progress}
       onImport={async (_json, parsedSchema, _uiJson, parsedUiSchema, rows, kind, geometryType) => {
         const newSchemaId = await createSchema({
-            geometryType: kind === "geospatial" ? geometryType : undefined,
-            kind: kind === "geospatial" ? "geospatial" : undefined,
-            schema: parsedSchema,
-            uiSchema: Object.keys(parsedUiSchema).length > 0 ? parsedUiSchema : undefined,
-          }),
-          uploadUrl = await generateUploadUrl({}),
-          res = await fetch(uploadUrl, {
-            body: JSON.stringify(rows),
-            headers: { "Content-Type": "application/json" },
-            method: "POST",
-          });
-        if (!res.ok) {
-          throw new Error("Failed to upload import data.");
+          geometryType: kind === "geospatial" ? geometryType : undefined,
+          kind: kind === "geospatial" ? "geospatial" : undefined,
+          schema: parsedSchema,
+          uiSchema: Object.keys(parsedUiSchema).length > 0 ? parsedUiSchema : undefined,
+        });
+
+        // Split client-side (we already have every row parsed here) and
+        // upload each chunk to its own blob — never one giant upload. See
+        // `chunkRowsForImport`'s doc comment for why: Convex components
+        // can't use the Node runtime, so no server-side step could safely
+        // parse one large upload in a single pass.
+        const chunks = chunkRowsForImport(rows),
+          storageIds: string[] = [];
+        for (const chunk of chunks) {
+          // oxlint-disable-next-line no-await-in-loop
+          const uploadUrl = await generateUploadUrl({}),
+            // oxlint-disable-next-line no-await-in-loop
+            res = await fetch(uploadUrl, {
+              body: JSON.stringify(chunk),
+              headers: { "Content-Type": "application/json" },
+              method: "POST",
+            });
+          if (!res.ok) {
+            throw new Error("Failed to upload import data.");
+          }
+          // oxlint-disable-next-line no-await-in-loop
+          const body: unknown = await res.json();
+          if (
+            typeof body !== "object" ||
+            body === null ||
+            !("storageId" in body) ||
+            typeof body.storageId !== "string"
+          ) {
+            throw new Error("Import upload did not return a storageId.");
+          }
+          storageIds.push(body.storageId);
         }
-        const body: unknown = await res.json();
-        if (
-          typeof body !== "object" ||
-          body === null ||
-          !("storageId" in body) ||
-          typeof body.storageId !== "string"
-        ) {
-          throw new Error("Import upload did not return a storageId.");
-        }
-        const storageId = body.storageId,
-          newImportId = await startImport({
-            schemaId: newSchemaId,
-            storageId,
-            total: rows.length,
-          });
+
+        const newImportId = await startImport({
+          schemaId: newSchemaId,
+          storageIds,
+          total: rows.length,
+        });
         setSchemaId(newSchemaId);
         setImportId(newImportId);
       }}

@@ -1,4 +1,5 @@
 import {
+  chunkRowsForImport,
   enabledAcceptString,
   enabledExtensionsHint,
   findImportParser,
@@ -248,8 +249,10 @@ async function loadImportedFile(file: File, isGeospatial: boolean): Promise<Load
 
   const parser = findImportParser(file);
   if (!parser) {
-    const hint = isGeospatial ? `.geojson, ${enabledExtensionsHint()}` : enabledExtensionsHint();
-    return { kind: "error", message: `Please upload a supported file (${hint}).` };
+    return {
+      kind: "error",
+      message: `Please upload a supported file (${enabledExtensionsHint()}).`,
+    };
   }
   try {
     return { kind: "parsed", result: await parser.parse(file) };
@@ -291,7 +294,6 @@ interface UploadCardProps {
   onClear: () => void;
   onValidate: () => void;
   arrayJsonSchema: object | undefined;
-  isGeospatial: boolean;
 }
 
 interface SheetPickerHandoff {
@@ -354,7 +356,6 @@ function UploadCard({
   onClear,
   onValidate,
   arrayJsonSchema,
-  isGeospatial,
 }: UploadCardProps) {
   return (
     <Card>
@@ -371,7 +372,7 @@ function UploadCard({
           <input
             ref={fileInputRef}
             type="file"
-            accept={isGeospatial ? `.geojson,${enabledAcceptString()}` : enabledAcceptString()}
+            accept={enabledAcceptString()}
             className="hidden"
             onChange={onFileChange}
           />
@@ -427,9 +428,7 @@ function UploadCard({
                     ? "Drop your file here"
                     : "Drag & drop a data file, or click to browse"}
                 </p>
-                <p className="text-xs">
-                  {isGeospatial ? `.geojson, ${enabledExtensionsHint()}` : enabledExtensionsHint()}
-                </p>
+                <p className="text-xs">{enabledExtensionsHint()}</p>
               </>
             )}
           </div>
@@ -723,28 +722,41 @@ function BulkUploadPage() {
 
       setIsSubmitting(true);
       try {
-        // Upload the valid rows to storage, then run the batched, monitored import.
-        const uploadUrl = await generateUploadUrl({}),
-          res = await fetch(uploadUrl, {
-            body: JSON.stringify(validEntries),
-            headers: { "Content-Type": "application/json" },
-            method: "POST",
-          });
-        if (!res.ok) {
-          throw new Error("Failed to upload entries.");
-        }
-        const body: unknown = await res.json();
-        if (
-          typeof body !== "object" ||
-          body === null ||
-          !("storageId" in body) ||
-          typeof body.storageId !== "string"
-        ) {
-          throw new Error("Upload did not return a storageId.");
+        // Split client-side (we already have every row parsed here) and
+        // upload each chunk to its own blob, then run the batched,
+        // monitored import. Never one giant upload — see
+        // `chunkRowsForImport`'s doc comment for why: Convex components
+        // can't use the Node runtime, so no server-side step could safely
+        // parse one large upload in a single pass.
+        const chunks = chunkRowsForImport(validEntries),
+          storageIds: string[] = [];
+        for (const chunk of chunks) {
+          // oxlint-disable-next-line no-await-in-loop
+          const uploadUrl = await generateUploadUrl({}),
+            // oxlint-disable-next-line no-await-in-loop
+            res = await fetch(uploadUrl, {
+              body: JSON.stringify(chunk),
+              headers: { "Content-Type": "application/json" },
+              method: "POST",
+            });
+          if (!res.ok) {
+            throw new Error("Failed to upload entries.");
+          }
+          // oxlint-disable-next-line no-await-in-loop
+          const body: unknown = await res.json();
+          if (
+            typeof body !== "object" ||
+            body === null ||
+            !("storageId" in body) ||
+            typeof body.storageId !== "string"
+          ) {
+            throw new Error("Upload did not return a storageId.");
+          }
+          storageIds.push(body.storageId);
         }
         const newImportId = await startImport({
           schemaId,
-          storageId: body.storageId,
+          storageIds,
           total: validEntries.length,
         });
         setImportId(newImportId);
@@ -831,7 +843,6 @@ function BulkUploadPage() {
             fileInputRef,
             fileName,
             isDragging,
-            isGeospatial,
             jsonText,
             onClear: clearInput,
             onDragLeave: handleDragLeave,

@@ -131,13 +131,19 @@ function EntryFormBody({
       setGeometryError(null);
       setIsSubmitting(true);
 
+      // `createEntry`/`updateEntry` carry geometry as a JSON string, not the
+      // nested-array `Geometry` shape directly — see `geometry_storage.ts`
+      // in the component for why (Convex's 8192-elements-per-array limit,
+      // which a hand-pasted ring can still exceed even for a single entry).
+      const geometryArg = geometry === undefined ? undefined : JSON.stringify(geometry);
+
       try {
         if (isEditing) {
-          await updateEntry({ data: data.formData, entryId: entry._id, geometry });
+          await updateEntry({ data: data.formData, entryId: entry._id, geometry: geometryArg });
           toast.success("Entry updated successfully!");
           onSaved("updated");
         } else {
-          await createEntry({ data: data.formData, geometry, schemaId });
+          await createEntry({ data: data.formData, geometry: geometryArg, schemaId });
           toast.success("Entry created successfully!");
           setGeometryText("");
           setFormKey((key) => key + 1);

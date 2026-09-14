@@ -10,7 +10,6 @@ export const {
   updateCollection: update,
   deleteCollection: remove,
   listSchemasByCollection: listDatasets,
-  listGeometriesByCollection,
   listEntriesByCollection,
   setSchemaCollection,
   setSchemaGroup,

@@ -55,7 +55,12 @@ const ACCEPT = enabledAcceptString(),
 
 /** Whether this file is JSON-shaped enough to be worth sniffing for GeoJSON before falling through to the generic parser registry (GeoJSON detection needs the raw parsed document, not a registry parser's already-flattened rows). */
 function looksLikeJsonFile(file: File): boolean {
-  return /\.(json|jsonl|ndjson)$/i.test(file.name) || file.type === "application/json";
+  return (
+    /\.(json|jsonl|ndjson|geojson)$/i.test(file.name) ||
+    file.type === "application/json" ||
+    file.type === "application/geo+json" ||
+    file.type === "application/vnd.geo+json"
+  );
 }
 
 async function readFileAsText(file: File): Promise<string> {

@@ -16,6 +16,11 @@ describe("import parser registry", () => {
     expect(xlsxParser === undefined ? undefined : xlsxParser.id).toBe("xlsx");
   });
 
+  it("dispatches a .geojson file to the JSON parser", () => {
+    const parser = findImportParser(fileNamed("smart_awards.geojson"));
+    expect(parser === undefined ? undefined : parser.id).toBe("json");
+  });
+
   it("returns undefined for an unrecognized extension", () => {
     expect(findImportParser(fileNamed("data.txt"))).toBeUndefined();
   });
@@ -23,6 +28,7 @@ describe("import parser registry", () => {
   it("exposes every enabled parser's accept string and extensions", () => {
     expect(enabledAcceptString()).toContain(".csv");
     expect(enabledAcceptString()).toContain(".xlsx");
-    expect(enabledExtensionsHint()).toBe(".json, .jsonl, .ndjson, .csv, .xlsx, .xlsm");
+    expect(enabledAcceptString()).toContain(".geojson");
+    expect(enabledExtensionsHint()).toBe(".json, .jsonl, .ndjson, .geojson, .csv, .xlsx, .xlsm");
   });
 });

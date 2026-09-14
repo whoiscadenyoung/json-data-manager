@@ -1,3 +1,5 @@
+import type { Geometry as GeometryShape } from "@caden/json-cms/react";
+import { useAllPaginated } from "@caden/json-cms/react";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
@@ -54,23 +56,51 @@ export const Route = createFileRoute("/datasets/$schemaId/")({
 });
 
 type Schema = NonNullable<FunctionReturnType<typeof api.schemas.get>>;
-type Geometry = FunctionReturnType<typeof api.geometries.list>[number];
+// `listGeometries` is paginated (see its doc comment in the component) — the
+// per-item shape is still `PaginationResult["page"][number]`.
+type Geometry = FunctionReturnType<typeof api.geometries.list>["page"][number];
 type Entry = FunctionReturnType<typeof api.entries.list>[number];
 type EntryPanelSearch = z.infer<typeof entryPanelSearchSchema>;
 
-/** Fetches this dataset's geometries — only when it's actually geospatial, `"skip"` otherwise. */
+/**
+ * Fetches this dataset's geometries — only when it's actually geospatial,
+ * `"skip"` otherwise. `listGeometries` is paginated server-side (a dataset's
+ * cumulative geometry payload can exceed Convex's per-execution read-byte
+ * budget even though each row is safely under its own document-size limit),
+ * so this fetches every page and returns `undefined` until all of them have
+ * loaded — matching the plain-`useQuery` shape the rest of this page expects.
+ */
 function useGeometriesForSchema(schema: Schema | null | undefined, schemaId: string) {
-  const shouldFetch = schema ? schema.kind === "geospatial" : false;
-  return useQuery(api.geometries.list, shouldFetch ? { schemaId } : "skip");
+  const shouldFetch = schema ? schema.kind === "geospatial" : false,
+    { isLoading, results } = useAllPaginated(
+      api.geometries.list,
+      shouldFetch ? { schemaId } : "skip",
+    );
+  return isLoading ? undefined : results;
 }
 
-/** The full GeoJSON geometry already on file for `entryId`, looked up from the schema's already-fetched geometries rather than a new query. */
+/**
+ * The full GeoJSON geometry already on file for `entryId`, looked up from
+ * the schema's already-fetched geometries rather than a new query. Only
+ * resolves the common inline case (`geometryJson`) synchronously — a
+ * geometry stored externally (`geometryUrl`, the rare large-geometry case)
+ * is left `undefined` here rather than kicking off an async fetch just to
+ * pre-fill an edit textarea; the user can still paste a replacement.
+ */
 function findEntryGeometry(geometries: Geometry[] | undefined, entryId: string) {
   if (geometries === undefined) {
     return undefined;
   }
   const match = geometries.find((geometry) => geometry.entryId === entryId);
-  return match === undefined ? undefined : match.geometry;
+  if (match === undefined || match.geometryJson === undefined) {
+    return undefined;
+  }
+  try {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- `geometryJson` was validated as a real `Geometry` server-side at write time.
+    return JSON.parse(match.geometryJson) as GeometryShape;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The entry an `edit` panel search targets, or `undefined` for a `create` panel (or a stale/deleted entryId). */

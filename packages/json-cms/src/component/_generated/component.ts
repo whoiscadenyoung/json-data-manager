@@ -8,7 +8,7 @@
  * @module
  */
 
-import type { FunctionReference } from "convex/server";
+import type { FunctionReference, PaginationOptions, PaginationResult } from "convex/server";
 
 type GeometryTypeLiteral =
   | "Point"
@@ -17,6 +17,17 @@ type GeometryTypeLiteral =
   | "MultiLineString"
   | "Polygon"
   | "MultiPolygon";
+
+type GeometryDocLiteral = {
+  _creationTime: number;
+  _id: string;
+  bbox?: Array<number>;
+  entryId: string;
+  geometryJson?: string;
+  geometryUrl?: string;
+  schemaId: string;
+  type: GeometryTypeLiteral;
+};
 
 /**
  * A utility for referencing a Convex component's exposed API.
@@ -34,7 +45,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
     createEntriesBulk: FunctionReference<
       "mutation",
       "internal",
-      { entries: Array<{ data: any; geometry?: any }>; schemaId: string },
+      { entries: Array<{ data: any; geometry?: string }>; schemaId: string },
       Array<string>,
       Name
     >;
@@ -48,7 +59,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
     createEntry: FunctionReference<
       "mutation",
       "internal",
-      { data: any; geometry?: any; schemaId: string },
+      { data: any; geometry?: string; schemaId: string },
       string,
       Name
     >;
@@ -128,7 +139,8 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         processed: number;
         schemaId: string;
         status: "pending" | "processing" | "completed" | "failed";
-        storageId: string;
+        storageId?: string;
+        storageIds?: Array<string>;
         total: number;
         workflowId?: string;
       } | null,
@@ -206,31 +218,8 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
     listGeometries: FunctionReference<
       "query",
       "internal",
-      { schemaId: string },
-      Array<{
-        _creationTime: number;
-        _id: string;
-        bbox?: Array<number>;
-        entryId: string;
-        geometry: any;
-        schemaId: string;
-        type: GeometryTypeLiteral;
-      }>,
-      Name
-    >;
-    listGeometriesByCollection: FunctionReference<
-      "query",
-      "internal",
-      { collectionId: string },
-      Array<{
-        _creationTime: number;
-        _id: string;
-        bbox?: Array<number>;
-        entryId: string;
-        geometry: any;
-        schemaId: string;
-        type: GeometryTypeLiteral;
-      }>,
+      { paginationOpts: PaginationOptions; schemaId: string },
+      PaginationResult<GeometryDocLiteral>,
       Name
     >;
     listGroups: FunctionReference<
@@ -321,7 +310,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
     startImport: FunctionReference<
       "mutation",
       "internal",
-      { schemaId: string; storageId: string; total: number },
+      { schemaId: string; storageIds: Array<string>; total: number },
       string,
       Name
     >;
@@ -335,7 +324,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
     updateEntry: FunctionReference<
       "mutation",
       "internal",
-      { data: any; entryId: string; geometry?: any },
+      { data: any; entryId: string; geometry?: string | null },
       any,
       Name
     >;

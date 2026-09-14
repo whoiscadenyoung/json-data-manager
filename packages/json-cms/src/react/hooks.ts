@@ -4,6 +4,8 @@ import { useMutation, useQuery } from "convex/react";
 import { useCallback, useState } from "react";
 
 import type { EntryId, SchemaId } from "../client/index.js";
+import { useAllPaginated } from "./lib/all-paginated.js";
+import { chunkRowsForImport } from "./lib/chunk-rows.js";
 import { useJsonCmsApi } from "./provider.js";
 import type {
   EntryDoc,
@@ -73,10 +75,17 @@ export function useReferencingEntries(
  * coordinate payloads (e.g. for a map view). `useEntries` never touches this
  * data, so rendering a properties table never pays for it. Pass `undefined`
  * to skip.
+ *
+ * Fetches every page automatically (see `useAllPaginated`) — `listGeometries`
+ * is paginated server-side because a dataset's cumulative geometry payload
+ * can exceed Convex's per-execution read-byte budget even though each row is
+ * safely under its own document-size limit — and returns `undefined` while
+ * any page is still loading, matching every other hook in this file.
  */
 export function useGeometries(schemaId: SchemaId | undefined): GeometryDoc[] | undefined {
-  const api = useJsonCmsApi();
-  return useQuery(api.listGeometries, schemaId ? { schemaId } : "skip");
+  const api = useJsonCmsApi(),
+    { isLoading, results } = useAllPaginated(api.listGeometries, schemaId ? { schemaId } : "skip");
+  return isLoading ? undefined : results;
 }
 
 // --- Schema mutations ---
@@ -113,12 +122,24 @@ export function useDeleteSchema() {
 
 // --- Entry mutations ---
 
+/**
+ * `createEntry`/`updateEntry`/`createEntriesBulk` all carry `geometry` over
+ * the wire as a JSON string (see `types.ts`'s `GeometryDoc` doc comment for
+ * why — Convex's 8192-elements-per-array limit, which a raw nested-array
+ * geometry argument can hit for real-world GIS data). These hooks keep the
+ * ergonomic `Geometry`-object input the rest of the app already uses;
+ * `toGeometryArg` does the one-line conversion at the boundary.
+ */
+function toGeometryArg(geometry: unknown): string | undefined {
+  return geometry === undefined ? undefined : JSON.stringify(geometry);
+}
+
 export function useCreateEntry() {
   const api = useJsonCmsApi(),
     fn = useMutation(api.createEntry);
   return useCallback(
     async (args: { schemaId: SchemaId; data: unknown; geometry?: unknown }): Promise<EntryId> =>
-      fn(args),
+      fn({ ...args, geometry: toGeometryArg(args.geometry) }),
     [fn],
   );
 }
@@ -130,7 +151,14 @@ export function useCreateEntriesBulk() {
     async (args: {
       schemaId: SchemaId;
       entries: Array<{ data: unknown; geometry?: unknown }>;
-    }): Promise<EntryId[]> => fn(args),
+    }): Promise<EntryId[]> =>
+      fn({
+        entries: args.entries.map((entry) => ({
+          data: entry.data,
+          geometry: toGeometryArg(entry.geometry),
+        })),
+        schemaId: args.schemaId,
+      }),
     [fn],
   );
 }
@@ -141,7 +169,7 @@ export function useUpdateEntry() {
   return useCallback(
     // `geometry: null` explicitly clears the entry's geometry; `undefined`/omitted leaves it untouched.
     async (args: { entryId: EntryId; data: unknown; geometry?: unknown }): Promise<null> =>
-      fn(args),
+      fn({ ...args, geometry: args.geometry === null ? null : toGeometryArg(args.geometry) }),
     [fn],
   );
 }
@@ -206,26 +234,45 @@ export function useDatasetImport(): DatasetImportHandle {
     start = useCallback(
       async ({ schema, uiSchema, kind, geometryType, rows }: StartDatasetImportArgs) => {
         const newSchemaId = await createSchema({ geometryType, kind, schema, uiSchema }),
-          uploadUrl = await generateUploadUrl({}),
-          res = await fetch(uploadUrl, {
-            body: JSON.stringify(rows),
-            headers: { "Content-Type": "application/json" },
-            method: "POST",
-          });
-        if (!res.ok) {
-          throw new Error("Failed to upload import data.");
+          // Split client-side (the browser already has every row parsed in
+          // memory) and upload each chunk to its own blob — never one giant
+          // blob. See `chunkRowsForImport`'s doc comment for why: Convex
+          // components can't use the Node runtime, so no server-side step
+          // could otherwise safely parse a large upload in one shot.
+          chunks = chunkRowsForImport(rows),
+          storageIds: string[] = [];
+        // Sequential: keeps upload order predictable and mirrors the
+        // workflow's own sequential chunk processing; could be
+        // parallelized later if upload latency becomes a bottleneck.
+        for (const chunk of chunks) {
+          // oxlint-disable-next-line no-await-in-loop
+          const uploadUrl = await generateUploadUrl({}),
+            // oxlint-disable-next-line no-await-in-loop
+            res = await fetch(uploadUrl, {
+              body: JSON.stringify(chunk),
+              headers: { "Content-Type": "application/json" },
+              method: "POST",
+            });
+          if (!res.ok) {
+            throw new Error("Failed to upload import data.");
+          }
+          // oxlint-disable-next-line no-await-in-loop
+          const body: unknown = await res.json();
+          if (
+            typeof body !== "object" ||
+            body === null ||
+            !("storageId" in body) ||
+            typeof body.storageId !== "string"
+          ) {
+            throw new Error("Import upload did not return a storageId.");
+          }
+          storageIds.push(body.storageId);
         }
-        const body: unknown = await res.json();
-        if (
-          typeof body !== "object" ||
-          body === null ||
-          !("storageId" in body) ||
-          typeof body.storageId !== "string"
-        ) {
-          throw new Error("Import upload did not return a storageId.");
-        }
-        const storageId = body.storageId,
-          newImportId = await startImport({ schemaId: newSchemaId, storageId, total: rows.length });
+        const newImportId = await startImport({
+          schemaId: newSchemaId,
+          storageIds,
+          total: rows.length,
+        });
         setSchemaId(newSchemaId);
         setImportId(newImportId);
         return { importId: newImportId, schemaId: newSchemaId };
