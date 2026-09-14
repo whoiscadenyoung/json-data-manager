@@ -1,4 +1,4 @@
-import type { FunctionReference } from "convex/server";
+import type { FunctionReference, PaginationOptions, PaginationResult } from "convex/server";
 
 import type { EntryId, SchemaId } from "../client/index.js";
 
@@ -68,8 +68,19 @@ export interface ReferencingEntryDoc {
 }
 
 /**
- * A stored geometry document, as returned by `listGeometries`. Holds the
- * heavy coordinate payload — the only place it lives.
+ * A stored geometry document, as returned by `listGeometries`. Points at the
+ * heavy coordinate payload rather than inlining it directly — a single
+ * geometry's coordinates can be several MB, comfortably past Convex's
+ * per-document size limit, so the query resolves it to one of two forms:
+ *
+ * - `geometryJson`: the full GeoJSON geometry, pre-serialized to a JSON
+ *   string — the common case (small/medium geometries). `JSON.parse` it.
+ * - `geometryUrl`: a fetchable URL for a geometry too large to fit inline —
+ *   do a client-side `fetch(geometryUrl).then(r => r.json())` to get it.
+ *   (`@caden/json-cms/react`'s `useResolvedGeometries` hook does this for
+ *   you, with caching, for a whole list of rows at once.)
+ *
+ * Exactly one of the two is set on any row with a geometry at all.
  */
 export interface GeometryDoc {
   _id: string;
@@ -78,8 +89,10 @@ export interface GeometryDoc {
   entryId: EntryId;
   /** This geometry's own top-level type. */
   type: string;
-  /** The full GeoJSON geometry (coordinates and all). */
-  geometry: unknown;
+  /** The full GeoJSON geometry, pre-serialized — `JSON.parse` it. Set when the geometry is small enough to have been stored inline. */
+  geometryJson?: string;
+  /** A URL to `fetch` the full GeoJSON geometry from. Set instead of `geometryJson` when the geometry was too large to store inline. */
+  geometryUrl?: string;
   /** This geometry's own bounding box, if computable. */
   bbox?: number[];
 }
@@ -132,33 +145,48 @@ export interface JsonCmsApi {
     { entryId: string },
     ReferencingEntryDoc[]
   >;
-  listGeometries: FunctionReference<"query", "public", { schemaId: string }, GeometryDoc[]>;
+  // Paginated — a dataset's geometry rows can cumulatively exceed Convex's
+  // per-execution read-byte budget even though each individual row is
+  // safely under its own document-size limit. Use `usePaginatedGeometries`
+  // (or the lower-level `useAllPaginated`) to fetch every page.
+  listGeometries: FunctionReference<
+    "query",
+    "public",
+    { paginationOpts: PaginationOptions; schemaId: string },
+    PaginationResult<GeometryDoc>
+  >;
+  // `geometry` here is a JSON *string* (see `GeometryDoc`'s doc comment) —
+  // the hooks in `hooks.ts` accept a `Geometry`-shaped value and
+  // `JSON.stringify` it before calling these, so callers of the hooks never
+  // need to know about this wire representation.
   createEntry: FunctionReference<
     "mutation",
     "public",
-    { schemaId: string; data: unknown; geometry?: unknown },
+    { schemaId: string; data: unknown; geometry?: string },
     EntryId
   >;
   createEntriesBulk: FunctionReference<
     "mutation",
     "public",
-    { schemaId: string; entries: Array<{ data: unknown; geometry?: unknown }> },
+    { schemaId: string; entries: Array<{ data: unknown; geometry?: string }> },
     EntryId[]
   >;
   updateEntry: FunctionReference<
     "mutation",
     "public",
-    { entryId: string; data: unknown; geometry?: unknown },
+    { entryId: string; data: unknown; geometry?: string | null },
     null
   >;
   deleteEntry: FunctionReference<"mutation", "public", { entryId: string }, null>;
   deleteEntriesBySchema: FunctionReference<"mutation", "public", { schemaId: string }, number>;
   // Batched dataset import
   generateImportUploadUrl: FunctionReference<"mutation", "public", Empty, string>;
+  // `storageIds`: one already-small, client-uploaded chunk blob per entry —
+  // see `chunkRowsForImport` for why chunking happens client-side.
   startImport: FunctionReference<
     "mutation",
     "public",
-    { schemaId: string; storageId: string; total: number },
+    { schemaId: string; storageIds: string[]; total: number },
     string
   >;
   getImportStatus: FunctionReference<
@@ -176,7 +204,9 @@ export interface ImportStatusDoc {
   _id: string;
   _creationTime: number;
   schemaId: SchemaId;
-  storageId: string;
+  /** @deprecated superseded by `storageIds` (one blob per client-uploaded chunk). */
+  storageId?: string;
+  storageIds?: string[];
   total: number;
   processed: number;
   status: "pending" | "processing" | "completed" | "failed";

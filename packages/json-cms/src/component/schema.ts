@@ -76,12 +76,34 @@ export default defineSchema({
   // join table would add real complexity (junction rows, extra queries) for
   // a use case that doesn't exist yet. This table is still a clean seam to
   // add one later if that ever changes, without touching `entries` again.
+  //
+  // The heavy coordinate payload is NEVER stored as nested Convex arrays
+  // (`geometryArgsValidator`'s shape) — real-world GIS data routinely has a
+  // single ring/position-list with tens of thousands of vertices, and Convex
+  // caps any single array (including one nested inside a document/argument)
+  // at 8192 elements. Instead the geometry is serialized to JSON text, which
+  // has no such cap, and stored one of two ways:
+  //  - `geometryJson`: inline, when the JSON text comfortably fits under
+  //    Convex's ~1 MiB per-document limit (see INLINE_GEOMETRY_BYTE_LIMIT in
+  //    lib.ts). This is the common case — most geometries land here.
+  //  - `geometryStorageId`: a file-storage blob holding the same JSON text,
+  //    for geometries too large to fit inline (measured up to ~4 MB in real
+  //    datasets) — file storage has no document-size or array-length ceiling.
+  // Exactly one of the two is set on any row written by current code.
+  //
+  // `geometry` (the old inline nested-array field) is kept declared, but
+  // optional and no longer written, purely so pre-migration rows already
+  // holding it don't fail schema validation — see `resolveGeometryOutput` in
+  // lib.ts, which normalizes it away for every reader.
   geometries: defineTable({
     bbox: v.optional(v.array(v.number())), // This geometry's own bounding box
     entryId: v.id("entries"),
-    geometry: geometryArgsValidator, // The heavy payload: full coordinates
+    /** @deprecated legacy inline shape — see the table's doc comment above. */
+    geometry: v.optional(geometryArgsValidator),
+    geometryJson: v.optional(v.string()),
+    geometryStorageId: v.optional(v.id("_storage")),
     schemaId: v.id("schemas"), // Denormalized for the by-schema index (map view reads)
-    type: geometryTypeValidator, // Denormalized copy of geometry.type for filtering/scanning without touching `geometry`
+    type: geometryTypeValidator, // Denormalized copy of geometry.type for filtering/scanning without touching the payload
   })
     .index("by_entry", ["entryId"])
     .index("by_schema", ["schemaId"]),
@@ -113,7 +135,12 @@ export default defineSchema({
     .index("by_target_schema", ["targetSchemaId"]),
 
   // Tracks a batched, workflow-driven import of a dataset's entries so the
-  // Client can monitor progress. The payload lives in file storage.
+  // Client can monitor progress. The client splits the row payload into
+  // several small chunks itself (each already comfortably small enough for
+  // the component's per-chunk action to parse in Convex's default action
+  // runtime — see lib.ts's `insertChunkFromStorage`; components cannot use
+  // the Node runtime at all, so no server-side step can safely hold a whole
+  // multi-tens-of-MB upload at once) and uploads each to its own storage blob.
   imports: defineTable({
     error: v.optional(v.string()),
     processed: v.number(),
@@ -124,7 +151,9 @@ export default defineSchema({
       v.literal("completed"),
       v.literal("failed"),
     ),
-    storageId: v.id("_storage"), // Uploaded rows payload (JSON array)
+    /** @deprecated superseded by `storageIds` (one blob per client-uploaded chunk) — kept optional so a pre-migration row doesn't fail schema validation. */
+    storageId: v.optional(v.id("_storage")),
+    storageIds: v.optional(v.array(v.id("_storage"))), // One already-small, client-uploaded chunk blob per entry.
     total: v.number(),
     workflowId: v.optional(v.string()),
   }).index("by_schema", ["schemaId"]),

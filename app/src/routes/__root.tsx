@@ -4,6 +4,7 @@ import { HeadContent, Scripts, createRootRouteWithContext } from "@tanstack/reac
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 
 import { Header } from "#/components/header";
+import { Toaster } from "#/components/ui/sonner";
 import { AppConvexProvider } from "#/integrations/convex/provider";
 import { tanStackQueryDevtools } from "#/integrations/tanstack-query/devtools";
 import { TanStackQueryProvider } from "#/integrations/tanstack-query/root-provider";
@@ -52,6 +53,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
           <TanStackQueryProvider>
             <Header />
             {children}
+            <Toaster />
             <TanStackDevtools
               config={{
                 position: "bottom-right",

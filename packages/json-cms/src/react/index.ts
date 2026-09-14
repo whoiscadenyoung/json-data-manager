@@ -106,3 +106,21 @@ export type {
 } from "../shared/geojson/types.js";
 export { looksLikeGeoJson, parseGeoJsonFeatures } from "./lib/geojson-import.js";
 export type { GeoJsonRow, GeoJsonParseResult, GeoJsonFeatureError } from "./lib/geojson-import.js";
+
+// Resolves a `GeometryDoc`'s `geometryJson`/`geometryUrl` (see its doc
+// comment in types.ts) into an actual `Geometry` — handles the client-side
+// fetch + cache for the (rare) storage-backed case transparently.
+export { useResolvedGeometries } from "./lib/geometry-resolve.js";
+export type { ResolvableGeometryRow } from "./lib/geometry-resolve.js";
+
+// Splits an import's rows into upload-sized chunks client-side — see its
+// doc comment for why (Convex components can't use the Node runtime, so no
+// server-side step can safely parse a whole multi-tens-of-MB upload at once).
+export { chunkRowsForImport } from "./lib/chunk-rows.js";
+export type { ImportRow } from "./lib/chunk-rows.js";
+
+// Auto-loads every page of a paginated query (e.g. `listGeometries`,
+// `listGeometriesByCollection`) instead of Convex's own incremental
+// "load more" `usePaginatedQuery` — for consumers (like map rendering) that
+// need the complete result set.
+export { useAllPaginated } from "./lib/all-paginated.js";

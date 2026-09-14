@@ -1,13 +1,13 @@
 import { WorkflowManager } from "@convex-dev/workflow";
+import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { ConvexError, v } from "convex/values";
 
 import { isGeometryCompatibleWithDatasetType } from "../shared/geojson/coalesce.js";
 import { GeoParseError, GeometryError } from "../shared/geojson/error.js";
-import { computeBbox, unionBbox } from "../shared/geojson/geometry.js";
-import { assertGeometry } from "../shared/geojson/geometry.js";
+import { unionBbox } from "../shared/geojson/geometry.js";
 import type { BoundingBox } from "../shared/geojson/geometry.js";
 import type { Geometry } from "../shared/geojson/types.js";
-import { geometryArgsValidator, geometryTypeValidator } from "../shared/geojson/validators.js";
+import { geometryTypeValidator } from "../shared/geojson/validators.js";
 import type { GeometryTypeArg } from "../shared/geojson/validators.js";
 import { extractReferences } from "../shared/reference.js";
 import { components, internal } from "./_generated/api.js";
@@ -20,12 +20,15 @@ import {
   query,
 } from "./_generated/server.js";
 import type { MutationCtx, QueryCtx } from "./_generated/server.js";
+import {
+  inlineGeometryFieldsOrThrow,
+  parseAndValidateGeometry,
+  resolveGeometryStorage,
+} from "./geometry_storage.js";
+import type { ResolvedGeometry } from "./geometry_storage.js";
 import schema from "./schema.js";
 
 const SCHEMA_SIZE_LIMIT = 102_400, // 100 KB
-  // Number of entries inserted per batch/workflow step. Kept well under Convex's
-  // Per-transaction write limit so a single dataset can be arbitrarily large.
-  IMPORT_BATCH_SIZE = 500,
   // Durable workflow engine (nested component) that drives batched imports.
   workflow = new WorkflowManager(components.workflow),
   collectionValidator = schema.tables.collections.validator.extend({
@@ -44,9 +47,28 @@ const SCHEMA_SIZE_LIMIT = 102_400, // 100 KB
     _creationTime: v.number(),
     _id: v.id("entries"),
   }),
-  geometryValidator = schema.tables.geometries.validator.extend({
+  // The normalized shape every reader of `geometries` gets back — see
+  // `resolveGeometryOutput`. Exactly one of `geometryJson`/`geometryUrl` is
+  // set (barring a row with no geometry payload at all, which shouldn't
+  // happen but isn't asserted against here).
+  geometryOutputValidator = v.object({
     _creationTime: v.number(),
     _id: v.id("geometries"),
+    bbox: v.optional(v.array(v.number())),
+    entryId: v.id("entries"),
+    geometryJson: v.optional(v.string()),
+    geometryUrl: v.optional(v.string()),
+    schemaId: v.id("schemas"),
+    type: geometryTypeValidator,
+  }),
+  // The fields a resolved geometry carries through the bulk-import path,
+  // once `import_prep.ts` has already validated it and decided inline vs.
+  // file storage — see `geometry_storage.ts`'s `ResolvedGeometry`.
+  resolvedGeometryValidator = v.object({
+    bbox: v.optional(v.array(v.number())),
+    geometryJson: v.optional(v.string()),
+    geometryStorageId: v.optional(v.id("_storage")),
+    type: geometryTypeValidator,
   }),
   entryReferenceValidator = v.object({
     fieldName: v.string(),
@@ -197,7 +219,10 @@ export const deleteSchema = mutation({
 
     await Promise.all([
       ...entries.map(async (entry) => ctx.db.delete(entry._id)),
-      ...geometries.map(async (geometry) => ctx.db.delete(geometry._id)),
+      ...geometries.map(async (geometry) => {
+        await ctx.db.delete(geometry._id);
+        await deleteGeometryStorageIfAny(ctx, geometry);
+      }),
       deleteReferencesForSchema(ctx, args.schemaId),
     ]);
 
@@ -484,24 +509,171 @@ export const listEntries = query({
 });
 
 /**
- * List the full-geometry rows for a schema — the ONLY read path that pulls
- * full coordinate payloads. Reserved for map rendering; the properties table
- * (`listEntries`) never touches this table.
+ * Normalizes one `geometries` row into the shape every reader gets back:
+ * exactly one of `geometryJson` (parseable inline text) or `geometryUrl` (a
+ * fetchable URL, for a geometry too large to store inline) is set. This
+ * transparently handles all on-disk forms a row can be in — new rows carry
+ * `geometryJson`/`geometryStorageId`; a pre-migration row may still carry
+ * only the legacy inline `geometry` field — so callers never need to know
+ * which one a given row has.
+ *
+ * `ctx.storage.getUrl` is available from a `query` (unlike `ctx.storage.get`,
+ * which reads blob content and is action-only) — that's what makes it
+ * possible to resolve a storage-backed geometry to something a client can
+ * fetch directly, without needing an action-backed read path.
+ */
+async function resolveGeometryOutput(
+  ctx: QueryCtx,
+  row: {
+    _creationTime: number;
+    _id: Id<"geometries">;
+    bbox?: number[];
+    entryId: Id<"entries">;
+    // Untyped here (not the `Geometry` union) — Convex's own `bbox` field on
+    // this legacy sub-shape is a plain `v.array(v.number())`, which doesn't
+    // structurally match the `geojson` package's strict-tuple `BBox` type;
+    // this function only ever re-serializes it, never inspects its shape.
+    geometry?: unknown;
+    geometryJson?: string;
+    geometryStorageId?: Id<"_storage">;
+    schemaId: Id<"schemas">;
+    type: GeometryTypeArg;
+  },
+): Promise<{
+  _creationTime: number;
+  _id: Id<"geometries">;
+  bbox?: number[];
+  entryId: Id<"entries">;
+  geometryJson?: string;
+  geometryUrl?: string;
+  schemaId: Id<"schemas">;
+  type: GeometryTypeArg;
+}> {
+  const base = {
+    _creationTime: row._creationTime,
+    _id: row._id,
+    bbox: row.bbox,
+    entryId: row.entryId,
+    schemaId: row.schemaId,
+    type: row.type,
+  };
+  if (row.geometryJson !== undefined) {
+    return { ...base, geometryJson: row.geometryJson };
+  }
+  if (row.geometryStorageId !== undefined) {
+    const url = await ctx.storage.getUrl(row.geometryStorageId);
+    return url === null ? base : { ...base, geometryUrl: url };
+  }
+  if (row.geometry !== undefined) {
+    return { ...base, geometryJson: JSON.stringify(row.geometry) };
+  }
+  return base;
+}
+
+// Convex caps a single query execution at reading ~16 MiB total across every
+// document it touches — independent of, and much larger than, the ~900 KB
+// per-document `INLINE_GEOMETRY_BYTE_LIMIT` a single `geometries` row can
+// carry. A dataset with hundreds of rows near that inline limit can still
+// blow the 16 MiB *cumulative* budget in one unpaginated `.collect()`, even
+// though every individual row is safely under its own limit.
+//
+// `listGeometries` pages through results manually — `.withIndex(...).gt(
+// "_creationTime", cursor).take(n)` — rather than using Convex's own
+// `.paginate()`: components cannot call `.paginate()` at all ("paginate()
+// is only supported in the app" — confirmed against a real deployment, not
+// just a doc comment; see `paginateGeometriesBySchema`'s doc comment), so
+// there's no `maximumBytesRead` safety net available here. Instead, the
+// page size itself is capped low enough that even the worst case (every row
+// at the maximum possible inline size) stays safely under budget.
+const MAX_GEOMETRY_PAGE_ROWS = 8; // 8 * ~900 KB (INLINE_GEOMETRY_BYTE_LIMIT) ≈ 7.2 MB — safely under Convex's ~16 MiB per-execution read cap, with room for the schema-existence read and per-document overhead sharing the same execution.
+
+/** One `geometries` row, as read directly off `ctx.db` (before `resolveGeometryOutput` normalizes it). */
+interface GeometryDbRow {
+  _creationTime: number;
+  _id: Id<"geometries">;
+  bbox?: number[];
+  entryId: Id<"entries">;
+  geometry?: unknown;
+  geometryJson?: string;
+  geometryStorageId?: Id<"_storage">;
+  schemaId: Id<"schemas">;
+  type: GeometryTypeArg;
+}
+
+/**
+ * Manual cursor-based pagination over one schema's `geometries` rows.
+ * Convex components cannot call `.paginate()` — confirmed at push time
+ * against a real deployment ("paginate() is only supported in the app"),
+ * not merely a documented restriction — so this hand-rolls the same shape
+ * `.paginate()` would produce (`{page, isDone, continueCursor}`) using a
+ * plain bounded index read instead. The cursor is just the last-returned
+ * row's `_creationTime` (the index's implicit trailing sort key); resuming
+ * means `.gt("_creationTime", cursor)` on the same index range.
+ *
+ * `numItems` is honored only up to `MAX_GEOMETRY_PAGE_ROWS` — never more,
+ * regardless of what the caller requests — since a larger page could itself
+ * exceed Convex's per-execution read budget (any single row can be up to
+ * `INLINE_GEOMETRY_BYTE_LIMIT`, ~900 KB).
+ */
+async function paginateGeometriesBySchema(
+  ctx: QueryCtx,
+  schemaId: Id<"schemas">,
+  paginationOpts: { cursor: string | null; numItems: number },
+): Promise<{ continueCursor: string; isDone: boolean; page: GeometryDbRow[] }> {
+  const afterCreationTime =
+    paginationOpts.cursor === null || paginationOpts.cursor === ""
+      ? undefined
+      : Number(paginationOpts.cursor);
+  if (afterCreationTime !== undefined && !Number.isFinite(afterCreationTime)) {
+    throw new ConvexError("Invalid pagination cursor.");
+  }
+
+  const limit = Math.max(1, Math.min(paginationOpts.numItems, MAX_GEOMETRY_PAGE_ROWS)),
+    page = await ctx.db
+      .query("geometries")
+      .withIndex("by_schema", (q) =>
+        afterCreationTime === undefined
+          ? q.eq("schemaId", schemaId)
+          : q.eq("schemaId", schemaId).gt("_creationTime", afterCreationTime),
+      )
+      .order("asc")
+      .take(limit);
+
+  const lastRow = page[page.length - 1];
+  return {
+    // A short page (or an empty one) means we've reached the end of this
+    // schema's rows; an exactly-full page might or might not be the end —
+    // treat it as "not done" so the next call (which will come back empty)
+    // is the one that actually confirms it, rather than guessing here.
+    continueCursor: lastRow === undefined ? (paginationOpts.cursor ?? "") : String(lastRow._creationTime),
+    isDone: page.length < limit,
+    page,
+  };
+}
+
+/**
+ * List the full-geometry rows for a schema, one page at a time — the ONLY
+ * read path that pulls full coordinate payloads. Reserved for map
+ * rendering; the properties table (`listEntries`) never touches this table.
+ * Callers must page through with `paginationOpts.cursor` until `isDone` —
+ * see `useAllPaginated` in the `react` package (also used internally by
+ * `useGeometries`), which does this for you.
  */
 export const listGeometries = query({
-  args: { schemaId: v.id("schemas") },
+  args: { paginationOpts: paginationOptsValidator, schemaId: v.id("schemas") },
   handler: async (ctx, args) => {
     const schemaDoc = await ctx.db.get(args.schemaId);
     if (!schemaDoc) {
       throw new ConvexError("Schema not found");
     }
 
-    return ctx.db
-      .query("geometries")
-      .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
-      .collect();
+    const result = await paginateGeometriesBySchema(ctx, args.schemaId, args.paginationOpts);
+    return {
+      ...result,
+      page: await Promise.all(result.page.map(async (row) => resolveGeometryOutput(ctx, row))),
+    };
   },
-  returns: v.array(geometryValidator),
+  returns: paginationResultValidator(geometryOutputValidator),
 });
 
 /** The `_id`s of every geospatial dataset directly or (via a group) indirectly in a collection. */
@@ -513,31 +685,25 @@ async function listGeospatialSchemaIdsByCollection(ctx: QueryCtx, collectionId: 
   return schemas.filter((schemaDoc) => schemaDoc.kind === "geospatial").map((s) => s._id);
 }
 
-/**
- * Aggregated geometry rows for every geospatial dataset in a collection —
- * powers the collection-level map view (grouped datasets included, since
- * `collectionId` is denormalized onto every dataset regardless of group).
- */
-export const listGeometriesByCollection = query({
-  args: { collectionId: v.id("collections") },
-  handler: async (ctx, args) => {
-    const schemaIds = await listGeospatialSchemaIdsByCollection(ctx, args.collectionId),
-      rows = await Promise.all(
-        schemaIds.map(async (schemaId) =>
-          ctx.db
-            .query("geometries")
-            .withIndex("by_schema", (q) => q.eq("schemaId", schemaId))
-            .collect(),
-        ),
-      );
-    return rows.flat();
-  },
-  returns: v.array(geometryValidator),
-});
+// NOTE on the collection-level map view: there is deliberately no
+// `listGeometriesByCollection` aggregate query. Convex allows at most ONE
+// `.paginate()` call per query execution ("Only a single paginated query is
+// allowed per function execution" — a hard platform limit, not a style
+// preference); a collection's geometries are spread across several
+// independently-indexed schemas (`geometries` has no `collectionId` of its
+// own to scan in one index-scoped pass), so aggregating them server-side
+// would need either multiple `.paginate()` calls in one execution (not
+// allowed) or a denormalized `collectionId` on every `geometries` row kept
+// in sync on every schema re-org (an expensive cascading update, itself
+// subject to the very same resource limits this fix exists to respect).
+// Instead, the client already has the collection's geospatial schema ids
+// (from `listSchemasByCollection` / its own `datasets` list) and calls the
+// already-paginated `listGeometries` once per schema, merging client-side —
+// see `useAllPaginated` and the collection map route for the pattern.
 
 /**
  * Aggregated entry rows for every geospatial dataset in a collection — joined
- * client-side against `listGeometriesByCollection` for feature-detail popups.
+ * client-side for feature-detail popups on the collection map view.
  */
 export const listEntriesByCollection = query({
   args: { collectionId: v.id("collections") },
@@ -633,49 +799,66 @@ export const getEntryInternal = internalQuery({
 // removes a geometry also keeps the owning schema's denormalized
 // `featureCount`/`boundingBox` summary up to date (see schema.ts for the
 // exact contract on each field).
+//
+// A geometry argument is always a JSON *string* here, never the nested-array
+// `Geometry` shape directly — see geometry_storage.ts's doc comment for why
+// (Convex's 8192-elements-per-array limit, which real-world GIS rings
+// routinely exceed).
 
-/**
- * Wraps `assertGeometry`, translating its custom error classes into a
- * `ConvexError` — `GeometryError`/`GeoParseError` don't serialize usefully
- * across the Convex function boundary, `ConvexError` does.
- */
-function assertGeometryForConvex(geometry: unknown): Geometry {
-  try {
-    return assertGeometry(geometry);
-  } catch (err) {
-    if (err instanceof GeometryError || err instanceof GeoParseError) {
-      throw new ConvexError(err.message);
-    }
-    throw err;
+/** Deletes a geometry row's external storage blob, if it has one. No-ops otherwise — safe to call on a row about to be deleted or replaced. */
+async function deleteGeometryStorageIfAny(
+  ctx: MutationCtx,
+  geometryDoc: { geometryStorageId?: Id<"_storage"> } | null,
+): Promise<void> {
+  if (geometryDoc && geometryDoc.geometryStorageId !== undefined) {
+    await ctx.storage.delete(geometryDoc.geometryStorageId);
   }
 }
 
 /**
- * Validates `geometry` against the schema doc's `kind`/`geometryType` and
- * returns the parsed `Geometry`, or `undefined` when no geometry was
- * provided. Absent geometry is always fine; a standard (non-geospatial)
- * schema can never carry one; a geospatial schema requires the geometry to
- * structurally validate and be compatible with the schema's locked
- * `geometryType`.
+ * Validates a JSON-string geometry argument against the schema doc's
+ * `kind`/`geometryType`, and resolves it to the fields a `geometries` row
+ * needs. Returns `undefined` when no geometry was provided.
+ *
+ * Only called from plain mutations, which can't write to file storage — a
+ * geometry whose JSON text is too large to store inline is rejected with a
+ * clear error rather than silently dropped or truncated; the caller is
+ * expected to use the bulk import flow instead (`startImport`), whose
+ * action-backed prep step (`import_prep.ts`) can fall back to file storage.
  */
 function validateEntryGeometry(
-  geometry: unknown,
+  geometryJsonArg: string | undefined,
   schemaDoc: { kind?: "standard" | "geospatial"; geometryType?: GeometryTypeArg },
-): Geometry | undefined {
-  if (geometry === undefined) {
+): ResolvedGeometry | undefined {
+  if (geometryJsonArg === undefined) {
     return undefined;
   }
   const kind = schemaDoc.kind ?? "standard";
   if (kind !== "geospatial" || schemaDoc.geometryType === undefined) {
     throw new ConvexError("Cannot attach geometry to a standard dataset.");
   }
-  const parsed = assertGeometryForConvex(geometry);
-  if (!isGeometryCompatibleWithDatasetType(parsed.type, schemaDoc.geometryType)) {
+  let geometry: Geometry;
+  try {
+    geometry = parseAndValidateGeometry(geometryJsonArg);
+  } catch (err) {
+    if (err instanceof GeometryError || err instanceof GeoParseError) {
+      throw new ConvexError(err.message);
+    }
+    throw err;
+  }
+  if (!isGeometryCompatibleWithDatasetType(geometry.type, schemaDoc.geometryType)) {
     throw new ConvexError(
-      `Geometry type "${parsed.type}" is not compatible with this dataset's "${schemaDoc.geometryType}" geometry type.`,
+      `Geometry type "${geometry.type}" is not compatible with this dataset's "${schemaDoc.geometryType}" geometry type.`,
     );
   }
-  return parsed;
+  try {
+    return inlineGeometryFieldsOrThrow(geometryJsonArg, geometry);
+  } catch (err) {
+    if (err instanceof GeometryError) {
+      throw new ConvexError(err.message);
+    }
+    throw err;
+  }
 }
 
 /**
@@ -690,6 +873,29 @@ function asBoundingBox(value: number[] | undefined): BoundingBox | undefined {
   }
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- always written as a 4-tuple by `applyGeometryStatsDelta`; the array validator can't express that statically.
   return value as BoundingBox;
+}
+
+/**
+ * `resolvedGeometryValidator`'s `bbox` field is, like `schemas.boundingBox`
+ * above, a plain `v.array(v.number())` (Convex validators can't express a
+ * fixed-length tuple) — but it's always written as a 4-tuple by
+ * `computeBbox`/`resolveGeometryStorage`. Narrows an already-resolved
+ * geometry (as received from `insertEntriesChunkInternal`'s args) back to
+ * the tuple-typed `ResolvedGeometry` shape the rest of this module uses.
+ */
+function asResolvedGeometry(value: {
+  bbox?: number[];
+  geometryJson?: string;
+  geometryStorageId?: Id<"_storage">;
+  type: GeometryTypeArg;
+}): ResolvedGeometry {
+  return {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    bbox: value.bbox as BoundingBox | undefined,
+    geometryJson: value.geometryJson,
+    geometryStorageId: value.geometryStorageId,
+    type: value.type,
+  };
 }
 
 /**
@@ -720,18 +926,18 @@ async function attachGeometry(
   ctx: MutationCtx,
   entryId: Id<"entries">,
   schemaId: Id<"schemas">,
-  geometry: Geometry,
+  resolved: ResolvedGeometry,
 ): Promise<BoundingBox | undefined> {
-  const bbox = computeBbox(geometry),
-    geometryId = await ctx.db.insert("geometries", {
-      bbox,
-      entryId,
-      geometry,
-      schemaId,
-      type: geometry.type,
-    });
-  await ctx.db.patch(entryId, { geometryId, geometryType: geometry.type });
-  return bbox;
+  const geometryId = await ctx.db.insert("geometries", {
+    bbox: resolved.bbox,
+    entryId,
+    geometryJson: resolved.geometryJson,
+    geometryStorageId: resolved.geometryStorageId,
+    schemaId,
+    type: resolved.type,
+  });
+  await ctx.db.patch(entryId, { geometryId, geometryType: resolved.type });
+  return resolved.bbox;
 }
 
 /**
@@ -842,6 +1048,35 @@ async function syncEntryReferences(
 }
 
 /**
+ * One row's geometry argument, as accepted by `insertEntryBatch`: either a
+ * raw JSON string awaiting validation (the single-entry mutation paths —
+ * `createEntry`/`updateEntry`/`createEntriesBulk`), or an already-resolved
+ * `ResolvedGeometry` (the bulk-import path, whose `import_prep.ts` action
+ * already validated + resolved it before this ever runs in a mutation).
+ */
+type PendingGeometry = string | ResolvedGeometry;
+
+function isResolvedGeometry(value: PendingGeometry): value is ResolvedGeometry {
+  return typeof value !== "string";
+}
+
+/** Re-validates just the cheap part (dataset-kind/geometry-type compatibility) for an already-resolved geometry. The expensive structural validation already happened in `import_prep.ts`. */
+function checkResolvedGeometryCompatible(
+  resolved: ResolvedGeometry,
+  schemaDoc: { kind?: "standard" | "geospatial"; geometryType?: GeometryTypeArg },
+): void {
+  const kind = schemaDoc.kind ?? "standard";
+  if (kind !== "geospatial" || schemaDoc.geometryType === undefined) {
+    throw new ConvexError("Cannot attach geometry to a standard dataset.");
+  }
+  if (!isGeometryCompatibleWithDatasetType(resolved.type, schemaDoc.geometryType)) {
+    throw new ConvexError(
+      `Geometry type "${resolved.type}" is not compatible with this dataset's "${schemaDoc.geometryType}" geometry type.`,
+    );
+  }
+}
+
+/**
  * Inserts a batch of `{data, geometry?}` rows as entries, attaching a
  * `geometries` row for any row that has one, and folds the whole batch's
  * count-added/bbox-expansion into a single `schemas` patch at the end
@@ -859,9 +1094,18 @@ async function insertEntryBatch(
     featureCount?: number;
     boundingBox?: number[];
   },
-  rows: Array<{ data: unknown; geometry?: unknown }>,
+  rows: Array<{ data: unknown; geometry?: PendingGeometry }>,
 ): Promise<Array<Id<"entries">>> {
-  const parsedGeometries = rows.map((row) => validateEntryGeometry(row.geometry, schemaDoc));
+  const resolvedGeometries = rows.map((row) => {
+    if (row.geometry === undefined) {
+      return undefined;
+    }
+    if (isResolvedGeometry(row.geometry)) {
+      checkResolvedGeometryCompatible(row.geometry, schemaDoc);
+      return row.geometry;
+    }
+    return validateEntryGeometry(row.geometry, schemaDoc);
+  });
 
   let addedCount = 0,
     unionedBbox: BoundingBox | undefined;
@@ -869,9 +1113,9 @@ async function insertEntryBatch(
   const ids = await Promise.all(
     rows.map(async ({ data }, i) => {
       const entryId = await ctx.db.insert("entries", { data, schemaId }),
-        parsed = parsedGeometries[i];
-      if (parsed !== undefined) {
-        const bbox = await attachGeometry(ctx, entryId, schemaId, parsed);
+        resolved = resolvedGeometries[i];
+      if (resolved !== undefined) {
+        const bbox = await attachGeometry(ctx, entryId, schemaId, resolved);
         addedCount += 1;
         unionedBbox = unionBbox(unionedBbox, bbox);
       }
@@ -888,9 +1132,10 @@ async function insertEntryBatch(
 }
 
 /**
- * Deletes an entry and, if it has one, its associated `geometries` row —
- * decrementing the owning schema's `featureCount` (bbox left untouched, see
- * its doc comment). Silently no-ops if the entry doesn't exist.
+ * Deletes an entry and, if it has one, its associated `geometries` row (and
+ * that row's external storage blob, if any) — decrementing the owning
+ * schema's `featureCount` (bbox left untouched, see its doc comment).
+ * Silently no-ops if the entry doesn't exist.
  */
 async function deleteEntryCascading(ctx: MutationCtx, entryId: Id<"entries">): Promise<void> {
   const existing = await ctx.db.get(entryId);
@@ -898,8 +1143,12 @@ async function deleteEntryCascading(ctx: MutationCtx, entryId: Id<"entries">): P
     return;
   }
   if (existing.geometryId !== undefined) {
-    const schemaDoc = await ctx.db.get(existing.schemaId);
+    const [schemaDoc, geometryDoc] = await Promise.all([
+      ctx.db.get(existing.schemaId),
+      ctx.db.get(existing.geometryId),
+    ]);
     await ctx.db.delete(existing.geometryId);
+    await deleteGeometryStorageIfAny(ctx, geometryDoc);
     if (schemaDoc) {
       await applyGeometryStatsDelta(ctx, existing.schemaId, schemaDoc, -1, undefined);
     }
@@ -909,9 +1158,10 @@ async function deleteEntryCascading(ctx: MutationCtx, entryId: Id<"entries">): P
 }
 
 /**
- * Deletes the entry's existing `geometries` row (if any), clears its
- * pointer fields, and decrements the schema's `featureCount`. No-ops if the
- * entry has no geometry. Bbox is left untouched (see its doc comment).
+ * Deletes the entry's existing `geometries` row (if any, and its external
+ * storage blob, if any), clears its pointer fields, and decrements the
+ * schema's `featureCount`. No-ops if the entry has no geometry. Bbox is left
+ * untouched (see its doc comment).
  */
 async function clearEntryGeometry(
   ctx: MutationCtx,
@@ -921,39 +1171,50 @@ async function clearEntryGeometry(
   if (entry.geometryId === undefined) {
     return;
   }
+  const existing = await ctx.db.get(entry.geometryId);
   await ctx.db.delete(entry.geometryId);
+  await deleteGeometryStorageIfAny(ctx, existing);
   await ctx.db.patch(entry._id, { geometryId: undefined, geometryType: undefined });
   await applyGeometryStatsDelta(ctx, entry.schemaId, schemaDoc, -1, undefined);
 }
 
 /**
- * Replaces (or newly attaches) an entry's geometry with `parsed`. Patches
+ * Replaces (or newly attaches) an entry's geometry with `resolved`. Patches
  * the existing `geometries` row in place when the entry already had one
- * (no `featureCount` change, since this is a replace, not an add);
- * otherwise attaches a new one and increments `featureCount`. Either way
- * expands the schema's `boundingBox`.
+ * (no `featureCount` change, since this is a replace, not an add) —
+ * clearing whichever of `geometryJson`/`geometryStorageId` the new value
+ * *doesn't* use, and deleting the old row's external storage blob (if it had
+ * one) now that it's no longer referenced; otherwise attaches a new row and
+ * increments `featureCount`. Either way expands the schema's `boundingBox`.
  */
 async function replaceEntryGeometry(
   ctx: MutationCtx,
   entry: { _id: Id<"entries">; schemaId: Id<"schemas">; geometryId?: Id<"geometries"> },
   schemaDoc: { featureCount?: number; boundingBox?: number[] },
-  parsed: Geometry,
+  resolved: ResolvedGeometry,
 ): Promise<void> {
   if (entry.geometryId !== undefined) {
-    const bbox = computeBbox(parsed);
-    await ctx.db.patch(entry.geometryId, { bbox, geometry: parsed, type: parsed.type });
-    await ctx.db.patch(entry._id, { geometryType: parsed.type });
-    await applyGeometryStatsDelta(ctx, entry.schemaId, schemaDoc, 0, bbox);
+    const existing = await ctx.db.get(entry.geometryId);
+    await ctx.db.patch(entry.geometryId, {
+      bbox: resolved.bbox,
+      geometry: undefined,
+      geometryJson: resolved.geometryJson,
+      geometryStorageId: resolved.geometryStorageId,
+      type: resolved.type,
+    });
+    await ctx.db.patch(entry._id, { geometryType: resolved.type });
+    await deleteGeometryStorageIfAny(ctx, existing);
+    await applyGeometryStatsDelta(ctx, entry.schemaId, schemaDoc, 0, resolved.bbox);
     return;
   }
-  const bbox = await attachGeometry(ctx, entry._id, entry.schemaId, parsed);
+  const bbox = await attachGeometry(ctx, entry._id, entry.schemaId, resolved);
   await applyGeometryStatsDelta(ctx, entry.schemaId, schemaDoc, 1, bbox);
 }
 
 export const createEntry = mutation({
   args: {
     data: v.any(),
-    geometry: v.optional(geometryArgsValidator),
+    geometry: v.optional(v.string()),
     schemaId: v.id("schemas"),
   },
   handler: async (ctx, args) => {
@@ -974,7 +1235,7 @@ export const createEntry = mutation({
 
 export const createEntriesBulk = mutation({
   args: {
-    entries: v.array(v.object({ data: v.any(), geometry: v.optional(geometryArgsValidator) })),
+    entries: v.array(v.object({ data: v.any(), geometry: v.optional(v.string()) })),
     schemaId: v.id("schemas"),
   },
   handler: async (ctx, args) => {
@@ -992,7 +1253,7 @@ export const updateEntry = mutation({
   args: {
     data: v.any(),
     entryId: v.id("entries"),
-    geometry: v.optional(v.union(geometryArgsValidator, v.null())),
+    geometry: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db.get(args.entryId);
@@ -1017,9 +1278,9 @@ export const updateEntry = mutation({
       return;
     }
 
-    const parsed = validateEntryGeometry(args.geometry, schemaDoc);
-    if (parsed !== undefined) {
-      await replaceEntryGeometry(ctx, existing, schemaDoc, parsed);
+    const resolved = validateEntryGeometry(args.geometry, schemaDoc);
+    if (resolved !== undefined) {
+      await replaceEntryGeometry(ctx, existing, schemaDoc, resolved);
     }
   },
 });
@@ -1061,7 +1322,10 @@ export const deleteEntriesBySchema = mutation({
 
     await Promise.all([
       ...entries.map(async (entry) => ctx.db.delete(entry._id)),
-      ...geometries.map(async (geometry) => ctx.db.delete(geometry._id)),
+      ...geometries.map(async (geometry) => {
+        await ctx.db.delete(geometry._id);
+        await deleteGeometryStorageIfAny(ctx, geometry);
+      }),
       deleteReferencesForSchema(ctx, args.schemaId),
     ]);
 
@@ -1082,7 +1346,7 @@ export const deleteEntriesBySchema = mutation({
 export const insertEntryInternal = internalMutation({
   args: {
     data: v.any(),
-    geometry: v.optional(geometryArgsValidator),
+    geometry: v.optional(v.string()),
     schemaId: v.id("schemas"),
   },
   handler: async (ctx, args) => {
@@ -1130,10 +1394,33 @@ export const deleteEntryInternal = internalMutation({
 // ---------------------------------------------------------------------------
 // Batched, monitored dataset import
 //
-// The client uploads the row payload to file storage and calls `startImport`,
-// Which records an `imports` status doc and kicks off a durable workflow. The
-// Workflow inserts entries in batches (each an independently-retried step) and
-// Updates the status doc so the client can render live progress.
+// Convex COMPONENTS cannot use the Node.js runtime (`"use node"` is an
+// app-layer-only capability — components must stay portable/sandboxable),
+// so no step running inside this component can ever safely download +
+// `JSON.parse` a multi-tens-of-MB upload in one shot (the default action
+// runtime caps out around 64 MB). Rather than doing that parse on the
+// server at all, the CLIENT — which already fully parses the entire file
+// in the browser for schema inference/validation before it ever calls
+// `startImport` — splits the row payload into several already-small chunks
+// itself (see `chunkRowsForImport` in the `react` package) and uploads each
+// to its own storage blob via repeated `generateUploadUrl` + `fetch` POSTs.
+//
+// `startImport` then just records the resulting list of chunk storage ids
+// and kicks off a durable workflow that, for each one, runs
+// `insertChunkFromStorage` — an action that downloads ONE already-small
+// chunk (safe in the default runtime), validates + resolves each row's
+// geometry (inline vs. file storage — see `geometry_storage.ts`), and
+// inserts it. No step ever holds more than one chunk's worth of data, and
+// no geometry's coordinate payload ever crosses a Convex value boundary (a
+// mutation argument or a document field) as a nested array larger than
+// Convex's 8192-elements-per-array limit — it's always JSON text.
+//
+// Trade-off versus a single-pass, whole-import validation: since chunks are
+// inserted as their step runs (not validated-then-committed atomically
+// across the whole import), a bad row in a later chunk can leave earlier
+// chunks already committed. This matches the pre-existing behavior before
+// this file's `geometryJson`/`geometryStorageId` rework and is an accepted,
+// documented trade-off of components being unable to use Node.
 // ---------------------------------------------------------------------------
 
 const importValidator = schema.tables.imports.validator.extend({
@@ -1141,7 +1428,7 @@ const importValidator = schema.tables.imports.validator.extend({
   _id: v.id("imports"),
 });
 
-/** Generate a short-lived URL the client POSTs the serialized rows to. */
+/** Generate a short-lived URL the client POSTs one chunk of serialized rows to. Called once per chunk. */
 export const generateUploadUrl = mutation({
   args: {},
   handler: async (ctx) => ctx.storage.generateUploadUrl(),
@@ -1155,11 +1442,15 @@ export const getImportStatus = query({
   returns: v.union(importValidator, v.null()),
 });
 
-/** Create the status doc and start the durable import workflow. */
+/**
+ * Create the status doc and start the durable import workflow. `storageIds`
+ * is the ordered list of already-small, client-uploaded chunk blobs (see the
+ * doc comment above) — each one gets its own `insertChunkFromStorage` step.
+ */
 export const startImport = mutation({
   args: {
     schemaId: v.id("schemas"),
-    storageId: v.id("_storage"),
+    storageIds: v.array(v.id("_storage")),
     total: v.number(),
   },
   handler: async (ctx, args) => {
@@ -1172,7 +1463,7 @@ export const startImport = mutation({
         processed: 0,
         schemaId: args.schemaId,
         status: "pending",
-        storageId: args.storageId,
+        storageIds: args.storageIds,
         total: args.total,
       }),
       workflowId = await workflow.start(
@@ -1181,11 +1472,14 @@ export const startImport = mutation({
         {
           importId,
           schemaId: args.schemaId,
-          storageId: args.storageId,
+          storageIds: args.storageIds,
           total: args.total,
         },
         {
-          context: { importId },
+          // Carried through to `handleImportComplete` so a failed/canceled
+          // import's not-yet-processed chunk blobs get cleaned up too (each
+          // chunk deletes its own blob on success, inside the loop below).
+          context: { importId, storageIds: args.storageIds },
           onComplete: internal.lib.handleImportComplete,
           startAsync: true,
         },
@@ -1198,8 +1492,27 @@ export const startImport = mutation({
 });
 
 /**
- * Runs after the import workflow finishes. On success the workflow already
- * marked the import `completed`; here we only need to record failures/cancels.
+ * Best-effort delete of a storage blob referenced by a plain string id (the
+ * form workflow steps pass storage ids in — see `insertChunkFromStorage`).
+ * Swallows "already gone" rather than failing an otherwise-successful import
+ * over cleanup.
+ */
+async function tryDeleteStorage(ctx: MutationCtx, storageId: string): Promise<void> {
+  try {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- see callers for why storage ids travel as plain strings here.
+    await ctx.storage.delete(storageId as Id<"_storage">);
+  } catch {
+    // Already deleted, or never existed — fine, this is best-effort cleanup.
+  }
+}
+
+/**
+ * Runs after the import workflow finishes. On success every chunk already
+ * deleted its own blob as it was consumed; here we only need to record
+ * failures/cancels, and best-effort delete any chunk blobs the workflow
+ * never got to (a failed/canceled import may have stopped partway through
+ * `storageIds`) — deleting an already-consumed blob is a harmless no-op
+ * (see `tryDeleteStorage`).
  */
 export const handleImportComplete = internalMutation({
   args: {
@@ -1208,12 +1521,32 @@ export const handleImportComplete = internalMutation({
     workflowId: v.string(),
   },
   handler: async (ctx, args) => {
-    const result = args.result;
+    const result = args.result,
+      context: unknown = args.context,
+      importId =
+        context && typeof context === "object" && "importId" in context
+          ? (context as { importId?: unknown }).importId
+          : undefined,
+      storageIds =
+        context && typeof context === "object" && "storageIds" in context
+          ? (context as { storageIds?: unknown }).storageIds
+          : undefined;
+
     if (result && result.kind === "success") {
       return;
     }
-    const importId = args.context ? args.context.importId : undefined;
-    if (!importId) {
+
+    if (Array.isArray(storageIds)) {
+      await Promise.all(
+        storageIds.map(async (id: unknown) => {
+          if (typeof id === "string") {
+            await tryDeleteStorage(ctx, id);
+          }
+        }),
+      );
+    }
+
+    if (typeof importId !== "string") {
       return;
     }
     let error = "Import failed.";
@@ -1222,7 +1555,8 @@ export const handleImportComplete = internalMutation({
     } else if (result && typeof result.error === "string") {
       error = result.error;
     }
-    await ctx.db.patch(importId, { error, status: "failed" });
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- narrowed to a string above; it's always the `Id<"imports">` `startImport` put into `context`.
+    await ctx.db.patch(importId as Id<"imports">, { error, status: "failed" });
   },
 });
 
@@ -1257,9 +1591,47 @@ export const updateImportProgress = internalMutation({
 });
 
 /**
- * Read the payload blob, slice `[offset, offset+limit)`, and insert that chunk.
- * Runs as a workflow step so a failed batch is retried in isolation. Returns
- * the number of rows inserted.
+ * Validates one row's geometry (if any) against the schema's locked
+ * `kind`/`geometryType`, and resolves it to inline-vs-storage form (see
+ * `resolveGeometryStorage`). Shared by `insertChunkFromStorage`'s per-row
+ * loop; extracted so that loop's own complexity stays manageable.
+ */
+async function resolveImportRowGeometry(
+  ctx: { storage: { store(blob: Blob, options?: { sha256?: string }): Promise<Id<"_storage">> } },
+  rowIndex: number,
+  geometry: unknown,
+  schemaDoc: { kind?: "standard" | "geospatial"; geometryType?: GeometryTypeArg },
+): Promise<ResolvedGeometry> {
+  const kind = schemaDoc.kind ?? "standard";
+  if (kind !== "geospatial" || schemaDoc.geometryType === undefined) {
+    throw new ConvexError(`Row ${rowIndex}: cannot attach geometry to a standard dataset.`);
+  }
+  const geometryJson = JSON.stringify(geometry);
+  let parsedGeometry: Geometry;
+  try {
+    parsedGeometry = parseAndValidateGeometry(geometryJson);
+  } catch (err) {
+    const message =
+      err instanceof GeometryError || err instanceof GeoParseError ? err.message : "Invalid geometry.";
+    throw new ConvexError(`Row ${rowIndex}: ${message}`);
+  }
+  if (!isGeometryCompatibleWithDatasetType(parsedGeometry.type, schemaDoc.geometryType)) {
+    throw new ConvexError(
+      `Row ${rowIndex}: geometry type "${parsedGeometry.type}" is not compatible with this dataset's "${schemaDoc.geometryType}" geometry type.`,
+    );
+  }
+  return resolveGeometryStorage(ctx, parsedGeometry, geometryJson);
+}
+
+/**
+ * Reads ONE already-small, client-uploaded chunk blob (raw `{data,
+ * geometry?}[]` rows — see the module doc comment above for why chunking
+ * happens client-side), validates + resolves each row's geometry, and
+ * inserts the batch. Runs entirely in Convex's default action runtime — a
+ * chunk is small enough by construction (see `chunkRowsForImport`) that this
+ * never needs Node. Deletes its own chunk blob once the insert succeeds.
+ * Runs as a workflow step so a failed chunk is retried in isolation.
+ * Returns the number of rows inserted.
  */
 export const insertChunkFromStorage = internalAction({
   args: {
@@ -1267,46 +1639,66 @@ export const insertChunkFromStorage = internalAction({
     // A `_storage` id — passed as a plain string because system-table ids can't
     // Be journaled/validated as `v.id("_storage")` through the workflow engine.
     storageId: v.string(),
-    offset: v.number(),
-    limit: v.number(),
   },
   handler: async (ctx, args) => {
-    // `storageId` arrives as a string (system-table ids can't be journaled as
-    // `v.id` through the workflow); actions have no `normalizeId`, so brand it here.
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-    const blob = await ctx.storage.get(args.storageId as Id<"_storage">);
-    if (!blob) {
-      throw new ConvexError("Import payload not found in storage");
-    }
-    // The uploaded blob is always an array of `{ data, geometry? }` rows —
-    // Uniform regardless of dataset kind; a standard dataset's rows simply
-    // Never carry `geometry`.
-    const parsed: unknown = JSON.parse(await blob.text()),
-      rows = Array.isArray(parsed) ? parsed : [],
-      chunk = rows.slice(args.offset, args.offset + args.limit);
-    if (chunk.length === 0) {
-      return 0;
-    }
-
-    await ctx.runMutation(internal.lib.insertEntriesChunkInternal, {
-      dataArray: chunk,
+    const schemaDoc = await ctx.runQuery(internal.lib.getSchemaInternal, {
       schemaId: args.schemaId,
     });
-    return chunk.length;
+    if (!schemaDoc) {
+      throw new ConvexError("Schema not found");
+    }
+
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- actions have no `normalizeId`; `storageId` is always a real `_storage` id, just untyped over the workflow boundary.
+    const blob = await ctx.storage.get(args.storageId as Id<"_storage">);
+    if (!blob) {
+      throw new ConvexError("Import chunk not found in storage");
+    }
+    const parsed: unknown = JSON.parse(await blob.text()),
+      rawRows = Array.isArray(parsed) ? parsed : [];
+
+    const resolvedRows: Array<{ data: unknown; resolvedGeometry?: ResolvedGeometry }> = [];
+    for (let i = 0; i < rawRows.length; i += 1) {
+      const row = rawRows[i];
+      if (typeof row !== "object" || row === null) {
+        throw new ConvexError(`Row ${i} is not an object.`);
+      }
+      // The uploaded chunk is always `{ data, geometry? }[]` — validated below.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+      const { data, geometry } = row as { data: unknown; geometry?: unknown };
+      if (geometry === undefined) {
+        resolvedRows.push({ data });
+        continue;
+      }
+      // oxlint-disable-next-line no-await-in-loop -- storage writes must land in row order; this loop is inherently sequential.
+      const resolvedGeometry = await resolveImportRowGeometry(ctx, i, geometry, schemaDoc);
+      resolvedRows.push({ data, resolvedGeometry });
+    }
+
+    if (resolvedRows.length > 0) {
+      await ctx.runMutation(internal.lib.insertEntriesChunkInternal, {
+        dataArray: resolvedRows,
+        schemaId: args.schemaId,
+      });
+    }
+
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    await ctx.storage.delete(args.storageId as Id<"_storage">);
+    return resolvedRows.length;
   },
   returns: v.number(),
 });
 
 /**
- * Insert one chunk of entries in a single transaction. Each row's geometry is
- * validated server-side too (defense-in-depth: the client is expected to
- * have already validated before uploading) — the whole chunk is rejected if
- * any row's geometry is invalid or incompatible, rather than silently
- * dropping bad rows.
+ * Insert one pre-resolved batch of entries in a single transaction. Each
+ * row's geometry was already structurally validated and resolved (inline
+ * vs. file storage) by `insertChunkFromStorage` — this only re-checks the
+ * cheap dataset-type-compatibility rule before writing.
  */
 export const insertEntriesChunkInternal = internalMutation({
   args: {
-    dataArray: v.array(v.object({ data: v.any(), geometry: v.optional(v.any()) })),
+    dataArray: v.array(
+      v.object({ data: v.any(), resolvedGeometry: v.optional(resolvedGeometryValidator) }),
+    ),
     schemaId: v.id("schemas"),
   },
   handler: async (ctx, args) => {
@@ -1315,18 +1707,26 @@ export const insertEntriesChunkInternal = internalMutation({
       throw new ConvexError("Schema not found");
     }
 
-    await insertEntryBatch(ctx, args.schemaId, schemaDoc, args.dataArray);
+    await insertEntryBatch(
+      ctx,
+      args.schemaId,
+      schemaDoc,
+      args.dataArray.map((row) => ({
+        data: row.data,
+        geometry: row.resolvedGeometry === undefined ? undefined : asResolvedGeometry(row.resolvedGeometry),
+      })),
+    );
     return null;
   },
   returns: v.null(),
 });
 
-/** Durable workflow: insert all rows in batches, updating progress as it goes. */
+/** Durable workflow: insert each client-uploaded chunk in turn, updating progress as it goes. */
 export const importWorkflow = workflow.define({
   args: {
     importId: v.id("imports"),
     schemaId: v.id("schemas"),
-    storageId: v.string(), // `_storage` id as a string (see insertChunkFromStorage)
+    storageIds: v.array(v.string()), // `_storage` ids as strings (see insertChunkFromStorage)
     total: v.number(),
   },
   handler: async (step, args): Promise<void> => {
@@ -1337,15 +1737,13 @@ export const importWorkflow = workflow.define({
     });
 
     let processed = 0;
-    // Batches run sequentially so memory stays bounded and progress lands
+    // Chunks run sequentially so memory stays bounded and progress lands
     // incrementally; parallelizing the steps would defeat both.
-    for (let offset = 0; offset < args.total; offset += IMPORT_BATCH_SIZE) {
+    for (const storageId of args.storageIds) {
       // oxlint-disable-next-line no-await-in-loop
       const inserted = await step.runAction(internal.lib.insertChunkFromStorage, {
-        limit: IMPORT_BATCH_SIZE,
-        offset,
         schemaId: args.schemaId,
-        storageId: args.storageId,
+        storageId,
       });
       processed += inserted;
       // oxlint-disable-next-line no-await-in-loop

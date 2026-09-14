@@ -1,4 +1,4 @@
-import { mutationGeneric, queryGeneric } from "convex/server";
+import { mutationGeneric, paginationOptsValidator, queryGeneric } from "convex/server";
 import type { Auth } from "convex/server";
 import { v } from "convex/values";
 
@@ -54,7 +54,6 @@ export type GroupId = Id<"groups">;
  *   updateGroup,
  *   deleteGroup,
  *   listSchemasByCollection,
- *   listGeometriesByCollection,
  *   listEntriesByCollection,
  *   setSchemaCollection,
  *   setSchemaGroup,
@@ -273,17 +272,17 @@ export function exposeApi(
         });
       },
     }),
-    // Aggregated across every geospatial dataset in a collection (grouped
-    // datasets included) — powers the collection-level map view.
-    listGeometriesByCollection: queryGeneric({
-      args: { collectionId: v.string() },
-      handler: async (ctx, args) => {
-        await options.auth(ctx, { collectionId: args.collectionId, type: "read" });
-        return ctx.runQuery(component.lib.listGeometriesByCollection, {
-          collectionId: args.collectionId,
-        });
-      },
-    }),
+    // NOTE: there is deliberately no `listGeometriesByCollection` here.
+    // Convex allows at most one `.paginate()` call per query execution, and
+    // a collection's geometries are spread across several independently
+    // indexed schemas — aggregating them server-side in one paginated query
+    // isn't possible without a denormalized `collectionId` on every
+    // `geometries` row (an expensive cascading update on every schema
+    // re-org). Powering the collection-level map view is instead the
+    // caller's job: fetch the collection's geospatial schema ids (already
+    // available from `listSchemasByCollection`) and call the paginated
+    // `listGeometries` once per schema, merging client-side — see
+    // `useAllPaginated` in the `react` package.
     listEntriesByCollection: queryGeneric({
       args: { collectionId: v.string() },
       handler: async (ctx, args) => {
@@ -351,17 +350,26 @@ export function exposeApi(
     }),
     // The only read path that pulls full geometry coordinates — reserved for
     // map rendering. `listEntries` never touches this table.
+    // Paginated — a dataset's geometry rows can cumulatively exceed Convex's
+    // per-execution read budget even though each individual row is safely
+    // under its own document-size limit. Use `useAllPaginated` (in
+    // the `react` package) to fetch every page.
     listGeometries: queryGeneric({
-      args: { schemaId: v.string() },
+      args: { paginationOpts: paginationOptsValidator, schemaId: v.string() },
       handler: async (ctx, args) => {
         await options.auth(ctx, { schemaId: args.schemaId, type: "read" });
         return ctx.runQuery(component.lib.listGeometries, {
+          paginationOpts: args.paginationOpts,
           schemaId: args.schemaId,
         });
       },
     }),
+    // `geometry` travels as a JSON *string*, not the nested-array `Geometry`
+    // shape — see `geometry_storage.ts` in the component for why (Convex's
+    // 8192-elements-per-array limit, which real-world GIS rings routinely
+    // exceed; a string has no such limit).
     createEntry: mutationGeneric({
-      args: { data: v.any(), geometry: v.optional(v.any()), schemaId: v.string() },
+      args: { data: v.any(), geometry: v.optional(v.string()), schemaId: v.string() },
       handler: async (ctx, args) => {
         await options.auth(ctx, { schemaId: args.schemaId, type: "create" });
         return ctx.runMutation(component.lib.createEntry, args);
@@ -369,7 +377,7 @@ export function exposeApi(
     }),
     createEntriesBulk: mutationGeneric({
       args: {
-        entries: v.array(v.object({ data: v.any(), geometry: v.optional(v.any()) })),
+        entries: v.array(v.object({ data: v.any(), geometry: v.optional(v.string()) })),
         schemaId: v.string(),
       },
       handler: async (ctx, args) => {
@@ -378,7 +386,11 @@ export function exposeApi(
       },
     }),
     updateEntry: mutationGeneric({
-      args: { data: v.any(), entryId: v.string(), geometry: v.optional(v.any()) },
+      args: {
+        data: v.any(),
+        entryId: v.string(),
+        geometry: v.optional(v.union(v.string(), v.null())),
+      },
       handler: async (ctx, args) => {
         await options.auth(ctx, { entryId: args.entryId, type: "update" });
         return ctx.runMutation(component.lib.updateEntry, args);
@@ -410,14 +422,18 @@ export function exposeApi(
     startImport: mutationGeneric({
       args: {
         schemaId: v.string(),
-        storageId: v.string(),
+        // One already-small, client-uploaded chunk blob per entry — see
+        // `chunkRowsForImport` in the `react` package for why chunking
+        // happens client-side (Convex components can't use the Node
+        // runtime, so no server-side step can safely parse one giant upload).
+        storageIds: v.array(v.string()),
         total: v.number(),
       },
       handler: async (ctx, args) => {
         await options.auth(ctx, { schemaId: args.schemaId, type: "create" });
         return ctx.runMutation(component.lib.startImport, {
           schemaId: args.schemaId,
-          storageId: args.storageId,
+          storageIds: args.storageIds,
           total: args.total,
         });
       },

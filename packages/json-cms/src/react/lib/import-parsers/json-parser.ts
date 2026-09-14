@@ -13,13 +13,16 @@ export async function parseJsonFile(file: File): Promise<ImportParseResult> {
 }
 
 export const jsonParser: ImportParser = {
-  accept: ".json,.jsonl,.ndjson,application/json,application/x-ndjson",
-  extensions: [".json", ".jsonl", ".ndjson"],
+  accept:
+    ".json,.jsonl,.ndjson,.geojson,application/json,application/x-ndjson,application/geo+json,application/vnd.geo+json",
+  extensions: [".json", ".jsonl", ".ndjson", ".geojson"],
   id: "json",
   label: "JSON / JSONL",
   matches: (file) =>
-    /\.(json|jsonl|ndjson)$/i.test(file.name) ||
+    /\.(json|jsonl|ndjson|geojson)$/i.test(file.name) ||
     file.type === "application/json" ||
-    file.type === "application/x-ndjson",
+    file.type === "application/x-ndjson" ||
+    file.type === "application/geo+json" ||
+    file.type === "application/vnd.geo+json",
   parse: parseJsonFile,
 };

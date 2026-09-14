@@ -1,3 +1,4 @@
+import { useAllPaginated } from "@caden/json-cms/react";
 import { ConfirmDialog } from "@caden/json-cms/react/ui";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
@@ -12,7 +13,7 @@ import {
   Trash2,
   Ungroup,
 } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { CollectionFormPanel } from "#/components/collection-form-panel";
@@ -46,6 +47,9 @@ import { api } from "#convex/_generated/api";
 
 type GroupDoc = FunctionReturnType<typeof api.groups.list>[number];
 type Dataset = FunctionReturnType<typeof api.schemas.list>[number];
+// `listGeometries` is paginated (see its doc comment in the component) — the
+// per-item shape is `PaginationResult["page"][number]`.
+type GeometryEntry = FunctionReturnType<typeof api.geometries.list>["page"][number];
 
 export const Route = createFileRoute("/collections/$collectionId/")({
   component: CollectionDetailPage,
@@ -284,6 +288,33 @@ function filterDatasetsByGroup(datasets: Dataset[], groupFilter: string): Datase
   return datasets.filter((dataset) => dataset.groupId === groupFilter);
 }
 
+/**
+ * Loads one geospatial schema's geometries (every page — see
+ * `useAllPaginated`) and reports them up via `onLoaded` whenever they
+ * change. There's no server-side "all geometries in this collection" query:
+ * Convex allows at most one `.paginate()` call per query execution, and a
+ * collection's geometries are spread across several independently indexed
+ * schemas, so aggregating them server-side isn't possible without a
+ * denormalized `collectionId` on every `geometries` row (an expensive
+ * cascading update on every schema re-org). Rendering one of these per
+ * geospatial schema — each with its own stable `useAllPaginated` hook call —
+ * is the supported way to fan out N independent reactive queries in React;
+ * a loop calling hooks inside one component is not. Renders nothing itself.
+ */
+function SchemaGeometriesLoader({
+  schemaId,
+  onLoaded,
+}: {
+  schemaId: string;
+  onLoaded: (schemaId: string, geometries: GeometryEntry[] | undefined) => void;
+}) {
+  const { isLoading, results } = useAllPaginated(api.geometries.list, { schemaId });
+  useEffect(() => {
+    onLoaded(schemaId, isLoading ? undefined : results);
+  }, [schemaId, isLoading, results, onLoaded]);
+  return null;
+}
+
 /** Combined map of every geospatial dataset in the collection, with an optional group filter. */
 function CollectionMapTab({
   collectionId,
@@ -294,15 +325,58 @@ function CollectionMapTab({
   datasets: Dataset[];
   groups: GroupDoc[];
 }) {
-  const geometries = useQuery(api.collections.listGeometriesByCollection, { collectionId }),
+  const geospatialSchemaIds = useMemo(
+      () =>
+        datasets.filter((dataset) => dataset.kind === "geospatial").map((dataset) => dataset._id),
+      [datasets],
+    ),
+    [geometriesBySchema, setGeometriesBySchema] = useState<
+      globalThis.Map<string, GeometryEntry[] | undefined>
+    >(() => new globalThis.Map()),
+    // Must be reference-stable across renders (hence `useCallback` with an
+    // empty dep array — the body only closes over the stable `useState`
+    // setter): `SchemaGeometriesLoader` depends on `onLoaded` inside its own
+    // `useEffect`, so a fresh function identity here on every render would
+    // re-fire that effect every time regardless of whether the underlying
+    // geometries actually changed, cascading into a `setState`-in-`useEffect`
+    // loop across every mounted loader ("Maximum update depth exceeded").
+    handleGeometriesLoaded = useCallback((schemaId: string, loaded: GeometryEntry[] | undefined) => {
+      setGeometriesBySchema((prev) => {
+        const existing = prev.get(schemaId);
+        // Bail out of the update entirely when nothing changed (covers the
+        // common case of a loader re-reporting the same `undefined` while
+        // still loading) — `new Map(prev)` always returns a new reference,
+        // so skipping it here is what actually breaks the loop, not just
+        // `handleGeometriesLoaded`'s own identity.
+        if (existing === loaded) {
+          return prev;
+        }
+        return new globalThis.Map(prev).set(schemaId, loaded);
+      });
+    }, []),
     entries = useQuery(api.collections.listEntriesByCollection, { collectionId }),
     [groupFilter, setGroupFilter] = useState(MAP_FILTER_ALL);
 
+  const geometries = geospatialSchemaIds.every(
+    (schemaId) => geometriesBySchema.get(schemaId) !== undefined,
+  )
+    ? geospatialSchemaIds.flatMap((schemaId) => geometriesBySchema.get(schemaId) ?? [])
+    : undefined;
+
+  // The loaders must stay mounted regardless of loading state — they're
+  // what's actually fetching the data the spinner below is waiting on.
+  const loaders = geospatialSchemaIds.map((schemaId) => (
+    <SchemaGeometriesLoader key={schemaId} schemaId={schemaId} onLoaded={handleGeometriesLoaded} />
+  ));
+
   if (geometries === undefined || entries === undefined) {
     return (
-      <div className="flex justify-center items-center min-h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-      </div>
+      <>
+        {loaders}
+        <div className="flex justify-center items-center min-h-64">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+        </div>
+      </>
     );
   }
 
@@ -313,6 +387,7 @@ function CollectionMapTab({
 
   return (
     <div className="flex flex-col gap-4">
+      {loaders}
       {groups.length > 0 && (
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">Show</span>

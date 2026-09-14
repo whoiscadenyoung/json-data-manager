@@ -3,7 +3,26 @@ import { it, afterEach, describe, expect, beforeEach, vi } from "vitest";
 
 import type { GeometryArgs, GeometryTypeArg } from "../shared/geojson/validators.js";
 import { api, internal } from "./_generated/api.js";
+import type { Id } from "./_generated/dataModel.js";
+import { INLINE_GEOMETRY_BYTE_LIMIT } from "./geometry_storage.js";
 import { initConvexTest } from "./setup.test.js";
+
+/** Builds a synthetic closed ring with `pointCount` positions — used to exercise geometries whose coordinate array exceeds Convex's 8192-elements-per-array limit, without needing a real multi-MB fixture file. Points are spread around a small circle so they're structurally valid (finite, in-range) and distinct. */
+function bigRing(pointCount: number): number[][] {
+  // `|| 0` normalizes a `-0` result (e.g. right at an angle where sin/cos
+  // rounds to negative zero) to plain `0` — `JSON.stringify(-0) === "0"`, so
+  // without this a fixture value could "round-trip" through JSON as `0`
+  // instead of `-0` and fail a strict-equality assertion for a reason that
+  // has nothing to do with the code under test.
+  const round = (n: number) => Number(n.toFixed(6)) || 0,
+    ring: number[][] = [];
+  for (let i = 0; i < pointCount - 1; i += 1) {
+    const angle = (2 * Math.PI * i) / (pointCount - 1);
+    ring.push([round(Math.cos(angle) * 0.01), round(Math.sin(angle) * 0.01)]);
+  }
+  ring.push(ring[0]); // Close the ring (first === last).
+  return ring;
+}
 
 type TestCtx = ReturnType<typeof initConvexTest>;
 
@@ -11,6 +30,29 @@ function assertDefined<T>(value: T): asserts value is NonNullable<T> {
   if (value === null || value === undefined) {
     throw new Error("Expected value to be defined");
   }
+}
+
+/**
+ * `listGeometries` is paginated (see its doc comment in lib.ts — a dataset's
+ * cumulative geometry payload can exceed Convex's per-execution read-byte
+ * budget even though each row is safely under its own document-size limit).
+ * Fetches every page and returns the merged, flat array — what most tests
+ * actually want to assert against.
+ */
+async function listAllGeometries(t: TestCtx, schemaId: Id<"schemas">) {
+  const fetchPage = async (cursor: string | null) =>
+      t.query(api.lib.listGeometries, { paginationOpts: { cursor, numItems: 1000 }, schemaId }),
+    pages: Array<Awaited<ReturnType<typeof fetchPage>>["page"][number]> = [];
+  let cursor: string | null = null,
+    isDone = false;
+  while (!isDone) {
+    // oxlint-disable-next-line no-await-in-loop -- each page's cursor depends on the previous one; inherently sequential.
+    const result = await fetchPage(cursor);
+    pages.push(...result.page);
+    isDone = result.isDone;
+    cursor = result.continueCursor;
+  }
+  return pages;
 }
 
 async function createTestSchema(t: TestCtx) {
@@ -366,7 +408,7 @@ describe("json-cms component", () => {
       await expect(
         t.mutation(api.lib.createEntry, {
           data: { name: "test" },
-          geometry: validPolygon,
+          geometry: JSON.stringify(validPolygon),
           schemaId,
         }),
       ).rejects.toThrow("Cannot attach geometry to a standard dataset.");
@@ -377,7 +419,7 @@ describe("json-cms component", () => {
         schemaId = await createGeospatialSchema(t, "MultiPolygon"),
         entryId = await t.mutation(api.lib.createEntry, {
           data: { name: "test" },
-          geometry: validPolygon,
+          geometry: JSON.stringify(validPolygon),
           schemaId,
         }),
         entry = await t.query(api.lib.getEntry, { entryId });
@@ -388,10 +430,11 @@ describe("json-cms component", () => {
       assertDefined(entry.geometryId);
 
       // The real coordinates live only in `geometries`.
-      const geometries = await t.query(api.lib.listGeometries, { schemaId }),
+      const geometries = await listAllGeometries(t, schemaId),
         geometryDoc = geometries.find((g) => g._id === entry.geometryId);
       assertDefined(geometryDoc);
-      expect(geometryDoc.geometry).toStrictEqual(validPolygon);
+      assertDefined(geometryDoc.geometryJson);
+      expect(JSON.parse(geometryDoc.geometryJson)).toStrictEqual(validPolygon);
       expect(geometryDoc.type).toBe("Polygon");
       expect(geometryDoc.entryId).toBe(entryId);
     });
@@ -403,7 +446,7 @@ describe("json-cms component", () => {
       await expect(
         t.mutation(api.lib.createEntry, {
           data: { name: "test" },
-          geometry: validMultiPolygon,
+          geometry: JSON.stringify(validMultiPolygon),
           schemaId,
         }),
       ).rejects.toThrow(
@@ -418,10 +461,22 @@ describe("json-cms component", () => {
       await expect(
         t.mutation(api.lib.createEntry, {
           data: { name: "test" },
-          geometry: invalidPoint,
+          geometry: JSON.stringify(invalidPoint),
           schemaId,
         }),
       ).rejects.toThrow("longitude must be a finite number in [-180, 180]");
+    });
+
+    it("createEntry rejects a geometry too large to store inline, with an actionable error", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Polygon"),
+        // A ring big enough that its JSON text exceeds INLINE_GEOMETRY_BYTE_LIMIT.
+        huge = JSON.stringify({ coordinates: [bigRing(60_000)], type: "Polygon" });
+      expect(huge.length).toBeGreaterThan(INLINE_GEOMETRY_BYTE_LIMIT);
+
+      await expect(
+        t.mutation(api.lib.createEntry, { data: {}, geometry: huge, schemaId }),
+      ).rejects.toThrow("too large to attach directly");
     });
 
     it("featureCount/boundingBox track create -> update (replace) -> delete", async () => {
@@ -432,7 +487,7 @@ describe("json-cms component", () => {
         pointC: GeometryArgs = { coordinates: [-5, -5], type: "Point" },
         entryId = await t.mutation(api.lib.createEntry, {
           data: {},
-          geometry: pointA,
+          geometry: JSON.stringify(pointA),
           schemaId,
         });
 
@@ -443,19 +498,28 @@ describe("json-cms component", () => {
 
       // Replace the geometry with one further out: bbox grows, count is unchanged
       // (a replace, not an add), and the SAME `geometries` row is reused in place.
-      await t.mutation(api.lib.updateEntry, { data: {}, entryId, geometry: pointB });
+      await t.mutation(api.lib.updateEntry, {
+        data: {},
+        entryId,
+        geometry: JSON.stringify(pointB),
+      });
 
       schemaDoc = await t.query(api.lib.getSchema, { schemaId });
       assertDefined(schemaDoc);
       expect(schemaDoc.featureCount).toBe(1);
       expect(schemaDoc.boundingBox).toStrictEqual([0, 0, 10, 10]);
 
-      const geometriesAfterUpdate = await t.query(api.lib.listGeometries, { schemaId });
+      const geometriesAfterUpdate = await listAllGeometries(t, schemaId);
       expect(geometriesAfterUpdate).toHaveLength(1);
-      expect(geometriesAfterUpdate[0].geometry).toStrictEqual(pointB);
+      assertDefined(geometriesAfterUpdate[0].geometryJson);
+      expect(JSON.parse(geometriesAfterUpdate[0].geometryJson)).toStrictEqual(pointB);
 
       // A second entry elsewhere, to prove the bbox stays monotonic through a later delete.
-      await t.mutation(api.lib.createEntry, { data: {}, geometry: pointC, schemaId });
+      await t.mutation(api.lib.createEntry, {
+        data: {},
+        geometry: JSON.stringify(pointC),
+        schemaId,
+      });
 
       schemaDoc = await t.query(api.lib.getSchema, { schemaId });
       assertDefined(schemaDoc);
@@ -471,7 +535,7 @@ describe("json-cms component", () => {
       expect(schemaDoc.featureCount).toBe(1);
       expect(schemaDoc.boundingBox).toStrictEqual([-5, -5, 10, 10]);
 
-      const geometriesAfterDelete = await t.query(api.lib.listGeometries, { schemaId });
+      const geometriesAfterDelete = await listAllGeometries(t, schemaId);
       expect(geometriesAfterDelete).toHaveLength(1);
     });
 
@@ -480,7 +544,7 @@ describe("json-cms component", () => {
         schemaId = await createGeospatialSchema(t, "Point"),
         entryId = await t.mutation(api.lib.createEntry, {
           data: {},
-          geometry: { coordinates: [1, 1], type: "Point" },
+          geometry: JSON.stringify({ coordinates: [1, 1], type: "Point" }),
           schemaId,
         });
 
@@ -495,7 +559,7 @@ describe("json-cms component", () => {
       assertDefined(schemaDoc);
       expect(schemaDoc.featureCount).toBe(0);
 
-      const geometries = await t.query(api.lib.listGeometries, { schemaId });
+      const geometries = await listAllGeometries(t, schemaId);
       expect(geometries).toHaveLength(0);
     });
 
@@ -505,11 +569,11 @@ describe("json-cms component", () => {
 
       await t.mutation(api.lib.createEntry, {
         data: {},
-        geometry: { coordinates: [1, 1], type: "Point" },
+        geometry: JSON.stringify({ coordinates: [1, 1], type: "Point" }),
         schemaId,
       });
       // Sanity: the geometries row exists before deletion.
-      expect(await t.query(api.lib.listGeometries, { schemaId })).toHaveLength(1);
+      expect(await listAllGeometries(t, schemaId)).toHaveLength(1);
 
       await t.mutation(api.lib.deleteSchema, { schemaId });
 
@@ -530,9 +594,9 @@ describe("json-cms component", () => {
 
       await t.mutation(api.lib.createEntriesBulk, {
         entries: [
-          { data: { n: 1 }, geometry: { coordinates: [0, 0], type: "Point" } },
+          { data: { n: 1 }, geometry: JSON.stringify({ coordinates: [0, 0], type: "Point" }) },
           { data: { n: 2 } }, // No geometry — should not affect featureCount/boundingBox.
-          { data: { n: 3 }, geometry: { coordinates: [5, 5], type: "Point" } },
+          { data: { n: 3 }, geometry: JSON.stringify({ coordinates: [5, 5], type: "Point" }) },
         ],
         schemaId,
       });
@@ -542,8 +606,127 @@ describe("json-cms component", () => {
       expect(schemaDoc.featureCount).toBe(2);
       expect(schemaDoc.boundingBox).toStrictEqual([0, 0, 5, 5]);
 
-      const geometries = await t.query(api.lib.listGeometries, { schemaId });
+      const geometries = await listAllGeometries(t, schemaId);
       expect(geometries).toHaveLength(2);
+    });
+
+    it("a geometry with a coordinate ring larger than 8192 elements round-trips exactly via createEntry", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Polygon"),
+        // Comfortably over Convex's 8192-elements-per-array limit, and small
+        // enough as JSON text to land inline (see INLINE_GEOMETRY_BYTE_LIMIT).
+        ring = bigRing(10_000),
+        geometry: GeometryArgs = { coordinates: [ring], type: "Polygon" },
+        entryId = await t.mutation(api.lib.createEntry, {
+          data: {},
+          geometry: JSON.stringify(geometry),
+          schemaId,
+        });
+
+      const geometries = await listAllGeometries(t, schemaId);
+      expect(geometries).toHaveLength(1);
+      assertDefined(geometries[0].geometryJson);
+      const roundTripped = JSON.parse(geometries[0].geometryJson);
+      expect(roundTripped).toStrictEqual(geometry);
+      expect(roundTripped.coordinates[0]).toHaveLength(ring.length);
+      expect(geometries[0].entryId).toBe(entryId);
+    });
+
+    describe("listGeometries pagination", () => {
+      // Regression coverage for: individual rows safely under
+      // INLINE_GEOMETRY_BYTE_LIMIT (~900 KB) can still, in aggregate, exceed
+      // Convex's ~16 MiB per-execution read budget when a dataset has many
+      // of them — this is what actually threw "Too many bytes read in a
+      // single function execution" against the real 521-row/80 MB file
+      // before `listGeometries` was paginated.
+      it("many near-inline-limit geometries for one schema page correctly and nothing is lost across pages", async () => {
+        // `convex-test`'s in-memory `.paginate()` simulation doesn't enforce
+        // `maximumBytesRead` the way a deployed backend does (verified: this
+        // exact fixture, requested as one `numItems: ROW_COUNT` page, comes
+        // back whole here instead of split) — so this test proves the
+        // pagination *mechanism* (cursors, page boundaries, no data lost)
+        // rather than the production safety net itself. The safety net —
+        // `maximumBytesRead: GEOMETRY_READ_BYTE_BUDGET` passed to every
+        // `.paginate()` call in `listGeometries`/lib.ts — was confirmed
+        // separately against a real deployment (see the PR notes): the exact
+        // failure this fixture models ("Too many bytes read in a single
+        // function execution") reproduced against unpaginated `.collect()`
+        // and is gone after this change.
+        const t = initConvexTest(),
+          schemaId = await createGeospatialSchema(t, "Polygon"),
+          ROW_COUNT = 12,
+          // ~850 KB per geometry as JSON text — comfortably inline
+          // (< INLINE_GEOMETRY_BYTE_LIMIT) but realistically close to it,
+          // matching the largest inline rows in the real 80 MB fixture file.
+          ring = bigRing(34_000),
+          geometryJson = JSON.stringify({ coordinates: [ring], type: "Polygon" });
+        expect(new TextEncoder().encode(geometryJson).length).toBeLessThan(INLINE_GEOMETRY_BYTE_LIMIT);
+
+        for (let i = 0; i < ROW_COUNT; i += 1) {
+          // oxlint-disable-next-line no-await-in-loop -- seeding fixture rows; order doesn't matter but each is cheap and sequential is simplest here.
+          await t.mutation(api.lib.createEntry, { data: { n: i }, geometry: geometryJson, schemaId });
+        }
+
+        // A deliberately small requested page size proves the pagination
+        // mechanism itself works: multiple calls are required, and none of
+        // them silently reads (or returns) more than asked.
+        const firstPage = await t.query(api.lib.listGeometries, {
+          paginationOpts: { cursor: null, numItems: 5 },
+          schemaId,
+        });
+        expect(firstPage.page).toHaveLength(5);
+        expect(firstPage.isDone).toBe(false);
+
+        // Nothing is dropped — every row is still reachable, just fetched
+        // across more, smaller reads instead of one big one.
+        const all = await listAllGeometries(t, schemaId);
+        expect(all).toHaveLength(ROW_COUNT);
+        for (const row of all) {
+          assertDefined(row.geometryJson);
+          expect(JSON.parse(row.geometryJson).coordinates[0]).toHaveLength(ring.length);
+        }
+      });
+
+      // NOTE: there is no server-side `listGeometriesByCollection` to test
+      // here — Convex allows at most one `.paginate()` call per query
+      // execution ("Only a single paginated query is allowed per function
+      // execution", a hard platform limit an earlier version of this fix
+      // violated by looping `.paginate()` across a collection's schemas in
+      // one query — it failed exactly this way against this exact test
+      // harness, which is how it was caught before it reached production).
+      // Aggregating a collection's geometries across its several
+      // independently-indexed schemas is the client's job instead: call
+      // this same paginated `listGeometries` once per geospatial schema and
+      // merge — see `SchemaGeometriesLoader` in the app's collection route.
+      it("listGeometries stays correctly scoped per schema — paginating one schema never returns another schema's rows", async () => {
+        const t = initConvexTest(),
+          schemaA = await createGeospatialSchema(t, "Point"),
+          schemaB = await createGeospatialSchema(t, "Point");
+
+        for (let i = 0; i < 3; i += 1) {
+          // oxlint-disable-next-line no-await-in-loop
+          await t.mutation(api.lib.createEntry, {
+            data: { i },
+            geometry: JSON.stringify({ coordinates: [i, i], type: "Point" }),
+            schemaId: schemaA,
+          });
+        }
+        for (let i = 0; i < 4; i += 1) {
+          // oxlint-disable-next-line no-await-in-loop
+          await t.mutation(api.lib.createEntry, {
+            data: { i },
+            geometry: JSON.stringify({ coordinates: [-i, -i], type: "Point" }),
+            schemaId: schemaB,
+          });
+        }
+
+        const geometriesA = await listAllGeometries(t, schemaA),
+          geometriesB = await listAllGeometries(t, schemaB);
+        expect(geometriesA).toHaveLength(3);
+        expect(geometriesB).toHaveLength(4);
+        expect(geometriesA.every((row) => row.schemaId === schemaA)).toBe(true);
+        expect(geometriesB.every((row) => row.schemaId === schemaB)).toBe(true);
+      });
     });
   });
 
@@ -801,14 +984,19 @@ describe("json-cms component", () => {
 
   describe("dataset import", () => {
     // NOTE: startImport's happy path and the full workflow *execution*
-    // (importWorkflow driving batches) aren't unit-tested here. The workflow
+    // (importWorkflow driving chunks) aren't unit-tested here. The workflow
     // Engine (a) requires registering the nested workflow component, whose
     // Shipped test source is type-incompatible with this repo's convex-test
     // Version, and (b) deletes `global.process` for determinism, which the
     // Convex-test edge-runtime doesn't provide (a step fails with "process is
     // Not defined" under the harness only). The real deployment compiles and
     // Runs it fine. We instead verify the guard plus the batch-insert
-    // Primitives the workflow calls.
+    // Primitives the workflow calls, directly — including `insertChunkFromStorage`,
+    // which now does the per-row geometry validation/resolution itself (see
+    // its doc comment: Convex components can't use the Node runtime, so that
+    // work can't happen in a separate whole-payload prep step anymore —
+    // chunking instead happens client-side, via `chunkRowsForImport` in the
+    // `react` package, before any of these component functions run at all).
     it("insertEntriesChunkInternal inserts a batch of entries", async () => {
       const t = initConvexTest(),
         schemaId = await createImportSchema(t),
@@ -823,22 +1011,20 @@ describe("json-cms component", () => {
       expect(entries).toHaveLength(chunk.length);
     });
 
-    it("insertChunkFromStorage reads storage and inserts the requested slice", async () => {
+    it("insertChunkFromStorage reads a raw client-uploaded chunk blob, validates + inserts it, then deletes the blob", async () => {
       const t = initConvexTest(),
         schemaId = await createImportSchema(t),
-        rows = Array.from({ length: 1200 }, (_, i) => ({ data: { name: `row-${i}` } })),
-        storageId = await storeRows(t, rows),
-        // Insert the middle batch [500, 1000).
-        inserted = await t.action(internal.lib.insertChunkFromStorage, {
-          limit: 500,
-          offset: 500,
-          schemaId,
-          storageId,
-        });
+        chunkRows = Array.from({ length: 500 }, (_, i) => ({ data: { name: `row-${i}` } })),
+        storageId = await storeRows(t, chunkRows),
+        inserted = await t.action(internal.lib.insertChunkFromStorage, { schemaId, storageId });
       expect(inserted).toBe(500);
 
       const entries = await t.query(api.lib.listEntries, { schemaId });
       expect(entries).toHaveLength(500);
+
+      // The chunk blob is deleted once its rows are inserted (import-litter cleanup).
+      const stillThere = await t.run(async (ctx) => ctx.storage.get(storageId));
+      expect(stillThere).toBeNull();
     });
 
     it("startImport rejects a missing schema", async () => {
@@ -850,8 +1036,124 @@ describe("json-cms component", () => {
       await t.mutation(api.lib.deleteSchema, { schemaId });
 
       await expect(
-        t.mutation(api.lib.startImport, { schemaId, storageId, total: 1 }),
+        t.mutation(api.lib.startImport, { schemaId, storageIds: [storageId], total: 1 }),
       ).rejects.toThrow("Schema not found");
+    });
+
+    it("a geometry with a coordinate ring larger than 8192 elements round-trips exactly through insertChunkFromStorage", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Polygon"),
+        ring = bigRing(9000), // > 8192, but small enough as JSON text to land inline.
+        geometry = { coordinates: [ring], type: "Polygon" },
+        storageId = await storeRows(t, [{ data: { name: "big" }, geometry }]);
+
+      await t.action(internal.lib.insertChunkFromStorage, { schemaId, storageId });
+
+      const geometries = await listAllGeometries(t, schemaId);
+      expect(geometries).toHaveLength(1);
+      assertDefined(geometries[0].geometryJson);
+      const roundTripped = JSON.parse(geometries[0].geometryJson);
+      expect(roundTripped).toStrictEqual(geometry);
+      expect(roundTripped.coordinates[0]).toHaveLength(ring.length);
+    });
+
+    it("falls back to file storage for a geometry too large to store inline, and the blob resolves to the exact original geometry", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Polygon"),
+        ring = bigRing(70_000), // JSON text comfortably exceeds INLINE_GEOMETRY_BYTE_LIMIT.
+        geometry = { coordinates: [ring], type: "Polygon" },
+        geometryJsonSize = JSON.stringify(geometry).length;
+      expect(geometryJsonSize).toBeGreaterThan(INLINE_GEOMETRY_BYTE_LIMIT);
+
+      const storageId = await storeRows(t, [{ data: { name: "huge" }, geometry }]);
+      await t.action(internal.lib.insertChunkFromStorage, { schemaId, storageId });
+
+      const geometries = await listAllGeometries(t, schemaId);
+      expect(geometries).toHaveLength(1);
+      expect(geometries[0].geometryJson).toBeUndefined();
+      assertDefined(geometries[0].geometryUrl);
+
+      // convex-test doesn't serve real HTTP for storage URLs, so verify the
+      // underlying blob directly instead of following the URL — a real
+      // deployment's URL fetches this same blob byte-for-byte.
+      const geometryRow = await t.run(async (ctx) =>
+        ctx.db
+          .query("geometries")
+          .withIndex("by_schema", (q) => q.eq("schemaId", schemaId))
+          .first(),
+      );
+      assertDefined(geometryRow);
+      assertDefined(geometryRow.geometryStorageId);
+      const geometryStorageId = geometryRow.geometryStorageId,
+        // Read + parse inside the `t.run` callback — its return value goes
+        // through Convex's value serialization, which (correctly) can't
+        // carry a raw `Blob` back out.
+        storedJson: unknown = await t.run(async (ctx) => {
+          const blob = await ctx.storage.get(geometryStorageId);
+          assertDefined(blob);
+          return JSON.parse(await blob.text());
+        });
+      expect(storedJson).toStrictEqual(geometry);
+      expect((storedJson as typeof geometry).coordinates[0]).toHaveLength(ring.length);
+    });
+
+    it("processes many client-produced chunks (simulating a large import) without ever holding more than one chunk at a time", async () => {
+      const t = initConvexTest(),
+        schemaId = await createImportSchema(t),
+        rows = Array.from({ length: 1200 }, (_, i) => ({ data: { name: `row-${i}` } })),
+        // Mirrors what the client does before calling startImport — see
+        // chunk-rows.test.ts for dedicated coverage of the splitting logic itself.
+        chunks = [rows.slice(0, 500), rows.slice(500, 1000), rows.slice(1000, 1200)];
+      expect(chunks.map((c) => c.length)).toStrictEqual([500, 500, 200]);
+
+      let totalInserted = 0;
+      for (const chunk of chunks) {
+        const storageId = await storeRows(t, chunk);
+        // oxlint-disable-next-line no-await-in-loop
+        totalInserted += await t.action(internal.lib.insertChunkFromStorage, {
+          schemaId,
+          storageId,
+        });
+      }
+      expect(totalInserted).toBe(1200);
+
+      const entries = await t.query(api.lib.listEntries, { schemaId });
+      expect(entries).toHaveLength(1200);
+    });
+
+    it("rejects a chunk atomically when one of its rows has an invalid geometry, before writing any of that chunk's rows", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Point"),
+        storageId = await storeRows(t, [
+          { data: { n: 1 }, geometry: { coordinates: [0, 0], type: "Point" } },
+          { data: { n: 2 }, geometry: { coordinates: [200, 0], type: "Point" } }, // out-of-range longitude
+        ]);
+
+      await expect(
+        t.action(internal.lib.insertChunkFromStorage, { schemaId, storageId }),
+      ).rejects.toThrow(/Row 1/);
+
+      const entries = await t.query(api.lib.listEntries, { schemaId });
+      expect(entries).toHaveLength(0);
+    });
+
+    it("a later chunk's failure does not undo an earlier chunk's already-committed rows (documented trade-off — see importWorkflow's doc comment)", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Point"),
+        goodStorageId = await storeRows(t, [
+          { data: { n: 1 }, geometry: { coordinates: [0, 0], type: "Point" } },
+        ]),
+        badStorageId = await storeRows(t, [
+          { data: { n: 2 }, geometry: { coordinates: [200, 0], type: "Point" } }, // out-of-range longitude
+        ]);
+
+      await t.action(internal.lib.insertChunkFromStorage, { schemaId, storageId: goodStorageId });
+      await expect(
+        t.action(internal.lib.insertChunkFromStorage, { schemaId, storageId: badStorageId }),
+      ).rejects.toThrow(/Row 0/);
+
+      const entries = await t.query(api.lib.listEntries, { schemaId });
+      expect(entries).toHaveLength(1);
     });
   });
 });

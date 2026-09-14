@@ -3,9 +3,11 @@ import { getReferenceFields } from "@caden/json-cms/react";
 import { Link } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
 import { flexRender, getCoreRowModel, useReactTable } from "@tanstack/react-table";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { Copy, Eye, MoreHorizontal, Pencil } from "lucide-react";
+import { useRef } from "react";
 import { toast } from "sonner";
 
 import { Button } from "#/components/ui/button";
@@ -17,7 +19,6 @@ import {
   DropdownMenuTrigger,
 } from "#/components/ui/dropdown-menu";
 import {
-  Table,
   TableBody,
   TableCell,
   TableHead,
@@ -155,6 +156,16 @@ function RowActions({
   );
 }
 
+// Row virtualization (see `EntriesTable` below) lays out `<tr>`s with CSS
+// grid/flex instead of the browser's table layout algorithm, which means
+// column widths are no longer inferred from content — every column needs an
+// explicit `size`. Kept generous enough that `ValueCell`'s own truncation
+// (`max-w-60`) is usually what actually clips text, not the column itself.
+const GEOMETRY_COLUMN_SIZE = 110,
+  PROPERTY_COLUMN_SIZE = 220,
+  CREATED_COLUMN_SIZE = 160,
+  ACTIONS_COLUMN_SIZE = 40;
+
 function buildColumns(
   schemaId: string,
   properties: string[],
@@ -179,6 +190,7 @@ function buildColumns(
         ),
       header: name,
       id: name,
+      size: PROPERTY_COLUMN_SIZE,
     };
   });
 
@@ -188,6 +200,7 @@ function buildColumns(
           cell: (info) => <GeometryCell geometryType={info.row.original.geometryType} />,
           header: "Geometry",
           id: "geometry",
+          size: GEOMETRY_COLUMN_SIZE,
         },
       ]
     : [];
@@ -199,14 +212,19 @@ function buildColumns(
       cell: (info) => new Date(info.row.original._creationTime).toLocaleString(),
       header: "Created",
       id: "_creationTime",
+      size: CREATED_COLUMN_SIZE,
     },
     {
       cell: (info) => <RowActions schemaId={schemaId} entry={info.row.original} onEdit={onEdit} />,
       header: "",
       id: "actions",
+      size: ACTIONS_COLUMN_SIZE,
     },
   ];
 }
+
+/** Estimated row height in px, used to seed the virtualizer before rows are measured. */
+const ESTIMATED_ROW_HEIGHT = 37;
 
 /** A TanStack Table view of a dataset's entries: one column per schema property. */
 export function EntriesTable({
@@ -243,43 +261,85 @@ export function EntriesTable({
     ),
     // TanStack Table's returned instance always has fresh method references; this is inherent to the library.
     // oxlint-disable-next-line react/incompatible-library
-    table = useReactTable({ columns, data: entries, getCoreRowModel: getCoreRowModel() });
+    table = useReactTable({ columns, data: entries, getCoreRowModel: getCoreRowModel() }),
+    rows = table.getRowModel().rows,
+    scrollContainerRef = useRef<HTMLDivElement>(null),
+    // Rows are uniform height (every cell truncates to one line), so a fixed
+    // estimate is accurate without per-row `measureElement` — the extra
+    // ResizeObserver bookkeeping that needs would be pure overhead here.
+    rowVirtualizer = useVirtualizer({
+      count: rows.length,
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- ref is stable across renders
+      getScrollElement: () => scrollContainerRef.current,
+      estimateSize: () => ESTIMATED_ROW_HEIGHT,
+      overscan: 10,
+    }),
+    virtualRows = rowVirtualizer.getVirtualItems();
 
   return (
-    <Table>
-      <TableHeader>
-        {table.getHeaderGroups().map((headerGroup) => (
-          <TableRow key={headerGroup.id}>
-            {headerGroup.headers.map((header) => (
-              <TableHead
-                key={header.id}
-                className={
-                  header.column.id === "actions"
-                    ? "w-10"
-                    : header.column.id === "geometry"
+    // A raw <table> here, not the shared `Table` primitive — its own wrapper
+    // div hardcodes `overflow-x-auto`, which per the CSS overflow spec forces
+    // `overflow-y: auto` too (a non-`visible` value on one axis makes the
+    // other compute to `auto` instead of `visible`), silently creating a
+    // SECOND scroll container between this one and the sticky header. The
+    // header's `position: sticky` binds to whichever scroll container is
+    // nearest, so it would stick inside that inner (undersized, never
+    // actually scrolled) wrapper instead of this div, rendering the sticky
+    // positioning inert. This div now owns both scroll axes itself.
+    <div ref={scrollContainerRef} className="max-h-[70vh] overflow-auto rounded-md border">
+      <table className="w-full caption-bottom text-xs" style={{ display: "grid" }}>
+        <TableHeader className="sticky top-0 z-10 bg-background" style={{ display: "grid" }}>
+          {table.getHeaderGroups().map((headerGroup) => (
+            <TableRow key={headerGroup.id} style={{ display: "flex", width: "100%" }}>
+              {headerGroup.headers.map((header) => (
+                <TableHead
+                  key={header.id}
+                  style={{ display: "flex", alignItems: "center", width: header.getSize() }}
+                  className={
+                    header.column.id === "actions"
                       ? undefined
-                      : "font-mono"
-                }
+                      : header.column.id === "geometry"
+                        ? undefined
+                        : "font-mono"
+                  }
+                >
+                  {header.isPlaceholder
+                    ? null
+                    : flexRender(header.column.columnDef.header, header.getContext())}
+                </TableHead>
+              ))}
+            </TableRow>
+          ))}
+        </TableHeader>
+        <TableBody
+          style={{ display: "grid", height: rowVirtualizer.getTotalSize(), position: "relative" }}
+        >
+          {virtualRows.map((virtualRow) => {
+            const row = rows[virtualRow.index];
+            return (
+              <TableRow
+                key={row.id}
+                style={{
+                  display: "flex",
+                  position: "absolute",
+                  top: 0,
+                  transform: `translateY(${virtualRow.start}px)`,
+                  width: "100%",
+                }}
               >
-                {header.isPlaceholder
-                  ? null
-                  : flexRender(header.column.columnDef.header, header.getContext())}
-              </TableHead>
-            ))}
-          </TableRow>
-        ))}
-      </TableHeader>
-      <TableBody>
-        {table.getRowModel().rows.map((row) => (
-          <TableRow key={row.id}>
-            {row.getVisibleCells().map((cell) => (
-              <TableCell key={cell.id}>
-                {flexRender(cell.column.columnDef.cell, cell.getContext())}
-              </TableCell>
-            ))}
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+                {row.getVisibleCells().map((cell) => (
+                  <TableCell
+                    key={cell.id}
+                    style={{ display: "flex", alignItems: "center", width: cell.column.getSize() }}
+                  >
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </TableCell>
+                ))}
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </table>
+    </div>
   );
 }
