@@ -11,7 +11,7 @@ import {
   UploadCloud,
   Workflow,
 } from "lucide-react";
-import { useState } from "react";
+import { z } from "zod";
 
 import { EntriesMap } from "@/components/entries-map";
 import { EntriesTable } from "@/components/entries-table";
@@ -40,13 +40,20 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { api } from "../../../../convex/_generated/api";
 
+const entryPanelSearchSchema = z.object({
+  entryId: z.string().optional(),
+  panel: z.enum(["create", "edit"]).optional(),
+});
+
 export const Route = createFileRoute("/datasets/$schemaId/")({
   component: SchemaDetailPage,
+  validateSearch: entryPanelSearchSchema,
 });
 
 type Schema = NonNullable<FunctionReturnType<typeof api.schemas.get>>;
 type Geometry = FunctionReturnType<typeof api.geometries.list>[number];
 type Entry = FunctionReturnType<typeof api.entries.list>[number];
+type EntryPanelSearch = z.infer<typeof entryPanelSearchSchema>;
 
 /** Fetches this dataset's geometries — only when it's actually geospatial, `"skip"` otherwise. */
 function useGeometriesForSchema(schema: Schema | null | undefined, schemaId: string) {
@@ -63,21 +70,32 @@ function findEntryGeometry(geometries: Geometry[] | undefined, entryId: string) 
   return match === undefined ? undefined : match.geometry;
 }
 
-/** Hosts the create/edit side panel — extracted so its target-resolution ternaries don't count against the page's own complexity. */
+/** The entry an `edit` panel search targets, or `undefined` for a `create` panel (or a stale/deleted entryId). */
+function resolveEntryForPanel(entries: Entry[], search: EntryPanelSearch): Entry | undefined {
+  if (search.panel !== "edit" || search.entryId === undefined) {
+    return undefined;
+  }
+  return entries.find((entry) => entry._id === search.entryId);
+}
+
+/** Hosts the create/edit side panel — extracted so its target-resolution ternaries don't count against the page's own complexity. Panel visibility lives in the URL's search params so it survives a reload. */
 function EntryPanelHost({
   schemaId,
   schema,
+  entries,
   geometries,
-  panelTarget,
+  search,
   onOpenChange,
 }: {
   schemaId: string;
   schema: Schema;
+  entries: Entry[];
   geometries: Geometry[] | undefined;
-  panelTarget: Entry | "create" | null;
+  search: EntryPanelSearch;
   onOpenChange: (open: boolean) => void;
 }) {
-  const entry = panelTarget === "create" || panelTarget === null ? undefined : panelTarget,
+  const entry = resolveEntryForPanel(entries, search),
+    isOpen = search.panel === "create" || entry !== undefined,
     initialGeometry = entry === undefined ? undefined : findEntryGeometry(geometries, entry._id);
 
   return (
@@ -86,7 +104,7 @@ function EntryPanelHost({
       schema={schema}
       entry={entry}
       initialGeometry={initialGeometry}
-      open={panelTarget !== null}
+      open={isOpen}
       onOpenChange={onOpenChange}
     />
   );
@@ -147,10 +165,20 @@ function downloadFile(content: string, filename: string) {
 
 function SchemaDetailPage() {
   const { schemaId } = Route.useParams(),
+    search = Route.useSearch(),
+    navigate = Route.useNavigate(),
     schema = useQuery(api.schemas.get, { schemaId }),
     entries = useQuery(api.entries.list, { schemaId }),
     geometries = useGeometriesForSchema(schema, schemaId),
-    [panelTarget, setPanelTarget] = useState<Entry | "create" | null>(null),
+    openCreatePanel = async () => {
+      await navigate({ search: { panel: "create" } });
+    },
+    openEditPanel = async (entry: Entry) => {
+      await navigate({ search: { entryId: entry._id, panel: "edit" } });
+    },
+    closePanel = async () => {
+      await navigate({ search: {} });
+    },
     handleExport = () => {
       if (!entries || !schema) {
         return;
@@ -227,7 +255,7 @@ function SchemaDetailPage() {
             <UploadCloud className="h-4 w-4 mr-2" />
             Bulk Upload
           </RouterButton>
-          <Button onClick={() => setPanelTarget("create")}>
+          <Button onClick={openCreatePanel}>
             <Plus className="h-4 w-4 mr-2" />
             Create Entry
           </Button>
@@ -260,7 +288,7 @@ function SchemaDetailPage() {
                     <EmptyDescription>Add your first entry to this schema.</EmptyDescription>
                   </EmptyHeader>
                   <EmptyContent>
-                    <Button onClick={() => setPanelTarget("create")}>
+                    <Button onClick={openCreatePanel}>
                       <Plus className="h-4 w-4 mr-2" />
                       Create First Entry
                     </Button>
@@ -272,7 +300,7 @@ function SchemaDetailPage() {
                   properties={Object.keys(schema.schema.properties ?? {})}
                   entries={entries}
                   isGeospatial={schema.kind === "geospatial"}
-                  onEdit={setPanelTarget}
+                  onEdit={openEditPanel}
                 />
               )}
             </CardContent>
@@ -314,11 +342,12 @@ function SchemaDetailPage() {
       <EntryPanelHost
         schemaId={schemaId}
         schema={schema}
+        entries={entries}
         geometries={geometries}
-        panelTarget={panelTarget}
+        search={search}
         onOpenChange={(isOpen) => {
           if (!isOpen) {
-            setPanelTarget(null);
+            void closePanel();
           }
         }}
       />
