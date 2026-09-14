@@ -3,11 +3,22 @@
 // Schema editor family
 export { SchemaEditor } from "./schema-editor.js";
 export { VisualBuilder } from "./visual-builder.js";
-export type { PropertyType, PropertyDef, SchemaFormData } from "./visual-builder.js";
+export type {
+  PropertyType,
+  PropertyDef,
+  SchemaFormData,
+  ReferenceDatasetOption,
+} from "./visual-builder.js";
 export { ValidationPane } from "./validation-pane.js";
 export type { ValidationState, ValidationResult } from "./validation-pane.js";
 export { SchemaPreview } from "./schema-preview.js";
 export { JsonTree } from "./json-tree.js";
+
+// Foreign-reference (relation) field widget — pair with
+// `buildReferenceUiSchema`/`buildReferenceCandidates` from `react` to wire a
+// form up. See ../../shared/reference.ts for the underlying convention.
+export { ReferenceWidget } from "./reference-widget.js";
+export type { ReferenceCandidate } from "./reference-widget.js";
 
 // New batteries-included components
 export { DatasetImporter } from "./dataset-importer.js";

@@ -13,6 +13,7 @@ import { SchemaPreview } from "./schema-preview.js";
 import { ValidationPane } from "./validation-pane.js";
 import type { ValidationState } from "./validation-pane.js";
 import { VisualBuilder } from "./visual-builder.js";
+import type { ReferenceDatasetOption } from "./visual-builder.js";
 
 const SCHEMA_SIZE_LIMIT = 102_400; // 100 KB
 
@@ -114,6 +115,8 @@ interface SchemaEditorProps {
   geometryTypeReadOnly?: boolean;
   /** e.g. "142 Polygon + 8 MultiPolygon → coalesced to MultiPolygon · 3 rows have no geometry" — shown next to the resolved type when `geometryTypeReadOnly`. */
   geometryTypeSummary?: string;
+  /** Other datasets the Visual builder's "reference" property type can link to. Omit/empty to hide that capability. */
+  availableDatasets?: ReferenceDatasetOption[];
 }
 
 interface PendingFile {
@@ -546,6 +549,7 @@ function EditorTabPanel({
   externalDataText,
   onInferSchema,
   onStateChange,
+  availableDatasets,
 }: {
   activeTab: EditorTab;
   schemaJson: string;
@@ -554,6 +558,7 @@ function EditorTabPanel({
   externalDataText: { text: string } | undefined;
   onInferSchema: (inferredJson: string) => void;
   onStateChange: (state: ValidationState) => void;
+  availableDatasets: ReferenceDatasetOption[] | undefined;
 }) {
   return (
     <div className="flex-1 overflow-auto p-4">
@@ -563,6 +568,7 @@ function EditorTabPanel({
           onChange={onSchemaJson}
           validationFailingPaths={validationState.failingPaths}
           totalDataItems={validationState.total}
+          availableDatasets={availableDatasets}
         />
       )}
       {activeTab === "code" && (
@@ -600,6 +606,7 @@ export function SchemaEditor({
   onGeometryTypeChange,
   geometryTypeReadOnly,
   geometryTypeSummary,
+  availableDatasets,
 }: SchemaEditorProps) {
   const [schemaJson, setSchemaJson] = useState(initialJson),
     [uiSchemaJson, setUiSchemaJson] = useState(initialUiSchemaJson),
@@ -816,6 +823,7 @@ export function SchemaEditor({
             onSchemaJson={setSchemaJson}
             validationState={validationState}
             externalDataText={externalDataText}
+            availableDatasets={availableDatasets}
             onInferSchema={(inferredJson) => {
               setSchemaJson(inferredJson);
               toast.success("Schema inferred! Fill in title and description to finish.");
