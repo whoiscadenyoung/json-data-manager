@@ -50,6 +50,7 @@ type Dataset = FunctionReturnType<typeof api.schemas.list>[number];
 // `listGeometries` is paginated (see its doc comment in the component) — the
 // per-item shape is `PaginationResult["page"][number]`.
 type GeometryEntry = FunctionReturnType<typeof api.geometries.list>["page"][number];
+type EntryDoc = FunctionReturnType<typeof api.collections.listEntriesByCollection>[number];
 
 export const Route = createFileRoute("/collections/$collectionId/")({
   component: CollectionDetailPage,
@@ -364,30 +365,68 @@ function CollectionMapTab({
     : undefined;
 
   // The loaders must stay mounted regardless of loading state — they're
-  // what's actually fetching the data the spinner below is waiting on.
+  // what's actually fetching the data the spinner below is waiting on. They
+  // used to sit under two early `return`s whose top-level JSX had different
+  // element types (a `<>` Fragment while loading vs. a `<div>` once loaded).
+  // React keys reconciliation off a component's own top-level element type,
+  // not just each child's `key` — so the instant `geometries`/`entries`
+  // finished loading and this swapped from one branch to the other, React
+  // discarded the whole previous tree (loaders included) and mounted a
+  // fresh one, wiping every loader's in-progress pagination state right as
+  // it completed. That immediately un-completed `geometries`, flipping back
+  // to the loading branch (itself a fresh mount under the *other* element
+  // type) and repeating forever — the reported endless spinner with an
+  // occasional flash of the legend. A single `return` with one stable
+  // top-level element, branching only in what's rendered *inside* it, keeps
+  // the loaders mounted continuously across that transition.
   const loaders = geospatialSchemaIds.map((schemaId) => (
     <SchemaGeometriesLoader key={schemaId} schemaId={schemaId} onLoaded={handleGeometriesLoaded} />
   ));
 
-  if (geometries === undefined || entries === undefined) {
-    return (
-      <>
-        {loaders}
+  return (
+    <div className="flex flex-col gap-4">
+      {loaders}
+      {geometries === undefined || entries === undefined ? (
         <div className="flex justify-center items-center min-h-64">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
         </div>
-      </>
-    );
-  }
+      ) : (
+        <CollectionMapContent
+          datasets={datasets}
+          groups={groups}
+          groupFilter={groupFilter}
+          setGroupFilter={setGroupFilter}
+          geometries={geometries}
+          entries={entries}
+        />
+      )}
+    </div>
+  );
+}
 
+/** The loaded-state contents of `CollectionMapTab` — the group filter and the combined map — extracted so `geometries`/`entries` narrow to defined without an early `return` in the caller (see that function's comment on why it can't branch via early returns). */
+function CollectionMapContent({
+  datasets,
+  groups,
+  groupFilter,
+  setGroupFilter,
+  geometries,
+  entries,
+}: {
+  datasets: Dataset[];
+  entries: EntryDoc[];
+  geometries: GeometryEntry[];
+  groupFilter: string;
+  groups: GroupDoc[];
+  setGroupFilter: (groupFilter: string) => void;
+}) {
   const filteredDatasets = filterDatasetsByGroup(datasets, groupFilter),
     filteredSchemaIds = new Set(filteredDatasets.map((dataset) => dataset._id)),
     filteredGeometries = geometries.filter((geometry) => filteredSchemaIds.has(geometry.schemaId)),
     filteredEntries = entries.filter((entry) => filteredSchemaIds.has(entry.schemaId));
 
   return (
-    <div className="flex flex-col gap-4">
-      {loaders}
+    <>
       {groups.length > 0 && (
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">Show</span>
@@ -413,7 +452,7 @@ function CollectionMapTab({
         geometries={filteredGeometries}
         entries={filteredEntries}
       />
-    </div>
+    </>
   );
 }
 
