@@ -11,9 +11,11 @@ import {
   UploadCloud,
   Workflow,
 } from "lucide-react";
+import { useState } from "react";
 
 import { EntriesMap } from "@/components/entries-map";
 import { EntriesTable } from "@/components/entries-table";
+import { EntryFormPanel } from "@/components/entry-form-panel";
 import { RouterButton } from "@/components/router-button";
 import { SchemaVisualizer } from "@/components/schema-visualizer";
 import {
@@ -50,6 +52,44 @@ type Entry = FunctionReturnType<typeof api.entries.list>[number];
 function useGeometriesForSchema(schema: Schema | null | undefined, schemaId: string) {
   const shouldFetch = schema ? schema.kind === "geospatial" : false;
   return useQuery(api.geometries.list, shouldFetch ? { schemaId } : "skip");
+}
+
+/** The full GeoJSON geometry already on file for `entryId`, looked up from the schema's already-fetched geometries rather than a new query. */
+function findEntryGeometry(geometries: Geometry[] | undefined, entryId: string) {
+  if (geometries === undefined) {
+    return undefined;
+  }
+  const match = geometries.find((geometry) => geometry.entryId === entryId);
+  return match === undefined ? undefined : match.geometry;
+}
+
+/** Hosts the create/edit side panel — extracted so its target-resolution ternaries don't count against the page's own complexity. */
+function EntryPanelHost({
+  schemaId,
+  schema,
+  geometries,
+  panelTarget,
+  onOpenChange,
+}: {
+  schemaId: string;
+  schema: Schema;
+  geometries: Geometry[] | undefined;
+  panelTarget: Entry | "create" | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const entry = panelTarget === "create" || panelTarget === null ? undefined : panelTarget,
+    initialGeometry = entry === undefined ? undefined : findEntryGeometry(geometries, entry._id);
+
+  return (
+    <EntryFormPanel
+      schemaId={schemaId}
+      schema={schema}
+      entry={entry}
+      initialGeometry={initialGeometry}
+      open={panelTarget !== null}
+      onOpenChange={onOpenChange}
+    />
+  );
 }
 
 /** "N features with geometry" line — extracted so its `??`/ternary don't count against the page's own complexity. */
@@ -110,6 +150,7 @@ function SchemaDetailPage() {
     schema = useQuery(api.schemas.get, { schemaId }),
     entries = useQuery(api.entries.list, { schemaId }),
     geometries = useGeometriesForSchema(schema, schemaId),
+    [panelTarget, setPanelTarget] = useState<Entry | "create" | null>(null),
     handleExport = () => {
       if (!entries || !schema) {
         return;
@@ -186,10 +227,10 @@ function SchemaDetailPage() {
             <UploadCloud className="h-4 w-4 mr-2" />
             Bulk Upload
           </RouterButton>
-          <RouterButton to="/datasets/$schemaId/create" params={{ schemaId }}>
+          <Button onClick={() => setPanelTarget("create")}>
             <Plus className="h-4 w-4 mr-2" />
             Create Entry
-          </RouterButton>
+          </Button>
         </div>
       </div>
 
@@ -219,10 +260,10 @@ function SchemaDetailPage() {
                     <EmptyDescription>Add your first entry to this schema.</EmptyDescription>
                   </EmptyHeader>
                   <EmptyContent>
-                    <RouterButton to="/datasets/$schemaId/create" params={{ schemaId }}>
+                    <Button onClick={() => setPanelTarget("create")}>
                       <Plus className="h-4 w-4 mr-2" />
                       Create First Entry
-                    </RouterButton>
+                    </Button>
                   </EmptyContent>
                 </Empty>
               ) : (
@@ -231,6 +272,7 @@ function SchemaDetailPage() {
                   properties={Object.keys(schema.schema.properties ?? {})}
                   entries={entries}
                   isGeospatial={schema.kind === "geospatial"}
+                  onEdit={setPanelTarget}
                 />
               )}
             </CardContent>
@@ -268,6 +310,18 @@ function SchemaDetailPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <EntryPanelHost
+        schemaId={schemaId}
+        schema={schema}
+        geometries={geometries}
+        panelTarget={panelTarget}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) {
+            setPanelTarget(null);
+          }
+        }}
+      />
     </div>
   );
 }

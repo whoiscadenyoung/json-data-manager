@@ -1,6 +1,6 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
-import { ArrowLeft, Calendar, Plus } from "lucide-react";
+import { ArrowLeft, Calendar } from "lucide-react";
 
 import { RouterButton } from "@/components/router-button";
 import {
@@ -96,10 +96,6 @@ function EntryDetailPage() {
       <div className="flex justify-center gap-4">
         <RouterButton variant="outline" to="/datasets/$schemaId" params={{ schemaId }}>
           Back to Dataset Details
-        </RouterButton>
-        <RouterButton to="/datasets/$schemaId/create" params={{ schemaId }}>
-          <Plus className="h-4 w-4 mr-2" />
-          Create Another Entry
         </RouterButton>
       </div>
     </div>
