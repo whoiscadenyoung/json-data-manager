@@ -57,6 +57,23 @@ export { buildReferenceUiSchema, buildReferenceCandidates } from "./lib/referenc
 export { inferSchemaFromData } from "./lib/infer-schema.js";
 export { parseDataRows } from "./lib/parse-data.js";
 export type { ParseDataResult, ParseError } from "./lib/parse-data.js";
+
+// Tabular import parsers (JSON/JSONL, CSV, Excel) — a pluggable registry so
+// a format can be added, removed, or disabled in one place. See
+// `import-parsers/registry.ts` for how to toggle one off.
+export {
+  getEnabledImportParsers,
+  getAllImportParsers,
+  findImportParser,
+  enabledAcceptString,
+  enabledExtensionsHint,
+} from "./lib/import-parsers/registry.js";
+export type {
+  ImportParser,
+  ImportParseResult,
+  ImportParseError,
+  ParsedSheet,
+} from "./lib/import-parsers/types.js";
 export {
   createDefaultUiSchema,
   mergeUiSchemas,

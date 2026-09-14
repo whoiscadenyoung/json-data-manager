@@ -43,7 +43,7 @@ function CreateDatasetPage() {
         <h1 className="text-3xl font-bold text-primary mb-1">Create dataset</h1>
         <p className="text-muted-foreground">
           {mode === "import"
-            ? "Import a JSON or JSONL file to auto-generate a schema and pre-populate the dataset."
+            ? "Import a JSON, CSV, or Excel file to auto-generate a schema and pre-populate the dataset."
             : mode === "schema"
               ? "Build your JSON schema visually or in code, then test it against sample data."
               : "Start from an empty schema, or import data to generate one automatically."}
@@ -92,8 +92,8 @@ function PathChooser({ onChoose }: { onChoose: (mode: Mode) => void }) {
             <Upload className="h-6 w-6 text-primary mb-2" />
             <CardTitle>Import data</CardTitle>
             <CardDescription>
-              Upload a <code>.json</code> or <code>.jsonl</code> file. We read every row to infer a
-              matching schema and pre-populate the dataset.
+              Upload a JSON, CSV, or Excel file. We read every row to infer a matching schema and
+              pre-populate the dataset.
             </CardDescription>
           </CardHeader>
         </Card>
