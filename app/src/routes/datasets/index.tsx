@@ -263,15 +263,13 @@ function GroupCard({
               <Link
                 to="/datasets/$schemaId"
                 params={{ schemaId: dataset._id }}
-                className="flex items-center gap-3 bg-muted/20 px-4 py-2 pl-8 hover:bg-muted/50"
+                className="flex flex-col gap-1 bg-muted/20 px-4 py-2 pl-8 hover:bg-muted/50"
               >
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <DatasetTypeTags dataset={dataset} />
                 </div>
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{dataset.title}</p>
-                  <p className="truncate text-xs text-muted-foreground">{dataset.description}</p>
-                </div>
+                <p className="truncate text-sm font-medium">{dataset.title}</p>
+                <p className="truncate text-xs text-muted-foreground">{dataset.description}</p>
               </Link>
             </li>
           ))}
