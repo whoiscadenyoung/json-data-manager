@@ -19,24 +19,45 @@ import { api } from "#convex/_generated/api";
 export type GroupDoc = FunctionReturnType<typeof api.groups.list>[number];
 export type Dataset = FunctionReturnType<typeof api.schemas.list>[number];
 
+/** Row/feature count shown next to a dataset's tags, or undefined when unknown. Geospatial datasets carry an exactly-maintained feature count on the schema doc itself; regular datasets count rows, which only some host pages have fetched. */
+function datasetCountLabel(
+  dataset: Dataset,
+  entryCounts: Map<string, number> | undefined,
+): string | undefined {
+  if (dataset.kind === "geospatial") {
+    return dataset.featureCount === undefined
+      ? undefined
+      : `${dataset.featureCount} ${dataset.featureCount === 1 ? "feature" : "features"}`;
+  }
+  if (entryCounts === undefined) {
+    return undefined;
+  }
+  const rowCount = entryCounts.get(dataset._id) ?? 0;
+  return `${rowCount} ${rowCount === 1 ? "row" : "rows"}`;
+}
+
 function DatasetRow({
   dataset,
   groups,
+  entryCounts,
   onMoveToGroup,
   onRemoveFromCollection,
 }: {
   dataset: Dataset;
   groups: GroupDoc[];
+  entryCounts: Map<string, number> | undefined;
   onMoveToGroup: (dataset: Dataset, groupId: string | null) => void;
   onRemoveFromCollection: (dataset: Dataset) => void;
 }) {
-  const otherGroups = groups.filter((group) => group._id !== dataset.groupId);
+  const otherGroups = groups.filter((group) => group._id !== dataset.groupId),
+    countLabel = datasetCountLabel(dataset, entryCounts);
 
   return (
     <li className="flex items-center justify-between gap-2 rounded-md border px-3 py-2">
       <Link to="/datasets/$schemaId" params={{ schemaId: dataset._id }} className="min-w-0 flex-1">
         <div className="mb-1 flex flex-wrap items-center gap-2">
           <DatasetTypeTags dataset={dataset} />
+          {countLabel && <span className="text-xs text-muted-foreground">{countLabel}</span>}
         </div>
         <p className="truncate text-sm font-medium">{dataset.title}</p>
         <p className="truncate text-xs text-muted-foreground">{dataset.description}</p>
@@ -94,12 +115,15 @@ function DatasetRow({
 export function DatasetList({
   datasets,
   groups,
+  entryCounts,
   emptyLabel,
   onMoveToGroup,
   onRemoveFromCollection,
 }: {
   datasets: Dataset[];
   groups: GroupDoc[];
+  /** Optional schemaId → row-count map for regular datasets' "N rows" labels — host pages that already fetched entries (e.g. the group page) pass it; without it those labels are simply omitted. */
+  entryCounts?: Map<string, number>;
   emptyLabel: string;
   onMoveToGroup: (dataset: Dataset, groupId: string | null) => void;
   onRemoveFromCollection: (dataset: Dataset) => void;
@@ -114,6 +138,7 @@ export function DatasetList({
           key={dataset._id}
           dataset={dataset}
           groups={groups}
+          entryCounts={entryCounts}
           onMoveToGroup={onMoveToGroup}
           onRemoveFromCollection={onRemoveFromCollection}
         />
