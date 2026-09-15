@@ -14,6 +14,7 @@ import {
 } from "#/components/ui/empty";
 import { Map, MapClusterLayer, MapGeoJSON } from "#/components/ui/map";
 import { buildPointFeatureCollection, splitPointLikeGeometries } from "#/lib/point-geometry";
+import { cn } from "#/lib/utils";
 import { api } from "#convex/_generated/api";
 
 // `listGeometries` is paginated (see its doc comment in the component) — the
@@ -27,7 +28,31 @@ type FeatureProperties = { entryId: string };
 
 const FEATURE_FILL_PAINT = { "fill-color": "#3b82f6", "fill-opacity": 0.2 },
   FEATURE_LINE_PAINT = { "line-color": "#3b82f6", "line-width": 2 },
-  FEATURE_FILL_HOVER_PAINT = { "fill-opacity": 0.35 };
+  FEATURE_FILL_HOVER_PAINT = { "fill-opacity": 0.35 },
+  // GeoLens-style dashed rectangle framing the dataset's extent, drawn under
+  // the data layers and never interactive so clicks pass through it.
+  EXTENT_LINE_PAINT = { "line-color": "#3b82f6", "line-width": 1.5, "line-dasharray": [2, 1.5] };
+
+/** Closed polygon ring covering a `[minLon, minLat, maxLon, maxLat]` bounding box. */
+function bboxFeature(bbox: [number, number, number, number]) {
+  const [minLon, minLat, maxLon, maxLat] = bbox;
+  return {
+    type: "Feature" as const,
+    properties: {},
+    geometry: {
+      type: "Polygon" as const,
+      coordinates: [
+        [
+          [minLon, minLat],
+          [maxLon, minLat],
+          [maxLon, maxLat],
+          [minLon, maxLat],
+          [minLon, minLat],
+        ],
+      ],
+    },
+  };
+}
 
 export function formatPropertyValue(value: unknown): string {
   if (value === null || value === undefined) return "—";
@@ -35,13 +60,7 @@ export function formatPropertyValue(value: unknown): string {
   return String(value);
 }
 
-function FeatureDetailsPanel({
-  entry,
-  onClose,
-}: {
-  entry: EntryDoc;
-  onClose: () => void;
-}) {
+function FeatureDetailsPanel({ entry, onClose }: { entry: EntryDoc; onClose: () => void }) {
   const fields = Object.entries(entry.data as Record<string, unknown>);
 
   return (
@@ -91,9 +110,12 @@ function toFeatureRow(g: GeometryEntry, resolved: Geometry) {
 export function EntriesMap({
   geometries,
   entries,
+  className,
 }: {
   geometries: GeometryEntry[];
   entries: EntryDoc[];
+  /** Overrides the map container's height classes (default `h-[500px]`). */
+  className?: string;
 }) {
   const entryById = useMemo(
     () => new globalThis.Map(entries.map((entry) => [entry._id, entry])),
@@ -135,6 +157,9 @@ export function EntriesMap({
     // Computed from the full `geometries` array (point-like and not) so the
     // viewport still fits everything, regardless of which layer renders each row.
     bbox = computeBbox(collection),
+    // The extent outline only means something once at least one feature
+    // resolved — an empty collection's bbox is infinite nonsense.
+    extentFeature = featureRows.length > 0 && bbox ? bboxFeature(bbox) : undefined,
     // `MapGeoJSON` renders `fill`/`line` layers, which draw nothing for
     // Point/MultiPoint geometries — those go to `MapClusterLayer` instead,
     // which renders `circle` layers. Split by entryId (rather than feeding
@@ -151,8 +176,21 @@ export function EntriesMap({
     selectedEntry = selectedEntryId ? entryById.get(selectedEntryId) : undefined;
 
   return (
-    <div className="relative h-[500px] w-full overflow-hidden rounded-lg border border-border">
+    <div
+      className={cn(
+        "relative h-[500px] w-full overflow-hidden rounded-lg border border-border",
+        className,
+      )}
+    >
       <Map bounds={bbox} className="h-full w-full">
+        {extentFeature && (
+          <MapGeoJSON
+            data={extentFeature}
+            id="dataset-extent"
+            fillPaint={false}
+            linePaint={EXTENT_LINE_PAINT}
+          />
+        )}
         {otherCollection.features.length > 0 && (
           <MapGeoJSON
             data={otherCollection}

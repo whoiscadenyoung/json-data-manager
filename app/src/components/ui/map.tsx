@@ -1791,6 +1791,11 @@ function MapArc<T extends MapArcDatum = MapArcDatum>({
 type MapClusterLayerProps<P extends GeoJSON.GeoJsonProperties = GeoJSON.GeoJsonProperties> = {
   /** GeoJSON FeatureCollection data or URL to fetch GeoJSON from */
   data: string | GeoJSON.FeatureCollection<GeoJSON.Point, P>;
+  /**
+   * Aggregate nearby points into clusters. Off by default — points render
+   * individually unless a caller explicitly opts back in.
+   */
+  cluster?: boolean;
   /** Maximum zoom level to cluster points on (default: 14) */
   clusterMaxZoom?: number;
   /** Radius of each cluster when clustering points in pixels (default: 50) */
@@ -1815,6 +1820,7 @@ const DEFAULT_CLUSTER_THRESHOLDS: [number, number] = [100, 750];
 
 function MapClusterLayer<P extends GeoJSON.GeoJsonProperties = GeoJSON.GeoJsonProperties>({
   data,
+  cluster = false,
   clusterMaxZoom = 14,
   clusterRadius = 50,
   clusterColors = DEFAULT_CLUSTER_COLORS,
@@ -1836,72 +1842,73 @@ function MapClusterLayer<P extends GeoJSON.GeoJsonProperties = GeoJSON.GeoJsonPr
     pointColor,
   });
 
-  // Add source and layers on mount
+  // Add source and layers on mount. In the default non-clustered mode a
+  // single unfiltered circle layer renders every point individually; the
+  // cluster opt-in restores the clustered source plus circle/count layers.
   useEffect(() => {
     if (!isLoaded || !map) return;
 
-    // Add clustered GeoJSON source
     map.addSource(sourceId, {
       type: "geojson",
       data,
-      cluster: true,
-      clusterMaxZoom,
-      clusterRadius,
+      ...(cluster ? { cluster: true, clusterMaxZoom, clusterRadius } : {}),
     });
 
-    // Add cluster circles layer
-    map.addLayer({
-      id: clusterLayerId,
-      type: "circle",
-      source: sourceId,
-      filter: ["has", "point_count"],
-      paint: {
-        "circle-color": [
-          "step",
-          ["get", "point_count"],
-          clusterColors[0],
-          clusterThresholds[0],
-          clusterColors[1],
-          clusterThresholds[1],
-          clusterColors[2],
-        ],
-        "circle-radius": [
-          "step",
-          ["get", "point_count"],
-          20,
-          clusterThresholds[0],
-          30,
-          clusterThresholds[1],
-          40,
-        ],
-        "circle-stroke-width": 0.75,
-        "circle-stroke-color": "#fff",
-        "circle-opacity": 0.85,
-      },
-    });
+    if (cluster) {
+      // Add cluster circles layer
+      map.addLayer({
+        id: clusterLayerId,
+        type: "circle",
+        source: sourceId,
+        filter: ["has", "point_count"],
+        paint: {
+          "circle-color": [
+            "step",
+            ["get", "point_count"],
+            clusterColors[0],
+            clusterThresholds[0],
+            clusterColors[1],
+            clusterThresholds[1],
+            clusterColors[2],
+          ],
+          "circle-radius": [
+            "step",
+            ["get", "point_count"],
+            20,
+            clusterThresholds[0],
+            30,
+            clusterThresholds[1],
+            40,
+          ],
+          "circle-stroke-width": 0.75,
+          "circle-stroke-color": "#fff",
+          "circle-opacity": 0.85,
+        },
+      });
 
-    // Add cluster count text layer
-    map.addLayer({
-      id: clusterCountLayerId,
-      type: "symbol",
-      source: sourceId,
-      filter: ["has", "point_count"],
-      layout: {
-        "text-field": "{point_count_abbreviated}",
-        "text-font": ["Open Sans Semibold"],
-        "text-size": 12,
-      },
-      paint: {
-        "text-color": "#fff",
-      },
-    });
+      // Add cluster count text layer
+      map.addLayer({
+        id: clusterCountLayerId,
+        type: "symbol",
+        source: sourceId,
+        filter: ["has", "point_count"],
+        layout: {
+          "text-field": "{point_count_abbreviated}",
+          "text-font": ["Open Sans Semibold"],
+          "text-size": 12,
+        },
+        paint: {
+          "text-color": "#fff",
+        },
+      });
+    }
 
-    // Add unclustered point layer
+    // Add individual point layer (the only layer when clustering is off)
     map.addLayer({
       id: unclusteredLayerId,
       type: "circle",
       source: sourceId,
-      filter: ["!", ["has", "point_count"]],
+      ...(cluster ? { filter: ["!", ["has", "point_count"]] } : {}),
       paint: {
         "circle-color": pointColor,
         "circle-radius": 5,
@@ -1921,7 +1928,7 @@ function MapClusterLayer<P extends GeoJSON.GeoJsonProperties = GeoJSON.GeoJsonPr
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoaded, map, sourceId]);
+  }, [isLoaded, map, sourceId, cluster]);
 
   // Update source data when data prop changes (only for non-URL data)
   useEffect(() => {
@@ -1933,9 +1940,10 @@ function MapClusterLayer<P extends GeoJSON.GeoJsonProperties = GeoJSON.GeoJsonPr
     }
   }, [isLoaded, map, data, sourceId]);
 
-  // Update layer styles when props change
+  // Update layer styles when props change (cluster layers only exist in
+  // clustered mode; the point layer color applies to both modes).
   useEffect(() => {
-    if (!isLoaded || !map) return;
+    if (!isLoaded || !map || !cluster) return;
 
     const prev = stylePropsRef.current;
     const colorsChanged =
@@ -2050,22 +2058,35 @@ function MapClusterLayer<P extends GeoJSON.GeoJsonProperties = GeoJSON.GeoJsonPr
       map.getCanvas().style.cursor = "";
     };
 
-    map.on("click", clusterLayerId, handleClusterClick);
     map.on("click", unclusteredLayerId, handlePointClick);
-    map.on("mouseenter", clusterLayerId, handleMouseEnterCluster);
-    map.on("mouseleave", clusterLayerId, handleMouseLeaveCluster);
     map.on("mouseenter", unclusteredLayerId, handleMouseEnterPoint);
     map.on("mouseleave", unclusteredLayerId, handleMouseLeavePoint);
+    if (cluster) {
+      map.on("click", clusterLayerId, handleClusterClick);
+      map.on("mouseenter", clusterLayerId, handleMouseEnterCluster);
+      map.on("mouseleave", clusterLayerId, handleMouseLeaveCluster);
+    }
 
     return () => {
-      map.off("click", clusterLayerId, handleClusterClick);
       map.off("click", unclusteredLayerId, handlePointClick);
-      map.off("mouseenter", clusterLayerId, handleMouseEnterCluster);
-      map.off("mouseleave", clusterLayerId, handleMouseLeaveCluster);
       map.off("mouseenter", unclusteredLayerId, handleMouseEnterPoint);
       map.off("mouseleave", unclusteredLayerId, handleMouseLeavePoint);
+      if (cluster) {
+        map.off("click", clusterLayerId, handleClusterClick);
+        map.off("mouseenter", clusterLayerId, handleMouseEnterCluster);
+        map.off("mouseleave", clusterLayerId, handleMouseLeaveCluster);
+      }
     };
-  }, [isLoaded, map, clusterLayerId, unclusteredLayerId, sourceId, onClusterClick, onPointClick]);
+  }, [
+    isLoaded,
+    map,
+    cluster,
+    clusterLayerId,
+    unclusteredLayerId,
+    sourceId,
+    onClusterClick,
+    onPointClick,
+  ]);
 
   return null;
 }

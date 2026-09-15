@@ -235,32 +235,6 @@ function MakeGeospatialButton({
   );
 }
 
-function MapTabTrigger({ schema }: { schema: Schema }) {
-  if (schema.kind !== "geospatial") {
-    return null;
-  }
-  return <TabsTrigger value="map">Map</TabsTrigger>;
-}
-
-function MapTabContent({
-  schema,
-  geometries,
-  entries,
-}: {
-  schema: Schema;
-  geometries: Geometry[] | undefined;
-  entries: Entry[];
-}) {
-  if (schema.kind !== "geospatial") {
-    return null;
-  }
-  return (
-    <TabsContent value="map">
-      <EntriesMap geometries={geometries ?? []} entries={entries} />
-    </TabsContent>
-  );
-}
-
 /** Trigger a browser download of `content` as a file named `filename`. */
 function downloadFile(content: string, filename: string) {
   const blob = new Blob([content], { type: "application/json" }),
@@ -405,11 +379,16 @@ function SchemaDetailPage() {
         />
       )}
 
+      {schema.kind === "geospatial" && geometries !== undefined && geometries.length > 0 && (
+        <section className="mb-6">
+          <EntriesMap geometries={geometries} entries={entries} className="h-[420px]" />
+        </section>
+      )}
+
       <Tabs defaultValue="entries">
         <TabsList>
           <TabsTrigger value="entries">Entries ({entries.length})</TabsTrigger>
           <TabsTrigger value="schema">Schema</TabsTrigger>
-          <MapTabTrigger schema={schema} />
         </TabsList>
 
         <TabsContent value="entries">
@@ -448,8 +427,6 @@ function SchemaDetailPage() {
             </CardContent>
           </Card>
         </TabsContent>
-
-        <MapTabContent schema={schema} geometries={geometries} entries={entries} />
 
         <TabsContent value="schema" className="space-y-6">
           <Card>
