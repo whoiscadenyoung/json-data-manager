@@ -18,6 +18,7 @@ import { Route as DatasetsSchemaIdIndexRouteImport } from './routes/datasets/$sc
 import { Route as DatasetsSchemaIdEntryIdRouteImport } from './routes/datasets/$schemaId/$entryId'
 import { Route as DatasetsSchemaIdBulkUploadRouteImport } from './routes/datasets/$schemaId/bulk-upload'
 import { Route as DatasetsSchemaIdEditRouteImport } from './routes/datasets/$schemaId/edit'
+import { Route as CollectionsCollectionIdGroupsGroupIdIndexRouteImport } from './routes/collections/$collectionId/groups/$groupId/index'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -66,6 +67,12 @@ const DatasetsSchemaIdEditRoute = DatasetsSchemaIdEditRouteImport.update({
   path: '/datasets/$schemaId/edit',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CollectionsCollectionIdGroupsGroupIdIndexRoute =
+  CollectionsCollectionIdGroupsGroupIdIndexRouteImport.update({
+    id: '/collections/$collectionId/groups/$groupId/',
+    path: '/collections/$collectionId/groups/$groupId/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -77,6 +84,7 @@ export interface FileRoutesByFullPath {
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
   '/collections/$collectionId/': typeof CollectionsCollectionIdIndexRoute
   '/datasets/$schemaId/': typeof DatasetsSchemaIdIndexRoute
+  '/collections/$collectionId/groups/$groupId/': typeof CollectionsCollectionIdGroupsGroupIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -88,6 +96,7 @@ export interface FileRoutesByTo {
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
   '/collections/$collectionId': typeof CollectionsCollectionIdIndexRoute
   '/datasets/$schemaId': typeof DatasetsSchemaIdIndexRoute
+  '/collections/$collectionId/groups/$groupId': typeof CollectionsCollectionIdGroupsGroupIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -100,6 +109,7 @@ export interface FileRoutesById {
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
   '/collections/$collectionId/': typeof CollectionsCollectionIdIndexRoute
   '/datasets/$schemaId/': typeof DatasetsSchemaIdIndexRoute
+  '/collections/$collectionId/groups/$groupId/': typeof CollectionsCollectionIdGroupsGroupIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -113,6 +123,7 @@ export interface FileRouteTypes {
     | '/datasets/$schemaId/edit'
     | '/collections/$collectionId/'
     | '/datasets/$schemaId/'
+    | '/collections/$collectionId/groups/$groupId/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -124,6 +135,7 @@ export interface FileRouteTypes {
     | '/datasets/$schemaId/edit'
     | '/collections/$collectionId'
     | '/datasets/$schemaId'
+    | '/collections/$collectionId/groups/$groupId'
   id:
     | '__root__'
     | '/'
@@ -135,6 +147,7 @@ export interface FileRouteTypes {
     | '/datasets/$schemaId/edit'
     | '/collections/$collectionId/'
     | '/datasets/$schemaId/'
+    | '/collections/$collectionId/groups/$groupId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -147,6 +160,7 @@ export interface RootRouteChildren {
   DatasetsSchemaIdEditRoute: typeof DatasetsSchemaIdEditRoute
   CollectionsCollectionIdIndexRoute: typeof CollectionsCollectionIdIndexRoute
   DatasetsSchemaIdIndexRoute: typeof DatasetsSchemaIdIndexRoute
+  CollectionsCollectionIdGroupsGroupIdIndexRoute: typeof CollectionsCollectionIdGroupsGroupIdIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -214,6 +228,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DatasetsSchemaIdEditRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/collections/$collectionId/groups/$groupId/': {
+      id: '/collections/$collectionId/groups/$groupId/'
+      path: '/collections/$collectionId/groups/$groupId'
+      fullPath: '/collections/$collectionId/groups/$groupId/'
+      preLoaderRoute: typeof CollectionsCollectionIdGroupsGroupIdIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -227,6 +248,8 @@ const rootRouteChildren: RootRouteChildren = {
   DatasetsSchemaIdEditRoute: DatasetsSchemaIdEditRoute,
   CollectionsCollectionIdIndexRoute: CollectionsCollectionIdIndexRoute,
   DatasetsSchemaIdIndexRoute: DatasetsSchemaIdIndexRoute,
+  CollectionsCollectionIdGroupsGroupIdIndexRoute:
+    CollectionsCollectionIdGroupsGroupIdIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
