@@ -2,6 +2,7 @@ import { WorkflowManager } from "@convex-dev/workflow";
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { ConvexError, v } from "convex/values";
 
+import { extractPointGeometry } from "../shared/coordinate-columns.js";
 import { isGeometryCompatibleWithDatasetType } from "../shared/geojson/coalesce.js";
 import { GeoParseError, GeometryError } from "../shared/geojson/error.js";
 import { unionBbox } from "../shared/geojson/geometry.js";
@@ -1759,4 +1760,251 @@ export const importWorkflow = workflow.define({
       status: "completed",
     });
   },
+});
+
+// ---------------------------------------------------------------------------
+// Convert an already-imported "standard" dataset to geospatial in place,
+// backfilling a Point geometry for every existing entry from two of its own
+// data fields (e.g. "Latitude"/"Longitude" columns) — for a dataset like a
+// TIGER export that already has coordinate columns but wasn't imported as
+// GeoJSON. Reuses the same `imports` status doc / workflow-monitoring
+// machinery as a fresh import (see the module doc comment above) so the
+// client can show the same progress UI, even though no file upload is
+// involved here — the coordinates already live in the entries' own `data`.
+//
+// A Point geometry's JSON text is always a few dozen bytes, nowhere near
+// `INLINE_GEOMETRY_BYTE_LIMIT` — so unlike the general import path, this
+// never needs file-storage fallback, which means every step here can be a
+// plain mutation (no action needed just to reach `ctx.storage.store`).
+// ---------------------------------------------------------------------------
+
+const CONVERSION_BATCH_SIZE = 100; // Entries are thin (no geometry payload) — generous relative to MAX_GEOMETRY_PAGE_ROWS.
+
+/** One `entries` row, as read directly off `ctx.db`. */
+interface EntryDbRow {
+  _creationTime: number;
+  _id: Id<"entries">;
+  data: unknown;
+  geometryId?: Id<"geometries">;
+  geometryType?: GeometryTypeArg;
+  schemaId: Id<"schemas">;
+}
+
+/**
+ * Manual cursor-based pagination over one schema's `entries` rows — the same
+ * hand-rolled approach as `paginateGeometriesBySchema` (components can't call
+ * `.paginate()`), sized for entries instead of geometries.
+ */
+async function paginateEntriesBySchema(
+  ctx: QueryCtx,
+  schemaId: Id<"schemas">,
+  cursor: string | null,
+  limit: number,
+): Promise<{ continueCursor: string; isDone: boolean; page: EntryDbRow[] }> {
+  const afterCreationTime = cursor === null || cursor === "" ? undefined : Number(cursor);
+  if (afterCreationTime !== undefined && !Number.isFinite(afterCreationTime)) {
+    throw new ConvexError("Invalid pagination cursor.");
+  }
+
+  const page = await ctx.db
+    .query("entries")
+    .withIndex("by_schema", (q) =>
+      afterCreationTime === undefined
+        ? q.eq("schemaId", schemaId)
+        : q.eq("schemaId", schemaId).gt("_creationTime", afterCreationTime),
+    )
+    .order("asc")
+    .take(limit);
+
+  const lastRow = page[page.length - 1];
+  return {
+    continueCursor: lastRow === undefined ? (cursor ?? "") : String(lastRow._creationTime),
+    isDone: page.length < limit,
+    page,
+  };
+}
+
+/**
+ * Converts one page of a schema's entries: builds a Point geometry from
+ * `data[latField]`/`data[lonField]` for each (via `extractPointGeometry`,
+ * shared with the client-side coordinate-column picker), skipping any row
+ * whose coordinates are missing/invalid rather than failing the whole batch
+ * — a dataset backfilled this way commonly has some ungeocodable rows.
+ * Reuses `replaceEntryGeometry` per row so `featureCount`/`boundingBox` stay
+ * correct; re-reads the schema doc each time since it's patched every
+ * iteration this same execution (reads see this transaction's own writes).
+ */
+export const convertEntriesBatchInternal = internalMutation({
+  args: {
+    cursor: v.union(v.string(), v.null()),
+    latField: v.string(),
+    lonField: v.string(),
+    schemaId: v.id("schemas"),
+  },
+  handler: async (ctx, args) => {
+    const { page, isDone, continueCursor } = await paginateEntriesBySchema(
+      ctx,
+      args.schemaId,
+      args.cursor,
+      CONVERSION_BATCH_SIZE,
+    );
+
+    let geocoded = 0;
+    for (const entry of page) {
+      const point = extractPointGeometry(entry.data, args.latField, args.lonField);
+      if (point === undefined) {
+        continue;
+      }
+      // oxlint-disable-next-line no-await-in-loop -- each iteration depends on the previous one's featureCount/boundingBox patch.
+      const schemaDoc = await ctx.db.get(args.schemaId);
+      if (!schemaDoc) {
+        throw new ConvexError("Schema not found");
+      }
+      const resolved = inlineGeometryFieldsOrThrow(JSON.stringify(point), point);
+      // oxlint-disable-next-line no-await-in-loop
+      await replaceEntryGeometry(ctx, entry, schemaDoc, resolved);
+      geocoded += 1;
+    }
+
+    return { continueCursor, examined: page.length, geocoded, isDone };
+  },
+  returns: v.object({
+    continueCursor: v.string(),
+    examined: v.number(),
+    geocoded: v.number(),
+    isDone: v.boolean(),
+  }),
+});
+
+/** Durable workflow: convert a standard dataset's entries page by page, updating progress as it goes. */
+export const geospatialConversionWorkflow = workflow.define({
+  args: {
+    importId: v.id("imports"),
+    latField: v.string(),
+    lonField: v.string(),
+    schemaId: v.id("schemas"),
+  },
+  handler: async (step, args): Promise<void> => {
+    await step.runMutation(internal.lib.updateImportProgress, {
+      importId: args.importId,
+      processed: 0,
+      status: "processing",
+    });
+
+    let processed = 0,
+      cursor: string | null = null,
+      isDone = false;
+    // Sequential for the same reason `importWorkflow` is: memory stays
+    // bounded and progress lands incrementally as each page completes.
+    while (!isDone) {
+      // Explicitly typed (rather than inferred from the call) to avoid a
+      // circular type reference: `internal.lib` is typed from this same
+      // module, and `geospatialConversionWorkflow` — currently being
+      // type-checked — is one of its exports.
+      const result: { continueCursor: string; examined: number; geocoded: number; isDone: boolean } =
+        // oxlint-disable-next-line no-await-in-loop
+        await step.runMutation(internal.lib.convertEntriesBatchInternal, {
+          cursor,
+          latField: args.latField,
+          lonField: args.lonField,
+          schemaId: args.schemaId,
+        });
+      processed += result.examined;
+      cursor = result.continueCursor;
+      isDone = result.isDone;
+      // oxlint-disable-next-line no-await-in-loop
+      await step.runMutation(internal.lib.updateImportProgress, { importId: args.importId, processed });
+    }
+
+    await step.runMutation(internal.lib.updateImportProgress, {
+      importId: args.importId,
+      processed,
+      status: "completed",
+    });
+  },
+});
+
+/** The property names declared on a schema doc's JSON Schema, or `{}` if it's malformed/propertyless. */
+function schemaPropertyNames(schemaDoc: { schema: unknown }): Record<string, unknown> {
+  const { schema: jsonSchema } = schemaDoc;
+  if (
+    jsonSchema &&
+    typeof jsonSchema === "object" &&
+    "properties" in jsonSchema &&
+    typeof jsonSchema.properties === "object" &&
+    jsonSchema.properties !== null
+  ) {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- narrowed by the `typeof === "object"` check above; a JSON Schema's `properties` is always a plain object.
+    return jsonSchema.properties as Record<string, unknown>;
+  }
+  return {};
+}
+
+/** Throws unless `latField`/`lonField` are a usable, distinct pair of this schema's own properties. */
+function assertConversionFieldsValid(
+  schemaDoc: { kind?: "standard" | "geospatial"; schema: unknown },
+  latField: string,
+  lonField: string,
+): void {
+  if (schemaDoc.kind === "geospatial") {
+    throw new ConvexError("This dataset is already geospatial.");
+  }
+  if (!latField.trim() || !lonField.trim()) {
+    throw new ConvexError("Choose latitude and longitude columns.");
+  }
+  if (latField === lonField) {
+    throw new ConvexError("Latitude and longitude must be different columns.");
+  }
+  const properties = schemaPropertyNames(schemaDoc);
+  if (!(latField in properties) || !(lonField in properties)) {
+    throw new ConvexError("Latitude/longitude fields must be properties of this dataset's schema.");
+  }
+}
+
+/**
+ * Flips a "standard" dataset to "geospatial" (locked to Point) and starts a
+ * durable workflow that backfills a Point geometry for every existing entry
+ * from its own `latField`/`lonField` data columns. The schema's `kind`
+ * changes immediately (so the map tab/entry form appear right away); entries
+ * without valid coordinates in those columns are simply left without
+ * geometry, same as any other geometry-less row.
+ */
+export const startGeospatialConversion = mutation({
+  args: {
+    latField: v.string(),
+    lonField: v.string(),
+    schemaId: v.id("schemas"),
+    total: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const schemaDoc = await ctx.db.get(args.schemaId);
+    if (!schemaDoc) {
+      throw new ConvexError("Schema not found");
+    }
+    assertConversionFieldsValid(schemaDoc, args.latField, args.lonField);
+
+    await ctx.db.patch(args.schemaId, {
+      boundingBox: undefined,
+      featureCount: 0,
+      geometryType: "Point",
+      kind: "geospatial",
+    });
+
+    const importId = await ctx.db.insert("imports", {
+        processed: 0,
+        schemaId: args.schemaId,
+        status: "pending",
+        total: args.total,
+      }),
+      workflowId = await workflow.start(
+        ctx,
+        internal.lib.geospatialConversionWorkflow,
+        { importId, latField: args.latField, lonField: args.lonField, schemaId: args.schemaId },
+        { context: { importId }, onComplete: internal.lib.handleImportComplete, startAsync: true },
+      );
+
+    await ctx.db.patch(importId, { workflowId });
+    return importId;
+  },
+  returns: v.id("imports"),
 });

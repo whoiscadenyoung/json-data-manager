@@ -2,6 +2,7 @@ import { AlertTriangle, CheckCircle, FileJson, Loader2, Upload, XCircle } from "
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { detectCoordinateColumns, extractPointGeometry } from "../../shared/coordinate-columns.js";
 import type { GeometryType } from "../../shared/geojson/types.js";
 import { looksLikeGeoJson, parseGeoJsonFeatures } from "../lib/geojson-import.js";
 import {
@@ -264,6 +265,78 @@ function DatasetDropzone({ onFile }: { onFile: (file: File) => void }) {
   );
 }
 
+/** Column names appearing anywhere across the rows (each row's `data`, if it's a plain object). */
+function columnsFromRows(rows: DatasetImportRow[], sampleSize = 50): string[] {
+  const seen = new Set<string>();
+  for (const row of rows.slice(0, sampleSize)) {
+    if (typeof row.data === "object" && row.data !== null && !Array.isArray(row.data)) {
+      for (const key of Object.keys(row.data)) {
+        seen.add(key);
+      }
+    }
+  }
+  return [...seen];
+}
+
+/** Lets the user confirm or override which two columns hold a tabular row's latitude/longitude — shown once a non-GeoJSON import is set to "Geospatial", so its rows can be converted to Point geometry. */
+function CoordinateColumnsPicker({
+  columns,
+  latField,
+  lonField,
+  onChange,
+}: {
+  columns: string[];
+  latField: string | undefined;
+  lonField: string | undefined;
+  onChange: (fields: { latField: string; lonField: string }) => void;
+}) {
+  const selectClass =
+    "h-6 rounded-md border border-input bg-background px-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring";
+  return (
+    <div className="flex flex-wrap items-center gap-3 border-b border-border px-3 py-2 bg-muted/30 text-xs shrink-0">
+      <span className="font-medium text-muted-foreground shrink-0">Coordinate columns</span>
+      <label className="flex items-center gap-1.5 text-muted-foreground">
+        Latitude
+        <select
+          value={latField ?? ""}
+          onChange={(e) => {
+            onChange({ latField: e.target.value, lonField: lonField ?? "" });
+          }}
+          className={selectClass}
+        >
+          <option value="" disabled>
+            Select column
+          </option>
+          {columns.map((column) => (
+            <option key={column} value={column}>
+              {column}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="flex items-center gap-1.5 text-muted-foreground">
+        Longitude
+        <select
+          value={lonField ?? ""}
+          onChange={(e) => {
+            onChange({ latField: latField ?? "", lonField: e.target.value });
+          }}
+          className={selectClass}
+        >
+          <option value="" disabled>
+            Select column
+          </option>
+          {columns.map((column) => (
+            <option key={column} value={column}>
+              {column}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
+}
+
 /** Review + edit the inferred schema against the imported rows. */
 function DatasetReview({
   rows,
@@ -279,6 +352,9 @@ function DatasetReview({
   onGeometryTypeChange,
   geometryTypeReadOnly,
   geometryTypeSummary,
+  showCoordinatePicker,
+  coordinateFields,
+  onCoordinateFieldsChange,
 }: {
   rows: DatasetImportRow[];
   fileName: string | null;
@@ -293,6 +369,10 @@ function DatasetReview({
   onGeometryTypeChange: (type: GeometryType) => void;
   geometryTypeReadOnly: boolean;
   geometryTypeSummary: string | undefined;
+  /** True for a non-GeoJSON import currently set to "Geospatial" — its rows have no geometry yet, so the coordinate columns must be chosen. */
+  showCoordinatePicker: boolean;
+  coordinateFields: { latField: string; lonField: string } | undefined;
+  onCoordinateFieldsChange: (fields: { latField: string; lonField: string }) => void;
 }) {
   const reuploadInputRef = useRef<HTMLInputElement>(null);
   return (
@@ -351,6 +431,16 @@ function DatasetReview({
         onGeometryTypeChange={onGeometryTypeChange}
         geometryTypeReadOnly={geometryTypeReadOnly}
         geometryTypeSummary={geometryTypeSummary}
+        editorChrome={
+          showCoordinatePicker ? (
+            <CoordinateColumnsPicker
+              columns={columnsFromRows(rows)}
+              latField={coordinateFields === undefined ? undefined : coordinateFields.latField}
+              lonField={coordinateFields === undefined ? undefined : coordinateFields.lonField}
+              onChange={onCoordinateFieldsChange}
+            />
+          ) : undefined
+        }
       />
     </div>
   );
@@ -362,6 +452,67 @@ type SchemaEditorSave = (
   uiSchemaJson: string,
   parsedUiSchema: object,
 ) => Promise<void>;
+
+/**
+ * Builds the final `{ data, geometry }` rows for a tabular-geospatial save:
+ * attaches a Point geometry to each row from the chosen coordinate columns.
+ * Returns an error message instead when the mapping can't produce anything
+ * usable — an unset/incomplete field pair, or coordinates valid in none of
+ * the rows.
+ */
+function buildCoordinateRows(
+  rows: DatasetImportRow[],
+  coordinateFields: { latField: string; lonField: string } | undefined,
+): { rows: DatasetImportRow[]; warning: string | undefined } | { error: string } {
+  if (coordinateFields === undefined || !coordinateFields.latField || !coordinateFields.lonField) {
+    return { error: "Select latitude and longitude columns, or switch Dataset Type back to Standard." };
+  }
+  const { latField, lonField } = coordinateFields;
+  let missing = 0;
+  const geoRows = rows.map((row) => {
+    const geometry = extractPointGeometry(row.data, latField, lonField);
+    missing += geometry === undefined ? 1 : 0;
+    return { data: row.data, geometry };
+  });
+  if (missing === geoRows.length) {
+    return { error: `No rows have valid coordinates in "${latField}"/"${lonField}".` };
+  }
+  return {
+    rows: geoRows,
+    warning:
+      missing > 0
+        ? `${missing} row(s) are missing valid coordinates and will be created without geometry.`
+        : undefined,
+  };
+}
+
+/** True once the user has opted a tabular (non-GeoJSON) import into "Geospatial" — its rows have no geometry yet, so a coordinate mapping is required before saving. */
+function needsCoordinatePicker(
+  rowsAreTabular: boolean,
+  datasetKind: "standard" | "geospatial",
+): boolean {
+  return rowsAreTabular && datasetKind === "geospatial";
+}
+
+/** The geometry-type props to hand `SchemaEditor`: forced to "Point" (and read-only) while the coordinate-column picker is driving a tabular import, otherwise passed through unchanged. */
+function coordinateAwareGeometryProps(
+  showCoordinatePicker: boolean,
+  geometryType: GeometryType | undefined,
+  geometryTypeSummary: string | undefined,
+  geometryTypeReadOnly: boolean,
+): {
+  geometryType: GeometryType | undefined;
+  geometryTypeSummary: string | undefined;
+  geometryTypeReadOnly: boolean;
+} {
+  return showCoordinatePicker
+    ? {
+        geometryType: "Point",
+        geometryTypeReadOnly: true,
+        geometryTypeSummary: "Point geometry built from the coordinate columns below",
+      }
+    : { geometryType, geometryTypeReadOnly, geometryTypeSummary };
+}
 
 export function DatasetImporter({
   onImport,
@@ -381,6 +532,18 @@ export function DatasetImporter({
     // actual GeoJSON import (not hand-picked via the toggle).
     [geometryTypeReadOnly, setGeometryTypeReadOnly] = useState(false),
     [geometryTypeSummary, setGeometryTypeSummary] = useState<string | undefined>(undefined),
+    // True for the current rows came from a tabular parser (JSON/CSV/Excel),
+    // false for the true-GeoJSON path (`ingestGeoJson`) whose rows already
+    // carry real geometry. Only tabular rows can offer the coordinate-column
+    // picker below — GeoJSON rows already have geometry, and forcing a
+    // coordinate mapping onto them wouldn't make sense.
+    [rowsAreTabular, setRowsAreTabular] = useState(true),
+    // The lat/lon columns to build a Point geometry from when the user opts a
+    // tabular import into "Geospatial" — pre-filled by `detectCoordinateColumns`,
+    // editable via `CoordinateColumnsPicker`.
+    [coordinateFields, setCoordinateFields] = useState<
+      { latField: string; lonField: string } | undefined
+    >(undefined),
     // Set only while a just-uploaded workbook has more than one sheet and the
     // user hasn't picked one yet.
     [workbookSheets, setWorkbookSheets] = useState<ParsedSheet[] | null>(null),
@@ -418,6 +581,8 @@ export function DatasetImporter({
       setGeometryTypeSummary(
         summarizeGeometryTypes(result.typeCounts, result.geometryType, geometrylessCount),
       );
+      setRowsAreTabular(false);
+      setCoordinateFields(undefined);
       if (keepSchema) {
         toast.success(`Reloaded ${result.rows.length} features from ${file.name}.`);
       } else {
@@ -434,6 +599,11 @@ export function DatasetImporter({
         toast.error("That sheet has no data rows.");
         return;
       }
+      const recordRows = parsedRows.filter(
+          (row): row is Record<string, unknown> =>
+            typeof row === "object" && row !== null && !Array.isArray(row),
+        ),
+        coordinateGuess = detectCoordinateColumns(recordRows);
       setRows(parsedRows.map((data) => ({ data })));
       setFileName(sourceName);
       setDataText(JSON.stringify(parsedRows, null, 2));
@@ -441,12 +611,23 @@ export function DatasetImporter({
       setGeometryType(undefined);
       setGeometryTypeReadOnly(false);
       setGeometryTypeSummary(undefined);
+      setRowsAreTabular(true);
+      setCoordinateFields(
+        coordinateGuess
+          ? { latField: coordinateGuess.latField, lonField: coordinateGuess.lonField }
+          : undefined,
+      );
       setWorkbookSheets(null);
       if (keepSchema) {
         toast.success(`Reloaded ${parsedRows.length} rows from ${sourceName}.`);
       } else {
         setInferredJson(JSON.stringify(inferSchemaFromData(parsedRows), null, 2));
         toast.success(`Inferred a schema from ${parsedRows.length} rows in ${sourceName}.`);
+      }
+      if (coordinateGuess) {
+        toast.message(
+          `Detected latitude/longitude columns "${coordinateGuess.latField}"/"${coordinateGuess.lonField}" — switch Dataset Type to Geospatial to import as a map dataset.`,
+        );
       }
     },
     // A registry parser's result may have zero sheets (nothing usable),
@@ -525,6 +706,7 @@ export function DatasetImporter({
       }
       applySheet(sheet, workbookFileName, workbookKeepSchema);
     },
+    showCoordinatePicker = needsCoordinatePicker(rowsAreTabular, datasetKind),
     handleSave: SchemaEditorSave = async (
       schemaJson,
       parsedSchema,
@@ -534,6 +716,20 @@ export function DatasetImporter({
       if (!rows) {
         return;
       }
+
+      let finalRows = rows;
+      if (showCoordinatePicker) {
+        const built = buildCoordinateRows(rows, coordinateFields);
+        if ("error" in built) {
+          toast.error(built.error);
+          return;
+        }
+        if (built.warning !== undefined) {
+          toast.warning(built.warning);
+        }
+        finalRows = built.rows;
+      }
+
       setSubmitting(true);
       try {
         await onImport(
@@ -541,9 +737,9 @@ export function DatasetImporter({
           parsedSchema,
           uiSchemaJson,
           parsedUiSchema,
-          rows,
+          finalRows,
           datasetKind,
-          geometryType,
+          datasetKind === "geospatial" ? (geometryType ?? "Point") : undefined,
         );
       } catch (error) {
         setSubmitting(false);
@@ -572,6 +768,12 @@ export function DatasetImporter({
   }
 
   if (rows) {
+    const geometryProps = coordinateAwareGeometryProps(
+      showCoordinatePicker,
+      geometryType,
+      geometryTypeSummary,
+      geometryTypeReadOnly,
+    );
     return (
       <DatasetReview
         rows={rows}
@@ -583,10 +785,13 @@ export function DatasetImporter({
         onSave={handleSave}
         datasetKind={datasetKind}
         onDatasetKindChange={setDatasetKind}
-        geometryType={geometryType}
+        geometryType={geometryProps.geometryType}
         onGeometryTypeChange={setGeometryType}
-        geometryTypeReadOnly={geometryTypeReadOnly}
-        geometryTypeSummary={geometryTypeSummary}
+        geometryTypeReadOnly={geometryProps.geometryTypeReadOnly}
+        geometryTypeSummary={geometryProps.geometryTypeSummary}
+        showCoordinatePicker={showCoordinatePicker}
+        coordinateFields={coordinateFields}
+        onCoordinateFieldsChange={setCoordinateFields}
       />
     );
   }

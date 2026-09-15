@@ -82,6 +82,19 @@ export {
 export type { UiSchema, UiOptions, UiSchemaSubmitButtonOptions } from "./lib/ui-schema.js";
 
 // Geospatial (GeoJSON) utilities
+// Coordinate-column detection — guesses a tabular dataset's lat/lon columns
+// (by naming convention, validated against sample values) and builds a
+// `Point` geometry from them. Powers both import-time "import as geospatial"
+// detection and converting an already-imported standard dataset in place.
+export {
+  detectCoordinateColumns,
+  extractPointGeometry,
+  parseCoordinateValue,
+  isValidLatitude,
+  isValidLongitude,
+} from "../shared/coordinate-columns.js";
+export type { CoordinateColumnGuess } from "../shared/coordinate-columns.js";
+
 export { GeoParseError, GeometryError } from "../shared/geojson/error.js";
 export {
   assertGeometry,

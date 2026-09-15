@@ -447,5 +447,27 @@ export function exposeApi(
         });
       },
     }),
+
+    // Convert an already-imported "standard" dataset to geospatial in place,
+    // backfilling a Point geometry for every existing entry from two of its
+    // own data columns (e.g. "Latitude"/"Longitude"). Reuses the same
+    // `imports` status doc/workflow monitoring as a fresh import.
+    startGeospatialConversion: mutationGeneric({
+      args: {
+        latField: v.string(),
+        lonField: v.string(),
+        schemaId: v.string(),
+        total: v.number(),
+      },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { schemaId: args.schemaId, type: "update" });
+        return ctx.runMutation(component.lib.startGeospatialConversion, {
+          latField: args.latField,
+          lonField: args.lonField,
+          schemaId: args.schemaId,
+          total: args.total,
+        });
+      },
+    }),
   };
 }

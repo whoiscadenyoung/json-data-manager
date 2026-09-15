@@ -9,6 +9,7 @@ import {
   FilePlus,
   FolderTree,
   MapIcon,
+  MapPinned,
   Pencil,
   Plus,
   UploadCloud,
@@ -21,6 +22,7 @@ import { DatasetOrganizePanel } from "@/components/dataset-organize-panel";
 import { EntriesMap } from "@/components/entries-map";
 import { EntriesTable } from "@/components/entries-table";
 import { EntryFormPanel } from "@/components/entry-form-panel";
+import { GeospatialConversionPanel } from "@/components/geospatial-conversion-panel";
 import { RouterButton } from "@/components/router-button";
 import { SchemaVisualizer } from "@/components/schema-visualizer";
 import {
@@ -184,6 +186,19 @@ function FeatureCountBadge({ schema }: { schema: Schema }) {
   );
 }
 
+/** "Make geospatial" action, only offered for a standard dataset that actually has entries to backfill geometry for. */
+function MakeGeospatialButton({ schema, entryCount, onClick }: { schema: Schema; entryCount: number; onClick: () => void }) {
+  if (schema.kind === "geospatial" || entryCount === 0) {
+    return null;
+  }
+  return (
+    <Button variant="outline" onClick={onClick}>
+      <MapPinned className="h-4 w-4 mr-2" />
+      Make Geospatial
+    </Button>
+  );
+}
+
 function MapTabTrigger({ schema }: { schema: Schema }) {
   if (schema.kind !== "geospatial") {
     return null;
@@ -231,6 +246,7 @@ function SchemaDetailPage() {
     entries = useQuery(api.entries.list, { schemaId }),
     geometries = useGeometriesForSchema(schema, schemaId),
     [organizeOpen, setOrganizeOpen] = useState(false),
+    [makeGeospatialOpen, setMakeGeospatialOpen] = useState(false),
     openCreatePanel = async () => {
       await navigate({ search: { panel: "create" } });
     },
@@ -313,6 +329,13 @@ function SchemaDetailPage() {
             <FolderTree className="h-4 w-4 mr-2" />
             Organize
           </Button>
+          <MakeGeospatialButton
+            schema={schema}
+            entryCount={entries.length}
+            onClick={() => {
+              setMakeGeospatialOpen(true);
+            }}
+          />
           <Button onClick={handleExport} disabled={entries.length === 0} variant="outline">
             <Download className="h-4 w-4 mr-2" />
             Export ({entries.length})
@@ -430,6 +453,20 @@ function SchemaDetailPage() {
         currentGroupId={schema.groupId}
         open={organizeOpen}
         onOpenChange={setOrganizeOpen}
+      />
+
+      <GeospatialConversionPanel
+        schemaId={schemaId}
+        columns={Object.keys(schema.schema.properties ?? {})}
+        sampleRows={entries
+          .map((entry) => entry.data)
+          .filter(
+            (data): data is Record<string, unknown> =>
+              typeof data === "object" && data !== null && !Array.isArray(data),
+          )}
+        entryCount={entries.length}
+        open={makeGeospatialOpen}
+        onOpenChange={setMakeGeospatialOpen}
       />
     </div>
   );
