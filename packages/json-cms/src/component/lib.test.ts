@@ -350,6 +350,157 @@ describe("json-cms component", () => {
     });
   });
 
+  describe("collections & groups", () => {
+    async function createTestCollection(t: TestCtx, name: string) {
+      return t.mutation(api.lib.createCollection, { name });
+    }
+
+    it("creates standalone groups without a collection", async () => {
+      const t = initConvexTest(),
+        groupId = await t.mutation(api.lib.createGroup, { name: "Standalone group" }),
+        group = await t.query(api.lib.getGroup, { groupId });
+      assertDefined(group);
+      expect(group.name).toBe("Standalone group");
+      expect(group.collectionId).toBeUndefined();
+    });
+
+    it("creates nested groups with a validated collection", async () => {
+      const t = initConvexTest(),
+        collectionId = await createTestCollection(t, "Grant data"),
+        groupId = await t.mutation(api.lib.createGroup, {
+          collectionId,
+          name: "SMART Grant 2025",
+        }),
+        group = await t.query(api.lib.getGroup, { groupId });
+      assertDefined(group);
+      expect(group.collectionId).toBe(collectionId);
+
+      await expect(
+        t.mutation(api.lib.createGroup, { collectionId, name: " " }),
+      ).rejects.toThrow("Group must have a name");
+    });
+
+    it("lists all groups when no collection filter is given", async () => {
+      const t = initConvexTest(),
+        collectionId = await createTestCollection(t, "Grant data"),
+        nestedId = await t.mutation(api.lib.createGroup, { collectionId, name: "Nested" }),
+        standaloneId = await t.mutation(api.lib.createGroup, { name: "Standalone" });
+
+      const all = await t.query(api.lib.listGroups, {});
+      expect(all.map((group) => group._id).sort()).toEqual([nestedId, standaloneId].sort());
+
+      const nested = await t.query(api.lib.listGroups, { collectionId });
+      expect(nested.map((group) => group._id)).toEqual([nestedId]);
+    });
+
+    it("adds a dataset to multiple collections without duplication", async () => {
+      const t = initConvexTest(),
+        schemaId = await createTestSchema(t),
+        firstId = await createTestCollection(t, "First"),
+        secondId = await createTestCollection(t, "Second");
+
+      await t.mutation(api.lib.addSchemaToCollection, { collectionId: firstId, schemaId });
+      await t.mutation(api.lib.addSchemaToCollection, { collectionId: secondId, schemaId });
+      // Adding the same membership twice is a no-op.
+      await t.mutation(api.lib.addSchemaToCollection, { collectionId: firstId, schemaId });
+
+      const collections = await t.query(api.lib.listCollectionsBySchema, { schemaId });
+      expect(collections.map((collection) => collection._id).sort()).toEqual(
+        [firstId, secondId].sort(),
+      );
+      expect(await t.query(api.lib.listSchemaCollections, {})).toHaveLength(2);
+
+      const firstDatasets = await t.query(api.lib.listSchemasByCollection, {
+        collectionId: firstId,
+      });
+      expect(firstDatasets.map((dataset) => dataset._id)).toEqual([schemaId]);
+    });
+
+    it("removes one collection membership and keeps the rest", async () => {
+      const t = initConvexTest(),
+        schemaId = await createTestSchema(t),
+        firstId = await createTestCollection(t, "First"),
+        secondId = await createTestCollection(t, "Second");
+
+      await t.mutation(api.lib.addSchemaToCollection, { collectionId: firstId, schemaId });
+      await t.mutation(api.lib.addSchemaToCollection, { collectionId: secondId, schemaId });
+      await t.mutation(api.lib.removeSchemaFromCollection, { collectionId: firstId, schemaId });
+
+      const collections = await t.query(api.lib.listCollectionsBySchema, { schemaId });
+      expect(collections.map((collection) => collection._id)).toEqual([secondId]);
+    });
+
+    it("keeps group membership and collection membership independent", async () => {
+      const t = initConvexTest(),
+        schemaId = await createTestSchema(t),
+        collectionId = await createTestCollection(t, "Grant data"),
+        groupId = await t.mutation(api.lib.createGroup, { collectionId, name: "Nested" });
+
+      // Setting a group must not join the group's collection…
+      await t.mutation(api.lib.setSchemaGroup, { groupId, schemaId });
+      expect(await t.query(api.lib.listCollectionsBySchema, { schemaId })).toEqual([]);
+
+      // …and joining a collection must not touch the group.
+      await t.mutation(api.lib.addSchemaToCollection, { collectionId, schemaId });
+      const dataset = await t.query(api.lib.getSchema, { schemaId });
+      assertDefined(dataset);
+      expect(dataset.groupId).toBe(groupId);
+
+      // Clearing the group leaves the collection membership alone.
+      await t.mutation(api.lib.setSchemaGroup, { groupId: null, schemaId });
+      const afterClear = await t.query(api.lib.getSchema, { schemaId });
+      assertDefined(afterClear);
+      expect(afterClear.groupId).toBeUndefined();
+      expect(
+        (await t.query(api.lib.listCollectionsBySchema, { schemaId })).map((c) => c._id),
+      ).toEqual([collectionId]);
+    });
+
+    it("deleting a collection removes only its own memberships and nested groups", async () => {
+      const t = initConvexTest(),
+        schemaId = await createTestSchema(t),
+        otherSchemaId = await createTestSchema(t),
+        doomedId = await createTestCollection(t, "Doomed"),
+        survivorId = await createTestCollection(t, "Survivor"),
+        doomedGroupId = await t.mutation(api.lib.createGroup, {
+          collectionId: doomedId,
+          name: "Doomed group",
+        });
+
+      await t.mutation(api.lib.addSchemaToCollection, { collectionId: doomedId, schemaId });
+      await t.mutation(api.lib.addSchemaToCollection, { collectionId: survivorId, schemaId });
+      await t.mutation(api.lib.setSchemaGroup, { groupId: doomedGroupId, schemaId: otherSchemaId });
+
+      await t.mutation(api.lib.deleteCollection, { collectionId: doomedId });
+
+      // Membership in the survivor survives; the doomed collection is gone.
+      const collections = await t.query(api.lib.listCollectionsBySchema, { schemaId });
+      expect(collections.map((collection) => collection._id)).toEqual([survivorId]);
+      expect(await t.query(api.lib.getCollection, { collectionId: doomedId })).toBeNull();
+
+      // The nested group died, and its datasets became ungrouped — but kept
+      // their own collection memberships.
+      expect(await t.query(api.lib.getGroup, { groupId: doomedGroupId })).toBeNull();
+      const ungrouped = await t.query(api.lib.getSchema, { schemaId: otherSchemaId });
+      assertDefined(ungrouped);
+      expect(ungrouped.groupId).toBeUndefined();
+    });
+
+    it("cleans up collection memberships when a dataset is deleted", async () => {
+      const t = initConvexTest(),
+        schemaId = await createTestSchema(t),
+        collectionId = await createTestCollection(t, "Grant data");
+
+      await t.mutation(api.lib.addSchemaToCollection, { collectionId, schemaId });
+      await t.mutation(api.lib.deleteSchema, { schemaId });
+
+      expect(await t.query(api.lib.listSchemaCollections, {})).toEqual([]);
+      expect(
+        await t.query(api.lib.listSchemasByCollection, { collectionId }),
+      ).toEqual([]);
+    });
+  });
+
   describe("geospatial datasets", () => {
     const validPolygon: GeometryArgs = {
         coordinates: [
@@ -1189,7 +1340,12 @@ describe("json-cms component", () => {
         isDone = false;
       while (!isDone) {
         // oxlint-disable-next-line no-await-in-loop -- each page's cursor depends on the previous one.
-        const result = await t.mutation(internal.lib.convertEntriesBatchInternal, {
+        // Explicitly typed to break the circular reference through `internal.lib`'s own type.
+        const result: {
+          continueCursor: string;
+          geocoded: number;
+          isDone: boolean;
+        } = await t.mutation(internal.lib.convertEntriesBatchInternal, {
           cursor,
           latField: "Latitude",
           lonField: "Longitude",

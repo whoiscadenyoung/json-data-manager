@@ -36,7 +36,6 @@ export const Route = createFileRoute("/collections/$collectionId/")({
 });
 
 function GroupCard({
-  collectionId,
   group,
   groups,
   datasets,
@@ -46,7 +45,6 @@ function GroupCard({
   onMoveToGroup,
   onRemoveFromCollection,
 }: {
-  collectionId: string;
   group: GroupDoc;
   groups: GroupDoc[];
   datasets: Dataset[];
@@ -62,8 +60,8 @@ function GroupCard({
         <div>
           <CardTitle>
             <Link
-              to="/collections/$collectionId/groups/$groupId"
-              params={{ collectionId, groupId: group._id }}
+              to="/groups/$groupId"
+              params={{ groupId: group._id }}
               className="hover:underline"
             >
               {group.name}
@@ -141,8 +139,10 @@ function UngroupedDatasetsCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{hasGroups ? "Ungrouped datasets" : "Datasets"}</CardTitle>
-        <CardDescription>Datasets directly in this collection</CardDescription>
+        <CardTitle>{hasGroups ? "Datasets outside its groups" : "Datasets"}</CardTitle>
+        <CardDescription>
+          Datasets in this collection that aren't in one of its groups
+        </CardDescription>
       </CardHeader>
       <CardContent>
         {collectionDatasets.length === 0 ? (
@@ -209,19 +209,19 @@ type AddDatasetTarget = "collection" | GroupDoc | undefined;
 function AddDatasetSheetHost({
   target,
   collectionId,
-  collectionDatasets,
+  allDatasets,
   collectionAddCandidates,
   onOpenChange,
-  setSchemaCollection,
+  addSchemaToCollection,
   setSchemaGroup,
 }: {
   target: AddDatasetTarget;
   collectionId: string;
-  collectionDatasets: Dataset[];
+  allDatasets: Dataset[];
   collectionAddCandidates: Dataset[];
   onOpenChange: (open: boolean) => void;
-  setSchemaCollection: (args: {
-    collectionId: string | null;
+  addSchemaToCollection: (args: {
+    collectionId: string;
     schemaId: string;
   }) => Promise<unknown>;
   setSchemaGroup: (args: { groupId: string | null; schemaId: string }) => Promise<unknown>;
@@ -230,11 +230,11 @@ function AddDatasetSheetHost({
     group = isCollectionTarget || target === undefined ? undefined : target,
     title = isCollectionTarget ? "Add dataset to collection" : "Add dataset to group",
     description = isCollectionTarget
-      ? "Choose a dataset to add directly to this collection."
-      : "Choose a dataset from this collection to add to the group.",
+      ? "Choose a dataset to add to this collection."
+      : "Choose a dataset to add to the group.",
     candidates = isCollectionTarget
       ? collectionAddCandidates
-      : collectionDatasets.filter((dataset) => dataset.groupId !== (group ? group._id : undefined));
+      : allDatasets.filter((dataset) => dataset.groupId !== (group ? group._id : undefined));
 
   return (
     <DatasetPickerSheet
@@ -245,7 +245,7 @@ function AddDatasetSheetHost({
       onOpenChange={onOpenChange}
       onPick={async (dataset) => {
         if (isCollectionTarget) {
-          await setSchemaCollection({ collectionId, schemaId: dataset._id });
+          await addSchemaToCollection({ collectionId, schemaId: dataset._id });
           toast.success(`Added "${dataset.title}" to the collection.`);
         } else if (group) {
           await setSchemaGroup({ groupId: group._id, schemaId: dataset._id });
@@ -261,12 +261,15 @@ function CollectionDetailPage() {
     navigate = useNavigate(),
     collection = useQuery(api.collections.get, { collectionId }),
     groups = useQuery(api.groups.list, { collectionId }),
+    allGroups = useQuery(api.groups.list, {}),
     collectionDatasets = useQuery(api.collections.listDatasets, { collectionId }),
     allDatasets = useQuery(api.schemas.list),
+    memberships = useQuery(api.collections.listSchemaCollections),
     deleteCollectionMutation = useMutation(api.collections.remove),
     deleteGroupMutation = useMutation(api.groups.remove),
-    setSchemaCollection = useMutation(api.collections.setSchemaCollection),
     setSchemaGroup = useMutation(api.collections.setSchemaGroup),
+    addSchemaToCollection = useMutation(api.collections.addSchemaToCollection),
+    removeSchemaFromCollection = useMutation(api.collections.removeSchemaFromCollection),
     [editingCollection, setEditingCollection] = useState(false),
     [pendingDeleteCollection, setPendingDeleteCollection] = useState(false),
     [groupFormOpen, setGroupFormOpen] = useState(false),
@@ -282,7 +285,7 @@ function CollectionDetailPage() {
     },
     handleRemoveFromCollection = async (dataset: Dataset) => {
       try {
-        await setSchemaCollection({ collectionId: null, schemaId: dataset._id });
+        await removeSchemaFromCollection({ collectionId, schemaId: dataset._id });
         toast.success(`Removed "${dataset.title}" from the collection.`);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Failed to remove dataset.");
@@ -309,7 +312,14 @@ function CollectionDetailPage() {
       }
     };
 
-  if (collection === undefined || groups === undefined || collectionDatasets === undefined) {
+  if (
+    collection === undefined ||
+    groups === undefined ||
+    allGroups === undefined ||
+    collectionDatasets === undefined ||
+    allDatasets === undefined ||
+    memberships === undefined
+  ) {
     return (
       <div className="flex justify-center items-center min-h-100">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
@@ -333,9 +343,20 @@ function CollectionDetailPage() {
     );
   }
 
-  const ungrouped = collectionDatasets.filter((dataset) => dataset.groupId === undefined),
-    collectionAddCandidates = (allDatasets ?? []).filter(
-      (dataset) => dataset.collectionId !== collectionId,
+  const groupIds = new Set(groups.map((group) => group._id)),
+    // Datasets joined to this collection that don't sit in one of its groups.
+    ungrouped = collectionDatasets.filter(
+      (dataset) => dataset.groupId === undefined || !groupIds.has(dataset.groupId),
+    ),
+    // Collection membership is many-to-many, so a group's members come from
+    // the full dataset list — a grouped dataset isn't implicitly in the
+    // group's collection.
+    addCandidates = allDatasets.filter(
+      (dataset) =>
+        !memberships.some(
+          (membership) =>
+            membership.collectionId === collectionId && membership.schemaId === dataset._id,
+        ),
     );
 
   return (
@@ -407,10 +428,9 @@ function CollectionDetailPage() {
         {groups.map((group) => (
           <GroupCard
             key={group._id}
-            collectionId={collectionId}
             group={group}
-            groups={groups}
-            datasets={collectionDatasets.filter((dataset) => dataset.groupId === group._id)}
+            groups={allGroups}
+            datasets={allDatasets.filter((dataset) => dataset.groupId === group._id)}
             onEdit={(target) => {
               setEditingGroup(target);
               setGroupFormOpen(true);
@@ -430,7 +450,7 @@ function CollectionDetailPage() {
           hasGroups={groups.length > 0}
           collectionDatasets={collectionDatasets}
           ungrouped={ungrouped}
-          groups={groups}
+          groups={allGroups}
           onMoveToGroup={(dataset, groupId) => {
             void handleMoveToGroup(dataset, groupId);
           }}
@@ -456,14 +476,14 @@ function CollectionDetailPage() {
       <AddDatasetSheetHost
         target={addDatasetTarget}
         collectionId={collectionId}
-        collectionDatasets={collectionDatasets}
-        collectionAddCandidates={collectionAddCandidates}
+        allDatasets={allDatasets}
+        collectionAddCandidates={addCandidates}
         onOpenChange={(open) => {
           if (!open) {
             setAddDatasetTarget(undefined);
           }
         }}
-        setSchemaCollection={setSchemaCollection}
+        addSchemaToCollection={addSchemaToCollection}
         setSchemaGroup={setSchemaGroup}
       />
 
@@ -471,7 +491,7 @@ function CollectionDetailPage() {
         open={pendingDeleteCollection}
         onOpenChange={setPendingDeleteCollection}
         title={`Delete "${collection.name}"?`}
-        description="Its groups will be deleted too. Datasets inside stay put — they just become uncategorized."
+        description="Its groups will be deleted too. Datasets inside stay put — they just lose this collection (and their other collections stay)."
         confirmLabel="Delete"
         destructive
         onConfirm={() => {
@@ -487,7 +507,7 @@ function CollectionDetailPage() {
           }
         }}
         title={pendingDeleteGroup === undefined ? "" : `Delete "${pendingDeleteGroup.name}"?`}
-        description="Its datasets stay in the collection — they just become ungrouped."
+        description="Its datasets are not deleted — they just become ungrouped."
         confirmLabel="Delete"
         destructive
         onConfirm={() => {

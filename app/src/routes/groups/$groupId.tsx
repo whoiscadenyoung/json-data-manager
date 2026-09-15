@@ -1,15 +1,18 @@
+import { ConfirmDialog } from "@caden/json-cms/react/ui";
 import { useResolvedGeometries } from "@caden/json-cms/react";
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
-import { Download, Layers } from "lucide-react";
+import { Download, Layers, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { api } from "#convex/_generated/api";
 import { DatasetList } from "@/components/dataset-list";
 import type { Dataset } from "@/components/dataset-list";
+import { DatasetPickerSheet } from "@/components/dataset-picker-sheet";
 import { ExportDialog } from "@/components/export-dialog";
 import type { ExportFormat, ExportFormatOption } from "@/components/export-dialog";
+import { GroupFormPanel } from "@/components/group-form-panel";
 import { GroupMap } from "@/components/group-map";
 import { useGeometriesBySchemas } from "@/components/schema-geometries-loader";
 import {
@@ -31,7 +34,7 @@ import {
   slugify,
 } from "@/lib/export";
 
-export const Route = createFileRoute("/collections/$collectionId/groups/$groupId/")({
+export const Route = createFileRoute("/groups/$groupId")({
   component: GroupDetailPage,
 });
 
@@ -39,16 +42,22 @@ export const Route = createFileRoute("/collections/$collectionId/groups/$groupId
  * A group's own page: every member dataset's geometries rendered together
  * on one map — points and shapes layered directly, one color per dataset —
  * so the group reads as a single layer of data, followed by the member
- * dataset list. The management surface (creating groups, adding datasets)
- * stays on the collection page.
+ * dataset list. The group is managed here too: its name/description can be
+ * edited and datasets can be added directly, whether the group is nested in
+ * a collection or standalone.
  */
 function GroupDetailPage() {
-  const { collectionId, groupId } = Route.useParams(),
+  const { groupId } = Route.useParams(),
+    navigate = useNavigate(),
     group = useQuery(api.groups.get, { groupId }),
-    collection = useQuery(api.collections.get, { collectionId }),
-    groups = useQuery(api.groups.list, { collectionId }),
+    parentCollection = useQuery(
+      api.collections.get,
+      group && group.collectionId !== undefined ? { collectionId: group.collectionId } : "skip",
+    ),
+    groups = useQuery(api.groups.list, {}),
     allDatasets = useQuery(api.schemas.list),
     datasets = (allDatasets ?? []).filter((dataset) => dataset.groupId === groupId),
+    addCandidates = (allDatasets ?? []).filter((dataset) => dataset.groupId !== groupId),
     memberSchemaIds = datasets.map((dataset) => dataset._id),
     geospatialSchemaIds = datasets
       .filter((dataset) => dataset.kind === "geospatial")
@@ -62,7 +71,14 @@ function GroupDetailPage() {
     { geometries, loaders } = useGeometriesBySchemas(geospatialSchemaIds),
     resolvedGeometries = useResolvedGeometries(geometries ?? []),
     setSchemaGroup = useMutation(api.collections.setSchemaGroup),
-    setSchemaCollection = useMutation(api.collections.setSchemaCollection),
+    deleteGroup = useMutation(api.groups.remove),
+    [editingGroup, setEditingGroup] = useState(false),
+    [addDatasetOpen, setAddDatasetOpen] = useState(false),
+    [pendingDelete, setPendingDelete] = useState(false),
+    handleAddDataset = async (dataset: Dataset) => {
+      await setSchemaGroup({ groupId, schemaId: dataset._id });
+      toast.success(`Added "${dataset.title}" to "${group ? group.name : "group"}".`);
+    },
     handleMoveToGroup = async (dataset: Dataset, targetGroupId: string | null) => {
       try {
         await setSchemaGroup({ groupId: targetGroupId, schemaId: dataset._id });
@@ -70,12 +86,21 @@ function GroupDetailPage() {
         toast.error(error instanceof Error ? error.message : "Failed to move dataset.");
       }
     },
-    handleRemoveFromCollection = async (dataset: Dataset) => {
+    handleRemoveDataset = async (dataset: Dataset) => {
       try {
-        await setSchemaCollection({ collectionId: null, schemaId: dataset._id });
-        toast.success(`Removed "${dataset.title}" from the collection.`);
+        await setSchemaGroup({ groupId: null, schemaId: dataset._id });
+        toast.success(`Removed "${dataset.title}" from the group.`);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Failed to remove dataset.");
+      }
+    },
+    handleDeleteGroup = async () => {
+      try {
+        await deleteGroup({ groupId });
+        toast.success("Group deleted.");
+        await navigate({ to: "/datasets" });
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to delete group.");
       }
     },
     [exportOpen, setExportOpen] = useState(false),
@@ -160,12 +185,7 @@ function GroupDetailPage() {
       toast.success("Exported workbook.");
     };
 
-  if (
-    group === undefined ||
-    collection === undefined ||
-    groups === undefined ||
-    allDatasets === undefined
-  ) {
+  if (group === undefined || groups === undefined || allDatasets === undefined) {
     return (
       <div className="flex justify-center items-center min-h-100">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
@@ -181,15 +201,17 @@ function GroupDetailPage() {
           <CardDescription className="mb-4">
             The group you're looking for doesn't exist or has been deleted.
           </CardDescription>
-          <Link to="/collections/$collectionId" params={{ collectionId }}>
-            <Button>Back to Collection</Button>
+          <Link to="/datasets">
+            <Button>Back to Datasets</Button>
           </Link>
         </CardContent>
       </Card>
     );
   }
 
-  const hasGeospatialDatasets = geospatialSchemaIds.length > 0;
+  const hasGeospatialDatasets = geospatialSchemaIds.length > 0,
+    parentCollectionId = group.collectionId,
+    isNested = parentCollectionId !== undefined;
 
   return (
     <div className="max-w-4xl mx-auto py-8 px-4 sm:px-0">
@@ -198,16 +220,29 @@ function GroupDetailPage() {
           <Breadcrumb className="mb-2">
             <BreadcrumbList>
               <BreadcrumbItem>
-                <BreadcrumbLink render={<Link to="/collections" />}>Collections</BreadcrumbLink>
+                {isNested ? (
+                  <BreadcrumbLink render={<Link to="/collections" />}>Collections</BreadcrumbLink>
+                ) : (
+                  <BreadcrumbLink render={<Link to="/datasets" />}>Datasets</BreadcrumbLink>
+                )}
               </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbLink
-                  render={<Link to="/collections/$collectionId" params={{ collectionId }} />}
-                >
-                  {collection ? collection.name : "Collection"}
-                </BreadcrumbLink>
-              </BreadcrumbItem>
+              {parentCollectionId !== undefined && (
+                <>
+                  <BreadcrumbSeparator />
+                  <BreadcrumbItem>
+                    <BreadcrumbLink
+                      render={
+                        <Link
+                          to="/collections/$collectionId"
+                          params={{ collectionId: parentCollectionId }}
+                        />
+                      }
+                    >
+                      {parentCollection ? parentCollection.name : "Collection"}
+                    </BreadcrumbLink>
+                  </BreadcrumbItem>
+                </>
+              )}
               <BreadcrumbSeparator />
               <BreadcrumbItem>
                 <BreadcrumbPage>{group.name}</BreadcrumbPage>
@@ -222,16 +257,45 @@ function GroupDetailPage() {
             <p className="text-lg text-muted-foreground mt-2">{group.description}</p>
           )}
         </div>
-        <Button
-          variant="outline"
-          onClick={() => {
-            setExportOpen(true);
-          }}
-          disabled={datasets.length === 0}
-        >
-          <Download className="h-4 w-4 mr-2" />
-          Export ({datasets.length})
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            onClick={() => {
+              setEditingGroup(true);
+            }}
+          >
+            <Pencil className="h-4 w-4 mr-2" />
+            Edit
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setPendingDelete(true);
+            }}
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            Delete
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setAddDatasetOpen(true);
+            }}
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Add dataset
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setExportOpen(true);
+            }}
+            disabled={datasets.length === 0}
+          >
+            <Download className="h-4 w-4 mr-2" />
+            Export ({datasets.length})
+          </Button>
+        </div>
       </div>
 
       {hasGeospatialDatasets && (
@@ -242,7 +306,7 @@ function GroupDetailPage() {
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
             </div>
           ) : (
-            <GroupMap datasets={datasets ?? []} geometries={geometries} entries={entries} />
+            <GroupMap datasets={datasets} geometries={geometries} entries={entries} />
           )}
         </section>
       )}
@@ -254,18 +318,41 @@ function GroupDetailPage() {
         </CardHeader>
         <CardContent>
           <DatasetList
-            datasets={datasets ?? []}
+            datasets={datasets}
             groups={groups}
-            emptyLabel="No datasets in this group yet — add some from the collection page."
+            emptyLabel="No datasets in this group yet."
             onMoveToGroup={(dataset, targetGroupId) => {
               void handleMoveToGroup(dataset, targetGroupId);
             }}
             onRemoveFromCollection={(dataset) => {
-              void handleRemoveFromCollection(dataset);
+              void handleRemoveDataset(dataset);
             }}
           />
         </CardContent>
       </Card>
+
+      <GroupFormPanel group={group} open={editingGroup} onOpenChange={setEditingGroup} />
+
+      <DatasetPickerSheet
+        title="Add dataset to group"
+        description="Choose a dataset to add to this group."
+        candidates={addCandidates}
+        open={addDatasetOpen}
+        onOpenChange={setAddDatasetOpen}
+        onPick={handleAddDataset}
+      />
+
+      <ConfirmDialog
+        open={pendingDelete}
+        onOpenChange={setPendingDelete}
+        title={`Delete "${group.name}"?`}
+        description="Its datasets are not deleted — they just become ungrouped."
+        confirmLabel="Delete"
+        destructive
+        onConfirm={() => {
+          void handleDeleteGroup();
+        }}
+      />
 
       <ExportDialog
         open={exportOpen}

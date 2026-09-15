@@ -40,6 +40,10 @@ const SCHEMA_SIZE_LIMIT = 102_400, // 100 KB
     _creationTime: v.number(),
     _id: v.id("groups"),
   }),
+  schemaCollectionValidator = schema.tables.schemaCollections.validator.extend({
+    _creationTime: v.number(),
+    _id: v.id("schemaCollections"),
+  }),
   schemaValidator = schema.tables.schemas.validator.extend({
     _creationTime: v.number(),
     _id: v.id("schemas"),
@@ -207,13 +211,17 @@ export const deleteSchema = mutation({
     }
 
     // Delete all entries and geometries associated with this schema first
-    const [entries, geometries] = await Promise.all([
+    const [entries, geometries, memberships] = await Promise.all([
       ctx.db
         .query("entries")
         .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
         .collect(),
       ctx.db
         .query("geometries")
+        .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
+        .collect(),
+      ctx.db
+        .query("schemaCollections")
         .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
         .collect(),
     ]);
@@ -225,6 +233,7 @@ export const deleteSchema = mutation({
         await deleteGeometryStorageIfAny(ctx, geometry);
       }),
       deleteReferencesForSchema(ctx, args.schemaId),
+      ...memberships.map(async (membership) => ctx.db.delete(membership._id)),
     ]);
 
     await ctx.db.delete(args.schemaId);
@@ -288,9 +297,10 @@ export const updateCollection = mutation({
 });
 
 /**
- * Deletes a collection along with every group inside it. Datasets that
- * belonged to it (directly or via one of its groups) are not deleted — they
- * simply become uncategorized again (`collectionId`/`groupId` cleared).
+ * Deletes a collection along with every group inside it. Membership is
+ * many-to-many (see `schemaCollections`), so member datasets simply lose
+ * this one collection — their other collection memberships are untouched.
+ * Datasets inside the deleted groups become ungrouped.
  */
 export const deleteCollection = mutation({
   args: { collectionId: v.id("collections") },
@@ -300,22 +310,30 @@ export const deleteCollection = mutation({
       throw new ConvexError("Collection not found");
     }
 
-    const [groups, datasets] = await Promise.all([
+    const [groups, memberships] = await Promise.all([
       ctx.db
         .query("groups")
         .withIndex("by_collection", (q) => q.eq("collectionId", args.collectionId))
         .collect(),
       ctx.db
-        .query("schemas")
+        .query("schemaCollections")
         .withIndex("by_collection", (q) => q.eq("collectionId", args.collectionId))
         .collect(),
     ]);
 
+    const groupedDatasets = await Promise.all(
+      groups.map(async (group) =>
+        ctx.db
+          .query("schemas")
+          .withIndex("by_group", (q) => q.eq("groupId", group._id))
+          .collect(),
+      ),
+    );
+
     await Promise.all([
       ...groups.map(async (group) => ctx.db.delete(group._id)),
-      ...datasets.map(async (dataset) =>
-        ctx.db.patch(dataset._id, { collectionId: undefined, groupId: undefined }),
-      ),
+      ...memberships.map(async (membership) => ctx.db.delete(membership._id)),
+      ...groupedDatasets.flat().map(async (dataset) => ctx.db.patch(dataset._id, { groupId: undefined })),
     ]);
 
     await ctx.db.delete(args.collectionId);
@@ -324,13 +342,22 @@ export const deleteCollection = mutation({
 
 // Group queries
 
+/**
+ * Lists groups — every group when `collectionId` is omitted (standalone
+ * groups included), or just the groups nested in that collection.
+ */
 export const listGroups = query({
-  args: { collectionId: v.id("collections") },
-  handler: async (ctx, args) =>
-    ctx.db
+  args: { collectionId: v.optional(v.id("collections")) },
+  handler: async (ctx, args) => {
+    const { collectionId } = args;
+    if (collectionId === undefined) {
+      return ctx.db.query("groups").order("desc").collect();
+    }
+    return ctx.db
       .query("groups")
-      .withIndex("by_collection", (q) => q.eq("collectionId", args.collectionId))
-      .collect(),
+      .withIndex("by_collection", (q) => q.eq("collectionId", collectionId))
+      .collect();
+  },
   returns: v.array(groupValidator),
 });
 
@@ -342,9 +369,13 @@ export const getGroup = query({
 
 // Group mutations
 
+/**
+ * Creates a group, optionally nested in a collection — a group can also
+ * float standalone (`collectionId` omitted).
+ */
 export const createGroup = mutation({
   args: {
-    collectionId: v.id("collections"),
+    collectionId: v.optional(v.id("collections")),
     description: v.optional(v.string()),
     name: v.string(),
   },
@@ -352,9 +383,11 @@ export const createGroup = mutation({
     if (!args.name.trim()) {
       throw new ConvexError("Group must have a name");
     }
-    const collection = await ctx.db.get(args.collectionId);
-    if (!collection) {
-      throw new ConvexError("Collection not found");
+    if (args.collectionId !== undefined) {
+      const collection = await ctx.db.get(args.collectionId);
+      if (!collection) {
+        throw new ConvexError("Collection not found");
+      }
     }
     return ctx.db.insert("groups", {
       collectionId: args.collectionId,
@@ -392,9 +425,8 @@ export const updateGroup = mutation({
 });
 
 /**
- * Deletes a group. Its datasets are not deleted — they fall back to being
- * directly in the group's collection (ungrouped), since `collectionId` is
- * left untouched.
+ * Deletes a group. Its datasets are not deleted — they just become ungrouped.
+ * Their collection memberships (see `schemaCollections`) are untouched.
  */
 export const deleteGroup = mutation({
   args: { groupId: v.id("groups") },
@@ -418,52 +450,101 @@ export const deleteGroup = mutation({
 });
 
 // Dataset <-> collection/group association
+//
+// Collections are many-to-many (a dataset can sit in any number of them, via
+// the `schemaCollections` join table — see schema.ts), while a dataset has at
+// most one group. The two relationships are independent: neither mutation
+// side touches the other.
 
 export const listSchemasByCollection = query({
   args: { collectionId: v.id("collections") },
-  handler: async (ctx, args) =>
-    ctx.db
-      .query("schemas")
+  handler: async (ctx, args) => {
+    const memberships = await ctx.db
+      .query("schemaCollections")
       .withIndex("by_collection", (q) => q.eq("collectionId", args.collectionId))
-      .collect(),
+      .collect();
+    const datasets = await Promise.all(memberships.map((row) => ctx.db.get(row.schemaId)));
+    return datasets.filter((dataset) => dataset !== null);
+  },
   returns: v.array(schemaValidator),
 });
 
-/**
- * Sets (or clears, via `null`) a dataset's top-level collection. Always
- * clears `groupId` too — a dataset moved directly under a collection is no
- * longer inside whichever group it may have belonged to.
- */
-export const setSchemaCollection = mutation({
+/** Every `{dataset, collection}` membership row — lets clients count/filter memberships without one query per collection. */
+export const listSchemaCollections = query({
+  args: {},
+  handler: async (ctx) => ctx.db.query("schemaCollections").collect(),
+  returns: v.array(schemaCollectionValidator),
+});
+
+/** The collections a dataset currently belongs to. */
+export const listCollectionsBySchema = query({
+  args: { schemaId: v.id("schemas") },
+  handler: async (ctx, args) => {
+    const memberships = await ctx.db
+      .query("schemaCollections")
+      .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
+      .collect();
+    const collections = await Promise.all(memberships.map((row) => ctx.db.get(row.collectionId)));
+    return collections.filter((collection) => collection !== null);
+  },
+  returns: v.array(collectionValidator),
+});
+
+/** Adds a dataset to a collection (a no-op if the membership already exists). */
+export const addSchemaToCollection = mutation({
   args: {
-    collectionId: v.union(v.id("collections"), v.null()),
+    collectionId: v.id("collections"),
     schemaId: v.id("schemas"),
   },
   handler: async (ctx, args) => {
-    const existing = await ctx.db.get(args.schemaId);
-    if (!existing) {
+    const [dataset, collection] = await Promise.all([
+      ctx.db.get(args.schemaId),
+      ctx.db.get(args.collectionId),
+    ]);
+    if (!dataset) {
       throw new ConvexError("Schema not found");
     }
-
-    if (args.collectionId === null) {
-      await ctx.db.patch(args.schemaId, { collectionId: undefined, groupId: undefined });
-      return;
-    }
-
-    const collection = await ctx.db.get(args.collectionId);
     if (!collection) {
       throw new ConvexError("Collection not found");
     }
-    await ctx.db.patch(args.schemaId, { collectionId: args.collectionId, groupId: undefined });
+
+    const existing = await ctx.db
+      .query("schemaCollections")
+      .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
+      .collect();
+    if (existing.some((row) => row.collectionId === args.collectionId)) {
+      return;
+    }
+    await ctx.db.insert("schemaCollections", {
+      collectionId: args.collectionId,
+      schemaId: args.schemaId,
+    });
+  },
+});
+
+/** Removes one of a dataset's collection memberships. Its other memberships and its group are untouched. */
+export const removeSchemaFromCollection = mutation({
+  args: {
+    collectionId: v.id("collections"),
+    schemaId: v.id("schemas"),
+  },
+  handler: async (ctx, args) => {
+    const memberships = await ctx.db
+      .query("schemaCollections")
+      .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
+      .collect();
+    await Promise.all(
+      memberships
+        .filter((row) => row.collectionId === args.collectionId)
+        .map(async (row) => ctx.db.delete(row._id)),
+    );
   },
 });
 
 /**
- * Sets (or clears, via `null`) a dataset's group. Setting a group always
- * derives `collectionId` from the group itself, so a dataset can never end up
- * in a group without also being in that group's collection. Clearing the
- * group leaves `collectionId` as-is — the dataset falls back to being
- * directly in the collection rather than being removed from it.
+ * Sets (or clears, via `null`) a dataset's group. Group membership is
+ * independent of collection memberships — this never touches the
+ * `schemaCollections` join table.
  */
 export const setSchemaGroup = mutation({
   args: {
@@ -485,7 +566,7 @@ export const setSchemaGroup = mutation({
     if (!group) {
       throw new ConvexError("Group not found");
     }
-    await ctx.db.patch(args.schemaId, { collectionId: group.collectionId, groupId: args.groupId });
+    await ctx.db.patch(args.schemaId, { groupId: args.groupId });
   },
 });
 
@@ -677,13 +758,19 @@ export const listGeometries = query({
   returns: paginationResultValidator(geometryOutputValidator),
 });
 
-/** The `_id`s of every geospatial dataset directly or (via a group) indirectly in a collection. */
+/** The `_id`s of every geospatial dataset in a collection, via its `schemaCollections` membership rows. */
 async function listGeospatialSchemaIdsByCollection(ctx: QueryCtx, collectionId: Id<"collections">) {
-  const schemas = await ctx.db
-    .query("schemas")
+  const memberships = await ctx.db
+    .query("schemaCollections")
     .withIndex("by_collection", (q) => q.eq("collectionId", collectionId))
     .collect();
-  return schemas.filter((schemaDoc) => schemaDoc.kind === "geospatial").map((s) => s._id);
+  const datasets = await Promise.all(memberships.map((row) => ctx.db.get(row.schemaId)));
+  return datasets
+    .filter(
+      (schemaDoc): schemaDoc is NonNullable<typeof schemaDoc> =>
+        schemaDoc !== null && schemaDoc.kind === "geospatial",
+    )
+    .map((schemaDoc) => schemaDoc._id);
 }
 
 // NOTE on the collection-level map view: there is deliberately no

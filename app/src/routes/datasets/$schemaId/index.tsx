@@ -9,8 +9,6 @@ import {
   Code2,
   Download,
   FilePlus,
-  FolderTree,
-  MapIcon,
   MapPinned,
   Pencil,
   Plus,
@@ -22,7 +20,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 
-import { DatasetOrganizePanel } from "@/components/dataset-organize-panel";
+import { DatasetOverview } from "@/components/dataset-overview";
 import { EntriesMap } from "@/components/entries-map";
 import { EntriesTable } from "@/components/entries-table";
 import { EntryFormPanel } from "@/components/entry-form-panel";
@@ -161,58 +159,6 @@ function EntryPanelHost({
   );
 }
 
-/** Shows which collection/group this dataset belongs to, if any, each linking back to its page. */
-function OrganizationBadge({ schema }: { schema: Schema }) {
-  const collection = useQuery(
-      api.collections.get,
-      schema.collectionId ? { collectionId: schema.collectionId } : "skip",
-    ),
-    group = useQuery(api.groups.get, schema.groupId ? { groupId: schema.groupId } : "skip");
-
-  if (!collection) {
-    return null;
-  }
-
-  return (
-    <p className="mb-3 flex items-center gap-1.5 text-sm text-muted-foreground">
-      <FolderTree className="h-3.5 w-3.5" />
-      <Link
-        to="/collections/$collectionId"
-        params={{ collectionId: collection._id }}
-        className="hover:underline"
-      >
-        {collection.name}
-      </Link>
-      {group && (
-        <>
-          <span>/</span>
-          <Link
-            to="/collections/$collectionId/groups/$groupId"
-            params={{ collectionId: collection._id, groupId: group._id }}
-            className="hover:underline"
-          >
-            {group.name}
-          </Link>
-        </>
-      )}
-    </p>
-  );
-}
-
-/** "N features with geometry" line — extracted so its `??`/ternary don't count against the page's own complexity. */
-function FeatureCountBadge({ schema }: { schema: Schema }) {
-  if (schema.kind !== "geospatial") {
-    return null;
-  }
-  const count = schema.featureCount ?? 0;
-  return (
-    <p className="mb-3 flex items-center gap-1.5 text-sm text-muted-foreground">
-      <MapIcon className="h-3.5 w-3.5" />
-      {count} {count === 1 ? "feature" : "features"} with geometry
-    </p>
-  );
-}
-
 /** Dismissible success banner shown right after a "Make geospatial" conversion completes. */
 function ConversionSuccessAlert({
   result,
@@ -267,7 +213,6 @@ function SchemaDetailPage() {
     entries = useQuery(api.entries.list, { schemaId }),
     geometries = useGeometriesForSchema(schema, schemaId),
     resolvedGeometries = useResolvedGeometries(geometries ?? []),
-    [organizeOpen, setOrganizeOpen] = useState(false),
     [makeGeospatialOpen, setMakeGeospatialOpen] = useState(false),
     [exportOpen, setExportOpen] = useState(false),
     [jsonDefinitionOpen, setJsonDefinitionOpen] = useState(false),
@@ -383,15 +328,6 @@ function SchemaDetailPage() {
             <Pencil className="h-4 w-4 mr-2" />
             Edit
           </RouterButton>
-          <Button
-            variant="outline"
-            onClick={() => {
-              setOrganizeOpen(true);
-            }}
-          >
-            <FolderTree className="h-4 w-4 mr-2" />
-            Organize
-          </Button>
           <MakeGeospatialButton
             schema={schema}
             entryCount={entries.length}
@@ -424,8 +360,6 @@ function SchemaDetailPage() {
         </div>
       </div>
 
-      <OrganizationBadge schema={schema} />
-      <FeatureCountBadge schema={schema} />
       {conversionSuccess && (
         <ConversionSuccessAlert
           result={conversionSuccess}
@@ -435,22 +369,26 @@ function SchemaDetailPage() {
         />
       )}
 
-      {schema.kind === "geospatial" && geometries !== undefined && geometries.length > 0 && (
-        <section className="mb-6">
-          <EntriesMap geometries={geometries} entries={entries} className="h-[420px]" />
-        </section>
-      )}
-
-      <Tabs defaultValue="entries">
+      <Tabs defaultValue="overview">
         <TabsList>
-          <TabsTrigger value="entries">Entries ({entries.length})</TabsTrigger>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="entries">Data ({entries.length})</TabsTrigger>
           <TabsTrigger value="schema">Schema</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="overview" className="space-y-6">
+          <DatasetOverview schema={schema} schemaId={schemaId} />
+          {schema.kind === "geospatial" && geometries !== undefined && geometries.length > 0 && (
+            <section>
+              <EntriesMap geometries={geometries} entries={entries} className="h-[420px]" />
+            </section>
+          )}
+        </TabsContent>
 
         <TabsContent value="entries">
           <Card>
             <CardHeader>
-              <CardTitle>Entries ({entries.length})</CardTitle>
+              <CardTitle>Data ({entries.length})</CardTitle>
               <CardDescription>Data entries created from this schema</CardDescription>
             </CardHeader>
             <CardContent>
@@ -460,7 +398,7 @@ function SchemaDetailPage() {
                     <EmptyMedia variant="icon">
                       <FilePlus />
                     </EmptyMedia>
-                    <EmptyTitle>No entries yet</EmptyTitle>
+                    <EmptyTitle>No data yet</EmptyTitle>
                     <EmptyDescription>Add your first entry to this schema.</EmptyDescription>
                   </EmptyHeader>
                   <EmptyContent>
@@ -540,14 +478,6 @@ function SchemaDetailPage() {
             void closePanel();
           }
         }}
-      />
-
-      <DatasetOrganizePanel
-        schemaId={schemaId}
-        currentCollectionId={schema.collectionId}
-        currentGroupId={schema.groupId}
-        open={organizeOpen}
-        onOpenChange={setOrganizeOpen}
       />
 
       <ExportDialog
