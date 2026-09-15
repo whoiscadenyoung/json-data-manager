@@ -4,6 +4,7 @@ import { Link, createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import {
+  CheckCircle,
   Code2,
   Download,
   FilePlus,
@@ -14,6 +15,7 @@ import {
   Plus,
   UploadCloud,
   Workflow,
+  X,
 } from "lucide-react";
 import { useState } from "react";
 import { z } from "zod";
@@ -25,6 +27,7 @@ import { EntryFormPanel } from "@/components/entry-form-panel";
 import { GeospatialConversionPanel } from "@/components/geospatial-conversion-panel";
 import { RouterButton } from "@/components/router-button";
 import { SchemaVisualizer } from "@/components/schema-visualizer";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -186,8 +189,41 @@ function FeatureCountBadge({ schema }: { schema: Schema }) {
   );
 }
 
+/** Dismissible success banner shown right after a "Make geospatial" conversion completes. */
+function ConversionSuccessAlert({
+  result,
+  onDismiss,
+}: {
+  result: { processed: number; total: number };
+  onDismiss: () => void;
+}) {
+  return (
+    <Alert variant="success" className="mb-6">
+      <CheckCircle />
+      <AlertTitle>This dataset is now geospatial</AlertTitle>
+      <AlertDescription>
+        Converted {result.processed} of {result.total} rows — each valid row got a Point geometry
+        built from its coordinate columns. All original columns were kept.
+      </AlertDescription>
+      <AlertAction>
+        <Button variant="ghost" size="icon-sm" aria-label="Dismiss" onClick={onDismiss}>
+          <X />
+        </Button>
+      </AlertAction>
+    </Alert>
+  );
+}
+
 /** "Make geospatial" action, only offered for a standard dataset that actually has entries to backfill geometry for. */
-function MakeGeospatialButton({ schema, entryCount, onClick }: { schema: Schema; entryCount: number; onClick: () => void }) {
+function MakeGeospatialButton({
+  schema,
+  entryCount,
+  onClick,
+}: {
+  schema: Schema;
+  entryCount: number;
+  onClick: () => void;
+}) {
   if (schema.kind === "geospatial" || entryCount === 0) {
     return null;
   }
@@ -247,6 +283,9 @@ function SchemaDetailPage() {
     geometries = useGeometriesForSchema(schema, schemaId),
     [organizeOpen, setOrganizeOpen] = useState(false),
     [makeGeospatialOpen, setMakeGeospatialOpen] = useState(false),
+    [conversionSuccess, setConversionSuccess] = useState<
+      { processed: number; total: number } | undefined
+    >(undefined),
     openCreatePanel = async () => {
       await navigate({ search: { panel: "create" } });
     },
@@ -357,6 +396,14 @@ function SchemaDetailPage() {
 
       <OrganizationBadge schema={schema} />
       <FeatureCountBadge schema={schema} />
+      {conversionSuccess && (
+        <ConversionSuccessAlert
+          result={conversionSuccess}
+          onDismiss={() => {
+            setConversionSuccess(undefined);
+          }}
+        />
+      )}
 
       <Tabs defaultValue="entries">
         <TabsList>
@@ -467,6 +514,7 @@ function SchemaDetailPage() {
         entryCount={entries.length}
         open={makeGeospatialOpen}
         onOpenChange={setMakeGeospatialOpen}
+        onConversionComplete={setConversionSuccess}
       />
     </div>
   );

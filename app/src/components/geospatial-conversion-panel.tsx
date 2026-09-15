@@ -1,6 +1,6 @@
 import { detectCoordinateColumns } from "@caden/json-cms/react";
 import { useMutation, useQuery } from "convex/react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "#/components/ui/button";
@@ -210,6 +210,7 @@ export function GeospatialConversionPanel({
   entryCount,
   open,
   onOpenChange,
+  onConversionComplete,
 }: {
   schemaId: string;
   /** Every property name on the dataset's schema — populates the two selects. */
@@ -219,6 +220,8 @@ export function GeospatialConversionPanel({
   entryCount: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Fired once, when a conversion started by this panel finishes successfully. */
+  onConversionComplete?: (result: { processed: number; total: number }) => void;
 }) {
   const guess = detectCoordinateColumns(sampleRows),
     [latField, setLatField] = useState(guess === undefined ? NONE : guess.latField),
@@ -227,10 +230,14 @@ export function GeospatialConversionPanel({
     [isSubmitting, setIsSubmitting] = useState(false),
     startGeospatialConversion = useMutation(api.imports.startGeospatialConversion),
     status = useQuery(api.imports.getImportStatus, importId ? { importId } : "skip"),
+    // One completion notification per conversion started by this panel —
+    // reset when the form is reused for a new conversion.
+    notifiedCompleteRef = useRef(false),
     resetFields = () => {
       setLatField(guess === undefined ? NONE : guess.latField);
       setLonField(guess === undefined ? NONE : guess.lonField);
       setImportId(undefined);
+      notifiedCompleteRef.current = false;
     },
     handleSubmit = async (event: React.FormEvent) => {
       event.preventDefault();
@@ -253,6 +260,23 @@ export function GeospatialConversionPanel({
         setIsSubmitting(false);
       }
     };
+
+  // Settled conversions shouldn't leave the user staring at a finished
+  // progress bar: announce success (a failed conversion keeps the sheet open
+  // with its inline error instead) and close the sheet. Fires once per
+  // conversion, and also covers the "Hide"-then-later-completes case — the
+  // toast still lands even though there's no sheet left to close.
+  useEffect(() => {
+    if (!status || status.status !== "completed" || notifiedCompleteRef.current) {
+      return;
+    }
+    notifiedCompleteRef.current = true;
+    toast.success(`Conversion complete — ${status.processed} of ${status.total} rows geocoded.`);
+    if (onConversionComplete) {
+      onConversionComplete({ processed: status.processed, total: status.total });
+    }
+    onOpenChange(false);
+  }, [status, onConversionComplete, onOpenChange]);
 
   return (
     <Sheet
