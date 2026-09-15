@@ -660,11 +660,17 @@ describe("json-cms component", () => {
           // matching the largest inline rows in the real 80 MB fixture file.
           ring = bigRing(34_000),
           geometryJson = JSON.stringify({ coordinates: [ring], type: "Polygon" });
-        expect(new TextEncoder().encode(geometryJson).length).toBeLessThan(INLINE_GEOMETRY_BYTE_LIMIT);
+        expect(new TextEncoder().encode(geometryJson).length).toBeLessThan(
+          INLINE_GEOMETRY_BYTE_LIMIT,
+        );
 
         for (let i = 0; i < ROW_COUNT; i += 1) {
           // oxlint-disable-next-line no-await-in-loop -- seeding fixture rows; order doesn't matter but each is cheap and sequential is simplest here.
-          await t.mutation(api.lib.createEntry, { data: { n: i }, geometry: geometryJson, schemaId });
+          await t.mutation(api.lib.createEntry, {
+            data: { n: i },
+            geometry: geometryJson,
+            schemaId,
+          });
         }
 
         // A deliberately small requested page size proves the pagination
@@ -1154,6 +1160,111 @@ describe("json-cms component", () => {
 
       const entries = await t.query(api.lib.listEntries, { schemaId });
       expect(entries).toHaveLength(1);
+    });
+  });
+
+  describe("geospatial conversion", () => {
+    // startGeospatialConversion's happy path kicks off the workflow Engine,
+    // which isn't unit-testable here (see the dataset import note above), so
+    // these assert the guard and the batch primitive the workflow drives —
+    // exactly, page by page, as geospatialConversionWorkflow would.
+    async function createCoordinateSchema(t: TestCtx) {
+      return t.mutation(api.lib.createSchema, {
+        schema: {
+          description: "Tabular rows with coordinate columns",
+          properties: {
+            Latitude: { type: "number" },
+            Longitude: { type: "number" },
+            Name: { type: "string" },
+          },
+          title: "Coordinate Schema",
+          type: "object",
+        },
+      });
+    }
+
+    async function runConversion(t: TestCtx, schemaId: Id<"schemas">) {
+      let cursor: string | null = null,
+        geocoded = 0,
+        isDone = false;
+      while (!isDone) {
+        // oxlint-disable-next-line no-await-in-loop -- each page's cursor depends on the previous one.
+        const result = await t.mutation(internal.lib.convertEntriesBatchInternal, {
+          cursor,
+          latField: "Latitude",
+          lonField: "Longitude",
+          schemaId,
+        });
+        cursor = result.continueCursor;
+        geocoded += result.geocoded;
+        isDone = result.isDone;
+      }
+      return geocoded;
+    }
+
+    it("startGeospatialConversion rejects converting an already-geospatial dataset", async () => {
+      const t = initConvexTest(),
+        schemaId = await t.mutation(api.lib.createSchema, {
+          geometryType: "Point",
+          kind: "geospatial",
+          schema: {
+            description: "Already geospatial",
+            properties: {
+              Latitude: { type: "number" },
+              Longitude: { type: "number" },
+            },
+            title: "Geospatial",
+            type: "object",
+          },
+        });
+
+      await expect(
+        t.mutation(api.lib.startGeospatialConversion, {
+          latField: "Latitude",
+          lonField: "Longitude",
+          schemaId,
+          total: 0,
+        }),
+      ).rejects.toThrow("already geospatial");
+    });
+
+    it("conversion preserves every entry property — including the Latitude/Longitude columns it consumes — while backfilling Point geometry (regression: #31)", async () => {
+      const t = initConvexTest(),
+        schemaId = await createCoordinateSchema(t),
+        rows = [
+          { Latitude: 44.33354, Longitude: -108.03041, Name: "valid" },
+          { Latitude: 0, Longitude: 0, Name: "origin" },
+          { Latitude: 999, Longitude: 0, Name: "invalid-lat" }, // out of range — skipped, not modified
+          { Name: "no-coords" },
+        ],
+        createdIds = [];
+      for (const data of rows) {
+        // oxlint-disable-next-line no-await-in-loop -- sequential inserts keep createdIds aligned with rows.
+        createdIds.push(await t.mutation(api.lib.createEntry, { data, schemaId }));
+      }
+
+      const geocoded = await runConversion(t, schemaId);
+      expect(geocoded).toBe(2);
+
+      const entries = await t.query(api.lib.listEntries, { schemaId });
+      expect(entries).toHaveLength(rows.length);
+      for (const [i, id] of createdIds.entries()) {
+        const entry = entries.find((e) => e._id === id);
+        assertDefined(entry);
+        // THE regression assertion: `data` — every property, coordinate
+        // columns included — comes through conversion byte-for-byte.
+        expect(entry.data).toStrictEqual(rows[i]);
+        // Geometry lands exactly on the rows with valid coordinates.
+        const hasGeometry = entry.geometryId !== undefined;
+        expect(hasGeometry).toBe(i < 2);
+        if (hasGeometry) {
+          expect(entry.geometryType).toBe("Point");
+        }
+      }
+
+      const geometries = await listAllGeometries(t, schemaId);
+      expect(geometries).toHaveLength(2);
+      expect(geometries.every((g) => g.type === "Point")).toBe(true);
     });
   });
 });
