@@ -65,7 +65,7 @@ const entryPanelSearchSchema = z.object({
   entryId: z.string().optional(),
   panel: z.enum(["create", "edit"]).optional(),
   // Active tab ("overview" is the default and deliberately absent from the URL).
-  view: z.enum(["overview", "entries", "schema"]).optional(),
+  view: z.enum(["overview", "entries", "structure"]).optional(),
 });
 
 export const Route = createFileRoute("/datasets/$schemaId/")({
@@ -242,13 +242,13 @@ function SchemaDetailPage() {
     // Tab switches write `?view=` so the active tab survives reloads and is
     // linkable; "overview" is the default and stays out of the URL. Panel
     // navigations above merge (not replace) so they never drop it.
-    setView = async (view: "entries" | "overview" | "schema") => {
+    setView = async (view: "entries" | "overview" | "structure") => {
       await navigate({
         search: (prev) => ({ ...prev, view: view === "overview" ? undefined : view }),
       });
     },
     handleTabChange = (value: unknown) => {
-      if (value === "entries" || value === "overview" || value === "schema") {
+      if (value === "entries" || value === "overview" || value === "structure") {
         void setView(value);
       }
     },
@@ -421,7 +421,7 @@ function SchemaDetailPage() {
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="entries">Data ({entries.length})</TabsTrigger>
-          <TabsTrigger value="schema">Schema</TabsTrigger>
+          <TabsTrigger value="structure">Structure</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6">
@@ -465,7 +465,7 @@ function SchemaDetailPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="schema" className="space-y-6">
+        <TabsContent value="structure" className="space-y-6">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
