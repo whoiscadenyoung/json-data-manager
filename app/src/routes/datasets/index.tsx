@@ -4,16 +4,15 @@ import type { FunctionReturnType } from "convex/server";
 import {
   Calendar,
   ChevronRight,
-  Database,
   FolderOpen,
   Layers,
-  MapPin,
   Plus,
   Search,
 } from "lucide-react";
 import { useState } from "react";
 
 import { RouterButton } from "#/components/router-button";
+import { DatasetTypeTags } from "#/components/dataset-type-tags";
 import { Badge } from "#/components/ui/badge";
 import { Card } from "#/components/ui/card";
 import {
@@ -169,27 +168,6 @@ function FiltersSidebar({
         </div>
       </div>
     </aside>
-  );
-}
-
-/** Type tags shown at the top of each card: Geospatial + geometry type, or Regular. */
-function DatasetTypeTags({ dataset }: { dataset: DatasetSummary }) {
-  if (dataset.kind === "geospatial") {
-    return (
-      <>
-        <Badge variant="default">
-          <MapPin />
-          Geospatial
-        </Badge>
-        {dataset.geometryType && <Badge variant="outline">{dataset.geometryType}</Badge>}
-      </>
-    );
-  }
-  return (
-    <Badge variant="secondary">
-      <Database />
-      Regular
-    </Badge>
   );
 }
 

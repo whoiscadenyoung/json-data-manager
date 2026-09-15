@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import type { FunctionReturnType } from "convex/server";
 import { MoreHorizontal, Trash2, Ungroup } from "lucide-react";
 
+import { DatasetTypeTags } from "#/components/dataset-type-tags";
 import { Button } from "#/components/ui/button";
 import {
   DropdownMenu,
@@ -34,6 +35,9 @@ function DatasetRow({
   return (
     <li className="flex items-center justify-between gap-2 rounded-md border px-3 py-2">
       <Link to="/datasets/$schemaId" params={{ schemaId: dataset._id }} className="min-w-0 flex-1">
+        <div className="mb-1 flex flex-wrap items-center gap-2">
+          <DatasetTypeTags dataset={dataset} />
+        </div>
         <p className="truncate text-sm font-medium">{dataset.title}</p>
         <p className="truncate text-xs text-muted-foreground">{dataset.description}</p>
       </Link>
