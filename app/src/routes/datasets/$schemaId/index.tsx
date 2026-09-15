@@ -5,6 +5,7 @@ import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import {
   CheckCircle,
+  ChevronDown,
   Code2,
   Download,
   FilePlus,
@@ -38,6 +39,7 @@ import {
 } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Empty,
   EmptyContent,
@@ -257,6 +259,7 @@ function SchemaDetailPage() {
     geometries = useGeometriesForSchema(schema, schemaId),
     [organizeOpen, setOrganizeOpen] = useState(false),
     [makeGeospatialOpen, setMakeGeospatialOpen] = useState(false),
+    [jsonDefinitionOpen, setJsonDefinitionOpen] = useState(false),
     [conversionSuccess, setConversionSuccess] = useState<
       { processed: number; total: number } | undefined
     >(undefined),
@@ -442,19 +445,34 @@ function SchemaDetailPage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Code2 className="h-5 w-5" />
-                JSON Definition
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="bg-muted rounded-lg p-4 overflow-x-auto">
-                <pre className="text-sm">{JSON.stringify(schema.schema, null, 2)}</pre>
-              </div>
-            </CardContent>
-          </Card>
+          <Collapsible
+            open={jsonDefinitionOpen}
+            onOpenChange={(next) => {
+              setJsonDefinitionOpen(next);
+            }}
+          >
+            <Card>
+              <CardHeader>
+                <CollapsibleTrigger className="flex w-full cursor-pointer items-center justify-between text-left">
+                  <CardTitle className="flex items-center gap-2">
+                    <Code2 className="h-5 w-5" />
+                    JSON Definition
+                  </CardTitle>
+                  <ChevronDown
+                    className="size-4 text-muted-foreground transition-transform"
+                    style={{ rotate: jsonDefinitionOpen ? "180deg" : undefined }}
+                  />
+                </CollapsibleTrigger>
+              </CardHeader>
+              <CollapsibleContent>
+                <CardContent>
+                  <div className="bg-muted rounded-lg p-4 overflow-x-auto">
+                    <pre className="text-sm">{JSON.stringify(schema.schema, null, 2)}</pre>
+                  </div>
+                </CardContent>
+              </CollapsibleContent>
+            </Card>
+          </Collapsible>
         </TabsContent>
       </Tabs>
 
