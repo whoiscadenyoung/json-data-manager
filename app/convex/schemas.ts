@@ -8,4 +8,5 @@ export const {
   getSchema: get,
   createSchema: create,
   updateSchema: update,
+  deleteSchema: remove,
 } = exposeApi(components.jsonCms, { auth });

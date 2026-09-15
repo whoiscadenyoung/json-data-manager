@@ -26,7 +26,6 @@ import {
 import { api } from "#convex/_generated/api";
 
 type Collection = FunctionReturnType<typeof api.collections.list>[number];
-type Dataset = FunctionReturnType<typeof api.schemas.list>[number];
 
 function CollectionCard({
   collection,
@@ -87,16 +86,19 @@ function CollectionCard({
   );
 }
 
-function countByCollection(datasets: Dataset[] | undefined, collectionId: string): number {
-  if (datasets === undefined) {
+function countByCollection(
+  memberships: FunctionReturnType<typeof api.collections.listSchemaCollections> | undefined,
+  collectionId: string,
+): number {
+  if (memberships === undefined) {
     return 0;
   }
-  return datasets.filter((dataset) => dataset.collectionId === collectionId).length;
+  return memberships.filter((membership) => membership.collectionId === collectionId).length;
 }
 
 function CollectionsPage() {
   const collections = useQuery(api.collections.list),
-    datasets = useQuery(api.schemas.list),
+    memberships = useQuery(api.collections.listSchemaCollections),
     deleteCollection = useMutation(api.collections.remove),
     [formOpen, setFormOpen] = useState(false),
     [editing, setEditing] = useState<Collection | undefined>(),
@@ -113,7 +115,7 @@ function CollectionsPage() {
       }
     };
 
-  if (collections === undefined) {
+  if (collections === undefined || memberships === undefined) {
     return (
       <div className="flex justify-center items-center min-h-100">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
@@ -168,7 +170,7 @@ function CollectionsPage() {
             <CollectionCard
               key={collection._id}
               collection={collection}
-              datasetCount={countByCollection(datasets, collection._id)}
+              datasetCount={countByCollection(memberships, collection._id)}
               onEdit={(target) => {
                 setEditing(target);
                 setFormOpen(true);

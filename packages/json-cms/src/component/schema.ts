@@ -11,27 +11,38 @@ export default defineSchema({
     name: v.string(),
   }),
 
-  // A tighter-coupled sub-collection within one `collections` doc — e.g.
-  // "SMART Grant 2025" holding just that year's polygons + points datasets.
-  // Always belongs to exactly one collection; never nests inside another group.
+  // A tighter-coupled set of related datasets — e.g. "SMART Grant 2025"
+  // holding just that year's polygons + points datasets, which don't make
+  // sense on their own. Usually lives inside one `collections` doc, but may
+  // also float standalone (no `collectionId`); never nests inside another
+  // group.
   groups: defineTable({
-    collectionId: v.id("collections"),
+    collectionId: v.optional(v.id("collections")),
     description: v.optional(v.string()),
     name: v.string(),
   }).index("by_collection", ["collectionId"]),
 
+  // Many-to-many membership between datasets and collections — a dataset can
+  // live in any number of collections, and a collection holds any number of
+  // datasets. One row per `{dataset, collection}` pair, deleted and re-derived
+  // only through addSchemaToCollection/removeSchemaFromCollection (which
+  // enforce uniqueness of the pair). Group membership is deliberately
+  // independent of these rows — see `groups` and setSchemaGroup.
+  schemaCollections: defineTable({
+    collectionId: v.id("collections"),
+    schemaId: v.id("schemas"),
+  })
+    .index("by_schema", ["schemaId"])
+    .index("by_collection", ["collectionId"]),
+
   schemas: defineTable({
-    // Denormalized from the owning group (kept in sync by setSchemaGroup) so a
-    // grouped dataset can still be queried/filtered by its collection directly,
-    // without joining through `groups`. Cleared alongside `groupId` whenever a
-    // dataset is moved to a different collection or ungrouped entirely.
-    collectionId: v.optional(v.id("collections")),
     description: v.string(),
     // Absent/undefined means "standard" (a plain JSON-schema dataset). No
     // Migration needed for existing docs — they simply have no `kind`.
     geometryType: v.optional(geometryTypeValidator), // Only meaningful when kind === "geospatial"
-    // A dataset can belong to at most one group. Setting this always implies
-    // `collectionId` equals the group's own `collectionId` — see setSchemaGroup.
+    // A dataset can belong to at most one group. Independent of collection
+    // memberships (see `schemaCollections`) — a grouped dataset isn't
+    // implicitly in the group's collection.
     groupId: v.optional(v.id("groups")),
     kind: v.optional(v.union(v.literal("standard"), v.literal("geospatial"))),
     // Denormalized dataset-level summary, maintained incrementally by the
@@ -51,7 +62,6 @@ export default defineSchema({
     title: v.string(),
     uiSchema: v.optional(v.any()), // RJSF UI schema object
   })
-    .index("by_collection", ["collectionId"])
     .index("by_group", ["groupId"]),
 
   entries: defineTable({

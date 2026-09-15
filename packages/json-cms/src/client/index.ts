@@ -55,7 +55,10 @@ export type GroupId = Id<"groups">;
  *   deleteGroup,
  *   listSchemasByCollection,
  *   listEntriesByCollection,
- *   setSchemaCollection,
+ *   listSchemaCollections,
+ *   listCollectionsBySchema,
+ *   addSchemaToCollection,
+ *   removeSchemaFromCollection,
  *   setSchemaGroup,
  * } = exposeApi(components.jsonCms, {
  *   auth: async (ctx, operation) => {
@@ -217,9 +220,12 @@ export function exposeApi(
 
     // Group operations
     listGroups: queryGeneric({
-      args: { collectionId: v.string() },
+      args: { collectionId: v.optional(v.string()) },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { collectionId: args.collectionId, type: "read" });
+        await options.auth(ctx, {
+          collectionId: args.collectionId,
+          type: "read",
+        });
         return ctx.runQuery(component.lib.listGroups, {
           collectionId: args.collectionId,
         });
@@ -234,7 +240,7 @@ export function exposeApi(
     }),
     createGroup: mutationGeneric({
       args: {
-        collectionId: v.string(),
+        collectionId: v.optional(v.string()),
         description: v.optional(v.string()),
         name: v.string(),
       },
@@ -262,7 +268,10 @@ export function exposeApi(
       },
     }),
 
-    // Dataset <-> collection/group association
+    // Dataset <-> collection/group association. Collections are many-to-many
+    // (a dataset can sit in any number of them, via the `schemaCollections`
+    // join table); a dataset has at most one group. The two relationships are
+    // independent.
     listSchemasByCollection: queryGeneric({
       args: { collectionId: v.string() },
       handler: async (ctx, args) => {
@@ -292,11 +301,40 @@ export function exposeApi(
         });
       },
     }),
-    setSchemaCollection: mutationGeneric({
-      args: { collectionId: v.union(v.string(), v.null()), schemaId: v.string() },
+    // Every `{dataset, collection}` membership row — lets clients count or
+    // filter memberships without one query per collection.
+    listSchemaCollections: queryGeneric({
+      args: {},
+      handler: async (ctx) => {
+        await options.auth(ctx, { type: "read" });
+        return ctx.runQuery(component.lib.listSchemaCollections, {});
+      },
+    }),
+    // The collections a dataset currently belongs to.
+    listCollectionsBySchema: queryGeneric({
+      args: { schemaId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { schemaId: args.schemaId, type: "read" });
+        return ctx.runQuery(component.lib.listCollectionsBySchema, {
+          schemaId: args.schemaId,
+        });
+      },
+    }),
+    // Adds a dataset to a collection (a no-op if already a member).
+    addSchemaToCollection: mutationGeneric({
+      args: { collectionId: v.string(), schemaId: v.string() },
       handler: async (ctx, args) => {
         await options.auth(ctx, { schemaId: args.schemaId, type: "update" });
-        return ctx.runMutation(component.lib.setSchemaCollection, args);
+        return ctx.runMutation(component.lib.addSchemaToCollection, args);
+      },
+    }),
+    // Removes one of a dataset's collection memberships — its other
+    // memberships and its group are untouched.
+    removeSchemaFromCollection: mutationGeneric({
+      args: { collectionId: v.string(), schemaId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { schemaId: args.schemaId, type: "update" });
+        return ctx.runMutation(component.lib.removeSchemaFromCollection, args);
       },
     }),
     setSchemaGroup: mutationGeneric({

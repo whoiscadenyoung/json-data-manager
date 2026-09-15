@@ -13,12 +13,12 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as CollectionsIndexRouteImport } from './routes/collections/index'
 import { Route as DatasetsIndexRouteImport } from './routes/datasets/index'
 import { Route as DatasetsCreateRouteImport } from './routes/datasets/create'
+import { Route as GroupsGroupIdRouteImport } from './routes/groups/$groupId'
 import { Route as CollectionsCollectionIdIndexRouteImport } from './routes/collections/$collectionId/index'
 import { Route as DatasetsSchemaIdIndexRouteImport } from './routes/datasets/$schemaId/index'
 import { Route as DatasetsSchemaIdEntryIdRouteImport } from './routes/datasets/$schemaId/$entryId'
 import { Route as DatasetsSchemaIdBulkUploadRouteImport } from './routes/datasets/$schemaId/bulk-upload'
 import { Route as DatasetsSchemaIdEditRouteImport } from './routes/datasets/$schemaId/edit'
-import { Route as CollectionsCollectionIdGroupsGroupIdIndexRouteImport } from './routes/collections/$collectionId/groups/$groupId/index'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -38,6 +38,11 @@ const DatasetsIndexRoute = DatasetsIndexRouteImport.update({
 const DatasetsCreateRoute = DatasetsCreateRouteImport.update({
   id: '/datasets/create',
   path: '/datasets/create',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GroupsGroupIdRoute = GroupsGroupIdRouteImport.update({
+  id: '/groups/$groupId',
+  path: '/groups/$groupId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CollectionsCollectionIdIndexRoute =
@@ -67,16 +72,11 @@ const DatasetsSchemaIdEditRoute = DatasetsSchemaIdEditRouteImport.update({
   path: '/datasets/$schemaId/edit',
   getParentRoute: () => rootRouteImport,
 } as any)
-const CollectionsCollectionIdGroupsGroupIdIndexRoute =
-  CollectionsCollectionIdGroupsGroupIdIndexRouteImport.update({
-    id: '/collections/$collectionId/groups/$groupId/',
-    path: '/collections/$collectionId/groups/$groupId/',
-    getParentRoute: () => rootRouteImport,
-  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/datasets/create': typeof DatasetsCreateRoute
+  '/groups/$groupId': typeof GroupsGroupIdRoute
   '/collections/': typeof CollectionsIndexRoute
   '/datasets/': typeof DatasetsIndexRoute
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
@@ -84,11 +84,11 @@ export interface FileRoutesByFullPath {
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
   '/collections/$collectionId/': typeof CollectionsCollectionIdIndexRoute
   '/datasets/$schemaId/': typeof DatasetsSchemaIdIndexRoute
-  '/collections/$collectionId/groups/$groupId/': typeof CollectionsCollectionIdGroupsGroupIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/datasets/create': typeof DatasetsCreateRoute
+  '/groups/$groupId': typeof GroupsGroupIdRoute
   '/collections': typeof CollectionsIndexRoute
   '/datasets': typeof DatasetsIndexRoute
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
@@ -96,12 +96,12 @@ export interface FileRoutesByTo {
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
   '/collections/$collectionId': typeof CollectionsCollectionIdIndexRoute
   '/datasets/$schemaId': typeof DatasetsSchemaIdIndexRoute
-  '/collections/$collectionId/groups/$groupId': typeof CollectionsCollectionIdGroupsGroupIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/datasets/create': typeof DatasetsCreateRoute
+  '/groups/$groupId': typeof GroupsGroupIdRoute
   '/collections/': typeof CollectionsIndexRoute
   '/datasets/': typeof DatasetsIndexRoute
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
@@ -109,13 +109,13 @@ export interface FileRoutesById {
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
   '/collections/$collectionId/': typeof CollectionsCollectionIdIndexRoute
   '/datasets/$schemaId/': typeof DatasetsSchemaIdIndexRoute
-  '/collections/$collectionId/groups/$groupId/': typeof CollectionsCollectionIdGroupsGroupIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
     | '/datasets/create'
+    | '/groups/$groupId'
     | '/collections/'
     | '/datasets/'
     | '/datasets/$schemaId/$entryId'
@@ -123,11 +123,11 @@ export interface FileRouteTypes {
     | '/datasets/$schemaId/edit'
     | '/collections/$collectionId/'
     | '/datasets/$schemaId/'
-    | '/collections/$collectionId/groups/$groupId/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/datasets/create'
+    | '/groups/$groupId'
     | '/collections'
     | '/datasets'
     | '/datasets/$schemaId/$entryId'
@@ -135,11 +135,11 @@ export interface FileRouteTypes {
     | '/datasets/$schemaId/edit'
     | '/collections/$collectionId'
     | '/datasets/$schemaId'
-    | '/collections/$collectionId/groups/$groupId'
   id:
     | '__root__'
     | '/'
     | '/datasets/create'
+    | '/groups/$groupId'
     | '/collections/'
     | '/datasets/'
     | '/datasets/$schemaId/$entryId'
@@ -147,12 +147,12 @@ export interface FileRouteTypes {
     | '/datasets/$schemaId/edit'
     | '/collections/$collectionId/'
     | '/datasets/$schemaId/'
-    | '/collections/$collectionId/groups/$groupId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DatasetsCreateRoute: typeof DatasetsCreateRoute
+  GroupsGroupIdRoute: typeof GroupsGroupIdRoute
   CollectionsIndexRoute: typeof CollectionsIndexRoute
   DatasetsIndexRoute: typeof DatasetsIndexRoute
   DatasetsSchemaIdEntryIdRoute: typeof DatasetsSchemaIdEntryIdRoute
@@ -160,7 +160,6 @@ export interface RootRouteChildren {
   DatasetsSchemaIdEditRoute: typeof DatasetsSchemaIdEditRoute
   CollectionsCollectionIdIndexRoute: typeof CollectionsCollectionIdIndexRoute
   DatasetsSchemaIdIndexRoute: typeof DatasetsSchemaIdIndexRoute
-  CollectionsCollectionIdGroupsGroupIdIndexRoute: typeof CollectionsCollectionIdGroupsGroupIdIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -191,6 +190,13 @@ declare module '@tanstack/react-router' {
       path: '/datasets/create'
       fullPath: '/datasets/create'
       preLoaderRoute: typeof DatasetsCreateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/groups/$groupId': {
+      id: '/groups/$groupId'
+      path: '/groups/$groupId'
+      fullPath: '/groups/$groupId'
+      preLoaderRoute: typeof GroupsGroupIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/collections/$collectionId/': {
@@ -228,19 +234,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DatasetsSchemaIdEditRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/collections/$collectionId/groups/$groupId/': {
-      id: '/collections/$collectionId/groups/$groupId/'
-      path: '/collections/$collectionId/groups/$groupId'
-      fullPath: '/collections/$collectionId/groups/$groupId/'
-      preLoaderRoute: typeof CollectionsCollectionIdGroupsGroupIdIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DatasetsCreateRoute: DatasetsCreateRoute,
+  GroupsGroupIdRoute: GroupsGroupIdRoute,
   CollectionsIndexRoute: CollectionsIndexRoute,
   DatasetsIndexRoute: DatasetsIndexRoute,
   DatasetsSchemaIdEntryIdRoute: DatasetsSchemaIdEntryIdRoute,
@@ -248,8 +248,6 @@ const rootRouteChildren: RootRouteChildren = {
   DatasetsSchemaIdEditRoute: DatasetsSchemaIdEditRoute,
   CollectionsCollectionIdIndexRoute: CollectionsCollectionIdIndexRoute,
   DatasetsSchemaIdIndexRoute: DatasetsSchemaIdIndexRoute,
-  CollectionsCollectionIdGroupsGroupIdIndexRoute:
-    CollectionsCollectionIdGroupsGroupIdIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -28,14 +28,14 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-/** Side panel for creating or editing a group (a sub-collection) within a fixed collection. */
+/** Side panel for creating or editing a group (a sub-collection). Groups may live inside a collection (`collectionId`) or float standalone. */
 export function GroupFormPanel({
   collectionId,
   group,
   open,
   onOpenChange,
 }: {
-  collectionId: string;
+  collectionId?: string;
   group?: Group;
   open: boolean;
   onOpenChange: (open: boolean) => void;

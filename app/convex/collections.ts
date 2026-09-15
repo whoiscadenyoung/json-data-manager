@@ -11,6 +11,9 @@ export const {
   deleteCollection: remove,
   listSchemasByCollection: listDatasets,
   listEntriesByCollection,
-  setSchemaCollection,
+  listSchemaCollections,
+  listCollectionsBySchema,
+  addSchemaToCollection,
+  removeSchemaFromCollection,
   setSchemaGroup,
 } = exposeApi(components.jsonCms, { auth });
