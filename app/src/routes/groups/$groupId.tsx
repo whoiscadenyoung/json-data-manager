@@ -70,6 +70,16 @@ function GroupDetailPage() {
     ),
     { geometries, loaders } = useGeometriesBySchemas(geospatialSchemaIds),
     resolvedGeometries = useResolvedGeometries(geometries ?? []),
+    // Per-dataset row counts for the member list, derived from the entries
+    // this page already fetches for the map's popups and the exports — no
+    // extra query. Undefined while the entries are still loading, which just
+    // hides the regular datasets' "N rows" labels until they're in.
+    entryCounts = entries
+      ? entries.reduce<Map<string, number>>(
+          (counts, entry) => counts.set(entry.schemaId, (counts.get(entry.schemaId) ?? 0) + 1),
+          new Map(),
+        )
+      : undefined,
     setSchemaGroup = useMutation(api.collections.setSchemaGroup),
     deleteGroup = useMutation(api.groups.remove),
     [editingGroup, setEditingGroup] = useState(false),
@@ -320,6 +330,7 @@ function GroupDetailPage() {
           <DatasetList
             datasets={datasets}
             groups={groups}
+            entryCounts={entryCounts}
             emptyLabel="No datasets in this group yet."
             onMoveToGroup={(dataset, targetGroupId) => {
               void handleMoveToGroup(dataset, targetGroupId);

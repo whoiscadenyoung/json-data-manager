@@ -151,6 +151,28 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         },
         Name
       >;
+      getEntryGeometry: FunctionReference<
+        "query",
+        "internal",
+        { entryId: string },
+        null | {
+          _creationTime: number;
+          _id: string;
+          bbox?: Array<number>;
+          entryId: string;
+          geometryJson?: string;
+          geometryUrl?: string;
+          schemaId: string;
+          type:
+            | "Point"
+            | "MultiPoint"
+            | "LineString"
+            | "MultiLineString"
+            | "Polygon"
+            | "MultiPolygon";
+        },
+        Name
+      >;
       getGroup: FunctionReference<
         "query",
         "internal",
@@ -190,7 +212,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           _creationTime: number;
           _id: string;
           boundingBox?: Array<number>;
-          description: string;
+          description?: string;
           featureCount?: number;
           geometryType?:
             | "Point"
@@ -386,7 +408,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           _creationTime: number;
           _id: string;
           boundingBox?: Array<number>;
-          description: string;
+          description?: string;
           featureCount?: number;
           geometryType?:
             | "Point"
@@ -411,7 +433,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           _creationTime: number;
           _id: string;
           boundingBox?: Array<number>;
-          description: string;
+          description?: string;
           featureCount?: number;
           geometryType?:
             | "Point"

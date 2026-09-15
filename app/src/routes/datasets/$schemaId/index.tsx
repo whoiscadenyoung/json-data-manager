@@ -64,6 +64,8 @@ import { api } from "../../../../convex/_generated/api";
 const entryPanelSearchSchema = z.object({
   entryId: z.string().optional(),
   panel: z.enum(["create", "edit"]).optional(),
+  // Active tab ("overview" is the default and deliberately absent from the URL).
+  view: z.enum(["overview", "entries", "structure"]).optional(),
 });
 
 export const Route = createFileRoute("/datasets/$schemaId/")({
@@ -83,16 +85,22 @@ type EntryPanelSearch = z.infer<typeof entryPanelSearchSchema>;
  * `"skip"` otherwise. `listGeometries` is paginated server-side (a dataset's
  * cumulative geometry payload can exceed Convex's per-execution read-byte
  * budget even though each row is safely under its own document-size limit),
- * so this fetches every page and returns `undefined` until all of them have
- * loaded — matching the plain-`useQuery` shape the rest of this page expects.
+ * so this fetches every page. `geometries` is `undefined` only until the
+ * first rows exist; `isComplete` is the real "everything is loaded" signal —
+ * a full pagination pass has finished, so the array is the complete dataset.
+ * (`isLoading` alone drops back to false after the first page, which is why
+ * the map's skeleton gate must key off `isComplete`.)
  */
 function useGeometriesForSchema(schema: Schema | null | undefined, schemaId: string) {
   const shouldFetch = schema ? schema.kind === "geospatial" : false,
-    { isLoading, results } = useAllPaginated(
+    { isLoading, results, status } = useAllPaginated(
       api.geometries.list,
       shouldFetch ? { schemaId } : "skip",
     );
-  return isLoading ? undefined : results;
+  return {
+    geometries: isLoading ? undefined : results,
+    isComplete: status === "Exhausted",
+  };
 }
 
 /**
@@ -211,8 +219,15 @@ function SchemaDetailPage() {
     navigate = Route.useNavigate(),
     schema = useQuery(api.schemas.get, { schemaId }),
     entries = useQuery(api.entries.list, { schemaId }),
-    geometries = useGeometriesForSchema(schema, schemaId),
+    { geometries, isComplete } = useGeometriesForSchema(schema, schemaId),
     resolvedGeometries = useResolvedGeometries(geometries ?? []),
+    // The dataset's group, for the breadcrumb — skipped unless it's grouped
+    // (also skips while `schema` itself is still loading, and yields null for
+    // a dangling groupId whose group was deleted).
+    group = useQuery(
+      api.groups.get,
+      schema?.groupId !== undefined ? { groupId: schema.groupId } : "skip",
+    ),
     [makeGeospatialOpen, setMakeGeospatialOpen] = useState(false),
     [exportOpen, setExportOpen] = useState(false),
     [jsonDefinitionOpen, setJsonDefinitionOpen] = useState(false),
@@ -220,14 +235,30 @@ function SchemaDetailPage() {
       { processed: number; total: number } | undefined
     >(undefined),
     openCreatePanel = async () => {
-      await navigate({ search: { panel: "create" } });
+      await navigate({ search: (prev) => ({ ...prev, panel: "create" }) });
     },
     openEditPanel = async (entry: Entry) => {
-      await navigate({ search: { entryId: entry._id, panel: "edit" } });
+      await navigate({ search: (prev) => ({ ...prev, entryId: entry._id, panel: "edit" }) });
     },
     closePanel = async () => {
-      await navigate({ search: {} });
+      await navigate({
+        search: (prev) => ({ ...prev, entryId: undefined, panel: undefined }),
+      });
     },
+    // Tab switches write `?view=` so the active tab survives reloads and is
+    // linkable; "overview" is the default and stays out of the URL. Panel
+    // navigations above merge (not replace) so they never drop it.
+    setView = async (view: "entries" | "overview" | "structure") => {
+      await navigate({
+        search: (prev) => ({ ...prev, view: view === "overview" ? undefined : view }),
+      });
+    },
+    handleTabChange = (value: unknown) => {
+      if (value === "entries" || value === "overview" || value === "structure") {
+        void setView(value);
+      }
+    },
+    view = search.view ?? "overview",
     isGeospatialDataset = schema !== undefined && schema !== null && schema.kind === "geospatial",
     exportFormats: ExportFormatOption[] = isGeospatialDataset
       ? [
@@ -314,6 +345,18 @@ function SchemaDetailPage() {
               <BreadcrumbItem>
                 <BreadcrumbLink render={<Link to="/datasets" />}>Datasets</BreadcrumbLink>
               </BreadcrumbItem>
+              {group != null && (
+                <>
+                  <BreadcrumbSeparator />
+                  <BreadcrumbItem>
+                    <BreadcrumbLink
+                      render={<Link to="/groups/$groupId" params={{ groupId: group._id }} />}
+                    >
+                      {group.name}
+                    </BreadcrumbLink>
+                  </BreadcrumbItem>
+                </>
+              )}
               <BreadcrumbSeparator />
               <BreadcrumbItem>
                 <BreadcrumbPage>{schema.title}</BreadcrumbPage>
@@ -369,20 +412,29 @@ function SchemaDetailPage() {
         />
       )}
 
-      <Tabs defaultValue="overview">
+      {schema.kind === "geospatial" && (
+        <section className="mb-6">
+          <EntriesMap
+            key={schemaId}
+            entries={entries}
+            geometries={geometries ?? []}
+            isLoading={!isComplete}
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the component maintains boundingBox as a fixed [minLon, minLat, maxLon, maxLat] (see `schemas.boundingBox` in packages/json-cms).
+            initialBbox={schema.boundingBox as [number, number, number, number] | undefined}
+            className="h-[420px]"
+          />
+        </section>
+      )}
+
+      <Tabs value={view} onValueChange={handleTabChange}>
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="entries">Data ({entries.length})</TabsTrigger>
-          <TabsTrigger value="schema">Schema</TabsTrigger>
+          <TabsTrigger value="structure">Structure</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6">
           <DatasetOverview schema={schema} schemaId={schemaId} />
-          {schema.kind === "geospatial" && geometries !== undefined && geometries.length > 0 && (
-            <section>
-              <EntriesMap geometries={geometries} entries={entries} className="h-[420px]" />
-            </section>
-          )}
         </TabsContent>
 
         <TabsContent value="entries">
@@ -422,7 +474,7 @@ function SchemaDetailPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="schema" className="space-y-6">
+        <TabsContent value="structure" className="space-y-6">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">

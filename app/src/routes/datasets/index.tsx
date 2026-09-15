@@ -4,16 +4,15 @@ import type { FunctionReturnType } from "convex/server";
 import {
   Calendar,
   ChevronRight,
-  Database,
   FolderOpen,
   Layers,
-  MapPin,
   Plus,
   Search,
 } from "lucide-react";
 import { useState } from "react";
 
 import { RouterButton } from "#/components/router-button";
+import { DatasetTypeTags } from "#/components/dataset-type-tags";
 import { Badge } from "#/components/ui/badge";
 import { Card } from "#/components/ui/card";
 import {
@@ -172,27 +171,6 @@ function FiltersSidebar({
   );
 }
 
-/** Type tags shown at the top of each card: Geospatial + geometry type, or Regular. */
-function DatasetTypeTags({ dataset }: { dataset: DatasetSummary }) {
-  if (dataset.kind === "geospatial") {
-    return (
-      <>
-        <Badge variant="default">
-          <MapPin />
-          Geospatial
-        </Badge>
-        {dataset.geometryType && <Badge variant="outline">{dataset.geometryType}</Badge>}
-      </>
-    );
-  }
-  return (
-    <Badge variant="secondary">
-      <Database />
-      Regular
-    </Badge>
-  );
-}
-
 function DatasetCard({ dataset }: { dataset: DatasetSummary }) {
   return (
     <Link to="/datasets/$schemaId" params={{ schemaId: dataset._id }} className="block">
@@ -263,17 +241,13 @@ function GroupCard({
               <Link
                 to="/datasets/$schemaId"
                 params={{ schemaId: dataset._id }}
-                className="flex items-center gap-3 bg-muted/20 px-4 py-2 pl-8 hover:bg-muted/50"
+                className="flex flex-col gap-1 bg-muted/20 px-4 py-2 pl-8 hover:bg-muted/50"
               >
-                {dataset.kind === "geospatial" ? (
-                  <MapPin className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                ) : (
-                  <Database className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                )}
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{dataset.title}</p>
-                  <p className="truncate text-xs text-muted-foreground">{dataset.description}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <DatasetTypeTags dataset={dataset} />
                 </div>
+                <p className="truncate text-sm font-medium">{dataset.title}</p>
+                <p className="truncate text-xs text-muted-foreground">{dataset.description}</p>
               </Link>
             </li>
           ))}

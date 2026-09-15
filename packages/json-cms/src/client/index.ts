@@ -402,6 +402,17 @@ export function exposeApi(
         });
       },
     }),
+    // The single geometry attached to one entry — for entry-level views that
+    // shouldn't drag in the whole dataset's paginated geometry set.
+    getEntryGeometry: queryGeneric({
+      args: { entryId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { entryId: args.entryId, type: "read" });
+        return ctx.runQuery(component.lib.getEntryGeometry, {
+          entryId: args.entryId,
+        });
+      },
+    }),
     // `geometry` travels as a JSON *string*, not the nested-array `Geometry`
     // shape — see `geometry_storage.ts` in the component for why (Convex's
     // 8192-elements-per-array limit, which real-world GIS rings routinely

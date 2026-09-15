@@ -121,5 +121,15 @@ export function useAllPaginated<Query extends PaginatedQueryReference>(
   return {
     isLoading: !nextState.hasCompletedPass && nextState.results.length === 0,
     results: nextState.results,
+    /**
+     * The underlying pagination status of the current pass. `"Exhausted"`
+     * means a full read of the query's result set just completed — the only
+     * point at which `results` is guaranteed complete. Note it reflects the
+     * *current* pass: a live-query write can flip it back to
+     * `"CanLoadMore"` while the next pass re-reads, so a consumer that only
+     * wants to gate the *first* render should latch on the first
+     * `"Exhausted"` rather than re-gating every time.
+     */
+    status,
   };
 }

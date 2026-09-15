@@ -138,12 +138,12 @@ function MetadataEditForm({
 }: {
   schemaId: string;
   title: string;
-  description: string;
+  description: string | undefined;
   updateSchema: ReturnType<typeof useMutation<typeof api.schemas.update>>;
   navigate: ReturnType<typeof useNavigate>;
 }) {
   const form = useForm({
-    defaultValues: { description, title },
+    defaultValues: { description: description ?? "", title },
     onSubmit: async ({ value }) => {
       try {
         await updateSchema({

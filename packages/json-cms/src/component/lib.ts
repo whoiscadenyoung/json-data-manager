@@ -118,8 +118,8 @@ export const createSchema = mutation({
     uiSchema: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
-    if (!args.schema.title || !args.schema.description) {
-      throw new ConvexError("Schema must have 'title' and 'description' properties");
+    if (!args.schema.title) {
+      throw new ConvexError("Schema must have a non-empty 'title' property");
     }
 
     assertKindAndGeometryType(args.kind, args.geometryType);
@@ -176,8 +176,8 @@ export const updateSchema = mutation({
         patch.description = args.description;
       }
     } else {
-      if (!args.schema.title || !args.schema.description) {
-        throw new ConvexError("Schema must have 'title' and 'description' properties");
+      if (!args.schema.title) {
+        throw new ConvexError("Schema must have a non-empty 'title' property");
       }
       const schemaStr = JSON.stringify(args.schema);
       if (schemaStr.length > SCHEMA_SIZE_LIMIT) {
@@ -756,6 +756,27 @@ export const listGeometries = query({
     };
   },
   returns: paginationResultValidator(geometryOutputValidator),
+});
+
+/**
+ * The single geometry attached to one entry (1:1 — see the `geometries`
+ * table's doc comment), or `null` when the entry has none. Lets entry-level
+ * views (entry details) fetch one geometry without dragging in the whole
+ * dataset's paginated set.
+ */
+export const getEntryGeometry = query({
+  args: { entryId: v.id("entries") },
+  handler: async (ctx, args) => {
+    const geometry = await ctx.db
+      .query("geometries")
+      .withIndex("by_entry", (q) => q.eq("entryId", args.entryId))
+      .unique();
+    if (geometry === null) {
+      return null;
+    }
+    return resolveGeometryOutput(ctx, geometry);
+  },
+  returns: v.union(v.null(), geometryOutputValidator),
 });
 
 /** The `_id`s of every geospatial dataset in a collection, via its `schemaCollections` membership rows. */

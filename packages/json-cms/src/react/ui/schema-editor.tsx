@@ -8,8 +8,12 @@ import type { GeometryType } from "../../shared/geojson/types.js";
 import { inferSchemaFromData } from "../lib/infer-schema.js";
 import { cn } from "./lib/utils.js";
 import { Button } from "./primitives/button.js";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./primitives/card.js";
 import { ConfirmDialog } from "./primitives/dialog.js";
+import { Input } from "./primitives/input.js";
 import { JsonEditor } from "./primitives/json-editor.js";
+import { Label } from "./primitives/label.js";
+import { Textarea } from "./primitives/textarea.js";
 import { SchemaPreview } from "./schema-preview.js";
 import { ValidationPane } from "./validation-pane.js";
 import type { ValidationState } from "./validation-pane.js";
@@ -68,15 +72,33 @@ function uiSchemaJsonError(uiSchemaJson: string): string | null {
   }
 }
 
-/** Validate the required `title` / `description` metadata on a parsed schema. */
+/** Validate the required `title` metadata on a parsed schema. `description` is optional. */
 function schemaMetaError(p: object): string | null {
   if (!("title" in p) || typeof p.title !== "string" || !p.title.trim()) {
     return "Schema must have a non-empty 'title' property.";
   }
-  if (!("description" in p) || typeof p.description !== "string" || !p.description.trim()) {
-    return "Schema must have a non-empty 'description' property.";
-  }
   return null;
+}
+
+/** Top-level `title`/`description` of the schema JSON, or undefined when the text is empty or doesn't parse to a JSON object. */
+function parsedSchemaMeta(schemaJson: string): { description: string; title: string } | undefined {
+  if (!schemaJson.trim()) {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(schemaJson);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return undefined;
+  }
+  const record = parsed as Record<string, unknown>;
+  return {
+    description: typeof record.description === "string" ? record.description : "",
+    title: typeof record.title === "string" ? record.title : "",
+  };
 }
 
 interface SchemaEditorProps {
@@ -436,6 +458,75 @@ function isGeometryType(value: string): value is GeometryType {
   return (GEOMETRY_TYPES as readonly string[]).includes(value);
 }
 
+/**
+ * Dataset name + summary, bound to the schema's top-level `title` /
+ * `description` — the title is required for every save, the description is
+ * optional. Rendered by `SchemaEditor` above the editor panels so they're
+ * visible on every tab: they used to live only inside the Visual builder,
+ * which hid them during an import (that flow opens on the Data tab) and left
+ * the disabled Save button unexplained.
+ */
+function DatasetInfoCard({
+  title,
+  description,
+  canEdit,
+  onChange,
+}: {
+  title: string;
+  description: string;
+  /** False while the schema JSON isn't a valid object — fix it in the Code tab first. */
+  canEdit: boolean;
+  onChange: (patch: { title?: string; description?: string }) => void;
+}) {
+  const missingMeta = canEdit && title.trim() === "";
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Dataset info</CardTitle>
+        <CardDescription>
+          Names your dataset across the app — a title is required; the description is optional.
+          Both are saved with the schema.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid grid-cols-1 gap-3">
+        <div className="space-y-1">
+          <Label htmlFor="schema-meta-title">
+            Title <span className="text-destructive">*</span>
+          </Label>
+          <Input
+            id="schema-meta-title"
+            value={title}
+            placeholder="My Dataset"
+            disabled={!canEdit}
+            onChange={(e) => {
+              onChange({ title: e.target.value });
+            }}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="schema-meta-description">Description</Label>
+          <Textarea
+            id="schema-meta-description"
+            value={description}
+            placeholder="Optional — describe what this dataset contains…"
+            rows={2}
+            disabled={!canEdit}
+            onChange={(e) => {
+              onChange({ description: e.target.value });
+            }}
+          />
+        </div>
+        {missingMeta && (
+          <div className="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+            A title is required before this dataset can be saved.
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 /** Editable dropdown of the 6 geometry types, or a read-only resolved type + summary when computed from an import. */
 function GeometryTypeControl({
   geometryType,
@@ -675,7 +766,7 @@ export function SchemaEditor({
             // No schema yet — infer directly
             const inferred = inferSchemaFromData(parsed);
             setSchemaJson(JSON.stringify(inferred, null, 2));
-            toast.success(`Schema inferred from ${file.name}! Fill in title and description.`);
+            toast.success(`Schema inferred from ${file.name}! Fill in the title.`);
           }
         } else if (schemaJson.trim()) {
           // It's a schema object
@@ -711,18 +802,16 @@ export function SchemaEditor({
       setPendingFile(null);
     },
     handleSwitchToVisual = () => {
-      if (activeTab === "code") {
-        // Empty editor is fine — visual builder shows a blank canvas
-        if (!schemaJson.trim()) {
-          setActiveTab("visual");
-          return;
-        }
-        try {
-          JSON.parse(schemaJson);
-          setActiveTab("visual");
-        } catch {
-          toast.error("Fix the JSON syntax error before switching to Visual mode.");
-        }
+      // Empty editor is fine — visual builder shows a blank canvas
+      if (!schemaJson.trim()) {
+        setActiveTab("visual");
+        return;
+      }
+      try {
+        JSON.parse(schemaJson);
+        setActiveTab("visual");
+      } catch {
+        toast.error("Fix the JSON syntax error before switching to Visual mode.");
       }
     },
     uiSchemaBytes = new Blob([uiSchemaJson]).size,
@@ -752,16 +841,35 @@ export function SchemaEditor({
         setIsSaving(false);
       }
     },
-    // When pre-populating a dataset, every imported row must validate.
-    isDataValid = validationState.total > 0 && validationState.invalidItemCount === 0,
-    canSave = computeCanSave(
-      schemaJsonError(schemaJson),
-      isOverLimit,
-      uiSchemaJsonError(uiSchemaJson),
-      isUiSchemaOverLimit,
-      requireValidData,
-      isDataValid,
-    );
+  // When pre-populating a dataset, every imported row must validate.
+  isDataValid = validationState.total > 0 && validationState.invalidItemCount === 0,
+  canSave = computeCanSave(
+    schemaJsonError(schemaJson),
+    isOverLimit,
+    uiSchemaJsonError(uiSchemaJson),
+    isUiSchemaOverLimit,
+    requireValidData,
+    isDataValid,
+  ),
+  // Dataset info card state: title/description live in the schema JSON itself,
+  // so editing them re-serializes it (the Visual builder and Code editor pick
+  // the change up through the same controlled `schemaJson`).
+  schemaMeta = parsedSchemaMeta(schemaJson),
+  handleMetaChange = (patch: { title?: string; description?: string }) => {
+    let parsed: unknown;
+    try {
+      parsed = schemaJson.trim() ? JSON.parse(schemaJson) : undefined;
+    } catch {
+      // Unparseable JSON — the card's inputs are disabled in this state.
+      return;
+    }
+    const base =
+      typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : // Typing into the card on an empty editor starts a minimal schema.
+          { properties: {}, type: "object" };
+    setSchemaJson(JSON.stringify({ ...base, ...patch }, null, 2));
+  };
 
   const showDataWarning = requireValidData && !isDataValid && !schemaJsonError(schemaJson);
 
@@ -781,6 +889,13 @@ export function SchemaEditor({
         onOpenChange={setIsConfirmDialogOpen}
         pendingFile={pendingFile}
         onConfirm={handleConfirm}
+      />
+
+      <DatasetInfoCard
+        title={schemaMeta?.title ?? ""}
+        description={schemaMeta?.description ?? ""}
+        canEdit={schemaMeta !== undefined || !schemaJson.trim()}
+        onChange={handleMetaChange}
       />
 
       {/* Main two-panel layout */}
@@ -832,7 +947,7 @@ export function SchemaEditor({
             availableDatasets={availableDatasets}
             onInferSchema={(inferredJson) => {
               setSchemaJson(inferredJson);
-              toast.success("Schema inferred! Fill in title and description to finish.");
+              toast.success("Schema inferred! Fill in the title to finish.");
             }}
             onStateChange={setValidationState}
           />

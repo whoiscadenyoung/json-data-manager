@@ -1,13 +1,14 @@
 import { buildFeatureCollection, computeBbox, useResolvedGeometries } from "@caden/json-cms/react";
 import type { Geometry } from "@caden/json-cms/react";
+import { Link } from "@tanstack/react-router";
 import type { FunctionReturnType } from "convex/server";
-import { X } from "lucide-react";
+import { ChevronRight, X } from "lucide-react";
 import { Fragment, useState } from "react";
 
-import { formatPropertyValue } from "#/components/entries-map";
 import type { GeometryEntry } from "#/components/schema-geometries-loader";
 import { Button } from "#/components/ui/button";
 import { Map, MapClusterLayer, MapGeoJSON } from "#/components/ui/map";
+import { formatPropertyValue } from "#/lib/format";
 import {
   bboxFeature,
   buildPointFeatureCollection,
@@ -89,6 +90,14 @@ function FeatureDetailsPanel({
           ))
         )}
       </dl>
+      <Link
+        to="/datasets/$schemaId/$entryId"
+        params={{ schemaId: entry.schemaId, entryId: entry._id }}
+        className="flex items-center justify-center gap-1.5 border-t border-border px-3 py-2 text-xs font-medium text-primary hover:bg-muted/50"
+      >
+        View details
+        <ChevronRight className="size-3" />
+      </Link>
     </div>
   );
 }

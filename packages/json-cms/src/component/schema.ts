@@ -36,7 +36,8 @@ export default defineSchema({
     .index("by_collection", ["collectionId"]),
 
   schemas: defineTable({
-    description: v.string(),
+    // Optional — a dataset needs a title, but a description is fine to omit.
+    description: v.optional(v.string()),
     // Absent/undefined means "standard" (a plain JSON-schema dataset). No
     // Migration needed for existing docs — they simply have no `kind`.
     geometryType: v.optional(geometryTypeValidator), // Only meaningful when kind === "geospatial"

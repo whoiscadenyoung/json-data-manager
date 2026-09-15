@@ -262,20 +262,20 @@ describe("json-cms component", () => {
         };
 
       await expect(t.mutation(api.lib.createSchema, { schema: badSchema })).rejects.toThrow(
-        "Schema must have 'title' and 'description' properties",
+        "Schema must have a non-empty 'title' property",
       );
     });
 
-    it("create schema without description throws error", async () => {
+    it("create schema without description succeeds — description is optional", async () => {
       const t = initConvexTest(),
-        badSchema = {
-          title: "Test Schema",
-          type: "object",
-        };
+        schemaId = await t.mutation(api.lib.createSchema, {
+          schema: { title: "Test Schema", type: "object" },
+        });
 
-      await expect(t.mutation(api.lib.createSchema, { schema: badSchema })).rejects.toThrow(
-        "Schema must have 'title' and 'description' properties",
-      );
+      const schema = await t.query(api.lib.getSchema, { schemaId });
+      assertDefined(schema);
+      expect(schema.title).toBe("Test Schema");
+      expect(schema.description).toBeUndefined();
     });
 
     it("update non-existent schema throws error", async () => {
