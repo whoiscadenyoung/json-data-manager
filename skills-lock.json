@@ -11,6 +11,12 @@
       "sourceType": "github",
       "computedHash": "2607fc60629b82b257136dd2a7a373f0a4466c0b49df7746d845d59313c99b21"
     },
+    "niko-table-best-practices": {
+      "source": "Semkoo/niko-table-registry",
+      "sourceType": "github",
+      "skillPath": ".cursor/skills/niko-table-best-practices/SKILL.md",
+      "computedHash": "775515748950d2db061d9b9b7ee3179d8f8773da1042be135c110a9ee0f925cd"
+    },
     "shadcn": {
       "source": "shadcn/ui",
       "sourceType": "github",

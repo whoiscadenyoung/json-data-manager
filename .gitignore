@@ -18,3 +18,5 @@ todos.json
 
 # tscbuildinfo
 .cache
+
+.input
