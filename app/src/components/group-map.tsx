@@ -8,7 +8,11 @@ import { formatPropertyValue } from "#/components/entries-map";
 import type { GeometryEntry } from "#/components/schema-geometries-loader";
 import { Button } from "#/components/ui/button";
 import { Map, MapClusterLayer, MapGeoJSON } from "#/components/ui/map";
-import { buildPointFeatureCollection, splitPointLikeGeometries } from "#/lib/point-geometry";
+import {
+  bboxFeature,
+  buildPointFeatureCollection,
+  splitPointLikeGeometries,
+} from "#/lib/point-geometry";
 
 type EntryDoc = FunctionReturnType<typeof api.entries.listEntriesForSchemas>[number];
 type Dataset = FunctionReturnType<typeof api.schemas.list>[number];
@@ -16,6 +20,14 @@ type Dataset = FunctionReturnType<typeof api.schemas.list>[number];
 import { api } from "#convex/_generated/api";
 
 type FeatureProperties = { entryId: string; schemaId: string };
+
+// Dashed rectangle framing the group's whole extent, matching the dataset
+// map's outline styling. Drawn under the data layers, never interactive.
+const EXTENT_LINE_PAINT = {
+  "line-color": "#3b82f6",
+  "line-width": 1.5,
+  "line-dasharray": [2, 1.5],
+};
 
 // Cycled per dataset so each shows up as a distinct color on the map/legend.
 const DATASET_COLORS = [
@@ -183,6 +195,14 @@ export function GroupMap({
       <MapLegend datasets={legendDatasets} />
       <div className="relative h-[500px] w-full overflow-hidden rounded-lg border border-border">
         <Map bounds={bbox} className="h-full w-full">
+          {/* Dashed outline framing the group's whole extent, under the data
+              layers — same treatment as a single dataset's map. */}
+          <MapGeoJSON
+            data={bboxFeature(bbox)}
+            id="group-extent"
+            fillPaint={false}
+            linePaint={EXTENT_LINE_PAINT}
+          />
           {schemaIds.map((schemaId, index) => {
             const color = colorForIndex(index),
               schemaGeometries = bySchema.get(schemaId) ?? [],

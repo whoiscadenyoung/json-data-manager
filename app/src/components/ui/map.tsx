@@ -203,9 +203,17 @@ type MapProps = {
    * to enable controlled mode where the map viewport is driven by your state.
    */
   onViewportChange?: (viewport: MapViewport) => void;
+  /**
+   * Options for fitting to `bounds`. Beyond the constructor's own use of
+   * them, the map RE-FITS whenever the `bounds` prop's values change (so a
+   * bbox computed from asynchronously-loading data pulls the viewport to
+   * cover late-arriving features). Defaults to a 40px inset so an extent
+   * outline drawn on the map stays framed instead of hugging the edges.
+   */
+  fitBoundsOptions?: MapLibreGL.FitBoundsOptions;
   /** Show a loading indicator on the map */
   loading?: boolean;
-} & Omit<MapLibreGL.MapOptions, "container" | "style">;
+} & Omit<MapLibreGL.MapOptions, "container" | "style" | "fitBoundsOptions">;
 
 function DefaultLoader() {
   return (
@@ -239,6 +247,7 @@ const Map = forwardRef<MapRef, MapProps>(function Map(
     projection,
     viewport,
     onViewportChange,
+    fitBoundsOptions,
     loading = false,
     ...props
   },
@@ -353,6 +362,21 @@ const Map = forwardRef<MapRef, MapProps>(function Map(
     mapInstance.jumpTo(next);
     internalUpdateRef.current = false;
   }, [mapInstance, isControlled, viewport]);
+
+  // Keep the viewport on the `bounds` prop: fit once the map (re)loads, and
+  // RE-fit whenever the bounds' values change — a bbox computed from
+  // asynchronously-loading data (e.g. externally-stored geometries that
+  // resolve via fetch) pulls the viewport out to cover late-arriving
+  // features, so the initial view always shows everything. Defaults to a
+  // 40px inset so an extent outline stays framed inside the viewport.
+  const stableFitBoundsOptions = useStableValue(fitBoundsOptions);
+  const boundsKey = useMemo(() => JSON.stringify(props.bounds) ?? "", [props.bounds]);
+  useEffect(() => {
+    if (!mapInstance || !isLoaded || !props.bounds) return;
+    mapInstance.fitBounds(props.bounds, { padding: 40, duration: 0, ...stableFitBoundsOptions });
+    // Re-fit only when the bounds' values (or fit options) actually change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapInstance, isLoaded, boundsKey, stableFitBoundsOptions]);
 
   // Handle style change: close the gate (so layer children tear down and
   // re-add on the incoming style) - the swap itself is staged to the effect below.
