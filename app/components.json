@@ -22,6 +22,7 @@
   "menuColor": "default",
   "menuAccent": "subtle",
   "registries": {
-    "@mapcn": "https://mapcn.dev/r/{name}.json"
+    "@mapcn": "https://mapcn.dev/r/{name}.json",
+    "@niko-table": "https://niko-table.com/r/{name}.json"
   }
 }

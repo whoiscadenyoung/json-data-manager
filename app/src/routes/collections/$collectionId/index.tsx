@@ -41,7 +41,13 @@ import {
   DropdownMenuTrigger,
 } from "#/components/ui/dropdown-menu";
 import { Empty, EmptyDescription, EmptyTitle } from "#/components/ui/empty";
-import { Select } from "#/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "#/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "#/components/ui/tabs";
 import { api } from "#convex/_generated/api";
 
@@ -341,20 +347,23 @@ function CollectionMapTab({
     // re-fire that effect every time regardless of whether the underlying
     // geometries actually changed, cascading into a `setState`-in-`useEffect`
     // loop across every mounted loader ("Maximum update depth exceeded").
-    handleGeometriesLoaded = useCallback((schemaId: string, loaded: GeometryEntry[] | undefined) => {
-      setGeometriesBySchema((prev) => {
-        const existing = prev.get(schemaId);
-        // Bail out of the update entirely when nothing changed (covers the
-        // common case of a loader re-reporting the same `undefined` while
-        // still loading) — `new Map(prev)` always returns a new reference,
-        // so skipping it here is what actually breaks the loop, not just
-        // `handleGeometriesLoaded`'s own identity.
-        if (existing === loaded) {
-          return prev;
-        }
-        return new globalThis.Map(prev).set(schemaId, loaded);
-      });
-    }, []),
+    handleGeometriesLoaded = useCallback(
+      (schemaId: string, loaded: GeometryEntry[] | undefined) => {
+        setGeometriesBySchema((prev) => {
+          const existing = prev.get(schemaId);
+          // Bail out of the update entirely when nothing changed (covers the
+          // common case of a loader re-reporting the same `undefined` while
+          // still loading) — `new Map(prev)` always returns a new reference,
+          // so skipping it here is what actually breaks the loop, not just
+          // `handleGeometriesLoaded`'s own identity.
+          if (existing === loaded) {
+            return prev;
+          }
+          return new globalThis.Map(prev).set(schemaId, loaded);
+        });
+      },
+      [],
+    ),
     entries = useQuery(api.collections.listEntriesByCollection, { collectionId }),
     [groupFilter, setGroupFilter] = useState(MAP_FILTER_ALL);
 
@@ -431,19 +440,23 @@ function CollectionMapContent({
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">Show</span>
           <Select
-            className="w-auto"
             value={groupFilter}
-            onChange={(e) => {
-              setGroupFilter(e.target.value);
+            onValueChange={(value) => {
+              setGroupFilter(value ?? MAP_FILTER_ALL);
             }}
           >
-            <option value={MAP_FILTER_ALL}>All datasets</option>
-            {groups.map((group) => (
-              <option key={group._id} value={group._id}>
-                {group.name}
-              </option>
-            ))}
-            <option value={MAP_FILTER_UNGROUPED}>Ungrouped</option>
+            <SelectTrigger className="w-auto">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={MAP_FILTER_ALL}>All datasets</SelectItem>
+              {groups.map((group) => (
+                <SelectItem key={group._id} value={group._id}>
+                  {group.name}
+                </SelectItem>
+              ))}
+              <SelectItem value={MAP_FILTER_UNGROUPED}>Ungrouped</SelectItem>
+            </SelectContent>
           </Select>
         </div>
       )}
@@ -704,7 +717,11 @@ function CollectionDetailPage() {
         </TabsContent>
 
         <TabsContent value="map">
-          <CollectionMapTab collectionId={collectionId} datasets={collectionDatasets} groups={groups} />
+          <CollectionMapTab
+            collectionId={collectionId}
+            datasets={collectionDatasets}
+            groups={groups}
+          />
         </TabsContent>
       </Tabs>
 
