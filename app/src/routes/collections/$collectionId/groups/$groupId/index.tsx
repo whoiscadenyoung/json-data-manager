@@ -1,11 +1,15 @@
+import { useResolvedGeometries } from "@caden/json-cms/react";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
-import { Layers } from "lucide-react";
+import { Download, Layers } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 
 import { api } from "#convex/_generated/api";
 import { DatasetList } from "@/components/dataset-list";
 import type { Dataset } from "@/components/dataset-list";
+import { ExportDialog } from "@/components/export-dialog";
+import type { ExportFormat, ExportFormatOption } from "@/components/export-dialog";
 import { GroupMap } from "@/components/group-map";
 import { useGeometriesBySchemas } from "@/components/schema-geometries-loader";
 import {
@@ -18,6 +22,14 @@ import {
 } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  buildGeoJsonCollection,
+  buildJsonPayload,
+  downloadText,
+  entryRows,
+  exportExcelWorkbook,
+  slugify,
+} from "@/lib/export";
 
 export const Route = createFileRoute("/collections/$collectionId/groups/$groupId/")({
   component: GroupDetailPage,
@@ -37,16 +49,18 @@ function GroupDetailPage() {
     groups = useQuery(api.groups.list, { collectionId }),
     allDatasets = useQuery(api.schemas.list),
     datasets = (allDatasets ?? []).filter((dataset) => dataset.groupId === groupId),
+    memberSchemaIds = datasets.map((dataset) => dataset._id),
     geospatialSchemaIds = datasets
       .filter((dataset) => dataset.kind === "geospatial")
       .map((dataset) => dataset._id),
-    // Feature-detail popups read entry properties; one query covers every
-    // geospatial dataset in the group.
+    // Entry data feeds both the map's feature-detail popups and the export
+    // dialog (regular datasets export too, so every member is fetched).
     entries = useQuery(
       api.entries.listEntriesForSchemas,
-      geospatialSchemaIds.length > 0 ? { schemaIds: geospatialSchemaIds } : "skip",
+      memberSchemaIds.length > 0 ? { schemaIds: memberSchemaIds } : "skip",
     ),
     { geometries, loaders } = useGeometriesBySchemas(geospatialSchemaIds),
+    resolvedGeometries = useResolvedGeometries(geometries ?? []),
     setSchemaGroup = useMutation(api.collections.setSchemaGroup),
     setSchemaCollection = useMutation(api.collections.setSchemaCollection),
     handleMoveToGroup = async (dataset: Dataset, targetGroupId: string | null) => {
@@ -63,6 +77,87 @@ function GroupDetailPage() {
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Failed to remove dataset.");
       }
+    },
+    [exportOpen, setExportOpen] = useState(false),
+    exportFormats: ExportFormatOption[] =
+      geospatialSchemaIds.length > 0
+        ? [
+            {
+              value: "geojson",
+              label: "GeoJSON",
+              hint: `One .geojson FeatureCollection per geospatial dataset (${geospatialSchemaIds.length} file(s)) — schemas stay separate.`,
+            },
+            {
+              value: "json",
+              label: "JSON",
+              hint: `One .json file per dataset (${datasets.length} file(s)) — schemas stay separate.`,
+            },
+            {
+              value: "excel",
+              label: "Excel (.xlsx)",
+              hint: `One workbook with a worksheet per dataset (${datasets.length} sheet(s)).`,
+            },
+          ]
+        : [
+            {
+              value: "json",
+              label: "JSON",
+              hint: `One .json file per dataset (${datasets.length} file(s)) — schemas stay separate.`,
+            },
+            {
+              value: "excel",
+              label: "Excel (.xlsx)",
+              hint: `One workbook with a worksheet per dataset (${datasets.length} sheet(s)).`,
+            },
+          ],
+    handleExportConfirm = async (format: ExportFormat, includeSchema: boolean) => {
+      if (!entries) {
+        return;
+      }
+      const entriesOf = (dataset: Dataset) =>
+          entries.filter((entry) => entry.schemaId === dataset._id),
+        downloadSchemaFile = (dataset: Dataset) => {
+          if (includeSchema) {
+            downloadText(
+              JSON.stringify(dataset.schema, null, 2),
+              `${slugify(dataset.title)}-schema.json`,
+            );
+          }
+        };
+
+      if (format === "geojson") {
+        // GeoJSON is a geospatial format — regular datasets in the group
+        // have no geometry to express and are skipped.
+        for (const dataset of datasets.filter((dataset) => dataset.kind === "geospatial")) {
+          downloadText(
+            JSON.stringify(
+              buildGeoJsonCollection(entriesOf(dataset), resolvedGeometries, dataset._id),
+              null,
+              2,
+            ),
+            `${slugify(dataset.title)}.geojson`,
+          );
+          downloadSchemaFile(dataset);
+        }
+        toast.success(`Exported ${geospatialSchemaIds.length} GeoJSON file(s).`);
+        return;
+      }
+      if (format === "json") {
+        for (const dataset of datasets) {
+          downloadText(
+            JSON.stringify(buildJsonPayload(dataset.schema, entriesOf(dataset)), null, 2),
+            `${slugify(dataset.title)}.json`,
+          );
+          downloadSchemaFile(dataset);
+        }
+        toast.success(`Exported ${datasets.length} JSON file(s).`);
+        return;
+      }
+      await exportExcelWorkbook(
+        datasets.map((dataset) => ({ name: dataset.title, rows: entryRows(entriesOf(dataset)) })),
+        `${slugify(group ? group.name : "group")}.xlsx`,
+      );
+      toast.success("Exported workbook.");
     };
 
   if (
@@ -98,33 +193,45 @@ function GroupDetailPage() {
 
   return (
     <div className="max-w-4xl mx-auto py-8 px-4 sm:px-0">
-      <div className="mb-8">
-        <Breadcrumb className="mb-2">
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink render={<Link to="/collections" />}>Collections</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink
-                render={<Link to="/collections/$collectionId" params={{ collectionId }} />}
-              >
-                {collection ? collection.name : "Collection"}
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>{group.name}</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
-        <h1 className="text-3xl font-bold text-primary flex items-center gap-2">
-          <Layers className="h-6 w-6" />
-          {group.name}
-        </h1>
-        {group.description && (
-          <p className="text-lg text-muted-foreground mt-2">{group.description}</p>
-        )}
+      <div className="flex justify-between items-start mb-8">
+        <div>
+          <Breadcrumb className="mb-2">
+            <BreadcrumbList>
+              <BreadcrumbItem>
+                <BreadcrumbLink render={<Link to="/collections" />}>Collections</BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbLink
+                  render={<Link to="/collections/$collectionId" params={{ collectionId }} />}
+                >
+                  {collection ? collection.name : "Collection"}
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbPage>{group.name}</BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
+          <h1 className="text-3xl font-bold text-primary flex items-center gap-2">
+            <Layers className="h-6 w-6" />
+            {group.name}
+          </h1>
+          {group.description && (
+            <p className="text-lg text-muted-foreground mt-2">{group.description}</p>
+          )}
+        </div>
+        <Button
+          variant="outline"
+          onClick={() => {
+            setExportOpen(true);
+          }}
+          disabled={datasets.length === 0}
+        >
+          <Download className="h-4 w-4 mr-2" />
+          Export ({datasets.length})
+        </Button>
       </div>
 
       {hasGeospatialDatasets && (
@@ -159,6 +266,16 @@ function GroupDetailPage() {
           />
         </CardContent>
       </Card>
+
+      <ExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        heading={`Export "${group.name}" (${datasets.length} datasets)`}
+        formatOptions={exportFormats}
+        defaultFormat={geospatialSchemaIds.length > 0 ? "geojson" : "json"}
+        schemaLabel="each dataset"
+        onConfirm={handleExportConfirm}
+      />
     </div>
   );
 }
