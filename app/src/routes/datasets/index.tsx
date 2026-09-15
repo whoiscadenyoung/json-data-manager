@@ -1,10 +1,11 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
-import { Calendar, ChevronRight, Database, FolderOpen, Plus, Search } from "lucide-react";
+import { Calendar, ChevronRight, Database, FolderOpen, MapPin, Plus, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { RouterButton } from "#/components/router-button";
+import { Badge } from "#/components/ui/badge";
 import { Card } from "#/components/ui/card";
 import {
   Empty,
@@ -15,7 +16,7 @@ import {
   EmptyTitle,
 } from "#/components/ui/empty";
 import { Input } from "#/components/ui/input";
-import { fieldCount, schemaType } from "#/lib/json-schema";
+import { fieldCount } from "#/lib/json-schema";
 import { cn } from "#/lib/utils";
 
 import { api } from "../../../convex/_generated/api";
@@ -32,21 +33,39 @@ const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { label: "Title (A–Z)", value: "title-asc" },
 ];
 
+type TypeFilter = "all" | "geospatial" | "regular";
+
+const TYPE_OPTIONS: { value: TypeFilter; label: string }[] = [
+  { label: "All", value: "all" },
+  { label: "Geospatial", value: "geospatial" },
+  { label: "Regular", value: "regular" },
+];
+
 type DatasetSummary = FunctionReturnType<typeof api.schemas.list>[number];
+
+function matchesTypeFilter(dataset: DatasetSummary, typeFilter: TypeFilter): boolean {
+  if (typeFilter === "all") {
+    return true;
+  }
+  return typeFilter === "geospatial"
+    ? dataset.kind === "geospatial"
+    : dataset.kind !== "geospatial";
+}
 
 function filterAndSort(
   datasets: DatasetSummary[],
   query: string,
   sort: SortOption,
+  typeFilter: TypeFilter,
 ): DatasetSummary[] {
   const normalized = query.trim().toLowerCase(),
-    filtered = normalized
-      ? datasets.filter(
-          (d) =>
-            d.title.toLowerCase().includes(normalized) ||
-            d.description.toLowerCase().includes(normalized),
-        )
-      : datasets;
+    filtered = datasets.filter(
+      (d) =>
+        matchesTypeFilter(d, typeFilter) &&
+        (!normalized ||
+          d.title.toLowerCase().includes(normalized) ||
+          d.description.toLowerCase().includes(normalized)),
+    );
 
   return filtered.toSorted((a, b) => {
     if (sort === "title-asc") {
@@ -62,10 +81,14 @@ function FiltersSidebar({
   total,
   sort,
   onSort,
+  typeFilter,
+  onTypeFilterChange,
 }: {
   total: number;
   sort: SortOption;
   onSort: (sort: SortOption) => void;
+  typeFilter: TypeFilter;
+  onTypeFilterChange: (typeFilter: TypeFilter) => void;
 }) {
   return (
     <aside className="w-full shrink-0 md:w-64">
@@ -74,6 +97,31 @@ function FiltersSidebar({
         <p className="mt-1 text-sm text-muted-foreground">
           {total} {total === 1 ? "result" : "results"}
         </p>
+
+        <div className="mt-4">
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Type
+          </p>
+          <div className="flex flex-col gap-1">
+            {TYPE_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => {
+                  onTypeFilterChange(option.value);
+                }}
+                className={cn(
+                  "rounded-md border px-3 py-1.5 text-left text-sm transition-colors",
+                  option.value === typeFilter
+                    ? "border-primary/30 bg-primary/5 font-medium text-primary"
+                    : "border-transparent text-muted-foreground hover:bg-muted",
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
 
         <div className="mt-4">
           <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -104,16 +152,34 @@ function FiltersSidebar({
   );
 }
 
+/** Type tags shown at the top of each card: Geospatial + geometry type, or Regular. */
+function DatasetTypeTags({ dataset }: { dataset: DatasetSummary }) {
+  if (dataset.kind === "geospatial") {
+    return (
+      <>
+        <Badge variant="default">
+          <MapPin />
+          Geospatial
+        </Badge>
+        {dataset.geometryType && <Badge variant="outline">{dataset.geometryType}</Badge>}
+      </>
+    );
+  }
+  return (
+    <Badge variant="secondary">
+      <Database />
+      Regular
+    </Badge>
+  );
+}
+
 function DatasetCard({ dataset }: { dataset: DatasetSummary }) {
   return (
     <Link to="/datasets/$schemaId" params={{ schemaId: dataset._id }} className="block">
       <Card className="flex-row items-center gap-4 px-4 transition-shadow hover:shadow-md">
         <div className="flex min-w-0 flex-1 flex-col gap-2 py-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              <Database className="h-3 w-3" />
-              {schemaType(dataset.schema)}
-            </span>
+            <DatasetTypeTags dataset={dataset} />
             <span className="text-xs text-muted-foreground">
               {fieldCount(dataset.schema)} {fieldCount(dataset.schema) === 1 ? "field" : "fields"}
             </span>
@@ -137,9 +203,10 @@ function DatasetsPage() {
   const datasets = useQuery(api.schemas.list),
     [search, setSearch] = useState(""),
     [sort, setSort] = useState<SortOption>("newest"),
+    [typeFilter, setTypeFilter] = useState<TypeFilter>("all"),
     visible = useMemo(
-      () => (datasets ? filterAndSort(datasets, search, sort) : []),
-      [datasets, search, sort],
+      () => (datasets ? filterAndSort(datasets, search, sort, typeFilter) : []),
+      [datasets, search, sort, typeFilter],
     );
 
   if (datasets === undefined) {
@@ -181,7 +248,13 @@ function DatasetsPage() {
         </Empty>
       ) : (
         <div className="flex flex-col gap-6 md:flex-row">
-          <FiltersSidebar total={visible.length} sort={sort} onSort={setSort} />
+          <FiltersSidebar
+            total={visible.length}
+            sort={sort}
+            onSort={setSort}
+            typeFilter={typeFilter}
+            onTypeFilterChange={setTypeFilter}
+          />
 
           <div className="min-w-0 flex-1">
             <div className="relative mb-4">
@@ -197,8 +270,12 @@ function DatasetsPage() {
             </div>
 
             {visible.length === 0 ? (
-              <div className="flex min-h-40 items-center justify-center rounded-lg border text-sm text-muted-foreground">
-                No datasets match "{search}".
+              <div className="flex min-h-40 items-center justify-center rounded-lg border px-4 text-center text-sm text-muted-foreground">
+                {search
+                  ? `No datasets match "${search}".`
+                  : typeFilter === "all"
+                    ? "No datasets yet."
+                    : `No ${typeFilter === "geospatial" ? "geospatial" : "regular"} datasets.`}
               </div>
             ) : (
               <div className="flex flex-col gap-3">
