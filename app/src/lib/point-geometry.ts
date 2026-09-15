@@ -34,6 +34,29 @@ export interface PointFeatureRow<P> {
   properties: P;
 }
 
+/** A GeoJSON Feature whose geometry is the closed polygon ring covering `bbox` (`[minLon, minLat, maxLon, maxLat]`). */
+export function bboxFeature(
+  bbox: [number, number, number, number],
+): GeoJSON.Feature<GeoJSON.Polygon> {
+  const [minLon, minLat, maxLon, maxLat] = bbox;
+  return {
+    type: "Feature",
+    properties: {},
+    geometry: {
+      type: "Polygon",
+      coordinates: [
+        [
+          [minLon, minLat],
+          [maxLon, minLat],
+          [maxLon, maxLat],
+          [minLon, maxLat],
+          [minLon, minLat],
+        ],
+      ],
+    },
+  };
+}
+
 /**
  * Builds a `Point`-only GeoJSON `FeatureCollection` for `MapClusterLayer`,
  * which only accepts `GeoJSON.Point` features. Rows are expected to already
