@@ -51,7 +51,7 @@ export function ExportDialog({
   // the same format is the common case); it only resets when the dialog
   // remounts on a different page.
   const [format, setFormat] = useState(defaultFormat),
-    [includeSchema, setIncludeSchema] = useState(true),
+    [includeSchema, setIncludeSchema] = useState(false),
     [isExporting, setIsExporting] = useState(false);
 
   const supportsSchema = format === "geojson" || format === "json",
