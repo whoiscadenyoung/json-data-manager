@@ -1,7 +1,8 @@
 import { buildFeatureCollection, computeBbox, useResolvedGeometries } from "@caden/json-cms/react";
 import type { Geometry } from "@caden/json-cms/react";
+import { Link } from "@tanstack/react-router";
 import type { FunctionReturnType } from "convex/server";
-import { Loader2, Map as MapIcon, X } from "lucide-react";
+import { ChevronRight, Loader2, Map as MapIcon, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "#/components/ui/button";
@@ -19,6 +20,7 @@ import {
   buildPointFeatureCollection,
   splitPointLikeGeometries,
 } from "#/lib/point-geometry";
+import { formatPropertyValue } from "#/lib/format";
 import { cn } from "#/lib/utils";
 import { api } from "#convex/_generated/api";
 
@@ -44,12 +46,6 @@ const FEATURE_FILL_PAINT = { "fill-color": "#3b82f6", "fill-opacity": 0.2 },
    */
   PENDING_GRACE_MS = 20_000;
 
-export function formatPropertyValue(value: unknown): string {
-  if (value === null || value === undefined) return "—";
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
-}
-
 function FeatureDetailsPanel({ entry, onClose }: { entry: EntryDoc; onClose: () => void }) {
   const fields = Object.entries(entry.data as Record<string, unknown>);
 
@@ -73,6 +69,14 @@ function FeatureDetailsPanel({ entry, onClose }: { entry: EntryDoc; onClose: () 
           ))
         )}
       </dl>
+      <Link
+        to="/datasets/$schemaId/$entryId"
+        params={{ schemaId: entry.schemaId, entryId: entry._id }}
+        className="flex items-center justify-center gap-1.5 border-t border-border px-3 py-2 text-xs font-medium text-primary hover:bg-muted/50"
+      >
+        View details
+        <ChevronRight className="size-3" />
+      </Link>
     </div>
   );
 }
