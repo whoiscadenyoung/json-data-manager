@@ -1,5 +1,5 @@
 import type { Geometry as GeometryShape } from "@caden/json-cms/react";
-import { useAllPaginated } from "@caden/json-cms/react";
+import { useAllPaginated, useResolvedGeometries } from "@caden/json-cms/react";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
@@ -19,12 +19,15 @@ import {
   X,
 } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 import { z } from "zod";
 
 import { DatasetOrganizePanel } from "@/components/dataset-organize-panel";
 import { EntriesMap } from "@/components/entries-map";
 import { EntriesTable } from "@/components/entries-table";
 import { EntryFormPanel } from "@/components/entry-form-panel";
+import { ExportDialog } from "@/components/export-dialog";
+import type { ExportFormat, ExportFormatOption } from "@/components/export-dialog";
 import { GeospatialConversionPanel } from "@/components/geospatial-conversion-panel";
 import { RouterButton } from "@/components/router-button";
 import { SchemaVisualizer } from "@/components/schema-visualizer";
@@ -49,6 +52,14 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  buildGeoJsonCollection,
+  buildJsonPayload,
+  downloadText,
+  entryRows,
+  exportExcelWorkbook,
+  slugify,
+} from "@/lib/export";
 
 import { api } from "../../../../convex/_generated/api";
 
@@ -237,19 +248,6 @@ function MakeGeospatialButton({
   );
 }
 
-/** Trigger a browser download of `content` as a file named `filename`. */
-function downloadFile(content: string, filename: string) {
-  const blob = new Blob([content], { type: "application/json" }),
-    url = URL.createObjectURL(blob),
-    a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.append(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
 function SchemaDetailPage() {
   const { schemaId } = Route.useParams(),
     search = Route.useSearch(),
@@ -257,8 +255,10 @@ function SchemaDetailPage() {
     schema = useQuery(api.schemas.get, { schemaId }),
     entries = useQuery(api.entries.list, { schemaId }),
     geometries = useGeometriesForSchema(schema, schemaId),
+    resolvedGeometries = useResolvedGeometries(geometries ?? []),
     [organizeOpen, setOrganizeOpen] = useState(false),
     [makeGeospatialOpen, setMakeGeospatialOpen] = useState(false),
+    [exportOpen, setExportOpen] = useState(false),
     [jsonDefinitionOpen, setJsonDefinitionOpen] = useState(false),
     [conversionSuccess, setConversionSuccess] = useState<
       { processed: number; total: number } | undefined
@@ -272,23 +272,59 @@ function SchemaDetailPage() {
     closePanel = async () => {
       await navigate({ search: {} });
     },
-    handleExport = () => {
-      if (!entries || !schema) {
+    isGeospatialDataset = schema !== undefined && schema !== null && schema.kind === "geospatial",
+    exportFormats: ExportFormatOption[] = isGeospatialDataset
+      ? [
+          {
+            value: "geojson",
+            label: "GeoJSON",
+            hint: "One .geojson FeatureCollection — entries without geometry get null geometry.",
+          },
+          { value: "json", label: "JSON", hint: "Data entries as a .json file." },
+          {
+            value: "excel",
+            label: "Excel (.xlsx)",
+            hint: "One worksheet with the entries as rows.",
+          },
+        ]
+      : [
+          { value: "json", label: "JSON", hint: "Data entries as a .json file." },
+          {
+            value: "excel",
+            label: "Excel (.xlsx)",
+            hint: "One worksheet with the entries as rows.",
+          },
+        ],
+    handleExportConfirm = async (format: ExportFormat, includeSchema: boolean) => {
+      if (!schema || !entries) {
         return;
       }
-
-      const slug = schema.title.toLowerCase().replaceAll(/\s+/g, "-"),
-        schemaFilename = `${slug}-schema.json`;
-
-      downloadFile(JSON.stringify(schema.schema, null, 2), schemaFilename);
-
-      setTimeout(() => {
-        const entriesData = {
-          $schema: schemaFilename,
-          entries: entries.map((entry) => entry.data),
+      const slug = slugify(schema.title),
+        downloadSchemaFile = () => {
+          if (includeSchema) {
+            downloadText(JSON.stringify(schema.schema, null, 2), `${slug}-schema.json`);
+          }
         };
-        downloadFile(JSON.stringify(entriesData, null, 2), `${slug}-entries.json`);
-      }, 100);
+
+      if (format === "geojson") {
+        downloadText(
+          JSON.stringify(buildGeoJsonCollection(entries, resolvedGeometries, schemaId), null, 2),
+          `${slug}.geojson`,
+        );
+        downloadSchemaFile();
+      } else if (format === "json") {
+        downloadText(
+          JSON.stringify(buildJsonPayload(schema.schema, entries), null, 2),
+          `${slug}.json`,
+        );
+        downloadSchemaFile();
+      } else {
+        await exportExcelWorkbook(
+          [{ name: schema.title, rows: entryRows(entries) }],
+          `${slug}.xlsx`,
+        );
+      }
+      toast.success("Export downloaded.");
     };
 
   if (schema === undefined || entries === undefined) {
@@ -352,7 +388,13 @@ function SchemaDetailPage() {
               setMakeGeospatialOpen(true);
             }}
           />
-          <Button onClick={handleExport} disabled={entries.length === 0} variant="outline">
+          <Button
+            onClick={() => {
+              setExportOpen(true);
+            }}
+            disabled={entries.length === 0}
+            variant="outline"
+          >
             <Download className="h-4 w-4 mr-2" />
             Export ({entries.length})
           </Button>
@@ -495,6 +537,16 @@ function SchemaDetailPage() {
         currentGroupId={schema.groupId}
         open={organizeOpen}
         onOpenChange={setOrganizeOpen}
+      />
+
+      <ExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        heading={`Export "${schema.title}" (${entries.length} entries)`}
+        formatOptions={exportFormats}
+        defaultFormat={isGeospatialDataset ? "geojson" : "json"}
+        schemaLabel="dataset"
+        onConfirm={handleExportConfirm}
       />
 
       <GeospatialConversionPanel
