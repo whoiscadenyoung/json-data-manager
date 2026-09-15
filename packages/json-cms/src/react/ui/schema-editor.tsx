@@ -488,7 +488,7 @@ function DatasetInfoCard({
           Both are saved with the schema.
         </CardDescription>
       </CardHeader>
-      <CardContent className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+      <CardContent className="grid grid-cols-1 gap-3">
         <div className="space-y-1">
           <Label htmlFor="schema-meta-title">
             Title <span className="text-destructive">*</span>
@@ -517,7 +517,7 @@ function DatasetInfoCard({
           />
         </div>
         {missingMeta && (
-          <div className="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-300 sm:col-span-2">
+          <div className="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
             <AlertCircle className="h-3.5 w-3.5 shrink-0" />
             A title is required before this dataset can be saved.
           </div>
