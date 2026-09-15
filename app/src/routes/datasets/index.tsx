@@ -265,11 +265,9 @@ function GroupCard({
                 params={{ schemaId: dataset._id }}
                 className="flex items-center gap-3 bg-muted/20 px-4 py-2 pl-8 hover:bg-muted/50"
               >
-                {dataset.kind === "geospatial" ? (
-                  <MapPin className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                ) : (
-                  <Database className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                )}
+                <div className="flex shrink-0 items-center gap-2">
+                  <DatasetTypeTags dataset={dataset} />
+                </div>
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">{dataset.title}</p>
                   <p className="truncate text-xs text-muted-foreground">{dataset.description}</p>
