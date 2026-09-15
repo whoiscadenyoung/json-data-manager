@@ -802,18 +802,16 @@ export function SchemaEditor({
       setPendingFile(null);
     },
     handleSwitchToVisual = () => {
-      if (activeTab === "code") {
-        // Empty editor is fine — visual builder shows a blank canvas
-        if (!schemaJson.trim()) {
-          setActiveTab("visual");
-          return;
-        }
-        try {
-          JSON.parse(schemaJson);
-          setActiveTab("visual");
-        } catch {
-          toast.error("Fix the JSON syntax error before switching to Visual mode.");
-        }
+      // Empty editor is fine — visual builder shows a blank canvas
+      if (!schemaJson.trim()) {
+        setActiveTab("visual");
+        return;
+      }
+      try {
+        JSON.parse(schemaJson);
+        setActiveTab("visual");
+      } catch {
+        toast.error("Fix the JSON syntax error before switching to Visual mode.");
       }
     },
     uiSchemaBytes = new Blob([uiSchemaJson]).size,
