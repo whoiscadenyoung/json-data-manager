@@ -2,7 +2,7 @@ import { buildFeatureCollection, computeBbox, useResolvedGeometries } from "@cad
 import type { Geometry } from "@caden/json-cms/react";
 import type { FunctionReturnType } from "convex/server";
 import { Map as MapIcon, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "#/components/ui/button";
 import {
@@ -13,6 +13,7 @@ import {
   EmptyTitle,
 } from "#/components/ui/empty";
 import { Map, MapClusterLayer, MapGeoJSON } from "#/components/ui/map";
+import { Skeleton } from "#/components/ui/skeleton";
 import {
   bboxFeature,
   buildPointFeatureCollection,
@@ -35,7 +36,13 @@ const FEATURE_FILL_PAINT = { "fill-color": "#3b82f6", "fill-opacity": 0.2 },
   FEATURE_FILL_HOVER_PAINT = { "fill-opacity": 0.35 },
   // GeoLens-style dashed rectangle framing the dataset's extent, drawn under
   // the data layers and never interactive so clicks pass through it.
-  EXTENT_LINE_PAINT = { "line-color": "#3b82f6", "line-width": 1.5, "line-dasharray": [2, 1.5] };
+  EXTENT_LINE_PAINT = { "line-color": "#3b82f6", "line-width": 1.5, "line-dasharray": [2, 1.5] },
+  /**
+   * How long the skeleton holds while some rows' geometries are still
+   * unresolved (external `geometryUrl` fetches in flight) before giving up on
+   * a complete first paint — see `pendingCount` in `EntriesMap`.
+   */
+  PENDING_GRACE_MS = 20_000;
 
 export function formatPropertyValue(value: unknown): string {
   if (value === null || value === undefined) return "—";
@@ -89,14 +96,21 @@ function toFeatureRow(g: GeometryEntry, resolved: Geometry) {
  * A "dumb" presentational map view of a dataset's geometries — receives data
  * as a prop rather than querying internally, matching `EntriesTable`'s own
  * pattern.
+ *
+ * The map's first paint waits for the complete dataset: the skeleton holds
+ * until every geometry row has resolved, so the viewport is fitted to the
+ * full extent exactly once and points never pop in one fetch at a time.
  */
 export function EntriesMap({
   geometries,
   entries,
+  isLoading = false,
   className,
 }: {
   geometries: GeometryEntry[];
   entries: EntryDoc[];
+  /** True while the caller's geometry query is still loading — renders the skeleton instead of an empty/half-ready map. */
+  isLoading?: boolean;
   /** Overrides the map container's height classes (default `h-[500px]`). */
   className?: string;
 }) {
@@ -116,7 +130,45 @@ export function EntriesMap({
           return resolved === undefined ? [] : [{ g, resolved }];
         }),
       [geometries, resolvedGeometries],
+    ),
+    // Rows absent from `resolvedGeometries` are either still fetching or
+    // failed/skipped — indistinguishable here. Hold the skeleton while any
+    // are pending so the map mounts with the complete collection.
+    pendingCount = geometries.length - resolvableGeometries.length,
+    // A row whose fetch failed (or whose inline JSON was malformed) never
+    // resolves — don't hold the skeleton over it forever. After a generous
+    // grace period, render whatever did resolve (the pre-skeleton behavior)
+    // rather than stranding the map on a skeleton.
+    [graceElapsed, setGraceElapsed] = useState(false);
+
+  useEffect(() => {
+    if (pendingCount === 0) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      setGraceElapsed(true);
+    }, PENDING_GRACE_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [pendingCount]);
+
+  if (isLoading || (pendingCount > 0 && !graceElapsed)) {
+    return (
+      <div
+        className={cn(
+          "relative h-[500px] w-full overflow-hidden rounded-lg border border-border",
+          className,
+        )}
+      >
+        <Skeleton className="h-full w-full rounded-none" />
+        <div className="absolute inset-0 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+          <MapIcon className="h-4 w-4" />
+          Loading map…
+        </div>
+      </div>
     );
+  }
 
   if (geometries.length === 0) {
     return (

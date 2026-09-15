@@ -369,6 +369,17 @@ function SchemaDetailPage() {
         />
       )}
 
+      {schema.kind === "geospatial" && (
+        <section className="mb-6">
+          <EntriesMap
+            entries={entries}
+            geometries={geometries ?? []}
+            isLoading={geometries === undefined}
+            className="h-[420px]"
+          />
+        </section>
+      )}
+
       <Tabs defaultValue="overview">
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
@@ -378,11 +389,6 @@ function SchemaDetailPage() {
 
         <TabsContent value="overview" className="space-y-6">
           <DatasetOverview schema={schema} schemaId={schemaId} />
-          {schema.kind === "geospatial" && geometries !== undefined && geometries.length > 0 && (
-            <section>
-              <EntriesMap geometries={geometries} entries={entries} className="h-[420px]" />
-            </section>
-          )}
         </TabsContent>
 
         <TabsContent value="entries">
