@@ -8,4 +8,5 @@ export const {
   startImport,
   getImportStatus,
   startGeospatialConversion,
+  startSimplification,
 } = exposeApi(components.jsonCms, { auth });

@@ -32,6 +32,17 @@ export interface SchemaDoc {
    * default viewport or a list-page summary; not exact after deletions.
    */
   boundingBox?: number[];
+  /**
+   * True when this dataset normalizes geometry coordinates to 6 decimal
+   * places (~0.11 m) on every write — set via the importer's "Simplify
+   * geometry" checkbox or the dataset page's "Simplify geometry" action.
+   * Absent means no simplification (pre-flag datasets).
+   */
+  simplifyGeometry?: boolean;
+  /** The original imported file, retained in storage for re-download. */
+  sourceFileStorageId?: string;
+  sourceFileName?: string;
+  sourceFileSize?: number;
 }
 
 /**
@@ -120,6 +131,7 @@ export interface JsonCmsApi {
       uiSchema?: unknown;
       kind?: "standard" | "geospatial";
       geometryType?: string;
+      simplifyGeometry?: boolean;
     },
     SchemaId
   >;
@@ -183,10 +195,26 @@ export interface JsonCmsApi {
   generateImportUploadUrl: FunctionReference<"mutation", "public", Empty, string>;
   // `storageIds`: one already-small, client-uploaded chunk blob per entry —
   // see `chunkRowsForImport` for why chunking happens client-side.
+  // `sourceFile`: the original uploaded file, retained on the dataset so the
+  // un-simplified source stays re-downloadable after geometry simplification.
   startImport: FunctionReference<
     "mutation",
     "public",
-    { schemaId: string; storageIds: string[]; total: number },
+    {
+      schemaId: string;
+      storageIds: string[];
+      total: number;
+      sourceFile?: { name: string; size: number; storageId: string };
+    },
+    string
+  >;
+  /** URL of the original imported file, or `null` when none was retained. */
+  getSourceFileUrl: FunctionReference<"query", "public", { schemaId: string }, string | null>;
+  /** Rounds an existing geospatial dataset's geometry payloads to 6dp via a durable workflow; poll `getImportStatus` for progress. */
+  startSimplification: FunctionReference<
+    "mutation",
+    "public",
+    { schemaId: string; total: number },
     string
   >;
   getImportStatus: FunctionReference<

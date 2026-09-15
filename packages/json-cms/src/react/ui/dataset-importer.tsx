@@ -32,6 +32,18 @@ export interface DatasetImportRow {
   geometry?: unknown;
 }
 
+/** Extra import-time dataset options resolved by the review screen's controls. */
+export interface DatasetImportOptions {
+  /**
+   * Round every geometry coordinate to 6 decimal places (~0.11 m) as it's
+   * stored — geospatial datasets only. The original file (below) stays
+   * re-downloadable regardless.
+   */
+  simplifyGeometry: boolean;
+  /** The exact uploaded file, retained in storage so it can be re-downloaded later. */
+  sourceFile: File | null;
+}
+
 export interface DatasetImporterProps {
   /**
    * Create the schema + entries from the reviewed schema and imported rows.
@@ -45,6 +57,7 @@ export interface DatasetImporterProps {
     rows: DatasetImportRow[],
     kind: "standard" | "geospatial",
     geometryType: GeometryType | undefined,
+    options: DatasetImportOptions,
   ) => Promise<void>;
   /** Live progress of the running import (drives the progress bar). */
   progress?: DatasetImportProgress | null;
@@ -352,6 +365,8 @@ function DatasetReview({
   onGeometryTypeChange,
   geometryTypeReadOnly,
   geometryTypeSummary,
+  simplifyGeometry,
+  onSimplifyGeometryChange,
   showCoordinatePicker,
   coordinateFields,
   onCoordinateFieldsChange,
@@ -369,6 +384,8 @@ function DatasetReview({
   onGeometryTypeChange: (type: GeometryType) => void;
   geometryTypeReadOnly: boolean;
   geometryTypeSummary: string | undefined;
+  simplifyGeometry: boolean;
+  onSimplifyGeometryChange: (value: boolean) => void;
   /** True for a non-GeoJSON import currently set to "Geospatial" — its rows have no geometry yet, so the coordinate columns must be chosen. */
   showCoordinatePicker: boolean;
   coordinateFields: { latField: string; lonField: string } | undefined;
@@ -431,6 +448,8 @@ function DatasetReview({
         onGeometryTypeChange={onGeometryTypeChange}
         geometryTypeReadOnly={geometryTypeReadOnly}
         geometryTypeSummary={geometryTypeSummary}
+        simplifyGeometry={simplifyGeometry}
+        onSimplifyGeometryChange={onSimplifyGeometryChange}
         editorChrome={
           showCoordinatePicker ? (
             <CoordinateColumnsPicker
@@ -465,7 +484,9 @@ function buildCoordinateRows(
   coordinateFields: { latField: string; lonField: string } | undefined,
 ): { rows: DatasetImportRow[]; warning: string | undefined } | { error: string } {
   if (coordinateFields === undefined || !coordinateFields.latField || !coordinateFields.lonField) {
-    return { error: "Select latitude and longitude columns, or switch Dataset Type back to Standard." };
+    return {
+      error: "Select latitude and longitude columns, or switch Dataset Type back to Standard.",
+    };
   }
   const { latField, lonField } = coordinateFields;
   let missing = 0;
@@ -549,6 +570,12 @@ export function DatasetImporter({
     [workbookSheets, setWorkbookSheets] = useState<ParsedSheet[] | null>(null),
     [workbookFileName, setWorkbookFileName] = useState(""),
     [workbookKeepSchema, setWorkbookKeepSchema] = useState(false),
+    // The exact uploaded file, retained so the backend can keep it
+    // re-downloadable alongside the (possibly simplified) stored geometries.
+    [sourceFile, setSourceFile] = useState<File | null>(null),
+    // Defaults to on: rounding to 6dp (~11 cm) is invisible at map scales and
+    // shrinks payloads substantially. See the Dataset Type section's checkbox.
+    [simplifyGeometry, setSimplifyGeometry] = useState(true),
     // A FeatureCollection / bare Feature array: geometry is split out into its
     // own rows shape and never enters the inferred JSON Schema.
     ingestGeoJson = (parsedJson: unknown, file: File, keepSchema: boolean) => {
@@ -662,6 +689,9 @@ export function DatasetImporter({
     // a JSON file that isn't GeoJSON-shaped — goes through the generic
     // parser registry (JSON/JSONL, CSV, Excel; see `import-parsers/registry.ts`).
     ingest = async (file: File, keepSchema: boolean) => {
+      // Remember the exact source file — it's uploaded alongside the row
+      // chunks and retained on the dataset for re-download.
+      setSourceFile(file);
       if (looksLikeJsonFile(file)) {
         let text: string;
         try {
@@ -740,6 +770,7 @@ export function DatasetImporter({
           finalRows,
           datasetKind,
           datasetKind === "geospatial" ? (geometryType ?? "Point") : undefined,
+          { simplifyGeometry, sourceFile },
         );
       } catch (error) {
         setSubmitting(false);
@@ -789,6 +820,8 @@ export function DatasetImporter({
         onGeometryTypeChange={setGeometryType}
         geometryTypeReadOnly={geometryProps.geometryTypeReadOnly}
         geometryTypeSummary={geometryProps.geometryTypeSummary}
+        simplifyGeometry={simplifyGeometry}
+        onSimplifyGeometryChange={setSimplifyGeometry}
         showCoordinatePicker={showCoordinatePicker}
         coordinateFields={coordinateFields}
         onCoordinateFieldsChange={setCoordinateFields}

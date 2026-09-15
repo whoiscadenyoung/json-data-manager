@@ -86,7 +86,11 @@ async function storeRows(t: TestCtx, rows: unknown[]) {
   );
 }
 
-async function createGeospatialSchema(t: TestCtx, geometryType: GeometryTypeArg) {
+async function createGeospatialSchema(
+  t: TestCtx,
+  geometryType: GeometryTypeArg,
+  options?: { simplifyGeometry?: boolean },
+) {
   return t.mutation(api.lib.createSchema, {
     geometryType,
     kind: "geospatial",
@@ -95,6 +99,7 @@ async function createGeospatialSchema(t: TestCtx, geometryType: GeometryTypeArg)
       title: "Geospatial Schema",
       type: "object",
     },
+    simplifyGeometry: options?.simplifyGeometry,
   });
 }
 
@@ -375,9 +380,9 @@ describe("json-cms component", () => {
       assertDefined(group);
       expect(group.collectionId).toBe(collectionId);
 
-      await expect(
-        t.mutation(api.lib.createGroup, { collectionId, name: " " }),
-      ).rejects.toThrow("Group must have a name");
+      await expect(t.mutation(api.lib.createGroup, { collectionId, name: " " })).rejects.toThrow(
+        "Group must have a name",
+      );
     });
 
     it("lists all groups when no collection filter is given", async () => {
@@ -495,9 +500,7 @@ describe("json-cms component", () => {
       await t.mutation(api.lib.deleteSchema, { schemaId });
 
       expect(await t.query(api.lib.listSchemaCollections, {})).toEqual([]);
-      expect(
-        await t.query(api.lib.listSchemasByCollection, { collectionId }),
-      ).toEqual([]);
+      expect(await t.query(api.lib.listSchemasByCollection, { collectionId })).toEqual([]);
     });
   });
 
@@ -1421,6 +1424,155 @@ describe("json-cms component", () => {
       const geometries = await listAllGeometries(t, schemaId);
       expect(geometries).toHaveLength(2);
       expect(geometries.every((g) => g.type === "Point")).toBe(true);
+    });
+  });
+
+  describe("geometry simplification", () => {
+    // `startSimplification`'s happy path and `simplifyGeometryWorkflow`'s
+    // execution aren't unit-testable here — same workflow Engine limitation
+    // as the dataset import and geospatial conversion suites above — so
+    // these cover the guard, the flag storage, and the batch primitives the
+    // workflow drives (`listSimplifyBatchInternal` /
+    // `simplifyGeometryBatchInternal` / `applySimplifiedGeometriesInternal`),
+    // plus the write-path rounding that the importer checkbox controls.
+    it("createSchema stores simplifyGeometry for geospatial datasets and rejects it for standard ones", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Polygon", { simplifyGeometry: true }),
+        stored = await t.query(api.lib.getSchema, { schemaId });
+      assertDefined(stored);
+      expect(stored.simplifyGeometry).toBe(true);
+
+      await expect(
+        t.mutation(api.lib.createSchema, {
+          kind: "standard",
+          schema: { title: "Plain", type: "object" },
+          simplifyGeometry: true,
+        }),
+      ).rejects.toThrow("Only a geospatial dataset can simplify geometry.");
+    });
+
+    it("createEntry rounds a geometry when the dataset opts into simplification, and stores it exactly otherwise", async () => {
+      const t = initConvexTest(),
+        simplifiedSchemaId = await createGeospatialSchema(t, "Point", { simplifyGeometry: true }),
+        exactSchemaId = await createGeospatialSchema(t, "Point"),
+        geometry = { coordinates: [0.123456789, 0.987654321], type: "Point" };
+
+      await t.mutation(api.lib.createEntry, {
+        data: { n: 1 },
+        geometry: JSON.stringify(geometry),
+        schemaId: simplifiedSchemaId,
+      });
+      await t.mutation(api.lib.createEntry, {
+        data: { n: 2 },
+        geometry: JSON.stringify(geometry),
+        schemaId: exactSchemaId,
+      });
+
+      const simplified = await listAllGeometries(t, simplifiedSchemaId),
+        exact = await listAllGeometries(t, exactSchemaId);
+      assertDefined(simplified[0]?.geometryJson);
+      assertDefined(exact[0]?.geometryJson);
+      // Rounded to 6dp on the simplifying dataset…
+      expect(JSON.parse(simplified[0].geometryJson)).toStrictEqual({
+        coordinates: [0.123457, 0.987654],
+        type: "Point",
+      });
+      // …and byte-for-byte on the dataset that didn't opt in.
+      expect(JSON.parse(exact[0].geometryJson)).toStrictEqual(geometry);
+    });
+
+    it("simplifyGeometryBatchInternal rounds inline and blob-backed payloads, re-decides each row's storage form, and deletes the blob it replaced", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Polygon"),
+        noisyPoint: number[] = [0.123456789012, 0.987654321098],
+        inlineGeometry = {
+          coordinates: [[noisyPoint, [1, 0], [1, 1], noisyPoint]],
+          type: "Polygon",
+        },
+        // JSON text comfortably beyond INLINE_GEOMETRY_BYTE_LIMIT, so this
+        // row lands in file storage rather than inline.
+        hugeRing = bigRing(70_000),
+        blobGeometry = { coordinates: [hugeRing], type: "Polygon" },
+        inlineStorageId = await storeRows(t, [{ data: { n: 1 }, geometry: inlineGeometry }]),
+        blobStorageId = await storeRows(t, [{ data: { n: 2 }, geometry: blobGeometry }]);
+      await t.action(internal.lib.insertChunkFromStorage, { schemaId, storageId: inlineStorageId });
+      await t.action(internal.lib.insertChunkFromStorage, { schemaId, storageId: blobStorageId });
+
+      const before = await listAllGeometries(t, schemaId);
+      expect(before).toHaveLength(2);
+      const blobRow = before.find((g) => g.geometryUrl !== undefined);
+      assertDefined(blobRow);
+      const blobGeometryStorageId = await t.run(async (ctx) => {
+        const row = await ctx.db.get(blobRow._id);
+        assertDefined(row);
+        assertDefined(row.geometryStorageId);
+        return row.geometryStorageId;
+      });
+
+      const result = await t.action(internal.lib.simplifyGeometryBatchInternal, {
+        cursor: null,
+        schemaId,
+      });
+      expect(result.isDone).toBe(true);
+      expect(result.simplified).toBe(2);
+
+      const after = await listAllGeometries(t, schemaId),
+        roundedInline = after.find((g) => g._id === before[0]._id),
+        roundedBlob = after.find((g) => g._id === blobRow._id);
+      assertDefined(roundedInline);
+      assertDefined(roundedBlob);
+
+      // The small row stays inline, now rounded…
+      assertDefined(roundedInline.geometryJson);
+      const inlineParsed = JSON.parse(roundedInline.geometryJson);
+      expect(inlineParsed.coordinates[0][0]).toStrictEqual([
+        Math.round(noisyPoint[0] * 1e6) / 1e6,
+        Math.round(noisyPoint[1] * 1e6) / 1e6,
+      ]);
+      // …and the big row still exceeds the inline limit, so it re-lands in a
+      // NEW blob (rounded), with the old blob deleted behind it.
+      const newBlobStorageId = await t.run(async (ctx) => {
+        const row = await ctx.db.get(roundedBlob._id);
+        assertDefined(row);
+        assertDefined(row.geometryStorageId);
+        return row.geometryStorageId;
+      });
+      expect(newBlobStorageId).not.toBe(blobGeometryStorageId);
+      const replaced = await t.run(async (ctx) => ctx.storage.get(blobGeometryStorageId));
+      expect(replaced).toBeNull();
+      const newBlobJson: unknown = await t.run(async (ctx) => {
+        const blob = await ctx.storage.get(newBlobStorageId);
+        assertDefined(blob);
+        return JSON.parse(await blob.text());
+      });
+      expect((newBlobJson as typeof blobGeometry).coordinates[0][0]).toStrictEqual([
+        Math.round(hugeRing[0][0] * 1e6) / 1e6,
+        Math.round(hugeRing[0][1] * 1e6) / 1e6,
+      ]);
+    });
+
+    it("startSimplification rejects a standard dataset", async () => {
+      const t = initConvexTest(),
+        schemaId = await createImportSchema(t);
+      await expect(t.mutation(api.lib.startSimplification, { schemaId, total: 1 })).rejects.toThrow(
+        "Only a geospatial dataset can simplify geometry.",
+      );
+    });
+
+    it("deleteSchema also deletes the retained source-file blob", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Polygon"),
+        sourceFileStorageId = await t.run(async (ctx) =>
+          ctx.storage.store(new Blob(["original bytes"], { type: "application/json" })),
+        );
+      await t.run(async (ctx) => {
+        await ctx.db.patch(schemaId, { sourceFileStorageId });
+      });
+
+      await t.mutation(api.lib.deleteSchema, { schemaId });
+
+      const stillThere = await t.run(async (ctx) => ctx.storage.get(sourceFileStorageId));
+      expect(stillThere).toBeNull();
     });
   });
 });

@@ -200,6 +200,19 @@ export interface StartDatasetImportArgs {
    * validator types just to thread the value through.
    */
   geometryType?: string;
+  /**
+   * Round every geometry coordinate to 6 decimal places (~0.11 m) as it's
+   * stored — smaller payloads, faster maps, no visible difference. The
+   * original file (below) stays re-downloadable regardless. Geospatial
+   * imports only.
+   */
+  simplifyGeometry?: boolean;
+  /**
+   * The exact file this import came from, retained in Convex file storage so
+   * it can be re-downloaded later (see the dataset's `getSourceFileUrl`).
+   * Uploaded as its own blob and attached to the dataset by `startImport`.
+   */
+  sourceFile?: File | null;
   rows: Array<{ data: unknown; geometry?: unknown }>;
 }
 
@@ -232,8 +245,22 @@ export function useDatasetImport(): DatasetImportHandle {
     [importId, setImportId] = useState<string | undefined>(),
     status = useQuery(api.getImportStatus, importId ? { importId } : "skip"),
     start = useCallback(
-      async ({ schema, uiSchema, kind, geometryType, rows }: StartDatasetImportArgs) => {
-        const newSchemaId = await createSchema({ geometryType, kind, schema, uiSchema }),
+      async ({
+        schema,
+        uiSchema,
+        kind,
+        geometryType,
+        simplifyGeometry,
+        sourceFile,
+        rows,
+      }: StartDatasetImportArgs) => {
+        const newSchemaId = await createSchema({
+            geometryType,
+            kind,
+            schema,
+            simplifyGeometry,
+            uiSchema,
+          }),
           // Split client-side (the browser already has every row parsed in
           // memory) and upload each chunk to its own blob — never one giant
           // blob. See `chunkRowsForImport`'s doc comment for why: Convex
@@ -268,8 +295,40 @@ export function useDatasetImport(): DatasetImportHandle {
           }
           storageIds.push(body.storageId);
         }
+
+        // Retain the original file as its own blob — deliberately NOT in
+        // `storageIds` (the import workflow deletes chunk blobs as it
+        // consumes them; this one must survive).
+        let sourceFileRef: { name: string; size: number; storageId: string } | undefined;
+        if (sourceFile) {
+          const uploadUrl = await generateUploadUrl({}),
+            res = await fetch(uploadUrl, {
+              body: sourceFile,
+              headers: { "Content-Type": sourceFile.type || "application/octet-stream" },
+              method: "POST",
+            });
+          if (!res.ok) {
+            throw new Error("Failed to upload the original file.");
+          }
+          const body: unknown = await res.json();
+          if (
+            typeof body !== "object" ||
+            body === null ||
+            !("storageId" in body) ||
+            typeof body.storageId !== "string"
+          ) {
+            throw new Error("Original-file upload did not return a storageId.");
+          }
+          sourceFileRef = {
+            name: sourceFile.name,
+            size: sourceFile.size,
+            storageId: body.storageId,
+          };
+        }
+
         const newImportId = await startImport({
           schemaId: newSchemaId,
+          sourceFile: sourceFileRef,
           storageIds,
           total: rows.length,
         });

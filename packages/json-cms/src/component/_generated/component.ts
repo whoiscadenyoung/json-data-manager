@@ -72,6 +72,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "MultiPolygon";
           kind?: "standard" | "geospatial";
           schema: any;
+          simplifyGeometry?: boolean;
           uiSchema?: any;
         },
         string,
@@ -224,9 +225,20 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           groupId?: string;
           kind?: "standard" | "geospatial";
           schema: any;
+          simplifyGeometry?: boolean;
+          sourceFileName?: string;
+          sourceFileSize?: number;
+          sourceFileStorageId?: string;
           title: string;
           uiSchema?: any;
         },
+        Name
+      >;
+      getSourceFileUrl: FunctionReference<
+        "query",
+        "internal",
+        { schemaId: string },
+        null | string,
         Name
       >;
       listCollections: FunctionReference<
@@ -420,6 +432,10 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           groupId?: string;
           kind?: "standard" | "geospatial";
           schema: any;
+          simplifyGeometry?: boolean;
+          sourceFileName?: string;
+          sourceFileSize?: number;
+          sourceFileStorageId?: string;
           title: string;
           uiSchema?: any;
         }>,
@@ -445,6 +461,10 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           groupId?: string;
           kind?: "standard" | "geospatial";
           schema: any;
+          simplifyGeometry?: boolean;
+          sourceFileName?: string;
+          sourceFileSize?: number;
+          sourceFileStorageId?: string;
           title: string;
           uiSchema?: any;
         }>,
@@ -474,7 +494,19 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       startImport: FunctionReference<
         "mutation",
         "internal",
-        { schemaId: string; storageIds: Array<string>; total: number },
+        {
+          schemaId: string;
+          sourceFile?: { name: string; size: number; storageId: string };
+          storageIds: Array<string>;
+          total: number;
+        },
+        string,
+        Name
+      >;
+      startSimplification: FunctionReference<
+        "mutation",
+        "internal",
+        { schemaId: string; total: number },
         string,
         Name
       >;

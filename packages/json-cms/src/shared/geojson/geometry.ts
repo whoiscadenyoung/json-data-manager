@@ -181,6 +181,43 @@ function planarBounds(result: number[]): [number, number, number, number] {
 }
 
 /**
+ * The decimal-place precision geometries are normalized to when a dataset
+ * opts into simplification. 6 decimal places is ~0.11 m at the equator —
+ * roughly an order of magnitude finer than consumer GPS and Census-derived
+ * boundary data, so the change is invisible at any realistic map zoom, while
+ * stripping the 7-13 decimal float64 artifacts real-world GIS files carry.
+ */
+export const GEOMETRY_SIMPLIFY_DECIMAL_PLACES = 6;
+
+/**
+ * Rounds every coordinate value (longitude, latitude, and altitude, if
+ * present) of `geometry` to `decimals` decimal places. The geometry's type
+ * and structure are untouched — only the numeric leaf values change. Idempotent:
+ * rounding an already-rounded geometry is a no-op. The result's JSON text is
+ * never longer than the input's (rounding can only drop digits — no value
+ * this produces ever serializes in exponent form), so callers that re-serialize
+ * after rounding are guaranteed a payload no larger than before.
+ */
+export function roundGeometryCoordinates<G extends Geometry>(geometry: G, decimals: number): G {
+  const factor = 10 ** decimals;
+  // A position is the first array level whose elements are numbers; anything
+  // above it (up to MultiPolygon's 3 levels of grouping) is recursed into.
+  const roundDeep = (value: unknown): unknown => {
+    if (Array.isArray(value)) {
+      return typeof value[0] === "number"
+        ? value.map((coordinate) => Math.round(coordinate * factor) / factor)
+        : value.map(roundDeep);
+    }
+    return value;
+  };
+  return {
+    ...geometry,
+    coordinates: roundDeep(geometry.coordinates),
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- `roundDeep` preserves the exact nesting shape each geometry type's `coordinates` expects; the per-type tuples can't be expressed through one generic walk.
+  } as G;
+}
+
+/**
  * Bounding box of a Geometry/Feature/FeatureCollection via `@turf/bbox`.
  * @returns `undefined` when there are no positions to bound, rather than Turf's own degenerate `[Infinity, Infinity, -Infinity, -Infinity]`.
  */

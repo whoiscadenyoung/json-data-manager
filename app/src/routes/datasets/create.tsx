@@ -181,11 +181,21 @@ function ImportFirst() {
   return (
     <DatasetImporter
       progress={progress}
-      onImport={async (_json, parsedSchema, _uiJson, parsedUiSchema, rows, kind, geometryType) => {
+      onImport={async (
+        _json,
+        parsedSchema,
+        _uiJson,
+        parsedUiSchema,
+        rows,
+        kind,
+        geometryType,
+        options,
+      ) => {
         const newSchemaId = await createSchema({
           geometryType: kind === "geospatial" ? geometryType : undefined,
           kind: kind === "geospatial" ? "geospatial" : undefined,
           schema: parsedSchema,
+          simplifyGeometry: kind === "geospatial" ? options.simplifyGeometry : undefined,
           uiSchema: Object.keys(parsedUiSchema).length > 0 ? parsedUiSchema : undefined,
         });
 
@@ -221,8 +231,42 @@ function ImportFirst() {
           storageIds.push(body.storageId);
         }
 
+        // Retain the original file as its own blob so it stays
+        // re-downloadable from the dataset page — deliberately NOT in
+        // `storageIds` (the import workflow deletes chunk blobs as it
+        // consumes them; this one must survive).
+        let sourceFile: { name: string; size: number; storageId: string } | undefined;
+        if (options.sourceFile) {
+          const uploadUrl = await generateUploadUrl({}),
+            res = await fetch(uploadUrl, {
+              body: options.sourceFile,
+              headers: {
+                "Content-Type": options.sourceFile.type || "application/octet-stream",
+              },
+              method: "POST",
+            });
+          if (!res.ok) {
+            throw new Error("Failed to upload the original file.");
+          }
+          const body: unknown = await res.json();
+          if (
+            typeof body !== "object" ||
+            body === null ||
+            !("storageId" in body) ||
+            typeof body.storageId !== "string"
+          ) {
+            throw new Error("Original-file upload did not return a storageId.");
+          }
+          sourceFile = {
+            name: options.sourceFile.name,
+            size: options.sourceFile.size,
+            storageId: body.storageId,
+          };
+        }
+
         const newImportId = await startImport({
           schemaId: newSchemaId,
+          sourceFile,
           storageIds,
           total: rows.length,
         });
