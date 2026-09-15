@@ -97,9 +97,14 @@ function toFeatureRow(g: GeometryEntry, resolved: Geometry) {
  * as a prop rather than querying internally, matching `EntriesTable`'s own
  * pattern.
  *
- * The map's first paint waits for the complete dataset: the skeleton holds
- * until every geometry row has resolved, so the viewport is fitted to the
- * full extent exactly once and points never pop in one fetch at a time.
+ * The map's first paint waits for the complete dataset, which arrives in two
+ * phases: the caller's paginated query finishing a full pass (`isLoading`),
+ * then every geometry row resolving (external `geometryUrl` fetches). Until
+ * both are done the skeleton holds, so the viewport is fitted to the full
+ * extent exactly once and points never pop in one page or one fetch at a
+ * time. Once the map has rendered with complete data it stays rendered —
+ * later live-query updates just flow into the existing map instead of
+ * re-skeletoning it.
  */
 export function EntriesMap({
   geometries,
@@ -109,7 +114,7 @@ export function EntriesMap({
 }: {
   geometries: GeometryEntry[];
   entries: EntryDoc[];
-  /** True while the caller's geometry query is still loading — renders the skeleton instead of an empty/half-ready map. */
+  /** True while the caller's data is not yet a complete read (pagination pass still running). */
   isLoading?: boolean;
   /** Overrides the map container's height classes (default `h-[500px]`). */
   className?: string;
@@ -137,12 +142,25 @@ export function EntriesMap({
     pendingCount = geometries.length - resolvableGeometries.length,
     // A row whose fetch failed (or whose inline JSON was malformed) never
     // resolves — don't hold the skeleton over it forever. After a generous
-    // grace period, render whatever did resolve (the pre-skeleton behavior)
-    // rather than stranding the map on a skeleton.
-    [graceElapsed, setGraceElapsed] = useState(false);
+    // grace period (only started once pagination itself is done, so a
+    // multi-page dataset still streaming in can't hit the cap), render
+    // whatever did resolve rather than stranding the map on a skeleton.
+    [graceElapsed, setGraceElapsed] = useState(false),
+    // Latched the first time the map renders with complete data. Live-query
+    // updates afterwards can briefly flip `isLoading`/`pendingCount` back to
+    // unfinished while the next pass re-reads — that must not re-skeleton a
+    // map the user is already looking at.
+    [hasRenderedOnce, setHasRenderedOnce] = useState(false),
+    ready = !isLoading && pendingCount === 0;
 
   useEffect(() => {
-    if (pendingCount === 0) {
+    if (ready) {
+      setHasRenderedOnce(true);
+    }
+  }, [ready]);
+
+  useEffect(() => {
+    if (isLoading || pendingCount === 0) {
       return;
     }
     const timer = setTimeout(() => {
@@ -151,9 +169,9 @@ export function EntriesMap({
     return () => {
       clearTimeout(timer);
     };
-  }, [pendingCount]);
+  }, [isLoading, pendingCount]);
 
-  if (isLoading || (pendingCount > 0 && !graceElapsed)) {
+  if (!hasRenderedOnce && !ready && !graceElapsed) {
     return (
       <div
         className={cn(

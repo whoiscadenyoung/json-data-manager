@@ -85,16 +85,22 @@ type EntryPanelSearch = z.infer<typeof entryPanelSearchSchema>;
  * `"skip"` otherwise. `listGeometries` is paginated server-side (a dataset's
  * cumulative geometry payload can exceed Convex's per-execution read-byte
  * budget even though each row is safely under its own document-size limit),
- * so this fetches every page and returns `undefined` until all of them have
- * loaded — matching the plain-`useQuery` shape the rest of this page expects.
+ * so this fetches every page. `geometries` is `undefined` only until the
+ * first rows exist; `isComplete` is the real "everything is loaded" signal —
+ * a full pagination pass has finished, so the array is the complete dataset.
+ * (`isLoading` alone drops back to false after the first page, which is why
+ * the map's skeleton gate must key off `isComplete`.)
  */
 function useGeometriesForSchema(schema: Schema | null | undefined, schemaId: string) {
   const shouldFetch = schema ? schema.kind === "geospatial" : false,
-    { isLoading, results } = useAllPaginated(
+    { isLoading, results, status } = useAllPaginated(
       api.geometries.list,
       shouldFetch ? { schemaId } : "skip",
     );
-  return isLoading ? undefined : results;
+  return {
+    geometries: isLoading ? undefined : results,
+    isComplete: status === "Exhausted",
+  };
 }
 
 /**
@@ -213,7 +219,7 @@ function SchemaDetailPage() {
     navigate = Route.useNavigate(),
     schema = useQuery(api.schemas.get, { schemaId }),
     entries = useQuery(api.entries.list, { schemaId }),
-    geometries = useGeometriesForSchema(schema, schemaId),
+    { geometries, isComplete } = useGeometriesForSchema(schema, schemaId),
     resolvedGeometries = useResolvedGeometries(geometries ?? []),
     // The dataset's group, for the breadcrumb — skipped unless it's grouped
     // (also skips while `schema` itself is still loading, and yields null for
@@ -409,9 +415,10 @@ function SchemaDetailPage() {
       {schema.kind === "geospatial" && (
         <section className="mb-6">
           <EntriesMap
+            key={schemaId}
             entries={entries}
             geometries={geometries ?? []}
-            isLoading={geometries === undefined}
+            isLoading={!isComplete}
             className="h-[420px]"
           />
         </section>
