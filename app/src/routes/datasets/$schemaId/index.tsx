@@ -419,6 +419,8 @@ function SchemaDetailPage() {
             entries={entries}
             geometries={geometries ?? []}
             isLoading={!isComplete}
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the component maintains boundingBox as a fixed [minLon, minLat, maxLon, maxLat] (see `schemas.boundingBox` in packages/json-cms).
+            initialBbox={schema.boundingBox as [number, number, number, number] | undefined}
             className="h-[420px]"
           />
         </section>

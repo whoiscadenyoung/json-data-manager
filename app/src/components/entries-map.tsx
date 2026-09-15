@@ -1,7 +1,7 @@
 import { buildFeatureCollection, computeBbox, useResolvedGeometries } from "@caden/json-cms/react";
 import type { Geometry } from "@caden/json-cms/react";
 import type { FunctionReturnType } from "convex/server";
-import { Map as MapIcon, X } from "lucide-react";
+import { Loader2, Map as MapIcon, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "#/components/ui/button";
@@ -97,25 +97,35 @@ function toFeatureRow(g: GeometryEntry, resolved: Geometry) {
  * as a prop rather than querying internally, matching `EntriesTable`'s own
  * pattern.
  *
- * The map's first paint waits for the complete dataset, which arrives in two
- * phases: the caller's paginated query finishing a full pass (`isLoading`),
- * then every geometry row resolving (external `geometryUrl` fetches). Until
- * both are done the skeleton holds, so the viewport is fitted to the full
- * extent exactly once and points never pop in one page or one fetch at a
- * time. Once the map has rendered with complete data it stays rendered —
- * later live-query updates just flow into the existing map instead of
- * re-skeletoning it.
+ * How much the map waits depends on `initialBbox`. Without one, the skeleton
+ * holds until the complete dataset has arrived (the caller's paginated query
+ * finishing a full pass, then every geometry row resolving) so the viewport
+ * is fitted to the full extent exactly once. With one — the server-
+ * maintained `schemas.boundingBox` — the map opens immediately on that
+ * extent with its dashed outline, and features stream in behind a small
+ * corner spinner; once everything has landed, the viewport corrects to the
+ * exact extent only if it differs (it can only be stale-wider, after
+ * deletions).
  */
 export function EntriesMap({
   geometries,
   entries,
   isLoading = false,
+  initialBbox,
   className,
 }: {
   geometries: GeometryEntry[];
   entries: EntryDoc[];
   /** True while the caller's data is not yet a complete read (pagination pass still running). */
   isLoading?: boolean;
+  /**
+   * The dataset's server-maintained extent, `[minLon, minLat, maxLon, maxLat]`
+   * (`schemas.boundingBox`). Lets the map render immediately on the right
+   * viewport instead of waiting on the data — it's a best-effort envelope
+   * (never shrinks on delete), so once everything is loaded the viewport
+   * re-fits to the exact extent when that differs.
+   */
+  initialBbox?: [number, number, number, number];
   /** Overrides the map container's height classes (default `h-[500px]`). */
   className?: string;
 }) {
@@ -171,7 +181,7 @@ export function EntriesMap({
     };
   }, [isLoading, pendingCount]);
 
-  if (!hasRenderedOnce && !ready && !graceElapsed) {
+  if (initialBbox === undefined && !hasRenderedOnce && !ready && !graceElapsed) {
     return (
       <div
         className={cn(
@@ -210,9 +220,14 @@ export function EntriesMap({
     // Computed from the full `geometries` array (point-like and not) so the
     // viewport still fits everything, regardless of which layer renders each row.
     bbox = computeBbox(collection),
-    // The extent outline only means something once at least one feature
-    // resolved — an empty collection's bbox is infinite nonsense.
-    extentFeature = featureRows.length > 0 && bbox ? bboxFeature(bbox) : undefined,
+    // While data is still arriving, a (possibly partial) computed extent must
+    // not drive the viewport — it would zoom in too far and keep growing, the
+    // exact jitter this design avoids. The server-maintained extent holds
+    // until everything has landed; only then does the exact extent take over
+    // (it can differ from the stored one only after deletions, which the
+    // stored envelope never shrinks for).
+    bounds = ready ? (bbox ?? initialBbox) : (initialBbox ?? bbox),
+    extentFeature = bounds ? bboxFeature(bounds) : undefined,
     // `MapGeoJSON` renders `fill`/`line` layers, which draw nothing for
     // Point/MultiPoint geometries — those go to `MapClusterLayer` instead,
     // which renders `circle` layers. Split by entryId (rather than feeding
@@ -235,7 +250,7 @@ export function EntriesMap({
         className,
       )}
     >
-      <Map bounds={bbox} className="h-full w-full">
+      <Map bounds={bounds} className="h-full w-full">
         {extentFeature && (
           <MapGeoJSON
             data={extentFeature}
@@ -261,6 +276,12 @@ export function EntriesMap({
           />
         )}
       </Map>
+      {!ready && (
+        <div className="absolute bottom-3 left-3 z-10 flex items-center gap-2 rounded-full border border-border bg-card/95 px-3 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur-sm">
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+          Loading features…
+        </div>
+      )}
       {selectedEntry && (
         <FeatureDetailsPanel entry={selectedEntry} onClose={() => setSelectedEntryId(null)} />
       )}
