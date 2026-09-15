@@ -213,6 +213,13 @@ function SchemaDetailPage() {
     entries = useQuery(api.entries.list, { schemaId }),
     geometries = useGeometriesForSchema(schema, schemaId),
     resolvedGeometries = useResolvedGeometries(geometries ?? []),
+    // The dataset's group, for the breadcrumb — skipped unless it's grouped
+    // (also skips while `schema` itself is still loading, and yields null for
+    // a dangling groupId whose group was deleted).
+    group = useQuery(
+      api.groups.get,
+      schema?.groupId !== undefined ? { groupId: schema.groupId } : "skip",
+    ),
     [makeGeospatialOpen, setMakeGeospatialOpen] = useState(false),
     [exportOpen, setExportOpen] = useState(false),
     [jsonDefinitionOpen, setJsonDefinitionOpen] = useState(false),
@@ -314,6 +321,18 @@ function SchemaDetailPage() {
               <BreadcrumbItem>
                 <BreadcrumbLink render={<Link to="/datasets" />}>Datasets</BreadcrumbLink>
               </BreadcrumbItem>
+              {group != null && (
+                <>
+                  <BreadcrumbSeparator />
+                  <BreadcrumbItem>
+                    <BreadcrumbLink
+                      render={<Link to="/groups/$groupId" params={{ groupId: group._id }} />}
+                    >
+                      {group.name}
+                    </BreadcrumbLink>
+                  </BreadcrumbItem>
+                </>
+              )}
               <BreadcrumbSeparator />
               <BreadcrumbItem>
                 <BreadcrumbPage>{schema.title}</BreadcrumbPage>
