@@ -1,15 +1,27 @@
 import type { ReferenceField } from "@caden/json-cms/react";
 import { getReferenceFields } from "@caden/json-cms/react";
 import { Link } from "@tanstack/react-router";
-import type { ColumnDef } from "@tanstack/react-table";
-import { flexRender, getCoreRowModel, useReactTable } from "@tanstack/react-table";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { Copy, Eye, MoreHorizontal, Pencil } from "lucide-react";
-import { useRef } from "react";
 import { toast } from "sonner";
 
+import { DataTableClearFilter } from "#/components/niko-table/components/data-table-clear-filter";
+import { DataTableColumnHeader } from "#/components/niko-table/components/data-table-column-header";
+import { DataTableColumnSortMenu } from "#/components/niko-table/components/data-table-column-sort";
+import { DataTableColumnTitle } from "#/components/niko-table/components/data-table-column-title";
+import { DataTableFilterMenu } from "#/components/niko-table/components/data-table-filter-menu";
+import { DataTableSearchFilter } from "#/components/niko-table/components/data-table-search-filter";
+import { DataTableToolbarSection } from "#/components/niko-table/components/data-table-toolbar-section";
+import { DataTableViewMenu } from "#/components/niko-table/components/data-table-view-menu";
+import { DataTable } from "#/components/niko-table/core/data-table";
+import { DataTableRoot } from "#/components/niko-table/core/data-table-root";
+import {
+  DataTableVirtualizedBody,
+  DataTableVirtualizedEmptyBody,
+  DataTableVirtualizedHeader,
+} from "#/components/niko-table/core/data-table-virtualized-structure";
+import type { DataTableColumnDef } from "#/components/niko-table/types";
 import { Button } from "#/components/ui/button";
 import {
   DropdownMenu,
@@ -18,13 +30,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "#/components/ui/dropdown-menu";
-import {
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "#/components/ui/table";
 import { buildLabelsByField, referencedEntryIds } from "#/lib/reference-labels";
 import { api } from "#convex/_generated/api";
 
@@ -156,6 +161,16 @@ function RowActions({
   );
 }
 
+/** A sortable column header: title + click-to-sort control, wired to the column via context. */
+function SortableHeader({ title }: { title?: string }) {
+  return (
+    <DataTableColumnHeader>
+      <DataTableColumnTitle title={title} />
+      <DataTableColumnSortMenu />
+    </DataTableColumnHeader>
+  );
+}
+
 // Row virtualization (see `EntriesTable` below) lays out `<tr>`s with CSS
 // grid/flex instead of the browser's table layout algorithm, which means
 // column widths are no longer inferred from content — every column needs an
@@ -173,8 +188,8 @@ function buildColumns(
   onEdit: (entry: Entry) => void,
   referenceFieldsByName: Map<string, ReferenceField>,
   labelsByField: Map<string, Map<string, string>>,
-): ColumnDef<Entry>[] {
-  const propertyColumns: ColumnDef<Entry>[] = properties.map((name) => {
+): DataTableColumnDef<Entry>[] {
+  const propertyColumns: DataTableColumnDef<Entry>[] = properties.map((name) => {
     const referenceField = referenceFieldsByName.get(name);
     return {
       accessorFn: (entry) => entry.data[name],
@@ -188,18 +203,23 @@ function buildColumns(
         ) : (
           <ValueCell value={info.getValue()} />
         ),
-      header: name,
+      enableColumnFilter: true,
+      header: () => <SortableHeader title={name} />,
       id: name,
+      meta: { label: name },
       size: PROPERTY_COLUMN_SIZE,
     };
   });
 
-  const geometryColumn: ColumnDef<Entry>[] = isGeospatial
+  const geometryColumn: DataTableColumnDef<Entry>[] = isGeospatial
     ? [
         {
+          accessorFn: (entry) => entry.geometryType,
           cell: (info) => <GeometryCell geometryType={info.row.original.geometryType} />,
-          header: "Geometry",
+          enableColumnFilter: true,
+          header: () => <SortableHeader title="Geometry" />,
           id: "geometry",
+          meta: { label: "Geometry" },
           size: GEOMETRY_COLUMN_SIZE,
         },
       ]
@@ -209,13 +229,19 @@ function buildColumns(
     ...geometryColumn,
     ...propertyColumns,
     {
+      accessorFn: (entry) => entry._creationTime,
       cell: (info) => new Date(info.row.original._creationTime).toLocaleString(),
-      header: "Created",
+      enableColumnFilter: true,
+      header: () => <SortableHeader title="Created" />,
       id: "_creationTime",
+      meta: { label: "Created" },
       size: CREATED_COLUMN_SIZE,
     },
     {
       cell: (info) => <RowActions schemaId={schemaId} entry={info.row.original} onEdit={onEdit} />,
+      enableColumnFilter: false,
+      enableHiding: false,
+      enableSorting: false,
       header: "",
       id: "actions",
       size: ACTIONS_COLUMN_SIZE,
@@ -226,7 +252,7 @@ function buildColumns(
 /** Estimated row height in px, used to seed the virtualizer before rows are measured. */
 const ESTIMATED_ROW_HEIGHT = 37;
 
-/** A TanStack Table view of a dataset's entries: one column per schema property. */
+/** A niko-table (TanStack Table v9) view of a dataset's entries: one column per schema property, with search/sort/filter/column-visibility. */
 export function EntriesTable({
   schemaId,
   schema,
@@ -258,88 +284,32 @@ export function EntriesTable({
       onEdit,
       referenceFieldsByName,
       labelsByField,
-    ),
-    // TanStack Table's returned instance always has fresh method references; this is inherent to the library.
-    // oxlint-disable-next-line react/incompatible-library
-    table = useReactTable({ columns, data: entries, getCoreRowModel: getCoreRowModel() }),
-    rows = table.getRowModel().rows,
-    scrollContainerRef = useRef<HTMLDivElement>(null),
-    // Rows are uniform height (every cell truncates to one line), so a fixed
-    // estimate is accurate without per-row `measureElement` — the extra
-    // ResizeObserver bookkeeping that needs would be pure overhead here.
-    rowVirtualizer = useVirtualizer({
-      count: rows.length,
-      // eslint-disable-next-line react-hooks/exhaustive-deps -- ref is stable across renders
-      getScrollElement: () => scrollContainerRef.current,
-      estimateSize: () => ESTIMATED_ROW_HEIGHT,
-      overscan: 10,
-    }),
-    virtualRows = rowVirtualizer.getVirtualItems();
+    );
 
   return (
-    // A raw <table> here, not the shared `Table` primitive — its own wrapper
-    // div hardcodes `overflow-x-auto`, which per the CSS overflow spec forces
-    // `overflow-y: auto` too (a non-`visible` value on one axis makes the
-    // other compute to `auto` instead of `visible`), silently creating a
-    // SECOND scroll container between this one and the sticky header. The
-    // header's `position: sticky` binds to whichever scroll container is
-    // nearest, so it would stick inside that inner (undersized, never
-    // actually scrolled) wrapper instead of this div, rendering the sticky
-    // positioning inert. This div now owns both scroll axes itself.
-    <div ref={scrollContainerRef} className="max-h-[70vh] overflow-auto rounded-md border">
-      <table className="w-full caption-bottom text-xs" style={{ display: "grid" }}>
-        <TableHeader className="sticky top-0 z-10 bg-background" style={{ display: "grid" }}>
-          {table.getHeaderGroups().map((headerGroup) => (
-            <TableRow key={headerGroup.id} style={{ display: "flex", width: "100%" }}>
-              {headerGroup.headers.map((header) => (
-                <TableHead
-                  key={header.id}
-                  style={{ display: "flex", alignItems: "center", width: header.getSize() }}
-                  className={
-                    header.column.id === "actions"
-                      ? undefined
-                      : header.column.id === "geometry"
-                        ? undefined
-                        : "font-mono"
-                  }
-                >
-                  {header.isPlaceholder
-                    ? null
-                    : flexRender(header.column.columnDef.header, header.getContext())}
-                </TableHead>
-              ))}
-            </TableRow>
-          ))}
-        </TableHeader>
-        <TableBody
-          style={{ display: "grid", height: rowVirtualizer.getTotalSize(), position: "relative" }}
-        >
-          {virtualRows.map((virtualRow) => {
-            const row = rows[virtualRow.index];
-            return (
-              <TableRow
-                key={row.id}
-                style={{
-                  display: "flex",
-                  position: "absolute",
-                  top: 0,
-                  transform: `translateY(${virtualRow.start}px)`,
-                  width: "100%",
-                }}
-              >
-                {row.getVisibleCells().map((cell) => (
-                  <TableCell
-                    key={cell.id}
-                    style={{ display: "flex", alignItems: "center", width: cell.column.getSize() }}
-                  >
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </TableCell>
-                ))}
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </table>
-    </div>
+    <DataTableRoot
+      data={entries}
+      columns={columns}
+      config={{ enableFilters: true, enableMultiSort: true, enableSorting: true }}
+      getRowId={(entry) => entry._id}
+    >
+      <DataTableToolbarSection className="justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <DataTableSearchFilter placeholder="Search entries..." />
+          <DataTableFilterMenu />
+          <DataTableClearFilter />
+        </div>
+        <DataTableViewMenu />
+      </DataTableToolbarSection>
+
+      <DataTable className="max-h-[70vh]">
+        <DataTableVirtualizedHeader />
+        <DataTableVirtualizedBody estimateSize={ESTIMATED_ROW_HEIGHT}>
+          <DataTableVirtualizedEmptyBody>
+            No entries match your filters.
+          </DataTableVirtualizedEmptyBody>
+        </DataTableVirtualizedBody>
+      </DataTable>
+    </DataTableRoot>
   );
 }

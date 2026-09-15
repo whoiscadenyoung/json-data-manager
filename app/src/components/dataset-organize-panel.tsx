@@ -4,7 +4,13 @@ import { toast } from "sonner";
 
 import { Button } from "#/components/ui/button";
 import { Label } from "#/components/ui/label";
-import { Select } from "#/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "#/components/ui/select";
 import {
   Sheet,
   SheetContent,
@@ -95,19 +101,23 @@ export function DatasetOrganizePanel({
           <div className="flex flex-col gap-2">
             <Label htmlFor="dataset-collection">Collection</Label>
             <Select
-              id="dataset-collection"
               value={collectionId}
-              onChange={(e) => {
-                setCollectionId(e.target.value);
+              onValueChange={(value) => {
+                setCollectionId(value ?? NONE);
                 setGroupId(NONE);
               }}
             >
-              <option value={NONE}>No collection</option>
-              {(collections ?? []).map((collection) => (
-                <option key={collection._id} value={collection._id}>
-                  {collection.name}
-                </option>
-              ))}
+              <SelectTrigger id="dataset-collection" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NONE}>No collection</SelectItem>
+                {(collections ?? []).map((collection) => (
+                  <SelectItem key={collection._id} value={collection._id}>
+                    {collection.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
             </Select>
           </div>
 
@@ -115,18 +125,22 @@ export function DatasetOrganizePanel({
             <div className="flex flex-col gap-2">
               <Label htmlFor="dataset-group">Group (optional)</Label>
               <Select
-                id="dataset-group"
                 value={groupId}
-                onChange={(e) => {
-                  setGroupId(e.target.value);
+                onValueChange={(value) => {
+                  setGroupId(value ?? NONE);
                 }}
               >
-                <option value={NONE}>Ungrouped</option>
-                {(groups ?? []).map((group) => (
-                  <option key={group._id} value={group._id}>
-                    {group.name}
-                  </option>
-                ))}
+                <SelectTrigger id="dataset-group" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NONE}>Ungrouped</SelectItem>
+                  {(groups ?? []).map((group) => (
+                    <SelectItem key={group._id} value={group._id}>
+                      {group.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
               </Select>
             </div>
           )}

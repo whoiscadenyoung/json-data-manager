@@ -5,7 +5,13 @@ import { toast } from "sonner";
 
 import { Button } from "#/components/ui/button";
 import { Label } from "#/components/ui/label";
-import { Select } from "#/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "#/components/ui/select";
 import {
   Sheet,
   SheetContent,
@@ -42,7 +48,9 @@ function ConversionProgress({
 }) {
   if (status === "failed") {
     return (
-      <p className="text-sm text-destructive">{error ?? "Something went wrong converting this dataset."}</p>
+      <p className="text-sm text-destructive">
+        {error ?? "Something went wrong converting this dataset."}
+      </p>
     );
   }
   const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
@@ -71,7 +79,13 @@ type ImportStatusDoc = {
 };
 
 /** Shown once the conversion has started: progress bar plus a close/hide button. */
-function ConversionRunningView({ status, onClose }: { status: ImportStatusDoc; onClose: () => void }) {
+function ConversionRunningView({
+  status,
+  onClose,
+}: {
+  status: ImportStatusDoc;
+  onClose: () => void;
+}) {
   const settled = status.status === "completed" || status.status === "failed";
   return (
     <div className="flex flex-1 flex-col gap-4 p-6">
@@ -108,20 +122,21 @@ function CoordinateFieldSelect({
     <div className="flex flex-col gap-2">
       <Label htmlFor={id}>{label}</Label>
       <Select
-        id={id}
-        value={value}
-        onChange={(e) => {
-          onChange(e.target.value);
+        value={value === NONE ? null : value}
+        onValueChange={(next) => {
+          onChange(next ?? NONE);
         }}
       >
-        <option value={NONE} disabled>
-          Select a column
-        </option>
-        {columns.map((column) => (
-          <option key={column} value={column}>
-            {column}
-          </option>
-        ))}
+        <SelectTrigger id={id} className="w-full">
+          <SelectValue placeholder="Select a column" />
+        </SelectTrigger>
+        <SelectContent>
+          {columns.map((column) => (
+            <SelectItem key={column} value={column}>
+              {column}
+            </SelectItem>
+          ))}
+        </SelectContent>
       </Select>
     </div>
   );
