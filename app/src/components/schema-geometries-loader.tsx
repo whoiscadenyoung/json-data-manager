@@ -1,0 +1,95 @@
+import { useAllPaginated } from "@caden/json-cms/react";
+import type { FunctionReturnType } from "convex/server";
+import { useCallback, useEffect, useState } from "react";
+
+import { api } from "#convex/_generated/api";
+
+// `listGeometries` is paginated (see its doc comment in the component) — the
+// per-item shape is `PaginationResult["page"][number]`.
+export type GeometryEntry = FunctionReturnType<typeof api.geometries.list>["page"][number];
+
+/**
+ * Loads one schema's geometries (every page — see `useAllPaginated`) and
+ * reports them up via `onLoaded` whenever they change. Renders nothing.
+ *
+ * There is no server-side "all geometries in these schemas" query: Convex
+ * allows at most one `.paginate()` call per query execution, and geometries
+ * are spread across several independently indexed schemas, so aggregating
+ * them server-side isn't possible without a denormalized `schemaId` fan-out
+ * on every `geometries` row. Rendering one of these per schema — each with
+ * its own stable `useAllPaginated` hook call — is the supported way to fan
+ * out N independent reactive queries in React; a loop calling hooks inside
+ * one component is not.
+ */
+export function SchemaGeometriesLoader({
+  schemaId,
+  onLoaded,
+}: {
+  schemaId: string;
+  onLoaded: (schemaId: string, geometries: GeometryEntry[] | undefined) => void;
+}) {
+  const { isLoading, results } = useAllPaginated(api.geometries.list, { schemaId });
+  useEffect(() => {
+    onLoaded(schemaId, isLoading ? undefined : results);
+  }, [schemaId, isLoading, results, onLoaded]);
+  return null;
+}
+
+/**
+ * Fan-out loader for several schemas' geometries: mounts one
+ * `SchemaGeometriesLoader` per schema and merges the results.
+ *
+ * Returns `loaders` (render them alongside your UI — they must stay mounted
+ * even while loading, since they're what's fetching the data) and
+ * `geometries`, which is `undefined` until every schema's pages have fully
+ * loaded, then one flat array across all schemas.
+ */
+export function useGeometriesBySchemas(schemaIds: string[]): {
+  geometries: GeometryEntry[] | undefined;
+  loaders: React.ReactNode[];
+} {
+  const [geometriesBySchema, setGeometriesBySchema] = useState<
+      globalThis.Map<string, GeometryEntry[] | undefined>
+    >(() => new globalThis.Map()),
+    // Must be reference-stable across renders (hence `useCallback` with an
+    // empty dep array — the body only closes over the stable `useState`
+    // setter): `SchemaGeometriesLoader` depends on `onLoaded` inside its own
+    // `useEffect`, so a fresh function identity here on every render would
+    // re-fire that effect every time regardless of whether the underlying
+    // geometries actually changed, cascading into a `setState`-in-`useEffect`
+    // loop across every mounted loader ("Maximum update depth exceeded").
+    handleGeometriesLoaded = useCallback(
+      (schemaId: string, loaded: GeometryEntry[] | undefined) => {
+        setGeometriesBySchema((prev) => {
+          const existing = prev.get(schemaId);
+          // Bail out of the update entirely when nothing changed (covers
+          // the common case of a loader re-reporting the same `undefined`
+          // while still loading) — `new Map(prev)` always returns a new
+          // reference, so skipping it here is what actually breaks the
+          // loop, not just `handleGeometriesLoaded`'s own identity.
+          if (existing === loaded) {
+            return prev;
+          }
+          return new globalThis.Map(prev).set(schemaId, loaded);
+        });
+      },
+      // `setGeometriesBySchema` is a useState setter — stable for the
+      // component's lifetime, so the callback identity is too.
+      [setGeometriesBySchema],
+    );
+
+  const geometries = schemaIds.every((schemaId) => geometriesBySchema.get(schemaId) !== undefined)
+    ? schemaIds.flatMap((schemaId) => geometriesBySchema.get(schemaId) ?? [])
+    : undefined;
+
+  return {
+    geometries,
+    loaders: schemaIds.map((schemaId) => (
+      <SchemaGeometriesLoader
+        key={schemaId}
+        schemaId={schemaId}
+        onLoaded={handleGeometriesLoaded}
+      />
+    )),
+  };
+}

@@ -1,16 +1,17 @@
-import { useAllPaginated } from "@caden/json-cms/react";
 import { ConfirmDialog } from "@caden/json-cms/react/ui";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
-import type { FunctionReturnType } from "convex/server";
-import { FolderOpen, Layers, MoreHorizontal, Pencil, Plus, Trash2, Ungroup } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { FolderOpen, Layers, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { CollectionFormPanel } from "#/components/collection-form-panel";
+import { DatasetList } from "#/components/dataset-list";
+import type { Dataset, GroupDoc } from "#/components/dataset-list";
 import { DatasetPickerSheet } from "#/components/dataset-picker-sheet";
 import { CollectionExtentMap } from "#/components/datasets-map";
 import { GroupFormPanel } from "#/components/group-form-panel";
+import { useGeometriesBySchemas } from "#/components/schema-geometries-loader";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -25,126 +26,17 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "#/components/ui/dropdown-menu";
 import { Empty, EmptyDescription, EmptyTitle } from "#/components/ui/empty";
 import { api } from "#convex/_generated/api";
 
-type GroupDoc = FunctionReturnType<typeof api.groups.list>[number];
-type Dataset = FunctionReturnType<typeof api.schemas.list>[number];
-// `listGeometries` is paginated (see its doc comment in the component) — the
-// per-item shape is `PaginationResult["page"][number]`.
-type GeometryEntry = FunctionReturnType<typeof api.geometries.list>["page"][number];
-
 export const Route = createFileRoute("/collections/$collectionId/")({
   component: CollectionDetailPage,
 });
 
-function DatasetRow({
-  dataset,
-  groups,
-  onMoveToGroup,
-  onRemoveFromCollection,
-}: {
-  dataset: Dataset;
-  groups: GroupDoc[];
-  onMoveToGroup: (dataset: Dataset, groupId: string | null) => void;
-  onRemoveFromCollection: (dataset: Dataset) => void;
-}) {
-  const otherGroups = groups.filter((group) => group._id !== dataset.groupId);
-
-  return (
-    <li className="flex items-center justify-between gap-2 rounded-md border px-3 py-2">
-      <Link to="/datasets/$schemaId" params={{ schemaId: dataset._id }} className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium">{dataset.title}</p>
-        <p className="truncate text-xs text-muted-foreground">{dataset.description}</p>
-      </Link>
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={<Button variant="ghost" size="icon" aria-label="Dataset actions" />}
-        >
-          <MoreHorizontal className="h-3.5 w-3.5" />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          {otherGroups.length > 0 && (
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>Move to group</DropdownMenuSubTrigger>
-              <DropdownMenuSubContent>
-                {otherGroups.map((group) => (
-                  <DropdownMenuItem
-                    key={group._id}
-                    onClick={() => {
-                      onMoveToGroup(dataset, group._id);
-                    }}
-                  >
-                    {group.name}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-          )}
-          {dataset.groupId !== undefined && (
-            <DropdownMenuItem
-              onClick={() => {
-                onMoveToGroup(dataset, null);
-              }}
-            >
-              <Ungroup className="h-3.5 w-3.5" />
-              Remove from group
-            </DropdownMenuItem>
-          )}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            variant="destructive"
-            onClick={() => {
-              onRemoveFromCollection(dataset);
-            }}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Remove from collection
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </li>
-  );
-}
-
-function DatasetList({
-  datasets,
-  groups,
-  emptyLabel,
-  onMoveToGroup,
-  onRemoveFromCollection,
-}: {
-  datasets: Dataset[];
-  groups: GroupDoc[];
-  emptyLabel: string;
-  onMoveToGroup: (dataset: Dataset, groupId: string | null) => void;
-  onRemoveFromCollection: (dataset: Dataset) => void;
-}) {
-  if (datasets.length === 0) {
-    return <p className="text-sm text-muted-foreground">{emptyLabel}</p>;
-  }
-  return (
-    <ul className="flex flex-col gap-1">
-      {datasets.map((dataset) => (
-        <DatasetRow
-          key={dataset._id}
-          dataset={dataset}
-          groups={groups}
-          onMoveToGroup={onMoveToGroup}
-          onRemoveFromCollection={onRemoveFromCollection}
-        />
-      ))}
-    </ul>
-  );
-}
-
 function GroupCard({
+  collectionId,
   group,
   groups,
   datasets,
@@ -154,6 +46,7 @@ function GroupCard({
   onMoveToGroup,
   onRemoveFromCollection,
 }: {
+  collectionId: string;
   group: GroupDoc;
   groups: GroupDoc[];
   datasets: Dataset[];
@@ -167,7 +60,15 @@ function GroupCard({
     <Card>
       <CardHeader className="flex-row items-start justify-between gap-2">
         <div>
-          <CardTitle>{group.name}</CardTitle>
+          <CardTitle>
+            <Link
+              to="/collections/$collectionId/groups/$groupId"
+              params={{ collectionId, groupId: group._id }}
+              className="hover:underline"
+            >
+              {group.name}
+            </Link>
+          </CardTitle>
           {group.description && <CardDescription>{group.description}</CardDescription>}
         </div>
         <div className="flex items-center gap-1">
@@ -264,38 +165,11 @@ function UngroupedDatasetsCard({
 }
 
 /**
- * Loads one geospatial schema's geometries (every page — see
- * `useAllPaginated`) and reports them up via `onLoaded` whenever they
- * change. There's no server-side "all geometries in this collection" query:
- * Convex allows at most one `.paginate()` call per query execution, and a
- * collection's geometries are spread across several independently indexed
- * schemas, so aggregating them server-side isn't possible without a
- * denormalized `collectionId` on every `geometries` row (an expensive
- * cascading update on every schema re-org). Rendering one of these per
- * geospatial schema — each with its own stable `useAllPaginated` hook call —
- * is the supported way to fan out N independent reactive queries in React;
- * a loop calling hooks inside one component is not. Renders nothing itself.
- */
-function SchemaGeometriesLoader({
-  schemaId,
-  onLoaded,
-}: {
-  schemaId: string;
-  onLoaded: (schemaId: string, geometries: GeometryEntry[] | undefined) => void;
-}) {
-  const { isLoading, results } = useAllPaginated(api.geometries.list, { schemaId });
-  useEffect(() => {
-    onLoaded(schemaId, isLoading ? undefined : results);
-  }, [schemaId, isLoading, results, onLoaded]);
-  return null;
-}
-
-/**
  * The extent map above the collection's dataset list: one dashed
  * color-coded rectangle per geospatial dataset, fit to their combined
- * extent (see `CollectionExtentMap`). Replaces the old full-featured
- * "Map" tab — this renders no individual features, so the dataset list
- * stays the page's focus.
+ * extent (see `CollectionExtentMap`). This renders no individual features —
+ * each group gets its own full feature-layer page, and the dataset list
+ * stays this page's focus.
  */
 function CollectionMapSection({ datasets }: { datasets: Dataset[] }) {
   const geospatialSchemaIds = useMemo(
@@ -303,58 +177,19 @@ function CollectionMapSection({ datasets }: { datasets: Dataset[] }) {
         datasets.filter((dataset) => dataset.kind === "geospatial").map((dataset) => dataset._id),
       [datasets],
     ),
-    [geometriesBySchema, setGeometriesBySchema] = useState<
-      globalThis.Map<string, GeometryEntry[] | undefined>
-    >(() => new globalThis.Map()),
-    // Must be reference-stable across renders (hence `useCallback` with an
-    // empty dep array — the body only closes over the stable `useState`
-    // setter): `SchemaGeometriesLoader` depends on `onLoaded` inside its own
-    // `useEffect`, so a fresh function identity here on every render would
-    // re-fire that effect every time regardless of whether the underlying
-    // geometries actually changed, cascading into a `setState`-in-`useEffect`
-    // loop across every mounted loader ("Maximum update depth exceeded").
-    handleGeometriesLoaded = useCallback(
-      (schemaId: string, loaded: GeometryEntry[] | undefined) => {
-        setGeometriesBySchema((prev) => {
-          const existing = prev.get(schemaId);
-          // Bail out of the update entirely when nothing changed (covers
-          // the common case of a loader re-reporting the same `undefined`
-          // while still loading) — `new Map(prev)` always returns a new
-          // reference, so skipping it here is what actually breaks the
-          // loop, not just `handleGeometriesLoaded`'s own identity.
-          if (existing === loaded) {
-            return prev;
-          }
-          return new globalThis.Map(prev).set(schemaId, loaded);
-        });
-      },
-      [],
-    ),
-    geometries = geospatialSchemaIds.every(
-      (schemaId) => geometriesBySchema.get(schemaId) !== undefined,
-    )
-      ? geospatialSchemaIds.flatMap((schemaId) => geometriesBySchema.get(schemaId) ?? [])
-      : undefined;
+    { geometries, loaders } = useGeometriesBySchemas(geospatialSchemaIds);
 
-  // The loaders must stay mounted regardless of loading state — they're
-  // what's actually fetching the data the spinner below is waiting on (the
-  // full account of why is in the old tab's history: swapping the tree's
-  // top-level element type mid-load remounts the loaders and loops
-  // forever). One stable section, branching only in what's rendered
-  // *inside* the fixed-height container, keeps them mounted continuously.
+  // The loaders render regardless of loading state — they must stay mounted
+  // (they're what's actually fetching the data the spinner waits on), and
+  // one stable section branching only inside the fixed-height container
+  // keeps them mounted continuously across the loading transition.
   if (geospatialSchemaIds.length === 0) {
     return null;
   }
 
   return (
     <section className="mb-6" aria-label="Spatial extent of the datasets in this collection">
-      {geospatialSchemaIds.map((schemaId) => (
-        <SchemaGeometriesLoader
-          key={schemaId}
-          schemaId={schemaId}
-          onLoaded={handleGeometriesLoaded}
-        />
-      ))}
+      {loaders}
       <div className="relative h-[320px] w-full overflow-hidden rounded-lg border border-border">
         {geometries === undefined ? (
           <div className="flex h-full items-center justify-center">
@@ -572,6 +407,7 @@ function CollectionDetailPage() {
         {groups.map((group) => (
           <GroupCard
             key={group._id}
+            collectionId={collectionId}
             group={group}
             groups={groups}
             datasets={collectionDatasets.filter((dataset) => dataset.groupId === group._id)}
