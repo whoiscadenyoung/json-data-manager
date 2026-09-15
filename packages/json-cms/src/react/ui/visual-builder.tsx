@@ -6,7 +6,6 @@ import { cn } from "./lib/utils.js";
 import { Button } from "./primitives/button.js";
 import { Input } from "./primitives/input.js";
 import { Label } from "./primitives/label.js";
-import { Textarea } from "./primitives/textarea.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -1142,39 +1141,6 @@ export function VisualBuilder({
 
   return (
     <div className="space-y-4">
-      {/* Title & description */}
-      <div className="grid grid-cols-1 gap-3">
-        <div className="space-y-1">
-          <Label htmlFor="vb-title" className="text-xs">
-            Title <span className="text-destructive">*</span>
-          </Label>
-          <Input
-            id="vb-title"
-            value={formData.title}
-            onChange={(e) => {
-              set("title", e.target.value);
-            }}
-            placeholder="My Schema"
-            className="h-7 text-sm"
-          />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="vb-description" className="text-xs">
-            Description <span className="text-destructive">*</span>
-          </Label>
-          <Textarea
-            id="vb-description"
-            value={formData.description}
-            onChange={(e) => {
-              set("description", e.target.value);
-            }}
-            placeholder="Describe what this schema represents…"
-            rows={2}
-            className="text-sm resize-none"
-          />
-        </div>
-      </div>
-
       {/* Properties */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
