@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import { GeoParseError, GeometryError } from "./error.js";
-import { assertGeometry, computeBbox, isValidGeometry, unionBbox } from "./geometry.js";
+import {
+  GEOMETRY_SIMPLIFY_DECIMAL_PLACES,
+  assertGeometry,
+  computeBbox,
+  isValidGeometry,
+  roundGeometryCoordinates,
+  unionBbox,
+} from "./geometry.js";
 
 const validPoint = { coordinates: [10, 20], type: "Point" },
   validLineString = {
@@ -138,6 +145,103 @@ describe("computeBbox", () => {
 
   it("returns undefined for a MultiPoint with no coordinates", () => {
     expect(computeBbox({ coordinates: [], type: "MultiPoint" })).toBeUndefined();
+  });
+});
+
+describe("roundGeometryCoordinates", () => {
+  it("rounds Point coordinates to the given precision", () => {
+    const point = assertGeometry({ coordinates: [10.123456789, 20.987654321], type: "Point" });
+    expect(roundGeometryCoordinates(point, 6)).toStrictEqual({
+      coordinates: [10.123457, 20.987654],
+      type: "Point",
+    });
+  });
+
+  it("rounds through every nesting level of a MultiPolygon", () => {
+    const multiPolygon = assertGeometry({
+      coordinates: [
+        [
+          [
+            [0.123456789, 0.987654321],
+            [1.111111111, 0],
+            [1, 1.000000001],
+            [0.123456789, 0.987654321],
+          ],
+        ],
+      ],
+      type: "MultiPolygon",
+    });
+    expect(roundGeometryCoordinates(multiPolygon, 4)).toStrictEqual({
+      coordinates: [
+        [
+          [
+            [0.1235, 0.9877],
+            [1.1111, 0],
+            [1, 1],
+            [0.1235, 0.9877],
+          ],
+        ],
+      ],
+      type: "MultiPolygon",
+    });
+  });
+
+  it("preserves a third altitude value while rounding it too", () => {
+    const point = assertGeometry({
+      coordinates: [10.123456789, 20.987654321, 55.5555555],
+      type: "Point",
+    });
+    expect(roundGeometryCoordinates(point, 2).coordinates[2]).toBe(55.56);
+  });
+
+  it("is idempotent — rounding an already-rounded geometry changes nothing", () => {
+    const polygon = assertGeometry({
+      coordinates: [
+        [
+          [-70.9232015429999, 41.4822198969999],
+          [-70.92101, 41.48245],
+          [-70.9205, 41.48301],
+          [-70.9232015429999, 41.4822198969999],
+        ],
+      ],
+      type: "Polygon",
+    });
+    const once = roundGeometryCoordinates(polygon, GEOMETRY_SIMPLIFY_DECIMAL_PLACES);
+    expect(roundGeometryCoordinates(once, GEOMETRY_SIMPLIFY_DECIMAL_PLACES)).toStrictEqual(once);
+  });
+
+  it("never lengthens the serialized payload", () => {
+    const noisy = assertGeometry({
+      coordinates: [
+        [
+          [-123.10803331604004, 27.57055507199985],
+          [-70.92320154299999, 48.14650260899995],
+          [-70.9201, 48.14701],
+          [-123.10803331604004, 27.57055507199985],
+        ],
+      ],
+      type: "Polygon",
+    });
+    const roundedJson = JSON.stringify(
+      roundGeometryCoordinates(noisy, GEOMETRY_SIMPLIFY_DECIMAL_PLACES),
+    );
+    expect(roundedJson.length).toBeLessThanOrEqual(JSON.stringify(noisy).length);
+  });
+
+  it("leaves ring closure intact", () => {
+    const closed = assertGeometry({
+      coordinates: [
+        [
+          [0.123456789, 0.987654321],
+          [1, 1],
+          [2, 2],
+          [0.123456789, 0.987654321],
+        ],
+      ],
+      type: "Polygon",
+    });
+    const rounded = roundGeometryCoordinates(closed, 3).coordinates[0];
+    expect(rounded[0]).toStrictEqual(rounded[rounded.length - 1]);
   });
 });
 

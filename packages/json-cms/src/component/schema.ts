@@ -59,11 +59,23 @@ export default defineSchema({
     // something to treat as exact.
     featureCount: v.optional(v.number()),
     boundingBox: v.optional(v.array(v.number())), // [minLon, minLat, maxLon, maxLat]
+    // True when this dataset normalizes geometry coordinates to
+    // GEOMETRY_SIMPLIFY_DECIMAL_PLACES (6dp, ~0.11 m) on every write — set at
+    // creation via the importer's "Simplify geometry" checkbox, or by
+    // startSimplification for an existing dataset. Absent means no
+    // simplification (all pre-flag datasets).
+    simplifyGeometry: v.optional(v.boolean()),
     schema: v.any(), // JSON schema object
+    // The exact file the dataset was imported from, kept in file storage so
+    // it can be re-downloaded even though every stored geometry was
+    // potentially rounded. Uploaded by the client alongside the row chunks
+    // and attached by `startImport`; only set for imports that provided one.
+    sourceFileStorageId: v.optional(v.id("_storage")),
+    sourceFileName: v.optional(v.string()),
+    sourceFileSize: v.optional(v.number()),
     title: v.string(),
     uiSchema: v.optional(v.any()), // RJSF UI schema object
-  })
-    .index("by_group", ["groupId"]),
+  }).index("by_group", ["groupId"]),
 
   entries: defineTable({
     data: v.any(), // Entry data conforming to the schema

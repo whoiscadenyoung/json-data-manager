@@ -138,6 +138,13 @@ interface SchemaEditorProps {
   geometryTypeReadOnly?: boolean;
   /** e.g. "142 Polygon + 8 MultiPolygon → coalesced to MultiPolygon · 3 rows have no geometry" — shown next to the resolved type when `geometryTypeReadOnly`. */
   geometryTypeSummary?: string;
+  /**
+   * Round every geometry coordinate to 6 decimal places (~0.11 m) as it's
+   * stored. Only relevant when `datasetKind === "geospatial"`; the checkbox
+   * only renders when `onSimplifyGeometryChange` is passed.
+   */
+  simplifyGeometry?: boolean;
+  onSimplifyGeometryChange?: (value: boolean) => void;
   /** Other datasets the Visual builder's "reference" property type can link to. Omit/empty to hide that capability. */
   availableDatasets?: ReferenceDatasetOption[];
   /** Extra chrome rendered below the "Dataset Type" section — e.g. the dataset importer's coordinate-column picker. Opt-in; renders nothing when omitted. */
@@ -484,8 +491,8 @@ function DatasetInfoCard({
       <CardHeader>
         <CardTitle>Dataset info</CardTitle>
         <CardDescription>
-          Names your dataset across the app — a title is required; the description is optional.
-          Both are saved with the schema.
+          Names your dataset across the app — a title is required; the description is optional. Both
+          are saved with the schema.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid grid-cols-1 gap-3">
@@ -589,6 +596,8 @@ function DatasetTypeSection({
   onGeometryTypeChange,
   geometryTypeReadOnly = false,
   geometryTypeSummary,
+  simplifyGeometry = true,
+  onSimplifyGeometryChange,
 }: {
   datasetKind: "standard" | "geospatial" | undefined;
   onDatasetKindChange: ((kind: "standard" | "geospatial") => void) | undefined;
@@ -596,6 +605,8 @@ function DatasetTypeSection({
   onGeometryTypeChange: ((type: GeometryType) => void) | undefined;
   geometryTypeReadOnly: boolean | undefined;
   geometryTypeSummary: string | undefined;
+  simplifyGeometry: boolean | undefined;
+  onSimplifyGeometryChange: ((value: boolean) => void) | undefined;
 }) {
   if (!onDatasetKindChange) {
     return null;
@@ -630,6 +641,24 @@ function DatasetTypeSection({
           readOnly={geometryTypeReadOnly}
           summary={geometryTypeSummary}
         />
+      )}
+      {datasetKind === "geospatial" && onSimplifyGeometryChange !== undefined && (
+        <label className="ml-auto flex max-w-md cursor-pointer items-start gap-2 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={simplifyGeometry}
+            onChange={(e) => {
+              onSimplifyGeometryChange(e.target.checked);
+            }}
+            className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer accent-primary"
+          />
+          <span>
+            <span className="font-medium text-foreground">Simplify geometry</span> — round every
+            coordinate to 6 decimal places (~11 cm precision, invisible at map scales) to keep
+            storage small and maps fast. The original file stays in storage so you can re-download
+            it later.
+          </span>
+        </label>
       )}
     </div>
   );
@@ -700,6 +729,8 @@ export function SchemaEditor({
   onGeometryTypeChange,
   geometryTypeReadOnly,
   geometryTypeSummary,
+  simplifyGeometry,
+  onSimplifyGeometryChange,
   availableDatasets,
   editorChrome,
 }: SchemaEditorProps) {
@@ -841,35 +872,35 @@ export function SchemaEditor({
         setIsSaving(false);
       }
     },
-  // When pre-populating a dataset, every imported row must validate.
-  isDataValid = validationState.total > 0 && validationState.invalidItemCount === 0,
-  canSave = computeCanSave(
-    schemaJsonError(schemaJson),
-    isOverLimit,
-    uiSchemaJsonError(uiSchemaJson),
-    isUiSchemaOverLimit,
-    requireValidData,
-    isDataValid,
-  ),
-  // Dataset info card state: title/description live in the schema JSON itself,
-  // so editing them re-serializes it (the Visual builder and Code editor pick
-  // the change up through the same controlled `schemaJson`).
-  schemaMeta = parsedSchemaMeta(schemaJson),
-  handleMetaChange = (patch: { title?: string; description?: string }) => {
-    let parsed: unknown;
-    try {
-      parsed = schemaJson.trim() ? JSON.parse(schemaJson) : undefined;
-    } catch {
-      // Unparseable JSON — the card's inputs are disabled in this state.
-      return;
-    }
-    const base =
-      typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-        ? (parsed as Record<string, unknown>)
-        : // Typing into the card on an empty editor starts a minimal schema.
-          { properties: {}, type: "object" };
-    setSchemaJson(JSON.stringify({ ...base, ...patch }, null, 2));
-  };
+    // When pre-populating a dataset, every imported row must validate.
+    isDataValid = validationState.total > 0 && validationState.invalidItemCount === 0,
+    canSave = computeCanSave(
+      schemaJsonError(schemaJson),
+      isOverLimit,
+      uiSchemaJsonError(uiSchemaJson),
+      isUiSchemaOverLimit,
+      requireValidData,
+      isDataValid,
+    ),
+    // Dataset info card state: title/description live in the schema JSON itself,
+    // so editing them re-serializes it (the Visual builder and Code editor pick
+    // the change up through the same controlled `schemaJson`).
+    schemaMeta = parsedSchemaMeta(schemaJson),
+    handleMetaChange = (patch: { title?: string; description?: string }) => {
+      let parsed: unknown;
+      try {
+        parsed = schemaJson.trim() ? JSON.parse(schemaJson) : undefined;
+      } catch {
+        // Unparseable JSON — the card's inputs are disabled in this state.
+        return;
+      }
+      const base =
+        typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>)
+          : // Typing into the card on an empty editor starts a minimal schema.
+            { properties: {}, type: "object" };
+      setSchemaJson(JSON.stringify({ ...base, ...patch }, null, 2));
+    };
 
   const showDataWarning = requireValidData && !isDataValid && !schemaJsonError(schemaJson);
 
@@ -920,6 +951,8 @@ export function SchemaEditor({
             onGeometryTypeChange={onGeometryTypeChange}
             geometryTypeReadOnly={geometryTypeReadOnly}
             geometryTypeSummary={geometryTypeSummary}
+            simplifyGeometry={simplifyGeometry}
+            onSimplifyGeometryChange={onSimplifyGeometryChange}
           />
 
           {editorChrome}

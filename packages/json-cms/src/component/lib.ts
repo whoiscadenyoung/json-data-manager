@@ -5,7 +5,11 @@ import { ConvexError, v } from "convex/values";
 import { extractPointGeometry } from "../shared/coordinate-columns.js";
 import { isGeometryCompatibleWithDatasetType } from "../shared/geojson/coalesce.js";
 import { GeoParseError, GeometryError } from "../shared/geojson/error.js";
-import { unionBbox } from "../shared/geojson/geometry.js";
+import {
+  GEOMETRY_SIMPLIFY_DECIMAL_PLACES,
+  roundGeometryCoordinates,
+  unionBbox,
+} from "../shared/geojson/geometry.js";
 import type { BoundingBox } from "../shared/geojson/geometry.js";
 import type { Geometry } from "../shared/geojson/types.js";
 import { geometryTypeValidator } from "../shared/geojson/validators.js";
@@ -22,6 +26,7 @@ import {
 } from "./_generated/server.js";
 import type { MutationCtx, QueryCtx } from "./_generated/server.js";
 import {
+  byteLength,
   inlineGeometryFieldsOrThrow,
   parseAndValidateGeometry,
   resolveGeometryStorage,
@@ -95,6 +100,25 @@ export const getSchema = query({
   returns: v.union(v.null(), schemaValidator),
 });
 
+/**
+ * A fetchable URL for the original file this dataset was imported from
+ * (retained through `startImport`'s `sourceFile`), or `null` when the
+ * dataset has no retained source file or its blob is gone. Lets clients
+ * re-download the exact uploaded bytes even after geometry has been
+ * simplified on write.
+ */
+export const getSourceFileUrl = query({
+  args: { schemaId: v.id("schemas") },
+  handler: async (ctx, args) => {
+    const schemaDoc = await ctx.db.get(args.schemaId);
+    if (!schemaDoc || schemaDoc.sourceFileStorageId === undefined) {
+      return null;
+    }
+    return ctx.storage.getUrl(schemaDoc.sourceFileStorageId);
+  },
+  returns: v.union(v.null(), v.string()),
+});
+
 // Schema mutations
 
 /** Throws unless a `kind`/`geometryType` pair is a valid combination for a schema doc. */
@@ -110,11 +134,24 @@ function assertKindAndGeometryType(
   }
 }
 
+/** Throws unless `simplifyGeometry` is only requested for a geospatial dataset — a standard dataset has no geometry to simplify. */
+function assertSimplifyGeometryApplies(
+  kind: "standard" | "geospatial" | undefined,
+  simplifyGeometry: boolean | undefined,
+): void {
+  if (simplifyGeometry !== undefined && kind !== "geospatial") {
+    throw new ConvexError("Only a geospatial dataset can simplify geometry.");
+  }
+}
+
 export const createSchema = mutation({
   args: {
     geometryType: v.optional(geometryTypeValidator),
     kind: v.optional(v.union(v.literal("standard"), v.literal("geospatial"))),
     schema: v.any(),
+    // Normalize every geometry coordinate to GEOMETRY_SIMPLIFY_DECIMAL_PLACES
+    // on write — see `simplifyGeometryPayload` below. Geospatial-only.
+    simplifyGeometry: v.optional(v.boolean()),
     uiSchema: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
@@ -123,6 +160,7 @@ export const createSchema = mutation({
     }
 
     assertKindAndGeometryType(args.kind, args.geometryType);
+    assertSimplifyGeometryApplies(args.kind, args.simplifyGeometry);
 
     const schemaStr = JSON.stringify(args.schema);
     if (schemaStr.length > SCHEMA_SIZE_LIMIT) {
@@ -143,6 +181,7 @@ export const createSchema = mutation({
       geometryType: args.geometryType,
       kind: args.kind,
       schema: args.schema,
+      simplifyGeometry: args.simplifyGeometry,
       title: args.schema.title,
       uiSchema: args.uiSchema,
     });
@@ -234,6 +273,11 @@ export const deleteSchema = mutation({
       }),
       deleteReferencesForSchema(ctx, args.schemaId),
       ...memberships.map(async (membership) => ctx.db.delete(membership._id)),
+      // The retained original import file goes with the dataset — nothing
+      // else can reference a schema's own source-file blob.
+      existing.sourceFileStorageId !== undefined
+        ? ctx.storage.delete(existing.sourceFileStorageId)
+        : undefined,
     ]);
 
     await ctx.db.delete(args.schemaId);
@@ -333,7 +377,9 @@ export const deleteCollection = mutation({
     await Promise.all([
       ...groups.map(async (group) => ctx.db.delete(group._id)),
       ...memberships.map(async (membership) => ctx.db.delete(membership._id)),
-      ...groupedDatasets.flat().map(async (dataset) => ctx.db.patch(dataset._id, { groupId: undefined })),
+      ...groupedDatasets
+        .flat()
+        .map(async (dataset) => ctx.db.patch(dataset._id, { groupId: undefined })),
     ]);
 
     await ctx.db.delete(args.collectionId);
@@ -727,7 +773,8 @@ async function paginateGeometriesBySchema(
     // schema's rows; an exactly-full page might or might not be the end —
     // treat it as "not done" so the next call (which will come back empty)
     // is the one that actually confirms it, rather than guessing here.
-    continueCursor: lastRow === undefined ? (paginationOpts.cursor ?? "") : String(lastRow._creationTime),
+    continueCursor:
+      lastRow === undefined ? (paginationOpts.cursor ?? "") : String(lastRow._creationTime),
     isDone: page.length < limit,
     page,
   };
@@ -925,6 +972,25 @@ async function deleteGeometryStorageIfAny(
 }
 
 /**
+ * Normalizes a validated geometry to the dataset's simplified precision when
+ * its schema doc opts in (`simplifyGeometry`): rounds every coordinate to
+ * `GEOMETRY_SIMPLIFY_DECIMAL_PLACES` and re-serializes, so the stored payload
+ * is the rounded text. Returns the original geometry/json pair unchanged
+ * otherwise.
+ */
+function simplifyGeometryPayload(
+  geometry: Geometry,
+  geometryJson: string,
+  schemaDoc: { simplifyGeometry?: boolean },
+): { geometry: Geometry; geometryJson: string } {
+  if (schemaDoc.simplifyGeometry !== true) {
+    return { geometry, geometryJson };
+  }
+  const rounded = roundGeometryCoordinates(geometry, GEOMETRY_SIMPLIFY_DECIMAL_PLACES);
+  return { geometry: rounded, geometryJson: JSON.stringify(rounded) };
+}
+
+/**
  * Validates a JSON-string geometry argument against the schema doc's
  * `kind`/`geometryType`, and resolves it to the fields a `geometries` row
  * needs. Returns `undefined` when no geometry was provided.
@@ -937,7 +1003,11 @@ async function deleteGeometryStorageIfAny(
  */
 function validateEntryGeometry(
   geometryJsonArg: string | undefined,
-  schemaDoc: { kind?: "standard" | "geospatial"; geometryType?: GeometryTypeArg },
+  schemaDoc: {
+    kind?: "standard" | "geospatial";
+    geometryType?: GeometryTypeArg;
+    simplifyGeometry?: boolean;
+  },
 ): ResolvedGeometry | undefined {
   if (geometryJsonArg === undefined) {
     return undefined;
@@ -960,8 +1030,9 @@ function validateEntryGeometry(
       `Geometry type "${geometry.type}" is not compatible with this dataset's "${schemaDoc.geometryType}" geometry type.`,
     );
   }
+  const resolved = simplifyGeometryPayload(geometry, geometryJsonArg, schemaDoc);
   try {
-    return inlineGeometryFieldsOrThrow(geometryJsonArg, geometry);
+    return inlineGeometryFieldsOrThrow(resolved.geometryJson, resolved.geometry);
   } catch (err) {
     if (err instanceof GeometryError) {
       throw new ConvexError(err.message);
@@ -1200,6 +1271,7 @@ async function insertEntryBatch(
     schema: unknown;
     kind?: "standard" | "geospatial";
     geometryType?: GeometryTypeArg;
+    simplifyGeometry?: boolean;
     featureCount?: number;
     boundingBox?: number[];
   },
@@ -1558,6 +1630,13 @@ export const getImportStatus = query({
  */
 export const startImport = mutation({
   args: {
+    // The exact file this import came from, already uploaded by the client to
+    // its own storage blob — retained on the schema doc so the original
+    // (un-simplified) data stays re-downloadable even when geometry is being
+    // simplified on write. Absent for imports that didn't provide one.
+    sourceFile: v.optional(
+      v.object({ name: v.string(), size: v.number(), storageId: v.id("_storage") }),
+    ),
     schemaId: v.id("schemas"),
     storageIds: v.array(v.id("_storage")),
     total: v.number(),
@@ -1566,6 +1645,14 @@ export const startImport = mutation({
     const targetSchema = await ctx.db.get(args.schemaId);
     if (!targetSchema) {
       throw new ConvexError("Schema not found");
+    }
+
+    if (args.sourceFile !== undefined) {
+      await ctx.db.patch(args.schemaId, {
+        sourceFileName: args.sourceFile.name,
+        sourceFileStorageId: args.sourceFile.storageId,
+        sourceFileSize: args.sourceFile.size,
+      });
     }
 
     const importId = await ctx.db.insert("imports", {
@@ -1709,19 +1796,25 @@ async function resolveImportRowGeometry(
   ctx: { storage: { store(blob: Blob, options?: { sha256?: string }): Promise<Id<"_storage">> } },
   rowIndex: number,
   geometry: unknown,
-  schemaDoc: { kind?: "standard" | "geospatial"; geometryType?: GeometryTypeArg },
+  schemaDoc: {
+    kind?: "standard" | "geospatial";
+    geometryType?: GeometryTypeArg;
+    simplifyGeometry?: boolean;
+  },
 ): Promise<ResolvedGeometry> {
   const kind = schemaDoc.kind ?? "standard";
   if (kind !== "geospatial" || schemaDoc.geometryType === undefined) {
     throw new ConvexError(`Row ${rowIndex}: cannot attach geometry to a standard dataset.`);
   }
-  const geometryJson = JSON.stringify(geometry);
+  let geometryJson = JSON.stringify(geometry);
   let parsedGeometry: Geometry;
   try {
     parsedGeometry = parseAndValidateGeometry(geometryJson);
   } catch (err) {
     const message =
-      err instanceof GeometryError || err instanceof GeoParseError ? err.message : "Invalid geometry.";
+      err instanceof GeometryError || err instanceof GeoParseError
+        ? err.message
+        : "Invalid geometry.";
     throw new ConvexError(`Row ${rowIndex}: ${message}`);
   }
   if (!isGeometryCompatibleWithDatasetType(parsedGeometry.type, schemaDoc.geometryType)) {
@@ -1729,7 +1822,8 @@ async function resolveImportRowGeometry(
       `Row ${rowIndex}: geometry type "${parsedGeometry.type}" is not compatible with this dataset's "${schemaDoc.geometryType}" geometry type.`,
     );
   }
-  return resolveGeometryStorage(ctx, parsedGeometry, geometryJson);
+  const simplified = simplifyGeometryPayload(parsedGeometry, geometryJson, schemaDoc);
+  return resolveGeometryStorage(ctx, simplified.geometry, simplified.geometryJson);
 }
 
 /**
@@ -1822,7 +1916,8 @@ export const insertEntriesChunkInternal = internalMutation({
       schemaDoc,
       args.dataArray.map((row) => ({
         data: row.data,
-        geometry: row.resolvedGeometry === undefined ? undefined : asResolvedGeometry(row.resolvedGeometry),
+        geometry:
+          row.resolvedGeometry === undefined ? undefined : asResolvedGeometry(row.resolvedGeometry),
       })),
     );
     return null;
@@ -1968,7 +2063,11 @@ export const convertEntriesBatchInternal = internalMutation({
       if (!schemaDoc) {
         throw new ConvexError("Schema not found");
       }
-      const resolved = inlineGeometryFieldsOrThrow(JSON.stringify(point), point);
+      const simplifiedPoint = simplifyGeometryPayload(point, JSON.stringify(point), schemaDoc),
+        resolved = inlineGeometryFieldsOrThrow(
+          simplifiedPoint.geometryJson,
+          simplifiedPoint.geometry,
+        );
       // oxlint-disable-next-line no-await-in-loop
       await replaceEntryGeometry(ctx, entry, schemaDoc, resolved);
       geocoded += 1;
@@ -2009,7 +2108,12 @@ export const geospatialConversionWorkflow = workflow.define({
       // circular type reference: `internal.lib` is typed from this same
       // module, and `geospatialConversionWorkflow` — currently being
       // type-checked — is one of its exports.
-      const result: { continueCursor: string; examined: number; geocoded: number; isDone: boolean } =
+      const result: {
+        continueCursor: string;
+        examined: number;
+        geocoded: number;
+        isDone: boolean;
+      } =
         // oxlint-disable-next-line no-await-in-loop
         await step.runMutation(internal.lib.convertEntriesBatchInternal, {
           cursor,
@@ -2021,7 +2125,10 @@ export const geospatialConversionWorkflow = workflow.define({
       cursor = result.continueCursor;
       isDone = result.isDone;
       // oxlint-disable-next-line no-await-in-loop
-      await step.runMutation(internal.lib.updateImportProgress, { importId: args.importId, processed });
+      await step.runMutation(internal.lib.updateImportProgress, {
+        importId: args.importId,
+        processed,
+      });
     }
 
     await step.runMutation(internal.lib.updateImportProgress, {
@@ -2108,6 +2215,294 @@ export const startGeospatialConversion = mutation({
         ctx,
         internal.lib.geospatialConversionWorkflow,
         { importId, latField: args.latField, lonField: args.lonField, schemaId: args.schemaId },
+        { context: { importId }, onComplete: internal.lib.handleImportComplete, startAsync: true },
+      );
+
+    await ctx.db.patch(importId, { workflowId });
+    return importId;
+  },
+  returns: v.id("imports"),
+});
+
+// ---------------------------------------------------------------------------
+// Simplify an existing geospatial dataset's geometries: round every stored
+// coordinate payload to GEOMETRY_SIMPLIFY_DECIMAL_PLACES. Launched from the
+// dataset page's action menu (the importer's "Simplify geometry" checkbox
+// covers new datasets at creation; existing data is deliberately NOT migrated
+// automatically). Reuses the `imports` status doc + progress/completion
+// machinery (`updateImportProgress`/`handleImportComplete`) so the UI can
+// monitor it exactly like an import or geospatial conversion.
+//
+// The batch step must be an action (not a mutation) because storage-backed
+// geometries' payloads are only readable via `ctx.storage.get`. Each batch
+// is one durable workflow step; rounding is idempotent, so a retried step
+// that already wrote some rows before failing simply re-rounds them.
+//
+// Like the import path, each row's post-rounding storage form is re-decided
+// (rounding only ever shrinks a payload, so a row can move from a storage
+// blob back inline, never the reverse) and the replaced blob is deleted.
+// ---------------------------------------------------------------------------
+
+/**
+ * One batch of a dataset's geometry rows as the simplify action needs them:
+ * pointers plus payload (inline text here, or the action reads the blob
+ * itself). Paged through `paginateGeometriesBySchema`'s shared cursor — the
+ * cursor is `_creationTime`, which a patch never changes, so rows rewritten
+ * by earlier batches are never revisited.
+ */
+export const listSimplifyBatchInternal = internalQuery({
+  args: {
+    cursor: v.union(v.string(), v.null()),
+    numItems: v.number(),
+    schemaId: v.id("schemas"),
+  },
+  handler: async (ctx, args) => {
+    const result = await paginateGeometriesBySchema(ctx, args.schemaId, {
+      cursor: args.cursor,
+      numItems: args.numItems,
+    });
+    return {
+      continueCursor: result.continueCursor,
+      isDone: result.isDone,
+      page: result.page.map((row) => ({
+        geometryJson: row.geometryJson,
+        geometryStorageId: row.geometryStorageId,
+        id: row._id,
+      })),
+    };
+  },
+  returns: v.object({
+    continueCursor: v.string(),
+    isDone: v.boolean(),
+    page: v.array(
+      v.object({
+        geometryJson: v.optional(v.string()),
+        geometryStorageId: v.optional(v.id("_storage")),
+        id: v.id("geometries"),
+      }),
+    ),
+  }),
+});
+
+/** Writes one batch of already-rounded payloads back onto their `geometries` rows, clearing whichever storage form each row no longer uses and deleting the blob it replaced. */
+export const applySimplifiedGeometriesInternal = internalMutation({
+  args: {
+    updates: v.array(
+      v.object({
+        bbox: v.optional(v.array(v.number())),
+        geometryJson: v.optional(v.string()),
+        geometryStorageId: v.optional(v.id("_storage")),
+        id: v.id("geometries"),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    for (const update of args.updates) {
+      const existing = await ctx.db.get(update.id);
+      if (existing === null) {
+        continue; // Deleted (or its whole dataset went) mid-run — nothing to round.
+      }
+      // The row's old blob is always superseded by this write: either the
+      // rounded payload moved back inline, or it was re-stored as a NEW blob
+      // (storage blobs are immutable), so the old one is unreferenced now.
+      await deleteGeometryStorageIfAny(ctx, existing);
+      await ctx.db.patch(update.id, {
+        bbox: update.bbox,
+        geometry: undefined,
+        geometryJson: update.geometryJson,
+        geometryStorageId: update.geometryStorageId,
+      });
+    }
+    return null;
+  },
+  returns: v.null(),
+});
+
+// Rows per batch, bounded by the same per-execution read budget as
+// `listGeometries` (each row's payload can be up to INLINE_GEOMETRY_BYTE_LIMIT).
+const SIMPLIFY_BATCH_ROWS = MAX_GEOMETRY_PAGE_ROWS,
+  // Payload bytes handed to `applySimplifiedGeometriesInternal` per call —
+  // matched to the bulk import path, whose 4 MB chunk-per-mutation precedent
+  // is proven against Convex's per-transaction write budget.
+  SIMPLIFY_WRITE_CHUNK_BYTES = 4_000_000;
+
+/**
+ * Rounds ONE batch of the schema's geometry payloads and writes them back.
+ * Runs as a workflow step (see the module comment above for why an action is
+ * required). Malformed payloads — which current write paths never produce —
+ * are skipped rather than failing the batch. Returns how many rows were
+ * rewritten (for progress) plus the pagination cursor.
+ */
+export const simplifyGeometryBatchInternal = internalAction({
+  args: {
+    cursor: v.union(v.string(), v.null()),
+    schemaId: v.id("schemas"),
+  },
+  // Explicit return type — the inferred one would flow back through this
+  // handler's own `internal.lib` references and circularly reference the
+  // export being defined (same reason `geospatialConversionWorkflow` types
+  // its step result explicitly).
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ continueCursor: string; isDone: boolean; simplified: number }> => {
+    const { continueCursor, isDone, page } = await ctx.runQuery(
+      internal.lib.listSimplifyBatchInternal,
+      {
+        cursor: args.cursor,
+        numItems: SIMPLIFY_BATCH_ROWS,
+        schemaId: args.schemaId,
+      },
+    );
+
+    let simplified = 0,
+      pendingBytes = 0;
+    const pending: Array<{
+      bbox?: number[];
+      geometryJson?: string;
+      geometryStorageId?: Id<"_storage">;
+      id: Id<"geometries">;
+    }> = [];
+    // Flushes `pending` to the write mutation, chunked by payload bytes so a
+    // full batch of near-limit geometries never exceeds the per-transaction
+    // write budget the import path has already proven (see
+    // SIMPLIFY_WRITE_CHUNK_BYTES).
+    const flush = async () => {
+      if (pending.length === 0) {
+        return;
+      }
+      await ctx.runMutation(internal.lib.applySimplifiedGeometriesInternal, {
+        updates: pending.splice(0),
+      });
+      pendingBytes = 0;
+    };
+
+    for (const row of page) {
+      try {
+        let raw: string;
+        if (row.geometryJson !== undefined) {
+          raw = row.geometryJson;
+        } else {
+          const blob =
+            row.geometryStorageId !== undefined
+              ? await ctx.storage.get(row.geometryStorageId)
+              : null;
+          if (blob === null) {
+            throw new Error("Geometry payload blob is missing.");
+          }
+          raw = await blob.text();
+        }
+        const parsedGeometry = parseAndValidateGeometry(raw);
+        const rounded = roundGeometryCoordinates(parsedGeometry, GEOMETRY_SIMPLIFY_DECIMAL_PLACES),
+          roundedJson = JSON.stringify(rounded),
+          resolved = await resolveGeometryStorage(ctx, rounded, roundedJson);
+        // `resolved` also carries `type` (unchanged by rounding) — only the
+        // fields this write actually touches travel to the mutation.
+        pending.push({
+          bbox: resolved.bbox,
+          geometryJson: resolved.geometryJson,
+          geometryStorageId: resolved.geometryStorageId,
+          id: row.id,
+        });
+        pendingBytes += byteLength(roundedJson);
+        simplified += 1;
+      } catch {
+        // Unreadable/unparseable payload — leave the row as-is and keep the
+        // batch moving; everything else still simplifies.
+      }
+      if (pendingBytes >= SIMPLIFY_WRITE_CHUNK_BYTES) {
+        // oxlint-disable-next-line no-await-in-loop -- chunked writes must land in payload order; inherently sequential.
+        await flush();
+      }
+    }
+    await flush();
+
+    return { continueCursor, isDone, simplified };
+  },
+  returns: v.object({
+    continueCursor: v.string(),
+    isDone: v.boolean(),
+    simplified: v.number(),
+  }),
+});
+
+/** Durable workflow: round a dataset's geometry payloads batch by batch, updating progress as it goes. */
+export const simplifyGeometryWorkflow = workflow.define({
+  args: {
+    importId: v.id("imports"),
+    schemaId: v.id("schemas"),
+  },
+  handler: async (step, args): Promise<void> => {
+    await step.runMutation(internal.lib.updateImportProgress, {
+      importId: args.importId,
+      processed: 0,
+      status: "processing",
+    });
+
+    let processed = 0,
+      cursor: string | null = null,
+      isDone = false;
+    // Sequential for the same reason `importWorkflow` is: memory stays
+    // bounded and progress lands incrementally as each batch completes.
+    while (!isDone) {
+      // Explicitly typed to avoid a circular type reference — see the same
+      // pattern in `geospatialConversionWorkflow` above.
+      const result: { continueCursor: string; isDone: boolean; simplified: number } =
+        // oxlint-disable-next-line no-await-in-loop
+        await step.runAction(internal.lib.simplifyGeometryBatchInternal, {
+          cursor,
+          schemaId: args.schemaId,
+        });
+      processed += result.simplified;
+      cursor = result.continueCursor;
+      isDone = result.isDone;
+      // oxlint-disable-next-line no-await-in-loop
+      await step.runMutation(internal.lib.updateImportProgress, {
+        importId: args.importId,
+        processed,
+      });
+    }
+
+    await step.runMutation(internal.lib.updateImportProgress, {
+      importId: args.importId,
+      processed,
+      status: "completed",
+    });
+  },
+});
+
+/**
+ * Rounds every stored geometry payload of a geospatial dataset to
+ * GEOMETRY_SIMPLIFY_DECIMAL_PLACES via `simplifyGeometryWorkflow`, and flips
+ * the dataset's `simplifyGeometry` flag so all future writes match. Reuses
+ * the `imports` status doc (see the module comment above) — the returned id
+ * feeds `getImportStatus` for live progress.
+ */
+export const startSimplification = mutation({
+  args: { schemaId: v.id("schemas"), total: v.number() },
+  handler: async (ctx, args) => {
+    const schemaDoc = await ctx.db.get(args.schemaId);
+    if (!schemaDoc) {
+      throw new ConvexError("Schema not found");
+    }
+    if (schemaDoc.kind !== "geospatial") {
+      throw new ConvexError("Only a geospatial dataset can simplify geometry.");
+    }
+
+    // Future writes (entry creates/updates, imports) simplify from now on,
+    // matching the data this run is about to normalize.
+    await ctx.db.patch(args.schemaId, { simplifyGeometry: true });
+
+    const importId = await ctx.db.insert("imports", {
+        processed: 0,
+        schemaId: args.schemaId,
+        status: "pending",
+        total: args.total,
+      }),
+      workflowId = await workflow.start(
+        ctx,
+        internal.lib.simplifyGeometryWorkflow,
+        { importId, schemaId: args.schemaId },
         { context: { importId }, onComplete: internal.lib.handleImportComplete, startAsync: true },
       );
 

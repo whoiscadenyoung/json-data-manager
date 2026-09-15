@@ -8,6 +8,8 @@ import {
   ChevronDown,
   Code2,
   Download,
+  Ellipsis,
+  FileDown,
   FilePlus,
   MapPinned,
   Pencil,
@@ -29,6 +31,7 @@ import type { ExportFormat, ExportFormatOption } from "@/components/export-dialo
 import { GeospatialConversionPanel } from "@/components/geospatial-conversion-panel";
 import { RouterButton } from "@/components/router-button";
 import { SchemaVisualizer } from "@/components/schema-visualizer";
+import { SimplifyGeometryPanel } from "@/components/simplify-geometry-panel";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Breadcrumb,
@@ -41,6 +44,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Empty,
   EmptyContent,
@@ -230,6 +239,7 @@ function SchemaDetailPage() {
     ),
     [makeGeospatialOpen, setMakeGeospatialOpen] = useState(false),
     [exportOpen, setExportOpen] = useState(false),
+    [simplifyOpen, setSimplifyOpen] = useState(false),
     [jsonDefinitionOpen, setJsonDefinitionOpen] = useState(false),
     [conversionSuccess, setConversionSuccess] = useState<
       { processed: number; total: number } | undefined
@@ -260,6 +270,37 @@ function SchemaDetailPage() {
     },
     view = search.view ?? "overview",
     isGeospatialDataset = schema !== undefined && schema !== null && schema.kind === "geospatial",
+    // The retained original import file — menu action hidden until the
+    // dataset actually has one.
+    sourceFileUrl = useQuery(
+      api.schemas.getSourceFileUrl,
+      schema !== undefined && schema !== null && schema.sourceFileStorageId !== undefined
+        ? { schemaId }
+        : "skip",
+    ),
+    downloadSourceFile = async () => {
+      if (!sourceFileUrl || !schema) {
+        return;
+      }
+      // Same-site-but-different-port download: the `download` attribute is
+      // ignored cross-origin, so fetch to a blob and save with the stored
+      // filename (falling back to the slugified title).
+      try {
+        const res = await fetch(sourceFileUrl);
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const blob = await res.blob(),
+          url = URL.createObjectURL(blob),
+          anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = schema.sourceFileName ?? `${slugify(schema.title)}-original`;
+        anchor.click();
+        URL.revokeObjectURL(url);
+      } catch {
+        toast.error("Could not download the original file.");
+      }
+    },
     exportFormats: ExportFormatOption[] = isGeospatialDataset
       ? [
           {
@@ -400,6 +441,36 @@ function SchemaDetailPage() {
             <Plus className="h-4 w-4 mr-2" />
             Create Entry
           </Button>
+          {(isGeospatialDataset || schema.sourceFileStorageId !== undefined) && (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={<Button variant="outline" size="icon" aria-label="More actions" />}
+              >
+                <Ellipsis className="h-4 w-4" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {isGeospatialDataset && (
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setSimplifyOpen(true);
+                    }}
+                  >
+                    <MapPinned className="h-4 w-4 mr-2" />
+                    Simplify geometry…
+                  </DropdownMenuItem>
+                )}
+                {schema.sourceFileStorageId !== undefined && (
+                  <DropdownMenuItem
+                    disabled={sourceFileUrl === undefined}
+                    onClick={() => void downloadSourceFile()}
+                  >
+                    <FileDown className="h-4 w-4 mr-2" />
+                    Download original file
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </div>
 
@@ -556,6 +627,17 @@ function SchemaDetailPage() {
         onOpenChange={setMakeGeospatialOpen}
         onConversionComplete={setConversionSuccess}
       />
+
+      {schema.kind === "geospatial" && (
+        <SimplifyGeometryPanel
+          alreadySimplified={schema.simplifyGeometry === true}
+          featureCount={schema.featureCount ?? entries.length}
+          open={simplifyOpen}
+          onOpenChange={setSimplifyOpen}
+          schemaId={schemaId}
+          schemaTitle={schema.title}
+        />
+      )}
     </div>
   );
 }

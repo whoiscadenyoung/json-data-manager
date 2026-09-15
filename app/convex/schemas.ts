@@ -6,6 +6,7 @@ import { auth } from "./auth";
 export const {
   listSchemas: list,
   getSchema: get,
+  getSourceFileUrl,
   createSchema: create,
   updateSchema: update,
   deleteSchema: remove,

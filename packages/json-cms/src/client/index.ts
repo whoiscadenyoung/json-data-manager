@@ -142,6 +142,7 @@ export function exposeApi(
         ),
         kind: v.optional(v.union(v.literal("standard"), v.literal("geospatial"))),
         schema: v.any(),
+        simplifyGeometry: v.optional(v.boolean()),
         uiSchema: v.optional(v.any()),
       },
       handler: async (ctx, args) => {
@@ -150,6 +151,7 @@ export function exposeApi(
           geometryType: args.geometryType,
           kind: args.kind,
           schema: args.schema,
+          simplifyGeometry: args.simplifyGeometry,
           uiSchema: args.uiSchema,
         });
       },
@@ -470,6 +472,12 @@ export function exposeApi(
     }),
     startImport: mutationGeneric({
       args: {
+        // The original uploaded file, retained on the dataset so the
+        // un-simplified source stays re-downloadable after geometry
+        // simplification. Already uploaded by the client to its own blob.
+        sourceFile: v.optional(
+          v.object({ name: v.string(), size: v.number(), storageId: v.string() }),
+        ),
         schemaId: v.string(),
         // One already-small, client-uploaded chunk blob per entry — see
         // `chunkRowsForImport` in the `react` package for why chunking
@@ -481,6 +489,7 @@ export function exposeApi(
       handler: async (ctx, args) => {
         await options.auth(ctx, { schemaId: args.schemaId, type: "create" });
         return ctx.runMutation(component.lib.startImport, {
+          sourceFile: args.sourceFile,
           schemaId: args.schemaId,
           storageIds: args.storageIds,
           total: args.total,
@@ -493,6 +502,32 @@ export function exposeApi(
         await options.auth(ctx, { type: "read" });
         return ctx.runQuery(component.lib.getImportStatus, {
           importId: args.importId,
+        });
+      },
+    }),
+
+    // Re-download the exact file a dataset was imported from (see
+    // `startImport`'s `sourceFile`). `null` when the dataset has no retained
+    // source file.
+    getSourceFileUrl: queryGeneric({
+      args: { schemaId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { schemaId: args.schemaId, type: "read" });
+        return ctx.runQuery(component.lib.getSourceFileUrl, { schemaId: args.schemaId });
+      },
+    }),
+
+    // Round an existing geospatial dataset's stored geometry payloads to
+    // GEOMETRY_SIMPLIFY_DECIMAL_PLACES via a durable workflow, and flip the
+    // dataset's `simplifyGeometry` flag so future writes match. Reuses the
+    // `imports` status doc — poll with `getImportStatus`.
+    startSimplification: mutationGeneric({
+      args: { schemaId: v.string(), total: v.number() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { schemaId: args.schemaId, type: "update" });
+        return ctx.runMutation(component.lib.startSimplification, {
+          schemaId: args.schemaId,
+          total: args.total,
         });
       },
     }),
