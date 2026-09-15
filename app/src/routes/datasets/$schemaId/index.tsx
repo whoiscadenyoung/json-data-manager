@@ -183,7 +183,18 @@ function OrganizationBadge({ schema }: { schema: Schema }) {
       >
         {collection.name}
       </Link>
-      {group && <span>/ {group.name}</span>}
+      {group && (
+        <>
+          <span>/</span>
+          <Link
+            to="/collections/$collectionId/groups/$groupId"
+            params={{ collectionId: collection._id, groupId: group._id }}
+            className="hover:underline"
+          >
+            {group.name}
+          </Link>
+        </>
+      )}
     </p>
   );
 }
