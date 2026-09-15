@@ -64,6 +64,8 @@ import { api } from "../../../../convex/_generated/api";
 const entryPanelSearchSchema = z.object({
   entryId: z.string().optional(),
   panel: z.enum(["create", "edit"]).optional(),
+  // Active tab ("overview" is the default and deliberately absent from the URL).
+  view: z.enum(["overview", "entries", "schema"]).optional(),
 });
 
 export const Route = createFileRoute("/datasets/$schemaId/")({
@@ -227,14 +229,30 @@ function SchemaDetailPage() {
       { processed: number; total: number } | undefined
     >(undefined),
     openCreatePanel = async () => {
-      await navigate({ search: { panel: "create" } });
+      await navigate({ search: (prev) => ({ ...prev, panel: "create" }) });
     },
     openEditPanel = async (entry: Entry) => {
-      await navigate({ search: { entryId: entry._id, panel: "edit" } });
+      await navigate({ search: (prev) => ({ ...prev, entryId: entry._id, panel: "edit" }) });
     },
     closePanel = async () => {
-      await navigate({ search: {} });
+      await navigate({
+        search: (prev) => ({ ...prev, entryId: undefined, panel: undefined }),
+      });
     },
+    // Tab switches write `?view=` so the active tab survives reloads and is
+    // linkable; "overview" is the default and stays out of the URL. Panel
+    // navigations above merge (not replace) so they never drop it.
+    setView = async (view: "entries" | "overview" | "schema") => {
+      await navigate({
+        search: (prev) => ({ ...prev, view: view === "overview" ? undefined : view }),
+      });
+    },
+    handleTabChange = (value: unknown) => {
+      if (value === "entries" || value === "overview" || value === "schema") {
+        void setView(value);
+      }
+    },
+    view = search.view ?? "overview",
     isGeospatialDataset = schema !== undefined && schema !== null && schema.kind === "geospatial",
     exportFormats: ExportFormatOption[] = isGeospatialDataset
       ? [
@@ -399,7 +417,7 @@ function SchemaDetailPage() {
         </section>
       )}
 
-      <Tabs defaultValue="overview">
+      <Tabs value={view} onValueChange={handleTabChange}>
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="entries">Data ({entries.length})</TabsTrigger>
