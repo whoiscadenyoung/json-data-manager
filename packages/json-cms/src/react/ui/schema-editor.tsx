@@ -72,13 +72,10 @@ function uiSchemaJsonError(uiSchemaJson: string): string | null {
   }
 }
 
-/** Validate the required `title` / `description` metadata on a parsed schema. */
+/** Validate the required `title` metadata on a parsed schema. `description` is optional. */
 function schemaMetaError(p: object): string | null {
   if (!("title" in p) || typeof p.title !== "string" || !p.title.trim()) {
     return "Schema must have a non-empty 'title' property.";
-  }
-  if (!("description" in p) || typeof p.description !== "string" || !p.description.trim()) {
-    return "Schema must have a non-empty 'description' property.";
   }
   return null;
 }
@@ -463,11 +460,11 @@ function isGeometryType(value: string): value is GeometryType {
 
 /**
  * Dataset name + summary, bound to the schema's top-level `title` /
- * `description` — the two fields every save requires. Rendered by
- * `SchemaEditor` above the editor panels so they're visible on every tab:
- * they used to live only inside the Visual builder, which hid them during an
- * import (that flow opens on the Data tab) and left the disabled Save button
- * unexplained.
+ * `description` — the title is required for every save, the description is
+ * optional. Rendered by `SchemaEditor` above the editor panels so they're
+ * visible on every tab: they used to live only inside the Visual builder,
+ * which hid them during an import (that flow opens on the Data tab) and left
+ * the disabled Save button unexplained.
  */
 function DatasetInfoCard({
   title,
@@ -481,13 +478,14 @@ function DatasetInfoCard({
   canEdit: boolean;
   onChange: (patch: { title?: string; description?: string }) => void;
 }) {
-  const missingMeta = canEdit && (title.trim() === "" || description.trim() === "");
+  const missingMeta = canEdit && title.trim() === "";
   return (
     <Card>
       <CardHeader>
         <CardTitle>Dataset info</CardTitle>
         <CardDescription>
-          Names your dataset across the app — both fields are required and saved with the schema.
+          Names your dataset across the app — a title is required; the description is optional.
+          Both are saved with the schema.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
@@ -506,13 +504,11 @@ function DatasetInfoCard({
           />
         </div>
         <div className="space-y-1">
-          <Label htmlFor="schema-meta-description">
-            Description <span className="text-destructive">*</span>
-          </Label>
+          <Label htmlFor="schema-meta-description">Description</Label>
           <Textarea
             id="schema-meta-description"
             value={description}
-            placeholder="Describe what this dataset contains…"
+            placeholder="Optional — describe what this dataset contains…"
             rows={2}
             disabled={!canEdit}
             onChange={(e) => {
@@ -523,7 +519,7 @@ function DatasetInfoCard({
         {missingMeta && (
           <div className="flex items-center gap-2 text-xs text-amber-700 dark:text-amber-300 sm:col-span-2">
             <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-            A title and description are required before this dataset can be saved.
+            A title is required before this dataset can be saved.
           </div>
         )}
       </CardContent>
@@ -770,7 +766,7 @@ export function SchemaEditor({
             // No schema yet — infer directly
             const inferred = inferSchemaFromData(parsed);
             setSchemaJson(JSON.stringify(inferred, null, 2));
-            toast.success(`Schema inferred from ${file.name}! Fill in title and description.`);
+            toast.success(`Schema inferred from ${file.name}! Fill in the title.`);
           }
         } else if (schemaJson.trim()) {
           // It's a schema object
@@ -953,7 +949,7 @@ export function SchemaEditor({
             availableDatasets={availableDatasets}
             onInferSchema={(inferredJson) => {
               setSchemaJson(inferredJson);
-              toast.success("Schema inferred! Fill in title and description to finish.");
+              toast.success("Schema inferred! Fill in the title to finish.");
             }}
             onStateChange={setValidationState}
           />

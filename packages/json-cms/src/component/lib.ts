@@ -118,8 +118,8 @@ export const createSchema = mutation({
     uiSchema: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
-    if (!args.schema.title || !args.schema.description) {
-      throw new ConvexError("Schema must have 'title' and 'description' properties");
+    if (!args.schema.title) {
+      throw new ConvexError("Schema must have a non-empty 'title' property");
     }
 
     assertKindAndGeometryType(args.kind, args.geometryType);
@@ -176,8 +176,8 @@ export const updateSchema = mutation({
         patch.description = args.description;
       }
     } else {
-      if (!args.schema.title || !args.schema.description) {
-        throw new ConvexError("Schema must have 'title' and 'description' properties");
+      if (!args.schema.title) {
+        throw new ConvexError("Schema must have a non-empty 'title' property");
       }
       const schemaStr = JSON.stringify(args.schema);
       if (schemaStr.length > SCHEMA_SIZE_LIMIT) {
