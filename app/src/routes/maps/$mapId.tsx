@@ -99,7 +99,10 @@ function useMapLayerActions(mapId: string) {
         await setMapLayerOverride({
           childKey,
           layerId,
-          visible: currentlyVisible ? undefined : false,
+          // A child's default (no override row) is visible, so HIDING writes
+          // a `{visible: false}` row and SHOWING clears any row — flipping
+          // this ternary makes the eye click a silent no-op.
+          visible: currentlyVisible ? false : undefined,
         });
       } catch (error) {
         toastError(error, "Failed to toggle layer item.");
