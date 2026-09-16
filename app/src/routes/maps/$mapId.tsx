@@ -1,7 +1,7 @@
 import { ConfirmDialog } from "@caden/json-cms/react/ui";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
-import { Layers as LayersIcon, MapIcon, Pencil, Plus, Trash2 } from "lucide-react";
+import { Layers as LayersIcon, Loader2, MapIcon, Pencil, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -337,8 +337,12 @@ function MapDetailPage() {
           {loaders}
           <div className="relative h-[440px] w-full overflow-hidden rounded-lg border border-border lg:h-[640px]">
             {servedGeometries === undefined || !hasLoadedOnce ? (
-              <div className="flex h-full items-center justify-center">
-                <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+              // Same loading chip as the dataset map, anchored top-right so
+              // the loading affordance sits in a consistent corner across
+              // every map view instead of dead-center over the basemap.
+              <div className="absolute top-3 right-3 z-10 flex items-center gap-2 rounded-full border border-border bg-card/95 px-3 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur-sm">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                Loading features…
               </div>
             ) : (
               <LayersMap
