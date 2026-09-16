@@ -1,10 +1,12 @@
 import { ConfirmDialog } from "@caden/json-cms/react/ui";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
-import { FolderOpen, Layers, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
+import { FolderOpen, Layers, MapIcon, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { AddToMapSheet } from "#/components/add-to-map-sheet";
+import { CollectionAddSheet } from "#/components/collection-add-sheet";
 import { CollectionFormPanel } from "#/components/collection-form-panel";
 import { DatasetList } from "#/components/dataset-list";
 import type { Dataset, GroupDoc } from "#/components/dataset-list";
@@ -59,11 +61,7 @@ function GroupCard({
       <CardHeader className="flex-row items-start justify-between gap-2">
         <div>
           <CardTitle>
-            <Link
-              to="/groups/$groupId"
-              params={{ groupId: group._id }}
-              className="hover:underline"
-            >
+            <Link to="/groups/$groupId" params={{ groupId: group._id }} className="hover:underline">
               {group.name}
             </Link>
           </CardTitle>
@@ -123,14 +121,17 @@ function GroupCard({
 
 function UngroupedDatasetsCard({
   hasGroups,
-  collectionDatasets,
+  hasContent,
   ungrouped,
   groups,
   onMoveToGroup,
   onRemoveFromCollection,
 }: {
   hasGroups: boolean;
-  collectionDatasets: Dataset[];
+  // Whether the collection holds ANY datasets — direct joins or group
+  // members (a group brings its datasets, so a collection whose datasets all
+  // live in its groups still "has content" and shouldn't read as empty).
+  hasContent: boolean;
   ungrouped: Dataset[];
   groups: GroupDoc[];
   onMoveToGroup: (dataset: Dataset, groupId: string | null) => void;
@@ -145,7 +146,7 @@ function UngroupedDatasetsCard({
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {collectionDatasets.length === 0 ? (
+        {hasContent ? (
           <Empty className="min-h-32 border">
             <EmptyTitle>No datasets yet</EmptyTitle>
             <EmptyDescription>Add a dataset to this collection to get started.</EmptyDescription>
@@ -203,63 +204,11 @@ function CollectionMapSection({ datasets }: { datasets: Dataset[] }) {
   );
 }
 
-type AddDatasetTarget = "collection" | GroupDoc | undefined;
-
-/** Hosts the "add dataset" side panel — extracted so its title/candidates ternaries don't count against the page's own complexity. */
-function AddDatasetSheetHost({
-  target,
-  collectionId,
-  allDatasets,
-  collectionAddCandidates,
-  onOpenChange,
-  addSchemaToCollection,
-  setSchemaGroup,
-}: {
-  target: AddDatasetTarget;
-  collectionId: string;
-  allDatasets: Dataset[];
-  collectionAddCandidates: Dataset[];
-  onOpenChange: (open: boolean) => void;
-  addSchemaToCollection: (args: {
-    collectionId: string;
-    schemaId: string;
-  }) => Promise<unknown>;
-  setSchemaGroup: (args: { groupId: string | null; schemaId: string }) => Promise<unknown>;
-}) {
-  const isCollectionTarget = target === "collection",
-    group = isCollectionTarget || target === undefined ? undefined : target,
-    title = isCollectionTarget ? "Add dataset to collection" : "Add dataset to group",
-    description = isCollectionTarget
-      ? "Choose a dataset to add to this collection."
-      : "Choose a dataset to add to the group.",
-    candidates = isCollectionTarget
-      ? collectionAddCandidates
-      : allDatasets.filter((dataset) => dataset.groupId !== (group ? group._id : undefined));
-
-  return (
-    <DatasetPickerSheet
-      title={title}
-      description={description}
-      candidates={candidates}
-      open={target !== undefined}
-      onOpenChange={onOpenChange}
-      onPick={async (dataset) => {
-        if (isCollectionTarget) {
-          await addSchemaToCollection({ collectionId, schemaId: dataset._id });
-          toast.success(`Added "${dataset.title}" to the collection.`);
-        } else if (group) {
-          await setSchemaGroup({ groupId: group._id, schemaId: dataset._id });
-          toast.success(`Added "${dataset.title}" to "${group.name}".`);
-        }
-      }}
-    />
-  );
-}
-
 function CollectionDetailPage() {
   const { collectionId } = Route.useParams(),
     navigate = useNavigate(),
     collection = useQuery(api.collections.get, { collectionId }),
+    collections = useQuery(api.collections.list),
     groups = useQuery(api.groups.list, { collectionId }),
     allGroups = useQuery(api.groups.list, {}),
     collectionDatasets = useQuery(api.collections.listDatasets, { collectionId }),
@@ -268,7 +217,6 @@ function CollectionDetailPage() {
     deleteCollectionMutation = useMutation(api.collections.remove),
     deleteGroupMutation = useMutation(api.groups.remove),
     setSchemaGroup = useMutation(api.collections.setSchemaGroup),
-    addSchemaToCollection = useMutation(api.collections.addSchemaToCollection),
     removeSchemaFromCollection = useMutation(api.collections.removeSchemaFromCollection),
     [editingCollection, setEditingCollection] = useState(false),
     [pendingDeleteCollection, setPendingDeleteCollection] = useState(false),
@@ -276,6 +224,7 @@ function CollectionDetailPage() {
     [editingGroup, setEditingGroup] = useState<GroupDoc | undefined>(),
     [pendingDeleteGroup, setPendingDeleteGroup] = useState<GroupDoc | undefined>(),
     [addDatasetTarget, setAddDatasetTarget] = useState<"collection" | GroupDoc | undefined>(),
+    [addToMapOpen, setAddToMapOpen] = useState(false),
     handleMoveToGroup = async (dataset: Dataset, groupId: string | null) => {
       try {
         await setSchemaGroup({ groupId, schemaId: dataset._id });
@@ -314,6 +263,7 @@ function CollectionDetailPage() {
 
   if (
     collection === undefined ||
+    collections === undefined ||
     groups === undefined ||
     allGroups === undefined ||
     collectionDatasets === undefined ||
@@ -348,15 +298,18 @@ function CollectionDetailPage() {
     ungrouped = collectionDatasets.filter(
       (dataset) => dataset.groupId === undefined || !groupIds.has(dataset.groupId),
     ),
-    // Collection membership is many-to-many, so a group's members come from
-    // the full dataset list — a grouped dataset isn't implicitly in the
-    // group's collection.
-    addCandidates = allDatasets.filter(
+    // Everything the collection contains: datasets joined directly, plus
+    // every dataset of a group living in the collection — a group joins as a
+    // single unit (see CollectionAddSheet) and brings its members along. The
+    // extent map and map layers derive from this, so a collection map really
+    // is the whole collection.
+    collectionContentDatasets = allDatasets.filter(
       (dataset) =>
-        !memberships.some(
+        memberships.some(
           (membership) =>
             membership.collectionId === collectionId && membership.schemaId === dataset._id,
-        ),
+        ) ||
+        (dataset.groupId !== undefined && groupIds.has(dataset.groupId)),
     );
 
   return (
@@ -419,10 +372,19 @@ function CollectionDetailPage() {
             <Plus className="h-4 w-4 mr-2" />
             Add dataset
           </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setAddToMapOpen(true);
+            }}
+          >
+            <MapIcon className="h-4 w-4 mr-2" />
+            Add to map
+          </Button>
         </div>
       </div>
 
-      <CollectionMapSection datasets={collectionDatasets} />
+      <CollectionMapSection datasets={collectionContentDatasets} />
 
       <div className="flex flex-col gap-6">
         {groups.map((group) => (
@@ -448,7 +410,7 @@ function CollectionDetailPage() {
 
         <UngroupedDatasetsCard
           hasGroups={groups.length > 0}
-          collectionDatasets={collectionDatasets}
+          hasContent={collectionContentDatasets.length > 0}
           ungrouped={ungrouped}
           groups={allGroups}
           onMoveToGroup={(dataset, groupId) => {
@@ -473,19 +435,38 @@ function CollectionDetailPage() {
         onOpenChange={setGroupFormOpen}
       />
 
-      <AddDatasetSheetHost
-        target={addDatasetTarget}
+      <CollectionAddSheet
         collectionId={collectionId}
-        allDatasets={allDatasets}
-        collectionAddCandidates={addCandidates}
+        collectionName={collection.name}
+        collections={collections}
+        groups={allGroups}
+        datasets={allDatasets}
+        memberships={memberships}
+        open={addDatasetTarget === "collection"}
         onOpenChange={(open) => {
           if (!open) {
             setAddDatasetTarget(undefined);
           }
         }}
-        addSchemaToCollection={addSchemaToCollection}
-        setSchemaGroup={setSchemaGroup}
       />
+
+      {addDatasetTarget !== undefined && addDatasetTarget !== "collection" && (
+        <DatasetPickerSheet
+          title="Add dataset to group"
+          description={`Choose a dataset to add to "${addDatasetTarget.name}".`}
+          candidates={allDatasets.filter((dataset) => dataset.groupId !== addDatasetTarget._id)}
+          open
+          onOpenChange={(open) => {
+            if (!open) {
+              setAddDatasetTarget(undefined);
+            }
+          }}
+          onPick={async (dataset) => {
+            await setSchemaGroup({ groupId: addDatasetTarget._id, schemaId: dataset._id });
+            toast.success(`Added "${dataset.title}" to "${addDatasetTarget.name}".`);
+          }}
+        />
+      )}
 
       <ConfirmDialog
         open={pendingDeleteCollection}
@@ -497,6 +478,12 @@ function CollectionDetailPage() {
         onConfirm={() => {
           void handleDeleteCollection();
         }}
+      />
+
+      <AddToMapSheet
+        open={addToMapOpen}
+        onOpenChange={setAddToMapOpen}
+        target={{ targetId: collectionId, targetType: "collection", targetName: collection.name }}
       />
 
       <ConfirmDialog

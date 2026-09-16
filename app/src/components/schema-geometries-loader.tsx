@@ -40,12 +40,17 @@ export function SchemaGeometriesLoader({
  * `SchemaGeometriesLoader` per schema and merges the results.
  *
  * Returns `loaders` (render them alongside your UI — they must stay mounted
- * even while loading, since they're what's fetching the data) and
- * `geometries`, which is `undefined` until every schema's pages have fully
- * loaded, then one flat array across all schemas.
+ * even while loading, since they're what's fetching the data), `geometries`,
+ * which is `undefined` until every schema's pages have fully loaded, then one
+ * flat array across all schemas, and `servedGeometries`, which additionally
+ * serves the already-loaded schemas' rows while a NEWLY added schema streams
+ * in (only `undefined` before the first schema loads at all) — a consumer
+ * that keeps rendering with it instead of gating on `geometries` keeps its
+ * mounted state (e.g. a Map's camera) across layer changes.
  */
 export function useGeometriesBySchemas(schemaIds: string[]): {
   geometries: GeometryEntry[] | undefined;
+  servedGeometries: GeometryEntry[] | undefined;
   loaders: React.ReactNode[];
 } {
   const [geometriesBySchema, setGeometriesBySchema] = useState<
@@ -82,8 +87,15 @@ export function useGeometriesBySchemas(schemaIds: string[]): {
     ? schemaIds.flatMap((schemaId) => geometriesBySchema.get(schemaId) ?? [])
     : undefined;
 
+  const loadedLists = schemaIds
+      .map((schemaId) => geometriesBySchema.get(schemaId))
+      .filter((loaded) => loaded !== undefined),
+    servedGeometries =
+      schemaIds.length === 0 ? [] : loadedLists.length === 0 ? undefined : loadedLists.flat();
+
   return {
     geometries,
+    servedGeometries,
     loaders: schemaIds.map((schemaId) => (
       <SchemaGeometriesLoader
         key={schemaId}

@@ -86,19 +86,35 @@ function CollectionCard({
   );
 }
 
+/**
+ * How many datasets a collection holds: direct joins plus every dataset of a
+ * group living in the collection — a group joins as a single unit and brings
+ * its members, so the card count reads the same as the collection page.
+ */
 function countByCollection(
-  memberships: FunctionReturnType<typeof api.collections.listSchemaCollections> | undefined,
+  memberships: FunctionReturnType<typeof api.collections.listSchemaCollections>,
+  datasets: FunctionReturnType<typeof api.schemas.list>,
+  groups: FunctionReturnType<typeof api.groups.list>,
   collectionId: string,
 ): number {
-  if (memberships === undefined) {
-    return 0;
-  }
-  return memberships.filter((membership) => membership.collectionId === collectionId).length;
+  const memberGroupIds = new Set(
+    groups.filter((group) => group.collectionId === collectionId).map((group) => group._id),
+  );
+  return new Set([
+    ...memberships
+      .filter((membership) => membership.collectionId === collectionId)
+      .map((membership) => membership.schemaId),
+    ...datasets
+      .filter((dataset) => dataset.groupId !== undefined && memberGroupIds.has(dataset.groupId))
+      .map((dataset) => dataset._id),
+  ]).size;
 }
 
 function CollectionsPage() {
   const collections = useQuery(api.collections.list),
     memberships = useQuery(api.collections.listSchemaCollections),
+    datasets = useQuery(api.schemas.list),
+    groups = useQuery(api.groups.list, {}),
     deleteCollection = useMutation(api.collections.remove),
     [formOpen, setFormOpen] = useState(false),
     [editing, setEditing] = useState<Collection | undefined>(),
@@ -115,7 +131,12 @@ function CollectionsPage() {
       }
     };
 
-  if (collections === undefined || memberships === undefined) {
+  if (
+    collections === undefined ||
+    memberships === undefined ||
+    datasets === undefined ||
+    groups === undefined
+  ) {
     return (
       <div className="flex justify-center items-center min-h-100">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
@@ -170,7 +191,7 @@ function CollectionsPage() {
             <CollectionCard
               key={collection._id}
               collection={collection}
-              datasetCount={countByCollection(memberships, collection._id)}
+              datasetCount={countByCollection(memberships, datasets, groups, collection._id)}
               onEdit={(target) => {
                 setEditing(target);
                 setFormOpen(true);

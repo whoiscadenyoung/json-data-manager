@@ -1,12 +1,13 @@
-import { ConfirmDialog } from "@caden/json-cms/react/ui";
 import { useResolvedGeometries } from "@caden/json-cms/react";
+import { ConfirmDialog } from "@caden/json-cms/react/ui";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
-import { Download, Layers, Pencil, Plus, Trash2 } from "lucide-react";
+import { Download, Layers, MapIcon, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { api } from "#convex/_generated/api";
+import { AddToMapSheet } from "@/components/add-to-map-sheet";
 import { DatasetList } from "@/components/dataset-list";
 import type { Dataset } from "@/components/dataset-list";
 import { DatasetPickerSheet } from "@/components/dataset-picker-sheet";
@@ -84,6 +85,7 @@ function GroupDetailPage() {
     deleteGroup = useMutation(api.groups.remove),
     [editingGroup, setEditingGroup] = useState(false),
     [addDatasetOpen, setAddDatasetOpen] = useState(false),
+    [addToMapOpen, setAddToMapOpen] = useState(false),
     [pendingDelete, setPendingDelete] = useState(false),
     handleAddDataset = async (dataset: Dataset) => {
       await setSchemaGroup({ groupId, schemaId: dataset._id });
@@ -305,6 +307,15 @@ function GroupDetailPage() {
             <Download className="h-4 w-4 mr-2" />
             Export ({datasets.length})
           </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setAddToMapOpen(true);
+            }}
+          >
+            <MapIcon className="h-4 w-4 mr-2" />
+            Add to map
+          </Button>
         </div>
       </div>
 
@@ -351,6 +362,12 @@ function GroupDetailPage() {
         open={addDatasetOpen}
         onOpenChange={setAddDatasetOpen}
         onPick={handleAddDataset}
+      />
+
+      <AddToMapSheet
+        open={addToMapOpen}
+        onOpenChange={setAddToMapOpen}
+        target={{ targetId: groupId, targetType: "group", targetName: group.name }}
       />
 
       <ConfirmDialog
