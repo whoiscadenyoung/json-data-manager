@@ -146,11 +146,6 @@ function UngroupedDatasetsCard({
       </CardHeader>
       <CardContent>
         {hasContent ? (
-          <Empty className="min-h-32 border">
-            <EmptyTitle>No datasets yet</EmptyTitle>
-            <EmptyDescription>Add a dataset to this collection to get started.</EmptyDescription>
-          </Empty>
-        ) : (
           <DatasetList
             datasets={ungrouped}
             groups={groups}
@@ -158,6 +153,11 @@ function UngroupedDatasetsCard({
             onMoveToGroup={onMoveToGroup}
             onRemoveFromCollection={onRemoveFromCollection}
           />
+        ) : (
+          <Empty className="min-h-32 border">
+            <EmptyTitle>No datasets yet</EmptyTitle>
+            <EmptyDescription>Add a dataset to this collection to get started.</EmptyDescription>
+          </Empty>
         )}
       </CardContent>
     </Card>
