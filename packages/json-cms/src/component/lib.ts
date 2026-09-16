@@ -45,6 +45,14 @@ const SCHEMA_SIZE_LIMIT = 102_400, // 100 KB
     _creationTime: v.number(),
     _id: v.id("groups"),
   }),
+  mapValidator = schema.tables.maps.validator.extend({
+    _creationTime: v.number(),
+    _id: v.id("maps"),
+  }),
+  mapLayerValidator = schema.tables.mapLayers.validator.extend({
+    _creationTime: v.number(),
+    _id: v.id("mapLayers"),
+  }),
   schemaCollectionValidator = schema.tables.schemaCollections.validator.extend({
     _creationTime: v.number(),
     _id: v.id("schemaCollections"),
@@ -273,6 +281,8 @@ export const deleteSchema = mutation({
       }),
       deleteReferencesForSchema(ctx, args.schemaId),
       ...memberships.map(async (membership) => ctx.db.delete(membership._id)),
+      // Any map layer pointing at this dataset goes with it.
+      deleteMapLayersForTarget(ctx, args.schemaId),
       // The retained original import file goes with the dataset — nothing
       // else can reference a schema's own source-file blob.
       existing.sourceFileStorageId !== undefined
@@ -380,6 +390,13 @@ export const deleteCollection = mutation({
       ...groupedDatasets
         .flat()
         .map(async (dataset) => ctx.db.patch(dataset._id, { groupId: undefined })),
+      // Map layers pointing at this collection (or any of its groups, which
+      // are being deleted just above) go with it.
+      deleteMapLayersForCollectionTree(
+        ctx,
+        args.collectionId,
+        groups.map((group) => group._id),
+      ),
     ]);
 
     await ctx.db.delete(args.collectionId);
@@ -487,9 +504,11 @@ export const deleteGroup = mutation({
       .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
       .collect();
 
-    await Promise.all(
-      datasets.map(async (dataset) => ctx.db.patch(dataset._id, { groupId: undefined })),
-    );
+    await Promise.all([
+      ...datasets.map(async (dataset) => ctx.db.patch(dataset._id, { groupId: undefined })),
+      // Map layers pointing at this group go with it.
+      deleteMapLayersForTarget(ctx, args.groupId),
+    ]);
 
     await ctx.db.delete(args.groupId);
   },
@@ -615,6 +634,280 @@ export const setSchemaGroup = mutation({
     await ctx.db.patch(args.schemaId, { groupId: args.groupId });
   },
 });
+
+// Map queries
+
+export const listMaps = query({
+  args: {},
+  handler: async (ctx) => ctx.db.query("maps").order("desc").collect(),
+  returns: v.array(mapValidator),
+});
+
+export const getMap = query({
+  args: { mapId: v.id("maps") },
+  handler: async (ctx, args) => ctx.db.get(args.mapId),
+  returns: v.union(v.null(), mapValidator),
+});
+
+// Map mutations
+
+export const createMap = mutation({
+  args: {
+    description: v.optional(v.string()),
+    name: v.string(),
+  },
+  handler: async (ctx, args) => {
+    if (!args.name.trim()) {
+      throw new ConvexError("Map must have a name");
+    }
+    return ctx.db.insert("maps", { description: args.description, name: args.name });
+  },
+  returns: v.id("maps"),
+});
+
+export const updateMap = mutation({
+  args: {
+    description: v.optional(v.string()),
+    mapId: v.id("maps"),
+    name: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.get(args.mapId);
+    if (!existing) {
+      throw new ConvexError("Map not found");
+    }
+    if (args.name !== undefined && !args.name.trim()) {
+      throw new ConvexError("Map must have a name");
+    }
+
+    const patch: Record<string, unknown> = {};
+    if (args.name !== undefined) {
+      patch.name = args.name;
+    }
+    if (args.description !== undefined) {
+      patch.description = args.description;
+    }
+    await ctx.db.patch(args.mapId, patch);
+  },
+});
+
+/** Deletes a map and every layer in it. The layers' targets are untouched. */
+export const deleteMap = mutation({
+  args: { mapId: v.id("maps") },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.get(args.mapId);
+    if (!existing) {
+      throw new ConvexError("Map not found");
+    }
+
+    const layers = await ctx.db
+      .query("mapLayers")
+      .withIndex("by_map", (q) => q.eq("mapId", args.mapId))
+      .collect();
+    await Promise.all(layers.map(async (layer) => ctx.db.delete(layer._id)));
+    await ctx.db.delete(args.mapId);
+  },
+});
+
+// Map layer queries
+
+/**
+ * Lists a map's layers in draw order (the `by_map` index covers
+ * `[mapId, order]`, so an ascending index scan IS the draw order). With
+ * `mapId` omitted, lists every layer across all maps — lets a client count
+ * layers per map in one query instead of one query per map.
+ */
+export const listMapLayers = query({
+  args: { mapId: v.optional(v.id("maps")) },
+  handler: async (ctx, args) => {
+    const { mapId } = args;
+    if (mapId === undefined) {
+      return ctx.db.query("mapLayers").order("asc").collect();
+    }
+    return ctx.db
+      .query("mapLayers")
+      .withIndex("by_map", (q) => q.eq("mapId", mapId))
+      .order("asc")
+      .collect();
+  },
+  returns: v.array(mapLayerValidator),
+});
+
+// Map layer mutations
+
+const mapLayerTargetTypeValidator = v.union(
+  v.literal("collection"),
+  v.literal("group"),
+  v.literal("dataset"),
+);
+
+/**
+ * Validates that `targetId` — a plain string from the host app (see
+ * exposeApi's note on id validation) — names an existing row of the table
+ * `targetType` implies, returning its normalized component id.
+ */
+async function normalizeMapLayerTarget(
+  ctx: MutationCtx,
+  targetType: "collection" | "group" | "dataset",
+  targetId: string,
+): Promise<Id<"collections"> | Id<"groups"> | Id<"schemas">> {
+  const label =
+    targetType === "collection" ? "Collection" : targetType === "group" ? "Group" : "Dataset";
+  const assertFound = (doc: unknown) => {
+    if (doc === null) {
+      throw new ConvexError(`${label} not found`);
+    }
+  };
+  switch (targetType) {
+    case "collection": {
+      const id = ctx.db.normalizeId("collections", targetId);
+      if (id === null) {
+        throw new ConvexError(`${label} not found`);
+      }
+      assertFound(await ctx.db.get(id));
+      return id;
+    }
+    case "group": {
+      const id = ctx.db.normalizeId("groups", targetId);
+      if (id === null) {
+        throw new ConvexError(`${label} not found`);
+      }
+      assertFound(await ctx.db.get(id));
+      return id;
+    }
+    default: {
+      const id = ctx.db.normalizeId("schemas", targetId);
+      if (id === null) {
+        throw new ConvexError(`${label} not found`);
+      }
+      assertFound(await ctx.db.get(id));
+      return id;
+    }
+  }
+}
+
+/**
+ * Adds a layer to the end of a map, visible by default. A no-op when this
+ * exact target is already a layer of the map (same duplicate guard as
+ * addSchemaToCollection).
+ */
+export const addMapLayer = mutation({
+  args: {
+    mapId: v.id("maps"),
+    targetId: v.string(),
+    targetType: mapLayerTargetTypeValidator,
+  },
+  handler: async (ctx, args) => {
+    const map = await ctx.db.get(args.mapId);
+    if (!map) {
+      throw new ConvexError("Map not found");
+    }
+    const targetId = await normalizeMapLayerTarget(ctx, args.targetType, args.targetId);
+
+    const layers = await ctx.db
+      .query("mapLayers")
+      .withIndex("by_map", (q) => q.eq("mapId", args.mapId))
+      .collect();
+    if (
+      layers.some((layer) => layer.targetType === args.targetType && layer.targetId === targetId)
+    ) {
+      return;
+    }
+
+    return ctx.db.insert("mapLayers", {
+      mapId: args.mapId,
+      order: layers.reduce((next, layer) => Math.max(next, layer.order + 1), 0),
+      targetId,
+      targetType: args.targetType,
+      visible: true,
+    });
+  },
+});
+
+export const removeMapLayer = mutation({
+  args: { layerId: v.id("mapLayers") },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.get(args.layerId);
+    if (!existing) {
+      throw new ConvexError("Layer not found");
+    }
+    await ctx.db.delete(args.layerId);
+  },
+});
+
+export const setMapLayerVisibility = mutation({
+  args: { layerId: v.id("mapLayers"), visible: v.boolean() },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.get(args.layerId);
+    if (!existing) {
+      throw new ConvexError("Layer not found");
+    }
+    await ctx.db.patch(args.layerId, { visible: args.visible });
+  },
+});
+
+/**
+ * Swaps a layer with its neighbor in draw order (`up` = toward the top of
+ * the list / first drawn). A no-op when the layer is already at that end.
+ */
+export const moveMapLayer = mutation({
+  args: {
+    direction: v.union(v.literal("up"), v.literal("down")),
+    layerId: v.id("mapLayers"),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.get(args.layerId);
+    if (!existing) {
+      throw new ConvexError("Layer not found");
+    }
+
+    const layers = await ctx.db
+      .query("mapLayers")
+      .withIndex("by_map", (q) => q.eq("mapId", existing.mapId))
+      .order("asc")
+      .collect();
+    const index = layers.findIndex((layer) => layer._id === args.layerId),
+      neighbor = args.direction === "up" ? layers[index - 1] : layers[index + 1];
+    if (neighbor === undefined || index === -1) {
+      return;
+    }
+    await Promise.all([
+      ctx.db.patch(args.layerId, { order: neighbor.order }),
+      ctx.db.patch(neighbor._id, { order: existing.order }),
+    ]);
+  },
+});
+
+/**
+ * Deletes every map layer pointing at `targetId` — called when a collection,
+ * group, or dataset is deleted, so no layer ever dangles at a missing target.
+ */
+async function deleteMapLayersForTarget(
+  ctx: MutationCtx,
+  targetId: Id<"collections"> | Id<"groups"> | Id<"schemas">,
+): Promise<void> {
+  const layers = await ctx.db
+    .query("mapLayers")
+    .withIndex("by_target", (q) => q.eq("targetId", targetId))
+    .collect();
+  await Promise.all(layers.map(async (layer) => ctx.db.delete(layer._id)));
+}
+
+/**
+ * Same as {@link deleteMapLayersForTarget}, but for a whole collection tree:
+ * a collection deletion takes its nested groups along (see deleteCollection),
+ * so layers pointing at those groups must go too.
+ */
+async function deleteMapLayersForCollectionTree(
+  ctx: MutationCtx,
+  collectionId: Id<"collections">,
+  groupIds: Array<Id<"groups">>,
+): Promise<void> {
+  await Promise.all([
+    deleteMapLayersForTarget(ctx, collectionId),
+    ...groupIds.map(async (groupId) => deleteMapLayersForTarget(ctx, groupId)),
+  ]);
+}
 
 // Entry queries
 

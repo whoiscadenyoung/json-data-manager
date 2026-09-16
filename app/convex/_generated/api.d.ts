@@ -14,6 +14,7 @@ import type * as entries from "../entries.js";
 import type * as geometries from "../geometries.js";
 import type * as groups from "../groups.js";
 import type * as imports from "../imports.js";
+import type * as maps from "../maps.js";
 import type * as schemas from "../schemas.js";
 
 import type {
@@ -29,6 +30,7 @@ declare const fullApi: ApiFromModules<{
   geometries: typeof geometries;
   groups: typeof groups;
   imports: typeof imports;
+  maps: typeof maps;
   schemas: typeof schemas;
 }>;
 

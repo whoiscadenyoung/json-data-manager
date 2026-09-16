@@ -24,6 +24,17 @@ import type { FunctionReference } from "convex/server";
 export type ComponentApi<Name extends string | undefined = string | undefined> =
   {
     lib: {
+      addMapLayer: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          mapId: string;
+          targetId: string;
+          targetType: "collection" | "group" | "dataset";
+        },
+        string,
+        Name
+      >;
       addSchemaToCollection: FunctionReference<
         "mutation",
         "internal",
@@ -56,6 +67,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "mutation",
         "internal",
         { collectionId?: string; description?: string; name: string },
+        string,
+        Name
+      >;
+      createMap: FunctionReference<
+        "mutation",
+        "internal",
+        { description?: string; name: string },
         string,
         Name
       >;
@@ -103,6 +121,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "mutation",
         "internal",
         { groupId: string },
+        any,
+        Name
+      >;
+      deleteMap: FunctionReference<
+        "mutation",
+        "internal",
+        { mapId: string },
         any,
         Name
       >;
@@ -203,6 +228,18 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           total: number;
           workflowId?: string;
         } | null,
+        Name
+      >;
+      getMap: FunctionReference<
+        "query",
+        "internal",
+        { mapId: string },
+        null | {
+          _creationTime: number;
+          _id: string;
+          description?: string;
+          name: string;
+        },
         Name
       >;
       getSchema: FunctionReference<
@@ -376,6 +413,33 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         }>,
         Name
       >;
+      listMapLayers: FunctionReference<
+        "query",
+        "internal",
+        { mapId?: string },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          mapId: string;
+          order: number;
+          targetId: string | string | string;
+          targetType: "collection" | "group" | "dataset";
+          visible: boolean;
+        }>,
+        Name
+      >;
+      listMaps: FunctionReference<
+        "query",
+        "internal",
+        {},
+        Array<{
+          _creationTime: number;
+          _id: string;
+          description?: string;
+          name: string;
+        }>,
+        Name
+      >;
       listReferencingEntries: FunctionReference<
         "query",
         "internal",
@@ -470,10 +534,31 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         }>,
         Name
       >;
+      moveMapLayer: FunctionReference<
+        "mutation",
+        "internal",
+        { direction: "up" | "down"; layerId: string },
+        any,
+        Name
+      >;
+      removeMapLayer: FunctionReference<
+        "mutation",
+        "internal",
+        { layerId: string },
+        any,
+        Name
+      >;
       removeSchemaFromCollection: FunctionReference<
         "mutation",
         "internal",
         { collectionId: string; schemaId: string },
+        any,
+        Name
+      >;
+      setMapLayerVisibility: FunctionReference<
+        "mutation",
+        "internal",
+        { layerId: string; visible: boolean },
         any,
         Name
       >;
@@ -528,6 +613,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "mutation",
         "internal",
         { description?: string; groupId: string; name?: string },
+        any,
+        Name
+      >;
+      updateMap: FunctionReference<
+        "mutation",
+        "internal",
+        { description?: string; mapId: string; name?: string },
         any,
         Name
       >;

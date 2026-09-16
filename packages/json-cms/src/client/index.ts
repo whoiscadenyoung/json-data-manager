@@ -60,6 +60,16 @@ export type GroupId = Id<"groups">;
  *   addSchemaToCollection,
  *   removeSchemaFromCollection,
  *   setSchemaGroup,
+ *   listMaps,
+ *   getMap,
+ *   createMap,
+ *   updateMap,
+ *   deleteMap,
+ *   listMapLayers,
+ *   addMapLayer,
+ *   removeMapLayer,
+ *   setMapLayerVisibility,
+ *   moveMapLayer,
  * } = exposeApi(components.jsonCms, {
  *   auth: async (ctx, operation) => {
  *     const userId = await getAuthUserId(ctx);
@@ -86,14 +96,22 @@ export function exposeApi(
             entryId?: string;
             collectionId?: string;
             groupId?: string;
+            mapId?: string;
           }
-        | { type: "create"; schemaId?: string; collectionId?: string; groupId?: string }
+        | {
+            type: "create";
+            schemaId?: string;
+            collectionId?: string;
+            groupId?: string;
+            mapId?: string;
+          }
         | {
             type: "update";
             schemaId?: string;
             entryId?: string;
             collectionId?: string;
             groupId?: string;
+            mapId?: string;
           }
         | {
             type: "delete";
@@ -101,6 +119,7 @@ export function exposeApi(
             entryId?: string;
             collectionId?: string;
             groupId?: string;
+            mapId?: string;
           },
     ) => Promise<string>;
   },
@@ -344,6 +363,93 @@ export function exposeApi(
       handler: async (ctx, args) => {
         await options.auth(ctx, { schemaId: args.schemaId, type: "update" });
         return ctx.runMutation(component.lib.setSchemaGroup, args);
+      },
+    }),
+
+    // Map operations — a saved arrangement of layers (collections, groups,
+    // or datasets) rendered together on one map. Layer mutations carry
+    // `mapId` for auth and travel as plain strings, re-validated inside the
+    // component (see the id-validation note above).
+    listMaps: queryGeneric({
+      args: {},
+      handler: async (ctx) => {
+        await options.auth(ctx, { type: "read" });
+        return ctx.runQuery(component.lib.listMaps, {});
+      },
+    }),
+    getMap: queryGeneric({
+      args: { mapId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { mapId: args.mapId, type: "read" });
+        return ctx.runQuery(component.lib.getMap, { mapId: args.mapId });
+      },
+    }),
+    createMap: mutationGeneric({
+      args: { description: v.optional(v.string()), name: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { type: "create" });
+        return ctx.runMutation(component.lib.createMap, args);
+      },
+    }),
+    updateMap: mutationGeneric({
+      args: {
+        description: v.optional(v.string()),
+        mapId: v.string(),
+        name: v.optional(v.string()),
+      },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { mapId: args.mapId, type: "update" });
+        return ctx.runMutation(component.lib.updateMap, args);
+      },
+    }),
+    deleteMap: mutationGeneric({
+      args: { mapId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { mapId: args.mapId, type: "delete" });
+        return ctx.runMutation(component.lib.deleteMap, args);
+      },
+    }),
+    // A map's layers in draw order; every layer across all maps when `mapId`
+    // is omitted (one query lets a client count layers per map).
+    listMapLayers: queryGeneric({
+      args: { mapId: v.optional(v.string()) },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { mapId: args.mapId, type: "read" });
+        return ctx.runQuery(component.lib.listMapLayers, { mapId: args.mapId });
+      },
+    }),
+    // Appends a layer (a no-op when the target is already a layer of the map).
+    addMapLayer: mutationGeneric({
+      args: {
+        mapId: v.string(),
+        targetId: v.string(),
+        targetType: v.union(v.literal("collection"), v.literal("group"), v.literal("dataset")),
+      },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { mapId: args.mapId, type: "update" });
+        return ctx.runMutation(component.lib.addMapLayer, args);
+      },
+    }),
+    removeMapLayer: mutationGeneric({
+      args: { layerId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { type: "update" });
+        return ctx.runMutation(component.lib.removeMapLayer, args);
+      },
+    }),
+    setMapLayerVisibility: mutationGeneric({
+      args: { layerId: v.string(), visible: v.boolean() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { type: "update" });
+        return ctx.runMutation(component.lib.setMapLayerVisibility, args);
+      },
+    }),
+    // Swaps a layer with its neighbor in draw order.
+    moveMapLayer: mutationGeneric({
+      args: { direction: v.union(v.literal("up"), v.literal("down")), layerId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { type: "update" });
+        return ctx.runMutation(component.lib.moveMapLayer, args);
       },
     }),
 
