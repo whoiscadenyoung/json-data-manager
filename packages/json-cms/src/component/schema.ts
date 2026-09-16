@@ -52,6 +52,23 @@ export default defineSchema({
     .index("by_map", ["mapId", "order"])
     .index("by_target", ["targetId"]),
 
+  // Per-child visibility overrides within one layer, keyed by `childKey` —
+  // `group:<id>` for a group inside a collection layer, `dataset:<id>` for a
+  // dataset (whether a direct member of the collection, a group member, or
+  // the layer's own single target). A child is visible when its layer is
+  // visible AND its override (if any) is true; overrides on a group child
+  // cascade down to its member datasets client-side (a dataset child of a
+  // hidden group child renders hidden regardless of its own override). One
+  // row per `{layerId, childKey}` — rows exist only for children the user
+  // has explicitly toggled, so membership changes flow through live like the
+  // layers themselves. Deleted with their layer (see removeMapLayer), so
+  // they never dangle.
+  mapLayerOverrides: defineTable({
+    childKey: v.string(),
+    layerId: v.id("mapLayers"),
+    visible: v.boolean(),
+  }).index("by_layer", ["layerId"]),
+
   // Many-to-many membership between datasets and collections — a dataset can
   // live in any number of collections, and a collection holds any number of
   // datasets. One row per `{dataset, collection}` pair, deleted and re-derived

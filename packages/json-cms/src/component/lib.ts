@@ -53,6 +53,10 @@ const SCHEMA_SIZE_LIMIT = 102_400, // 100 KB
     _creationTime: v.number(),
     _id: v.id("mapLayers"),
   }),
+  mapLayerOverrideValidator = schema.tables.mapLayerOverrides.validator.extend({
+    _creationTime: v.number(),
+    _id: v.id("mapLayerOverrides"),
+  }),
   schemaCollectionValidator = schema.tables.schemaCollections.validator.extend({
     _creationTime: v.number(),
     _id: v.id("schemaCollections"),
@@ -737,7 +741,8 @@ export const deleteMap = mutation({
       .query("mapLayers")
       .withIndex("by_map", (q) => q.eq("mapId", args.mapId))
       .collect();
-    await Promise.all(layers.map(async (layer) => ctx.db.delete(layer._id)));
+    // deleteMapLayersForTarget deletes each layer's override rows too.
+    await Promise.all(layers.map(async (layer) => deleteMapLayersForLayer(ctx, layer._id)));
     await ctx.db.delete(args.mapId);
   },
 });
@@ -864,7 +869,14 @@ export const removeMapLayer = mutation({
     if (!existing) {
       throw new ConvexError("Layer not found");
     }
-    await ctx.db.delete(args.layerId);
+    const overrides = await ctx.db
+      .query("mapLayerOverrides")
+      .withIndex("by_layer", (q) => q.eq("layerId", args.layerId))
+      .collect();
+    await Promise.all([
+      ...overrides.map(async (override) => ctx.db.delete(override._id)),
+      ctx.db.delete(args.layerId),
+    ]);
   },
 });
 
@@ -876,6 +888,72 @@ export const setMapLayerVisibility = mutation({
       throw new ConvexError("Layer not found");
     }
     await ctx.db.patch(args.layerId, { visible: args.visible });
+  },
+});
+
+/**
+ * Every override row for one layer (only rows the user has explicitly
+ * toggled exist — see the table's doc comment in schema.ts). The client
+ * combines them with the layer's live children to derive effective child
+ * visibility, so stale overrides (children since removed) are simply
+ * ignored, not cleaned up.
+ */
+export const listMapLayerOverrides = query({
+  args: { layerId: v.id("mapLayers") },
+  handler: async (ctx, args) =>
+    ctx.db
+      .query("mapLayerOverrides")
+      .withIndex("by_layer", (q) => q.eq("layerId", args.layerId))
+      .collect(),
+  returns: v.array(mapLayerOverrideValidator),
+});
+
+/** Every override row across all layers — one query instead of one per layer. */
+export const listAllMapLayerOverrides = query({
+  args: {},
+  handler: async (ctx) => ctx.db.query("mapLayerOverrides").collect(),
+  returns: v.array(mapLayerOverrideValidator),
+});
+
+/**
+ * Sets (or clears, via `null`) a child's visibility override within one
+ * layer. `childKey` is `group:<id>` or `dataset:<id>` — validated only as a
+ * string here (the id inside cannot be checked against a table without
+ * knowing which); the client derives keys from real children, and a stale
+ * key is inert (it matches no rendered child). Clearing removes the row so
+ * untouched children stay untouched.
+ */
+export const setMapLayerOverride = mutation({
+  args: {
+    childKey: v.string(),
+    layerId: v.id("mapLayers"),
+    visible: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const layer = await ctx.db.get(args.layerId);
+    if (!layer) {
+      throw new ConvexError("Layer not found");
+    }
+
+    const existing = (
+        await ctx.db
+          .query("mapLayerOverrides")
+          .withIndex("by_layer", (q) => q.eq("layerId", args.layerId))
+          .collect()
+      ).filter((row) => row.childKey === args.childKey),
+      // Clearing (`visible` undefined) removes any override row; setting
+      // replaces any existing row for the same childKey.
+      deleteExisting = Promise.all(existing.map(async (row) => ctx.db.delete(row._id)));
+    if (args.visible === undefined) {
+      await deleteExisting;
+      return;
+    }
+    await deleteExisting;
+    await ctx.db.insert("mapLayerOverrides", {
+      childKey: args.childKey,
+      layerId: args.layerId,
+      visible: args.visible,
+    });
   },
 });
 
@@ -911,9 +989,22 @@ export const moveMapLayer = mutation({
   },
 });
 
+/** Deletes one map layer along with any child visibility overrides it carries. */
+async function deleteMapLayersForLayer(ctx: MutationCtx, layerId: Id<"mapLayers">): Promise<void> {
+  const overrides = await ctx.db
+    .query("mapLayerOverrides")
+    .withIndex("by_layer", (q) => q.eq("layerId", layerId))
+    .collect();
+  await Promise.all([
+    ...overrides.map(async (override) => ctx.db.delete(override._id)),
+    ctx.db.delete(layerId),
+  ]);
+}
+
 /**
- * Deletes every map layer pointing at `targetId` — called when a collection,
- * group, or dataset is deleted, so no layer ever dangles at a missing target.
+ * Deletes every map layer (and its override rows) pointing at `targetId` —
+ * called when a collection, group, or dataset is deleted, so no layer ever
+ * dangles at a missing target.
  */
 async function deleteMapLayersForTarget(
   ctx: MutationCtx,
@@ -923,7 +1014,7 @@ async function deleteMapLayersForTarget(
     .query("mapLayers")
     .withIndex("by_target", (q) => q.eq("targetId", targetId))
     .collect();
-  await Promise.all(layers.map(async (layer) => ctx.db.delete(layer._id)));
+  await Promise.all(layers.map(async (layer) => deleteMapLayersForLayer(ctx, layer._id)));
 }
 
 /**

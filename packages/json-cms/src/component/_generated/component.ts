@@ -278,6 +278,19 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         null | string,
         Name
       >;
+      listAllMapLayerOverrides: FunctionReference<
+        "query",
+        "internal",
+        {},
+        Array<{
+          _creationTime: number;
+          _id: string;
+          childKey: string;
+          layerId: string;
+          visible: boolean;
+        }>,
+        Name
+      >;
       listCollections: FunctionReference<
         "query",
         "internal",
@@ -410,6 +423,19 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           collectionId?: string;
           description?: string;
           name: string;
+        }>,
+        Name
+      >;
+      listMapLayerOverrides: FunctionReference<
+        "query",
+        "internal",
+        { layerId: string },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          childKey: string;
+          layerId: string;
+          visible: boolean;
         }>,
         Name
       >;
@@ -559,6 +585,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "mutation",
         "internal",
         { collectionId: string | null; groupId: string },
+        any,
+        Name
+      >;
+      setMapLayerOverride: FunctionReference<
+        "mutation",
+        "internal",
+        { childKey: string; layerId: string; visible?: boolean },
         any,
         Name
       >;

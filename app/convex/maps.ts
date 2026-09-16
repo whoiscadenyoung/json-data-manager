@@ -14,4 +14,6 @@ export const {
   removeMapLayer: removeLayer,
   setMapLayerVisibility: setLayerVisibility,
   moveMapLayer: moveLayer,
+  listMapLayerOverrides,
+  setMapLayerOverride,
 } = exposeApi(components.jsonCms, { auth });

@@ -1,25 +1,13 @@
 import { ConfirmDialog } from "@caden/json-cms/react/ui";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
-import {
-  ChevronDown,
-  ChevronUp,
-  Eye,
-  EyeOff,
-  FolderOpen,
-  Layers as LayersIcon,
-  MapIcon,
-  MapPin,
-  Pencil,
-  Plus,
-  Trash2,
-  X,
-} from "lucide-react";
+import { Layers as LayersIcon, MapIcon, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { LayersMap } from "#/components/layers-map";
 import { MapFormPanel } from "#/components/map-form-panel";
+import { MapLayerPanel } from "#/components/map-layer-panel";
 import { MapLayerPickerSheet } from "#/components/map-layer-picker";
 import { useGeometriesBySchemas } from "#/components/schema-geometries-loader";
 import {
@@ -31,7 +19,7 @@ import {
   BreadcrumbSeparator,
 } from "#/components/ui/breadcrumb";
 import { Button } from "#/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
+import { Card, CardContent, CardDescription, CardTitle } from "#/components/ui/card";
 import {
   Empty,
   EmptyContent,
@@ -40,7 +28,13 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "#/components/ui/empty";
-import { assignDatasetColors, expandLayerDatasets } from "#/lib/map-layers";
+import {
+  assignDatasetColors,
+  buildLayerChildren,
+  expandLayerDatasets,
+  overridesByLayerId,
+  resolveVisibleSchemaIds,
+} from "#/lib/map-layers";
 import type { MapLayerDoc } from "#/lib/map-layers";
 import { api } from "#convex/_generated/api";
 
@@ -48,167 +42,59 @@ export const Route = createFileRoute("/maps/$mapId")({
   component: MapDetailPage,
 });
 
-const LAYER_ICONS = {
-  collection: LayersIcon,
-  group: FolderOpen,
-  dataset: MapPin,
-} as const;
-
-const LAYER_KINDS = {
-  collection: "Collection",
-  group: "Group",
-  dataset: "Dataset",
-} as const;
-
-/** Up to eight per-dataset color swatches (+N overflow) under a layer row — the same colors the map draws them in. */
-function LayerDatasetDots({ colors }: { colors: string[] }) {
-  if (colors.length === 0) {
-    return null;
-  }
-  const shown = colors.slice(0, 8),
-    overflow = colors.length - shown.length;
-  return (
-    <span className="flex shrink-0 items-center gap-1">
-      {shown.map((color) => (
-        <span
-          key={color}
-          className="inline-block h-2 w-2 rounded-full"
-          style={{ backgroundColor: color }}
-        />
-      ))}
-      {overflow > 0 && <span className="text-xs text-muted-foreground">+{overflow}</span>}
-    </span>
-  );
-}
-
-function LayerRow({
-  layer,
-  index,
-  totalCount,
-  name,
-  datasetColors,
-  onMoveUp,
-  onMoveDown,
-  onToggleVisibility,
-  onRemove,
-}: {
-  layer: MapLayerDoc;
-  index: number;
-  totalCount: number;
-  name: string;
-  datasetColors: string[];
-  onMoveUp: () => void;
-  onMoveDown: () => void;
-  onToggleVisibility: () => void;
-  onRemove: () => void;
-}) {
-  const Icon = LAYER_ICONS[layer.targetType],
-    datasetCount = datasetColors.length;
-  return (
-    <li
-      className={`flex items-center gap-2 rounded-md border px-2.5 py-2 transition-opacity ${
-        layer.visible ? "" : "opacity-55"
-      }`}
-    >
-      <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium">{name}</p>
-        <div className="flex items-center justify-between gap-2">
-          <p className="truncate text-xs text-muted-foreground">
-            {LAYER_KINDS[layer.targetType]} ·{" "}
-            {datasetCount === 0
-              ? "no geospatial datasets"
-              : `${datasetCount} ${datasetCount === 1 ? "dataset" : "datasets"}`}
-          </p>
-          <LayerDatasetDots colors={datasetColors} />
-        </div>
-      </div>
-      <div className="flex shrink-0 items-center">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          aria-label={`Move ${layer.visible ? "" : "hidden "}"${name}" up`}
-          disabled={index === 0}
-          onClick={onMoveUp}
-        >
-          <ChevronUp className="size-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          aria-label={`Move ${layer.visible ? "" : "hidden "}"${name}" down`}
-          disabled={index === totalCount - 1}
-          onClick={onMoveDown}
-        >
-          <ChevronDown className="size-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          aria-label={layer.visible ? `Hide "${name}"` : `Show "${name}"`}
-          onClick={onToggleVisibility}
-        >
-          {layer.visible ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7 text-muted-foreground hover:text-foreground"
-          aria-label={`Remove "${name}" from this map`}
-          onClick={onRemove}
-        >
-          <X className="size-3.5" />
-        </Button>
-      </div>
-    </li>
-  );
-}
-
 /**
  * A saved map's workspace: the combined map of its layers on the left, and
  * the layer panel on the right — add collections/groups/datasets as layers,
  * reorder them, toggle show/hide, remove them. Layers draw in list order;
  * each dataset keeps a stable color across visibility toggles.
  */
-function MapDetailPage() {
-  const { mapId } = Route.useParams(),
-    navigate = useNavigate(),
-    map = useQuery(api.maps.get, { mapId }),
-    layers = useQuery(api.maps.listLayers, { mapId }),
-    datasets = useQuery(api.schemas.list),
-    collections = useQuery(api.collections.list),
-    groups = useQuery(api.groups.list, {}),
-    memberships = useQuery(api.collections.listSchemaCollections),
+function toastError(error: unknown, fallback: string) {
+  toast.error(error instanceof Error ? error.message : fallback);
+}
+
+/**
+ * The workspace's layer mutation handlers, extracted so the page component
+ * stays readable (and under the repo's complexity budget). Child toggles
+ * write overrides: hiding inserts a `{visible: false}` row, showing clears
+ * any override row (back to the default visible).
+ */
+function useMapLayerActions(mapId: string) {
+  const navigate = useNavigate(),
     removeLayer = useMutation(api.maps.removeLayer),
     setLayerVisibility = useMutation(api.maps.setLayerVisibility),
     moveLayer = useMutation(api.maps.moveLayer),
-    addLayer = useMutation(api.maps.addLayer),
+    setMapLayerOverride = useMutation(api.maps.setMapLayerOverride),
     deleteMap = useMutation(api.maps.remove),
-    [editingMap, setEditingMap] = useState(false),
-    [addLayerOpen, setAddLayerOpen] = useState(false),
-    [pendingDeleteMap, setPendingDeleteMap] = useState(false),
     handleRemoveLayer = async (layer: MapLayerDoc) => {
       try {
         await removeLayer({ layerId: layer._id });
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to remove layer.");
+        toastError(error, "Failed to remove layer.");
       }
     },
     handleToggleVisibility = async (layer: MapLayerDoc) => {
       try {
         await setLayerVisibility({ layerId: layer._id, visible: !layer.visible });
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to toggle layer.");
+        toastError(error, "Failed to toggle layer.");
+      }
+    },
+    handleToggleChild = async (layerId: string, childKey: string, currentlyVisible: boolean) => {
+      try {
+        await setMapLayerOverride({
+          childKey,
+          layerId,
+          visible: currentlyVisible ? undefined : false,
+        });
+      } catch (error) {
+        toastError(error, "Failed to toggle layer item.");
       }
     },
     handleMoveLayer = async (layer: MapLayerDoc, direction: "up" | "down") => {
       try {
         await moveLayer({ direction, layerId: layer._id });
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to move layer.");
+        toastError(error, "Failed to move layer.");
       }
     },
     handleDeleteMap = async () => {
@@ -217,15 +103,44 @@ function MapDetailPage() {
         toast.success("Map deleted.");
         await navigate({ to: "/maps" });
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to delete map.");
+        toastError(error, "Failed to delete map.");
       }
     };
+  return {
+    handleDeleteMap,
+    handleMoveLayer,
+    handleRemoveLayer,
+    handleToggleChild,
+    handleToggleVisibility,
+  };
+}
+
+function MapDetailPage() {
+  const { mapId } = Route.useParams(),
+    map = useQuery(api.maps.get, { mapId }),
+    layers = useQuery(api.maps.listLayers, { mapId }),
+    datasets = useQuery(api.schemas.list),
+    collections = useQuery(api.collections.list),
+    groups = useQuery(api.groups.list, {}),
+    memberships = useQuery(api.collections.listSchemaCollections),
+    addLayer = useMutation(api.maps.addLayer),
+    [editingMap, setEditingMap] = useState(false),
+    [addLayerOpen, setAddLayerOpen] = useState(false),
+    [pendingDeleteMap, setPendingDeleteMap] = useState(false),
+    {
+      handleDeleteMap,
+      handleMoveLayer,
+      handleRemoveLayer,
+      handleToggleChild,
+      handleToggleVisibility,
+    } = useMapLayerActions(mapId);
 
   // Layer → dataset expansion, dataset colors, and the unique schema id set
   // to load geometry for — ALL layers' datasets (visible or not), so showing
   // a hidden layer is an instant render filter, not a refetch. Derived
   // plainly (no useMemo): the React Compiler memoizes these automatically.
-  const expanded =
+  const overrides = useQuery(api.maps.listMapLayerOverrides),
+    expanded =
       layers !== undefined &&
       datasets !== undefined &&
       memberships !== undefined &&
@@ -252,6 +167,7 @@ function MapDetailPage() {
     collections === undefined ||
     groups === undefined ||
     memberships === undefined ||
+    overrides === undefined ||
     expanded === undefined ||
     colorBySchema === undefined
   ) {
@@ -300,9 +216,11 @@ function MapDetailPage() {
       }
     },
     addedTargets = new Set(layers.map((layer) => `${layer.targetType}:${layer.targetId}`)),
-    visibleSchemaIds = new Set(
-      layers.flatMap((layer) => (layer.visible ? (expanded.get(layer._id) ?? []) : [])),
-    ),
+    overridesByLayer = overridesByLayerId(overrides),
+    childrenByLayer = buildLayerChildren(layers, datasets, memberships, groups, colorBySchema),
+    visibleSchemaIds = resolveVisibleSchemaIds(layers, datasets, expanded, overridesByLayer),
+    datasetColorsByLayer = (layer: MapLayerDoc) =>
+      (expanded.get(layer._id) ?? []).map((schemaId) => colorBySchema.get(schemaId) ?? "#3b82f6"),
     hasLayers = layers.length > 0;
 
   return (
@@ -399,40 +317,25 @@ function MapDetailPage() {
               />
             )}
           </div>
-          <Card className="h-fit">
-            <CardHeader>
-              <CardTitle>Layers ({layers.length})</CardTitle>
-              <CardDescription>Draw order, top layer first</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ul className="flex flex-col gap-2">
-                {layers.map((layer, index) => (
-                  <LayerRow
-                    key={layer._id}
-                    layer={layer}
-                    index={index}
-                    totalCount={layers.length}
-                    name={layerName(layer)}
-                    datasetColors={(expanded.get(layer._id) ?? []).map(
-                      (schemaId) => colorBySchema.get(schemaId) ?? "#3b82f6",
-                    )}
-                    onMoveUp={() => {
-                      void handleMoveLayer(layer, "up");
-                    }}
-                    onMoveDown={() => {
-                      void handleMoveLayer(layer, "down");
-                    }}
-                    onToggleVisibility={() => {
-                      void handleToggleVisibility(layer);
-                    }}
-                    onRemove={() => {
-                      void handleRemoveLayer(layer);
-                    }}
-                  />
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
+          <MapLayerPanel
+            layers={layers}
+            childrenByLayer={childrenByLayer}
+            overridesByLayer={overridesByLayer}
+            datasetColorsByLayer={datasetColorsByLayer}
+            nameForLayer={layerName}
+            onMove={(layer, direction) => {
+              void handleMoveLayer(layer, direction);
+            }}
+            onToggleVisibility={(layer) => {
+              void handleToggleVisibility(layer);
+            }}
+            onRemove={(layer) => {
+              void handleRemoveLayer(layer);
+            }}
+            onToggleChild={(layerId, childKey, currentlyVisible) => {
+              void handleToggleChild(layerId, childKey, currentlyVisible);
+            }}
+          />
         </div>
       )}
 

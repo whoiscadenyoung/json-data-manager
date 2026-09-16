@@ -463,6 +463,29 @@ export function exposeApi(
         return ctx.runMutation(component.lib.moveMapLayer, args);
       },
     }),
+    // Every layer's per-child visibility overrides in one query (only
+    // explicitly-toggled children have rows — clients match them against the
+    // layers' live children and ignore stale ones).
+    listMapLayerOverrides: queryGeneric({
+      args: {},
+      handler: async (ctx) => {
+        await options.auth(ctx, { type: "read" });
+        return ctx.runQuery(component.lib.listAllMapLayerOverrides, {});
+      },
+    }),
+    // Sets (or clears, via `visible: undefined`) a child's visibility
+    // override within one layer. `childKey` is `group:<id>`/`dataset:<id>`.
+    setMapLayerOverride: mutationGeneric({
+      args: {
+        childKey: v.string(),
+        layerId: v.string(),
+        visible: v.optional(v.boolean()),
+      },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { type: "update" });
+        return ctx.runMutation(component.lib.setMapLayerOverride, args);
+      },
+    }),
 
     // Entry operations
     listEntries: queryGeneric({
