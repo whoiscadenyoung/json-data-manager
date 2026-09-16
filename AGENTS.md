@@ -1,4 +1,4 @@
-# Claude Instructions
+# AGENTS.md
 
 ## Project Memory
 
