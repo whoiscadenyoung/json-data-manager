@@ -5,6 +5,7 @@ import type { GeometryArgs, GeometryTypeArg } from "../shared/geojson/validators
 import { api, internal } from "./_generated/api.js";
 import type { Id } from "./_generated/dataModel.js";
 import { INLINE_GEOMETRY_BYTE_LIMIT } from "./geometry_storage.js";
+import { GEOMETRY_PAGE_BYTE_BUDGET } from "./lib.js";
 import { initConvexTest } from "./setup.test.js";
 
 /** Builds a synthetic closed ring with `pointCount` positions — used to exercise geometries whose coordinate array exceeds Convex's 8192-elements-per-array limit, without needing a real multi-MB fixture file. Points are spread around a small circle so they're structurally valid (finite, in-range) and distinct. */
@@ -873,22 +874,24 @@ describe("json-cms component", () => {
       });
 
       // The budget itself: rows near the inline limit pack a page only up to
-      // ~10 MB — the page splits BEFORE the (much higher) row ceiling and
-      // before the index runs out, reporting isDone: false, and the
-      // remaining rows are still fully reachable across the cursor.
+      // the byte budget — the page splits BEFORE the (much higher) row
+      // ceiling and before the index runs out, reporting isDone: false, and
+      // the remaining rows are still fully reachable across the cursor.
       it("pages stop at the byte budget when rows are near the inline limit, losing nothing", async () => {
         const t = initConvexTest(),
           schemaId = await createGeospatialSchema(t, "Polygon"),
           ROW_COUNT = 15,
-          ring = bigRing(34_000),
-          geometryJson = JSON.stringify({ coordinates: [ring], type: "Polygon" });
+          ring = bigRing(20_000),
+          geometryJson = JSON.stringify({ coordinates: [ring], type: "Polygon" }),
+          rowBytes = new TextEncoder().encode(geometryJson).length;
         // Each row is comfortably inline (< INLINE_GEOMETRY_BYTE_LIMIT ≈
-        // 900 KB) but 15 of them together (~11–13 MB) exceed the ~10 MB page
-        // budget — so one page holds at least 11 of them (10 MB / 900 KB
-        // worst case) but never all 15.
-        expect(new TextEncoder().encode(geometryJson).length).toBeLessThan(
-          INLINE_GEOMETRY_BYTE_LIMIT,
-        );
+        // 900 KB), and the fixture is sized so the budget splits it: a page
+        // holds ~11 of these rows (budget / row size — past the old 8-row
+        // cap, proving the split is byte-driven) but never all 15
+        // (15 × row size is over the budget).
+        expect(rowBytes).toBeLessThan(INLINE_GEOMETRY_BYTE_LIMIT);
+        expect(Math.floor(GEOMETRY_PAGE_BYTE_BUDGET / rowBytes)).toBeGreaterThan(8);
+        expect(ROW_COUNT * rowBytes).toBeGreaterThan(GEOMETRY_PAGE_BYTE_BUDGET);
 
         await t.mutation(api.lib.createEntriesBulk, {
           entries: Array.from({ length: ROW_COUNT }, (_, i) => ({

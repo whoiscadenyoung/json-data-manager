@@ -1137,16 +1137,17 @@ async function resolveGeometryOutput(
 // count tracks the data's actual size, not its worst case. (A fixed 8-row
 // cap used to make 13 KB of point data cost 17 round trips; the same data
 // now fits one page.)
-const GEOMETRY_PAGE_BYTE_BUDGET = 10_000_000; // ~10 MB of payload per page — safely under the 16 MiB per-execution read cap (which the schema-existence read and per-document overhead also share), with room for the one-row overshoot below.
+/** Upper bound on the payload bytes one page may carry (exported for tests). */
+export const GEOMETRY_PAGE_BYTE_BUDGET = 5_000_000; // ~5 MB of payload per page — safely under the 16 MiB per-execution read cap (which the schema-existence read and per-document overhead also share), with room for the one-row overshoot below. Sized as much for rendering cadence as for safety: each page is one serial round trip with a render in between, and after real-world feedback that ~10 MB pages read as one big stall per arrival, the budget is small enough that pages land as a steady stream instead.
 
 /** High safety ceiling on rows per page; the byte budget is what actually bounds a real page long before this unless every row is tiny. */
 const MAX_GEOMETRY_PAGE_ROWS = 500;
 
-// Rows per `.take()` while the remaining budget is plentiful. A chunk is
-// taken at this width only when even a worst-case chunk (every row at
-// `INLINE_GEOMETRY_BYTE_LIMIT`) would still fit, which keeps the possible
-// overshoot at a page boundary — rows read but deliberately left for the
-// next page — down to a single ~900 KB row.
+// Cap on rows per `.take()` while the remaining budget is plentiful. The
+// width actually used scales down with the remaining budget (see
+// `takeGeometryRows`) so a page can stop right on the budget, and the
+// possible overshoot at a page boundary — rows read but deliberately left
+// for the next page — stays down to a single ~900 KB row.
 const GEOMETRY_PAGE_CHUNK_ROWS = 8;
 
 /** One `geometries` row, as read directly off `ctx.db` (before `resolveGeometryOutput` normalizes it). */
@@ -1195,8 +1196,8 @@ function parseCreationTimeCursor(cursor: string | null): number | undefined {
 /**
  * One `.take()` of a schema's `geometries` rows starting just after
  * `afterTime`, at the widest row count the remaining byte budget can
- * safely absorb — a full chunk only while even a worst-case chunk (every
- * row at `INLINE_GEOMETRY_BYTE_LIMIT`) would still fit, so the possible
+ * safely absorb: never more rows than the budget could hold even if every
+ * one were worst-case `INLINE_GEOMETRY_BYTE_LIMIT` size, so the possible
  * overshoot at a page boundary — rows read but deliberately left for the
  * next page — stays down to a single ~900 KB row.
  *
@@ -1212,9 +1213,8 @@ async function takeGeometryRows(
 ): Promise<{ requested: number; rows: GeometryDbRow[] }> {
   const requested = Math.min(
     maxRows,
-    remainingBytes >= GEOMETRY_PAGE_CHUNK_ROWS * INLINE_GEOMETRY_BYTE_LIMIT
-      ? GEOMETRY_PAGE_CHUNK_ROWS
-      : 1,
+    GEOMETRY_PAGE_CHUNK_ROWS,
+    Math.max(1, Math.floor(remainingBytes / INLINE_GEOMETRY_BYTE_LIMIT)),
   );
   return {
     requested,
