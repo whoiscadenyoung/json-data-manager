@@ -214,29 +214,15 @@ function DatasetCandidateRow({
  * added to the group flow through (the group is the member, not its rows).
  * A group already living in another collection can still be added; it moves.
  */
-export function CollectionAddSheet({
-  collectionId,
-  collectionName,
-  collections,
-  groups,
-  datasets,
-  memberships,
-  open,
-  onOpenChange,
-}: {
-  collectionId: string;
-  collectionName: string;
-  collections: CollectionDoc[];
-  groups: GroupDoc[];
-  datasets: DatasetSummary[];
-  memberships: MembershipRow[];
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
+/** The sheet's two add actions, extracted so the component itself stays under the repo's complexity budget. */
+function useCollectionAddActions(
+  collectionId: string,
+  collectionName: string,
+  onOpenChange: (open: boolean) => void,
+  setPendingKey: (key: string | undefined) => void,
+) {
   const addSchemaToCollection = useMutation(api.collections.addSchemaToCollection),
     setGroupCollection = useMutation(api.groups.setCollection),
-    [search, setSearch] = useState(""),
-    [pendingKey, setPendingKey] = useState<string | undefined>(),
     handleAddDataset = async (dataset: DatasetSummary) => {
       setPendingKey(dataset._id);
       try {
@@ -265,6 +251,36 @@ export function CollectionAddSheet({
         setPendingKey(undefined);
       }
     };
+  return { handleAddDataset, handleAddGroup };
+}
+
+export function CollectionAddSheet({
+  collectionId,
+  collectionName,
+  collections,
+  groups,
+  datasets,
+  memberships,
+  open,
+  onOpenChange,
+}: {
+  collectionId: string;
+  collectionName: string;
+  collections: CollectionDoc[];
+  groups: GroupDoc[];
+  datasets: DatasetSummary[];
+  memberships: MembershipRow[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [search, setSearch] = useState(""),
+    [pendingKey, setPendingKey] = useState<string | undefined>(),
+    { handleAddDataset, handleAddGroup } = useCollectionAddActions(
+      collectionId,
+      collectionName,
+      onOpenChange,
+      setPendingKey,
+    );
 
   const normalizedSearch = search.trim().toLowerCase(),
     collectionNameById = (id: string) => {
@@ -281,13 +297,11 @@ export function CollectionAddSheet({
   // search when its own name/description matches (then ALL its members
   // show), or when any member matches (then just those members show).
   const { groupItems, datasetItems } = buildCandidates(
-      groups,
-      datasets,
-      collectionId,
-      normalizedSearch,
-    ),
-    nothingAddedYet =
-      groups.every((group) => group.collectionId !== collectionId) && directMemberIds.size === 0;
+    groups,
+    datasets,
+    collectionId,
+    normalizedSearch,
+  );
 
   return (
     <Sheet
@@ -375,14 +389,6 @@ export function CollectionAddSheet({
               )}
             </>
           )}
-
-          {normalizedSearch === "" &&
-            nothingAddedYet &&
-            (groupItems.length > 0 || datasetItems.length > 0) && (
-              <p className="text-xs text-muted-foreground">
-                Items already in this collection show an "Added" badge.
-              </p>
-            )}
         </div>
       </SheetContent>
     </Sheet>
