@@ -847,6 +847,93 @@ describe("json-cms component", () => {
         }
       });
 
+      // The page budget is measured in BYTES, not rows: a page of tiny
+      // geometries fills toward the row ceiling instead of stopping at a
+      // fixed count. This is the shape of the audit's SMART dataset — 13 KB
+      // of points that cost 17 round trips under the old fixed 8-row cap —
+      // which must now fit one page.
+      it("small geometries fill a whole page well past the old fixed row cap", async () => {
+        const t = initConvexTest(),
+          schemaId = await createGeospatialSchema(t, "Point"),
+          ROW_COUNT = 100;
+        await t.mutation(api.lib.createEntriesBulk, {
+          entries: Array.from({ length: ROW_COUNT }, (_, i) => ({
+            data: { n: i },
+            geometry: JSON.stringify({ coordinates: [i % 170, i % 80], type: "Point" }),
+          })),
+          schemaId,
+        });
+
+        const page = await t.query(api.lib.listGeometries, {
+          paginationOpts: { cursor: null, numItems: 200 },
+          schemaId,
+        });
+        expect(page.page).toHaveLength(ROW_COUNT);
+        expect(page.isDone).toBe(true);
+      });
+
+      // The budget itself: rows near the inline limit pack a page only up to
+      // ~10 MB — the page splits BEFORE the (much higher) row ceiling and
+      // before the index runs out, reporting isDone: false, and the
+      // remaining rows are still fully reachable across the cursor.
+      it("pages stop at the byte budget when rows are near the inline limit, losing nothing", async () => {
+        const t = initConvexTest(),
+          schemaId = await createGeospatialSchema(t, "Polygon"),
+          ROW_COUNT = 15,
+          ring = bigRing(34_000),
+          geometryJson = JSON.stringify({ coordinates: [ring], type: "Polygon" });
+        // Each row is comfortably inline (< INLINE_GEOMETRY_BYTE_LIMIT ≈
+        // 900 KB) but 15 of them together (~11–13 MB) exceed the ~10 MB page
+        // budget — so one page holds at least 11 of them (10 MB / 900 KB
+        // worst case) but never all 15.
+        expect(new TextEncoder().encode(geometryJson).length).toBeLessThan(
+          INLINE_GEOMETRY_BYTE_LIMIT,
+        );
+
+        await t.mutation(api.lib.createEntriesBulk, {
+          entries: Array.from({ length: ROW_COUNT }, (_, i) => ({
+            data: { n: i },
+            geometry: geometryJson,
+          })),
+          schemaId,
+        });
+
+        const firstPage = await t.query(api.lib.listGeometries, {
+          paginationOpts: { cursor: null, numItems: 200 },
+          schemaId,
+        });
+        // Not the old fixed 8-row cap, and not the whole dataset — the byte
+        // budget is what stopped it.
+        expect(firstPage.page.length).toBeGreaterThan(8);
+        expect(firstPage.page.length).toBeLessThan(ROW_COUNT);
+        expect(firstPage.isDone).toBe(false);
+
+        const all = await listAllGeometries(t, schemaId);
+        expect(all).toHaveLength(ROW_COUNT);
+      });
+
+      // The row ceiling (`numItems` is honored only up to it) — a defensive
+      // clamp, but pinned so a future budget change can't silently uncap it.
+      it("numItems beyond the row ceiling is clamped", async () => {
+        const t = initConvexTest(),
+          schemaId = await createGeospatialSchema(t, "Point"),
+          ROW_COUNT = 505; // one more than the 500-row ceiling.
+        await t.mutation(api.lib.createEntriesBulk, {
+          entries: Array.from({ length: ROW_COUNT }, (_, i) => ({
+            data: { n: i },
+            geometry: JSON.stringify({ coordinates: [i % 170, i % 80], type: "Point" }),
+          })),
+          schemaId,
+        });
+
+        const firstPage = await t.query(api.lib.listGeometries, {
+          paginationOpts: { cursor: null, numItems: 100_000 },
+          schemaId,
+        });
+        expect(firstPage.page).toHaveLength(500);
+        expect(firstPage.isDone).toBe(false);
+      });
+
       // NOTE: there is no server-side `listGeometriesByCollection` to test
       // here — Convex allows at most one `.paginate()` call per query
       // execution ("Only a single paginated query is allowed per function
@@ -857,7 +944,8 @@ describe("json-cms component", () => {
       // Aggregating a collection's geometries across its several
       // independently-indexed schemas is the client's job instead: call
       // this same paginated `listGeometries` once per geospatial schema and
-      // merge — see `SchemaGeometriesLoader` in the app's collection route.
+      // merge — see `useGeometriesBySchemas` in the app (used by its maps
+      // and group feature-layer routes).
       it("listGeometries stays correctly scoped per schema — paginating one schema never returns another schema's rows", async () => {
         const t = initConvexTest(),
           schemaA = await createGeospatialSchema(t, "Point"),
