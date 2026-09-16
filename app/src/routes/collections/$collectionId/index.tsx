@@ -1,10 +1,11 @@
 import { ConfirmDialog } from "@caden/json-cms/react/ui";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
-import { FolderOpen, Layers, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
+import { FolderOpen, Layers, MapIcon, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { AddToMapSheet } from "#/components/add-to-map-sheet";
 import { CollectionFormPanel } from "#/components/collection-form-panel";
 import { DatasetList } from "#/components/dataset-list";
 import type { Dataset, GroupDoc } from "#/components/dataset-list";
@@ -59,11 +60,7 @@ function GroupCard({
       <CardHeader className="flex-row items-start justify-between gap-2">
         <div>
           <CardTitle>
-            <Link
-              to="/groups/$groupId"
-              params={{ groupId: group._id }}
-              className="hover:underline"
-            >
+            <Link to="/groups/$groupId" params={{ groupId: group._id }} className="hover:underline">
               {group.name}
             </Link>
           </CardTitle>
@@ -220,10 +217,7 @@ function AddDatasetSheetHost({
   allDatasets: Dataset[];
   collectionAddCandidates: Dataset[];
   onOpenChange: (open: boolean) => void;
-  addSchemaToCollection: (args: {
-    collectionId: string;
-    schemaId: string;
-  }) => Promise<unknown>;
+  addSchemaToCollection: (args: { collectionId: string; schemaId: string }) => Promise<unknown>;
   setSchemaGroup: (args: { groupId: string | null; schemaId: string }) => Promise<unknown>;
 }) {
   const isCollectionTarget = target === "collection",
@@ -276,6 +270,7 @@ function CollectionDetailPage() {
     [editingGroup, setEditingGroup] = useState<GroupDoc | undefined>(),
     [pendingDeleteGroup, setPendingDeleteGroup] = useState<GroupDoc | undefined>(),
     [addDatasetTarget, setAddDatasetTarget] = useState<"collection" | GroupDoc | undefined>(),
+    [addToMapOpen, setAddToMapOpen] = useState(false),
     handleMoveToGroup = async (dataset: Dataset, groupId: string | null) => {
       try {
         await setSchemaGroup({ groupId, schemaId: dataset._id });
@@ -419,6 +414,15 @@ function CollectionDetailPage() {
             <Plus className="h-4 w-4 mr-2" />
             Add dataset
           </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setAddToMapOpen(true);
+            }}
+          >
+            <MapIcon className="h-4 w-4 mr-2" />
+            Add to map
+          </Button>
         </div>
       </div>
 
@@ -497,6 +501,12 @@ function CollectionDetailPage() {
         onConfirm={() => {
           void handleDeleteCollection();
         }}
+      />
+
+      <AddToMapSheet
+        open={addToMapOpen}
+        onOpenChange={setAddToMapOpen}
+        target={{ targetId: collectionId, targetType: "collection", targetName: collection.name }}
       />
 
       <ConfirmDialog

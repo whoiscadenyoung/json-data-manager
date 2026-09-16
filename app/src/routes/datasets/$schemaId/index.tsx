@@ -11,6 +11,7 @@ import {
   Ellipsis,
   FileDown,
   FilePlus,
+  MapIcon,
   MapPinned,
   Pencil,
   Plus,
@@ -22,6 +23,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 
+import { AddToMapSheet } from "@/components/add-to-map-sheet";
 import { DatasetOverview } from "@/components/dataset-overview";
 import { EntriesMap } from "@/components/entries-map";
 import { EntriesTable } from "@/components/entries-table";
@@ -240,6 +242,7 @@ function SchemaDetailPage() {
     [makeGeospatialOpen, setMakeGeospatialOpen] = useState(false),
     [exportOpen, setExportOpen] = useState(false),
     [simplifyOpen, setSimplifyOpen] = useState(false),
+    [addToMapOpen, setAddToMapOpen] = useState(false),
     [jsonDefinitionOpen, setJsonDefinitionOpen] = useState(false),
     [conversionSuccess, setConversionSuccess] = useState<
       { processed: number; total: number } | undefined
@@ -450,14 +453,24 @@ function SchemaDetailPage() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 {isGeospatialDataset && (
-                  <DropdownMenuItem
-                    onClick={() => {
-                      setSimplifyOpen(true);
-                    }}
-                  >
-                    <MapPinned className="h-4 w-4 mr-2" />
-                    Simplify geometry…
-                  </DropdownMenuItem>
+                  <>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        setAddToMapOpen(true);
+                      }}
+                    >
+                      <MapIcon className="h-4 w-4 mr-2" />
+                      Add to map…
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        setSimplifyOpen(true);
+                      }}
+                    >
+                      <MapPinned className="h-4 w-4 mr-2" />
+                      Simplify geometry…
+                    </DropdownMenuItem>
+                  </>
                 )}
                 {schema.sourceFileStorageId !== undefined && (
                   <DropdownMenuItem
@@ -636,6 +649,14 @@ function SchemaDetailPage() {
           onOpenChange={setSimplifyOpen}
           schemaId={schemaId}
           schemaTitle={schema.title}
+        />
+      )}
+
+      {isGeospatialDataset && (
+        <AddToMapSheet
+          open={addToMapOpen}
+          onOpenChange={setAddToMapOpen}
+          target={{ targetId: schemaId, targetType: "dataset", targetName: schema.title }}
         />
       )}
     </div>
