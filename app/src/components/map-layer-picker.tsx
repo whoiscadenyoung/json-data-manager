@@ -35,11 +35,36 @@ function buildCandidates(
   memberships: MembershipRow[],
   addedTargets: Set<string>,
 ): LayerCandidate[] {
+  const groupIdsByCollection = new globalThis.Map<string, string[]>();
+  for (const group of groups) {
+    if (group.collectionId === undefined) {
+      continue;
+    }
+    const existing = groupIdsByCollection.get(group.collectionId);
+    if (existing !== undefined) {
+      existing.push(group._id);
+    } else {
+      groupIdsByCollection.set(group.collectionId, [group._id]);
+    }
+  }
+
   return [
     ...collections.map((collection): LayerCandidate => {
-      const count = memberships.filter(
-        (membership) => membership.collectionId === collection._id,
-      ).length;
+      // The count matches what adding the collection as a layer would draw:
+      // datasets joined directly plus every dataset of a group living in the
+      // collection (a group joins as a single unit and brings its members).
+      const memberGroupIds = new Set(groupIdsByCollection.get(collection._id) ?? []),
+        contentIds = new Set([
+          ...memberships
+            .filter((membership) => membership.collectionId === collection._id)
+            .map((membership) => membership.schemaId),
+          ...datasets
+            .filter(
+              (dataset) => dataset.groupId !== undefined && memberGroupIds.has(dataset.groupId),
+            )
+            .map((dataset) => dataset._id),
+        ]),
+        count = contentIds.size;
       return {
         target: { targetId: collection._id, targetType: "collection" },
         icon: Layers,

@@ -69,9 +69,9 @@ function LayerDatasetDots({ colors }: { colors: string[] }) {
     overflow = colors.length - shown.length;
   return (
     <span className="flex shrink-0 items-center gap-1">
-      {shown.map((color, index) => (
+      {shown.map((color) => (
         <span
-          key={index}
+          key={color}
           className="inline-block h-2 w-2 rounded-full"
           style={{ backgroundColor: color }}
         />
@@ -190,28 +190,25 @@ function MapDetailPage() {
     [editingMap, setEditingMap] = useState(false),
     [addLayerOpen, setAddLayerOpen] = useState(false),
     [pendingDeleteMap, setPendingDeleteMap] = useState(false),
-    handleLayerError = (error: unknown, fallback: string) => {
-      toast.error(error instanceof Error ? error.message : fallback);
-    },
     handleRemoveLayer = async (layer: MapLayerDoc) => {
       try {
         await removeLayer({ layerId: layer._id });
       } catch (error) {
-        handleLayerError(error, "Failed to remove layer.");
+        toast.error(error instanceof Error ? error.message : "Failed to remove layer.");
       }
     },
     handleToggleVisibility = async (layer: MapLayerDoc) => {
       try {
         await setLayerVisibility({ layerId: layer._id, visible: !layer.visible });
       } catch (error) {
-        handleLayerError(error, "Failed to toggle layer.");
+        toast.error(error instanceof Error ? error.message : "Failed to toggle layer.");
       }
     },
     handleMoveLayer = async (layer: MapLayerDoc, direction: "up" | "down") => {
       try {
         await moveLayer({ direction, layerId: layer._id });
       } catch (error) {
-        handleLayerError(error, "Failed to move layer.");
+        toast.error(error instanceof Error ? error.message : "Failed to move layer.");
       }
     },
     handleDeleteMap = async () => {
@@ -229,8 +226,11 @@ function MapDetailPage() {
   // a hidden layer is an instant render filter, not a refetch. Derived
   // plainly (no useMemo): the React Compiler memoizes these automatically.
   const expanded =
-      layers !== undefined && datasets !== undefined && memberships !== undefined
-        ? expandLayerDatasets(layers, datasets, memberships)
+      layers !== undefined &&
+      datasets !== undefined &&
+      memberships !== undefined &&
+      groups !== undefined
+        ? expandLayerDatasets(layers, datasets, memberships, groups)
         : undefined,
     colorBySchema =
       layers !== undefined && expanded !== undefined

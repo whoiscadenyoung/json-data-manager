@@ -635,6 +635,39 @@ export const setSchemaGroup = mutation({
   },
 });
 
+/**
+ * Sets (or clears, via `null`) which collection a group lives in. A group
+ * lives in at most one collection (`groups.collectionId` — see schema.ts);
+ * "adding" a group to a collection IS setting it here, moving it out of any
+ * collection it previously lived in. The group's datasets' own
+ * `schemaCollections` memberships are untouched — group membership is
+ * independent of dataset membership (see setSchemaGroup). Mirrors
+ * setSchemaGroup's shape for datasets.
+ */
+export const setGroupCollection = mutation({
+  args: {
+    collectionId: v.union(v.id("collections"), v.null()),
+    groupId: v.id("groups"),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.get(args.groupId);
+    if (!existing) {
+      throw new ConvexError("Group not found");
+    }
+
+    if (args.collectionId === null) {
+      await ctx.db.patch(args.groupId, { collectionId: undefined });
+      return;
+    }
+
+    const collection = await ctx.db.get(args.collectionId);
+    if (!collection) {
+      throw new ConvexError("Collection not found");
+    }
+    await ctx.db.patch(args.groupId, { collectionId: args.collectionId });
+  },
+});
+
 // Map queries
 
 export const listMaps = query({

@@ -60,6 +60,7 @@ export type GroupId = Id<"groups">;
  *   addSchemaToCollection,
  *   removeSchemaFromCollection,
  *   setSchemaGroup,
+ *   setGroupCollection,
  *   listMaps,
  *   getMap,
  *   createMap,
@@ -363,6 +364,16 @@ export function exposeApi(
       handler: async (ctx, args) => {
         await options.auth(ctx, { schemaId: args.schemaId, type: "update" });
         return ctx.runMutation(component.lib.setSchemaGroup, args);
+      },
+    }),
+    // Sets (or clears, via `null`) which collection a group lives in —
+    // "adding" a group to a collection as a single unit (a group lives in at
+    // most one collection). Mirrors setSchemaGroup.
+    setGroupCollection: mutationGeneric({
+      args: { collectionId: v.union(v.string(), v.null()), groupId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { groupId: args.groupId, type: "update" });
+        return ctx.runMutation(component.lib.setGroupCollection, args);
       },
     }),
 

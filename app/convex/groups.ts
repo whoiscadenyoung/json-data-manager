@@ -9,4 +9,5 @@ export const {
   createGroup: create,
   updateGroup: update,
   deleteGroup: remove,
+  setGroupCollection: setCollection,
 } = exposeApi(components.jsonCms, { auth });

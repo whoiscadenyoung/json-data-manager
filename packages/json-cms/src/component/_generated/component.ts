@@ -32,7 +32,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           targetId: string;
           targetType: "collection" | "group" | "dataset";
         },
-        string,
+        any,
         Name
       >;
       addSchemaToCollection: FunctionReference<
@@ -552,6 +552,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "mutation",
         "internal",
         { collectionId: string; schemaId: string },
+        any,
+        Name
+      >;
+      setGroupCollection: FunctionReference<
+        "mutation",
+        "internal",
+        { collectionId: string | null; groupId: string },
         any,
         Name
       >;
