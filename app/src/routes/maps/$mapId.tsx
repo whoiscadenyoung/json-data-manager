@@ -2,7 +2,7 @@ import { ConfirmDialog } from "@caden/json-cms/react/ui";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
 import { Layers as LayersIcon, MapIcon, Pencil, Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { LayersMap } from "#/components/layers-map";
@@ -50,6 +50,21 @@ export const Route = createFileRoute("/maps/$mapId")({
  */
 function toastError(error: unknown, fallback: string) {
   toast.error(error instanceof Error ? error.message : fallback);
+}
+
+/**
+ * Reports `complete` to the parent once via callback — the same
+ * child-component pattern as SchemaGeometriesLoader, whose effect-callback
+ * call doesn't trip the React Compiler's setState-in-effect rule (a direct
+ * setState inside this page's own effect would).
+ */
+function CompletionLatch({ complete, onComplete }: { complete: boolean; onComplete: () => void }) {
+  useEffect(() => {
+    if (complete) {
+      onComplete();
+    }
+  }, [complete, onComplete]);
+  return null;
 }
 
 /**
@@ -152,13 +167,22 @@ function MapDetailPage() {
         ? assignDatasetColors(layers, expanded)
         : undefined,
     schemaIds = expanded === undefined ? [] : [...new Set([...expanded.values()].flat())],
-    { geometries, loaders } = useGeometriesBySchemas(schemaIds),
+    { geometries, servedGeometries, loaders } = useGeometriesBySchemas(schemaIds),
     // Entry data feeds the map's feature-detail popups.
     entriesQuery = useQuery(
       api.entries.listEntriesForSchemas,
       schemaIds.length > 0 ? { schemaIds } : "skip",
     ),
-    entries = schemaIds.length === 0 ? [] : entriesQuery;
+    entries = schemaIds.length === 0 ? [] : entriesQuery,
+    // The map mounts on the first fully-complete load, then — via
+    // `servedGeometries`, which keeps serving loaded schemas while a newly
+    // added one streams in — stays mounted across layer adds/removes and
+    // visibility toggles. Latched once, exactly like the dataset map's
+    // "never re-skeleton a map the user is looking at" behavior (229150b),
+    // so the loading gate never unmounts the Map instance and the camera
+    // the frozen bounds protect survives.
+    [hasLoadedOnce, setHasLoadedOnce] = useState(false),
+    geometriesComplete = geometries !== undefined;
 
   if (
     map === undefined ||
@@ -301,17 +325,23 @@ function MapDetailPage() {
         </Empty>
       ) : (
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+          <CompletionLatch
+            complete={geometriesComplete}
+            onComplete={() => {
+              setHasLoadedOnce(true);
+            }}
+          />
           {loaders}
           <div className="relative h-[440px] w-full overflow-hidden rounded-lg border border-border lg:h-[640px]">
-            {geometries === undefined || entries === undefined ? (
+            {servedGeometries === undefined || !hasLoadedOnce ? (
               <div className="flex h-full items-center justify-center">
                 <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
               </div>
             ) : (
               <LayersMap
                 datasets={datasets}
-                geometries={geometries}
-                entries={entries}
+                geometries={servedGeometries}
+                entries={entries ?? []}
                 visibleSchemaIds={visibleSchemaIds}
                 colorBySchema={colorBySchema}
               />

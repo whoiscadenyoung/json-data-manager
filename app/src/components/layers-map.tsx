@@ -1,5 +1,5 @@
-import { buildFeatureCollection, computeBbox, useResolvedGeometries } from "@caden/json-cms/react";
-import type { Geometry } from "@caden/json-cms/react";
+import { buildFeatureCollection, unionBbox, useResolvedGeometries } from "@caden/json-cms/react";
+import type { BoundingBox, Geometry } from "@caden/json-cms/react";
 import { Link } from "@tanstack/react-router";
 import type { FunctionReturnType } from "convex/server";
 import { ChevronRight, X } from "lucide-react";
@@ -112,13 +112,34 @@ function getDatasetTitle(
 }
 
 /**
+ * `geometries.bbox` is a plain `v.array(v.number())` (Convex validators
+ * can't express a fixed-length tuple), but every write stores exactly 4
+ * numbers — this narrows the read side back to the tuple shape `unionBbox`
+ * expects, mirroring the component's own `asBoundingBox`.
+ */
+function asBoundingBox(value: number[] | undefined): BoundingBox | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- always written as a 4-tuple server-side; the array validator can't express that statically.
+  return value as BoundingBox;
+}
+
+/**
  * The combined map of a saved map's layers: every visible layer's geometries
  * rendered directly (shapes via fill/line layers, points as individual
- * circles), one stable color per dataset, viewport fit to the visible union —
- * geometries only, no extent rectangles. Clicking a feature opens its
- * entry's properties. Geometry rows arrive for ALL layers (visible or not) so
- * toggling a layer on is instant; rows are filtered to `visibleSchemaIds` at
- * render time.
+ * circles), one stable color per dataset — geometries only, no extent
+ * rectangles. Clicking a feature opens its entry's properties. Geometry rows
+ * arrive for ALL layers (visible or not) so toggling a layer on is instant;
+ * rows are filtered to `visibleSchemaIds` at render time.
+ *
+ * The viewport fits exactly once, when the component mounts (the parent
+ * gates mounting on the first fully-complete load): the bounds are captured
+ * from the rows' own per-row `bbox` envelopes — available without resolving
+ * any payload — via a lazy initializer and never change afterwards. Hiding
+ * or showing layers (or any of their datasets), adding or removing layers,
+ * or late-resolving payloads never moves the camera again; a fresh page
+ * load re-fits.
  */
 export function LayersMap({
   datasets,
@@ -145,17 +166,17 @@ export function LayersMap({
       const resolved = resolvedGeometries.get(g._id);
       return resolved === undefined ? [] : [{ g, resolved }];
     }),
+    // Captured exactly once, at mount, from the rows' stored envelopes (see
+    // the doc comment) — constant for this mount, so the `Map` component's
+    // fit-bounds effect runs exactly once.
+    [initialBounds] = useState(() => {
+      let bbox: BoundingBox | undefined;
+      for (const geometry of geometries) {
+        bbox = unionBbox(bbox, asBoundingBox(geometry.bbox));
+      }
+      return bbox;
+    }),
     [selected, setSelected] = useState<FeatureProperties | null>(null);
-
-  if (visibleGeometries.length === 0) {
-    return (
-      <div className="flex h-full items-center justify-center p-6 text-center">
-        <p className="text-sm text-muted-foreground">
-          Nothing to draw — every visible layer is empty or its datasets have no features.
-        </p>
-      </div>
-    );
-  }
 
   const bySchema = new globalThis.Map<string, GeometryEntry[]>();
   for (const { g } of visibleGeometries) {
@@ -170,10 +191,6 @@ export function LayersMap({
     resolvedById = new globalThis.Map(
       visibleGeometries.map(({ g, resolved }) => [g._id, resolved]),
     ),
-    combined = buildFeatureCollection<FeatureProperties>(
-      visibleGeometries.map(({ g, resolved }) => toFeatureRow(g, resolved)),
-    ),
-    bbox = computeBbox(combined),
     legendDatasets = schemaIds.map((schemaId) => ({
       schemaId,
       title: getDatasetTitle(datasetById, schemaId, "Untitled dataset"),
@@ -182,13 +199,9 @@ export function LayersMap({
     selectedEntry = selected ? entryById.get(selected.entryId) : undefined,
     selectedDatasetTitle = selected ? getDatasetTitle(datasetById, selected.schemaId, "") : "";
 
-  if (bbox === undefined) {
-    return null;
-  }
-
   return (
     <div className="relative h-full w-full">
-      <Map bounds={bbox} className="h-full w-full">
+      <Map bounds={initialBounds} className="h-full w-full">
         {schemaIds.map((schemaId) => {
           const color = colorBySchema.get(schemaId) ?? "#3b82f6",
             schemaGeometries = bySchema.get(schemaId) ?? [],
@@ -235,6 +248,13 @@ export function LayersMap({
           );
         })}
       </Map>
+      {visibleGeometries.length === 0 && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/40 p-6 text-center backdrop-blur-[1px]">
+          <p className="text-sm text-muted-foreground">
+            Nothing to draw — every visible layer is empty or its datasets have no features.
+          </p>
+        </div>
+      )}
       <MapLegend datasets={legendDatasets} />
       {selectedEntry && (
         <FeatureDetailsPanel
