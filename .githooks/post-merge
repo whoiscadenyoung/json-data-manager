@@ -1,0 +1,9 @@
+#!/bin/sh
+# After every merge, drop worktrees whose branch is fully merged into the
+# current branch. Never blocks the merge: all failures are ignored.
+#
+# Install once per clone:  bun run setup   (sets git config core.hooksPath)
+root="$(git rev-parse --show-toplevel 2>/dev/null)"
+[ -n "$root" ] || exit 0
+bun "$root/scripts/worktree.ts" clean --quiet >/dev/null 2>&1 || true
+exit 0

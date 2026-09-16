@@ -21,3 +21,6 @@ todos.json
 
 .input
 exports
+
+# Git worktrees (scripts/worktree.ts) + port registry
+.worktrees

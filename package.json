@@ -7,7 +7,10 @@
   ],
   "type": "module",
   "scripts": {
-    "dev": "bun --filter=app run dev",
+    "dev": "bun scripts/dev.ts",
+    "dev:plain": "bun --filter=app run dev",
+    "worktree": "bun scripts/worktree.ts",
+    "setup": "git config core.hooksPath .githooks && echo 'hooks installed: post-merge worktree cleanup'",
     "build": "bun --filter=app run build",
     "preview": "bun --filter=app run preview",
     "test": "bun --filter=app run test",
@@ -18,6 +21,7 @@
     "clean": "find . -name 'node_modules' -type d -prune -exec rm -rf '{}' +"
   },
   "devDependencies": {
+    "@types/bun": "^1.4.2",
     "oxfmt": "^0.66.0",
     "oxlint": "^1.81.0",
     "oxlint-tsgolint": "^7.0.2001"

@@ -7,6 +7,11 @@ bun install
 bun --bun run dev
 ```
 
+The dev command runs the Convex local backend and Vite with per-checkout
+ports, so git worktrees (`.worktrees/<name>`) and multiple projects can run
+side by side. See [docs/dev-environment.md](docs/dev-environment.md) for
+worktrees, port isolation (portless), and dev containers.
+
 # Building For Production
 
 To build this application for production:

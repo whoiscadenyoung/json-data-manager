@@ -1,0 +1,33 @@
+// Dev container config. Volume mounts shadow node_modules and the Convex
+// local-deployment storage so installs and dev data stay inside the container
+// and never leak platform-specific files (or 221 MB of sqlite) onto the host.
+{
+  "name": "json-data-manager",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "remoteUser": "bun",
+  "postCreateCommand": "git config --global --add safe.directory ${localWorkspaceFolder} && bun install --frozen-lockfile",
+  "forwardPorts": [5173, 3210, 3211, 3212, 3213],
+  "portsAttributes": {
+    "5173": { "label": "vite", "onAutoForward": "openBrowser" },
+    "3210": { "label": "convex api (fresh)", "onAutoForward": "silent" },
+    "3211": { "label": "convex internal (fresh)", "onAutoForward": "silent" },
+    "3212": { "label": "convex api", "onAutoForward": "silent" },
+    "3213": { "label": "convex internal", "onAutoForward": "silent" }
+  },
+  "otherPortsAttributes": { "onAutoForward": "silent" },
+  "mounts": [
+    "source=jdm-node-modules-root,target=/workspaces/${localWorkspaceFolderBasename}/node_modules,type=volume",
+    "source=jdm-node-modules-app,target=/workspaces/${localWorkspaceFolderBasename}/app/node_modules,type=volume",
+    "source=jdm-node-modules-json-cms,target=/workspaces/${localWorkspaceFolderBasename}/packages/json-cms/node_modules,type=volume",
+    "source=jdm-node-modules-data-export,target=/workspaces/${localWorkspaceFolderBasename}/packages/data-export/node_modules,type=volume",
+    "source=jdm-convex-local,target=/workspaces/${localWorkspaceFolderBasename}/app/.convex,type=volume"
+  ],
+  "customizations": {
+    "vscode": {
+      "extensions": ["oxc.oxc-vscode"]
+    }
+  }
+}
