@@ -1,5 +1,5 @@
-import { buildFeatureCollection, computeBbox, useResolvedGeometries } from "@caden/json-cms/react";
-import type { Geometry } from "@caden/json-cms/react";
+import { unionBbox } from "@caden/json-cms/react";
+import type { BoundingBox } from "@caden/json-cms/react";
 import type { FunctionReturnType } from "convex/server";
 import { Map as MapIcon } from "lucide-react";
 
@@ -14,14 +14,6 @@ import { Map, MapGeoJSON } from "#/components/ui/map";
 import { bboxFeature } from "#/lib/point-geometry";
 import { api } from "#convex/_generated/api";
 
-// There is no server-side "all geometries in this collection" query — see
-// the collection detail route's `SchemaGeometriesLoader` doc comment for
-// why (Convex allows at most one `.paginate()` call per query execution).
-// The caller fetches each geospatial schema's geometries separately (via
-// the paginated `listGeometries`) and merges them into one flat array
-// before passing it down here — this type just describes one of those
-// already-merged rows.
-type GeometryEntry = FunctionReturnType<typeof api.geometries.list>["page"][number];
 type Dataset = FunctionReturnType<typeof api.schemas.list>[number];
 
 // Cycled per dataset so each shows up as a distinct color on the map/legend.
@@ -40,19 +32,6 @@ function colorForIndex(index: number) {
   return DATASET_COLORS[index % DATASET_COLORS.length];
 }
 
-function groupGeometriesBySchema(geometries: GeometryEntry[]) {
-  const bySchema = new globalThis.Map<string, GeometryEntry[]>();
-  for (const geometry of geometries) {
-    const existing = bySchema.get(geometry.schemaId);
-    if (existing) {
-      existing.push(geometry);
-    } else {
-      bySchema.set(geometry.schemaId, [geometry]);
-    }
-  }
-  return bySchema;
-}
-
 /** Falls back to `fallback` when the dataset isn't found — avoids an optional-chained `?.title`. */
 function getDatasetTitle(
   datasetById: globalThis.Map<string, Dataset>,
@@ -63,7 +42,21 @@ function getDatasetTitle(
   return dataset ? dataset.title : fallback;
 }
 
-/** One color-coded legend swatch per dataset that actually has geometry on the map. */
+/**
+ * `schemas.boundingBox` is a plain `v.array(v.number())` (Convex validators
+ * can't express a fixed-length tuple), but every write stores exactly 4
+ * numbers — this narrows the read side back to the tuple shape `unionBbox`
+ * expects, mirroring the component's own `asBoundingBox`.
+ */
+function asBoundingBox(value: number[] | undefined): BoundingBox | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- always written as a 4-tuple server-side; the array validator can't express that statically.
+  return value as BoundingBox;
+}
+
+/** One color-coded legend swatch per dataset that has an extent on the map. */
 function MapLegend({
   datasets,
 }: {
@@ -90,43 +83,50 @@ function MapLegend({
   );
 }
 
-function toFeatureRow(geometry: GeometryEntry, resolved: Geometry) {
-  return {
-    id: geometry.entryId,
-    geometry: resolved,
-    properties: {},
-  };
-}
-
 /**
  * A quiet, extent-only view of a collection's geospatial datasets: one
  * dashed color-coded rectangle per dataset framing its bounding box, with
  * the viewport fit to their combined extent. Renders no individual features
  * — this sits above the collection's dataset list (a full feature map lives
  * on each dataset's own page).
+ *
+ * The rectangles come straight from each dataset's server-maintained
+ * `schemas.boundingBox`, so this renders with zero geometry loads — no
+ * `listGeometries` traffic at all, where drawing the same rectangles from
+ * resolved payloads used to page through every dataset's full geometry rows
+ * (57 serial round trips for one measured real dataset). The stored extent
+ * is a best-effort envelope that only ever grows (deletions don't shrink
+ * it) — accepted here the same way the dataset page accepts it, since this
+ * map only ever draws extent rectangles and a default viewport, never
+ * exact features.
  */
-export function CollectionExtentMap({
-  datasets,
-  geometries,
-}: {
-  datasets: Dataset[];
-  geometries: GeometryEntry[];
-}) {
+export function CollectionExtentMap({ datasets }: { datasets: Dataset[] }) {
   const datasetById = new globalThis.Map(datasets.map((dataset) => [dataset._id, dataset])),
-    resolvedGeometries = useResolvedGeometries(geometries),
-    // Most rows resolve synchronously (inline `geometryJson`); a row backed
-    // by external storage is simply absent until its `fetch` completes.
-    resolvableGeometries = geometries.flatMap((g) => {
-      const resolved = resolvedGeometries.get(g._id);
-      return resolved === undefined ? [] : [{ g, resolved }];
+    // One entry per dataset that has a stored extent — the only thing this
+    // map can draw. A geospatial dataset without one has no geometry yet.
+    extents = datasets.flatMap((dataset) => {
+      const bbox = asBoundingBox(dataset.boundingBox);
+      return bbox === undefined ? [] : [{ schemaId: dataset._id, bbox }];
     }),
-    geometriesBySchema = groupGeometriesBySchema(resolvableGeometries.map(({ g }) => g)),
-    schemaIds = [...geometriesBySchema.keys()],
-    resolvedById = new globalThis.Map(
-      resolvableGeometries.map(({ g, resolved }) => [g._id, resolved]),
-    );
+    framedExtents = extents.map(({ schemaId, bbox }, index) => ({
+      bbox,
+      color: colorForIndex(index),
+      feature: bboxFeature(bbox),
+      schemaId,
+    })),
+    // The combined viewport = union of the stored boxes (same `unionBbox`
+    // the component uses to grow each dataset's own `boundingBox`).
+    combinedBbox = extents.reduce<BoundingBox | undefined>(
+      (acc, extent) => unionBbox(acc, extent.bbox),
+      undefined,
+    ),
+    legendDatasets = framedExtents.map(({ schemaId, color }) => ({
+      schemaId,
+      title: getDatasetTitle(datasetById, schemaId, "Untitled dataset"),
+      color,
+    }));
 
-  if (resolvableGeometries.length === 0) {
+  if (framedExtents.length === 0) {
     return (
       <Empty>
         <EmptyHeader>
@@ -142,48 +142,12 @@ export function CollectionExtentMap({
     );
   }
 
-  const combined = buildFeatureCollection(
-      resolvableGeometries.map(({ g, resolved }) => toFeatureRow(g, resolved)),
-    ),
-    combinedBbox = computeBbox(combined),
-    legendDatasets = schemaIds.map((schemaId, index) => ({
-      schemaId,
-      title: getDatasetTitle(datasetById, schemaId, "Untitled dataset"),
-      color: colorForIndex(index),
-    })),
-    // One dashed extent rectangle per dataset — skipped entirely when its
-    // geometries somehow have no determinable coordinates.
-    extents = schemaIds.flatMap((schemaId, index) => {
-      const rows = geometriesBySchema.get(schemaId) ?? [],
-        bbox = computeBbox(
-          buildFeatureCollection(
-            rows.flatMap((g) => {
-              const resolved = resolvedById.get(g._id);
-              return resolved === undefined ? [] : [toFeatureRow(g, resolved)];
-            }),
-          ),
-        );
-      return bbox === undefined
-        ? []
-        : [
-            {
-              schemaId,
-              feature: bboxFeature(bbox),
-              color: colorForIndex(index),
-            },
-          ];
-    });
-
-  if (combinedBbox === undefined) {
-    return null;
-  }
-
   return (
     <div className="flex h-full w-full flex-col gap-3">
       <MapLegend datasets={legendDatasets} />
       <div className="relative min-h-0 w-full flex-1 overflow-hidden rounded-lg border border-border">
         <Map bounds={combinedBbox} className="h-full w-full">
-          {extents.map((extent) => (
+          {framedExtents.map((extent) => (
             <MapGeoJSON
               key={extent.schemaId}
               id={`collection-extent-${extent.schemaId}`}
