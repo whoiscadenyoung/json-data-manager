@@ -1,0 +1,39 @@
+{
+  "name": "@caden/geometry-archive",
+  "version": "0.1.0",
+  "description": "Build PMTiles v3 vector-tile archives (MVT, gzip) from GeoJSON features in pure JavaScript — browser, worker, and Node safe.",
+  "license": "Apache-2.0",
+  "repository": "github:whoiscadenyoung/json-data-manager",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "type": "module",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project ./tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "prepare": "bun run build"
+  },
+  "devDependencies": {
+    "@mapbox/vector-tile": "^3.0.0",
+    "@types/bun": "^1.4.2",
+    "pbf": "^5.1.2",
+    "pmtiles": "^4.5.0",
+    "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "geojson-vt": "^5.0.2",
+    "vt-pbf": "^3.1.3"
+  }
+}
