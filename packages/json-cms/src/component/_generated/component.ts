@@ -274,6 +274,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "MultiPolygon";
           groupId?: string;
           kind?: "standard" | "geospatial";
+          mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
           mapTileArchiveMaxZoom?: number;
           mapTileArchiveStorageId?: string;
@@ -538,6 +539,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "MultiPolygon";
           groupId?: string;
           kind?: "standard" | "geospatial";
+          mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
           mapTileArchiveMaxZoom?: number;
           mapTileArchiveStorageId?: string;
@@ -571,6 +573,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "MultiPolygon";
           groupId?: string;
           kind?: "standard" | "geospatial";
+          mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
           mapTileArchiveMaxZoom?: number;
           mapTileArchiveStorageId?: string;

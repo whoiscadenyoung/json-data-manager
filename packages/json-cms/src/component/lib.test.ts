@@ -1849,6 +1849,7 @@ describe("json-cms component", () => {
       expect(schemaDoc.mapTileArchiveStorageId).toBeUndefined();
       expect(schemaDoc.mapTileArchiveBytes).toBeUndefined();
       expect(schemaDoc.mapTileArchiveMaxZoom).toBeUndefined();
+      expect(schemaDoc.mapTileArchiveBuiltVersion).toBeUndefined();
       expect(schemaDoc.mapTileCacheVersion).toBeUndefined();
       expect(await t.query(api.lib.getMapTileArchiveMeta, { schemaId })).toBeNull();
       const stillThere = await t.run(async (ctx) => ctx.storage.get(archiveStorageId));
@@ -1891,6 +1892,37 @@ describe("json-cms component", () => {
         expect(meta.bytes).toBe("legacy-archive".length);
         expect(meta.maxZoom).toBe(12);
         expect(meta.url).toBeTruthy();
+      });
+
+      it("makes an archive observably stale when edits land after its install", async () => {
+        const t = initConvexTest(),
+          schemaId = await createGeospatialSchema(t, "Point"),
+          storageId = await installArchive(t, schemaId, 0, "built-at-0");
+
+        // Fresh install: built-at version equals the live counter.
+        const before = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
+        assertDefined(before);
+        expect(before.version).toBe(0);
+        const rowBefore = await t.query(api.lib.getSchema, { schemaId });
+        assertDefined(rowBefore);
+        expect(rowBefore.mapTileCacheVersion).toBe(0);
+
+        await t.mutation(api.lib.createEntry, {
+          data: { n: 1 },
+          geometry: JSON.stringify({ coordinates: [0, 0], type: "Point" }),
+          schemaId,
+        });
+
+        // The edit bumped the row's counter but not the archive's built-at
+        // snapshot — meta.version falls behind, which the rebuild worker's
+        // stale-on-view trigger reads as "rebuild".
+        const meta = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
+        assertDefined(meta);
+        expect(meta.storageId).toBe(storageId);
+        expect(meta.version).toBe(0);
+        const row = await t.query(api.lib.getSchema, { schemaId });
+        assertDefined(row);
+        expect(row.mapTileCacheVersion).toBe(1);
       });
 
       it("re-installing at the same version deletes the superseded blob and repoints the meta", async () => {
@@ -1940,7 +1972,10 @@ describe("json-cms component", () => {
         const meta = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
         assertDefined(meta);
         expect(meta.storageId).toBe(currentId);
-        expect(meta.version).toBe(2);
+        // `version` is the BUILT-at version of the surviving archive (1) —
+        // behind the row's live counter (2), which is exactly the signal a
+        // consumer uses to detect that edits landed after the install.
+        expect(meta.version).toBe(1);
       });
 
       it("discards the incoming blob when the schema row itself is gone", async () => {

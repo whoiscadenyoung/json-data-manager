@@ -56,8 +56,73 @@ behavior change; #61 makes archives self-maintaining; #62 is the visible
 payoff measured on FY22 (≤5% of 46.55 MB, no main-thread parse, instant
 toggles); #63 completes the cache layers (repeat opens = zero bytes).
 
-## #60 part-2 status (2026-09-17, merged to `main`)
+## #61 part-3 status (2026-09-17, PR merged to `main`)
 
+Client rebuild machinery shipped: `app/src/lib/tile-archive.worker.ts` +
+`app/src/lib/tile-archive.ts`, the app-level wrapper `app/convex/
+tile_archives.ts` (`install`), `@caden/geometry-archive` added to app deps.
+186 component tests + 7 new app scheduler tests green; app tsc clean; lint
+findings identical to the main baseline. **Live-verified on the dev
+deployment** (throwaway dataset, deleted after): one build per edit burst
+built at the FINAL version; a mid-build edit self-discarded (guard) and the
+queued rebuild converged to fresh; deleteSchema removed the blob (404) +
+meta.
+
+- **Staleness amendment (the part-3 find):** part 2's `getMapTileArchiveMeta`
+  returned `version: schemaDoc.mapTileCacheVersion` — the LIVE counter — so
+  `meta.version` could never fall behind the row and staleness was
+  unobservable (every doc comment described the built-at comparison). Added
+  schema field `mapTileArchiveBuiltVersion` (patched by `setMapTileArchive`
+  to `expectedVersion`; reset with the other cache fields by
+  `deleteEntriesBySchema`); meta `version` now returns the built-at snapshot.
+  Consumers compare `meta.version !== schema.mapTileCacheVersion`. Legacy
+  archives missing the field read as no-archive (meta null) — self-healing
+  (stale-on-view rebuilds only fire when version > 0, and a legacy row's
+  version reads as 0, so nothing fires until the first edit bumps it).
+- **Worker shape (verified — NO fallback needed):** standalone `ConvexClient`
+  in the worker works (WebSocket fine); one build per inbound message;
+  outbound `phase` states (fetching/building/uploading/installing) then ONE
+  terminal message: `done` (builtVersion/bytes/maxZoom) | `stale-discarded`
+  | `skipped` (reason: not-geospatial | below-threshold). Threshold applied
+  on the exact assembled payload BEFORE building (small datasets skip
+  upload/install — they attempt per edit-burst and skip; cheap ≤256 KB
+  fetch, accepted). Builds serialize via a promise chain (the CPU-bound
+  geojson-vt math never interleaves). Storage-backed rows fetch `geometryUrl`
+  directly; all `JSON.parse` stays in the worker.
+- **Manager shape:** `TileArchiveScheduler` — 5 s trailing debounce keyed by
+  version (newer resets, equal/older keeps), single-flight per schema,
+  at most ONE queued rebuild (queued when a trigger lands mid-build; it runs
+  immediately after the in-flight settles — the worker re-reads the live
+  version at start, so both outcomes converge to fresh), failed builds don't
+  wedge (catch → in-flight cleared). `ensureMapTileArchive(schemaId)` skips
+  the debounce (import UI completion calls it; geospatial-conversion/simplify
+  workflows have no client hook — the root manager catches those the same
+  way). `<TileArchiveManager />` is mounted in `__root.tsx` and watches ALL
+  geospatial schemas from `api.schemas.list`: stale-on-view (meta.version
+  behind mapTileCacheVersion) AND first-build (version > 0, no archive —
+  covers legacy datasets and imports whose ensure-call raced).
+- **Wrapper:** `app/convex/tile_archives.ts` `install` — auth + the component
+  mutation + a same-transaction meta re-read to return
+  `"installed" | "discarded"` (the guard's discard is silent otherwise; the
+  worker's progress reporting needs the outcome). Not reachable through
+  exposeApi; the app api path is `api.tile_archives.install` (snake case —
+  the file name drives it).
+- **App-side type/lint gotchas hit:** `oxc/no-optional-chaining` is an ERROR
+  repo-wide (use `??`/explicit undefined checks; `??` is fine — the component
+  uses it); worker-scope `postMessage`/`onmessage` → use `self.addEventListener`
+  + an inline `unicorn/require-post-message-target-origin` disable (the
+  rule's targetOrigin argument doesn't exist in worker scope); `Blob` part
+  typing wants `Uint8Array<ArrayBuffer>` (copy once with `new Uint8Array(archive)`
+  — fresh buffer, no cast); `vi.fn` needs explicit type params; don't run
+  convex CLI from `packages/json-cms` mid-session (cwd gotcha — confirmed
+  again).
+- Part 4 kickoff (`docs/kickoffs/part-4-render-from-tiles.md`) amended with
+  the part-3 surface + the built-version semantics + the "row path fallback
+  when the archive is stale or missing" clarification.
+- **Per the kickoff: STOP — part 4 (#62: rendering from tiles) is the next
+  session's chunk.**
+
+## #60 part-2 status (2026-09-17, merged to `main`)
 Server plumbing shipped: schema fields (`mapTileCacheVersion`,
 `mapTileArchiveStorageId/Bytes/MaxZoom`), unconditional version bumps on every
 geometry-affecting write, `setMapTileArchive` with the `expectedVersion` guard,
