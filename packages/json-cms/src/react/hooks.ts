@@ -11,6 +11,7 @@ import type {
   EntryDoc,
   GeometryDoc,
   ImportStatusDoc,
+  MapTileArchiveMeta,
   ReferencingEntryDoc,
   SchemaDoc,
 } from "./types.js";
@@ -86,6 +87,21 @@ export function useGeometries(schemaId: SchemaId | undefined): GeometryDoc[] | u
   const api = useJsonCmsApi(),
     { isLoading, results } = useAllPaginated(api.listGeometries, schemaId ? { schemaId } : "skip");
   return isLoading ? undefined : results;
+}
+
+/**
+ * A dataset's tile-archive rendering-cache metadata (`{storageId, version,
+ * bytes, maxZoom, url}`), or `null` when no current archive is installed —
+ * then the row-based geometry path applies. Subscribe to this (not the
+ * schema row) for the staleness check: `version` is the snapshot the
+ * archive was built from, so `meta.version !== schema.mapTileCacheVersion`
+ * means edits landed after it was built. Pass `undefined` to skip.
+ */
+export function useMapTileArchiveMeta(
+  schemaId: SchemaId | undefined,
+): MapTileArchiveMeta | null | undefined {
+  const api = useJsonCmsApi();
+  return useQuery(api.getMapTileArchiveMeta, schemaId ? { schemaId } : "skip");
 }
 
 // --- Schema mutations ---

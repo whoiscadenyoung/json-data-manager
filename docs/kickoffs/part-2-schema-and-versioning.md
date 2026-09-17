@@ -67,6 +67,6 @@ Read path:
   blob + fields; legacy rows with absent fields read fine.
 
 ## Done
-- [ ] `bun test` green + component build green
-- [ ] Verified live: `setMapTileArchive` round trip + meta query via `bunx convex run`
-- [ ] PR merged + memory updated + **STOP** (part 3 = #61 next)
+- [x] `bun test` green + component build green
+- [x] Verified live: `setMapTileArchive` round trip + meta query via `bunx convex run`
+- [x] PR merged + memory updated + **STOP** (part 3 = #61 next)

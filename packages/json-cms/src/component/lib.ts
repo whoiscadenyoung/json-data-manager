@@ -132,6 +132,123 @@ export const getSourceFileUrl = query({
   returns: v.union(v.null(), v.string()),
 });
 
+// Tile archive (issue #58)
+//
+// The per-dataset MVT/PMTiles rendering cache. The rebuild worker (part 3)
+// snapshots `mapTileCacheVersion`, generates the archive from that exact
+// data, uploads the blob, then installs it here. Correctness lives in the
+// `expectedVersion` guard below, not in any client-side debounce: a rebuild
+// that started against stale data self-discards instead of shadowing a
+// newer dataset state.
+
+/**
+ * A fetchable URL for the dataset's current tile archive, plus the metadata
+ * a client needs to decide between the tile path and the row path
+ * (`version` currency check, byte size, max zoom). All fields absent/null
+ * when the dataset has no installed archive (or its blob is gone) — read
+ * that as "row path only".
+ */
+export const getMapTileArchiveMeta = query({
+  args: { schemaId: v.id("schemas") },
+  handler: async (ctx, args) => {
+    const schemaDoc = await ctx.db.get(args.schemaId);
+    if (
+      !schemaDoc ||
+      schemaDoc.mapTileArchiveStorageId === undefined ||
+      schemaDoc.mapTileCacheVersion === undefined
+    ) {
+      return null;
+    }
+    // `ctx.storage.getUrl` works in queries (same precedent as
+    // `resolveGeometryOutput`/`getSourceFileUrl`); a `null` URL means the
+    // blob was already deleted out from under the pointer — treat that as
+    // no archive rather than handing the client a dead link.
+    const url = await ctx.storage.getUrl(schemaDoc.mapTileArchiveStorageId);
+    if (url === null) {
+      return null;
+    }
+    return {
+      bytes: schemaDoc.mapTileArchiveBytes,
+      maxZoom: schemaDoc.mapTileArchiveMaxZoom,
+      storageId: schemaDoc.mapTileArchiveStorageId,
+      url,
+      version: schemaDoc.mapTileCacheVersion,
+    };
+  },
+  returns: v.union(
+    v.null(),
+    v.object({
+      bytes: v.optional(v.number()),
+      maxZoom: v.optional(v.number()),
+      storageId: v.id("_storage"),
+      url: v.string(),
+      version: v.number(),
+    }),
+  ),
+});
+
+/**
+ * Installs a freshly generated tile archive onto a schema, guarded by the
+ * version snapshot the rebuild worker took BEFORE generating: if
+ * `expectedVersion` no longer matches the schema's current
+ * `mapTileCacheVersion`, edits landed while the archive was being built —
+ * so the incoming blob is deleted and nothing is patched (a stale rebuild
+ * self-discards, and the client's next staleness check will trigger a
+ * rebuild against the newer version). On match, the superseded archive blob
+ * is deleted (blobs are immutable; a new generation is a new blob) and all
+ * four fields are patched atomically.
+ *
+ * Deliberately a PUBLIC component mutation, NOT exposed through `exposeApi`:
+ * a component-internal function is invisible to the host app entirely (the
+ * generated ComponentApi only carries public functions), and the rebuild
+ * worker — app-level code (part 3) — reaches this through a thin
+ * app-layer mutation wrapping `components.jsonCms.lib.setMapTileArchive`.
+ * Because `exposeApi` never re-exports it, no browser client has a path to
+ * it — which is the property the issue's "internal" actually meant.
+ */
+export const setMapTileArchive = mutation({
+  args: {
+    bytes: v.number(),
+    expectedVersion: v.number(),
+    maxZoom: v.number(),
+    schemaId: v.id("schemas"),
+    storageId: v.id("_storage"),
+  },
+  handler: async (ctx, args) => {
+    const schemaDoc = await ctx.db.get(args.schemaId);
+    if (!schemaDoc) {
+      // The dataset itself is gone — its archive blob is now unreferenced.
+      await ctx.storage.delete(args.storageId);
+      return;
+    }
+    // An absent version field reads as 0 — a dataset that predates these
+    // fields (or was cleared) has never had a geometry-affecting write.
+    const currentVersion = schemaDoc.mapTileCacheVersion ?? 0;
+    if (currentVersion !== args.expectedVersion) {
+      // Stale rebuild: edits happened during generation. Discard the
+      // incoming blob; leave the row (including any current archive)
+      // untouched.
+      await ctx.storage.delete(args.storageId);
+      return;
+    }
+
+    const superseded = schemaDoc.mapTileArchiveStorageId;
+    if (superseded !== undefined && superseded !== args.storageId) {
+      await ctx.storage.delete(superseded);
+    }
+    // Patch all four fields, including the version: `expectedVersion` matched
+    // (whether as a real bump count or a legacy row's implicit 0), and
+    // writing it explicitly keeps the invariant "an installed archive always
+    // carries a version" so `getMapTileArchiveMeta` never has to guess.
+    await ctx.db.patch(args.schemaId, {
+      mapTileArchiveBytes: args.bytes,
+      mapTileArchiveMaxZoom: args.maxZoom,
+      mapTileArchiveStorageId: args.storageId,
+      mapTileCacheVersion: args.expectedVersion,
+    });
+  },
+});
+
 // Schema mutations
 
 /** Throws unless a `kind`/`geometryType` pair is a valid combination for a schema doc. */
@@ -292,6 +409,11 @@ export const deleteSchema = mutation({
       // else can reference a schema's own source-file blob.
       existing.sourceFileStorageId !== undefined
         ? ctx.storage.delete(existing.sourceFileStorageId)
+        : undefined,
+      // Same for the tile archive's blob (see setMapTileArchive) — the whole
+      // schema doc is going away, so the cache fields die with it.
+      existing.mapTileArchiveStorageId !== undefined
+        ? ctx.storage.delete(existing.mapTileArchiveStorageId)
         : undefined,
     ]);
 
@@ -1140,6 +1262,9 @@ async function resolveGeometryOutput(
 /** Upper bound on the payload bytes one page may carry (exported for tests). */
 export const GEOMETRY_PAGE_BYTE_BUDGET = 5_000_000; // ~5 MB of payload per page — safely under the 16 MiB per-execution read cap (which the schema-existence read and per-document overhead also share), with room for the one-row overshoot below. Sized as much for rendering cadence as for safety: each page is one serial round trip with a render in between, and after real-world feedback that ~10 MB pages read as one big stall per arrival, the budget is small enough that pages land as a steady stream instead.
 
+/** Minimum geometry-payload size a dataset must reach before a tile archive is worth building for it (exported for tests). Below this the existing row-based read path is already cheap enough — SMART's ~13 KB of points would gain nothing from a 256 KB archive. Consumed by the rebuild worker (issue #58 part 3), not by this component. */
+export const MAP_TILE_ARCHIVE_MIN_BYTES = 262_144; // 256 KB
+
 /** High safety ceiling on rows per page; the byte budget is what actually bounds a real page long before this unless every row is tiny. */
 const MAX_GEOMETRY_PAGE_ROWS = 500;
 
@@ -1606,21 +1731,48 @@ function asResolvedGeometry(value: {
 
 /**
  * Folds a geometry add/remove/replace into a schema doc's denormalized
- * `featureCount`/`boundingBox` summary and patches it. `featureCount` is
- * kept exactly accurate (clamped at 0). `boundingBox` only ever grows (via
- * `unionBbox`) — see the field's doc comment in schema.ts for why deletes
- * don't shrink it back down.
+ * `featureCount`/`boundingBox` summary — and bumps `mapTileCacheVersion` in
+ * the same patch, so any geometry-affecting write invalidates the dataset's
+ * tile archive in the same transaction (see `bumpMapTileCacheVersion`).
+ * `featureCount` is kept exactly accurate (clamped at 0). `boundingBox` only
+ * ever grows (via `unionBbox`) — see the field's doc comment in schema.ts
+ * for why deletes don't shrink it back down.
  */
 async function applyGeometryStatsDelta(
   ctx: MutationCtx,
   schemaId: Id<"schemas">,
-  schemaDoc: { featureCount?: number; boundingBox?: number[] },
+  schemaDoc: { featureCount?: number; boundingBox?: number[]; mapTileCacheVersion?: number },
   countDelta: number,
   newBbox: BoundingBox | undefined,
 ): Promise<void> {
   const featureCount = Math.max(0, (schemaDoc.featureCount ?? 0) + countDelta),
     boundingBox = unionBbox(asBoundingBox(schemaDoc.boundingBox), newBbox);
-  await ctx.db.patch(schemaId, { boundingBox, featureCount });
+  await ctx.db.patch(schemaId, {
+    boundingBox,
+    featureCount,
+    mapTileCacheVersion: (schemaDoc.mapTileCacheVersion ?? 0) + 1,
+  });
+}
+
+/**
+ * Monotonically bumps a schema's `mapTileCacheVersion` (`absent = 0`) — the
+ * invalidation signal for the dataset's tile archive (issue #58): a rebuild
+ * worker snapshots the version before generating, and `setMapTileArchive`
+ * discards the result unless the version is still current. Patched into
+ * every path that already maintains `featureCount`/`boundingBox`
+ * (via `applyGeometryStatsDelta`) plus the two that patch the schema row
+ * directly — simplify batches and `deleteEntriesBySchema`/`deleteSchema`.
+ * Unconditional, including below-threshold datasets: the field costs one
+ * number and keeps the invariant simple ("version changed ⇒ data changed").
+ */
+async function bumpMapTileCacheVersion(
+  ctx: MutationCtx,
+  schemaId: Id<"schemas">,
+  schemaDoc: { mapTileCacheVersion?: number },
+): Promise<void> {
+  await ctx.db.patch(schemaId, {
+    mapTileCacheVersion: (schemaDoc.mapTileCacheVersion ?? 0) + 1,
+  });
 }
 
 /**
@@ -2034,13 +2186,25 @@ export const deleteEntriesBySchema = mutation({
         await deleteGeometryStorageIfAny(ctx, geometry);
       }),
       deleteReferencesForSchema(ctx, args.schemaId),
+      // The tile archive's blob goes with the dataset too — like the
+      // source-file blob below, nothing outside the schema doc references it.
+      schemaDoc.mapTileArchiveStorageId !== undefined
+        ? ctx.storage.delete(schemaDoc.mapTileArchiveStorageId)
+        : undefined,
     ]);
 
     // The whole dataset's entries/geometries are gone, so — unlike a single
     // entry delete — the exact reset (rather than only-grow) is safe here.
+    // The tile archive goes with the data: its blob is deleted (nothing else
+    // references a schema's own archive) and all four cache fields reset, so
+    // a fresh import starts from a clean version-0 slate.
     await ctx.db.patch(args.schemaId, {
       boundingBox: undefined,
       featureCount: schemaDoc.kind === "geospatial" ? 0 : undefined,
+      mapTileArchiveBytes: undefined,
+      mapTileArchiveMaxZoom: undefined,
+      mapTileArchiveStorageId: undefined,
+      mapTileCacheVersion: undefined,
     });
 
     return entries.length;
@@ -2820,11 +2984,13 @@ export const applySimplifiedGeometriesInternal = internalMutation({
     ),
   },
   handler: async (ctx, args) => {
+    let touchedSchemaId: Id<"schemas"> | undefined;
     for (const update of args.updates) {
       const existing = await ctx.db.get(update.id);
       if (existing === null) {
         continue; // Deleted (or its whole dataset went) mid-run — nothing to round.
       }
+      touchedSchemaId ??= existing.schemaId;
       // The row's old blob is always superseded by this write: either the
       // rounded payload moved back inline, or it was re-stored as a NEW blob
       // (storage blobs are immutable), so the old one is unreferenced now.
@@ -2835,6 +3001,17 @@ export const applySimplifiedGeometriesInternal = internalMutation({
         geometryJson: update.geometryJson,
         geometryStorageId: update.geometryStorageId,
       });
+    }
+    // One bump per batch write, not per row — the batch is one transaction,
+    // so consumers only need to know the data changed at all (and the
+    // simplify workflow's batches land back-to-back; per-row bumps would
+    // just inflate the counter meaninglessly). Read fresh: earlier batches
+    // in the same workflow already bumped this same doc.
+    if (touchedSchemaId !== undefined) {
+      const schemaDoc = await ctx.db.get(touchedSchemaId);
+      if (schemaDoc) {
+        await bumpMapTileCacheVersion(ctx, touchedSchemaId, schemaDoc);
+      }
     }
     return null;
   },

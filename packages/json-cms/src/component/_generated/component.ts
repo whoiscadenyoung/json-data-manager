@@ -242,6 +242,19 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         },
         Name
       >;
+      getMapTileArchiveMeta: FunctionReference<
+        "query",
+        "internal",
+        { schemaId: string },
+        null | {
+          bytes?: number;
+          maxZoom?: number;
+          storageId: string;
+          url: string;
+          version: number;
+        },
+        Name
+      >;
       getSchema: FunctionReference<
         "query",
         "internal",
@@ -261,6 +274,10 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "MultiPolygon";
           groupId?: string;
           kind?: "standard" | "geospatial";
+          mapTileArchiveBytes?: number;
+          mapTileArchiveMaxZoom?: number;
+          mapTileArchiveStorageId?: string;
+          mapTileCacheVersion?: number;
           schema: any;
           simplifyGeometry?: boolean;
           sourceFileName?: string;
@@ -521,6 +538,10 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "MultiPolygon";
           groupId?: string;
           kind?: "standard" | "geospatial";
+          mapTileArchiveBytes?: number;
+          mapTileArchiveMaxZoom?: number;
+          mapTileArchiveStorageId?: string;
+          mapTileCacheVersion?: number;
           schema: any;
           simplifyGeometry?: boolean;
           sourceFileName?: string;
@@ -550,6 +571,10 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "MultiPolygon";
           groupId?: string;
           kind?: "standard" | "geospatial";
+          mapTileArchiveBytes?: number;
+          mapTileArchiveMaxZoom?: number;
+          mapTileArchiveStorageId?: string;
+          mapTileCacheVersion?: number;
           schema: any;
           simplifyGeometry?: boolean;
           sourceFileName?: string;
@@ -599,6 +624,19 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "mutation",
         "internal",
         { layerId: string; visible: boolean },
+        any,
+        Name
+      >;
+      setMapTileArchive: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          bytes: number;
+          expectedVersion: number;
+          maxZoom: number;
+          schemaId: string;
+          storageId: string;
+        },
         any,
         Name
       >;

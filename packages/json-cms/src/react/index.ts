@@ -12,6 +12,7 @@ export {
   useEntriesForSchemas,
   useReferencingEntries,
   useGeometries,
+  useMapTileArchiveMeta,
   useCreateSchema,
   useUpdateSchema,
   useDeleteSchema,
@@ -31,6 +32,7 @@ export type {
   EntryDoc,
   GeometryDoc,
   ImportStatusDoc,
+  MapTileArchiveMeta,
   ReferencingEntryDoc,
 } from "./types.js";
 export type { SchemaId, EntryId, GeometryId } from "../client/index.js";

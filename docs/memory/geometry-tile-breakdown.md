@@ -56,6 +56,52 @@ behavior change; #61 makes archives self-maintaining; #62 is the visible
 payoff measured on FY22 (≤5% of 46.55 MB, no main-thread parse, instant
 toggles); #63 completes the cache layers (repeat opens = zero bytes).
 
+## #60 part-2 status (2026-09-17, merged to `main`)
+
+Server plumbing shipped: schema fields (`mapTileCacheVersion`,
+`mapTileArchiveStorageId/Bytes/MaxZoom`), unconditional version bumps on every
+geometry-affecting write, `setMapTileArchive` with the `expectedVersion` guard,
+`getMapTileArchiveMeta` + `useMapTileArchiveMeta`, `MAP_TILE_ARCHIVE_MIN_BYTES
+= 262_144` (all in component `lib.ts`/`schema.ts`; `exposeApi` + app
+`geometries.ts`; react `types.ts`/`hooks.ts`). App behaves exactly as before
+(no consumer of the new fields yet). 185 convex-tests green, app tsc clean,
+lint findings identical to the main baseline (repo has pre-existing ones).
+
+- **Bump paths:** folded into `applyGeometryStatsDelta` (covers insert /
+  replace / delete / clear — i.e. `createEntry`, `createEntriesBulk`,
+  `insertEntry*Internal`, import chunks via `insertEntriesChunkInternal`,
+  geospatial-conversion batches) — one patch, no extra read. Two paths patch
+  the schema row directly and call `bumpMapTileCacheVersion` explicitly:
+  `applySimplifiedGeometriesInternal` (one bump per batch write, not per row)
+  and `deleteEntriesBySchema` (which also deletes the archive blob and resets
+  all four fields). `deleteSchema` deletes the archive blob too (row dies, no
+  reset needed). Data-only entry edits deliberately do NOT bump (tiles encode
+  geometry + the spec scoped bumps to featureCount/boundingBox-maintaining
+  paths); deleting a geometry-less entry also doesn't bump.
+- **Spec amendment — `setMapTileArchive` is PUBLIC, not internal:** the
+  generated ComponentApi only carries the component's PUBLIC functions, so an
+  `internalMutation` would be invisible to the host app and part 3's
+  app-level worker could never reach it. It is now a public component
+  mutation, deliberately NOT re-exported through `exposeApi` (no browser
+  path); part 3 installs via a thin app-level mutation wrapping
+  `components.jsonCms.lib.setMapTileArchive` (ids as plain strings,
+  component re-validates). Verified live through exactly that wrapper.
+- **Guard details worth remembering:** absent version reads as 0 (legacy rows
+  install at `expectedVersion: 0`); the install patches all four fields
+  including `mapTileCacheVersion` so "archive present ⇒ version present"
+  holds; `getMapTileArchiveMeta` returns null for missing schema, absent
+  archive fields, or a dead blob URL (treat as row-path-only); stale install
+  deletes only the INCOMING blob and leaves any installed archive alone;
+  supersede deletes the old blob inside the mutation.
+- **Live-verified round trip on the dev deployment** (throwaway dataset via
+  `bunx convex run` from `app/`): install → meta with fetchable URL; real
+  edit → version 2; stale install → self-discard (row untouched); re-install
+  at current version → old blob 404s; `deleteSchema` → blob 404s + meta null.
+  Temp wrapper file deleted after verification (the app-layer wrapper is
+  part 3's to add properly).
+- Part 3 kickoff amended with the wrapper pattern + corrected claim
+  (`handleImportComplete` doesn't bump; chunk inserts do).
+
 ## #59 part-1 status (2026-09-17, merged to `main`)
 
 Library implemented + bun tests green (reference-reader roundtrip, x- and

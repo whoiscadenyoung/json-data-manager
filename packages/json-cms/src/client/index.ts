@@ -555,6 +555,21 @@ export function exposeApi(
         });
       },
     }),
+    // The dataset's tile-archive rendering cache metadata — `{storageId,
+    // version, bytes, maxZoom, url}`, or `null` when no current archive is
+    // installed (read the row-based path instead). `version` is what
+    // clients compare against the schema's `mapTileCacheVersion` to decide
+    // staleness; installing archives happens server-side (the rebuild
+    // worker), so there is deliberately no client-facing install mutation.
+    getMapTileArchiveMeta: queryGeneric({
+      args: { schemaId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { schemaId: args.schemaId, type: "read" });
+        return ctx.runQuery(component.lib.getMapTileArchiveMeta, {
+          schemaId: args.schemaId,
+        });
+      },
+    }),
     // `geometry` travels as a JSON *string*, not the nested-array `Geometry`
     // shape — see `geometry_storage.ts` in the component for why (Convex's
     // 8192-elements-per-array limit, which real-world GIS rings routinely
