@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { Geometry } from "../../shared/geojson/types.js";
 
@@ -54,24 +54,62 @@ function urlOnlyRows<T extends ResolvableGeometryRow>(rows: T[]): Array<{ id: st
  * `listGeometriesByCollection`) into actual `Geometry` objects, keyed by
  * `_id`. Most rows resolve synchronously from `geometryJson` — the common
  * case, a geometry small enough that the server stored it inline; that part
- * is plain derived state, computed during render. A row with `geometryUrl`
- * instead (a geometry too large to fit in one Convex document) needs a
- * client-side `fetch`, which — as a genuine side effect — runs in an
- * `useEffect`, cached by URL, and merged into the result as each one
- * resolves rather than waiting on all of them together.
+ * is plain derived state, computed during render (with a per-row parse
+ * cache — see below). A row with `geometryUrl` instead (a geometry too
+ * large to fit in one Convex document) needs a client-side `fetch`, which —
+ * as a genuine side effect — runs in an `useEffect`, cached by URL, and
+ * merged into the result as each one resolves rather than waiting on all
+ * of them together.
+ *
+ * The inline part is parsed INCREMENTALLY, not per render: `rows` is a
+ * fresh array (with fresh row objects) on every page arrival of a paginated
+ * stream, so re-parsing on every identity change would re-parse the entire
+ * accumulated set each time — for a dataset streamed across a dozen ~4 MB
+ * pages that compounds into seconds of main-thread `JSON.parse` per pass,
+ * which froze a map mid-stream (nothing drew while old rows re-parsed, then
+ * the catch-up render dropped everything at once). Each row parses once
+ * into a cache keyed by `_id` and is reused until its payload text actually
+ * changes (a geometry edit rewrites the payload); the per-arrival cost is
+ * then just parsing the new rows.
  */
 export function useResolvedGeometries<T extends ResolvableGeometryRow>(
   rows: T[],
 ): Map<string, Geometry> {
-  const inlineResolved = useMemo(() => {
-      const map = new Map<string, Geometry>();
+  const parsedCacheRef = useRef(new Map<string, { geometry: Geometry; json: string }>()),
+    inlineResolved = useMemo(() => {
+      const cache = parsedCacheRef.current,
+        map = new Map<string, Geometry>(),
+        rowIds = new Set<string>();
       for (const row of rows) {
-        if (row.geometryJson !== undefined) {
-          try {
-            map.set(row._id, JSON.parse(row.geometryJson) as Geometry);
-          } catch {
-            // Malformed inline JSON shouldn't happen (written by the
-            // server), but skip rather than crash the whole map over one bad row.
+        if (row.geometryJson === undefined) {
+          continue;
+        }
+        rowIds.add(row._id);
+        const cached = cache.get(row._id);
+        // `===` on strings is a content comparison when the references
+        // differ — a fresh convex update re-deserializes every row, so
+        // unchanged payloads arrive content-equal but reference-fresh, and
+        // this check must (and does, cheaply) skip re-parsing them.
+        if (cached !== undefined && cached.json === row.geometryJson) {
+          map.set(row._id, cached.geometry);
+          continue;
+        }
+        try {
+          const geometry = JSON.parse(row.geometryJson) as Geometry;
+          cache.set(row._id, { geometry, json: row.geometryJson });
+          map.set(row._id, geometry);
+        } catch {
+          // Malformed inline JSON shouldn't happen (written by the
+          // server), but skip rather than crash the whole map over one bad row.
+        }
+      }
+      if (cache.size > rowIds.size) {
+        // Rows (or whole layers) left the list — drop their cache entries
+        // so removed geometries don't linger. Checked against size so the
+        // common grow-only pass never pays the prune walk.
+        for (const id of cache.keys()) {
+          if (!rowIds.has(id)) {
+            cache.delete(id);
           }
         }
       }
