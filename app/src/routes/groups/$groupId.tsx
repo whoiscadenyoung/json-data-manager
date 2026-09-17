@@ -1,4 +1,5 @@
 import { useResolvedGeometries } from "@caden/json-cms/react";
+import type { Geometry } from "@caden/json-cms/react";
 import { ConfirmDialog } from "@caden/json-cms/react/ui";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
@@ -34,6 +35,47 @@ import {
   exportExcelWorkbook,
   slugify,
 } from "@/lib/export";
+import { resolveDatasetGeometryRows } from "@/lib/geometry-rows";
+import type { LayerSourceSplit } from "@/lib/layer-source";
+import { splitSchemaIdsByDecision, useTileArchiveSources } from "@/lib/layer-source";
+
+/**
+ * The group map's on-demand export materialization: tile-path datasets'
+ * geometry rows (never fetched for rendering) merged into the row path's
+ * already-resolved map. One pass per tile-path dataset, sequential; each
+ * dataset's rows resolve together once its paging ends.
+ */
+async function mergedResolvedGeometries(
+  rowPathResolved: globalThis.Map<string, Geometry>,
+  tileSources: Array<{ schemaId: string; url: string }>,
+): Promise<globalThis.Map<string, Geometry>> {
+  const merged = new globalThis.Map(rowPathResolved);
+  for (const source of tileSources) {
+    // oxlint-disable-next-line no-await-in-loop -- inherently sequential per dataset (each merge builds on the last); rows within one dataset resolve in parallel.
+    for (const [rowId, geometry] of await resolveDatasetGeometryRows(source.schemaId)) {
+      merged.set(rowId, geometry);
+    }
+  }
+  return merged;
+}
+
+/** The spinner holds until the group's layers can mount: entries in, no source decision still pending, and the row fan-out finished (tile-only groups skip that wait). */
+function isGroupWorkspaceLoading(
+  entries: unknown,
+  split: LayerSourceSplit,
+  geometries: unknown,
+): boolean {
+  return (
+    entries === undefined ||
+    split.sourcesPending ||
+    (geometries === undefined && split.tileSources.length === 0)
+  );
+}
+
+/** A nullable list as an empty list — the row path serves `undefined` before its first rows land, and the map renders tile sources (or nothing) then. */
+function withEmptyRows<T>(rows: T[] | undefined): T[] {
+  return rows === undefined ? [] : rows;
+}
 
 export const Route = createFileRoute("/groups/$groupId")({
   component: GroupDetailPage,
@@ -63,13 +105,22 @@ function GroupDetailPage() {
     geospatialSchemaIds = datasets
       .filter((dataset) => dataset.kind === "geospatial")
       .map((dataset) => dataset._id),
+    // Layer-source decisions (issue #58 part 4): a dataset with a fresh tile
+    // archive renders via `pmtiles://` range requests and is excluded from
+    // the row fan-out; everything else stays on today's row path.
+    sourceBySchema = useTileArchiveSources(
+      datasets.filter((dataset) => dataset.kind === "geospatial"),
+    ),
+    split = splitSchemaIdsByDecision(geospatialSchemaIds, sourceBySchema),
+    rowSchemaIds = split.rowSchemaIds,
+    tileSources = split.tileSources,
     // Entry data feeds both the map's feature-detail popups and the export
     // dialog (regular datasets export too, so every member is fetched).
     entries = useQuery(
       api.entries.listEntriesForSchemas,
       memberSchemaIds.length > 0 ? { schemaIds: memberSchemaIds } : "skip",
     ),
-    { geometries, loaders } = useGeometriesBySchemas(geospatialSchemaIds),
+    { geometries, loaders } = useGeometriesBySchemas(rowSchemaIds),
     resolvedGeometries = useResolvedGeometries(geometries ?? []),
     // Per-dataset row counts for the member list, derived from the entries
     // this page already fetches for the map's popups and the exports — no
@@ -160,7 +211,11 @@ function GroupDetailPage() {
               `${slugify(dataset.title)}-schema.json`,
             );
           }
-        };
+        },
+        // Tile-path datasets' geometry rows were never fetched (their maps
+        // render from the archive) — materialize each one now, once, and
+        // merge with whatever the row path already resolved.
+        exportResolvedGeometries = await mergedResolvedGeometries(resolvedGeometries, tileSources);
 
       if (format === "geojson") {
         // GeoJSON is a geospatial format — regular datasets in the group
@@ -168,7 +223,7 @@ function GroupDetailPage() {
         for (const dataset of datasets.filter((dataset) => dataset.kind === "geospatial")) {
           downloadText(
             JSON.stringify(
-              buildGeoJsonCollection(entriesOf(dataset), resolvedGeometries, dataset._id),
+              buildGeoJsonCollection(entriesOf(dataset), exportResolvedGeometries, dataset._id),
               null,
               2,
             ),
@@ -322,12 +377,21 @@ function GroupDetailPage() {
       {hasGeospatialDatasets && (
         <section className="mb-8" aria-label="Combined map of the datasets in this group">
           {loaders}
-          {geometries === undefined || entries === undefined ? (
+          {/* The spinner holds until every row-path member's full pagination
+              pass is done (and while any tile decision is still pending) — a
+              group whose datasets all render from tile archives mounts
+              immediately. */}
+          {isGroupWorkspaceLoading(entries, split, geometries) ? (
             <div className="flex justify-center items-center h-[500px] rounded-lg border border-border">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
             </div>
           ) : (
-            <GroupMap datasets={datasets} geometries={geometries} entries={entries} />
+            <GroupMap
+              datasets={datasets}
+              geometries={withEmptyRows(geometries)}
+              entries={withEmptyRows(entries)}
+              tileSources={tileSources}
+            />
           )}
         </section>
       )}

@@ -6,6 +6,7 @@ import { X, Minus, Plus, Locate, Maximize, Loader2 } from "lucide-react";
 import "maplibre-gl/dist/maplibre-gl.css";
 import * as MapLibreGL from "maplibre-gl";
 import type { PopupOptions, MarkerOptions } from "maplibre-gl";
+import { Protocol as PmtilesProtocol } from "pmtiles";
 import {
   createContext,
   forwardRef,
@@ -27,6 +28,21 @@ if (typeof window !== "undefined" && !MapLibreGL.getWorkerUrl()) {
   MapLibreGL.setWorkerUrl(
     `https://unpkg.com/maplibre-gl@${MapLibreGL.getVersion()}/dist/maplibre-gl-worker.mjs`,
   );
+}
+
+// The tile archives this app builds (`@caden/geometry-archive`, issue #58) are
+// PMTiles: a single blob addressed by HTTP range requests. MapLibre reads them
+// through a registered protocol handler — the reference `pmtiles` reader (the
+// writer is ours; its roundtrip tests pin the two sides together). One module
+// instance serves every map on the page; the handler's internal caches are
+// keyed by archive URL and are shared across maps for free.
+const pmtilesProtocol = new PmtilesProtocol();
+
+// MapLibre keeps protocols in a module-level map and `addProtocol` overwrites,
+// so re-registration (e.g. an HMR re-evaluation of this module) is idempotent
+// in effect — no guard beyond the SSR check is needed.
+if (typeof window !== "undefined") {
+  MapLibreGL.addProtocol("pmtiles", pmtilesProtocol.tile);
 }
 
 const defaultStyles = {
@@ -1225,6 +1241,299 @@ type MapGeoJSONData<P extends GeoJSON.GeoJsonProperties = GeoJSON.GeoJsonPropert
 
 type MapFillPaint = NonNullable<MapLibreGL.FillLayerSpecification["paint"]>;
 type MapLinePaint = NonNullable<MapLibreGL.LineLayerSpecification["paint"]>;
+type MapCirclePaint = NonNullable<MapLibreGL.CircleLayerSpecification["paint"]>;
+
+/** Feature properties a tile feature carries — the id-only projection's join key. */
+type TileFeatureProperties = { entryId: string } & Record<string, string | number | boolean>;
+
+/** Event payload passed to MapVectorTiles interaction callbacks. */
+type MapVectorTilesEvent<P extends TileFeatureProperties = TileFeatureProperties> = {
+  /** The feature under the cursor, with its tile properties (`entryId` always present). */
+  feature: MapGeoJSONFeature<P>;
+  /** Longitude of the cursor at the time of the event. */
+  longitude: number;
+  /** Latitude of the cursor at the time of the event. */
+  latitude: number;
+  /** The underlying MapLibre mouse event for advanced use cases. */
+  originalEvent: MapLibreGL.MapLayerMouseEvent;
+};
+
+type MapVectorTilesProps<P extends TileFeatureProperties = TileFeatureProperties> = {
+  /** The vector-tile source URL. PMTiles archives use the `pmtiles://<url>` scheme. */
+  url: string;
+  /** The MVT source layer inside the tiles (default `"geojson"` — what our writer emits). */
+  sourceLayer?: string;
+  /** Optional unique identifier prefix for the source/layers. Auto-generated if not provided. */
+  id?: string;
+  /** Paint for the polygon fill layer. Merged on top of the same theme-aware defaults as `MapGeoJSON`. Pass `false` to omit. */
+  fillPaint?: MapFillPaint | false;
+  /** Paint for the outline layer. Merged on top of the same hairline default as `MapGeoJSON`. Pass `false` to omit. */
+  linePaint?: MapLinePaint | false;
+  /**
+   * Paint for the point circle layer. Merged on top of the same defaults as
+   * `MapClusterLayer`'s unclustered points (`circle-color`, radius 5, 2px
+   * white stroke). Point features in the tiles render here — clustering is a
+   * below-threshold (row-path) feature.
+   */
+  circlePaint?: MapCirclePaint;
+  /** Paint merged onto the fill layer for the hovered feature (requires `promoteId`, which this component always sets to `entryId`). */
+  fillHoverPaint?: MapFillPaint;
+  /** Callback when a feature is clicked. */
+  onClick?: (e: MapVectorTilesEvent<P>) => void;
+  /** Callback fired when the hovered feature changes; `null` when the cursor leaves. */
+  onHover?: (e: MapVectorTilesEvent<P> | null) => void;
+  /** Whether features respond to mouse events (default: false). */
+  interactive?: boolean;
+  /** Whether the layers render (default: true). Hiding keeps the source + tile caches warm so re-showing is instant. */
+  visible?: boolean;
+  /** Optional MapLibre layer id to insert the layers before (z-order control). */
+  beforeId?: string;
+  /**
+   * Fired once after the source (re)loads and the map next reaches `idle` —
+   * all viewport tiles have arrived. Callers key their completeness chip on
+   * this; MapLibre fires `idle` again on every pan/zoom settle, but this prop
+   * stays silent after the first post-add idle (re-fires per source swap —
+   * the map itself is never unmounted).
+   */
+  onIdle?: () => void;
+};
+
+/**
+ * Renders a vector-tile source (`pmtiles://…` or any `vector://` URL) as
+ * fill + line + circle layers — the tile-sourced sibling of `MapGeoJSON` +
+ * `MapClusterLayer`. The source's features are projected to id-only
+ * properties (`entryId`), so click/hover payloads carry the join key and the
+ * real entry data loads on demand (issue #62's hit-testing direction).
+ *
+ * Hot-swap contract: a changed `url` removes the source and re-adds it with
+ * the same layer ids — the map itself is never unmounted, and the previous
+ * source's tile bytes stay in the browser cache.
+ */
+function MapVectorTiles<P extends TileFeatureProperties = TileFeatureProperties>({
+  url,
+  sourceLayer = "geojson",
+  id: propId,
+  fillPaint,
+  linePaint,
+  circlePaint,
+  fillHoverPaint,
+  onClick,
+  onHover,
+  interactive = false,
+  visible = true,
+  beforeId,
+  onIdle,
+}: MapVectorTilesProps<P>) {
+  const { map, isLoaded, resolvedTheme } = useMap();
+  const autoId = useId();
+  const id = propId ?? autoId;
+  const sourceId = `vector-source-${id}`;
+  const fillLayerId = `vector-fill-${id}`;
+  const lineLayerId = `vector-line-${id}`;
+  const circleLayerId = `vector-circle-${id}`;
+
+  const defaults = GEOJSON_DEFAULT_COLORS[resolvedTheme];
+
+  const showFill = fillPaint !== false;
+  const showLine = linePaint !== false;
+
+  const mergedFillPaint = useMemo(
+    () => mergeHoverPaint({ "fill-color": defaults.fill, ...(fillPaint || {}) }, fillHoverPaint),
+    [defaults.fill, fillPaint, fillHoverPaint],
+  );
+  const mergedLinePaint = useMemo(
+    () => ({
+      "line-color": defaults.line,
+      "line-width": 0.5,
+      ...(linePaint || {}),
+    }),
+    [defaults.line, linePaint],
+  );
+  const mergedCirclePaint = useMemo(
+    () => ({
+      "circle-color": "#3b82f6",
+      "circle-radius": 5,
+      "circle-stroke-width": 2,
+      "circle-stroke-color": "#fff",
+      ...(circlePaint || {}),
+    }),
+    [circlePaint],
+  );
+
+  const latestRef = useRef({ onClick, onHover, onIdle, beforeId, visible });
+  latestRef.current = { onClick, onHover, onIdle, beforeId, visible };
+
+  // The source's paint/layout at (re)add time rides refs so a styling change
+  // doesn't rebuild the source — it syncs via the effect below instead.
+  const addTimeRef = useRef({ mergedFillPaint, mergedLinePaint, mergedCirclePaint, sourceLayer });
+  addTimeRef.current = { mergedFillPaint, mergedLinePaint, mergedCirclePaint, sourceLayer };
+
+  // Add the source (and drop the old one) when the archive URL changes — the
+  // hot-swap seam. Layers are (re-)applied by the sync effect; this effect
+  // must be declared BEFORE it so the source always exists first.
+  useEffect(() => {
+    if (!isLoaded || !map) return;
+
+    map.addSource(sourceId, {
+      type: "vector",
+      url,
+      // Tiles carry `entryId` as a property on every feature (the writer's
+      // id-only projection); promoting it makes feature-state hover work.
+      promoteId: "entryId",
+    });
+
+    const idleHandler = () => {
+      latestRef.current.onIdle?.();
+    };
+    map.once("idle", idleHandler);
+
+    return () => {
+      map.off("idle", idleHandler);
+      try {
+        if (map.getLayer(fillLayerId)) map.removeLayer(fillLayerId);
+        if (map.getLayer(lineLayerId)) map.removeLayer(lineLayerId);
+        if (map.getLayer(circleLayerId)) map.removeLayer(circleLayerId);
+        if (map.getSource(sourceId)) map.removeSource(sourceId);
+      } catch {
+        // style may be mid-reload
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoaded, map, url, sourceId, fillLayerId, lineLayerId, circleLayerId]);
+
+  // Apply/refresh layers: adds missing ones, removes deconfigured ones, syncs
+  // paints and the visibility layout property. `url` is a dependency so the
+  // layers re-apply after every source hot-swap (the swap effect above only
+  // re-adds the source) — styling rides the new source without rebuilding it.
+  useEffect(() => {
+    if (!isLoaded || !map) return;
+
+    const source = map.getSource(sourceId);
+    if (!source) return;
+
+    const layers = [
+      { id: fillLayerId, type: "fill" as const, show: showFill, paint: mergedFillPaint },
+      { id: lineLayerId, type: "line" as const, show: showLine, paint: mergedLinePaint },
+      {
+        id: circleLayerId,
+        type: "circle" as const,
+        show: true,
+        paint: mergedCirclePaint,
+      },
+    ];
+
+    for (const layer of layers) {
+      if (layer.show && !map.getLayer(layer.id)) {
+        map.addLayer(
+          {
+            id: layer.id,
+            type: layer.type,
+            source: sourceId,
+            "source-layer": addTimeRef.current.sourceLayer,
+            paint: layer.paint,
+          } as MapLibreGL.LayerSpecification,
+          beforeId,
+        );
+      } else if (!layer.show && map.getLayer(layer.id)) {
+        map.removeLayer(layer.id);
+      }
+    }
+
+    for (const layer of layers) {
+      if (!layer.show) continue;
+      if (map.getLayer(layer.id)) {
+        map.setLayoutProperty(layer.id, "visibility", visible ? "visible" : "none");
+        if (visible) {
+          for (const [key, value] of Object.entries(layer.paint)) {
+            map.setPaintProperty(layer.id, key as never, value as never);
+          }
+        }
+      }
+    }
+  }, [
+    isLoaded,
+    map,
+    url,
+    sourceId,
+    fillLayerId,
+    lineLayerId,
+    circleLayerId,
+    showFill,
+    showLine,
+    mergedFillPaint,
+    mergedLinePaint,
+    mergedCirclePaint,
+    visible,
+    beforeId,
+  ]);
+
+  // Interaction handlers (click on every layer — a tile source serves point,
+  // line, and polygon features from one source; hover mirrors `MapGeoJSON`'s
+  // fill-layer-only hover).
+  useEffect(() => {
+    if (!isLoaded || !map || !interactive) return;
+
+    let hoveredId: string | number | null = null;
+
+    const setHover = (next: string | number | null) => {
+      if (next === hoveredId) return;
+      const sourceExists = !!map.getSource(sourceId);
+      if (hoveredId != null && sourceExists) {
+        map.setFeatureState({ source: sourceId, id: hoveredId }, { hover: false });
+      }
+      hoveredId = next;
+      if (next != null && sourceExists) {
+        map.setFeatureState({ source: sourceId, id: next }, { hover: true });
+      }
+    };
+
+    const eventOf = (e: MapLibreGL.MapLayerMouseEvent): MapVectorTilesEvent<P> => ({
+      feature: e.features![0] as unknown as MapGeoJSONFeature<P>,
+      latitude: e.lngLat.lat,
+      longitude: e.lngLat.lng,
+      originalEvent: e,
+    });
+
+    const handleMouseMove = (e: MapLibreGL.MapLayerMouseEvent) => {
+      if (!e.features?.length) return;
+      map.getCanvas().style.cursor = "pointer";
+      const featureId = (e.features[0].id as string | number | undefined) ?? null;
+      if (featureId !== hoveredId) {
+        setHover(featureId);
+      }
+      latestRef.current.onHover?.(eventOf(e));
+    };
+
+    const handleMouseLeave = () => {
+      setHover(null);
+      map.getCanvas().style.cursor = "";
+      latestRef.current.onHover?.(null);
+    };
+
+    const handleClick = (e: MapLibreGL.MapLayerMouseEvent) => {
+      if (!e.features?.length) return;
+      latestRef.current.onClick?.(eventOf(e));
+    };
+
+    for (const layerId of [fillLayerId, lineLayerId, circleLayerId]) {
+      map.on("mousemove", layerId, handleMouseMove);
+      map.on("mouseleave", layerId, handleMouseLeave);
+      map.on("click", layerId, handleClick);
+    }
+
+    return () => {
+      for (const layerId of [fillLayerId, lineLayerId, circleLayerId]) {
+        map.off("mousemove", layerId, handleMouseMove);
+        map.off("mouseleave", layerId, handleMouseLeave);
+        map.off("click", layerId, handleClick);
+      }
+      setHover(null);
+      map.getCanvas().style.cursor = "";
+    };
+  }, [isLoaded, map, sourceId, fillLayerId, lineLayerId, circleLayerId, interactive, showFill, showLine]);
+
+  return null;
+}
 
 /** A rendered feature with strongly-typed `properties`. */
 type MapGeoJSONFeature<P extends GeoJSON.GeoJsonProperties = GeoJSON.GeoJsonProperties> = Omit<
@@ -2128,6 +2437,7 @@ export {
   MapRoute,
   MapArc,
   MapGeoJSON,
+  MapVectorTiles,
   MapClusterLayer,
 };
 
@@ -2140,6 +2450,7 @@ export type {
   MapGeoJSONData,
   MapGeoJSONFeature,
   MapGeoJSONEvent,
+  MapVectorTilesEvent,
   MapProps,
   MapMarkerProps,
   MarkerContentProps,
@@ -2151,5 +2462,6 @@ export type {
   MapRouteProps,
   MapArcProps,
   MapGeoJSONProps,
+  MapVectorTilesProps,
   MapClusterLayerProps,
 };

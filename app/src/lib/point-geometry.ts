@@ -1,4 +1,4 @@
-import type { Geometry, GeometryType } from "@caden/json-cms/react";
+import type { BoundingBox, Geometry, GeometryType } from "@caden/json-cms/react";
 import type * as GeoJSON from "geojson";
 
 /**
@@ -55,6 +55,20 @@ export function bboxFeature(
       ],
     },
   };
+}
+
+/**
+ * `schemas.boundingBox` is a plain `v.array(v.number())` (Convex validators
+ * can't express a fixed-length tuple), but every write stores exactly 4
+ * numbers — this narrows the read side back to the tuple shape `unionBbox`
+ * expects, mirroring the component's own `asBoundingBox`.
+ */
+export function asBoundingBox(value: number[] | undefined): BoundingBox | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- always written as a 4-tuple server-side; the array validator can't express that statically.
+  return value as BoundingBox;
 }
 
 /**

@@ -1,5 +1,5 @@
-import { buildFeatureCollection, computeBbox, useResolvedGeometries } from "@caden/json-cms/react";
-import type { Geometry } from "@caden/json-cms/react";
+import { buildFeatureCollection, computeBbox, useResolvedGeometries, unionBbox } from "@caden/json-cms/react";
+import type { BoundingBox, Geometry } from "@caden/json-cms/react";
 import { Link } from "@tanstack/react-router";
 import type { FunctionReturnType } from "convex/server";
 import { ChevronRight, X } from "lucide-react";
@@ -7,9 +7,10 @@ import { Fragment, useState } from "react";
 
 import type { GeometryEntry } from "#/components/schema-geometries-loader";
 import { Button } from "#/components/ui/button";
-import { Map, MapClusterLayer, MapGeoJSON } from "#/components/ui/map";
+import { Map, MapClusterLayer, MapGeoJSON, MapVectorTiles } from "#/components/ui/map";
 import { formatPropertyValue } from "#/lib/format";
 import {
+  asBoundingBox,
   bboxFeature,
   buildPointFeatureCollection,
   splitPointLikeGeometries,
@@ -144,15 +145,24 @@ function toFeatureRow(geometry: GeometryEntry, resolved: Geometry) {
  * individual circles), one color per dataset, viewport fit to their union.
  * Clicking a feature opens its entry's properties — so the group reads as
  * one layer of data, the way a single dataset's map does.
+ *
+ * Above-threshold datasets with a fresh tile archive (issue #58 part 4)
+ * arrive as `tileSources` and render via `MapVectorTiles` with the same
+ * per-dataset color; tile features carry id-only properties (`entryId`), and
+ * their viewport contribution to the fit comes from the datasets' stored
+ * `boundingBox` extents rather than any geometry rows.
  */
 export function GroupMap({
   datasets,
   geometries,
   entries,
+  tileSources,
 }: {
   datasets: Dataset[];
   geometries: GeometryEntry[];
   entries: EntryDoc[];
+  /** Above-threshold datasets rendering from their fresh tile archive. */
+  tileSources: Array<{ schemaId: string; url: string }>;
 }) {
   const entryById = new globalThis.Map(entries.map((entry) => [entry._id, entry])),
     datasetById = new globalThis.Map(datasets.map((dataset) => [dataset._id, dataset])),
@@ -173,20 +183,29 @@ export function GroupMap({
       bySchema.set(geometry.schemaId, [geometry]);
     }
   }
-  const schemaIds = [...bySchema.keys()],
+  // Row-path schemas with geometry plus the tile-path sources, in one stable
+  // order so each dataset's color index is deterministic across renders.
+  const schemaIds = [...new Set([...bySchema.keys(), ...tileSources.map((s) => s.schemaId)])],
     resolvedById = new globalThis.Map(
       resolvableGeometries.map(({ g, resolved }) => [g._id, resolved]),
     ),
     [selected, setSelected] = useState<FeatureProperties | null>(null);
 
-  if (resolvableGeometries.length === 0) {
+  if (resolvableGeometries.length === 0 && tileSources.length === 0) {
     return null;
   }
 
   const combined = buildFeatureCollection<FeatureProperties>(
       resolvableGeometries.map(({ g, resolved }) => toFeatureRow(g, resolved)),
     ),
-    bbox = computeBbox(combined),
+    // The tile path contributes no rows — its viewport coverage is the
+    // datasets' stored `boundingBox` extents (same stored-envelope caveat as
+    // every other consumer: only ever stale-wider, never stale-smaller).
+    tileBbox = tileSources.reduce<BoundingBox | undefined>((acc, source) => {
+      const dataset = datasetById.get(source.schemaId);
+      return dataset === undefined ? acc : unionBbox(acc, asBoundingBox(dataset.boundingBox));
+    }, undefined),
+    bbox = unionBbox(computeBbox(combined), tileBbox),
     legendDatasets = schemaIds.map((schemaId, index) => ({
       schemaId,
       title: getDatasetTitle(datasetById, schemaId, "Untitled dataset"),
@@ -214,7 +233,26 @@ export function GroupMap({
           />
           {schemaIds.map((schemaId, index) => {
             const color = colorForIndex(index),
-              schemaGeometries = bySchema.get(schemaId) ?? [],
+              tileSource = tileSources.find((source) => source.schemaId === schemaId);
+            if (tileSource !== undefined) {
+              return (
+                <MapVectorTiles<{ entryId: string }>
+                  key={schemaId}
+                  id={`group-tiles-${schemaId}`}
+                  url={tileSource.url}
+                  interactive
+                  fillPaint={{ "fill-color": color, "fill-opacity": 0.2 }}
+                  linePaint={{ "line-color": color, "line-width": 2 }}
+                  fillHoverPaint={{ "fill-opacity": 0.35 }}
+                  onClick={(e) => {
+                    // Tiles carry id-only properties — the entry id is the
+                    // join key; the dataset is known from this layer's wiring.
+                    setSelected({ entryId: e.feature.properties.entryId, schemaId });
+                  }}
+                />
+              );
+            }
+            const schemaGeometries = bySchema.get(schemaId) ?? [],
               // `MapGeoJSON` renders `fill`/`line` layers, which draw nothing
               // for Point/MultiPoint geometries — those go to
               // `MapClusterLayer` instead, which renders `circle` layers
@@ -228,10 +266,7 @@ export function GroupMap({
               otherCollection = buildFeatureCollection<FeatureProperties>(withResolved(otherRows)),
               pointCollection = buildPointFeatureCollection<FeatureProperties>(
                 withResolved(pointRows),
-              ),
-              handleFeatureSelect = (properties: FeatureProperties) => {
-                setSelected(properties);
-              };
+              );
             return (
               <Fragment key={schemaId}>
                 {otherCollection.features.length > 0 && (
@@ -241,14 +276,18 @@ export function GroupMap({
                     fillPaint={{ "fill-color": color, "fill-opacity": 0.2 }}
                     linePaint={{ "line-color": color, "line-width": 2 }}
                     fillHoverPaint={{ "fill-opacity": 0.35 }}
-                    onClick={(e) => handleFeatureSelect(e.feature.properties)}
+                    onClick={(e) => {
+                      setSelected(e.feature.properties);
+                    }}
                   />
                 )}
                 {pointCollection.features.length > 0 && (
                   <MapClusterLayer<FeatureProperties>
                     data={pointCollection}
                     pointColor={color}
-                    onPointClick={(feature) => handleFeatureSelect(feature.properties)}
+                    onPointClick={(feature) => {
+                      setSelected(feature.properties);
+                    }}
                   />
                 )}
               </Fragment>

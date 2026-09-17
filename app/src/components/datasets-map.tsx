@@ -11,7 +11,7 @@ import {
   EmptyTitle,
 } from "#/components/ui/empty";
 import { Map, MapGeoJSON } from "#/components/ui/map";
-import { bboxFeature } from "#/lib/point-geometry";
+import { asBoundingBox, bboxFeature } from "#/lib/point-geometry";
 import { api } from "#convex/_generated/api";
 
 type Dataset = FunctionReturnType<typeof api.schemas.list>[number];
@@ -40,20 +40,6 @@ function getDatasetTitle(
 ) {
   const dataset = datasetById.get(schemaId);
   return dataset ? dataset.title : fallback;
-}
-
-/**
- * `schemas.boundingBox` is a plain `v.array(v.number())` (Convex validators
- * can't express a fixed-length tuple), but every write stores exactly 4
- * numbers — this narrows the read side back to the tuple shape `unionBbox`
- * expects, mirroring the component's own `asBoundingBox`.
- */
-function asBoundingBox(value: number[] | undefined): BoundingBox | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- always written as a 4-tuple server-side; the array validator can't express that statically.
-  return value as BoundingBox;
 }
 
 /** One color-coded legend swatch per dataset that has an extent on the map. */
