@@ -95,7 +95,7 @@ describe("buildGeometryArchive roundtrip through the reference reader", () => {
     expect(header.maxZoom).toBe(5);
     expect(header.tileType).toBe(1); // MVT
     expect(header.internalCompression).toBe(2); // gzip
-    expect(header.tileCompression).toBe(2); // gzip (measured: 7.5% vs 10.9% uncompressed)
+    expect(header.tileCompression).toBe(2); // gzip (measured better than none)
     expect(header.clustered).toBe(true);
     expect(header.minLon).toBeCloseTo(-122.5, 5);
     expect(header.maxLat).toBeCloseTo(37.9, 5);

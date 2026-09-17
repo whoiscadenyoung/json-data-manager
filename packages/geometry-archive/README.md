@@ -42,7 +42,7 @@ explode, matching geojson-vt's own practical limits.
 ## Development
 
 ```sh
-bun test        # 13 tests incl. reference-reader roundtrip
+bun test        # 16 tests incl. reference-reader roundtrip + leaf split
 bun run build   # dist/ via tsc
 ```
 

@@ -115,6 +115,68 @@ describe("tile boundaries", () => {
     }
   });
 
+  test("a line crossing a horizontal tile boundary appears in both rows", async () => {
+    // At z4 the row 6/7 boundary sits at lat ≈ 21.93 (mercator 7/16). The
+    // vertical line spans it, so tiles in row 6 AND row 7 must carry it.
+    const features = [
+      feature("crossing-y", {
+        type: "LineString",
+        coordinates: [[30.0, 21.0], [30.0, 23.0]],
+      }),
+    ];
+    const archive = await buildGeometryArchive({ features, minZoom: 4, maxZoom: 4 });
+    const pmtiles = new PMTiles(memorySource(archive));
+
+    const northTile = await pmtiles.getZxy(4, 9, 6);
+    const southTile = await pmtiles.getZxy(4, 9, 7);
+    if (northTile === undefined || southTile === undefined) {
+      throw new Error("tiles 4/9/6 or 4/9/7 missing from the archive");
+    }
+    for (const resolved of [northTile, southTile]) {
+      const layer = new VectorTile(new PbfReader(resolved.data)).layers["geojson"];
+      const ids: string[] = [];
+      for (let i = 0; i < layer.length; i += 1) {
+        ids.push(layer.feature(i).properties["entryId"] as string);
+      }
+      expect(ids).toContain("crossing-y");
+    }
+  });
+
+  test("a buffered point near a horizontal boundary repeats into the row above", async () => {
+    // Lat 21.9 is just inside row 7 (south of the 6/7 boundary at ≈21.93);
+    // the 64-unit buffer pulls it into row 6 as well.
+    const features = [
+      feature("near-y", { type: "Point", coordinates: [30.0, 21.9] }),
+    ];
+    const archive = await buildGeometryArchive({ features, minZoom: 4, maxZoom: 4 });
+    const pmtiles = new PMTiles(memorySource(archive));
+
+    const aboveTile = await pmtiles.getZxy(4, 9, 6);
+    const ownTile = await pmtiles.getZxy(4, 9, 7);
+    if (aboveTile === undefined || ownTile === undefined) {
+      throw new Error("tiles 4/9/6 or 4/9/7 missing from the archive");
+    }
+    for (const resolved of [aboveTile, ownTile]) {
+      const layer = new VectorTile(new PbfReader(resolved.data)).layers["geojson"];
+      const ids: string[] = [];
+      for (let i = 0; i < layer.length; i += 1) {
+        ids.push(layer.feature(i).properties["entryId"] as string);
+      }
+      expect(ids).toContain("near-y");
+    }
+
+    // One row further south the buffer does not reach.
+    const farAway = await pmtiles.getZxy(4, 9, 8);
+    if (farAway !== undefined) {
+      const layer = new VectorTile(new PbfReader(farAway.data)).layers["geojson"];
+      const ids: string[] = [];
+      for (let i = 0; i < layer.length; i += 1) {
+        ids.push(layer.feature(i).properties["entryId"] as string);
+      }
+      expect(ids).not.toContain("near-y");
+    }
+  });
+
   test("includeProperties carries the allow-listed keys", async () => {
     const features = [
       {

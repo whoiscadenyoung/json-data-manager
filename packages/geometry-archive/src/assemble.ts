@@ -77,12 +77,6 @@ function digestOf(data: Uint8Array): string {
   return `${data.length}:${headHex}:${tailHex}`;
 }
 
-/** Deduplicated tiles: run-length directory entries plus their blobs. */
-interface Deduplicated {
-  entries: ContainerEntry[];
-  blobData: Uint8Array[];
-}
-
 /**
  * Collapses Hilbert-adjacent identical tiles into run-length entries and
  * deduplicates identical blobs globally so each unique byte string is

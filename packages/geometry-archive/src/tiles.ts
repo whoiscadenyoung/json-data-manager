@@ -186,7 +186,12 @@ function clampTile(value: number, tilesPerSide: number): number {
   return value;
 }
 
-/** Inclusive tile-index range covering the bounds plus the buffer pad. */
+/**
+ * Inclusive tile-index range covering the bounds plus the buffer pad.
+ * Tile rows grow southward while latitude grows northward, so the north
+ * edge (`maxLat`) yields the smaller row index and the south edge (`minLat`)
+ * the larger one.
+ */
 function candidateRange(
   bounds: Bounds,
   tilesPerSide: number,
@@ -195,8 +200,8 @@ function candidateRange(
   return {
     x0: clampTile(Math.floor((mercatorX(bounds.minLon) - pad) * tilesPerSide), tilesPerSide),
     x1: clampTile(Math.floor((mercatorX(bounds.maxLon) + pad) * tilesPerSide), tilesPerSide),
-    y0: clampTile(Math.floor((mercatorY(bounds.minLat) - pad) * tilesPerSide), tilesPerSide),
-    y1: clampTile(Math.floor((mercatorY(bounds.maxLat) + pad) * tilesPerSide), tilesPerSide),
+    y0: clampTile(Math.floor((mercatorY(bounds.maxLat) - pad) * tilesPerSide), tilesPerSide),
+    y1: clampTile(Math.floor((mercatorY(bounds.minLat) + pad) * tilesPerSide), tilesPerSide),
   };
 }
 

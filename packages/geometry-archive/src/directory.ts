@@ -112,7 +112,7 @@ const MAGIC_NUMBER = [0x50, 0x4d, 0x54, 0x69, 0x6c, 0x65, 0x73] as const; // "PM
 const SPEC_VERSION = 3;
 const COMPRESSION_GZIP = 2;
 
-/** Tile compression: none (per-tile gzip framing costs more than it saves). */
+/** Tile compression: gzip (measured better than none at FY22 scale). */
 const TILE_COMPRESSION_GZIP = 2;
 const TILE_TYPE_MVT = 1;
 

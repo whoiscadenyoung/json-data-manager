@@ -56,17 +56,29 @@ behavior change; #61 makes archives self-maintaining; #62 is the visible
 payoff measured on FY22 (≤5% of 46.55 MB, no main-thread parse, instant
 toggles); #63 completes the cache layers (repeat opens = zero bytes).
 
-## #59 part-1 status (2026-09-17, branch `feat/geometry-archive-lib`)
+## #59 part-1 status (2026-09-17, merged to `main`)
 
-Library implemented + 13 bun tests green (reference-reader roundtrip,
-boundaries, benchmark), repo oxlint clean; commit pushed for history only —
-**PR/merge deferred by user instruction**; finish #59's PR + kickoff-DONE
-items next session.
+Library implemented + bun tests green (reference-reader roundtrip, x- and
+y-boundaries, leaf-directory split, benchmark), repo oxlint clean; PR opened,
+merged, branch deleted per the kickoff DONE list.
 
 - **Measured size (FY22-shaped 450-feature county-road fixture, ~4700
-  verts/feature + SS4A property bag):** GeoJSON 50.61 MB → archive 3.81 MB =
-  **7.52%** with per-tile gzip (tiles uncompressed: 10.91%). Part 4 byte
-  targets calibrate on ~7.5%.
+  verts/feature + SS4A property bag):** GeoJSON 50.61 MB → archive 5.07 MB =
+  **10.01%** with per-tile gzip. **Part 4 byte targets calibrate on ~10%.**
+  (The earlier 7.52% figure was measured on a build with a tile-enumeration
+  bug that silently dropped features spanning tile rows; the complete archive
+  is ~33% larger. Uncompressed-tile comparison 10.91% is likewise stale —
+  gzip-vs-none decision unaffected, not re-measured.)
+- **Review-fix 2026-09-17 (y-span enumeration):** `candidateRange` derived
+  `y0` from `minLat` and `y1` from `maxLat`, but mercator rows grow southward
+  — features crossing a row boundary produced `y0 > y1` and contributed no
+  tiles (silently missing data, or "no tiles" on single-feature inputs).
+  Fixed to derive the range from `maxLat`→`minLat`; y-boundary tests added.
+  Lesson: tile-axis direction must be tested in BOTH axes — the original
+  boundary suite only crossed x boundaries at constant latitude.
+- **Leaf-directory split now regression-tested:** 20k scattered z12 points
+  force root > 16 KB; leaves resolve through the reference reader (was
+  implemented but untested).
 - **Spec corrections vs kickoff text (validated against the protomaps
   `firenze.pmtiles` sample):** header is **127 bytes** (not 163) and
   positions are **int32 ×1e7 fixed-point** (not float32); **v3 has no EOS
@@ -74,8 +86,8 @@ items next session.
   form); zoom/compression/tileType live in the header (extras in metadata
   are optional).
 - **Tile compression decision:** per-tile gzip measured better than none at
-  FY22 scale (7.52% vs 10.91% of GeoJSON) — header `tileCompression=2`,
-  `internalCompression=2` (dirs+metadata), `clustered=1`, `tileType=1`.
+  FY22 scale — header `tileCompression=2`, `internalCompression=2`
+  (dirs+metadata), `clustered=1`, `tileType=1`.
 - **Dependency APIs that shaped the code:** `pmtiles@4.5` reader
   (`getZxy`/`getHeader`/`getMetadata`; `Source` = `getBytes`+`getKey`);
   `geojson-vt@5.0.2` (ESM; `getTile` drills lazily, `tileCoords` only lists
@@ -88,4 +100,6 @@ items next session.
 - **Gotchas hit:** web-mercator y is `0.5 − asinh(tan φ)/(2π)` (÷π breaks
   candidate enumeration); the first directory delta may be 0 (tileId 0 is
   legal), guard is `delta<0 || (i>0 && delta<=0)`; gzipSync is deterministic
-  so dedup compares compressed bytes directly.
+  so dedup compares compressed bytes directly; uniform synthetic tiles
+  gzip-crush the root directory — force a leaf split with irregular tile
+  sizes/positions.
