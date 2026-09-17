@@ -26,6 +26,7 @@ import {
 } from "./_generated/server.js";
 import type { MutationCtx, QueryCtx } from "./_generated/server.js";
 import {
+  INLINE_GEOMETRY_BYTE_LIMIT,
   byteLength,
   inlineGeometryFieldsOrThrow,
   parseAndValidateGeometry,
@@ -1116,21 +1117,38 @@ async function resolveGeometryOutput(
 }
 
 // Convex caps a single query execution at reading ~16 MiB total across every
-// document it touches — independent of, and much larger than, the ~900 KB
-// per-document `INLINE_GEOMETRY_BYTE_LIMIT` a single `geometries` row can
-// carry. A dataset with hundreds of rows near that inline limit can still
-// blow the 16 MiB *cumulative* budget in one unpaginated `.collect()`, even
-// though every individual row is safely under its own limit.
+// document it touches — and caps a function's return value at the same 16 MiB
+// — independent of, and much larger than, the ~900 KB per-document
+// `INLINE_GEOMETRY_BYTE_LIMIT` a single `geometries` row can carry. A dataset
+// with hundreds of rows near that inline limit can still blow the 16 MiB
+// *cumulative* budget in one unpaginated `.collect()`, even though every
+// individual row is safely under its own limit.
 //
 // `listGeometries` pages through results manually — `.withIndex(...).gt(
 // "_creationTime", cursor).take(n)` — rather than using Convex's own
 // `.paginate()`: components cannot call `.paginate()` at all ("paginate()
 // is only supported in the app" — confirmed against a real deployment, not
 // just a doc comment; see `paginateGeometriesBySchema`'s doc comment), so
-// there's no `maximumBytesRead` safety net available here. Instead, the
-// page size itself is capped low enough that even the worst case (every row
-// at the maximum possible inline size) stays safely under budget.
-const MAX_GEOMETRY_PAGE_ROWS = 8; // 8 * ~900 KB (INLINE_GEOMETRY_BYTE_LIMIT) ≈ 7.2 MB — safely under Convex's ~16 MiB per-execution read cap, with room for the schema-existence read and per-document overhead sharing the same execution.
+// there's no `maximumBytesRead` safety net available here. Instead, pages
+// are budgeted by *bytes*: rows are `.take()`-n in small chunks while the
+// cumulative payload estimate stays under the budget, so a page of point
+// geometries (a few dozen bytes each) fills toward the row ceiling while a
+// page of near-inline-limit polygons stops after a handful — the round-trip
+// count tracks the data's actual size, not its worst case. (A fixed 8-row
+// cap used to make 13 KB of point data cost 17 round trips; the same data
+// now fits one page.)
+/** Upper bound on the payload bytes one page may carry (exported for tests). */
+export const GEOMETRY_PAGE_BYTE_BUDGET = 5_000_000; // ~5 MB of payload per page — safely under the 16 MiB per-execution read cap (which the schema-existence read and per-document overhead also share), with room for the one-row overshoot below. Sized as much for rendering cadence as for safety: each page is one serial round trip with a render in between, and after real-world feedback that ~10 MB pages read as one big stall per arrival, the budget is small enough that pages land as a steady stream instead.
+
+/** High safety ceiling on rows per page; the byte budget is what actually bounds a real page long before this unless every row is tiny. */
+const MAX_GEOMETRY_PAGE_ROWS = 500;
+
+// Cap on rows per `.take()` while the remaining budget is plentiful. The
+// width actually used scales down with the remaining budget (see
+// `takeGeometryRows`) so a page can stop right on the budget, and the
+// possible overshoot at a page boundary — rows read but deliberately left
+// for the next page — stays down to a single ~900 KB row.
+const GEOMETRY_PAGE_CHUNK_ROWS = 8;
 
 /** One `geometries` row, as read directly off `ctx.db` (before `resolveGeometryOutput` normalizes it). */
 interface GeometryDbRow {
@@ -1146,53 +1164,144 @@ interface GeometryDbRow {
 }
 
 /**
+ * Upper-bounds one row's contribution to the page budget. Inline rows cost
+ * exactly their JSON text; a pre-migration legacy row costs its
+ * re-serialized form; a storage-backed row's payload lives in a blob this
+ * query never touches (the client fetches it separately via
+ * `geometryUrl`), so it's charged the worst-case inline size — conservative
+ * for the budget, which is the safe direction.
+ */
+function estimateGeometryRowBytes(row: GeometryDbRow): number {
+  if (row.geometryJson !== undefined) {
+    return byteLength(row.geometryJson);
+  }
+  if (row.geometry !== undefined) {
+    return byteLength(JSON.stringify(row.geometry));
+  }
+  return INLINE_GEOMETRY_BYTE_LIMIT;
+}
+
+/**
+ * Parses a `_creationTime` pagination cursor ("", null → undefined).
+ * Shared by the geometry and entries paginators, which resume identically.
+ */
+function parseCreationTimeCursor(cursor: string | null): number | undefined {
+  const afterCreationTime = cursor === null || cursor === "" ? undefined : Number(cursor);
+  if (afterCreationTime !== undefined && !Number.isFinite(afterCreationTime)) {
+    throw new ConvexError("Invalid pagination cursor.");
+  }
+  return afterCreationTime;
+}
+
+/**
+ * One `.take()` of a schema's `geometries` rows starting just after
+ * `afterTime`, at the widest row count the remaining byte budget can
+ * safely absorb: never more rows than the budget could hold even if every
+ * one were worst-case `INLINE_GEOMETRY_BYTE_LIMIT` size, so the possible
+ * overshoot at a page boundary — rows read but deliberately left for the
+ * next page — stays down to a single ~900 KB row.
+ *
+ * Returns `requested` alongside the rows so the caller can tell "the index
+ * ran dry" (`rows.length < requested`) from "the page budget stopped us".
+ */
+async function takeGeometryRows(
+  ctx: QueryCtx,
+  schemaId: Id<"schemas">,
+  afterTime: number | undefined,
+  maxRows: number,
+  remainingBytes: number,
+): Promise<{ requested: number; rows: GeometryDbRow[] }> {
+  const requested = Math.min(
+    maxRows,
+    GEOMETRY_PAGE_CHUNK_ROWS,
+    Math.max(1, Math.floor(remainingBytes / INLINE_GEOMETRY_BYTE_LIMIT)),
+  );
+  return {
+    requested,
+    rows: await ctx.db
+      .query("geometries")
+      .withIndex("by_schema", (q) =>
+        afterTime === undefined
+          ? q.eq("schemaId", schemaId)
+          : q.eq("schemaId", schemaId).gt("_creationTime", afterTime),
+      )
+      .order("asc")
+      .take(requested),
+  };
+}
+
+/**
  * Manual cursor-based pagination over one schema's `geometries` rows.
  * Convex components cannot call `.paginate()` — confirmed at push time
  * against a real deployment ("paginate() is only supported in the app"),
  * not merely a documented restriction — so this hand-rolls the same shape
- * `.paginate()` would produce (`{page, isDone, continueCursor}`) using a
- * plain bounded index read instead. The cursor is just the last-returned
- * row's `_creationTime` (the index's implicit trailing sort key); resuming
- * means `.gt("_creationTime", cursor)` on the same index range.
+ * `.paginate()` would produce (`{page, isDone, continueCursor}`), with an
+ * explicit byte budget standing in for the `maximumBytesRead` safety net
+ * `.paginate()` would have provided.
  *
- * `numItems` is honored only up to `MAX_GEOMETRY_PAGE_ROWS` — never more,
- * regardless of what the caller requests — since a larger page could itself
- * exceed Convex's per-execution read budget (any single row can be up to
- * `INLINE_GEOMETRY_BYTE_LIMIT`, ~900 KB).
+ * The cursor is just the last-returned row's `_creationTime` (the index's
+ * implicit trailing sort key); resuming means `.gt("_creationTime", cursor)`
+ * on the same index range.
+ *
+ * Rows are read in small chunks and accumulate into the page until either
+ * the index is exhausted (`isDone`) or the next row would push the page's
+ * cumulative payload estimate past `GEOMETRY_PAGE_BYTE_BUDGET` — in which
+ * case the page stops early with `isDone: false` and the unserved rows are
+ * simply re-read by the next page (the overshoot is at most one ~900 KB
+ * row; see `takeGeometryRows`). `numItems` is honored only up to
+ * `MAX_GEOMETRY_PAGE_ROWS` — never more, as the last-resort ceiling — and
+ * at least one row is always returned per call, so the cursor always
+ * advances and a caller paging to `isDone` can never stall.
  */
 async function paginateGeometriesBySchema(
   ctx: QueryCtx,
   schemaId: Id<"schemas">,
   paginationOpts: { cursor: string | null; numItems: number },
 ): Promise<{ continueCursor: string; isDone: boolean; page: GeometryDbRow[] }> {
-  const afterCreationTime =
-    paginationOpts.cursor === null || paginationOpts.cursor === ""
-      ? undefined
-      : Number(paginationOpts.cursor);
-  if (afterCreationTime !== undefined && !Number.isFinite(afterCreationTime)) {
-    throw new ConvexError("Invalid pagination cursor.");
-  }
+  const rowLimit = Math.max(1, Math.min(paginationOpts.numItems, MAX_GEOMETRY_PAGE_ROWS)),
+    page: GeometryDbRow[] = [];
+  let payloadBytes = 0,
+    afterTime = parseCreationTimeCursor(paginationOpts.cursor),
+    budgetFull = false,
+    isDone = false;
 
-  const limit = Math.max(1, Math.min(paginationOpts.numItems, MAX_GEOMETRY_PAGE_ROWS)),
-    page = await ctx.db
-      .query("geometries")
-      .withIndex("by_schema", (q) =>
-        afterCreationTime === undefined
-          ? q.eq("schemaId", schemaId)
-          : q.eq("schemaId", schemaId).gt("_creationTime", afterCreationTime),
-      )
-      .order("asc")
-      .take(limit);
+  while (!budgetFull && page.length < rowLimit) {
+    // oxlint-disable-next-line no-await-in-loop -- each chunk resumes from the previous chunk's last row; inherently sequential.
+    const { requested, rows: chunk } = await takeGeometryRows(
+      ctx,
+      schemaId,
+      afterTime,
+      rowLimit - page.length,
+      GEOMETRY_PAGE_BYTE_BUDGET - payloadBytes,
+    );
+
+    let drained = chunk.length < requested;
+    for (const row of chunk) {
+      const rowBytes = estimateGeometryRowBytes(row);
+      if (payloadBytes > 0 && payloadBytes + rowBytes > GEOMETRY_PAGE_BYTE_BUDGET) {
+        // This row would push the page over budget — stop here and leave it
+        // (and everything after) for the next page. The rows behind it were
+        // already read either way; nothing is lost, only re-read.
+        budgetFull = true;
+        break;
+      }
+      page.push(row);
+      payloadBytes += rowBytes;
+      afterTime = row._creationTime;
+    }
+
+    if (budgetFull || !drained) {
+      continue; // More rows may follow; the while conditions decide.
+    }
+    isDone = true; // The index ran dry inside this page.
+    break;
+  }
 
   const lastRow = page[page.length - 1];
   return {
-    // A short page (or an empty one) means we've reached the end of this
-    // schema's rows; an exactly-full page might or might not be the end —
-    // treat it as "not done" so the next call (which will come back empty)
-    // is the one that actually confirms it, rather than guessing here.
     continueCursor:
       lastRow === undefined ? (paginationOpts.cursor ?? "") : String(lastRow._creationTime),
-    isDone: page.length < limit,
+    isDone,
     page,
   };
 }
@@ -2398,7 +2507,7 @@ export const importWorkflow = workflow.define({
 // plain mutation (no action needed just to reach `ctx.storage.store`).
 // ---------------------------------------------------------------------------
 
-const CONVERSION_BATCH_SIZE = 100; // Entries are thin (no geometry payload) — generous relative to MAX_GEOMETRY_PAGE_ROWS.
+const CONVERSION_BATCH_SIZE = 100; // Entries are thin (no geometry payload) — safe to read in one pass, unlike geometry pages which need the byte budget.
 
 /** One `entries` row, as read directly off `ctx.db`. */
 interface EntryDbRow {
@@ -2421,10 +2530,7 @@ async function paginateEntriesBySchema(
   cursor: string | null,
   limit: number,
 ): Promise<{ continueCursor: string; isDone: boolean; page: EntryDbRow[] }> {
-  const afterCreationTime = cursor === null || cursor === "" ? undefined : Number(cursor);
-  if (afterCreationTime !== undefined && !Number.isFinite(afterCreationTime)) {
-    throw new ConvexError("Invalid pagination cursor.");
-  }
+  const afterCreationTime = parseCreationTimeCursor(cursor);
 
   const page = await ctx.db
     .query("entries")
@@ -2735,8 +2841,10 @@ export const applySimplifiedGeometriesInternal = internalMutation({
   returns: v.null(),
 });
 
-// Rows per batch, bounded by the same per-execution read budget as
-// `listGeometries` (each row's payload can be up to INLINE_GEOMETRY_BYTE_LIMIT).
+// Rows per simplify batch: the same ceiling `listGeometries` honors — the
+// shared paginator's byte budget (not this number) is what actually bounds
+// how much payload one batch reads (each row's payload can be up to
+// INLINE_GEOMETRY_BYTE_LIMIT).
 const SIMPLIFY_BATCH_ROWS = MAX_GEOMETRY_PAGE_ROWS,
   // Payload bytes handed to `applySimplifiedGeometriesInternal` per call —
   // matched to the bulk import path, whose 4 MB chunk-per-mutation precedent

@@ -134,12 +134,11 @@ function asBoundingBox(value: number[] | undefined): BoundingBox | undefined {
  * rows are filtered to `visibleSchemaIds` at render time.
  *
  * The viewport fits exactly once, when the component mounts (the parent
- * gates mounting on the first fully-complete load): the bounds are captured
- * from the rows' own per-row `bbox` envelopes — available without resolving
- * any payload — via a lazy initializer and never change afterwards. Hiding
- * or showing layers (or any of their datasets), adding or removing layers,
- * or late-resolving payloads never moves the camera again; a fresh page
- * load re-fits.
+ * mounts it as soon as the first layer's rows complete): the bounds are
+ * captured from the layers' datasets' stored `boundingBox` extents via a
+ * lazy initializer and never change afterwards. Hiding or showing layers
+ * (or any of their datasets), adding or removing layers, or late-resolving
+ * payloads never moves the camera again; a fresh page load re-fits.
  */
 export function LayersMap({
   datasets,
@@ -166,13 +165,19 @@ export function LayersMap({
       const resolved = resolvedGeometries.get(g._id);
       return resolved === undefined ? [] : [{ g, resolved }];
     }),
-    // Captured exactly once, at mount, from the rows' stored envelopes (see
-    // the doc comment) — constant for this mount, so the `Map` component's
-    // fit-bounds effect runs exactly once.
+    // Captured exactly once, at mount — but from each dataset's
+    // server-maintained `schemas.boundingBox`, NOT the served rows' per-row
+    // envelopes: the map mounts as soon as the FIRST schema's pagination
+    // completes while the rest still stream, so row-derived bounds would
+    // understate the extent and strand late-arriving features outside the
+    // viewport. The stored extents are complete the moment layers resolve,
+    // so the one fit-bounds is right from the start. Caveat (same
+    // everywhere): stored envelopes only grow (deletions never shrink
+    // them) — fine for a default viewport.
     [initialBounds] = useState(() => {
       let bbox: BoundingBox | undefined;
-      for (const geometry of geometries) {
-        bbox = unionBbox(bbox, asBoundingBox(geometry.bbox));
+      for (const dataset of datasets) {
+        bbox = unionBbox(bbox, asBoundingBox(dataset.boundingBox));
       }
       return bbox;
     }),

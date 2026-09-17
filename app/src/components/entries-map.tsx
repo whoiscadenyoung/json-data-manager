@@ -281,7 +281,7 @@ export function EntriesMap({
         )}
       </Map>
       {!ready && (
-        <div className="absolute bottom-3 left-3 z-10 flex items-center gap-2 rounded-full border border-border bg-card/95 px-3 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur-sm">
+        <div className="absolute top-3 right-3 z-10 flex items-center gap-2 rounded-full border border-border bg-card/95 px-3 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur-sm">
           <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
           Loading features…
         </div>

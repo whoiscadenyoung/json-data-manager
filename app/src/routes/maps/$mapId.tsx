@@ -1,8 +1,8 @@
 import { ConfirmDialog } from "@caden/json-cms/react/ui";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
-import { Layers as LayersIcon, MapIcon, Pencil, Plus, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Layers as LayersIcon, Loader2, MapIcon, Pencil, Plus, Trash2 } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 
 import { LayersMap } from "#/components/layers-map";
@@ -50,21 +50,6 @@ export const Route = createFileRoute("/maps/$mapId")({
  */
 function toastError(error: unknown, fallback: string) {
   toast.error(error instanceof Error ? error.message : fallback);
-}
-
-/**
- * Reports `complete` to the parent once via callback — the same
- * child-component pattern as SchemaGeometriesLoader, whose effect-callback
- * call doesn't trip the React Compiler's setState-in-effect rule (a direct
- * setState inside this page's own effect would).
- */
-function CompletionLatch({ complete, onComplete }: { complete: boolean; onComplete: () => void }) {
-  useEffect(() => {
-    if (complete) {
-      onComplete();
-    }
-  }, [complete, onComplete]);
-  return null;
 }
 
 /**
@@ -177,14 +162,14 @@ function MapDetailPage() {
       schemaIds.length > 0 ? { schemaIds } : "skip",
     ),
     entries = schemaIds.length === 0 ? [] : entriesQuery,
-    // The map mounts on the first fully-complete load, then — via
-    // `servedGeometries`, which keeps serving loaded schemas while a newly
-    // added one streams in — stays mounted across layer adds/removes and
-    // visibility toggles. Latched once, exactly like the dataset map's
-    // "never re-skeleton a map the user is looking at" behavior (229150b),
-    // so the loading gate never unmounts the Map instance and the camera
-    // the frozen bounds protect survives.
-    [hasLoadedOnce, setHasLoadedOnce] = useState(false),
+    // The map mounts as soon as the FIRST schema's pagination completes
+    // (`servedGeometries` carries the completed schemas' rows while the
+    // rest stream in) and then — via that same prop — stays mounted across
+    // layer adds/removes, visibility toggles, and background re-reads,
+    // exactly like the dataset map's "never re-skeleton a map the user is
+    // looking at" behavior (229150b). The loading chip stays up until EVERY
+    // layer's full pass has completed (`geometries`), which is what "still
+    // loading into the map" means here.
     geometriesComplete = geometries !== undefined;
 
   if (
@@ -224,6 +209,9 @@ function MapDetailPage() {
   const collectionById = new Map(collections.map((collection) => [collection._id, collection])),
     groupById = new Map(groups.map((group) => [group._id, group])),
     datasetById = new Map(datasets.map((dataset) => [dataset._id, dataset])),
+    // This map's datasets only — LayersMap frames its one-shot viewport from
+    // these stored extents, so unrelated app datasets must not widen it.
+    mapDatasets = datasets.filter((dataset) => schemaIds.includes(dataset._id)),
     // Cascading deletes keep layers from dangling at missing targets, but
     // read the label defensively anyway — a stale label never beats a crash.
     layerName = (layer: MapLayerDoc) => {
@@ -328,26 +316,25 @@ function MapDetailPage() {
         </Empty>
       ) : (
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-          <CompletionLatch
-            complete={geometriesComplete}
-            onComplete={() => {
-              setHasLoadedOnce(true);
-            }}
-          />
           {loaders}
           <div className="relative h-[440px] w-full overflow-hidden rounded-lg border border-border lg:h-[640px]">
-            {servedGeometries === undefined || !hasLoadedOnce ? (
-              <div className="flex h-full items-center justify-center">
-                <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-              </div>
-            ) : (
+            {servedGeometries !== undefined && (
               <LayersMap
-                datasets={datasets}
+                datasets={mapDatasets}
                 geometries={servedGeometries}
                 entries={entries ?? []}
                 visibleSchemaIds={visibleSchemaIds}
                 colorBySchema={colorBySchema}
               />
+            )}
+            {!geometriesComplete && (
+              // Same loading chip as the dataset map, anchored top-right and
+              // overlaid on the streaming map — it stays up until every
+              // layer's full pagination pass has completed.
+              <div className="absolute top-3 right-3 z-10 flex items-center gap-2 rounded-full border border-border bg-card/95 px-3 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur-sm">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                Loading features…
+              </div>
             )}
           </div>
           <MapLayerPanel

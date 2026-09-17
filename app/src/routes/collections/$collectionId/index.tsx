@@ -13,7 +13,6 @@ import type { Dataset, GroupDoc } from "#/components/dataset-list";
 import { DatasetPickerSheet } from "#/components/dataset-picker-sheet";
 import { CollectionExtentMap } from "#/components/datasets-map";
 import { GroupFormPanel } from "#/components/group-form-panel";
-import { useGeometriesBySchemas } from "#/components/schema-geometries-loader";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -147,11 +146,6 @@ function UngroupedDatasetsCard({
       </CardHeader>
       <CardContent>
         {hasContent ? (
-          <Empty className="min-h-32 border">
-            <EmptyTitle>No datasets yet</EmptyTitle>
-            <EmptyDescription>Add a dataset to this collection to get started.</EmptyDescription>
-          </Empty>
-        ) : (
           <DatasetList
             datasets={ungrouped}
             groups={groups}
@@ -159,6 +153,11 @@ function UngroupedDatasetsCard({
             onMoveToGroup={onMoveToGroup}
             onRemoveFromCollection={onRemoveFromCollection}
           />
+        ) : (
+          <Empty className="min-h-32 border">
+            <EmptyTitle>No datasets yet</EmptyTitle>
+            <EmptyDescription>Add a dataset to this collection to get started.</EmptyDescription>
+          </Empty>
         )}
       </CardContent>
     </Card>
@@ -170,35 +169,24 @@ function UngroupedDatasetsCard({
  * color-coded rectangle per geospatial dataset, fit to their combined
  * extent (see `CollectionExtentMap`). This renders no individual features —
  * each group gets its own full feature-layer page, and the dataset list
- * stays this page's focus.
+ * stays this page's focus. It reads only the datasets' server-maintained
+ * `boundingBox` extents, so it renders immediately with no geometry
+ * queries on page open.
  */
 function CollectionMapSection({ datasets }: { datasets: Dataset[] }) {
-  const geospatialSchemaIds = useMemo(
-      () =>
-        datasets.filter((dataset) => dataset.kind === "geospatial").map((dataset) => dataset._id),
-      [datasets],
-    ),
-    { geometries, loaders } = useGeometriesBySchemas(geospatialSchemaIds);
+  const geospatialDatasets = useMemo(
+    () => datasets.filter((dataset) => dataset.kind === "geospatial"),
+    [datasets],
+  );
 
-  // The loaders render regardless of loading state — they must stay mounted
-  // (they're what's actually fetching the data the spinner waits on), and
-  // one stable section branching only inside the fixed-height container
-  // keeps them mounted continuously across the loading transition.
-  if (geospatialSchemaIds.length === 0) {
+  if (geospatialDatasets.length === 0) {
     return null;
   }
 
   return (
     <section className="mb-6" aria-label="Spatial extent of the datasets in this collection">
-      {loaders}
       <div className="relative h-[320px] w-full overflow-hidden rounded-lg border border-border">
-        {geometries === undefined ? (
-          <div className="flex h-full items-center justify-center">
-            <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-          </div>
-        ) : (
-          <CollectionExtentMap datasets={datasets} geometries={geometries} />
-        )}
+        <CollectionExtentMap datasets={geospatialDatasets} />
       </div>
     </section>
   );
