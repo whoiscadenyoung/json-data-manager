@@ -9,6 +9,7 @@ import { toast } from "sonner";
 
 import { RouterButton } from "#/components/router-button";
 import { Card, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
+import { ensureMapTileArchive } from "#/lib/tile-archive";
 
 import { api } from "../../../convex/_generated/api";
 
@@ -161,9 +162,13 @@ function ImportFirst() {
     status = useQuery(api.imports.getImportStatus, importId ? { importId } : "skip"),
     importStatus = status ? status.status : undefined;
 
-  // Navigate to the new dataset once the import finishes.
+  // Navigate to the new dataset once the import finishes. The tile archive
+  // rebuild happens server-side — nothing client-side can hook the workflow —
+  // so an import success just skips the manager's debounce window; the
+  // mounted manager catches the version bumps either way.
   useEffect(() => {
     if (importStatus === "completed" && schemaId) {
+      ensureMapTileArchive(schemaId);
       toast.success("Dataset imported!");
       void navigate({ params: { schemaId }, to: "/datasets/$schemaId" });
     }

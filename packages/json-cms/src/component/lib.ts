@@ -155,7 +155,15 @@ export const getMapTileArchiveMeta = query({
     if (
       !schemaDoc ||
       schemaDoc.mapTileArchiveStorageId === undefined ||
-      schemaDoc.mapTileCacheVersion === undefined
+      schemaDoc.mapTileCacheVersion === undefined ||
+      // Part 3's amendment: `version` is the version the archive was BUILT
+      // from (`mapTileArchiveBuiltVersion`), not the live counter — every
+      // consumer (the react hook doc, issue #61's stale-on-view trigger)
+      // compares it against `schemaDoc.mapTileCacheVersion`. An archive
+      // missing the built-version field can only predate this field (dev
+      // installs from before the amendment); treat it as no archive rather
+      // than serve an unanchored staleness check.
+      schemaDoc.mapTileArchiveBuiltVersion === undefined
     ) {
       return null;
     }
@@ -172,7 +180,7 @@ export const getMapTileArchiveMeta = query({
       maxZoom: schemaDoc.mapTileArchiveMaxZoom,
       storageId: schemaDoc.mapTileArchiveStorageId,
       url,
-      version: schemaDoc.mapTileCacheVersion,
+      version: schemaDoc.mapTileArchiveBuiltVersion,
     };
   },
   returns: v.union(
@@ -196,7 +204,7 @@ export const getMapTileArchiveMeta = query({
  * self-discards, and the client's next staleness check will trigger a
  * rebuild against the newer version). On match, the superseded archive blob
  * is deleted (blobs are immutable; a new generation is a new blob) and all
- * four fields are patched atomically.
+ * five fields are patched atomically.
  *
  * Deliberately a PUBLIC component mutation, NOT exposed through `exposeApi`:
  * a component-internal function is invisible to the host app entirely (the
@@ -236,11 +244,15 @@ export const setMapTileArchive = mutation({
     if (superseded !== undefined && superseded !== args.storageId) {
       await ctx.storage.delete(superseded);
     }
-    // Patch all four fields, including the version: `expectedVersion` matched
-    // (whether as a real bump count or a legacy row's implicit 0), and
-    // writing it explicitly keeps the invariant "an installed archive always
-    // carries a version" so `getMapTileArchiveMeta` never has to guess.
+    // Patch all five fields: the three archive pointers plus
+    // `mapTileArchiveBuiltVersion` (the snapshot this archive was built
+    // from — equal to the current version here, which is what makes
+    // `getMapTileArchiveMeta`'s `version` the staleness comparison
+    // anchor), and `mapTileCacheVersion` explicitly so "an installed
+    // archive always carries a version" holds even for a legacy
+    // absent-field row.
     await ctx.db.patch(args.schemaId, {
+      mapTileArchiveBuiltVersion: args.expectedVersion,
       mapTileArchiveBytes: args.bytes,
       mapTileArchiveMaxZoom: args.maxZoom,
       mapTileArchiveStorageId: args.storageId,
@@ -2196,11 +2208,12 @@ export const deleteEntriesBySchema = mutation({
     // The whole dataset's entries/geometries are gone, so — unlike a single
     // entry delete — the exact reset (rather than only-grow) is safe here.
     // The tile archive goes with the data: its blob is deleted (nothing else
-    // references a schema's own archive) and all four cache fields reset, so
+    // references a schema's own archive) and all five cache fields reset, so
     // a fresh import starts from a clean version-0 slate.
     await ctx.db.patch(args.schemaId, {
       boundingBox: undefined,
       featureCount: schemaDoc.kind === "geospatial" ? 0 : undefined,
+      mapTileArchiveBuiltVersion: undefined,
       mapTileArchiveBytes: undefined,
       mapTileArchiveMaxZoom: undefined,
       mapTileArchiveStorageId: undefined,

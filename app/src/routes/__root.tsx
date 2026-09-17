@@ -8,6 +8,7 @@ import { Toaster } from "#/components/ui/sonner";
 import { AppConvexProvider } from "#/integrations/convex/provider";
 import { tanStackQueryDevtools } from "#/integrations/tanstack-query/devtools";
 import { TanStackQueryProvider } from "#/integrations/tanstack-query/root-provider";
+import { TileArchiveManager } from "#/lib/tile-archive";
 
 import appCss from "#/styles.css?url";
 
@@ -51,6 +52,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       <body className="font-sans antialiased wrap-anywhere selection:bg-[rgba(79,184,178,0.24)]">
         <AppConvexProvider>
           <TanStackQueryProvider>
+            <TileArchiveManager />
             <Header />
             {children}
             <Toaster />

@@ -16,6 +16,7 @@ import type * as groups from "../groups.js";
 import type * as imports from "../imports.js";
 import type * as maps from "../maps.js";
 import type * as schemas from "../schemas.js";
+import type * as tile_archives from "../tile_archives.js";
 
 import type {
   ApiFromModules,
@@ -32,6 +33,7 @@ declare const fullApi: ApiFromModules<{
   imports: typeof imports;
   maps: typeof maps;
   schemas: typeof schemas;
+  tile_archives: typeof tile_archives;
 }>;
 
 /**
