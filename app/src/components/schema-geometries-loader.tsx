@@ -1,6 +1,6 @@
 import { useAllPaginated } from "@caden/json-cms/react";
 import type { FunctionReturnType } from "convex/server";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "#convex/_generated/api";
 
@@ -11,6 +11,16 @@ export type GeometryEntry = FunctionReturnType<typeof api.geometries.list>["page
 /**
  * Loads one schema's geometries (every page — see `useAllPaginated`) and
  * reports them up via `onLoaded` whenever they change. Renders nothing.
+ *
+ * A schema counts as loaded only after a FULL pass — pagination reached
+ * `"Exhausted"`. `useAllPaginated`'s `isLoading` drops as soon as the first
+ * page lands (its accumulated results are non-empty), and reporting then
+ * would latch every consumer's completeness gate after one round trip while
+ * the remaining pages are still streaming. Latched on the first completed
+ * pass: a live re-read flips `status` back while `useAllPaginated` keeps
+ * serving the last complete snapshot, so the loader keeps reporting that
+ * snapshot instead of flickering back to `undefined` — which is what lets a
+ * mounted map stay mounted across background re-reads.
  *
  * There is no server-side "all geometries in these schemas" query: Convex
  * allows at most one `.paginate()` call per query execution, and geometries
@@ -28,10 +38,14 @@ export function SchemaGeometriesLoader({
   schemaId: string;
   onLoaded: (schemaId: string, geometries: GeometryEntry[] | undefined) => void;
 }) {
-  const { isLoading, results } = useAllPaginated(api.geometries.list, { schemaId });
+  const { results, status } = useAllPaginated(api.geometries.list, { schemaId }),
+    completedRef = useRef(false);
   useEffect(() => {
-    onLoaded(schemaId, isLoading ? undefined : results);
-  }, [schemaId, isLoading, results, onLoaded]);
+    if (status === "Exhausted") {
+      completedRef.current = true;
+    }
+    onLoaded(schemaId, completedRef.current ? results : undefined);
+  }, [schemaId, status, results, onLoaded]);
   return null;
 }
 
@@ -41,10 +55,11 @@ export function SchemaGeometriesLoader({
  *
  * Returns `loaders` (render them alongside your UI — they must stay mounted
  * even while loading, since they're what's fetching the data), `geometries`,
- * which is `undefined` until every schema's pages have fully loaded, then one
- * flat array across all schemas, and `servedGeometries`, which additionally
- * serves the already-loaded schemas' rows while a NEWLY added schema streams
- * in (only `undefined` before the first schema loads at all) — a consumer
+ * which is `undefined` until every schema's pagination has completed at
+ * least one full pass, then one flat array across all schemas, and
+ * `servedGeometries`, which additionally serves the already-completed
+ * schemas' rows while a NEWLY added schema streams in (only `undefined`
+ * before the first schema completes at all) — a consumer
  * that keeps rendering with it instead of gating on `geometries` keeps its
  * mounted state (e.g. a Map's camera) across layer changes.
  */
