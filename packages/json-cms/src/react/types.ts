@@ -43,6 +43,19 @@ export interface SchemaDoc {
   sourceFileStorageId?: string;
   sourceFileName?: string;
   sourceFileSize?: number;
+  /**
+   * Rendering-cache version — bumped on every geometry-affecting write (see
+   * the component's `bumpMapTileCacheVersion`). Absent means 0. Compare
+   * against `MapTileArchiveMeta.version` to decide whether an installed
+   * tile archive is still current.
+   */
+  mapTileCacheVersion?: number;
+  /** Pointer to the current tile archive blob, when one is installed. */
+  mapTileArchiveStorageId?: string;
+  /** The tile archive's byte length, set at install time. */
+  mapTileArchiveBytes?: number;
+  /** The tile pyramid's max zoom, set at install time. */
+  mapTileArchiveMaxZoom?: number;
 }
 
 /**
@@ -106,6 +119,28 @@ export interface GeometryDoc {
   geometryUrl?: string;
   /** This geometry's own bounding box, if computable. */
   bbox?: number[];
+}
+
+/**
+ * A dataset's tile-archive rendering cache metadata, as returned by
+ * `getMapTileArchiveMeta` (and `useMapTileArchiveMeta`). `null` means no
+ * current archive is installed (or its blob is gone) — render from the
+ * row-based geometry path. `version` is the snapshot the archive was built
+ * from; compare it against the schema's `mapTileCacheVersion` to detect
+ * staleness (a mismatch means edits landed after this archive was built —
+ * trigger a rebuild, or fall back to the row path until one lands).
+ */
+export interface MapTileArchiveMeta {
+  /** The archive blob's storage id (part 3's OPFS pin keys on it). */
+  storageId: string;
+  /** The data version the archive was built from. */
+  version: number;
+  /** The archive's byte length, as reported at install time. */
+  bytes?: number;
+  /** The tile pyramid's max zoom. */
+  maxZoom?: number;
+  /** A fetchable URL for the archive bytes (PMTiles; works with the `pmtiles` protocol handler). */
+  url: string;
 }
 
 type Empty = Record<string, never>;
@@ -210,6 +245,13 @@ export interface JsonCmsApi {
   >;
   /** URL of the original imported file, or `null` when none was retained. */
   getSourceFileUrl: FunctionReference<"query", "public", { schemaId: string }, string | null>;
+  /** The dataset's tile-archive cache metadata, or `null` when none is installed (row path only). */
+  getMapTileArchiveMeta: FunctionReference<
+    "query",
+    "public",
+    { schemaId: string },
+    MapTileArchiveMeta | null
+  >;
   /** Rounds an existing geospatial dataset's geometry payloads to 6dp via a durable workflow; poll `getImportStatus` for progress. */
   startSimplification: FunctionReference<
     "mutation",

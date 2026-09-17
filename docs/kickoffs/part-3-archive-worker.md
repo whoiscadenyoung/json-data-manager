@@ -39,6 +39,16 @@ fetching/building/uploading/installing/done/stale-discarded):
 4. Storage upload URL flow (same as the import path) → POST archive →
    `setMapTileArchive` with **`expectedVersion` = version captured BEFORE
    generation** (part 2's guard makes mid-build invalidation self-discarding).
+   **Reach it through a thin app-level public mutation** in `app/convex/`
+   (e.g. `tile_archives.ts`) whose handler does
+   `ctx.runMutation(components.jsonCms.lib.setMapTileArchive, …)`: the
+   component function is PUBLIC (part 2 amendment — a component-internal
+   function is invisible to the host app entirely; the generated
+   ComponentApi only carries public functions) but deliberately NOT
+   re-exported through `exposeApi`, so no browser client can call it. Pass
+   ids as plain strings (`v.string()` at the wrapper, like every exposeApi
+   id — the component re-validates). Verified live in part 2 with exactly
+   this wrapper shape.
 
 Manager:
 - Single-flight per schema (module-level `Map<schemaId, Promise>`), trailing
@@ -47,10 +57,14 @@ Manager:
   of `useMapTileArchiveMeta` seeing `meta.version` behind the schema's current
   `mapTileCacheVersion` schedules a rebuild; (b) import UI success →
   `ensureMapTileArchive(schemaId)` for immediacy.
-- **`handleImportComplete` (`component/lib.ts:2239`) is a SERVER-side workflow
-  callback — there is NO client completion hook.** It bumps the version
-  (part 2); stale-on-view + ensure-call give "imports rebuild exactly once,
-  never per chunk". No scheduled sweep needed (documented).
+- **`handleImportComplete` (`component/lib.ts`) is a SERVER-side workflow
+  callback — there is NO client completion hook, and it does NOT bump the
+  version itself**: the bumps land in the chunk-insert mutations themselves
+  (every geometry write goes through `applyGeometryStatsDelta`, which bumps
+  once per batch — so an N-chunk import bumps N times, all before the UI
+  can observe the import completing). Stale-on-view + ensure-call give
+  "imports rebuild exactly once, never per chunk". No scheduled sweep needed
+  (documented).
 - Below-threshold datasets: manager no-ops.
 
 ## Verification

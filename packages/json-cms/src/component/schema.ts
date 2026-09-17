@@ -106,6 +106,17 @@ export default defineSchema({
     // something to treat as exact.
     featureCount: v.optional(v.number()),
     boundingBox: v.optional(v.array(v.number())), // [minLon, minLat, maxLon, maxLat]
+    // Rendering-cache bookkeeping for the tile-archive path (#58): every
+    // geometry-affecting write bumps `mapTileCacheVersion` (see
+    // `bumpMapTileCacheVersion` in lib.ts) so a stale rebuild can detect
+    // itself, and the remaining three fields point at the current archive —
+    // set atomically by `setMapTileArchive` only when its `expectedVersion`
+    // still matches. All four are absent on datasets that never had an
+    // archive; an absent version reads as 0.
+    mapTileCacheVersion: v.optional(v.number()),
+    mapTileArchiveStorageId: v.optional(v.id("_storage")),
+    mapTileArchiveBytes: v.optional(v.number()),
+    mapTileArchiveMaxZoom: v.optional(v.number()),
     // True when this dataset normalizes geometry coordinates to
     // GEOMETRY_SIMPLIFY_DECIMAL_PLACES (6dp, ~0.11 m) on every write — set at
     // creation via the importer's "Simplify geometry" checkbox, or by

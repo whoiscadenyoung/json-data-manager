@@ -5,7 +5,7 @@ import type { GeometryArgs, GeometryTypeArg } from "../shared/geojson/validators
 import { api, internal } from "./_generated/api.js";
 import type { Id } from "./_generated/dataModel.js";
 import { INLINE_GEOMETRY_BYTE_LIMIT } from "./geometry_storage.js";
-import { GEOMETRY_PAGE_BYTE_BUDGET } from "./lib.js";
+import { GEOMETRY_PAGE_BYTE_BUDGET, MAP_TILE_ARCHIVE_MIN_BYTES } from "./lib.js";
 import { initConvexTest } from "./setup.test.js";
 
 /** Builds a synthetic closed ring with `pointCount` positions — used to exercise geometries whose coordinate array exceeds Convex's 8192-elements-per-array limit, without needing a real multi-MB fixture file. Points are spread around a small circle so they're structurally valid (finite, in-range) and distinct. */
@@ -85,6 +85,26 @@ async function storeRows(t: TestCtx, rows: unknown[]) {
   return t.run(async (ctx) =>
     ctx.storage.store(new Blob([JSON.stringify(rows)], { type: "application/json" })),
   );
+}
+
+/** Stores an archive-sized blob and installs it via `setMapTileArchive` at `expectedVersion`. */
+async function installArchive(
+  t: TestCtx,
+  schemaId: Id<"schemas">,
+  expectedVersion: number,
+  label: string,
+) {
+  const storageId = await t.run(async (ctx) =>
+    ctx.storage.store(new Blob([label], { type: "application/octet-stream" })),
+  );
+  await t.mutation(internal.lib.setMapTileArchive, {
+    bytes: label.length,
+    expectedVersion,
+    maxZoom: 12,
+    schemaId,
+    storageId,
+  });
+  return storageId;
 }
 
 async function createGeospatialSchema(
@@ -1664,6 +1684,302 @@ describe("json-cms component", () => {
 
       const stillThere = await t.run(async (ctx) => ctx.storage.get(sourceFileStorageId));
       expect(stillThere).toBeNull();
+    });
+  });
+
+  describe("map tile archive versioning", () => {
+    // Every geometry-affecting write bumps `mapTileCacheVersion` (absent
+    // reads as 0) so the rebuild worker's expectedVersion guard can detect a
+    // stale rebuild. "Geometry-affecting" = the paths that already maintain
+    // `featureCount`/`boundingBox` (via `applyGeometryStatsDelta`) plus
+    // simplify batches and `deleteEntriesBySchema` — NOT data-only property
+    // edits, which never touch stored coordinates.
+    async function versionOf(t: TestCtx, schemaId: Id<"schemas">): Promise<number | undefined> {
+      const schemaDoc = await t.query(api.lib.getSchema, { schemaId });
+      assertDefined(schemaDoc);
+      return schemaDoc.mapTileCacheVersion;
+    }
+
+    it("MAP_TILE_ARCHIVE_MIN_BYTES pins the 256 KB threshold", () => {
+      expect(MAP_TILE_ARCHIVE_MIN_BYTES).toBe(262_144);
+    });
+
+    it("bumps the version on insert -> replace -> clear -> delete, not on data-only edits", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Point"),
+        pointA = { coordinates: [0, 0], type: "Point" },
+        pointB = { coordinates: [1, 1], type: "Point" },
+        entryId = await t.mutation(api.lib.createEntry, {
+          data: { n: 1 },
+          geometry: JSON.stringify(pointA),
+          schemaId,
+        });
+
+      expect(await versionOf(t, schemaId)).toBe(1);
+
+      // A data-only edit (no `geometry` arg) never touches coordinates.
+      await t.mutation(api.lib.updateEntry, { data: { n: 2 }, entryId });
+      expect(await versionOf(t, schemaId)).toBe(1);
+
+      await t.mutation(api.lib.updateEntry, {
+        data: { n: 2 },
+        entryId,
+        geometry: JSON.stringify(pointB),
+      });
+      expect(await versionOf(t, schemaId)).toBe(2);
+
+      await t.mutation(api.lib.updateEntry, { data: { n: 2 }, entryId, geometry: null });
+      expect(await versionOf(t, schemaId)).toBe(3);
+
+      // Deleting an entry whose geometry is ALREADY gone is not
+      // geometry-affecting (nothing maintains featureCount/boundingBox) —
+      // no bump. Deleting one that still has a geometry is.
+      const secondId = await t.mutation(api.lib.createEntry, {
+        data: { n: 3 },
+        geometry: JSON.stringify(pointA),
+        schemaId,
+      });
+      expect(await versionOf(t, schemaId)).toBe(4);
+
+      await t.mutation(api.lib.deleteEntry, { entryId });
+      expect(await versionOf(t, schemaId)).toBe(4);
+
+      await t.mutation(api.lib.deleteEntry, { entryId: secondId });
+      expect(await versionOf(t, schemaId)).toBe(5);
+    });
+
+    it("a legacy row with an absent version field bumps from 0, and standard datasets stay at 0", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Point");
+      // Never written since the field existed: version is absent…
+      expect(await versionOf(t, schemaId)).toBeUndefined();
+
+      // …and the first geometry write lands at 1, not 2.
+      await t.mutation(api.lib.createEntry, {
+        data: { n: 1 },
+        geometry: JSON.stringify({ coordinates: [0, 0], type: "Point" }),
+        schemaId,
+      });
+      expect(await versionOf(t, schemaId)).toBe(1);
+
+      // A standard dataset's entries carry no geometry — no bumps, ever.
+      const standardId = await createTestSchema(t);
+      await t.mutation(api.lib.createEntry, { data: { name: "plain" }, schemaId: standardId });
+      expect(await versionOf(t, standardId)).toBeUndefined();
+    });
+
+    it("bumps once per import chunk (insertEntriesChunkInternal) and once per simplify batch", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Point"),
+        point = { coordinates: [0.5, 0.5], type: "Point" };
+
+      await t.mutation(internal.lib.insertEntriesChunkInternal, {
+        dataArray: [
+          {
+            data: { n: 1 },
+            resolvedGeometry: { geometryJson: JSON.stringify(point), type: "Point" },
+          },
+          {
+            data: { n: 2 },
+            resolvedGeometry: { geometryJson: JSON.stringify(point), type: "Point" },
+          },
+        ],
+        schemaId,
+      });
+      const afterChunkOne = await versionOf(t, schemaId);
+      expect(afterChunkOne).toBe(1);
+
+      await t.mutation(internal.lib.insertEntriesChunkInternal, {
+        dataArray: [
+          { data: { n: 3 }, resolvedGeometry: { geometryJson: JSON.stringify(point), type: "Point" } },
+        ],
+        schemaId,
+      });
+      expect(await versionOf(t, schemaId)).toBe(2);
+
+      // The simplify path rewrites geometry payloads directly (not through
+      // applyGeometryStatsDelta) — it must bump too. Driven on a FRESH
+      // dataset seeded with one noisy row, exactly as the workflow step
+      // would call it, so the batch touches exactly one row.
+      const simplifySchemaId = await createGeospatialSchema(t, "Point"),
+        noisyStorageId = await storeRows(t, [
+          {
+            data: { n: 9 },
+            geometry: { coordinates: [0.123456789012, 0.987654321098], type: "Point" },
+          },
+        ]);
+      await t.action(internal.lib.insertChunkFromStorage, {
+        schemaId: simplifySchemaId,
+        storageId: noisyStorageId,
+      });
+      expect(await versionOf(t, simplifySchemaId)).toBe(1);
+
+      const result = await t.action(internal.lib.simplifyGeometryBatchInternal, {
+        cursor: null,
+        schemaId: simplifySchemaId,
+      });
+      expect(result.simplified).toBe(1);
+      expect(await versionOf(t, simplifySchemaId)).toBe(2);
+    });
+
+    it("deleteEntriesBySchema deletes the archive blob and resets all four cache fields", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Point");
+      await t.mutation(api.lib.createEntry, {
+        data: { n: 1 },
+        geometry: JSON.stringify({ coordinates: [0, 0], type: "Point" }),
+        schemaId,
+      });
+      const archiveStorageId = await t.run(async (ctx) =>
+        ctx.storage.store(new Blob(["pmtiles"], { type: "application/octet-stream" })),
+      );
+      await t.mutation(internal.lib.setMapTileArchive, {
+        bytes: 7,
+        expectedVersion: 1,
+        maxZoom: 14,
+        schemaId,
+        storageId: archiveStorageId,
+      });
+      assertDefined(await t.query(api.lib.getMapTileArchiveMeta, { schemaId }));
+
+      await t.mutation(api.lib.deleteEntriesBySchema, { schemaId });
+
+      const schemaDoc = await t.query(api.lib.getSchema, { schemaId });
+      assertDefined(schemaDoc);
+      expect(schemaDoc.mapTileArchiveStorageId).toBeUndefined();
+      expect(schemaDoc.mapTileArchiveBytes).toBeUndefined();
+      expect(schemaDoc.mapTileArchiveMaxZoom).toBeUndefined();
+      expect(schemaDoc.mapTileCacheVersion).toBeUndefined();
+      expect(await t.query(api.lib.getMapTileArchiveMeta, { schemaId })).toBeNull();
+      const stillThere = await t.run(async (ctx) => ctx.storage.get(archiveStorageId));
+      expect(stillThere).toBeNull();
+    });
+
+    it("deleteSchema also deletes the installed archive blob", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Point"),
+        archiveStorageId = await t.run(async (ctx) =>
+          ctx.storage.store(new Blob(["pmtiles"], { type: "application/octet-stream" })),
+        );
+      await t.mutation(internal.lib.setMapTileArchive, {
+        bytes: 7,
+        expectedVersion: 0,
+        maxZoom: 14,
+        schemaId,
+        storageId: archiveStorageId,
+      });
+
+      await t.mutation(api.lib.deleteSchema, { schemaId });
+
+      const stillThere = await t.run(async (ctx) => ctx.storage.get(archiveStorageId));
+      expect(stillThere).toBeNull();
+    });
+
+    describe("setMapTileArchive", () => {
+      it("installs onto a never-written (legacy, absent-version) row at expectedVersion 0 and serves the meta shape", async () => {
+        const t = initConvexTest(),
+          schemaId = await createGeospatialSchema(t, "Point"),
+          storageId = await installArchive(t, schemaId, 0, "legacy-archive");
+
+        // Absent-version rows read as version 0, so the install matches —
+        // and writes the version explicitly, keeping "archive present ⇒
+        // version present" for the meta query.
+        const meta = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
+        assertDefined(meta);
+        expect(meta.storageId).toBe(storageId);
+        expect(meta.version).toBe(0);
+        expect(meta.bytes).toBe("legacy-archive".length);
+        expect(meta.maxZoom).toBe(12);
+        expect(meta.url).toBeTruthy();
+      });
+
+      it("re-installing at the same version deletes the superseded blob and repoints the meta", async () => {
+        const t = initConvexTest(),
+          schemaId = await createGeospatialSchema(t, "Point"),
+          firstId = await installArchive(t, schemaId, 0, "first-archive"),
+          secondId = await installArchive(t, schemaId, 0, "second-archive");
+
+        expect(secondId).not.toBe(firstId);
+        const replaced = await t.run(async (ctx) => ctx.storage.get(firstId));
+        expect(replaced).toBeNull();
+
+        const meta = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
+        assertDefined(meta);
+        expect(meta.storageId).toBe(secondId);
+      });
+
+      it("a stale expectedVersion discards the incoming blob and leaves the row untouched", async () => {
+        const t = initConvexTest(),
+          schemaId = await createGeospatialSchema(t, "Point");
+        await t.mutation(api.lib.createEntry, {
+          data: { n: 1 },
+          geometry: JSON.stringify({ coordinates: [0, 0], type: "Point" }),
+          schemaId,
+        });
+        const currentId = await installArchive(t, schemaId, 1, "current-archive");
+        const before = await t.query(api.lib.getSchema, { schemaId });
+        assertDefined(before);
+
+        // The rebuild started at version 1, but a second edit bumped the
+        // row to 2 while it generated — installing at 1 must self-discard.
+        await t.mutation(api.lib.createEntry, {
+          data: { n: 2 },
+          geometry: JSON.stringify({ coordinates: [1, 1], type: "Point" }),
+          schemaId,
+        });
+        const staleId = await installArchive(t, schemaId, 1, "stale-archive");
+
+        const discarded = await t.run(async (ctx) => ctx.storage.get(staleId));
+        expect(discarded).toBeNull();
+        const after = await t.query(api.lib.getSchema, { schemaId });
+        assertDefined(after);
+        expect(after.mapTileArchiveStorageId).toBe(currentId);
+        expect(after.mapTileCacheVersion).toBe(2);
+        expect(after.mapTileArchiveBytes).toBe(before.mapTileArchiveBytes);
+
+        const meta = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
+        assertDefined(meta);
+        expect(meta.storageId).toBe(currentId);
+        expect(meta.version).toBe(2);
+      });
+
+      it("discards the incoming blob when the schema row itself is gone", async () => {
+        const t = initConvexTest(),
+          schemaId = await createTestSchema(t),
+          storageId = await t.run(async (ctx) =>
+            ctx.storage.store(new Blob(["orphan"], { type: "application/octet-stream" })),
+          );
+        await t.mutation(api.lib.deleteSchema, { schemaId });
+
+        await t.mutation(internal.lib.setMapTileArchive, {
+          bytes: 6,
+          expectedVersion: 0,
+          maxZoom: 12,
+          schemaId,
+          storageId,
+        });
+
+        const stillThere = await t.run(async (ctx) => ctx.storage.get(storageId));
+        expect(stillThere).toBeNull();
+      });
+
+      it("a dataset with no archive (and its untouched legacy rows) reads as null meta", async () => {
+        const t = initConvexTest(),
+          legacyId = await createGeospatialSchema(t, "Point");
+        // Write some geometry so the row is not brand new, but never install
+        // an archive — absent fields must read as "row path only".
+        await t.mutation(api.lib.createEntry, {
+          data: { n: 1 },
+          geometry: JSON.stringify({ coordinates: [0, 0], type: "Point" }),
+          schemaId: legacyId,
+        });
+
+        expect(await t.query(api.lib.getMapTileArchiveMeta, { schemaId: legacyId })).toBeNull();
+
+        const missingId = await createTestSchema(t);
+        await t.mutation(api.lib.deleteSchema, { schemaId: missingId });
+        expect(await t.query(api.lib.getMapTileArchiveMeta, { schemaId: missingId })).toBeNull();
+      });
     });
   });
 });
