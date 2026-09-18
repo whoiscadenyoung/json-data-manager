@@ -1,7 +1,9 @@
 import type { Geometry as GeometryShape } from "@caden/json-cms/react";
 import { useAllPaginated, useResolvedGeometries } from "@caden/json-cms/react";
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "convex/react";
+import { convexQuery } from "@convex-dev/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { useQuery as useConvexQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";import {
   CheckCircle,
   ChevronDown,
@@ -224,8 +226,10 @@ function EntryPanelHost({
   const entry = resolveEntryForPanel(entries, search),
     isOpen = search.panel === "create" || entry !== undefined,
     // The on-demand single-entry read, only while the panel targets an entry
-    // AND the dataset's rows aren't in hand (the tile path).
-    fetchedRow = useQuery(
+    // AND the dataset's rows aren't in hand (the tile path). Deliberately on
+    // the plain Convex subscription path, not the TanStack cache — geometry
+    // payloads never enter the persisted-state system (part 5's invariant).
+    fetchedRow = useConvexQuery(
       api.geometries.getEntryGeometry,
       isOpen && entry !== undefined && geometries === undefined
         ? { entryId: entry._id }
@@ -295,8 +299,11 @@ function SchemaDetailPage() {
   const { schemaId } = Route.useParams(),
     search = Route.useSearch(),
     navigate = Route.useNavigate(),
-    schema = useQuery(api.schemas.get, { schemaId }),
-    entries = useQuery(api.entries.list, { schemaId }),
+    // Light queries through the TanStack bridge (issue #58 part 5): the
+    // dataset's schema and entries table render from the persisted cache on a
+    // cold start; the live WebSocket subscription updates the same entries.
+    schema = useQuery({ ...convexQuery(api.schemas.get, { schemaId }) }).data,
+    entries = useQuery({ ...convexQuery(api.entries.list, { schemaId }) }).data,
     // Layer-source decision (issue #58 part 4): fresh tile archive → the map
     // renders from vector tiles and geometry rows are never fetched;
     // otherwise the row path applies exactly as before.
@@ -309,9 +316,15 @@ function SchemaDetailPage() {
     // (also skips while `schema` itself is still loading, and yields null for
     // a dangling groupId whose group was deleted).
     group = useQuery(
-      api.groups.get,
-      schema?.groupId !== undefined ? { groupId: schema.groupId } : "skip",
-    ),
+      {
+        ...convexQuery(
+          api.groups.get,
+          schema !== null && schema !== undefined && schema.groupId !== undefined
+            ? { groupId: schema.groupId }
+            : "skip",
+        ),
+      },
+    ).data,
     [makeGeospatialOpen, setMakeGeospatialOpen] = useState(false),
     [exportOpen, setExportOpen] = useState(false),
     [simplifyOpen, setSimplifyOpen] = useState(false),
@@ -348,12 +361,14 @@ function SchemaDetailPage() {
     isGeospatialDataset = schema !== undefined && schema !== null && schema.kind === "geospatial",
     // The retained original import file — menu action hidden until the
     // dataset actually has one.
-    sourceFileUrl = useQuery(
-      api.schemas.getSourceFileUrl,
-      schema !== undefined && schema !== null && schema.sourceFileStorageId !== undefined
-        ? { schemaId }
-        : "skip",
-    ),
+    sourceFileUrl = useQuery({
+      ...convexQuery(
+        api.schemas.getSourceFileUrl,
+        schema !== undefined && schema !== null && schema.sourceFileStorageId !== undefined
+          ? { schemaId }
+          : "skip",
+      ),
+    }).data,
     downloadSourceFile = async () => {
       if (!sourceFileUrl || !schema) {
         return;

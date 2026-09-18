@@ -1,5 +1,6 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "convex/react";
+import { convexQuery } from "@convex-dev/react-query";
+import { useQuery } from "@tanstack/react-query";
 import type { FunctionReturnType } from "convex/server";
 import {
   Calendar,
@@ -320,10 +321,21 @@ function filterBrowserItems(
   return sortItems(items, sort);
 }
 
+/**
+ * The browser's three light queries, through the TanStack bridge (issue #58
+ * part 5): they render from the persisted cache on a cold start and stay live
+ * via WebSocket updates pushed into the same cache entries.
+ */
+function useBrowserLightQueries() {
+  return {
+    collections: useQuery({ ...convexQuery(api.collections.list) }).data,
+    datasets: useQuery({ ...convexQuery(api.schemas.list) }).data,
+    groups: useQuery({ ...convexQuery(api.groups.list, {}) }).data,
+  };
+}
+
 function DatasetsPage() {
-  const datasets = useQuery(api.schemas.list),
-    groups = useQuery(api.groups.list, {}),
-    collections = useQuery(api.collections.list),
+  const { datasets, groups, collections } = useBrowserLightQueries(),
     [search, setSearch] = useState(""),
     [sort, setSort] = useState<SortOption>("newest"),
     [typeFilter, setTypeFilter] = useState<TypeFilter>("all"),

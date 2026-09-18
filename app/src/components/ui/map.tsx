@@ -6,7 +6,6 @@ import { X, Minus, Plus, Locate, Maximize, Loader2 } from "lucide-react";
 import "maplibre-gl/dist/maplibre-gl.css";
 import * as MapLibreGL from "maplibre-gl";
 import type { PopupOptions, MarkerOptions } from "maplibre-gl";
-import { Protocol as PmtilesProtocol } from "pmtiles";
 import {
   createContext,
   forwardRef,
@@ -23,6 +22,7 @@ import {
 import { createPortal } from "react-dom";
 
 import { cn } from "#/lib/utils.ts";
+import { pmtilesProtocol } from "#/lib/pmtiles-protocol.ts";
 
 if (typeof window !== "undefined" && !MapLibreGL.getWorkerUrl()) {
   MapLibreGL.setWorkerUrl(
@@ -35,8 +35,9 @@ if (typeof window !== "undefined" && !MapLibreGL.getWorkerUrl()) {
 // through a registered protocol handler — the reference `pmtiles` reader (the
 // writer is ours; its roundtrip tests pin the two sides together). One module
 // instance serves every map on the page; the handler's internal caches are
-// keyed by archive URL and are shared across maps for free.
-const pmtilesProtocol = new PmtilesProtocol();
+// keyed by archive URL and are shared across maps for free. The instance is
+// created in `#/lib/pmtiles-protocol.ts` so the OPFS pin (part 5) can
+// pre-register locally-served archives on the same handler.
 
 // MapLibre keeps protocols in a module-level map and `addProtocol` overwrites,
 // so re-registration (e.g. an HMR re-evaluation of this module) is idempotent
