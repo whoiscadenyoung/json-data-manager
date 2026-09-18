@@ -68,15 +68,24 @@ toggles); #63 completes the cache layers (repeat opens = zero bytes).
   123/1531/1584/1585 predate this fix). Lesson: a part that amends a
   function's internal/public visibility must re-grep its own test file, and
   "tsc clean" claims must name WHICH package they cover.
-- **Cloud range-request parity still unverified** — #58's risk list asked for one
-  `curl -H "Range: bytes=0-100"` probe against a CLOUD storage URL during
-  implementation; part 4 verified range requests on the local dev backend only.
-  Only matters when the app runs against a cloud Convex deployment.
-- **Transient worker error, unroot-caused:** part-5 live verification observed
-  one worker failure during "fetching" (a directly spawned worker built fine);
-  never reproduced or diagnosed.
-- **Multi-tab convergence is pinned by prune-rule unit tests only** — never
-  driven live with two tabs.
+- **Issue consolidation (2026-09-18):** #55 closed as a duplicate of #54 (same
+  audit items filed twice); #54's body refreshed with current line refs
+  (entries.list now `index.tsx:306` via convexQuery, fan-outs at component
+  `lib.ts:1493/1527/1555`) + PR #69 credited with the worker half of the CDN
+  item + the persister light-namespace constraint on the table-pagination fix.
+  The verification-debt trio below is now tracked as **issue #71** (was
+  memory-only). #54's remaining scope: entries-table server pagination,
+  basemap style JSON off cartocdn, collection N+1, two unbounded fan-outs.
+- **Cloud range-request parity still unverified (tracked in #71)** — #58's risk
+  list asked for one `curl -H "Range: bytes=0-100"` probe against a CLOUD
+  storage URL during implementation; part 4 verified range requests on the
+  local dev backend only. Only matters when the app runs against a cloud
+  Convex deployment.
+- **Transient worker error, unroot-caused (tracked in #71):** part-5 live
+  verification observed one worker failure during "fetching" (a directly
+  spawned worker built fine); never reproduced or diagnosed.
+- **Multi-tab convergence is pinned by prune-rule unit tests only (tracked in
+  #71)** — never driven live with two tabs.
 - **Accepted costs, by design (documented so nobody re-litigates):** every
   geometry edit flips the dataset to the row path until the rebuild converges
   (~60 MB FY22 row pass; rebuild ≈4–5 min for 450 features z0–14); the real FY22
