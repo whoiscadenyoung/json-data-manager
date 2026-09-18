@@ -68,6 +68,25 @@ USER TODO: run `bunx convex dev` interactively in app/ (re-login if prompted)
 to restore the normal dev loop. Agent-started backend processes are lossy —
 writes right before a kill can vanish.
 
+**RESOLVED same evening — switched to the cloud dev deployment.** App now runs
+against `dev/caden-young` (project json-data-manager, team caden-young,
+deployment woozy-husky-92). Mechanics that matter:
+- `--deployment`/`deployment select` cannot be combined with CONVEX_DEPLOY_KEY;
+  the working pattern is `CONVEX_DEPLOYMENT=dev:caden-young bunx convex dev
+  --start 'vite dev'` with CONVEX_DEPLOY_KEY in app/.env (user-managed, do not
+  read). convex dev then re-provisioned app/.env.local with the cloud
+  VITE_CONVEX_URL/SITE_URL itself.
+- Old .env.local (local deployment) preserved at
+  `app/.env.local.local-backup`; local backend data exported (with file
+  storage) to `exports/local-dev-20260918` (568 MB zip) and imported into the
+  cloud with `CONVEX_DEPLOYMENT=dev:caden-young bunx convex import
+  --replace-all --format zip <path>` (1756 docs + 13 storage files).
+- CLI commands against the deployment: prefix
+  `CONVEX_DEPLOYMENT=dev:caden-young` (deploy key auto-loads from .env).
+- The vite/convex-dev nohup processes started by agents may still be reaped
+  between turns — if the app stops loading data, rerun the convex dev command
+  above (ideally from the user's own terminal).
+
 **Dashboard CRUD shipped** (second iteration, same day): `/dashboard` route +
 `app/src/components/dashboard/*` panels do CRUD over the three source tables;
 `app/convex/dashboard.ts` holds the mutations. Every source write stamps
