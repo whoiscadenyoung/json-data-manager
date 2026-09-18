@@ -144,6 +144,19 @@ cache, HTTP cache + MapLibre cache + OPFS pin + persisted light state. #63,
   basemap + 450 features in seconds, chip resolves. Diagnostic techniques
   that cracked it: bare-maplibre control with event log, in-page
   fetch/XHR patch + console capture around `new Map`, rAF frame counter.
+- **PHANTOM DOTS ON POLYGON DATASETS (2026-09-18, PR #70):** MapLibre's
+  `circle` layer draws a marker for EVERY feature shape — for polygons, one
+  dot at each feature's anchor — so tile-path polygon datasets rendered one
+  phantom point per feature, reading as data that doesn't exist (SS4A
+  collection: 450+37 features, ALL Polygon/MultiPolygon; verified by paging
+  every geometry row AND by decoding installed archive tiles — zero points).
+  `queryRenderedFeatures` under the dots identified the layer: all from
+  `vector-circle-layer-tiles-*` with `geo:Polygon` features. Fixed with
+  `filter: ["==", ["geometry-type"], "Point"]` on MapVectorTiles' circle
+  layer. Debugging technique that worked: deep React-fiber walk UP the
+  return chain (scan memoizedState hook chains for an object with
+  `getStyle` + `queryRenderedFeatures`) to reach the live Map instance, then
+  enumerate layers/sources + queryRenderedFeatures at the artifact's pixels.
 - 30/30 app tests, `tsc --noEmit` clean, zero new lint errors (repo baseline
   untouched). PR #68 → `Closes #63`; #58 + #51 closed with a completion
   comment.
