@@ -9,6 +9,7 @@
  */
 
 import type * as auth from "../auth.js";
+import type * as bindings from "../bindings.js";
 import type * as collections from "../collections.js";
 import type * as entries from "../entries.js";
 import type * as geometries from "../geometries.js";
@@ -16,6 +17,7 @@ import type * as groups from "../groups.js";
 import type * as imports from "../imports.js";
 import type * as maps from "../maps.js";
 import type * as schemas from "../schemas.js";
+import type * as seed from "../seed.js";
 import type * as tile_archives from "../tile_archives.js";
 
 import type {
@@ -26,6 +28,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
+  bindings: typeof bindings;
   collections: typeof collections;
   entries: typeof entries;
   geometries: typeof geometries;
@@ -33,6 +36,7 @@ declare const fullApi: ApiFromModules<{
   imports: typeof imports;
   maps: typeof maps;
   schemas: typeof schemas;
+  seed: typeof seed;
   tile_archives: typeof tile_archives;
 }>;
 
