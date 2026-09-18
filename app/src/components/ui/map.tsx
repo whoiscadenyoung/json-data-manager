@@ -1445,14 +1445,25 @@ function MapVectorTiles<P extends TileFeatureProperties = TileFeatureProperties>
     const source = map.getSource(sourceId);
     if (!source) return;
 
-    const layers = [
-      { id: fillLayerId, type: "fill" as const, show: showFill, paint: mergedFillPaint },
-      { id: lineLayerId, type: "line" as const, show: showLine, paint: mergedLinePaint },
+    const layers: Array<{
+      id: string;
+      type: "fill" | "line" | "circle";
+      show: boolean;
+      paint: Record<string, unknown>;
+      filter?: MapLibreGL.FilterSpecification;
+    }> = [
+      { id: fillLayerId, type: "fill", show: showFill, paint: mergedFillPaint },
+      { id: lineLayerId, type: "line", show: showLine, paint: mergedLinePaint },
       {
         id: circleLayerId,
-        type: "circle" as const,
+        type: "circle",
         show: true,
         paint: mergedCirclePaint,
+        // MapLibre's `circle` layer draws a marker for EVERY feature shape —
+        // including polygons (one dot at each feature's anchor) — which read
+        // as phantom data points on polygon datasets. Circles are for actual
+        // point geometries only.
+        filter: ["==", ["geometry-type"], "Point"],
       },
     ];
 
@@ -1465,6 +1476,7 @@ function MapVectorTiles<P extends TileFeatureProperties = TileFeatureProperties>
             source: sourceId,
             "source-layer": addTimeRef.current.sourceLayer,
             paint: layer.paint,
+            ...(layer.filter !== undefined ? { filter: layer.filter } : {}),
           } as MapLibreGL.LayerSpecification,
           beforeId,
         );
