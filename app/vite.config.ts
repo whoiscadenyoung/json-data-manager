@@ -8,6 +8,9 @@ import { defineConfig } from "vite";
 const config = defineConfig({
   plugins: [devtools(), tailwindcss(), tanstackStart(), nitro({ preset: "bun" }), viteReact()],
   resolve: { tsconfigPaths: true },
+  // Module workers (maplibre's, `tile-archive.worker.ts`) must build as ES —
+  // the default iife wrap breaks `new Worker(url, { type: "module" })`.
+  worker: { format: "es" },
 });
 
 export default config;

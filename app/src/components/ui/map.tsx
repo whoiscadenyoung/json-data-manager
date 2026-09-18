@@ -23,11 +23,44 @@ import { createPortal } from "react-dom";
 
 import { cn } from "#/lib/utils.ts";
 import { pmtilesProtocol } from "#/lib/pmtiles-protocol.ts";
+import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 
+// Same-origin module worker, bundled by vite (`?worker&url`). The previous
+// unpkg CDN URL made maps die silently: cross-origin Worker construction is
+// blocked by the platform, and MapLibre's blob-wrapper fallback fails without
+// surfacing an error — the map never fires `load`/`error`/`idle` at all.
 if (typeof window !== "undefined" && !MapLibreGL.getWorkerUrl()) {
-  MapLibreGL.setWorkerUrl(
-    `https://unpkg.com/maplibre-gl@${MapLibreGL.getVersion()}/dist/maplibre-gl-worker.mjs`,
-  );
+  MapLibreGL.setWorkerUrl(maplibreWorkerUrl);
+}
+
+// MapLibre's render loop is requestAnimationFrame-driven. Some embedded or
+// occluded browsing contexts pause rAF indefinitely while the page still
+// reports visible (observed in ZCode's in-app browser: 0 frames in 2s), which
+// leaves every map permanently blank — no `load`, no `idle`, no error. Probe
+// once at startup: if rAF doesn't tick, swap in a timer-based replacement so
+// maps render there too. Healthy browsers never trigger the swap.
+if (typeof window !== "undefined") {
+  let rafTicked = false;
+  window.requestAnimationFrame(() => {
+    rafTicked = true;
+  });
+  setTimeout(() => {
+    if (rafTicked) return;
+    const originalCancel = window.cancelAnimationFrame.bind(window);
+    const scheduled = new Set<number>();
+    window.requestAnimationFrame = (callback: FrameRequestCallback): number => {
+      const id = setTimeout(() => {
+        scheduled.delete(id);
+        callback(performance.now());
+      }, 16) as unknown as number;
+      scheduled.add(id);
+      return id;
+    };
+    window.cancelAnimationFrame = (handle: number): void => {
+      if (scheduled.delete(handle)) clearTimeout(handle);
+      else originalCancel(handle);
+    };
+  }, 300);
 }
 
 // The tile archives this app builds (`@caden/geometry-archive`, issue #58) are
