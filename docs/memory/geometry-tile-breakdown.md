@@ -56,6 +56,58 @@ behavior change; #61 makes archives self-maintaining; #62 is the visible
 payoff measured on FY22 (≤5% of 46.55 MB, no main-thread parse, instant
 toggles); #63 completes the cache layers (repeat opens = zero bytes).
 
+## #62 part-4 status (2026-09-17, PR #67 merged to `main`)
+
+Tile rendering shipped: `pmtiles` Protocol registered once in `map.tsx`
+(SSR-guarded; maplibre-gl has no `getProtocol` — overwrite is idempotent),
+`MapVectorTiles` (vector source, `promoteId: "entryId"`, fill/line/circle
+layers mirroring row-path styling, per-source `once("idle")` latch, visibility
+toggles that keep tile caches warm, hot-swap = remove/re-add source keyed on
+`url` — the layer-sync effect must also depend on `url` or layers vanish
+after a swap), and `app/src/lib/layer-source.ts` (fresh-archive selection +
+`tile_archives.metas` fan-out query + `splitSchemaIdsByDecision`). Consumers:
+EntriesMap (`source` prop, three-state decision), LayersMap, GroupMap —
+mixed tile+row rendering everywhere; collection extent maps stay bbox-only.
+Exports/edit-prefill materialize rows on demand (`geometry-rows.ts`) so the
+tile path keeps no standing row subscription. **Live-verified on FY22
+(450 features)**: map open = ~96 range requests / **1.49 MB = 3.2%** of the
+46.55 MB row path (target ≤5%); zero row fetches for rendering; click→entry
+details works from tiles; SMART (13 KB) unchanged; layer toggles + the full
+edit→rebuild→hot-swap cycle keep the map container AND canvas identity
+(DOM-sentinel verified). 186 component + 14 app tests green, tsc clean, lint
+finding SET identical to baseline (EntriesMap 18→13, Map/Group pages −1 —
+extract into module helpers, never optional chaining).
+
+- **Stale fallback is the row path (kickoff-mandated):** every edit flips
+  tiles→rows until the rebuild converges — an FY22 edit costs one full row
+  pass (~60 MB) — identical to the pre-tile status quo on edits; the win is
+  opens/pan/zoom. Consequence fixed en route: the row path's "No geometry
+  yet" gate must require a COMPLETED pass (`hasRenderedOnce || rowReady`),
+  else the fresh fan-out flashes empty and remounts the map on the fallback.
+- **Chip semantics:** tile completeness = fresh archive ∧ map `idle` after
+  source add, latched per mount. An external-basemap stall (CARTO flakes in
+  this sandbox) legitimately holds the chip forever — `idle` can't fire while
+  the style hangs; pre-existing, reload recovers. Don't misread that as a
+  tile-path bug.
+- **Measured archive size surprise:** the real FY22 archive is ~22.6 MB
+  (maxZoom 14), ~37–49% of payload text — far above part 1's 10% fixture
+  ratio (polygons duplicate clipped geometry across the z0–14 stack; the
+  fixture was line-heavy). Open cost stays tiny (viewport-bounded reads).
+  Part 5's 256 MB LRU is fine; calibrate on ~22 MB per large dataset.
+- **Verification gotchas (new):** the vite client-console bridge DROPS lines
+  under load — wrap `window.Worker` in-page (before hydration) to tap the
+  worker's real messages; `MapVectorTiles` mounts only post-decision, so
+  React-fiber walks over `.maplibregl-map` give ground truth on which path
+  renders (look for `MapVectorTiles` vs `RowPathFeatureLayers`/`MapClusterLayer`);
+  MapLibre fetches tiles inside its worker — `performance.getEntriesByType`
+  sees ZERO archive requests; measure bytes by replaying the pmtiles read
+  sequence with a counting `Source` instead. Sandbox background processes
+  get SIGTERM'd between turns (dev stack died 3× mid-verification — restart
+  json-cms backend :3216 before app dev; convex CLI only from `app/`).
+- **Next: part 5 (#63)** — kickoff `docs/kickoffs/part-5-opfs-and-persister.md`
+  amended with the full part-4 surface. **STOP after part 4; #63 is the next
+  session's chunk.**
+
 ## #61 part-3 status (2026-09-17, PR merged to `main`)
 
 Client rebuild machinery shipped: `app/src/lib/tile-archive.worker.ts` +
