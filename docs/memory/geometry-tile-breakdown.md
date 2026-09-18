@@ -56,6 +56,81 @@ behavior change; #61 makes archives self-maintaining; #62 is the visible
 payoff measured on FY22 (≤5% of 46.55 MB, no main-thread parse, instant
 toggles); #63 completes the cache layers (repeat opens = zero bytes).
 
+## #63 part-5 status (2026-09-18, PR #68 merged to `main`) — ALL FIVE PARTS DONE
+
+#58 architecture complete: rows authoritative, tile archives as rendering
+cache, HTTP cache + MapLibre cache + OPFS pin + persisted light state. #63,
+#58, and #51 (fallback) closed.
+
+- **OPFS pin (`app/src/lib/tile-archive-cache.ts`):** root-mounted
+  `<TileArchiveCacheManager />` observes `tile_archives.metas` for all
+  geospatial datasets → backfills each installed archive ONCE into
+  `tile-archives/{schemaId}/{version}.pmtiles`, prunes superseded versions
+  only after the replacement is local (a rebuild never blinds a live map),
+  prunes immediately when the meta goes null, discards in-flight backfills
+  for pruned schemas via a per-schema generation counter, enforces a 256 MB
+  LRU (unit-tested), `navigator.storage.persist()` granted. Read seam: the
+  pmtiles `Protocol` checks pre-added instances by `source.getKey()` before
+  creating an implicit `FetchSource` — so the protocol instance moved to
+  `app/src/lib/pmtiles-protocol.ts` and the pin calls `protocol.add(new
+  PMTiles(OpfsBackfillSource))` keyed by the bare storage URL; the
+  `pmtiles://` tile URL string is UNCHANGED from part 4 (zero consumer
+  changes). `asyncThrottle`-free, storage access via async OPFS API.
+- **Persister:** the app's data was ALL `convex/react` WebSocket hooks — the
+  TanStack cache was EMPTY, so the persister had nothing to save. Connected
+  the never-connected `@convex-dev/react-query` bridge (hashFn/queryFn
+  defaults + `connect`) and migrated only the light queries on the two table
+  surfaces (datasets browser: schemas/groups/collections; dataset page:
+  schemas.get/entries.list) to `convexQuery()`. `PersistQueryClientProvider`
+  + `createAsyncStoragePersister` + idb-keyval; buster = new trivial
+  `schemas:maxTileCacheVersion` (server-side fold over the component list);
+  light-namespace allowlist in `light-namespaces.ts` (default-deny — keeps
+  `geometries:*` out of persisted state by construction); maxAge 7d, gcTime
+  maxAge+1d; `onSuccess` fires an initial save. `convexQuery` keys are
+  JSON-safe BY DESIGN (function NAME string, not the opaque ref — "Make
+  query key serializable") — that is what makes persist/restore round-trip:
+  `hydrate` rebuilds with the persisted hash, the integration's cache
+  `"added"` listener re-subscribes (getFunctionName passes strings through),
+  pushes land via setQueryData into the restored entry.
+- **Persister gotchas that cost real debugging:** (1) a bare
+  `convexQueryClient.connect()` throws "already subscribed" after an HMR
+  module re-eval — and since the `context` memo is set after connect, EVERY
+  SSR request 500s until fixed; connect must be idempotent (detect
+  same-client via the `queryClient` getter). (2) v5's AsyncStorage contract
+  calls `storage.setItem(key, value)` — a one-param handler silently stores
+  the KEY as the payload, and restore then silently discards
+  (`timestamp` undefined → removeClient). (3) The provider saves only on
+  cache CHANGES — a quiet page never saves after boot → the `onSuccess`
+  initial save is required. (4) The persist provider must not mount until
+  the buster is defined — restoring against `undefined` buster discards the
+  store on every cold start.
+- **Verification technique (in-page):** vite serves HMR-touched modules under
+  `?t=` cache-busters — `import('/src/lib/x.ts')` from a probe creates a
+  DIFFERENT module instance than the app's; use the app's exact served URL.
+  The IAB `evaluate` runs in an ISOLATED world (page `window.*` markers
+  invisible; IndexedDB/OPFS shared; ~30s cap → two-phase probes that set a
+  `document.documentElement.dataset.<key>` from an injected main-world
+  `<script>`, then poll). Proved the pin by driving the app's own wired
+  instance: `protocol.tiles.get(storageUrl).getHeader()/getZxy(...)` with a
+  main-thread fetch counter — header + directory + a real z3 tile read with
+  ZERO network fetches. MapLibre's own tile fetches run in its worker — a
+  main-thread fetch patch cannot see them, and resource timing is empty in
+  the IAB.
+- **Live-verified:** edit on FY22 Action Plan (in-page ConvexHttpClient
+  `entries.update` with a nudged coordinate — data-only edits don't bump;
+  geometry edits do) → rebuild v5 installed (~4–5 min for 450 features z0–14)
+  → client backfilled `5.pmtiles` (22,678,460 B) once, pruned `4.pmtiles`,
+  re-wired the protocol; persisted payload = buster "4" + exactly
+  schemas/groups/collections list keys; one restore discard observed when the
+  payload was briefly malformed (the designed safety path). The worker
+  errored once during "fetching" (transient; a directly spawned worker built
+  fine). Multi-tab convergence pinned by prune-rule unit tests, not driven
+  live. The map canvas stalled identically on a row-path CONTROL dataset —
+  environmental, not part-5 (part 4 documented the same class).
+- 30/30 app tests, `tsc --noEmit` clean, zero new lint errors (repo baseline
+  untouched). PR #68 → `Closes #63`; #58 + #51 closed with a completion
+  comment.
+
 ## #62 part-4 status (2026-09-17, PR #67 merged to `main`)
 
 Tile rendering shipped: `pmtiles` Protocol registered once in `map.tsx`

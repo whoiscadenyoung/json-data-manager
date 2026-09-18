@@ -27,4 +27,8 @@ actual results.
 | [part-5-opfs-and-persister.md](./part-5-opfs-and-persister.md) | #63 | OPFS archive pin + TanStack Query persister (light state) |
 
 Parent: #58 (survey doc: `docs/gis-geometry-transport-survey.md`).
-Close #58 when all five land; #51 stays open as the fallback format until then.
+
+**COMPLETE 2026-09-18** — all five parts landed (PRs #64–#68, one per part);
+#58, #51, and #63 closed. What actually shipped per part lives in
+`docs/memory/geometry-tile-breakdown.md`; the per-part files above are kept as
+historical handoffs (each was amended by its successor where reality diverged).
