@@ -44,6 +44,30 @@ Gotcha: changing component function args requires `bunx convex codegen
 carry signatures) before typecheck passes; then `bun run build` for dist —
 the running app dev picked up the rebuilt dist WITHOUT a restart.
 
+**Sync state + history (shown on dataset page, same day):** `datasetActivity`
+app table (one row per sync; ops diffed by location label, capped 200 +
+truncated), `bindings.getBySchema` + `bindings.history` queries. Dataset page:
+"Out of date" badge by title + Source row ("synced X ago") when bound +
+**History tab** (`?view=history`) rendering sync diffs with field-level
+detail. Shared `app/src/lib/sync-staleness.ts` (dashboard card + dataset page).
+Gotcha: the diff must read `entry.data.label`, not `entry.label` (component
+docs wrap row data).
+
+**Environment (2026-09-18 evening):** the app dev stack (convex dev on 3212 +
+vite on 3000) died mid-session and `bunx convex dev` from app/ then failed
+with "You don't have access to the selected project" + non-interactive prompt
+— cloud-side project check rejects the stored token (packages/json-cms has a
+DIFFERENT team/project in its .env.local: caden-young/json-cms vs the app's
+caden-young-noblis-org/app). Workaround used: launch the local backend binary
+directly (instance name/secret from app/.convex/local/default/config.json)
++ a keeper loop (`/tmp/convex-keeper.sh`) that revives it every 2 min
+(something kills it repeatedly), + push code via
+`bunx convex deploy --env-file /tmp/convex-selfhost.env` (self-hosted mode
+bypasses the cloud check; env file holds CONVEX_SELF_HOSTED_URL/ADMIN_KEY).
+USER TODO: run `bunx convex dev` interactively in app/ (re-login if prompted)
+to restore the normal dev loop. Agent-started backend processes are lossy —
+writes right before a kill can vanish.
+
 **Dashboard CRUD shipped** (second iteration, same day): `/dashboard` route +
 `app/src/components/dashboard/*` panels do CRUD over the three source tables;
 `app/convex/dashboard.ts` holds the mutations. Every source write stamps

@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 
 import { components } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 
@@ -43,6 +44,90 @@ async function createBoundDataset(
   return schemaId;
 }
 
+type ProjectionRow = {
+  data: {
+    address: string;
+    city: string;
+    cuisine: string;
+    label: string;
+    lat: number;
+    lng: number;
+    restaurantName: string;
+    state: string;
+  };
+  geometry: string;
+};
+
+const ACTIVITY_OPS_LIMIT = 200;
+
+/**
+ * Diffs the previous projection against the incoming rows, keyed by the
+ * location label (the projection's stable natural key). Returns per-op
+ * records for the activity log plus add/remove/update counts — with field
+ * detail on updates so the History tab can show what changed, GitHub-style.
+ */
+function diffProjection(
+  previousData: Array<unknown>,
+  nextRows: Array<ProjectionRow>,
+): {
+  added: number;
+  ops: Array<{
+    detail?: string;
+    label: string;
+    op: "add" | "remove" | "update";
+  }>;
+  removed: number;
+  updated: number;
+} {
+  const previousByKey = new Map<string, Record<string, unknown>>();
+  for (const entry of previousData) {
+    // Component entry docs wrap the projected row in `data` — the natural
+    // key lives at `data.label`, not on the doc itself.
+    const data = (entry as { data?: unknown }).data as Record<string, unknown> | undefined;
+    if (data !== undefined && typeof data.label === "string") {
+      previousByKey.set(data.label, data);
+    }
+  }
+
+  const ops: Array<{ detail?: string; label: string; op: "add" | "remove" | "update" }> = [];
+  let added = 0,
+    removed = 0,
+    updated = 0;
+
+  const nextLabels = new Set<string>();
+  for (const row of nextRows) {
+    nextLabels.add(row.data.label);
+    const before = previousByKey.get(row.data.label);
+    if (before === undefined) {
+      added += 1;
+      ops.push({ label: row.data.label, op: "add" });
+      continue;
+    }
+    const after: Record<string, unknown> = row.data,
+      changes: string[] = [],
+      fields = new Set([...Object.keys(before), ...Object.keys(after)]);
+    for (const field of fields) {
+      const beforeValue = JSON.stringify(before[field]),
+        afterValue = JSON.stringify(after[field]);
+      if (beforeValue !== afterValue) {
+        changes.push(`${field}: ${beforeValue} → ${afterValue}`);
+      }
+    }
+    if (changes.length > 0) {
+      updated += 1;
+      ops.push({ detail: changes.join("; "), label: row.data.label, op: "update" });
+    }
+  }
+  for (const label of previousByKey.keys()) {
+    if (!nextLabels.has(label)) {
+      removed += 1;
+      ops.push({ label, op: "remove" });
+    }
+  }
+
+  return { added, ops, removed, updated };
+}
+
 const COLLECTION_NAME = "External demo";
 const COLLECTION_DESCRIPTION =
   "Datasets projected from the app's own tables — the bound-datasets PoC.";
@@ -67,6 +152,17 @@ const restaurantLocationSchema = {
   title: DATASET_TITLE,
   type: "object",
 };
+
+const bindingValidator = v.object({
+  _creationTime: v.number(),
+  _id: v.id("datasetBindings"),
+  collectionId: v.optional(v.string()),
+  lastSyncedAt: v.optional(v.number()),
+  schemaId: v.string(),
+  source: v.string(),
+  sourceUpdatedAt: v.optional(v.number()),
+  syncedEntryCount: v.optional(v.number()),
+});
 
 export const syncRestaurantLocations = mutation({
   args: {},
@@ -106,6 +202,12 @@ export const syncRestaurantLocations = mutation({
       schemaId = await createBoundDataset(ctx, collectionId);
     }
 
+    // Snapshot the previous projection before the rebuild so the diff can
+    // record what this sync changed.
+    const previousEntries = await ctx.runQuery(components.jsonCms.lib.listEntriesForSchemas, {
+      schemaIds: [schemaId],
+    });
+
     // Rebuild the projection: v1 sync is clear-then-reload (the design's
     // "simplest correct sync"; delete detection comes free at this scale).
     // `deleteEntriesBySchema` bumps the tile-cache version, so any archive
@@ -141,12 +243,14 @@ export const syncRestaurantLocations = mutation({
       }),
     );
     const entries = joined.filter((entry) => entry !== null);
+    const diff = diffProjection(previousEntries, entries);
     await ctx.runMutation(components.jsonCms.lib.createEntriesBulk, {
       entries,
       schemaId,
     });
 
     const syncedAt = Date.now();
+    let bindingId: Id<"datasetBindings">;
     if (binding) {
       await ctx.db.patch(binding._id, {
         collectionId,
@@ -154,8 +258,9 @@ export const syncRestaurantLocations = mutation({
         schemaId,
         syncedEntryCount: entries.length,
       });
+      bindingId = binding._id;
     } else {
-      await ctx.db.insert("datasetBindings", {
+      bindingId = await ctx.db.insert("datasetBindings", {
         collectionId,
         lastSyncedAt: syncedAt,
         schemaId,
@@ -163,14 +268,27 @@ export const syncRestaurantLocations = mutation({
         syncedEntryCount: entries.length,
       });
     }
+    await ctx.db.insert("datasetActivity", {
+      added: diff.added,
+      bindingId,
+      entryCount: entries.length,
+      ops: diff.ops.slice(0, ACTIVITY_OPS_LIMIT),
+      removed: diff.removed,
+      schemaId,
+      syncedAt,
+      truncated: diff.ops.length > ACTIVITY_OPS_LIMIT,
+      updated: diff.updated,
+    });
 
     return {
+      changes: { added: diff.added, removed: diff.removed, updated: diff.updated },
       collectionId,
       entries: entries.length,
       schemaId,
     };
   },
   returns: v.object({
+    changes: v.object({ added: v.number(), removed: v.number(), updated: v.number() }),
     collectionId: v.string(),
     entries: v.number(),
     schemaId: v.string(),
@@ -199,17 +317,59 @@ export const status = query({
   returns: v.union(
     v.null(),
     v.object({
-      binding: v.object({
-        _creationTime: v.number(),
-        _id: v.id("datasetBindings"),
-        collectionId: v.optional(v.string()),
-        lastSyncedAt: v.optional(v.number()),
-        schemaId: v.string(),
-        source: v.string(),
-        sourceUpdatedAt: v.optional(v.number()),
-        syncedEntryCount: v.optional(v.number()),
-      }),
+      binding: bindingValidator,
       schema: v.any(),
     }),
   ),
+});
+
+/**
+ * The binding for one projected dataset (by the json-cms schema id) — how
+ * the dataset page learns its sync state (lastSyncedAt vs sourceUpdatedAt).
+ * `null` for ordinary, non-bound datasets.
+ */
+export const getBySchema = query({
+  args: { schemaId: v.string() },
+  handler: async (ctx, args) =>
+    ctx.db
+      .query("datasetBindings")
+      .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
+      .first(),
+  returns: v.union(v.null(), bindingValidator),
+});
+
+const activityValidator = v.object({
+  _creationTime: v.number(),
+  _id: v.id("datasetActivity"),
+  added: v.number(),
+  bindingId: v.id("datasetBindings"),
+  entryCount: v.number(),
+  ops: v.array(
+    v.object({
+      detail: v.optional(v.string()),
+      label: v.string(),
+      op: v.union(v.literal("add"), v.literal("remove"), v.literal("update")),
+    }),
+  ),
+  removed: v.number(),
+  schemaId: v.string(),
+  syncedAt: v.number(),
+  truncated: v.optional(v.boolean()),
+  updated: v.number(),
+});
+
+/**
+ * The sync activity log for one bound dataset, newest first — the History
+ * tab's data. Bounded to the 50 most recent syncs; this is per-sync
+ * granularity until the design's commit-level feed lands (phase 4).
+ */
+export const history = query({
+  args: { bindingId: v.id("datasetBindings") },
+  handler: async (ctx, args) =>
+    ctx.db
+      .query("datasetActivity")
+      .withIndex("by_bindingId", (q) => q.eq("bindingId", args.bindingId))
+      .order("desc")
+      .take(50),
+  returns: v.array(activityValidator),
 });

@@ -10,6 +10,31 @@ import { v } from "convex/values";
 // expected to take. `datasetBindings` is the first cut of the design's
 // binding registry: it points a json-cms dataset at one of these sources.
 export default defineSchema({
+  // One row per sync of a bound dataset — the activity log the dataset
+  // page's History tab renders (per-sync granularity for now; the design's
+  // commit-level feed upgrades this later). `ops` summarizes what changed,
+  // keyed by the projection's natural key (location label); it is capped at
+  // 200 entries with `truncated` set on overflow so a doc can never
+  // approach the 1 MiB limit. Rows survive dataset re-creation during
+  // migration because they point at the binding, not the schema.
+  datasetActivity: defineTable({
+    added: v.number(),
+    bindingId: v.id("datasetBindings"),
+    entryCount: v.number(),
+    ops: v.array(
+      v.object({
+        detail: v.optional(v.string()),
+        label: v.string(),
+        op: v.union(v.literal("add"), v.literal("remove"), v.literal("update")),
+      }),
+    ),
+    removed: v.number(),
+    schemaId: v.string(),
+    syncedAt: v.number(),
+    truncated: v.optional(v.boolean()),
+    updated: v.number(),
+  }).index("by_bindingId", ["bindingId"]),
+
   // The binding registry — one row per json-cms dataset projected from a
   // source in this schema. `source` is a stable key for the source table
   // (today only "restaurantLocations"); `schemaId`/`collectionId` hold the

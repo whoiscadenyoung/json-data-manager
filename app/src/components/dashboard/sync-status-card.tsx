@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
+import { isSyncStale } from "#/lib/sync-staleness";
 import { api } from "#convex/_generated/api";
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -18,17 +19,7 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-type SyncClocks = { lastSyncedAt?: number; sourceUpdatedAt?: number };
-
-/** True when a source-table write landed after the last projection sync. */
-function isBindingStale(binding: SyncClocks): boolean {
-  return (
-    binding.sourceUpdatedAt !== undefined &&
-    (binding.lastSyncedAt === undefined || binding.sourceUpdatedAt > binding.lastSyncedAt)
-  );
-}
-
-function formatLastSynced(binding: SyncClocks): string {
+function formatLastSynced(binding: { lastSyncedAt?: number }): string {
   return binding.lastSyncedAt === undefined
     ? "never"
     : formatDistanceToNow(new Date(binding.lastSyncedAt), { addSuffix: true });
@@ -95,7 +86,7 @@ export function SyncStatusCard() {
   }
 
   const { binding, schema } = status,
-    isStale = isBindingStale(binding),
+    isStale = isSyncStale(binding),
     lastSynced = formatLastSynced(binding);
 
   return (

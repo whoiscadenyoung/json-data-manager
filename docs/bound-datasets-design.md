@@ -189,6 +189,18 @@ lives in the app's `auth` choke point (`app/convex/auth.ts`): entry-targeted
 writes, schema-targeted creates, and schema deletes are rejected for bound
 datasets, while metadata edits and collection/group organization stay
 allowed — the sync bypasses the gate by calling the component directly.
+**Sync state + history (shipped 2026-09-18, same phase):** the app-side
+`datasetActivity` table records one row per sync — a diff of the projection
+against its previous state (keyed by location label; per-sync granularity
+until the commit-level feed lands). `bindings.getBySchema` powers the dataset
+page's last-synced time and "Out of date" badge (title + Source row;
+`sourceUpdatedAt` vs `lastSyncedAt`, shared `isSyncStale` helper), and a
+**History** tab (`?view=history`, bound datasets only) renders the sync log
+with added/removed/updated counts and field-level before→after detail. The
+dashboard sync card uses the same signals. This tab is the seed of phase 4's
+commit log: when the foreign commit feed lands, these per-sync rows upgrade
+to per-commit rows with author/message.
+
 Remaining for full phase 1: component-level enforcement (needs real auth —
 with anonymous access, any client could claim a sync exemption), gating
 `startSimplification`/`startGeospatialConversion` (indistinguishable from

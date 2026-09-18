@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
+import { formatDistanceToNow } from "date-fns";
 import {
   Calendar,
   Database,
@@ -30,11 +31,13 @@ import {
 import { Separator } from "#/components/ui/separator";
 import { Textarea } from "#/components/ui/textarea";
 import { fieldCount } from "#/lib/json-schema";
+import { isSyncStale } from "#/lib/sync-staleness";
 import { api } from "#convex/_generated/api";
 
 type CollectionDoc = FunctionReturnType<typeof api.collections.list>[number];
 type GroupDoc = FunctionReturnType<typeof api.groups.list>[number];
 type DatasetDoc = FunctionReturnType<typeof api.schemas.list>[number];
+type BindingDoc = NonNullable<FunctionReturnType<typeof api.bindings.getBySchema>>;
 
 const NO_PARENT = "none";
 
@@ -48,8 +51,30 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
+/** The Source row for bound datasets: what it syncs from, how recently, and staleness. */
+function SourceRow({ binding, source }: { binding?: BindingDoc; source: { name: string } }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Source</dt>
+      <dd className="flex flex-wrap items-center gap-1.5 text-sm">
+        <span>
+          Synced from <span className="font-medium">{source.name}</span> — read-only
+        </span>
+        {binding !== undefined && binding.lastSyncedAt !== undefined && (
+          <span className="text-muted-foreground">
+            · synced {formatDistanceToNow(new Date(binding.lastSyncedAt), { addSuffix: true })}
+          </span>
+        )}
+        {binding !== undefined && isSyncStale(binding) && (
+          <Badge variant="destructive">Out of date</Badge>
+        )}
+      </dd>
+    </div>
+  );
+}
+
 /** The dataset's type, field count, feature count and creation date at a glance. */
-function DetailsCard({ schema }: { schema: DatasetDoc }) {
+function DetailsCard({ schema, binding }: { binding?: BindingDoc; schema: DatasetDoc }) {
   const fields = fieldCount(schema.schema);
   return (
     <Card>
@@ -96,16 +121,7 @@ function DetailsCard({ schema }: { schema: DatasetDoc }) {
               <dd className="text-sm">{schema.featureCount ?? 0} with geometry</dd>
             </div>
           )}
-          {schema.source && (
-            <div className="flex flex-col gap-1.5">
-              <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Source
-              </dt>
-              <dd className="text-sm">
-                Synced from <span className="font-medium">{schema.source.name}</span> — read-only
-              </dd>
-            </div>
-          )}
+          {schema.source && <SourceRow binding={binding} source={schema.source} />}
           <div className="flex flex-col gap-1.5">
             <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Created
@@ -680,10 +696,18 @@ function GroupSection({ schemaId, groupId }: { schemaId: string; groupId?: strin
 }
 
 /** The Overview tab's content: dataset details plus inline collection/group management. */
-export function DatasetOverview({ schema, schemaId }: { schema: DatasetDoc; schemaId: string }) {
+export function DatasetOverview({
+  binding,
+  schema,
+  schemaId,
+}: {
+  binding?: BindingDoc;
+  schema: DatasetDoc;
+  schemaId: string;
+}) {
   return (
     <div className="space-y-6">
-      <DetailsCard schema={schema} />
+      <DetailsCard binding={binding} schema={schema} />
       <CollectionsSection schemaId={schemaId} />
       <GroupSection schemaId={schemaId} groupId={schema.groupId} />
     </div>

@@ -26,6 +26,7 @@ import { toast } from "sonner";
 import { z } from "zod";
 
 import { AddToMapSheet } from "@/components/add-to-map-sheet";
+import { DatasetHistoryPanel } from "@/components/dataset-history-panel";
 import { DatasetOverview } from "@/components/dataset-overview";
 import { EntriesMap } from "@/components/entries-map";
 import { EntriesTable } from "@/components/entries-table";
@@ -37,6 +38,7 @@ import { RouterButton } from "@/components/router-button";
 import { SchemaVisualizer } from "@/components/schema-visualizer";
 import { SimplifyGeometryPanel } from "@/components/simplify-geometry-panel";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -73,6 +75,7 @@ import {
 } from "@/lib/export";
 import { fetchAllGeometryRows, resolveGeometryRows } from "@/lib/geometry-rows";
 import { layerSourceKind, useTileArchiveSource } from "@/lib/layer-source";
+import { isSyncStale } from "@/lib/sync-staleness";
 
 import { api } from "../../../../convex/_generated/api";
 
@@ -80,7 +83,7 @@ const entryPanelSearchSchema = z.object({
   entryId: z.string().optional(),
   panel: z.enum(["create", "edit"]).optional(),
   // Active tab ("overview" is the default and deliberately absent from the URL).
-  view: z.enum(["overview", "entries", "structure"]).optional(),
+  view: z.enum(["overview", "entries", "history", "structure"]).optional(),
 });
 
 export const Route = createFileRoute("/datasets/$schemaId/")({
@@ -344,13 +347,18 @@ function SchemaDetailPage() {
     // Tab switches write `?view=` so the active tab survives reloads and is
     // linkable; "overview" is the default and stays out of the URL. Panel
     // navigations above merge (not replace) so they never drop it.
-    setView = async (view: "entries" | "overview" | "structure") => {
+    setView = async (view: "entries" | "history" | "overview" | "structure") => {
       await navigate({
         search: (prev) => ({ ...prev, view: view === "overview" ? undefined : view }),
       });
     },
     handleTabChange = (value: unknown) => {
-      if (value === "entries" || value === "overview" || value === "structure") {
+      if (
+        value === "entries" ||
+        value === "history" ||
+        value === "overview" ||
+        value === "structure"
+      ) {
         void setView(value);
       }
     },
@@ -360,6 +368,11 @@ function SchemaDetailPage() {
     // its rows are owned by the source's sync flow, so the write actions are
     // hidden (and the mutations they call are rejected server-side too).
     isBoundToSource = schema !== undefined && schema !== null && schema.source !== undefined,
+    // Sync state of the bound dataset — last-synced time, staleness, and the
+    // History tab all read from the binding (undefined while loading, null
+    // for ordinary datasets).
+    binding = useQuery({ ...convexQuery(api.bindings.getBySchema, { schemaId }) }).data,
+    activeView = view === "history" && !isBoundToSource ? "overview" : view,
     // The retained original import file — menu action hidden until the
     // dataset actually has one.
     sourceFileUrl = useQuery({
@@ -505,7 +518,17 @@ function SchemaDetailPage() {
               </BreadcrumbItem>
             </BreadcrumbList>
           </Breadcrumb>
-          <h1 className="text-3xl font-bold text-primary">{schema.title}</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-3xl font-bold text-primary">{schema.title}</h1>
+            {binding !== undefined && binding !== null && isSyncStale(binding) && (
+              <Badge
+                variant="destructive"
+                title="The connected source changed after the last sync — sync from the dashboard to refresh."
+              >
+                Out of date
+              </Badge>
+            )}
+          </div>
           <p className="text-lg text-muted-foreground mt-2">{schema.description}</p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -617,15 +640,18 @@ function SchemaDetailPage() {
         </section>
       )}
 
-      <Tabs value={view} onValueChange={handleTabChange}>
+      <Tabs value={activeView} onValueChange={handleTabChange}>
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="entries">Data ({entries.length})</TabsTrigger>
+          {isBoundToSource && binding !== undefined && binding !== null && (
+            <TabsTrigger value="history">History</TabsTrigger>
+          )}
           <TabsTrigger value="structure">Structure</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6">
-          <DatasetOverview schema={schema} schemaId={schemaId} />
+          <DatasetOverview binding={binding ?? undefined} schema={schema} schemaId={schemaId} />
         </TabsContent>
 
         <TabsContent value="entries">
@@ -664,6 +690,12 @@ function SchemaDetailPage() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {isBoundToSource && binding !== undefined && binding !== null && (
+          <TabsContent value="history" className="space-y-6">
+            <DatasetHistoryPanel binding={binding} />
+          </TabsContent>
+        )}
 
         <TabsContent value="structure" className="space-y-6">
           <Card>
