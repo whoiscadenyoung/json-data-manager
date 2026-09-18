@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 
 import { components } from "./_generated/api";
-import { mutation } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 import { auth } from "./auth";
 
 /**
@@ -52,4 +52,45 @@ export const install = mutation({
       : ("discarded" as const);
   },
   returns: v.union(v.literal("installed"), v.literal("discarded")),
+});
+
+/**
+ * Tile-archive metadata for several datasets in one query, aligned with the
+ * input order (an id that appears twice is fetched once and appears twice —
+ * map the result onto the caller's list by index).
+ *
+ * One subscription for N datasets is what keeps the source-selection helper
+ * (`app/src/lib/layer-source.ts`) hook-rules-clean: React can't call
+ * `useQuery` per id inside a loop, and the component's own
+ * `getMapTileArchiveMeta` takes a single schema id (the react package's
+ * `useMapTileArchiveMeta` likewise needs the provider surface this app
+ * doesn't mount). Returns `null` per id with no current archive — the
+ * row-path decision; the caller never hits the network for a tile that
+ * isn't there.
+ */
+export const metas = query({
+  args: { schemaIds: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    await auth(ctx);
+    const unique = [...new Set(args.schemaIds)],
+      resolved = await Promise.all(
+        unique.map(async (schemaId) =>
+          ctx.runQuery(components.jsonCms.lib.getMapTileArchiveMeta, { schemaId }),
+        ),
+      ),
+      bySchemaId = new Map(unique.map((schemaId, index) => [schemaId, resolved[index]]));
+    return args.schemaIds.map((schemaId) => bySchemaId.get(schemaId) ?? null);
+  },
+  returns: v.array(
+    v.union(
+      v.null(),
+      v.object({
+        bytes: v.optional(v.number()),
+        maxZoom: v.optional(v.number()),
+        storageId: v.string(),
+        url: v.string(),
+        version: v.number(),
+      }),
+    ),
+  ),
 });

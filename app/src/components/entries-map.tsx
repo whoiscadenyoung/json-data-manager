@@ -1,9 +1,10 @@
 import { buildFeatureCollection, computeBbox, useResolvedGeometries } from "@caden/json-cms/react";
-import type { Geometry } from "@caden/json-cms/react";
+import type { BoundingBox, Geometry } from "@caden/json-cms/react";
 import { Link } from "@tanstack/react-router";
 import type { FunctionReturnType } from "convex/server";
 import { ChevronRight, Loader2, Map as MapIcon, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import type * as GeoJSON from "geojson";
 
 import { Button } from "#/components/ui/button";
 import {
@@ -13,7 +14,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "#/components/ui/empty";
-import { Map, MapClusterLayer, MapGeoJSON } from "#/components/ui/map";
+import { Map, MapClusterLayer, MapGeoJSON, MapVectorTiles } from "#/components/ui/map";
 import { Skeleton } from "#/components/ui/skeleton";
 import {
   bboxFeature,
@@ -21,6 +22,8 @@ import {
   splitPointLikeGeometries,
 } from "#/lib/point-geometry";
 import { formatPropertyValue } from "#/lib/format";
+import { layerSourceKind, layerSourceUrl } from "#/lib/layer-source";
+import type { TileSourceDecision } from "#/lib/layer-source";
 import { cn } from "#/lib/utils";
 import { api } from "#convex/_generated/api";
 
@@ -42,7 +45,7 @@ const FEATURE_FILL_PAINT = { "fill-color": "#3b82f6", "fill-opacity": 0.2 },
   /**
    * How long the skeleton holds while some rows' geometries are still
    * unresolved (external `geometryUrl` fetches in flight) before giving up on
-   * a complete first paint — see `pendingCount` in `EntriesMap`.
+   * a complete first paint — see `pendingCount` in `useEntriesRowReadiness`.
    */
   PENDING_GRACE_MS = 20_000;
 
@@ -97,6 +100,136 @@ function toFeatureRow(g: GeometryEntry, resolved: Geometry) {
 }
 
 /**
+ * The viewport bounds the dataset map opens on: the exact computed extent
+ * once the data is complete, the stored envelope before that (a partial
+ * computed extent must not drive the viewport — it would zoom in too far
+ * and keep growing, the exact jitter this design avoids). The stored extent
+ * holds until everything has landed; only then does the exact extent take
+ * over (it can differ only after deletions, which the stored envelope never
+ * shrinks for). The tile path has no computed extent of its own — the
+ * archive's extent tracks the same stored envelope, so the stored extent IS
+ * the camera.
+ */
+function resolveEntriesMapBounds(
+  ready: boolean,
+  computedBbox: BoundingBox | undefined,
+  initialBbox: [number, number, number, number] | undefined,
+): BoundingBox | undefined {
+  return ready ? (computedBbox ?? initialBbox) : (initialBbox ?? computedBbox);
+}
+
+/**
+ * The row path's per-row readiness state, extracted so `EntriesMap` itself
+ * carries only the path decision (the repo's complexity budget).
+ *
+ * Rows resolve via `useResolvedGeometries` — most synchronously from inline
+ * `geometryJson`; a row backed by external storage is absent until its
+ * `fetch` completes. Rows still absent are either fetching or failed —
+ * indistinguishable here. Hold readiness while any are pending, but only
+ * within a grace period (started once pagination itself is done, so a
+ * multi-page dataset still streaming in can't hit the cap): a row whose
+ * fetch failed never resolves, and the map must not strand on a skeleton
+ * over it.
+ */
+function useEntriesRowReadiness(geometries: GeometryEntry[], isLoading: boolean) {
+  const resolvedGeometries = useResolvedGeometries(geometries),
+    resolvableGeometries = useMemo(
+      () =>
+        geometries.flatMap((g) => {
+          const resolved = resolvedGeometries.get(g._id);
+          return resolved === undefined ? [] : [{ g, resolved }];
+        }),
+      [geometries, resolvedGeometries],
+    ),
+    pendingCount = geometries.length - resolvableGeometries.length,
+    [graceElapsed, setGraceElapsed] = useState(false),
+    // Latched the first time the row path renders with complete data. Live
+    // updates afterwards can briefly flip readiness back to unfinished while
+    // the next pass re-reads — that must not re-skeleton a map the user is
+    // already looking at.
+    [hasRenderedOnce, setHasRenderedOnce] = useState(false),
+    rowReady = !isLoading && pendingCount === 0;
+
+  useEffect(() => {
+    if (rowReady) {
+      setHasRenderedOnce(true);
+    }
+  }, [rowReady]);
+
+  useEffect(() => {
+    if (isLoading || pendingCount === 0) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      setGraceElapsed(true);
+    }, PENDING_GRACE_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [isLoading, pendingCount]);
+
+  return {
+    resolvableGeometries,
+    graceElapsed,
+    hasRenderedOnce,
+    rowReady,
+  };
+}
+
+/** The row-path feature layers (shapes via fill/line, points as circles), extracted for `EntriesMap`'s complexity budget. */
+function RowPathFeatureLayers({
+  otherCollection,
+  pointCollection,
+  onSelectEntry,
+}: {
+  otherCollection: GeoJSON.FeatureCollection<GeoJSON.Geometry, FeatureProperties>;
+  pointCollection: GeoJSON.FeatureCollection<GeoJSON.Point, FeatureProperties>;
+  onSelectEntry: (entryId: string) => void;
+}) {
+  return (
+    <>
+      {otherCollection.features.length > 0 && (
+        <MapGeoJSON
+          data={otherCollection}
+          interactive
+          fillPaint={FEATURE_FILL_PAINT}
+          linePaint={FEATURE_LINE_PAINT}
+          fillHoverPaint={FEATURE_FILL_HOVER_PAINT}
+          onClick={(e) => onSelectEntry(e.feature.properties.entryId)}
+        />
+      )}
+      {pointCollection.features.length > 0 && (
+        <MapClusterLayer<FeatureProperties>
+          data={pointCollection}
+          onPointClick={(feature) => onSelectEntry(feature.properties.entryId)}
+        />
+      )}
+    </>
+  );
+}
+
+/** The skeleton holds on the row path only — no stored extent, nothing complete rendered yet, no grace. The tile path never holds (its `idle` latch needs a mounted map). */
+function entriesSkeletonHolds(
+  tilePath: boolean,
+  hasInitialBbox: boolean,
+  hasRenderedOnce: boolean,
+  ready: boolean,
+  graceElapsed: boolean,
+): boolean {
+  return !tilePath && !hasInitialBbox && !hasRenderedOnce && !ready && !graceElapsed;
+}
+
+/** The "no geometry yet" empty state applies on the row path only, and only AFTER a full pass has completed — a fresh pass (e.g. the tiles→rows fallback after an edit) must not blank a mounted map; it streams in behind the chip. */
+function entriesIsEmpty(
+  tilePath: boolean,
+  pendingSource: boolean,
+  count: number,
+  hasCompletedPass: boolean,
+): boolean {
+  return !tilePath && !pendingSource && count === 0 && hasCompletedPass;
+}
+
+/**
  * A "dumb" presentational map view of a dataset's geometries — receives data
  * as a prop rather than querying internally, matching `EntriesTable`'s own
  * pattern.
@@ -117,6 +250,7 @@ export function EntriesMap({
   isLoading = false,
   initialBbox,
   className,
+  source,
 }: {
   geometries: GeometryEntry[];
   entries: EntryDoc[];
@@ -132,60 +266,56 @@ export function EntriesMap({
   initialBbox?: [number, number, number, number];
   /** Overrides the map container's height classes (default `h-[500px]`). */
   className?: string;
+  /**
+   * The dataset's layer-source decision (see `lib/layer-source.ts`, issue #58
+   * part 4). `{kind: "vector"}` renders the map from the tile archive via
+   * `MapVectorTiles` and the row path below never mounts: geometry rows
+   * aren't fetched at all, and completeness is the tile path's (`archive
+   * fresh` ∧ map reached `idle` after the source was added — no Exhausted
+   * pagination to wait on). `{kind: "pending"}` holds the row fetch (the
+   * archive is known fresh; its URL is one round trip away). Undefined and
+   * `{kind: "rows"}` keep today's row path unchanged.
+   */
+  source?: TileSourceDecision;
 }) {
   const entryById = useMemo(
     () => new globalThis.Map(entries.map((entry) => [entry._id, entry])),
     [entries],
   );
-  const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null),
-    resolvedGeometries = useResolvedGeometries(geometries),
-    // Most rows resolve synchronously (inline `geometryJson`); a row backed
-    // by external storage is simply absent from `resolvedGeometries` until
-    // its `fetch` completes, so it's excluded here rather than crashing.
-    resolvableGeometries = useMemo(
-      () =>
-        geometries.flatMap((g) => {
-          const resolved = resolvedGeometries.get(g._id);
-          return resolved === undefined ? [] : [{ g, resolved }];
-        }),
-      [geometries, resolvedGeometries],
-    ),
-    // Rows absent from `resolvedGeometries` are either still fetching or
-    // failed/skipped — indistinguishable here. Hold the skeleton while any
-    // are pending so the map mounts with the complete collection.
-    pendingCount = geometries.length - resolvableGeometries.length,
-    // A row whose fetch failed (or whose inline JSON was malformed) never
-    // resolves — don't hold the skeleton over it forever. After a generous
-    // grace period (only started once pagination itself is done, so a
-    // multi-page dataset still streaming in can't hit the cap), render
-    // whatever did resolve rather than stranding the map on a skeleton.
-    [graceElapsed, setGraceElapsed] = useState(false),
-    // Latched the first time the map renders with complete data. Live-query
-    // updates afterwards can briefly flip `isLoading`/`pendingCount` back to
-    // unfinished while the next pass re-reads — that must not re-skeleton a
-    // map the user is already looking at.
-    [hasRenderedOnce, setHasRenderedOnce] = useState(false),
-    ready = !isLoading && pendingCount === 0;
+  const vectorUrl = layerSourceUrl(source),
+    tilePath = vectorUrl !== undefined,
+    pendingSource = layerSourceKind(source) === "pending",
+    [selectedEntryId, setSelectedEntryId] = useState<string | null>(null),
+    // Tile-path completeness: latched at the map's first `idle` after the
+    // vector source mounted — never re-skeletoned afterwards (a rebuild's
+    // hot-swap re-adds the source in place; the map the user is looking at
+    // stays mounted and keeps rendering the previous archive meanwhile).
+    [tilesReady, setTilesReady] = useState(false),
+    {
+      resolvableGeometries,
+      graceElapsed,
+      hasRenderedOnce,
+      rowReady,
+    } = useEntriesRowReadiness(geometries, isLoading),
+    // A pending decision (fresh archive whose URL hasn't landed) holds
+    // readiness too — the chip covers the map until the decision resolves
+    // either way.
+    ready = tilePath ? tilesReady : pendingSource ? false : rowReady;
 
-  useEffect(() => {
-    if (ready) {
-      setHasRenderedOnce(true);
-    }
-  }, [ready]);
-
-  useEffect(() => {
-    if (isLoading || pendingCount === 0) {
-      return;
-    }
-    const timer = setTimeout(() => {
-      setGraceElapsed(true);
-    }, PENDING_GRACE_MS);
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [isLoading, pendingCount]);
-
-  if (initialBbox === undefined && !hasRenderedOnce && !ready && !graceElapsed) {
+  // The tile path never holds the skeleton: "idle" needs a MOUNTED map, and
+  // the skeleton replaces the map instead of overlaying it — mounting
+  // immediately (on the stored extent, or the default camera when even that
+  // is missing) is the only way the latch can ever fire. A pending decision
+  // resolves by itself (the metadata round trip), so its chip is safe too.
+  if (
+    entriesSkeletonHolds(
+      tilePath,
+      initialBbox !== undefined,
+      hasRenderedOnce,
+      ready,
+      graceElapsed,
+    )
+  ) {
     return (
       <div
         className={cn(
@@ -202,7 +332,7 @@ export function EntriesMap({
     );
   }
 
-  if (geometries.length === 0) {
+  if (entriesIsEmpty(tilePath, pendingSource, geometries.length, hasRenderedOnce || rowReady)) {
     return (
       <Empty>
         <EmptyHeader>
@@ -216,7 +346,9 @@ export function EntriesMap({
     );
   }
 
-  const featureRows = resolvableGeometries.map(({ g, resolved }) => toFeatureRow(g, resolved)),
+  const featureRows = tilePath
+      ? []
+      : resolvableGeometries.map(({ g, resolved }) => toFeatureRow(g, resolved)),
     collection = buildFeatureCollection<FeatureProperties>(featureRows),
     // `collection.bbox` is typed as the `geojson` package's wider `BBox` (4- or
     // 6-tuple); `computeBbox` has its own narrower `BoundingBox` (always 4)
@@ -224,13 +356,7 @@ export function EntriesMap({
     // Computed from the full `geometries` array (point-like and not) so the
     // viewport still fits everything, regardless of which layer renders each row.
     bbox = computeBbox(collection),
-    // While data is still arriving, a (possibly partial) computed extent must
-    // not drive the viewport — it would zoom in too far and keep growing, the
-    // exact jitter this design avoids. The server-maintained extent holds
-    // until everything has landed; only then does the exact extent take over
-    // (it can differ from the stored one only after deletions, which the
-    // stored envelope never shrinks for).
-    bounds = ready ? (bbox ?? initialBbox) : (initialBbox ?? bbox),
+    bounds = resolveEntriesMapBounds(ready, bbox, initialBbox),
     extentFeature = bounds ? bboxFeature(bounds) : undefined,
     // `MapGeoJSON` renders `fill`/`line` layers, which draw nothing for
     // Point/MultiPoint geometries — those go to `MapClusterLayer` instead,
@@ -263,20 +389,26 @@ export function EntriesMap({
             linePaint={EXTENT_LINE_PAINT}
           />
         )}
-        {otherCollection.features.length > 0 && (
-          <MapGeoJSON
-            data={otherCollection}
+        {vectorUrl !== undefined ? (
+          <MapVectorTiles<{ entryId: string }>
+            id="dataset-tiles"
+            url={vectorUrl}
             interactive
             fillPaint={FEATURE_FILL_PAINT}
             linePaint={FEATURE_LINE_PAINT}
             fillHoverPaint={FEATURE_FILL_HOVER_PAINT}
-            onClick={(e) => setSelectedEntryId(e.feature.properties.entryId)}
+            onIdle={() => {
+              setTilesReady(true);
+            }}
+            onClick={(e) => {
+              setSelectedEntryId(e.feature.properties.entryId);
+            }}
           />
-        )}
-        {pointCollection.features.length > 0 && (
-          <MapClusterLayer<FeatureProperties>
-            data={pointCollection}
-            onPointClick={(feature) => setSelectedEntryId(feature.properties.entryId)}
+        ) : (
+          <RowPathFeatureLayers
+            otherCollection={otherCollection}
+            pointCollection={pointCollection}
+            onSelectEntry={setSelectedEntryId}
           />
         )}
       </Map>

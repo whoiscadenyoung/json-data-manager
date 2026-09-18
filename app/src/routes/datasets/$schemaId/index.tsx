@@ -2,8 +2,7 @@ import type { Geometry as GeometryShape } from "@caden/json-cms/react";
 import { useAllPaginated, useResolvedGeometries } from "@caden/json-cms/react";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
-import type { FunctionReturnType } from "convex/server";
-import {
+import type { FunctionReturnType } from "convex/server";import {
   CheckCircle,
   ChevronDown,
   Code2,
@@ -69,6 +68,8 @@ import {
   exportExcelWorkbook,
   slugify,
 } from "@/lib/export";
+import { fetchAllGeometryRows, resolveGeometryRows } from "@/lib/geometry-rows";
+import { layerSourceKind, useTileArchiveSource } from "@/lib/layer-source";
 
 import { api } from "../../../../convex/_generated/api";
 
@@ -92,18 +93,26 @@ type Entry = FunctionReturnType<typeof api.entries.list>[number];
 type EntryPanelSearch = z.infer<typeof entryPanelSearchSchema>;
 
 /**
- * Fetches this dataset's geometries — only when it's actually geospatial,
- * `"skip"` otherwise. `listGeometries` is paginated server-side (a dataset's
- * cumulative geometry payload can exceed Convex's per-execution read-byte
- * budget even though each row is safely under its own document-size limit),
- * so this fetches every page. `geometries` is `undefined` only until the
- * first rows exist; `isComplete` is the real "everything is loaded" signal —
- * a full pagination pass has finished, so the array is the complete dataset.
- * (`isLoading` alone drops back to false after the first page, which is why
- * the map's skeleton gate must key off `isComplete`.)
+ * Fetches this dataset's geometries — only when it's actually geospatial AND
+ * the row path is serving it (`rowPath` false covers both the tile path —
+ * issue #58 part 4: an above-threshold dataset's fresh archive renders the
+ * map with zero geometry-row traffic — and the pending state where the
+ * archive's metadata is still landing). `listGeometries` is paginated
+ * server-side (a dataset's cumulative geometry payload can exceed Convex's
+ * per-execution read-byte budget even though each row is safely under its own
+ * document-size limit), so this fetches every page. `geometries` is
+ * `undefined` only until the first rows exist; `isComplete` is the real
+ * "everything is loaded" signal — a full pagination pass has finished, so the
+ * array is the complete dataset. (`isLoading` alone drops back to false after
+ * the first page, which is why the map's skeleton gate must key off
+ * `isComplete`.)
  */
-function useGeometriesForSchema(schema: Schema | null | undefined, schemaId: string) {
-  const shouldFetch = schema ? schema.kind === "geospatial" : false,
+function useGeometriesForSchema(
+  schema: Schema | null | undefined,
+  schemaId: string,
+  rowPath: boolean,
+) {
+  const shouldFetch = schema ? schema.kind === "geospatial" && rowPath : false,
     { isLoading, results, status } = useAllPaginated(
       api.geometries.list,
       shouldFetch ? { schemaId } : "skip",
@@ -146,7 +155,57 @@ function resolveEntryForPanel(entries: Entry[], search: EntryPanelSearch): Entry
   return entries.find((entry) => entry._id === search.entryId);
 }
 
-/** Hosts the create/edit side panel — extracted so its target-resolution ternaries don't count against the page's own complexity. Panel visibility lives in the URL's search params so it survives a reload. */
+/**
+ * The export's resolved-geometry map: the row path's already-resolved map
+ * when it's serving the dataset, or — on the tile path (issue #58 part 4),
+ * where geometry rows were never fetched for rendering — one on-demand
+ * paginated fetch + resolve, materialized just for the export.
+ */
+async function resolveExportGeometries(
+  tilePath: boolean,
+  schemaId: string,
+  rowPathResolved: globalThis.Map<string, GeometryShape>,
+): Promise<globalThis.Map<string, GeometryShape>> {
+  if (!tilePath) {
+    return rowPathResolved;
+  }
+  return await resolveGeometryRows(await fetchAllGeometryRows(schemaId));
+}
+
+/**
+ * The edit panel's prefill geometry: from the dataset's already-fetched rows
+ * when the row path has them in hand; on the tile path (issue #58 part 4)
+ * rows aren't fetched at all, so the on-demand single-entry read
+ * (`getEntryGeometry`) fills in instead — an entry-detail read staying on
+ * the row path, just lazily. Either way only the common inline case
+ * (`geometryJson`) resolves; an externally-stored geometry is left
+ * `undefined` rather than pre-fetched into the textarea (same as today).
+ */
+function resolveInitialGeometry(
+  entry: Entry | undefined,
+  geometries: Geometry[] | undefined,
+  fetchedRow: Geometry | null | undefined,
+): GeometryShape | undefined {
+  if (entry === undefined) {
+    return undefined;
+  }
+  if (geometries === undefined) {
+    return fetchedRow === null || fetchedRow === undefined
+      ? undefined
+      : findEntryGeometry([fetchedRow], entry._id);
+  }
+  return findEntryGeometry(geometries, entry._id);
+}
+
+/**
+ * Hosts the create/edit side panel — extracted so its target-resolution
+ * ternaries don't count against the page's own complexity. Panel visibility
+ * lives in the URL's search params so it survives a reload. Geometry prefill
+ * reads the dataset's already-fetched rows when the row path has them; on
+ * the tile path (issue #58 part 4) rows aren't fetched at all, so the one
+ * entry's geometry loads on demand via `getEntryGeometry` instead — an
+ * entry-detail read staying on the row path, just lazily.
+ */
 function EntryPanelHost({
   schemaId,
   schema,
@@ -164,7 +223,15 @@ function EntryPanelHost({
 }) {
   const entry = resolveEntryForPanel(entries, search),
     isOpen = search.panel === "create" || entry !== undefined,
-    initialGeometry = entry === undefined ? undefined : findEntryGeometry(geometries, entry._id);
+    // The on-demand single-entry read, only while the panel targets an entry
+    // AND the dataset's rows aren't in hand (the tile path).
+    fetchedRow = useQuery(
+      api.geometries.getEntryGeometry,
+      isOpen && entry !== undefined && geometries === undefined
+        ? { entryId: entry._id }
+        : "skip",
+    ),
+    initialGeometry = resolveInitialGeometry(entry, geometries, fetchedRow);
 
   return (
     <EntryFormPanel
@@ -230,7 +297,13 @@ function SchemaDetailPage() {
     navigate = Route.useNavigate(),
     schema = useQuery(api.schemas.get, { schemaId }),
     entries = useQuery(api.entries.list, { schemaId }),
-    { geometries, isComplete } = useGeometriesForSchema(schema, schemaId),
+    // Layer-source decision (issue #58 part 4): fresh tile archive → the map
+    // renders from vector tiles and geometry rows are never fetched;
+    // otherwise the row path applies exactly as before.
+    sourceDecision = useTileArchiveSource(schema, schemaId),
+    tilePath = layerSourceKind(sourceDecision) === "vector",
+    rowPath = layerSourceKind(sourceDecision) === "rows",
+    { geometries, isComplete } = useGeometriesForSchema(schema, schemaId, rowPath),
     resolvedGeometries = useResolvedGeometries(geometries ?? []),
     // The dataset's group, for the breadcrumb — skipped unless it's grouped
     // (also skips while `schema` itself is still loading, and yields null for
@@ -335,11 +408,12 @@ function SchemaDetailPage() {
           if (includeSchema) {
             downloadText(JSON.stringify(schema.schema, null, 2), `${slug}-schema.json`);
           }
-        };
+        },
+        exportResolvedGeometries = await resolveExportGeometries(tilePath, schemaId, resolvedGeometries);
 
       if (format === "geojson") {
         downloadText(
-          JSON.stringify(buildGeoJsonCollection(entries, resolvedGeometries, schemaId), null, 2),
+          JSON.stringify(buildGeoJsonCollection(entries, exportResolvedGeometries, schemaId), null, 2),
           `${slug}.geojson`,
         );
         downloadSchemaFile();
@@ -503,6 +577,7 @@ function SchemaDetailPage() {
             entries={entries}
             geometries={geometries ?? []}
             isLoading={!isComplete}
+            source={sourceDecision}
             // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the component maintains boundingBox as a fixed [minLon, minLat, maxLon, maxLat] (see `schemas.boundingBox` in packages/json-cms).
             initialBbox={schema.boundingBox as [number, number, number, number] | undefined}
             className="h-[420px]"

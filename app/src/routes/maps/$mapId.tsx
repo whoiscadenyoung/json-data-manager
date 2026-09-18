@@ -35,8 +35,56 @@ import {
   overridesByLayerId,
   resolveVisibleSchemaIds,
 } from "#/lib/map-layers";
-import type { MapLayerDoc } from "#/lib/map-layers";
+import type { DatasetSummary, MapLayerDoc } from "#/lib/map-layers";
+import type { TileSourceSchemaRow } from "#/lib/layer-source";
+import type { LayerSourceSplit } from "#/lib/layer-source";
+import { splitSchemaIdsByDecision, useTileArchiveSources } from "#/lib/layer-source";
 import { api } from "#convex/_generated/api";
+
+/** This map's geospatial datasets, in schema-id order (the only rows the source decisions need). */
+function geospatialDatasetsFor(
+  schemaIds: string[],
+  datasets: DatasetSummary[] | undefined,
+): TileSourceSchemaRow[] {
+  if (datasets === undefined) {
+    return [];
+  }
+  const byId = new globalThis.Map(datasets.map((dataset) => [dataset._id, dataset]));
+  return schemaIds.flatMap((schemaId) => {
+    const dataset = byId.get(schemaId);
+    return dataset !== undefined && dataset.kind === "geospatial" ? [dataset] : [];
+  });
+}
+
+/** The arrived-set update for one tile source's `idle` report (bails out of the state update when already present). */
+function withArrivedTileSchema(prev: Set<string>, schemaId: string): Set<string> {
+  if (prev.has(schemaId)) {
+    return prev;
+  }
+  return new Set(prev).add(schemaId);
+}
+
+/** A nullable list as an empty list — the row path serves `undefined` before its first rows land, and the map renders tile sources (or nothing) then. */
+function withEmptyRows<T>(rows: T[] | undefined): T[] {
+  return rows === undefined ? [] : rows;
+}
+
+/** The workspace is fully loaded: every row-path pass finished, every tile source reached `idle`, and no source decision is still pending. */
+function isLayersWorkspaceComplete(
+  geometries: unknown,
+  split: LayerSourceSplit,
+  arrivedSchemaIds: ReadonlySet<string>,
+): boolean {
+  if (geometries === undefined || split.sourcesPending) {
+    return false;
+  }
+  return split.tileSources.every((source) => arrivedSchemaIds.has(source.schemaId));
+}
+
+/** The map mounts on the first served rows OR any tile source — before that only the chip shows. */
+function layersMapShouldMount(geometries: unknown, split: LayerSourceSplit): boolean {
+  return geometries !== undefined || split.tileSources.length > 0;
+}
 
 export const Route = createFileRoute("/maps/$mapId")({
   component: MapDetailPage,
@@ -154,23 +202,50 @@ function MapDetailPage() {
       layers !== undefined && expanded !== undefined
         ? assignDatasetColors(layers, expanded)
         : undefined,
-    schemaIds = expanded === undefined ? [] : [...new Set([...expanded.values()].flat())],
-    { geometries, servedGeometries, loaders } = useGeometriesBySchemas(schemaIds),
+    schemaIds = expanded === undefined ? [] : [...new Set([...expanded.values()].flat())];
+  // Layer-source decisions (issue #58 part 4): a dataset with a fresh tile
+  // archive renders via `pmtiles://` range requests (no geometry-row traffic
+  // for it at all); everything else stays on today's row path.
+  const sourceBySchema = useTileArchiveSources(geospatialDatasetsFor(schemaIds, datasets)),
+    split = splitSchemaIdsByDecision(schemaIds, sourceBySchema),
+    rowSchemaIds = split.rowSchemaIds,
+    tileSources = split.tileSources,
+    sourcesPending = split.sourcesPending,
+    { geometries, servedGeometries, loaders } = useGeometriesBySchemas(rowSchemaIds),
     // Entry data feeds the map's feature-detail popups.
     entriesQuery = useQuery(
       api.entries.listEntriesForSchemas,
       schemaIds.length > 0 ? { schemaIds } : "skip",
     ),
     entries = schemaIds.length === 0 ? [] : entriesQuery,
+    // Tile sources report `idle` once their viewport tiles have arrived; the
+    // set of arrived sources feeds the chip's completeness below.
+    [arrivedTileSchemaIds, setArrivedTileSchemaIds] = useState<Set<string>>(() => new Set()),
     // The map mounts as soon as the FIRST schema's pagination completes
-    // (`servedGeometries` carries the completed schemas' rows while the
-    // rest stream in) and then — via that same prop — stays mounted across
-    // layer adds/removes, visibility toggles, and background re-reads,
-    // exactly like the dataset map's "never re-skeleton a map the user is
-    // looking at" behavior (229150b). The loading chip stays up until EVERY
-    // layer's full pass has completed (`geometries`), which is what "still
-    // loading into the map" means here.
-    geometriesComplete = geometries !== undefined;
+    // (`servedGeometries` carries the completed schemas' rows while the rest
+    // stream in) — or immediately when any layer renders from tiles — and
+    // then stays mounted across layer adds/removes, visibility toggles, and
+    // background re-reads, exactly like the dataset map's "never
+    // re-skeleton a map the user is looking at" behavior (229150b). The
+    // loading chip stays up until EVERY layer is complete: each row-path
+    // layer's full pagination pass (`geometries`), each tile-path layer's
+    // post-load `idle`, and no layer's source decision still pending (a
+    // pending decision would otherwise flash an empty map with the chip
+    // hidden — the empty row fan-out resolves immediately while the tile
+    // metadata is still in flight).
+    // The map mounts as soon as the FIRST schema's pagination completes
+    // (`servedGeometries` carries the completed schemas' rows while the rest
+    // stream in) — or immediately when any layer renders from tiles — and
+    // then stays mounted across layer adds/removes, visibility toggles, and
+    // background re-reads, exactly like the dataset map's "never
+    // re-skeleton a map the user is looking at" behavior (229150b). The
+    // loading chip stays up until EVERY layer is complete: each row-path
+    // layer's full pagination pass (`geometries`), each tile-path layer's
+    // post-load `idle`, and no layer's source decision still pending (a
+    // pending decision would otherwise flash an empty map with the chip
+    // hidden — the empty row fan-out resolves immediately while the tile
+    // metadata is still in flight).
+    geometriesComplete = isLayersWorkspaceComplete(geometries, split, arrivedTileSchemaIds);
 
   if (
     map === undefined ||
@@ -318,19 +393,25 @@ function MapDetailPage() {
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
           {loaders}
           <div className="relative h-[440px] w-full overflow-hidden rounded-lg border border-border lg:h-[640px]">
-            {servedGeometries !== undefined && (
+            {layersMapShouldMount(servedGeometries, split) && (
               <LayersMap
                 datasets={mapDatasets}
-                geometries={servedGeometries}
-                entries={entries ?? []}
+                geometries={withEmptyRows(servedGeometries)}
+                entries={withEmptyRows(entries)}
                 visibleSchemaIds={visibleSchemaIds}
                 colorBySchema={colorBySchema}
+                tileSources={tileSources}
+                sourcesPending={sourcesPending}
+                onTileSourceIdle={(schemaId) => {
+                  setArrivedTileSchemaIds((prev) => withArrivedTileSchema(prev, schemaId));
+                }}
               />
             )}
             {!geometriesComplete && (
               // Same loading chip as the dataset map, anchored top-right and
-              // overlaid on the streaming map — it stays up until every
-              // layer's full pagination pass has completed.
+              // overlaid on the streaming map — it stays up until every layer
+              // is complete: each row-path layer's full pagination pass, and
+              // each tile-path layer's post-load `idle`.
               <div className="absolute top-3 right-3 z-10 flex items-center gap-2 rounded-full border border-border bg-card/95 px-3 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur-sm">
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
                 Loading features…
