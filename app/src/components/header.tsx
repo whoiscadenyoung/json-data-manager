@@ -32,6 +32,13 @@ export function Header() {
             >
               Maps
             </Link>
+            <Link
+              to="/dashboard"
+              className="hover:text-foreground"
+              activeProps={{ className: "text-foreground" }}
+            >
+              Dashboard
+            </Link>
           </nav>
         </div>
         <ThemeToggle />

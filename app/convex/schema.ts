@@ -21,6 +21,10 @@ export default defineSchema({
     lastSyncedAt: v.optional(v.number()),
     schemaId: v.string(),
     source: v.string(),
+    // Set by the dashboard's source-table mutations on every write, so the
+    // UI can show "source changed since last sync" without diffing rows —
+    // the PoC stand-in for the design's commit cursor.
+    sourceUpdatedAt: v.optional(v.number()),
     syncedEntryCount: v.optional(v.number()),
   })
     .index("by_source", ["source"])
@@ -43,7 +47,9 @@ export default defineSchema({
     locationId: v.id("locations"),
     openedYear: v.optional(v.number()),
     restaurantId: v.id("restaurants"),
-  }).index("by_restaurantId_and_locationId", ["restaurantId", "locationId"]),
+  })
+    .index("by_locationId", ["locationId"])
+    .index("by_restaurantId_and_locationId", ["restaurantId", "locationId"]),
 
   restaurants: defineTable({
     cuisine: v.string(),

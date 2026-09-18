@@ -11,6 +11,7 @@
 import type * as auth from "../auth.js";
 import type * as bindings from "../bindings.js";
 import type * as collections from "../collections.js";
+import type * as dashboard from "../dashboard.js";
 import type * as entries from "../entries.js";
 import type * as geometries from "../geometries.js";
 import type * as groups from "../groups.js";
@@ -30,6 +31,7 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   bindings: typeof bindings;
   collections: typeof collections;
+  dashboard: typeof dashboard;
   entries: typeof entries;
   geometries: typeof geometries;
   groups: typeof groups;

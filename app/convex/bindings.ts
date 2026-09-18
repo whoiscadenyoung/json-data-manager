@@ -19,8 +19,10 @@ import { mutation, query } from "./_generated/server";
 
 // Stable key of the source table in this schema. Stands in for the design's
 // remote source descriptor (deployment + reader + geometry mapping) — with
-// the source co-deployed, the binding only needs the table's name.
-const SOURCE_KEY = "restaurantLocations";
+// the source co-deployed, the binding only needs the table's name. Shared
+// with the dashboard's CRUD mutations, which touch `sourceUpdatedAt` on the
+// same row to mark the projection stale.
+export const SOURCE_KEY = "restaurantLocations";
 
 const COLLECTION_NAME = "External demo";
 const COLLECTION_DESCRIPTION =
@@ -180,6 +182,7 @@ export const status = query({
         lastSyncedAt: v.optional(v.number()),
         schemaId: v.string(),
         source: v.string(),
+        sourceUpdatedAt: v.optional(v.number()),
         syncedEntryCount: v.optional(v.number()),
       }),
       schema: v.any(),

@@ -27,6 +27,14 @@ mutation) find-or-creates the "External demo" collection + geospatial Point
 dataset + binding row, then clear-and-reloads the projection; `status` query
 reports state. Map rendered all 16 points with **zero frontend changes**.
 
+**Dashboard CRUD shipped** (second iteration, same day): `/dashboard` route +
+`app/src/components/dashboard/*` panels do CRUD over the three source tables;
+`app/convex/dashboard.ts` holds the mutations. Every source write stamps
+`datasetBindings.sourceUpdatedAt`, and the dashboard's sync card flips to
+"Source changed" until "Sync now" runs `bindings.syncRestaurantLocations`
+(verified full loop: add location+link → stale badge → sync → 17 points on
+map → cleanup → sync → 16).
+
 Gotchas learned building it:
 - Host calls component functions directly via `components.jsonCms.lib.*`
   passing plain-string component ids (component re-validates against its own
@@ -42,6 +50,22 @@ Gotchas learned building it:
 - oxlint: `String(componentId)` is flagged no-unnecessary-type-conversion —
   component ids are plain strings at the host boundary; `no-await-in-loop`
   warnings avoided via `Promise.all(arr.map(async ...))` (component idiom).
+- `ui/select.tsx` is BASE-UI, not radix: `<SelectValue>` renders the raw
+  value (an id) unless the Select root gets `items={ [{value,label}] }` —
+  pass the mapping (also enables typeahead). Radix-style
+  `value === label` usages elsewhere in the app mask this.
+- Convex dev push FAILS closed on TS errors ("TypeScript typecheck via tsc
+  failed" in the dev log) and keeps serving the previous function versions —
+  the UI can silently run stale mutations while fresh ones pass `tsc` in the
+  repo. Check `/private/tmp/app-dev*.log` when backend behavior looks older
+  than the source. (One data point: a location created via UI during that
+  broken-push window later vanished without explanation — unexplained, watch
+  for recurrence.)
+- Browser verification (IAB): locator `.click()` routinely times out on this
+  app's buttons/tabs (actionability never settles) while `fill()` works —
+  use `cua.click` at screenshot coordinates for buttons, `getByRole`+`fill`
+  for inputs. base-ui Select options: keyboard `Down`/`Enter` works via
+  `cua.keypress`; character typeahead does not.
 - `bunx convex ai-files install` (from `app/`) generates
   `app/convex/_generated/ai/guidelines.md` plus `app/AGENTS.md`,
   `app/CLAUDE.md`, `app/.agents/`, `app/.claude/`, `app/skills-lock.json` —
