@@ -131,6 +131,12 @@ export default defineSchema({
     // startSimplification for an existing dataset. Absent means no
     // simplification (all pre-flag datasets).
     simplifyGeometry: v.optional(v.boolean()),
+    // Set when this dataset is a read-only projection of a connected external
+    // source (the host app's bound-datasets integration): `name` identifies
+    // the source (e.g. a table or feed the host syncs from). Data mutations
+    // on the dataset belong to that source's sync flow, not to users —
+    // hosts gate their own wrapped mutations on this field's presence.
+    source: v.optional(v.object({ name: v.string() })),
     schema: v.any(), // JSON schema object
     // The exact file the dataset was imported from, kept in file storage so
     // it can be re-downloaded even though every stored geometry was

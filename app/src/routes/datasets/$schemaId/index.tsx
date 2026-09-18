@@ -1,10 +1,11 @@
 import type { Geometry as GeometryShape } from "@caden/json-cms/react";
 import { useAllPaginated, useResolvedGeometries } from "@caden/json-cms/react";
-import { Link, createFileRoute } from "@tanstack/react-router";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
+import { Link, createFileRoute } from "@tanstack/react-router";
 import { useQuery as useConvexQuery } from "convex/react";
-import type { FunctionReturnType } from "convex/server";import {
+import type { FunctionReturnType } from "convex/server";
+import {
   CheckCircle,
   ChevronDown,
   Code2,
@@ -231,9 +232,7 @@ function EntryPanelHost({
     // payloads never enter the persisted-state system (part 5's invariant).
     fetchedRow = useConvexQuery(
       api.geometries.getEntryGeometry,
-      isOpen && entry !== undefined && geometries === undefined
-        ? { entryId: entry._id }
-        : "skip",
+      isOpen && entry !== undefined && geometries === undefined ? { entryId: entry._id } : "skip",
     ),
     initialGeometry = resolveInitialGeometry(entry, geometries, fetchedRow);
 
@@ -315,16 +314,14 @@ function SchemaDetailPage() {
     // The dataset's group, for the breadcrumb — skipped unless it's grouped
     // (also skips while `schema` itself is still loading, and yields null for
     // a dangling groupId whose group was deleted).
-    group = useQuery(
-      {
-        ...convexQuery(
-          api.groups.get,
-          schema !== null && schema !== undefined && schema.groupId !== undefined
-            ? { groupId: schema.groupId }
-            : "skip",
-        ),
-      },
-    ).data,
+    group = useQuery({
+      ...convexQuery(
+        api.groups.get,
+        schema !== null && schema !== undefined && schema.groupId !== undefined
+          ? { groupId: schema.groupId }
+          : "skip",
+      ),
+    }).data,
     [makeGeospatialOpen, setMakeGeospatialOpen] = useState(false),
     [exportOpen, setExportOpen] = useState(false),
     [simplifyOpen, setSimplifyOpen] = useState(false),
@@ -359,6 +356,10 @@ function SchemaDetailPage() {
     },
     view = search.view ?? "overview",
     isGeospatialDataset = schema !== undefined && schema !== null && schema.kind === "geospatial",
+    // A dataset synced from a connected external source is read-only here:
+    // its rows are owned by the source's sync flow, so the write actions are
+    // hidden (and the mutations they call are rejected server-side too).
+    isBoundToSource = schema !== undefined && schema !== null && schema.source !== undefined,
     // The retained original import file — menu action hidden until the
     // dataset actually has one.
     sourceFileUrl = useQuery({
@@ -424,11 +425,19 @@ function SchemaDetailPage() {
             downloadText(JSON.stringify(schema.schema, null, 2), `${slug}-schema.json`);
           }
         },
-        exportResolvedGeometries = await resolveExportGeometries(tilePath, schemaId, resolvedGeometries);
+        exportResolvedGeometries = await resolveExportGeometries(
+          tilePath,
+          schemaId,
+          resolvedGeometries,
+        );
 
       if (format === "geojson") {
         downloadText(
-          JSON.stringify(buildGeoJsonCollection(entries, exportResolvedGeometries, schemaId), null, 2),
+          JSON.stringify(
+            buildGeoJsonCollection(entries, exportResolvedGeometries, schemaId),
+            null,
+            2,
+          ),
           `${slug}.geojson`,
         );
         downloadSchemaFile();
@@ -500,17 +509,21 @@ function SchemaDetailPage() {
           <p className="text-lg text-muted-foreground mt-2">{schema.description}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <RouterButton variant="outline" to="/datasets/$schemaId/edit" params={{ schemaId }}>
-            <Pencil className="h-4 w-4 mr-2" />
-            Edit
-          </RouterButton>
-          <MakeGeospatialButton
-            schema={schema}
-            entryCount={entries.length}
-            onClick={() => {
-              setMakeGeospatialOpen(true);
-            }}
-          />
+          {!isBoundToSource && (
+            <RouterButton variant="outline" to="/datasets/$schemaId/edit" params={{ schemaId }}>
+              <Pencil className="h-4 w-4 mr-2" />
+              Edit
+            </RouterButton>
+          )}
+          {!isBoundToSource && (
+            <MakeGeospatialButton
+              schema={schema}
+              entryCount={entries.length}
+              onClick={() => {
+                setMakeGeospatialOpen(true);
+              }}
+            />
+          )}
           <Button
             onClick={() => {
               setExportOpen(true);
@@ -521,18 +534,22 @@ function SchemaDetailPage() {
             <Download className="h-4 w-4 mr-2" />
             Export ({entries.length})
           </Button>
-          <RouterButton
-            variant="outline"
-            to="/datasets/$schemaId/bulk-upload"
-            params={{ schemaId }}
-          >
-            <UploadCloud className="h-4 w-4 mr-2" />
-            Bulk Upload
-          </RouterButton>
-          <Button onClick={openCreatePanel}>
-            <Plus className="h-4 w-4 mr-2" />
-            Create Entry
-          </Button>
+          {!isBoundToSource && (
+            <RouterButton
+              variant="outline"
+              to="/datasets/$schemaId/bulk-upload"
+              params={{ schemaId }}
+            >
+              <UploadCloud className="h-4 w-4 mr-2" />
+              Bulk Upload
+            </RouterButton>
+          )}
+          {!isBoundToSource && (
+            <Button onClick={openCreatePanel}>
+              <Plus className="h-4 w-4 mr-2" />
+              Create Entry
+            </Button>
+          )}
           {(isGeospatialDataset || schema.sourceFileStorageId !== undefined) && (
             <DropdownMenu>
               <DropdownMenuTrigger
@@ -542,24 +559,24 @@ function SchemaDetailPage() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 {isGeospatialDataset && (
-                  <>
-                    <DropdownMenuItem
-                      onClick={() => {
-                        setAddToMapOpen(true);
-                      }}
-                    >
-                      <MapIcon className="h-4 w-4 mr-2" />
-                      Add to map…
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => {
-                        setSimplifyOpen(true);
-                      }}
-                    >
-                      <MapPinned className="h-4 w-4 mr-2" />
-                      Simplify geometry…
-                    </DropdownMenuItem>
-                  </>
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setAddToMapOpen(true);
+                    }}
+                  >
+                    <MapIcon className="h-4 w-4 mr-2" />
+                    Add to map…
+                  </DropdownMenuItem>
+                )}
+                {isGeospatialDataset && !isBoundToSource && (
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setSimplifyOpen(true);
+                    }}
+                  >
+                    <MapPinned className="h-4 w-4 mr-2" />
+                    Simplify geometry…
+                  </DropdownMenuItem>
                 )}
                 {schema.sourceFileStorageId !== undefined && (
                   <DropdownMenuItem

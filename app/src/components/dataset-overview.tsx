@@ -17,13 +17,7 @@ import { toast } from "sonner";
 
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "#/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import {
@@ -100,6 +94,16 @@ function DetailsCard({ schema }: { schema: DatasetDoc }) {
                 Features
               </dt>
               <dd className="text-sm">{schema.featureCount ?? 0} with geometry</dd>
+            </div>
+          )}
+          {schema.source && (
+            <div className="flex flex-col gap-1.5">
+              <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Source
+              </dt>
+              <dd className="text-sm">
+                Synced from <span className="font-medium">{schema.source.name}</span> — read-only
+              </dd>
             </div>
           )}
           <div className="flex flex-col gap-1.5">
@@ -210,9 +214,7 @@ function MembershipPicker({
     [pendingId, setPendingId] = useState<string | undefined>(),
     normalized = search.trim().toLowerCase(),
     visible = normalized
-      ? candidates.filter((candidate) =>
-          candidate.label.toLowerCase().includes(normalized),
-        )
+      ? candidates.filter((candidate) => candidate.label.toLowerCase().includes(normalized))
       : candidates,
     handlePick = async (id: string) => {
       setPendingId(id);
@@ -307,11 +309,7 @@ function SectionActions({
       </div>
       {pickOpen && (
         <div className="mt-3">
-          <MembershipPicker
-            emptyLabel={pickEmptyLabel}
-            candidates={candidates}
-            onPick={onPick}
-          />
+          <MembershipPicker emptyLabel={pickEmptyLabel} candidates={candidates} onPick={onPick} />
         </div>
       )}
       {createOpen && <div className="mt-3">{createForm}</div>}
@@ -355,9 +353,7 @@ function CollectionsSection({ schemaId }: { schemaId: string }) {
           <FolderTree className="h-5 w-5" />
           Collections ({members.length})
         </CardTitle>
-        <CardDescription>
-          A dataset can live in any number of collections
-        </CardDescription>
+        <CardDescription>A dataset can live in any number of collections</CardDescription>
       </CardHeader>
       <CardContent>
         {members.length === 0 ? (
@@ -499,13 +495,16 @@ function GroupSection({ schemaId, groupId }: { schemaId: string; groupId?: strin
     [editing, setEditing] = useState(false),
     [parentId, setParentId] = useState(NO_PARENT),
     groups = allGroups ?? [],
-    currentGroup = groupId === undefined ? undefined : groups.find((group) => group._id === groupId),
+    currentGroup =
+      groupId === undefined ? undefined : groups.find((group) => group._id === groupId),
     collectionName = (collectionId: string) => {
       const match = (allCollections ?? []).find((collection) => collection._id === collectionId);
       return match ? match.name : undefined;
     },
     subtitle = (group: GroupDoc) =>
-      group.collectionId ? `in ${collectionName(group.collectionId) ?? "collection"}` : "Standalone",
+      group.collectionId
+        ? `in ${collectionName(group.collectionId) ?? "collection"}`
+        : "Standalone",
     candidates = groups
       .filter((group) => group._id !== groupId)
       .map((group) => ({ id: group._id, label: group.name, subtitle: subtitle(group) }));
@@ -518,8 +517,7 @@ function GroupSection({ schemaId, groupId }: { schemaId: string; groupId?: strin
           Group
         </CardTitle>
         <CardDescription>
-          One group per dataset — grouped datasets appear under their group in the datasets
-          browser
+          One group per dataset — grouped datasets appear under their group in the datasets browser
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -536,9 +534,7 @@ function GroupSection({ schemaId, groupId }: { schemaId: string; groupId?: strin
                   <p className="truncate text-sm font-medium hover:underline">
                     {currentGroup.name}
                   </p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {subtitle(currentGroup)}
-                  </p>
+                  <p className="truncate text-xs text-muted-foreground">{subtitle(currentGroup)}</p>
                 </div>
               </Link>
               <div className="flex items-center gap-0.5">
@@ -684,13 +680,7 @@ function GroupSection({ schemaId, groupId }: { schemaId: string; groupId?: strin
 }
 
 /** The Overview tab's content: dataset details plus inline collection/group management. */
-export function DatasetOverview({
-  schema,
-  schemaId,
-}: {
-  schema: DatasetDoc;
-  schemaId: string;
-}) {
+export function DatasetOverview({ schema, schemaId }: { schema: DatasetDoc; schemaId: string }) {
   return (
     <div className="space-y-6">
       <DetailsCard schema={schema} />

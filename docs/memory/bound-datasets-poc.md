@@ -27,6 +27,23 @@ mutation) find-or-creates the "External demo" collection + geospatial Point
 dataset + binding row, then clear-and-reloads the projection; `status` query
 reports state. Map rendered all 16 points with **zero frontend changes**.
 
+**Read-only source marking (phase 1 app-half, shipped 2026-09-18):**
+component `schemas.source: {name}` (set via createSchema; schemaValidator
+derives from the table so it flows through every read automatically), exposeApi
+createSchema passes it through; app `auth.ts` gate rejects entry writes,
+schema-targeted creates and deletes for datasets with a `datasetBindings` row
+(metadata/organization ops stay allowed; sync bypasses via direct component
+calls); UI: "Synced" badge in DatasetTypeTags (all list views), Source row in
+the details card, hidden Edit/MakeGeospatial/BulkUpload/CreateEntry/Simplify.
+Dataset migrated by re-running sync (sync deletes+recreates a bound dataset
+missing `source`). Component-level enforcement deferred to real auth;
+startSimplification/startGeospatialConversion ungatable in the current
+auth-operation shape (same `{schemaId,"update"}` as organization ops).
+Gotcha: changing component function args requires `bunx convex codegen
+--component-dir ./src/component` in packages/json-cms (generated api types
+carry signatures) before typecheck passes; then `bun run build` for dist —
+the running app dev picked up the rebuilt dist WITHOUT a restart.
+
 **Dashboard CRUD shipped** (second iteration, same day): `/dashboard` route +
 `app/src/components/dashboard/*` panels do CRUD over the three source tables;
 `app/convex/dashboard.ts` holds the mutations. Every source write stamps

@@ -176,14 +176,32 @@ first thing the PoC proves:
   page/map render the points with zero frontend changes.
 
 What the PoC does not cover yet: commit-tail sync (v1 is full rebuild),
-tag/version freezing, the commits table, overlay rendering, read-only
-mutation gates, and remote-source transport.
+tag/version freezing, the commits table, overlay rendering, and
+remote-source transport.
+
+**Read-only marking (phase 1, shipped 2026-09-18):** the component's
+`schemas` table carries `source: { name }` (set via `createSchema`), marking
+a dataset as a read-only projection of a connected source. The app surfaces
+it as a "Synced" badge in `DatasetTypeTags` (all list views), a Source row in
+the dataset page details card, and hides the write actions (Edit / Make
+geospatial / Bulk Upload / Create Entry / Simplify geometry). Enforcement
+lives in the app's `auth` choke point (`app/convex/auth.ts`): entry-targeted
+writes, schema-targeted creates, and schema deletes are rejected for bound
+datasets, while metadata edits and collection/group organization stay
+allowed — the sync bypasses the gate by calling the component directly.
+Remaining for full phase 1: component-level enforcement (needs real auth —
+with anonymous access, any client could claim a sync exemption), gating
+`startSimplification`/`startGeospatialConversion` (indistinguishable from
+organization ops in the current `auth` operation shape), and an
+unbind-then-delete flow.
 
 ## 10. Phased roadmap (candidate sub-issues, in order)
 
-1. **Read-only bound datasets** — immutability gate in the component's
-   entry/geometry mutations keyed on binding/lineage fields; promote the
-   binding registry into the component (`source` field on `schemas`).
+1. **Read-only bound datasets** — DONE 2026-09-18 for the app-side half:
+   `source` marker on the component's `schemas` doc, Synced badge + hidden
+   write actions in the UI, and the read-only gate in the app's `auth`
+   choke point. Remaining: component-level enforcement + the two
+   conversion/simplification ops (see §9).
 2. **Source interface + co-deployed sync** — formalize the source descriptor
    (state reader + geometry mapping) and the durable sync workflow with
    reconcile; UI "synced N minutes ago" + Sync button.

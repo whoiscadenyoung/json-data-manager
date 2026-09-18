@@ -162,6 +162,9 @@ export function exposeApi(
         ),
         kind: v.optional(v.union(v.literal("standard"), v.literal("geospatial"))),
         schema: v.any(),
+        // Marks the dataset as a read-only projection of a connected external
+        // source — see the component's `schemas.source` field.
+        source: v.optional(v.object({ name: v.string() })),
         simplifyGeometry: v.optional(v.boolean()),
         uiSchema: v.optional(v.any()),
       },
@@ -172,6 +175,7 @@ export function exposeApi(
           kind: args.kind,
           schema: args.schema,
           simplifyGeometry: args.simplifyGeometry,
+          source: args.source,
           uiSchema: args.uiSchema,
         });
       },

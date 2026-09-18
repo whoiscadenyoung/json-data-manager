@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 
 import { components } from "./_generated/api";
+import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 
 /**
@@ -23,6 +24,24 @@ import { mutation, query } from "./_generated/server";
 // with the dashboard's CRUD mutations, which touch `sourceUpdatedAt` on the
 // same row to mark the projection stale.
 export const SOURCE_KEY = "restaurantLocations";
+
+/** Creates the projected dataset with its read-only source marker and files it into the collection. */
+async function createBoundDataset(
+  ctx: Pick<MutationCtx, "runMutation">,
+  collectionId: string,
+): Promise<string> {
+  const schemaId = await ctx.runMutation(components.jsonCms.lib.createSchema, {
+    geometryType: "Point",
+    kind: "geospatial",
+    schema: restaurantLocationSchema,
+    source: { name: SOURCE_KEY },
+  });
+  await ctx.runMutation(components.jsonCms.lib.addSchemaToCollection, {
+    collectionId,
+    schemaId,
+  });
+  return schemaId;
+}
 
 const COLLECTION_NAME = "External demo";
 const COLLECTION_DESCRIPTION =
@@ -61,9 +80,10 @@ export const syncRestaurantLocations = mutation({
           description: COLLECTION_DESCRIPTION,
           name: COLLECTION_NAME,
         });
-    // Find-or-create the bound dataset. Real deployments would key this off
-    // the binding row only; re-checking by title keeps a stray manual
-    // duplicate from forking the projection.
+    // Find-or-create the bound dataset, marked as a read-only projection of
+    // this source. Real deployments would key this off the binding row only;
+    // re-checking by title keeps a stray manual duplicate from forking the
+    // projection.
     const binding = await ctx.db
       .query("datasetBindings")
       .withIndex("by_source", (q) => q.eq("source", SOURCE_KEY))
@@ -71,16 +91,19 @@ export const syncRestaurantLocations = mutation({
     let schemaId: string;
     if (binding) {
       schemaId = binding.schemaId;
-    } else {
-      schemaId = await ctx.runMutation(components.jsonCms.lib.createSchema, {
-        geometryType: "Point",
-        kind: "geospatial",
-        schema: restaurantLocationSchema,
-      });
-      await ctx.runMutation(components.jsonCms.lib.addSchemaToCollection, {
-        collectionId,
+      // Migrate datasets created before the source marker existed: a bound
+      // dataset without `source` is deleted and recreated (deleteSchema
+      // cascades its entries/archive; the projection is rebuilt below) so
+      // the read-only marker is present everywhere it is read.
+      const existing = await ctx.runQuery(components.jsonCms.lib.getSchema, {
         schemaId,
       });
+      if (existing === null || existing.source === undefined) {
+        await ctx.runMutation(components.jsonCms.lib.deleteSchema, { schemaId });
+        schemaId = await createBoundDataset(ctx, collectionId);
+      }
+    } else {
+      schemaId = await createBoundDataset(ctx, collectionId);
     }
 
     // Rebuild the projection: v1 sync is clear-then-reload (the design's
@@ -128,6 +151,7 @@ export const syncRestaurantLocations = mutation({
       await ctx.db.patch(binding._id, {
         collectionId,
         lastSyncedAt: syncedAt,
+        schemaId,
         syncedEntryCount: entries.length,
       });
     } else {

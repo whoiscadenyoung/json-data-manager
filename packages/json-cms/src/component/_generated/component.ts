@@ -91,6 +91,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           kind?: "standard" | "geospatial";
           schema: any;
           simplifyGeometry?: boolean;
+          source?: { name: string };
           uiSchema?: any;
         },
         string,
@@ -281,6 +282,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileCacheVersion?: number;
           schema: any;
           simplifyGeometry?: boolean;
+          source?: { name: string };
           sourceFileName?: string;
           sourceFileSize?: number;
           sourceFileStorageId?: string;
@@ -546,6 +548,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileCacheVersion?: number;
           schema: any;
           simplifyGeometry?: boolean;
+          source?: { name: string };
           sourceFileName?: string;
           sourceFileSize?: number;
           sourceFileStorageId?: string;
@@ -580,6 +583,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileCacheVersion?: number;
           schema: any;
           simplifyGeometry?: boolean;
+          source?: { name: string };
           sourceFileName?: string;
           sourceFileSize?: number;
           sourceFileStorageId?: string;

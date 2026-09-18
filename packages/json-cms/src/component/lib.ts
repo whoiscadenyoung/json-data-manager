@@ -291,6 +291,10 @@ export const createSchema = mutation({
     geometryType: v.optional(geometryTypeValidator),
     kind: v.optional(v.union(v.literal("standard"), v.literal("geospatial"))),
     schema: v.any(),
+    // Marks the dataset as a read-only projection of a connected external
+    // source — see the `source` field's doc on the `schemas` table. Absent
+    // for ordinary user-created datasets.
+    source: v.optional(v.object({ name: v.string() })),
     // Normalize every geometry coordinate to GEOMETRY_SIMPLIFY_DECIMAL_PLACES
     // on write — see `simplifyGeometryPayload` below. Geospatial-only.
     simplifyGeometry: v.optional(v.boolean()),
@@ -324,6 +328,7 @@ export const createSchema = mutation({
       kind: args.kind,
       schema: args.schema,
       simplifyGeometry: args.simplifyGeometry,
+      source: args.source,
       title: args.schema.title,
       uiSchema: args.uiSchema,
     });
