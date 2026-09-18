@@ -56,6 +56,36 @@ behavior change; #61 makes archives self-maintaining; #62 is the visible
 payoff measured on FY22 (≤5% of 46.55 MB, no main-thread parse, instant
 toggles); #63 completes the cache layers (repeat opens = zero bytes).
 
+## Outstanding follow-ups (2026-09-18 review — #58 itself complete)
+
+- **RESOLVED 2026-09-18: json-cms `tsc --noEmit` green for the first time since
+  before #58.** The four stale `internal.lib.setMapTileArchive` call sites in
+  `lib.test.ts` (introduced by part 2's own commit 8de8edd when the function
+  went public) now use `api.lib.setMapTileArchive`; the 3 pre-existing
+  `geometry.test.ts:244` union-index errors were fixed with a
+  `Polygon["coordinates"]` narrowing cast. 186 tests green, lint findings
+  untouched (the 4 no-optional-chaining errors in lib.test.ts at
+  123/1531/1584/1585 predate this fix). Lesson: a part that amends a
+  function's internal/public visibility must re-grep its own test file, and
+  "tsc clean" claims must name WHICH package they cover.
+- **Cloud range-request parity still unverified** — #58's risk list asked for one
+  `curl -H "Range: bytes=0-100"` probe against a CLOUD storage URL during
+  implementation; part 4 verified range requests on the local dev backend only.
+  Only matters when the app runs against a cloud Convex deployment.
+- **Transient worker error, unroot-caused:** part-5 live verification observed
+  one worker failure during "fetching" (a directly spawned worker built fine);
+  never reproduced or diagnosed.
+- **Multi-tab convergence is pinned by prune-rule unit tests only** — never
+  driven live with two tabs.
+- **Accepted costs, by design (documented so nobody re-litigates):** every
+  geometry edit flips the dataset to the row path until the rebuild converges
+  (~60 MB FY22 row pass; rebuild ≈4–5 min for 450 features z0–14); the real FY22
+  archive is ~22.6 MB (~37–49% of payload text — polygon clipping duplicates
+  geometry across z0–14), far above part 1's 10% line-heavy fixture benchmark;
+  sub-threshold datasets attempt-and-skip a build per edit burst (cheap ≤256 KB);
+  the tile-path chip legitimately holds forever while an external basemap hangs
+  (`idle` can't fire; pre-existing, reload recovers).
+
 ## #63 part-5 status (2026-09-18, PR #68 merged to `main`) — ALL FIVE PARTS DONE
 
 #58 architecture complete: rows authoritative, tile archives as rendering
