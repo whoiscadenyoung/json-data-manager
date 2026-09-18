@@ -9,6 +9,7 @@ import {
   roundGeometryCoordinates,
   unionBbox,
 } from "./geometry.js";
+import type { Polygon } from "./types.js";
 
 const validPoint = { coordinates: [10, 20], type: "Point" },
   validLineString = {
@@ -240,7 +241,7 @@ describe("roundGeometryCoordinates", () => {
       ],
       type: "Polygon",
     });
-    const rounded = roundGeometryCoordinates(closed, 3).coordinates[0];
+    const rounded = (roundGeometryCoordinates(closed, 3).coordinates as Polygon["coordinates"])[0];
     expect(rounded[0]).toStrictEqual(rounded[rounded.length - 1]);
   });
 });
