@@ -97,7 +97,7 @@ async function installArchive(
   const storageId = await t.run(async (ctx) =>
     ctx.storage.store(new Blob([label], { type: "application/octet-stream" })),
   );
-  await t.mutation(internal.lib.setMapTileArchive, {
+  await t.mutation(api.lib.setMapTileArchive, {
     bytes: label.length,
     expectedVersion,
     maxZoom: 12,
@@ -1833,7 +1833,7 @@ describe("json-cms component", () => {
       const archiveStorageId = await t.run(async (ctx) =>
         ctx.storage.store(new Blob(["pmtiles"], { type: "application/octet-stream" })),
       );
-      await t.mutation(internal.lib.setMapTileArchive, {
+      await t.mutation(api.lib.setMapTileArchive, {
         bytes: 7,
         expectedVersion: 1,
         maxZoom: 14,
@@ -1862,7 +1862,7 @@ describe("json-cms component", () => {
         archiveStorageId = await t.run(async (ctx) =>
           ctx.storage.store(new Blob(["pmtiles"], { type: "application/octet-stream" })),
         );
-      await t.mutation(internal.lib.setMapTileArchive, {
+      await t.mutation(api.lib.setMapTileArchive, {
         bytes: 7,
         expectedVersion: 0,
         maxZoom: 14,
@@ -1986,7 +1986,7 @@ describe("json-cms component", () => {
           );
         await t.mutation(api.lib.deleteSchema, { schemaId });
 
-        await t.mutation(internal.lib.setMapTileArchive, {
+        await t.mutation(api.lib.setMapTileArchive, {
           bytes: 6,
           expectedVersion: 0,
           maxZoom: 12,
