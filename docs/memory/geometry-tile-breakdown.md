@@ -125,8 +125,25 @@ cache, HTTP cache + MapLibre cache + OPFS pin + persisted light state. #63,
   payload was briefly malformed (the designed safety path). The worker
   errored once during "fetching" (transient; a directly spawned worker built
   fine). Multi-tab convergence pinned by prune-rule unit tests, not driven
-  live. The map canvas stalled identically on a row-path CONTROL dataset —
-  environmental, not part-5 (part 4 documented the same class).
+  live.
+- **MAP-STALL ROOT CAUSE (2026-09-18, PR #69) — corrects the record:** the
+  "CARTO flakes in this sandbox" attribution from part 4 (and part 5's
+  initial "environmental" call) was WRONG. Two real causes, both app-level:
+  (1) `setWorkerUrl("https://unpkg.com/...")` — cross-origin Worker
+  construction is platform-blocked, MapLibre's blob-wrapper fallback fails
+  with NO surfaced error, so maps never booted (zero load/error/idle events);
+  fixed by serving the worker same-origin via vite `?worker&url` +
+  `worker: { format: "es" }` (also required for `tile-archive.worker.ts` in
+  prod builds). (2) ZCode's in-app browser reports `visibilityState:
+  "visible"` while requestAnimationFrame NEVER ticks (0 frames / 2s
+  measured) — MapLibre's render loop is rAF-driven, so style + worker were
+  fine yet the first frame never rendered. Fixed with a one-time startup
+  probe in `map.tsx`: if rAF doesn't tick within 300 ms, swap in a
+  timer-based rAF (correct cancel semantics; healthy browsers unaffected).
+  Verified: bare-maplibre control 0 events → load+idle; FY22 map renders
+  basemap + 450 features in seconds, chip resolves. Diagnostic techniques
+  that cracked it: bare-maplibre control with event log, in-page
+  fetch/XHR patch + console capture around `new Map`, rAF frame counter.
 - 30/30 app tests, `tsc --noEmit` clean, zero new lint errors (repo baseline
   untouched). PR #68 → `Closes #63`; #58 + #51 closed with a completion
   comment.
