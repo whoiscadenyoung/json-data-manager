@@ -5,6 +5,8 @@ import { auth } from "./auth";
 
 export const {
   listEntries: list,
+  listEntriesPage: listPage,
+  listEntriesForIds: listForIds,
   getEntry: get,
   listEntriesForSchemas,
   listReferencingEntries,

@@ -13,6 +13,7 @@
  */
 import { useQuery } from "convex/react";
 import { useEffect, useSyncExternalStore } from "react";
+import { toast } from "sonner";
 
 import { api } from "#convex/_generated/api";
 
@@ -249,11 +250,13 @@ function handleWorkerMessage(event: MessageEvent<unknown>): void {
     pending.resolve("skipped");
   } else {
     setBuildState(schemaId, "error");
-    pending.reject(
-      new Error(
-        typeof data.message === "string" ? data.message : "Tile-archive build failed.",
-      ),
-    );
+    const message =
+      typeof data.message === "string" ? data.message : "Tile-archive build failed.";
+    // Issue #71: a failed build used to flash an in-memory state nothing
+    // rendered — users never saw it. The toast persists past the 4s state
+    // revert and is the one surface that follows the user across pages.
+    toast.error(`Tile rebuild failed (${schemaId.slice(-6)}): ${message}`);
+    pending.reject(new Error(message));
   }
 }
 
@@ -275,7 +278,9 @@ function getWorker(): Worker {
       for (const [schemaId, pending] of pendingBuilds) {
         pendingBuilds.delete(schemaId);
         setBuildState(schemaId, "error");
-        pending.reject(new Error(event.message || "Tile-archive worker crashed."));
+        const message = event.message || "Tile-archive worker crashed.";
+        toast.error(`Tile rebuild failed (${schemaId.slice(-6)}): ${message}`);
+        pending.reject(new Error(message));
       }
       archiveWorker = undefined;
       spawned.terminate();

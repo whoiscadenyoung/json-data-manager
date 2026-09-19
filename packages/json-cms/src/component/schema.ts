@@ -77,6 +77,16 @@ export default defineSchema({
   // independent of these rows — see `groups` and setSchemaGroup.
   schemaCollections: defineTable({
     collectionId: v.id("collections"),
+    // The owning dataset's `kind`, denormalized onto the membership row so
+    // "which of this collection's datasets are geospatial" reads membership
+    // rows only, with no `schemas` doc fetch per membership (issue #54's
+    // collection-level N+1). Kept in sync where `kind` itself changes:
+    // stamped at insert time, and `startGeospatialConversion` rewrites the
+    // dataset's membership rows when it flips a dataset to geospatial.
+    // Absent on pre-field rows — `listGeospatialSchemaIdsByCollection`
+    // falls back to reading the schema doc for just those rows, so the
+    // denormalization only ever saves reads, never changes results.
+    kind: v.optional(v.union(v.literal("standard"), v.literal("geospatial"))),
     schemaId: v.id("schemas"),
   })
     .index("by_schema", ["schemaId"])
@@ -105,6 +115,15 @@ export default defineSchema({
     // actual use (map default viewport, list-page summary badge), just not
     // something to treat as exact.
     featureCount: v.optional(v.number()),
+    // Total rows in the dataset — like `featureCount`, kept exactly accurate
+    // by the entry mutations (see `applyEntryCountDelta` in lib.ts). This is
+    // the count the UI can afford to read on every list page: Convex has no
+    // count operator, so without it a "Data (N)" badge would mean reading
+    // every entry doc (and their full `data` payloads) up to the 16 MiB
+    // per-execution cap. Optional + absent on pre-field rows — the one-off
+    // `backfillDatasetSummaries` fills them in; readers treat absent as
+    // "unknown" and fall back to what the loaded pages show.
+    entryCount: v.optional(v.number()),
     boundingBox: v.optional(v.array(v.number())), // [minLon, minLat, maxLon, maxLat]
     // Rendering-cache bookkeeping for the tile-archive path (#58): every
     // geometry-affecting write bumps `mapTileCacheVersion` (see
