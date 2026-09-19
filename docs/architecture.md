@@ -1,255 +1,207 @@
-# System Architecture Guide
+# Architecture
 
-> **Note (2026-08):** The repo is now a bun workspace. The application
-> described below lives in the `app/` workspace (paths like `convex/…` and
-> `src/…` are under `app/`), and its data is stored in the `@caden/json-cms`
-> Convex component (`packages/json-cms/`) rather than app-owned tables — the
-> app re-exports the component's API via `exposeApi` under the same function
-> names used here. This document still describes the app's behavior
-> accurately; a full rewrite for the new layout is a follow-up.
+> Last verified against the code 2026-09-19. For the reasoning behind major
+> decisions, see [`docs/decisions/`](./decisions/); for topic designs, the
+> [documentation map](#documentation-map) at the end.
 
-## Overview
+A geospatial JSON data manager: define datasets (JSON Schema), import rows
+(JSON/CSV/XLSX/GeoJSON), browse and edit them in tables and on maps, organize
+them into collections/groups, and compose saved map views. It also renders
+data owned by a *different* Convex app as read-only "bound datasets" with
+git-style commits and tag versions.
 
-A JSON data management application built with React, Convex (backend/database), and TanStack Router. The system enables users to define JSON schemas and create/manage data entries that conform to those schemas.
+The core data layer is not in the app — it is a reusable Convex component,
+[`@caden/json-cms`](../packages/json-cms/), which owns the dataset/entry/
+geometry/organization tables. The app (`app/`) is a TanStack Start frontend
+plus a thin Convex host that re-exports the component's API and adds a
+bound-datasets sync layer on top.
 
-## Tech Stack
+## Workspace layout
 
-| Layer         | Technology                                 |
-| ------------- | ------------------------------------------ |
-| Frontend      | React 19, TypeScript                       |
-| Routing       | TanStack Router (file-based)               |
-| Data Fetching | Convex React SDK + TanStack Query          |
-| Backend/DB    | Convex (serverless)                        |
-| UI Components | shadcn/ui, Base UI                         |
-| Forms         | @rjsf/shadcn (schema-based), TanStack Form |
-| Styling       | Tailwind CSS v4                            |
-| Validation    | AJV8 (via @rjsf/validator-ajv8)            |
+Bun workspace (`bun.lock` at the root; use `bun`, not node/npm):
 
----
+| Path | What it is |
+| --- | --- |
+| `app/` | The application: TanStack Start (React 19) frontend in `app/src`, Convex host functions in `app/convex`. |
+| `packages/json-cms/` | `@caden/json-cms` — the CMS Convex component (`src/component`), a typed client facade with `exposeApi` (`src/client`), React hooks + prop-driven UI (`src/react`), backend-free shared geojson/reference code (`src/shared`). Keeps its own `example/` app as dev/codegen host. |
+| `packages/geometry-archive/` | `@caden/geometry-archive` — PMTiles archive writer + tile logic used by the map tile pipeline (issue #58). |
+| `packages/data-export/` | `@caden/data-export` — durable snapshot-export component. **Built but not wired in**: no consumer, not registered in `app/convex/convex.config.ts`. Decision pending: wire in as the backup story or archive it. |
+| `docs/` | Design docs, decision records, and project memory (see the map at the end). |
 
-## Database Schema
-
-Convex tables defined in `convex/schema.ts`:
-
-### `schemas` Table
-
-```typescript
-{
-  title: string; // Display name
-  description: string; // Human-readable description
-  schema: any; // JSON Schema Draft-07 object
-}
-```
-
-Stores JSON schema definitions that describe the structure of data entries.
-
-### `entries` Table
-
-```typescript
-{
-  schemaId: Id<"schemas">; // Foreign key to schemas table
-  data: any; // Entry data conforming to the schema
-}
-// Index: by_schema (for efficient schema-based queries)
-```
-
-Stores actual data entries. Each entry references a schema and stores arbitrary JSON data validated against that schema.
-
----
-
-## Backend Functions (Convex)
-
-### Schema Management (`convex/schemas.ts`)
-
-| Function | Type     | Description                                                                                                                                         |
-| -------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `list`   | query    | Returns all schemas ordered by creation time (desc)                                                                                                 |
-| `get`    | query    | Retrieves a single schema by ID; throws if not found                                                                                                |
-| `create` | mutation | Inserts new schema; validates `title` and `description` required; enforces 100KB size limit                                                         |
-| `update` | mutation | Patches schema fields; full schema updates only allowed when no entries exist (to preserve data integrity); metadata-only updates allowed otherwise |
-
-### Entry Management (`convex/entries.ts`)
-
-| Function     | Type     | Description                                                        |
-| ------------ | -------- | ------------------------------------------------------------------ |
-| `list`       | query    | Returns all entries for a given schema ID (uses `by_schema` index) |
-| `get`        | query    | Retrieves single entry by ID                                       |
-| `create`     | mutation | Inserts single entry; verifies schema exists                       |
-| `createBulk` | mutation | Batch inserts multiple entries; single transaction                 |
-
-### Key Backend Patterns
-
-- **Validation**: Schema size limit (100KB) enforced server-side
-- **Referential Integrity**: Entry mutations verify schema existence before insert
-- **Indexing**: `by_schema` index on `entries` for efficient per-schema queries
-- **Error Handling**: Uses `ConvexError` for typed error messages
-
----
-
-## Frontend Architecture
-
-### Routing Structure (TanStack Router)
-
-File-based routing in `src/routes/`:
+## Runtime topology
 
 ```
-/__root.tsx              # Root layout with providers
-/index.tsx               # Landing page
-/schemas/
-  /index.tsx             # Schema list (dashboard)
-  /create.tsx            # Create new schema
-  /$schemaId/
-    /index.tsx           # Schema detail + entries list
-    /edit.tsx            # Edit schema (metadata or full)
-    /create.tsx          # Create single entry (form-based)
-    /bulk-upload.tsx     # Bulk upload entries (JSON array)
-    /$entryId.tsx        # Entry detail view
+Browser ── TanStack Start (Vite + nitro, bun preset; SSR shell + SPA)
+   │  uses @convex-dev/react-query bridge; light queries persist to
+   │  sessionStorage for instant re-opens (app/src/integrations/tanstack-query)
+   ▼
+Convex backend (cloud dev when available; local backend is the current
+   │  fallback — see "Development") 
+   ├── component tables  (json-cms: datasets, entries, geometries, org, maps)
+   ├── host tables       (bound-datasets sync state + foreign-domain stand-ins)
+   └── file storage      (source files, geometry blobs, tile archives,
+                          snapshot JSONL — served with range-request support)
+        ▲
+        └── rebuild worker: in-browser worker builds a dataset's PMTiles
+            archive (geometry-archive) and installs it via tile_archives.install
 ```
 
-### Data Flow Pattern
+The app registers exactly one component (`app/convex/convex.config.ts`):
+`jsonCms`. Component tables are namespace-isolated by Convex, so component
+and host tables never collide and need no prefixes.
 
+## Data model
+
+Two schemas, deliberately separate.
+
+### Component tables (`packages/json-cms/src/component/schema.ts`)
+
+- **Content** — `schemas` (a dataset: JSON Schema doc, `kind` standard/
+  geospatial, denormalized summaries, tile-cache bookkeeping, optional
+  `source`/`lineage` read-only markers), `entries` (one row of `data`),
+  `geometries` (1:1 with entries that have geometry; JSON-text payload either
+  inline under ~1 MiB or as a storage blob — never nested Convex arrays,
+  which cap at 8192 elements), `references` (denormalized index of entry-to-
+  entry references for reverse lookup), `imports` (batched import tracking).
+- **Organization** — `collections` and `groups` (groups may float outside a
+  collection; a dataset is in many collections via `schemaCollections` and at
+  most one group via `schemas.groupId`).
+- **Map views** — `maps`, `mapLayers` (a layer targets a whole collection,
+  group, or dataset; collection/group layers expand live at read time),
+  `mapLayerOverrides` (per-child visibility, sparse rows).
+
+`datasets` (the `schemas` table) carries three groups of denormalized fields
+maintained incrementally by entry/geometry mutations, never recomputed by
+scan: `entryCount`/`featureCount` (exact), `boundingBox` (monotonically
+non-shrinking — fine for viewports, not exact), and the tile-cache fields
+(`mapTileCacheVersion` bumps on every geometry write; `mapTileArchive*` point
+at the installed archive and the version it was built from).
+
+### Host tables (`app/convex/schema.ts`)
+
+Two concerns, currently one schema (segmentation is tracked in #82):
+
+- **Bound-datasets infrastructure** — `datasetBindings` (registry: source key
+  → projected dataset, sync cursor, retention settings), `bindingEntries`
+  (foreign key → entry map; makes sync idempotent and delete detection
+  possible), `syncRuns` (checkpointed durable runs), `datasetActivity`
+  (per-sync history), `commits` (mirror of the applied foreign commit tail),
+  `tagDeltas` (stored deltas between consecutive frozen versions).
+- **Foreign-domain stand-in** — the PoC's "other app": `restaurants`,
+  `locations`, `restaurantLocations` (join), `sourceCommits` (its git-like
+  feed), `restaurantSnapshots` (its tag snapshots as JSONL in storage). This
+  is scaffolding for the real integration; phase 5 (#78, remote transport) is
+  blocked on the hosting-fork decision — see
+  [`docs/bound-datasets-design.md`](./bound-datasets-design.md) §8.
+
+## Backend layout (`app/convex/`)
+
+- **API shims** — `schemas.ts`, `entries.ts`, `collections.ts`, `groups.ts`,
+  `maps.ts`, `geometries.ts`, `imports.ts` are thin `exposeApi` re-exports of
+  component functions under short names (`api.entries.listPage`, …). The
+  module/function names are load-bearing: client call sites, the TanStack
+  Query persist allowlist (`app/src/integrations/tanstack-query/light-namespaces.ts`),
+  and saved query hashes all key on them. Every shim passes the host `auth`.
+- **auth.ts** — the single choke point inside `exposeApi`. Identity is a
+  constant `"anonymous"` (real auth is a standing TODO). It also rejects
+  writes to read-only datasets (bound or frozen-version) as a friendly first
+  line; the component itself enforces the same rule via its `boundWrite`
+  attestation, so the gate is defense-in-depth, not the only wall.
+- **Bound-datasets layer** — `sources.ts` (the `BoundSource` descriptor
+  interface + registry: adding a source = one entry), `sync.ts` (durable
+  engine: collect → chunked apply, keyed and idempotent via `bindingEntries`;
+  commit-tail is the primary path, full pass falls back or reconciles),
+  `tags.ts` (snapshot ingest: freeze foreign snapshots into read-only
+  lineage datasets, version compare, keep-N/pin retention), `bindings.ts`
+  (binding status/unbind queries for the UI). Weekly reconcile cron in
+  `crons.ts`.
+- **Foreign-domain CRUD** — `dashboard.ts` (restaurants/locations/links CRUD
+  for `/dashboard`; every write only stamps staleness on the binding) and
+  `seed.ts`.
+- **Tile install** — `tile_archives.ts` — deliberately NOT an exposeApi
+  export: `install` is a host wrapper around the component's
+  `setMapTileArchive` so only the rebuild worker (standalone ConvexClient)
+  can install archives; the expectedVersion guard makes an edit-raced
+  rebuild self-discard. `schemas.maxTileCacheVersion` is the one-number cache
+  buster for persisted client state.
+
+## Import, export, and the two geometry paths
+
+Import: the client parses (CSV/XLSX/JSON/GeoJSON via json-cms react parsers),
+chunks rows, uploads chunk blobs, and drives the component's workflow-driven
+`imports` progress. Optional: retain the source file, simplify geometry to
+6dp, or convert lat/lng columns to geometry (`geospatial-conversion-panel`).
+
+Reading geometry has two paths, chosen per dataset by `app/src/lib/layer-source.ts`:
+
+- **Row path** — byte-budget pagination (`geometries.list`, ~5 MB/page,
+  500-row ceiling) rendered as GeoJSON. Small datasets, always available.
+- **Tile path** — for datasets with an installed PMTiles archive: the map
+  requests tiles through the pmtiles protocol (`pmtiles-protocol.ts`), backed
+  by HTTP range requests against storage, with a 256 MB OPFS LRU
+  (`tile-archive-cache.ts`) making repeat opens fetch zero archive bytes. A
+  browser worker (`tile-archive.worker.ts` + geometry-archive) rebuilds
+  archives after edits; version guards discard stale builds.
+
+The tile path exists because the 2026-09 audit measured the row path at
+46.55 MB for one real dataset — see
+[`docs/map-performance-audit-2026-09-16.md`](./map-performance-audit-2026-09-16.md).
+
+## Frontend layout (`app/src/`)
+
+- **Routes** (TanStack file-based routing): `/datasets` (+ per-dataset
+  detail/edit/bulk-upload/entry), `/collections`, `/groups`, `/maps`,
+  `/dashboard` (the foreign-domain CRUD surface).
+- **`components/ui/map.tsx`** — the app's MapLibre kit (~15 components: Map,
+  Marker/Popup, Controls, GeoJSON/VectorTiles/Arc/Cluster layers). Per-page
+  map components (`entries-map`, `group-map`, `layers-map`, `datasets-map`,
+  `diff-overlay-map`) compose it; they share orchestration that is a known
+  duplication target (#82).
+- **`components/niko-table/`** — vendored third-party table library
+  (niko-table), ~11.7k lines, consumed only by `entries-table.tsx`.
+  Vendor-boundary cleanup tracked in #82.
+- **State** — Convex via the `@convex-dev/react-query` bridge; no global
+  store. Light query namespaces persist for instant re-opens; persisted state
+  is invalidated by `maxTileCacheVersion`.
+
+## Development
+
+```bash
+bun install
+bun --filter=app run dev     # app (vite + convex dev)
+bun test                     # vitest across workspaces
+bunx tsc --noEmit            # from app/ — the app has no typecheck script
+bun run lint                 # oxlint (type-aware) at the root
 ```
-┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
-│   React UI  │────▶│ Convex Hooks │────▶│  Convex Server  │
-│             │◀────│ (useQuery/   │◀────│  (queries/      │
-│             │     │  useMutation)│     │   mutations)    │
-└─────────────┘     └──────────────┘     └─────────────────┘
-                            │
-                            ▼
-                    ┌──────────────┐
-                    │ TanStack     │
-                    │ QueryClient  │
-                    └──────────────┘
-```
 
-### Convex Integration
+Component-package changes need a rebuild before the app picks them up:
+`bun run build` inside `packages/json-cms` (the app consumes `dist`).
+json-cms develops against its own `example/` host (`bun run dev` there runs
+backend + example + codegen watch).
 
-**Provider** (`src/integrations/convex/provider.tsx`):
+Deployment has been volatile — the cloud dev deployment was disabled on
+free-plan limits (2026-09-19) and the app currently runs against a local
+Convex backend; the working env-file recipe and the warnings (plain
+`convex dev` from `app/` can re-select cloud and rewrite `.env.local`) live
+in project memory (`docs/memory/`) rather than here, because this section
+ages fast.
 
-```typescript
-const convexQueryClient = new ConvexQueryClient(env.VITE_CONVEX_URL);
-<ConvexProvider client={convexQueryClient.convexClient}>
-```
+## Documentation map
 
-**Usage in Components**:
+| Doc | Status | What it holds |
+| --- | --- | --- |
+| [`bound-datasets-design.md`](./bound-datasets-design.md) | current | The full bound-datasets design: concept mapping, data model, sync, tag ingest, adapter contract, PoC status, phased roadmap (#72–#78). |
+| [`map-performance-audit-2026-09-16.md`](./map-performance-audit-2026-09-16.md) | historical record | The audit that produced #48–#55; method + measurements still cited by the geometry path. |
+| [`gis-geometry-transport-survey.md`](./gis-geometry-transport-survey.md) | research (2026-09-17) | Survey of how major GIS platforms transport geometry; rationale companion to the tile path. |
+| [`decisions/`](./decisions/) | living log | Numbered decision records (ADR-style). |
+| [`memory/`](./memory/MEMORY.md) | living log | Project memory: durable lessons, verification gotchas, per-initiative records. Policy in the repo `AGENTS.md`. |
 
-```typescript
-// Queries
-const schemas = useQuery(api.schemas.list);
-const schema = useQuery(api.schemas.get, { schemaId });
-const entries = useQuery(api.entries.list, { schemaId });
+## Known gaps
 
-// Mutations
-const createSchema = useMutation(api.schemas.create);
-const createEntry = useMutation(api.entries.create);
-const createBulk = useMutation(api.entries.createBulk);
-```
-
----
-
-## Key Frontend Components
-
-### Schema Editor (`src/components/schema-editor/schema-editor.tsx`)
-
-Dual-mode JSON schema editor:
-
-- **Visual Mode**: Form-based builder for common schema properties
-- **Code Mode**: Raw JSON editor with CodeMirror
-- **Validation Pane**: Side panel for testing schema against sample data
-- **Drag & Drop**: Accepts JSON files (schema objects or data arrays)
-- **Schema Inference**: Auto-generates schema from data arrays
-
-### Entry Creation Flow
-
-**Single Entry** (`/schemas/$schemaId/create.tsx`):
-
-```typescript
-// Uses @rjsf/shadcn to render dynamic form from JSON schema
-<Form schema={schema.schema} validator={validator} onSubmit={handleSubmit} />
-```
-
-**Bulk Upload** (`/schemas/$schemaId/bulk-upload.tsx`):
-
-1. Accepts JSON array via file upload or paste
-2. Client-side validation against schema using AJV8
-3. Displays per-entry validation results
-4. Submits only valid entries via `createBulk` mutation
-
-### Schema Edit Protection
-
-When a schema has entries, editing is restricted to metadata only (`title`, `description`). This preserves data integrity by preventing structural changes that would invalidate existing entries.
-
-```typescript
-// In edit.tsx
-const hasEntries = entries.length > 0;
-hasEntries
-  ? <MetadataEditForm />   // Title/description only
-  : <FullSchemaEditForm /> // Full schema editor
-```
-
----
-
-## Utilities
-
-### Schema Inference (`src/lib/infer-schema.ts`)
-
-Infers JSON Schema Draft-07 from an array of plain objects:
-
-- Type inference: `string`, `number`, `integer`, `boolean`, `object`, `array`, `null`
-- Merged types for heterogeneous data (e.g., `integer` + `number` → `number`)
-- Nested object support (recursive inference)
-- Required field detection (present in all objects, non-null)
-
-```typescript
-export function inferSchemaFromData(data: unknown[]): Record<string, unknown>;
-```
-
----
-
-## Data Pipeline Summary
-
-### Creating a Schema
-
-1. User builds schema in SchemaEditor (visual or code mode)
-2. Client validates JSON syntax and required fields (`title`, `description`)
-3. Client enforces 100KB size limit
-4. `createSchema({ schema })` mutation → Convex
-5. Convex validates and inserts into `schemas` table
-6. User redirected to schema detail page
-
-### Creating an Entry
-
-1. User navigates to schema detail, clicks "Create Entry"
-2. `@rjsf/shadcn` renders form from JSON schema
-3. User fills form, client validates via AJV8
-4. `createEntry({ schemaId, data })` mutation → Convex
-5. Convex verifies schema exists, inserts into `entries` table
-6. Entry appears in schema's entry list (auto-refreshed via `useQuery`)
-
-### Bulk Upload
-
-1. User provides JSON array (file or paste)
-2. Client parses and validates each item against schema
-3. Validation results displayed with per-item error details
-4. User submits; `createBulk({ schemaId, dataArray })` → Convex
-5. Batch insert in single transaction
-
-### Export
-
-1. Schema detail page offers export functionality
-2. Downloads two files:
-   - `{slug}-schema.json`: The schema definition
-   - `{slug}-entries.json`: Array of all entry data
-
----
-
-## Key Design Decisions
-
-| Decision                     | Rationale                                                               |
-| ---------------------------- | ----------------------------------------------------------------------- |
-| Schema stored as `any` type  | JSON Schemas are self-describing; strict typing would be overly complex |
-| No entry update/delete       | MVP scope; entries are append-only for simplicity                       |
-| Schema edit restrictions     | Prevents data corruption; existing entries must remain valid            |
-| Client-side validation first | Fast feedback; server validates as secondary defense                    |
-| TanStack Query + Convex      | Caching, devtools, and optimistic updates via proven patterns           |
-| File-based routing           | Colocation of routes with components; automatic route tree generation   |
+- **No real auth** — identity is `"anonymous"` everywhere.
+- **`@caden/data-export` is unwired** — the backup story exists as a package
+  but nothing registers or calls it.
+- **No CI** — tests and typecheck run locally only.
+- **#82** records a full architecture review (monolith splits, vendor
+  boundary, host-schema segmentation) as reference-only; nothing there is
+  approved work.
