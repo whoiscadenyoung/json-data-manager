@@ -16,6 +16,68 @@ primary path = commit-tail apply; projection beats virtual tables (every
 component read path works unchanged). Hosting fork (this app hosts vs.
 component-in-other-app) deliberately open until the remote-transport phase.
 
+**ALL ENGINEERING PHASES SHIPPED (2026-09-19): #75→PR #79, #76→PR #80,
+#77→PR #81, all verified E2E on the LOCAL backend.** Only #78 (remote
+transport) remains, blocked on the user's hosting-fork decision. What
+landed, per phase:
+
+**#75 — component-level read-only gate (PR #79).** The component's
+data-mutating functions (createEntry/createEntriesBulk/updateEntry/
+deleteEntry/deleteEntriesBySchema/deleteSchema/startImport/
+startSimplification/startGeospatialConversion) reject writes to
+source/lineage-marked schemas unless the call carries the host-only
+`boundWrite` attestation (`assertDataWritable`). Real auth NOT needed: the
+attestation is deliberately absent from every exposeApi wrapper's args,
+Convex validators are exact (no client smuggling), and component functions
+have no client-facing path — attack matrix verified over dev HTTP. This
+closes startSimplification/startGeospatialConversion, whose
+{schemaId,"update"} shape was indistinguishable from organization ops.
+`source` is host-flow-only (stripped from exposeApi.createSchema). Escape
+hatches: `bindings.unbind` (deletes projection + binding + history; source
+untouched) and `tags.retireVersion` (one frozen version; snapshot stays
+re-freezable), with dataset-page UI (danger zone + Versions-card retire).
+
+**#76 — source interface + durable sync (PR #80).** `app/convex/sources.ts`:
+`BoundSource` = descriptor (schema/kind/geometry) + declared `schemaMapping`
+(snapshot onto binding) + `listRows` full-state reader; registry `SOURCES`;
+a second non-geospatial source ("restaurants") proves descriptor-driven.
+`app/convex/sync.ts`: startRun (guards concurrent runs — join, and resume a
+stale checkpoint) → collectRows action (chunks source state to APP storage —
+component blobs only resolve inside the component) → applyChunks action
+(resumes at run's chunkIndex/rowOffset) → keyed idempotent applies through
+the `bindingEntries` map via createEntry/updateEntry/deleteEntry + boundWrite
+→ finalizeRun (deletes keys the run never saw, stamps binding + activity).
+Reconcile = same engine in "reconcile" mode, weekly cron (`crons.ts`,
+Mondays 09:00) + dashboard button. Dashboard sync card rebuilt around the
+run lifecycle (progress, last result, per-source rows).
+
+**#77 — commit-tail sync + overlays + compare + retention (PR #81).**
+`sourceCommits` = stand-in foreign commit log; dashboard CRUD appends one
+commit per user action in ops shape {entryKey, op, fields[[name,before,after]],
+geometryChanged}, expanded per joined link row (openedYear deliberately NOT
+projected — the feed must match the full-sync projection exactly).
+`commitsSince`/`newestCommit`/`buildGeometry` joined the source interface.
+"sync" runs page the tail since binding.lastAppliedCommitSeq; ops apply
+through the key map (add builds from after-values + rebuilt geometry; update
+merges deltas; delete propagates); applied commits mirror into the host-side
+`commits` table (newest 200/binding — finalizeRun prunes). Full passes
+re-baseline the cursor; re-applying an applied tail is a no-op. History tab
+= commit rail; selecting a commit highlights affected features on a
+dedicated GeoJSON overlay (`DiffOverlayMap`, never the tile source) beside
+field diffs. Tag compare: ingest stores sequential deltas (`tagDeltas`);
+`tags.getVersionDelta` computes any pair on demand; `VersionCompare` renders
+the add/remove/modify overlay on either base. Retention: keep-N unpinned
+(default 10, editable) + pin exemption, enforced after every ingest.
+
+Phase 4 gotchas: `.first()` resolves to NULL not undefined (hit AGAIN — the
+legacy-clear check silently never fired until fixed); Convex returns
+validators are exact — raw docs returned from queries must be projected when
+the doc gains new fields (bindings:status broke this way); convex codegen's
+typecheck uses an older lib target — no `Array.prototype.at` in convex/
+files; oxlint bans `?.` (use explicit ternaries) and `delete obj[key]`;
+finalizeRun must not stomp tail-run counters it doesn't compute (removed
+was reset to 0 by the sweep-local variable).
+
 **Working PoC shipped** (verified end-to-end on local dev): `app/convex/schema.ts`
 adds foreign-domain host tables (`restaurants`, `locations` lat/lng,
 `restaurantLocations` many-to-many, `datasetBindings` registry) cohabiting

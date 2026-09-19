@@ -206,6 +206,23 @@ with anonymous access, any client could claim a sync exemption), gating
 organization ops in the current `auth` operation shape), and an
 unbind-then-delete flow.
 
+**Component-level enforcement + unbind/retire (phase 1 remainder, shipped
+2026-09-19 as #75 / PR #79):** the component itself now enforces the
+read-only rule — every data-mutating function rejects writes to
+`source`/`lineage`-marked schemas unless the call carries the host-only
+`boundWrite` attestation (`assertDataWritable` in the component's lib.ts).
+Real auth turned out to be unnecessary: the attestation is deliberately
+absent from every `exposeApi` wrapper's args, Convex validators are exact,
+and component functions have no client-facing path — so only host
+sync/ingest/retirement code can supply it. This also closes
+`startSimplification`/`startGeospatialConversion`, whose operation shape was
+indistinguishable from organization ops app-side. The `source` marker is
+host-flow-only (`exposeApi.createSchema` no longer forwards it). The
+explicit exit paths exist: `bindings.unbind` deletes the projection +
+binding + history (source tables untouched, re-sync re-creates) and
+`tags.retireVersion` deletes one frozen version (snapshot stays
+re-freezable), both with dataset-page UI.
+
 **Tag ingest + lineage (phase 3, shipped 2026-09-19):** the foreign app's
 snapshot timeline is modeled by the `restaurantSnapshots` table. Taking a
 snapshot (`tags:createRestaurantSnapshot`) serializes the joined tables to a
@@ -234,21 +251,44 @@ and version retention (pin/unpin or keep-N; versions accumulate until then).
 1. **Read-only bound datasets** — DONE 2026-09-18 for the app-side half:
    `source` marker on the component's `schemas` doc, Synced badge + hidden
    write actions in the UI, and the read-only gate in the app's `auth`
-   choke point. Remaining: component-level enforcement + the two
-   conversion/simplification ops (see §9).
-2. **Source interface + co-deployed sync** — formalize the source descriptor
-   (state reader + geometry mapping) and the durable sync workflow with
-   reconcile. The UI half (Sync button, "synced N ago", Out-of-date badge)
-   shipped with phase 1 (2026-09-18).
+   choke point. Component-level enforcement + unbind/retire DONE 2026-09-19
+   (#75, PR #79 — see §9).
+2. **Source interface + co-deployed sync** — DONE 2026-09-19 (#76, PR #80):
+   `app/convex/sources.ts` defines the `BoundSource` descriptor (dataset
+   schema, declared field→projection mapping, full-state reader) behind an
+   interface a remote transport (#78) can implement unchanged; a second,
+   non-geospatial source ("Restaurants") ships to prove the machinery is
+   descriptor-driven. The sync engine (`app/convex/sync.ts`) replaced the
+   clear-then-reload mutation with a durable, keyed, resumable workflow:
+   collect → chunk blobs → checkpointed keyed applies through the
+   `bindingEntries` map (idempotent, no duplicates/loss on resume) →
+   delete detection (keys the run didn't see) → binding stamps + activity
+   row. Concurrent starts join the live run; stale checkpoints resume.
+   Reconcile is the same engine in "reconcile" mode — weekly cron plus an
+   on-demand dashboard button.
 3. **Tag ingest + lineage** — DONE 2026-09-19: snapshot files (JSONL) frozen
    into version datasets via the import pipeline; `lineage` on the
    component's `schemas` doc (+ two indexes); versions surfaced in the
    browser, dataset pages, and maps; pull-based auto-ingest with per-ref
    idempotency (dashboard Snapshots card; `createRestaurantSnapshot` stands
-   in for the foreign app's push hook). Remaining: delta-at-ingest (moved to
-   4) and version retention.
-4. **Commits + overlay rendering** — `commits` table, commit feed apply as
-   the primary sync path, history rail, diff overlay, tag-compare view
-   (absorbs the tag-delta computation deferred from 3).
-5. **Remote transport (if side-by-side)** — reader/commit-feed/tag adapter
-   on the foreign app + cross-deployment auth; retires at the merge.
+   in for the foreign app's push hook).
+4. **Commits + overlay rendering** — DONE 2026-09-19 (#77, PR #81): the
+   stand-in foreign app keeps its own commit log (`sourceCommits`; the
+   dashboard's source-table writes append one commit per user action in the
+   ops shape, expanded per joined link row). Sync's primary path pages the
+   feed since the binding's cursor (`commitsSince` on the source interface)
+   and applies ops through the keyed map; applied commits mirror into the
+   host-side `commits` table (newest 200 per binding). Full passes
+   re-baseline the cursor; re-applying an applied tail is a no-op. The
+   History tab is a commit rail: selecting a commit highlights its affected
+   features on a dedicated GeoJSON overlay map (never the tile source)
+   beside field-level before/after diffs. Tag compare: the ingest stores the
+   sequential delta between consecutive versions (`tagDeltas`), and the
+   compare view computes any pair on demand (`tags.getVersionDelta`),
+   rendered as an add/remove/modify overlay on either base. Retention:
+   keep-N unpinned versions (default 10, editable), pin/unpin exemption,
+   enforced after every ingest.
+5. **Remote transport (if side-by-side)** — OPEN (#78), blocked on the
+   hosting-fork decision (see §8). The source interface (state reader,
+   `commitsSince`/`newestCommit`, `buildGeometry`) is the seam a remote
+   transport implements; nothing else changes.
