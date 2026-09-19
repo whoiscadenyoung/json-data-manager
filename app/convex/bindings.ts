@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 
 import { components } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
@@ -251,8 +251,13 @@ export const syncRestaurantLocations = mutation({
     // Rebuild the projection: v1 sync is clear-then-reload (the design's
     // "simplest correct sync"; delete detection comes free at this scale).
     // `deleteEntriesBySchema` bumps the tile-cache version, so any archive
-    // of the previous projection is invalidated before we write.
-    await ctx.runMutation(components.jsonCms.lib.deleteEntriesBySchema, { schemaId });
+    // of the previous projection is invalidated before we write. Both writes
+    // carry the component's host-only `boundWrite` attestation — the
+    // component-level read-only gate would otherwise reject them (#75).
+    await ctx.runMutation(components.jsonCms.lib.deleteEntriesBySchema, {
+      boundWrite: "sync",
+      schemaId,
+    });
 
     const rows = await collectProjectionRows(ctx),
       entries = rows.map((row) => ({
@@ -262,6 +267,7 @@ export const syncRestaurantLocations = mutation({
       }));
     const diff = diffProjection(previousEntries, entries);
     await ctx.runMutation(components.jsonCms.lib.createEntriesBulk, {
+      boundWrite: "sync",
       entries,
       schemaId,
     });
@@ -310,6 +316,39 @@ export const syncRestaurantLocations = mutation({
     entries: v.number(),
     schemaId: v.string(),
   }),
+});
+
+/**
+ * Detaches a bound live dataset: deletes the projected dataset (allowed by
+ * the component's read-only gate because this flow attests
+ * `boundWrite: "unbind"`), then removes the binding row and its activity
+ * history. The source tables are untouched — a later sync simply re-creates
+ * the projection. Deleting a bound dataset any other way stays blocked.
+ */
+export const unbind = mutation({
+  args: { schemaId: v.string() },
+  handler: async (ctx, args) => {
+    const binding = await ctx.db
+      .query("datasetBindings")
+      .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
+      .first();
+    if (binding === null) {
+      throw new ConvexError("This dataset has no source binding to remove.");
+    }
+    await ctx.runMutation(components.jsonCms.lib.deleteSchema, {
+      boundWrite: "unbind",
+      schemaId: binding.schemaId,
+    });
+    // The activity log describes the projection it synced — it goes with it.
+    const activity = await ctx.db
+      .query("datasetActivity")
+      .withIndex("by_bindingId", (q) => q.eq("bindingId", binding._id))
+      .collect();
+    await Promise.all([
+      ...activity.map((row) => ctx.db.delete(row._id)),
+      ctx.db.delete(binding._id),
+    ]);
+  },
 });
 
 /**

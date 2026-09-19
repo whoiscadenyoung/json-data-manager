@@ -7,6 +7,7 @@ import {
   action,
   internalMutation,
   internalQuery,
+  mutation,
   query,
 } from "./_generated/server";
 
@@ -214,6 +215,33 @@ export const listSnapshots = query({
   returns: v.array(snapshotValidator),
 });
 
+/**
+ * Retires one frozen version dataset: deletes it through the component's
+ * read-only gate with the host's retirement attestation. The snapshot row
+ * and its file stay — the version can always be re-frozen from the same ref
+ * (delete the snapshot itself for that to stop being possible). Versions are
+ * independent datasets, so unbinding/deleting the live dataset never touches
+ * them; each retires on its own here (or later, through a retention policy).
+ */
+export const retireVersion = mutation({
+  args: { schemaId: v.string() },
+  handler: async (ctx, args) => {
+    const schema = await ctx.runQuery(components.jsonCms.lib.getSchema, {
+      schemaId: args.schemaId,
+    });
+    if (schema === null) {
+      throw new ConvexError("Version dataset not found.");
+    }
+    if (schema.lineage === undefined) {
+      throw new ConvexError("Only a frozen version dataset can be retired here.");
+    }
+    await ctx.runMutation(components.jsonCms.lib.deleteSchema, {
+      boundWrite: "retire",
+      schemaId: args.schemaId,
+    });
+  },
+});
+
 const versionValidator = v.object({
   _creationTime: v.number(),
   entryCount: v.optional(v.number()),
@@ -361,8 +389,11 @@ export const freezeSnapshotVersion = internalMutation({
       });
     }
     // An empty snapshot still gets an import doc — zero chunks complete
-    // immediately, and status reads uniformly for every version.
+    // immediately, and status reads uniformly for every version. The
+    // `boundWrite` attestation marks this as the host's tag-ingest flow (the
+    // component's read-only gate requires it on a lineage-marked schema).
     const importId = await ctx.runMutation(components.jsonCms.lib.startImport, {
+      boundWrite: "tag-ingest",
       schemaId,
       storageIds: args.chunkStorageIds,
       total: args.total,
@@ -475,7 +506,10 @@ async function cleanupPartialVersion(
       snapshotRef: ref,
     });
     if (partial !== null) {
-      await ctx.runMutation(components.jsonCms.lib.deleteSchema, { schemaId: partial._id });
+      await ctx.runMutation(components.jsonCms.lib.deleteSchema, {
+        boundWrite: "retire",
+        schemaId: partial._id,
+      });
     }
   } catch {
     // Cleanup is best-effort; the caller's failure report still stands.

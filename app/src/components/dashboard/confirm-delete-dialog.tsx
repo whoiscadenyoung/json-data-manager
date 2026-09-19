@@ -11,20 +11,25 @@ import {
 /**
  * Shared "delete this? it cascades to links" confirmation for the dashboard
  * panels. `name` undefined closes the dialog; when set, it names the row
- * being deleted.
+ * being deleted. `title`/`confirmLabel` re-word the action for flows where
+ * "delete" isn't the verb (e.g. retiring a frozen version).
  */
 export function ConfirmDeleteDialog({
+  confirmLabel = "Delete",
   description,
   entityLabel,
   isPending,
   name,
+  title,
   onCancel,
   onConfirm,
 }: {
+  confirmLabel?: string;
   description: string;
   entityLabel: string;
   isPending: boolean;
   name?: string;
+  title?: string;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -40,7 +45,8 @@ export function ConfirmDeleteDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            {name === undefined ? `Delete ${entityLabel}` : `Delete "${name}"?`}
+            {title ??
+              (name === undefined ? `Delete ${entityLabel}` : `Delete "${name}"?`)}
           </DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
@@ -60,7 +66,7 @@ export function ConfirmDeleteDialog({
               onConfirm();
             }}
           >
-            {isPending ? "Deleting…" : "Delete"}
+            {isPending ? `${confirmLabel}…` : confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -152,9 +152,11 @@ export default defineSchema({
     simplifyGeometry: v.optional(v.boolean()),
     // Set when this dataset is a read-only projection of a connected external
     // source (the host app's bound-datasets integration): `name` identifies
-    // the source (e.g. a table or feed the host syncs from). Data mutations
-    // on the dataset belong to that source's sync flow, not to users —
-    // hosts gate their own wrapped mutations on this field's presence.
+    // the source (e.g. a table or feed the host syncs from). The component
+    // itself enforces the read-only rule: data mutations on a `source`- or
+    // `lineage`-marked dataset are rejected unless the host's sync/ingest
+    // flow attests them with `boundWrite` (see `assertDataWritable` in
+    // lib.ts) — hosts additionally gate their own wrapped mutations.
     source: v.optional(v.object({ name: v.string() })),
     // Set when this dataset is a frozen point-in-time version (a tag) of a
     // bound live dataset — the host's tag-ingest flow writes it alongside
@@ -162,8 +164,9 @@ export default defineSchema({
     // live dataset the version froze; `versionLabel`/`snapshotRef` identify
     // the foreign snapshot it came from (`snapshotRef` is the host's
     // idempotency key — a ref never freezes twice); `frozenAt` is the freeze
-    // time. The host gates data mutations on its presence, exactly like
-    // `source`. Two indexes serve the version reads: "versions of X"
+    // time. Like `source`, its presence makes the dataset read-only at the
+    // component level (see `assertDataWritable` in lib.ts). Two indexes
+    // serve the version reads: "versions of X"
     // listings and the already-ingested lookup.
     lineage: v.optional(
       v.object({
