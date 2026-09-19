@@ -6,24 +6,30 @@ import type { MutationCtx } from "./_generated/server";
 
 /**
  * TODO(auth): the app has no authentication yet, so identity is a constant
- * "anonymous". The operation-aware half below is the bound-datasets read-only
- * gate instead: writes targeting a read-only dataset are rejected here — the
- * one choke point every exposeApi-wrapped mutation flows through. Two kinds
- * of dataset are read-only: a live projection with a `datasetBindings` row
- * (a synced external source) and a frozen tag version (`lineage` on the
- * component's schema doc). The sync and tag ingest call the component
- * directly (not through exposeApi), so both are unaffected.
+ * "anonymous". The operation-aware half below is the app-side half of the
+ * bound-datasets read-only gate: writes targeting a read-only dataset are
+ * rejected here — the one choke point every exposeApi-wrapped mutation flows
+ * through. Two kinds of dataset are read-only: a live projection with a
+ * `datasetBindings` row (a synced external source) and a frozen tag version
+ * (`lineage` on the component's schema doc). The sync and tag ingest call the
+ * component directly (not through exposeApi), so both are unaffected.
  *
  * Allowed on read-only datasets: schema metadata edits (`updateSchema`) and
  * organization (collection/group membership) — the data is read-only, not the
- * filing. Deletion is blocked too: removing a bound dataset starts with
- * removing its binding row ("unbinding"), which turns it back into an
- * ordinary dataset, and version datasets are the source's history — they go
- * when the source's retention says so, not via stray deletes. Known gaps
- * while auth is anonymous: `startSimplification`/`startGeospatialConversion`
- * pass the same `{schemaId, "update"}` shape as the organization ops and so
- * are not distinguishable here — component-level enforcement lands with real
- * auth (docs/bound-datasets-design.md phase 1).
+ * filing. Deletion is blocked too: removing a bound dataset goes through the
+ * explicit unbind flow (`bindings.unbind`), and version datasets retire via
+ * `tags.retireVersion` — both call the component directly with the host-only
+ * `boundWrite` attestation.
+ *
+ * Since #75, enforcement no longer depends on this choke point: the
+ * component itself rejects data mutations on `source`/`lineage`-marked
+ * schemas unless the caller carries the `boundWrite` attestation
+ * (`assertDataWritable` in the component), which no exposeApi wrapper can
+ * carry — that closes `startSimplification`/`startGeospatialConversion` too,
+ * whose `{schemaId, "update"}` shape was indistinguishable from organization
+ * ops here. This gate stays as the user-facing first line (friendlier error,
+ * one fewer round trip) and for the paths only it can see. Real auth
+ * (identity beyond "anonymous") remains a separate TODO.
  */
 export async function auth(
   ctx: { auth: Auth },

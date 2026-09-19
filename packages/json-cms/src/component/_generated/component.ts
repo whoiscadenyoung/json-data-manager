@@ -59,14 +59,18 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       createEntriesBulk: FunctionReference<
         "mutation",
         "internal",
-        { entries: Array<{ data: any; geometry?: string }>; schemaId: string },
+        {
+          boundWrite?: string;
+          entries: Array<{ data: any; geometry?: string }>;
+          schemaId: string;
+        },
         Array<string>,
         Name
       >;
       createEntry: FunctionReference<
         "mutation",
         "internal",
-        { data: any; geometry?: string; schemaId: string },
+        { boundWrite?: string; data: any; geometry?: string; schemaId: string },
         string,
         Name
       >;
@@ -120,14 +124,14 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       deleteEntriesBySchema: FunctionReference<
         "mutation",
         "internal",
-        { schemaId: string },
+        { boundWrite?: string; schemaId: string },
         number,
         Name
       >;
       deleteEntry: FunctionReference<
         "mutation",
         "internal",
-        { entryId: string },
+        { boundWrite?: string; entryId: string },
         any,
         Name
       >;
@@ -148,7 +152,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       deleteSchema: FunctionReference<
         "mutation",
         "internal",
-        { schemaId: string },
+        { boundWrite?: string; schemaId: string },
         any,
         Name
       >;
@@ -832,7 +836,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       startGeospatialConversion: FunctionReference<
         "mutation",
         "internal",
-        { latField: string; lonField: string; schemaId: string; total: number },
+        {
+          boundWrite?: string;
+          latField: string;
+          lonField: string;
+          schemaId: string;
+          total: number;
+        },
         string,
         Name
       >;
@@ -840,6 +850,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "mutation",
         "internal",
         {
+          boundWrite?: string;
           schemaId: string;
           sourceFile?: { name: string; size: number; storageId: string };
           storageIds: Array<string>;
@@ -851,7 +862,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       startSimplification: FunctionReference<
         "mutation",
         "internal",
-        { schemaId: string; total: number },
+        { boundWrite?: string; schemaId: string; total: number },
         string,
         Name
       >;
@@ -865,7 +876,12 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       updateEntry: FunctionReference<
         "mutation",
         "internal",
-        { data: any; entryId: string; geometry?: string | null },
+        {
+          boundWrite?: string;
+          data: any;
+          entryId: string;
+          geometry?: string | null;
+        },
         any,
         Name
       >;

@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { formatDistanceToNow } from "date-fns";
@@ -12,11 +12,14 @@ import {
   Plus,
   Search,
   Tag,
+  Trash2,
+  Unplug,
   X,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { ConfirmDeleteDialog } from "#/components/dashboard/confirm-delete-dialog";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
@@ -109,8 +112,24 @@ function LineageRow({ lineage }: { lineage: NonNullable<DatasetDoc["lineage"]> }
 }
 
 /** The dataset's type, field count, feature count and creation date at a glance. */
-function DetailsCard({ schema, binding }: { binding?: BindingDoc; schema: DatasetDoc }) {
-  const fields = fieldCount(schema.schema);
+function DetailsCard({ binding, schema }: { binding?: BindingDoc; schema: DatasetDoc }) {
+  const fields = fieldCount(schema.schema),
+    navigate = useNavigate(),
+    unbind = useMutation(api.bindings.unbind),
+    [unbindTarget, setUnbindTarget] = useState<string | undefined>(),
+    [isUnbinding, setIsUnbinding] = useState(false),
+    handleUnbind = async () => {
+      setIsUnbinding(true);
+      try {
+        await unbind({ schemaId: schema._id });
+        toast.success("Unbound — the mirrored dataset and its sync history are gone.");
+        void navigate({ to: "/datasets" });
+      } catch (error) {
+        toast.error(errorMessage(error, "Failed to unbind dataset."));
+      } finally {
+        setIsUnbinding(false);
+      }
+    };
   return (
     <Card>
       <CardHeader>
@@ -168,6 +187,43 @@ function DetailsCard({ schema, binding }: { binding?: BindingDoc; schema: Datase
             </dd>
           </div>
         </dl>
+        {binding !== undefined && (
+          <>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t pt-4">
+              <p className="text-xs text-muted-foreground">
+                No longer want this projection? Unbinding deletes the mirrored dataset and its sync
+                history — the source tables stay untouched, and a later sync re-creates it. Frozen
+                versions are separate datasets and stay.
+              </p>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="shrink-0 text-destructive hover:text-destructive"
+                onClick={() => {
+                  setUnbindTarget(schema.title);
+                }}
+              >
+                <Unplug className="h-3.5 w-3.5" />
+                Unbind &amp; delete
+              </Button>
+            </div>
+            <ConfirmDeleteDialog
+              confirmLabel="Unbind & delete"
+              title={`Unbind from ${binding.source} and delete "${schema.title}"?`}
+              entityLabel="bound dataset"
+              description="The mirrored dataset and its sync history are deleted. The source data is untouched — syncing again re-creates the projection."
+              isPending={isUnbinding}
+              name={unbindTarget}
+              onCancel={() => {
+                setUnbindTarget(undefined);
+              }}
+              onConfirm={() => {
+                setUnbindTarget(undefined);
+                void handleUnbind();
+              }}
+            />
+          </>
+        )}
       </CardContent>
     </Card>
   );
@@ -769,7 +825,21 @@ function VersionsCard({ sourceSchemaId }: { sourceSchemaId: string }) {
 }
 
 function VersionRow({ version }: { version: VersionDoc }) {
-  const label = version.lineage === undefined ? undefined : version.lineage.versionLabel;
+  const retire = useMutation(api.tags.retireVersion),
+    [retireTarget, setRetireTarget] = useState<string | undefined>(),
+    [isRetiring, setIsRetiring] = useState(false),
+    label = version.lineage === undefined ? undefined : version.lineage.versionLabel,
+    handleRetire = async () => {
+      setIsRetiring(true);
+      try {
+        await retire({ schemaId: version.schemaId });
+        toast.success(`Retired "${version.title}".`);
+      } catch (error) {
+        toast.error(errorMessage(error, "Failed to retire version."));
+      } finally {
+        setIsRetiring(false);
+      }
+    };
   return (
     <li className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2">
       <Link
@@ -786,12 +856,39 @@ function VersionRow({ version }: { version: VersionDoc }) {
           </p>
         </div>
       </Link>
-      {label !== undefined && (
-        <Badge variant="outline" className="shrink-0">
-          <Tag />
-          {label}
-        </Badge>
-      )}
+      <div className="flex shrink-0 items-center gap-0.5">
+        {label !== undefined && (
+          <Badge variant="outline">
+            <Tag />
+            {label}
+          </Badge>
+        )}
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={`Retire ${version.title}`}
+          onClick={() => {
+            setRetireTarget(version.title);
+          }}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+      <ConfirmDeleteDialog
+        confirmLabel="Retire version"
+        title={`Retire "${version.title}"?`}
+        entityLabel="frozen version"
+        description="Retiring deletes this frozen copy — its rows, geometries, and map archive. The snapshot itself stays, so the version can be re-frozen from the dashboard."
+        isPending={isRetiring}
+        name={retireTarget}
+        onCancel={() => {
+          setRetireTarget(undefined);
+        }}
+        onConfirm={() => {
+          setRetireTarget(undefined);
+          void handleRetire();
+        }}
+      />
     </li>
   );
 }

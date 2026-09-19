@@ -162,11 +162,12 @@ export function exposeApi(
         ),
         kind: v.optional(v.union(v.literal("standard"), v.literal("geospatial"))),
         schema: v.any(),
-        // Marks the dataset as a read-only projection of a connected external
-        // source — see the component's `schemas.source` field.
-        source: v.optional(v.object({ name: v.string() })),
         simplifyGeometry: v.optional(v.boolean()),
         uiSchema: v.optional(v.any()),
+        // Deliberately NO `source`/`lineage` here: the read-only markers are
+        // host-flow-only (set by the host's sync/tag-ingest code invoking the
+        // component directly). Convex validators are exact, so clients can't
+        // smuggle them in — see `assertDataWritable` in the component.
       },
       handler: async (ctx, args) => {
         await options.auth(ctx, { type: "create" });
@@ -175,7 +176,6 @@ export function exposeApi(
           kind: args.kind,
           schema: args.schema,
           simplifyGeometry: args.simplifyGeometry,
-          source: args.source,
           uiSchema: args.uiSchema,
         });
       },
@@ -607,6 +607,12 @@ export function exposeApi(
     // shape — see `geometry_storage.ts` in the component for why (Convex's
     // 8192-elements-per-array limit, which real-world GIS rings routinely
     // exceed; a string has no such limit).
+    //
+    // Every mutation below (and `startSimplification`/`startGeospatialConversion`
+    // further down) deliberately omits the component's `boundWrite`
+    // attestation: it is host-flow-only, and its absence here is what makes
+    // the component's bound-dataset read-only enforcement hold no matter
+    // which wrapper a client calls through. Never add it to these args.
     createEntry: mutationGeneric({
       args: { data: v.any(), geometry: v.optional(v.string()), schemaId: v.string() },
       handler: async (ctx, args) => {

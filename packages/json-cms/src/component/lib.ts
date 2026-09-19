@@ -16,7 +16,7 @@ import { geometryTypeValidator } from "../shared/geojson/validators.js";
 import type { GeometryTypeArg } from "../shared/geojson/validators.js";
 import { extractReferences } from "../shared/reference.js";
 import { components, internal } from "./_generated/api.js";
-import type { Id } from "./_generated/dataModel.js";
+import type { Doc, Id } from "./_generated/dataModel.js";
 import {
   internalAction,
   internalMutation,
@@ -100,7 +100,43 @@ const SCHEMA_SIZE_LIMIT = 102_400, // 100 KB
     fieldName: v.string(),
     sourceEntry: entryValidator,
     sourceSchemaId: v.id("schemas"),
-  });
+  }),
+  // Host-only attestation that a data write is driven by the host's
+  // bound-dataset flows (its sync, tag ingest, unbind, or version-retirement
+  // path) rather than by a user. Carried on every data-mutating function and
+  // checked by `assertDataWritable`; the value names the flow for diagnostics.
+  boundWriteValidator = v.optional(v.string());
+
+/**
+ * Component-level read-only enforcement for bound datasets
+ * (docs/bound-datasets-design.md §2): a schema marked `source` (a live
+ * projection of a connected external source) or `lineage` (a frozen
+ * point-in-time version) rejects data writes that don't carry the host's
+ * `boundWrite` attestation.
+ *
+ * The enforcement holds regardless of entry point because the attestation is
+ * deliberately absent from every `exposeApi` wrapper's args: Convex arg
+ * validators are exact, so a browser client cannot smuggle it through a host
+ * wrapper, and component functions have no client-facing path at all. The
+ * only callers who can supply it are host functions invoking the component
+ * directly — exactly the sync/ingest/retirement flows the writes belong to.
+ * It is an attestation, not a secret: the host is trusted code; what is
+ * enforced is that user-driven paths cannot reach marked datasets' data.
+ */
+function assertDataWritable(
+  schemaDoc: Pick<Doc<"schemas">, "lineage" | "source">,
+  boundWrite: string | undefined,
+): void {
+  if (boundWrite !== undefined) {
+    return;
+  }
+  if (schemaDoc.source !== undefined || schemaDoc.lineage !== undefined) {
+    throw new ConvexError(
+      "This dataset is a read-only projection of a connected external source — " +
+        "its data changes only through that source's sync/ingest flow, never by direct edits.",
+    );
+  }
+}
 
 // Schema queries
 
@@ -436,6 +472,8 @@ export const updateSchema = mutation({
 
 export const deleteSchema = mutation({
   args: {
+    // Host-only bound-dataset write attestation — see `assertDataWritable`.
+    boundWrite: boundWriteValidator,
     schemaId: v.id("schemas"),
   },
   handler: async (ctx, args) => {
@@ -443,6 +481,9 @@ export const deleteSchema = mutation({
     if (!existing) {
       throw new ConvexError("Schema not found");
     }
+    // Deleting a dataset deletes its data, so a bound dataset's deletion
+    // belongs to the host's unbind/retirement flows only.
+    assertDataWritable(existing, args.boundWrite);
 
     // Delete all entries and geometries associated with this schema first
     const [entries, geometries, memberships] = await Promise.all([
@@ -2247,6 +2288,8 @@ async function replaceEntryGeometry(
 
 export const createEntry = mutation({
   args: {
+    // Host-only bound-dataset write attestation — see `assertDataWritable`.
+    boundWrite: boundWriteValidator,
     data: v.any(),
     geometry: v.optional(v.string()),
     schemaId: v.id("schemas"),
@@ -2257,6 +2300,7 @@ export const createEntry = mutation({
     if (!schemaDoc) {
       throw new ConvexError("Schema not found");
     }
+    assertDataWritable(schemaDoc, args.boundWrite);
 
     const [entryId] = await insertEntryBatch(ctx, args.schemaId, schemaDoc, [
       { data: args.data, geometry: args.geometry },
@@ -2269,6 +2313,8 @@ export const createEntry = mutation({
 
 export const createEntriesBulk = mutation({
   args: {
+    // Host-only bound-dataset write attestation — see `assertDataWritable`.
+    boundWrite: boundWriteValidator,
     entries: v.array(v.object({ data: v.any(), geometry: v.optional(v.string()) })),
     schemaId: v.id("schemas"),
   },
@@ -2277,6 +2323,7 @@ export const createEntriesBulk = mutation({
     if (!schemaDoc) {
       throw new ConvexError("Schema not found");
     }
+    assertDataWritable(schemaDoc, args.boundWrite);
 
     return insertEntryBatch(ctx, args.schemaId, schemaDoc, args.entries);
   },
@@ -2285,6 +2332,8 @@ export const createEntriesBulk = mutation({
 
 export const updateEntry = mutation({
   args: {
+    // Host-only bound-dataset write attestation — see `assertDataWritable`.
+    boundWrite: boundWriteValidator,
     data: v.any(),
     entryId: v.id("entries"),
     geometry: v.optional(v.union(v.string(), v.null())),
@@ -2295,12 +2344,16 @@ export const updateEntry = mutation({
       throw new ConvexError("Entry not found");
     }
 
-    await ctx.db.patch(args.entryId, { data: args.data });
-
     const schemaDoc = await ctx.db.get(existing.schemaId);
     if (!schemaDoc) {
       throw new ConvexError("Schema not found");
     }
+    // Checked before any write so a rejected call leaves the entry untouched
+    // (the transaction would roll back anyway; failing fast is clearer).
+    assertDataWritable(schemaDoc, args.boundWrite);
+
+    await ctx.db.patch(args.entryId, { data: args.data });
+
     await syncEntryReferences(ctx, args.entryId, existing.schemaId, schemaDoc, args.data);
 
     if (args.geometry === undefined) {
@@ -2321,6 +2374,8 @@ export const updateEntry = mutation({
 
 export const deleteEntry = mutation({
   args: {
+    // Host-only bound-dataset write attestation — see `assertDataWritable`.
+    boundWrite: boundWriteValidator,
     entryId: v.id("entries"),
   },
   handler: async (ctx, args) => {
@@ -2329,12 +2384,21 @@ export const deleteEntry = mutation({
       throw new ConvexError("Entry not found");
     }
 
+    // The schema doc is normally present; an orphaned entry (its dataset
+    // already gone) may still be cleaned up.
+    const schemaDoc = await ctx.db.get(existing.schemaId);
+    if (schemaDoc !== null) {
+      assertDataWritable(schemaDoc, args.boundWrite);
+    }
+
     await deleteEntryCascading(ctx, args.entryId);
   },
 });
 
 export const deleteEntriesBySchema = mutation({
   args: {
+    // Host-only bound-dataset write attestation — see `assertDataWritable`.
+    boundWrite: boundWriteValidator,
     schemaId: v.id("schemas"),
   },
   handler: async (ctx, args) => {
@@ -2342,6 +2406,7 @@ export const deleteEntriesBySchema = mutation({
     if (!schemaDoc) {
       throw new ConvexError("Schema not found");
     }
+    assertDataWritable(schemaDoc, args.boundWrite);
 
     const [entries, geometries] = await Promise.all([
       ctx.db
@@ -2552,6 +2617,8 @@ export const getImportStatus = query({
  */
 export const startImport = mutation({
   args: {
+    // Host-only bound-dataset write attestation — see `assertDataWritable`.
+    boundWrite: boundWriteValidator,
     // The exact file this import came from, already uploaded by the client to
     // its own storage blob — retained on the schema doc so the original
     // (un-simplified) data stays re-downloadable even when geometry is being
@@ -2568,6 +2635,9 @@ export const startImport = mutation({
     if (!targetSchema) {
       throw new ConvexError("Schema not found");
     }
+    // An import writes entries, so a bound dataset only accepts one from its
+    // host's tag-ingest flow.
+    assertDataWritable(targetSchema, args.boundWrite);
 
     if (args.sourceFile !== undefined) {
       await ctx.db.patch(args.schemaId, {
@@ -3113,6 +3183,12 @@ function assertConversionFieldsValid(
  */
 export const startGeospatialConversion = mutation({
   args: {
+    // Host-only bound-dataset write attestation — see `assertDataWritable`.
+    // Conversion rewrites every entry's geometry payload, so it is a data
+    // mutation even though it shares the organization ops' operation shape in
+    // exposeApi — component-level enforcement is what blocks it on bound
+    // datasets (docs/bound-datasets-design.md §9, phase 1 remainder).
+    boundWrite: boundWriteValidator,
     latField: v.string(),
     lonField: v.string(),
     schemaId: v.id("schemas"),
@@ -3123,6 +3199,7 @@ export const startGeospatialConversion = mutation({
     if (!schemaDoc) {
       throw new ConvexError("Schema not found");
     }
+    assertDataWritable(schemaDoc, args.boundWrite);
     assertConversionFieldsValid(schemaDoc, args.latField, args.lonField);
 
     await ctx.db.patch(args.schemaId, {
@@ -3435,12 +3512,22 @@ export const simplifyGeometryWorkflow = workflow.define({
  * feeds `getImportStatus` for live progress.
  */
 export const startSimplification = mutation({
-  args: { schemaId: v.id("schemas"), total: v.number() },
+  args: {
+    // Host-only bound-dataset write attestation — see `assertDataWritable`.
+    // Simplification rewrites every stored geometry payload, so it is a data
+    // mutation even though it shares the organization ops' operation shape in
+    // exposeApi — component-level enforcement is what blocks it on bound
+    // datasets (docs/bound-datasets-design.md §9, phase 1 remainder).
+    boundWrite: boundWriteValidator,
+    schemaId: v.id("schemas"),
+    total: v.number(),
+  },
   handler: async (ctx, args) => {
     const schemaDoc = await ctx.db.get(args.schemaId);
     if (!schemaDoc) {
       throw new ConvexError("Schema not found");
     }
+    assertDataWritable(schemaDoc, args.boundWrite);
     if (schemaDoc.kind !== "geospatial") {
       throw new ConvexError("Only a geospatial dataset can simplify geometry.");
     }
