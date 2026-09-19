@@ -11,7 +11,7 @@ import {
   query,
 } from "./_generated/server";
 
-import { collectProjectionRows, SOURCE_KEY } from "./bindings";
+import { chunkByJsonBytes, getSource, SOURCE_KEY } from "./sources";
 
 /**
  * Tag ingest for bound datasets (docs/bound-datasets-design.md §6, roadmap
@@ -47,7 +47,6 @@ type SnapshotRow = {
   data: Record<string, unknown>;
   geometry: Record<string, unknown>;
 };
-
 type PendingSnapshot = {
   fileStorageId: Id<"_storage">;
   label: string;
@@ -91,34 +90,14 @@ function parseSnapshotRows(text: string): SnapshotRow[] {
   return rows;
 }
 
-// Mirrors the client importer's chunking intent (chunkRowsForImport): small
-// enough that one chunk's rows fit a request body and one insert pass stays
-// well inside the action's memory.
+// Mirrors the sync engine's chunking intent (chunkByJsonBytes in sources.ts)
+// via the same shared helper: small enough that one chunk's rows fit a
+// request body and one insert pass stays well inside the action's memory.
 const SNAPSHOT_CHUNK_ROWS = 500,
   SNAPSHOT_CHUNK_BYTES = 768_000;
 
 function chunkRows(rows: SnapshotRow[]): SnapshotRow[][] {
-  const chunks: SnapshotRow[][] = [];
-  let current: SnapshotRow[] = [],
-    currentBytes = 0;
-  for (const row of rows) {
-    const rowBytes = JSON.stringify(row).length;
-    if (
-      current.length > 0 &&
-      (current.length >= SNAPSHOT_CHUNK_ROWS ||
-        currentBytes + rowBytes > SNAPSHOT_CHUNK_BYTES)
-    ) {
-      chunks.push(current);
-      current = [];
-      currentBytes = 0;
-    }
-    current.push(row);
-    currentBytes += rowBytes;
-  }
-  if (current.length > 0) {
-    chunks.push(current);
-  }
-  return chunks;
+  return chunkByJsonBytes(rows, SNAPSHOT_CHUNK_ROWS, SNAPSHOT_CHUNK_BYTES);
 }
 
 const snapshotValidator = v.object({
@@ -134,7 +113,16 @@ const snapshotValidator = v.object({
 /** The shared projection join, callable from an action. */
 export const collectProjectionRowsQuery = internalQuery({
   args: {},
-  handler: async (ctx) => collectProjectionRows(ctx),
+  handler: async (ctx) => {
+    const rows = await getSource(SOURCE_KEY).listRows(ctx);
+    // Snapshot files keep the {data, geometry} transport shape (no key) —
+    // the file is the point-in-time state the import pipeline consumes.
+    return rows.flatMap(({ data, geometry }) =>
+      geometry === null || geometry === undefined
+        ? []
+        : [{ data, geometry: { coordinates: geometry.coordinates, type: geometry.type } }],
+    );
+  },
   returns: v.array(
     v.object({
       data: v.record(v.string(), v.any()),
@@ -189,10 +177,10 @@ export const createRestaurantSnapshot = action({
     }
     // Explicit row type — the guidelines' workaround for the same-file
     // runQuery circularity (the query's type lands here via generated api).
-    const rows: Awaited<ReturnType<typeof collectProjectionRows>> = await ctx.runQuery(
-      internal.tags.collectProjectionRowsQuery,
-      {},
-    );
+    const rows: Array<{
+      data: Record<string, unknown>;
+      geometry: { coordinates: number[]; type: string };
+    }> = await ctx.runQuery(internal.tags.collectProjectionRowsQuery, {});
     const jsonl = rows.map((row) => JSON.stringify(row)).join("\n"),
       fileStorageId = await ctx.storage.store(new Blob([jsonl], { type: "application/jsonl" }));
     return await ctx.runMutation(internal.tags.registerSnapshot, {

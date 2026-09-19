@@ -1,329 +1,79 @@
 import { ConvexError, v } from "convex/values";
 
 import { components } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
-import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
+import { SOURCE_KEY } from "./sources";
 
 /**
- * The bound-datasets proof of concept (docs/bound-datasets-design.md): the
- * app's own tables stand in for the "foreign" app's preexisting data, and
- * `syncRestaurantLocations` projects them into a read-only json-cms
- * geospatial dataset — the "live" dataset of the design, pointing at
- * "main head". One mutation does find-or-create of the collection, dataset,
- * and binding row, then rebuilds the projection.
- *
- * Everything the component needs for rendering happens automatically inside
- * these calls: geometry writes maintain `featureCount`/`boundingBox` and
- * bump `mapTileCacheVersion`, so opening the map picks the dataset up with
- * the existing staleness/rebuild machinery — no client changes at all.
+ * The bound-datasets binding registry's read side and its escape hatch.
+ * The sync engine lives in sync.ts (durable, keyed, resumable — #76) and
+ * the source descriptors in sources.ts (#76's source interface); this file
+ * keeps the queries the dataset page and dashboard subscribe to, plus the
+ * explicit unbind flow (#75).
  */
-
-// Stable key of the source table in this schema. Stands in for the design's
-// remote source descriptor (deployment + reader + geometry mapping) — with
-// the source co-deployed, the binding only needs the table's name. Shared
-// with the dashboard's CRUD mutations, which touch `sourceUpdatedAt` on the
-// same row to mark the projection stale.
-export const SOURCE_KEY = "restaurantLocations";
-
-/** Creates the projected dataset with its read-only source marker and files it into the collection. */
-async function createBoundDataset(
-  ctx: Pick<MutationCtx, "runMutation">,
-  collectionId: string,
-): Promise<string> {
-  const schemaId = await ctx.runMutation(components.jsonCms.lib.createSchema, {
-    geometryType: "Point",
-    kind: "geospatial",
-    schema: restaurantLocationSchema,
-    source: { name: SOURCE_KEY },
-  });
-  await ctx.runMutation(components.jsonCms.lib.addSchemaToCollection, {
-    collectionId,
-    schemaId,
-  });
-  return schemaId;
-}
-
-type ProjectionRow = {
-  data: {
-    address: string;
-    city: string;
-    cuisine: string;
-    label: string;
-    lat: number;
-    lng: number;
-    restaurantName: string;
-    state: string;
-  };
-  // GeoJSON Point — [lng, lat]. Sync serializes this to a JSON string for
-  // the component's bulk-insert (its 8192-element array cap never applies
-  // to Points); snapshot files keep the object as-is (JSONL transport).
-  geometry: { coordinates: [number, number]; type: "Point" };
-};
-
-/**
- * Joins the foreign tables into the projection's row shape — the one
- * definition of what a projected row looks like, shared by the live sync
- * and the snapshot-file export (tags.ts), so the two can't drift.
- */
-export async function collectProjectionRows(
-  ctx: Pick<QueryCtx, "db">,
-): Promise<ProjectionRow[]> {
-  const links = await ctx.db.query("restaurantLocations").take(1000);
-  const joined = await Promise.all(
-    links.map(async (link) => {
-      const location = await ctx.db.get(link.locationId);
-      const restaurant = await ctx.db.get(link.restaurantId);
-      if (!location || !restaurant) {
-        return null;
-      }
-      return {
-        data: {
-          address: location.address,
-          city: location.city,
-          cuisine: restaurant.cuisine,
-          label: location.label,
-          lat: location.lat,
-          lng: location.lng,
-          restaurantName: restaurant.name,
-          state: location.state,
-        },
-        geometry: {
-          coordinates: [location.lng, location.lat] as [number, number],
-          type: "Point" as const,
-        },
-      };
-    }),
-  );
-  return joined.filter((entry) => entry !== null);
-}
-
-const ACTIVITY_OPS_LIMIT = 200;
-
-/**
- * Diffs the previous projection against the incoming rows, keyed by the
- * location label (the projection's stable natural key). Returns per-op
- * records for the activity log plus add/remove/update counts — with field
- * detail on updates so the History tab can show what changed, GitHub-style.
- */
-function diffProjection(
-  previousData: Array<unknown>,
-  nextRows: Array<{ data: ProjectionRow["data"] }>,
-): {
-  added: number;
-  ops: Array<{
-    detail?: string;
-    label: string;
-    op: "add" | "remove" | "update";
-  }>;
-  removed: number;
-  updated: number;
-} {
-  const previousByKey = new Map<string, Record<string, unknown>>();
-  for (const entry of previousData) {
-    // Component entry docs wrap the projected row in `data` — the natural
-    // key lives at `data.label`, not on the doc itself.
-    const data = (entry as { data?: unknown }).data as Record<string, unknown> | undefined;
-    if (data !== undefined && typeof data.label === "string") {
-      previousByKey.set(data.label, data);
-    }
-  }
-
-  const ops: Array<{ detail?: string; label: string; op: "add" | "remove" | "update" }> = [];
-  let added = 0,
-    removed = 0,
-    updated = 0;
-
-  const nextLabels = new Set<string>();
-  for (const row of nextRows) {
-    nextLabels.add(row.data.label);
-    const before = previousByKey.get(row.data.label);
-    if (before === undefined) {
-      added += 1;
-      ops.push({ label: row.data.label, op: "add" });
-      continue;
-    }
-    const after: Record<string, unknown> = row.data,
-      changes: string[] = [],
-      fields = new Set([...Object.keys(before), ...Object.keys(after)]);
-    for (const field of fields) {
-      const beforeValue = JSON.stringify(before[field]),
-        afterValue = JSON.stringify(after[field]);
-      if (beforeValue !== afterValue) {
-        changes.push(`${field}: ${beforeValue} → ${afterValue}`);
-      }
-    }
-    if (changes.length > 0) {
-      updated += 1;
-      ops.push({ detail: changes.join("; "), label: row.data.label, op: "update" });
-    }
-  }
-  for (const label of previousByKey.keys()) {
-    if (!nextLabels.has(label)) {
-      removed += 1;
-      ops.push({ label, op: "remove" });
-    }
-  }
-
-  return { added, ops, removed, updated };
-}
-
-const COLLECTION_NAME = "External demo";
-const COLLECTION_DESCRIPTION =
-  "Datasets projected from the app's own tables — the bound-datasets PoC.";
-
-const DATASET_TITLE = "Restaurant locations";
-
-const restaurantLocationSchema = {
-  description:
-    "Live projection of the restaurants/locations/restaurantLocations tables. " +
-    "Bound dataset — sync from the source tables; read-only here.",
-  properties: {
-    address: { title: "Address", type: "string" },
-    city: { title: "City", type: "string" },
-    cuisine: { title: "Cuisine", type: "string" },
-    label: { title: "Location", type: "string" },
-    lat: { title: "Latitude", type: "number" },
-    lng: { title: "Longitude", type: "number" },
-    restaurantName: { title: "Restaurant", type: "string" },
-    state: { title: "State", type: "string" },
-  },
-  required: ["restaurantName", "label", "city", "state", "lat", "lng"],
-  title: DATASET_TITLE,
-  type: "object",
-};
 
 const bindingValidator = v.object({
   _creationTime: v.number(),
   _id: v.id("datasetBindings"),
   collectionId: v.optional(v.string()),
+  lastReconciledAt: v.optional(v.number()),
   lastSyncedAt: v.optional(v.number()),
   schemaId: v.string(),
+  schemaMapping: v.optional(v.any()),
   source: v.string(),
   sourceUpdatedAt: v.optional(v.number()),
   syncedEntryCount: v.optional(v.number()),
 });
 
-export const syncRestaurantLocations = mutation({
+/** Every binding, with its dataset's title — the dashboard sync card's rows. */
+export const list = query({
   args: {},
   handler: async (ctx) => {
-    // Find-or-create the collection that groups bound datasets.
-    const collections = await ctx.runQuery(components.jsonCms.lib.listCollections, {});
-    const existingCollection = collections.find((c) => c.name === COLLECTION_NAME);
-    const collectionId = existingCollection
-      ? existingCollection._id
-      : await ctx.runMutation(components.jsonCms.lib.createCollection, {
-          description: COLLECTION_DESCRIPTION,
-          name: COLLECTION_NAME,
+    const bindings = await ctx.db.query("datasetBindings").take(100);
+    return Promise.all(
+      bindings.map(async (binding) => {
+        const schema = await ctx.runQuery(components.jsonCms.lib.getSchema, {
+          schemaId: binding.schemaId,
         });
-    // Find-or-create the bound dataset, marked as a read-only projection of
-    // this source. Real deployments would key this off the binding row only;
-    // re-checking by title keeps a stray manual duplicate from forking the
-    // projection.
-    const binding = await ctx.db
-      .query("datasetBindings")
-      .withIndex("by_source", (q) => q.eq("source", SOURCE_KEY))
-      .first();
-    let schemaId: string;
-    if (binding) {
-      schemaId = binding.schemaId;
-      // Migrate datasets created before the source marker existed: a bound
-      // dataset without `source` is deleted and recreated (deleteSchema
-      // cascades its entries/archive; the projection is rebuilt below) so
-      // the read-only marker is present everywhere it is read.
-      const existing = await ctx.runQuery(components.jsonCms.lib.getSchema, {
-        schemaId,
-      });
-      if (existing === null || existing.source === undefined) {
-        await ctx.runMutation(components.jsonCms.lib.deleteSchema, { schemaId });
-        schemaId = await createBoundDataset(ctx, collectionId);
-      }
-    } else {
-      schemaId = await createBoundDataset(ctx, collectionId);
-    }
-
-    // Snapshot the previous projection before the rebuild so the diff can
-    // record what this sync changed.
-    const previousEntries = await ctx.runQuery(components.jsonCms.lib.listEntriesForSchemas, {
-      schemaIds: [schemaId],
-    });
-
-    // Rebuild the projection: v1 sync is clear-then-reload (the design's
-    // "simplest correct sync"; delete detection comes free at this scale).
-    // `deleteEntriesBySchema` bumps the tile-cache version, so any archive
-    // of the previous projection is invalidated before we write. Both writes
-    // carry the component's host-only `boundWrite` attestation — the
-    // component-level read-only gate would otherwise reject them (#75).
-    await ctx.runMutation(components.jsonCms.lib.deleteEntriesBySchema, {
-      boundWrite: "sync",
-      schemaId,
-    });
-
-    const rows = await collectProjectionRows(ctx),
-      entries = rows.map((row) => ({
-        data: row.data,
-        // Geometry travels to the component as a JSON string.
-        geometry: JSON.stringify(row.geometry),
-      }));
-    const diff = diffProjection(previousEntries, entries);
-    await ctx.runMutation(components.jsonCms.lib.createEntriesBulk, {
-      boundWrite: "sync",
-      entries,
-      schemaId,
-    });
-
-    const syncedAt = Date.now();
-    let bindingId: Id<"datasetBindings">;
-    if (binding) {
-      await ctx.db.patch(binding._id, {
-        collectionId,
-        lastSyncedAt: syncedAt,
-        schemaId,
-        syncedEntryCount: entries.length,
-      });
-      bindingId = binding._id;
-    } else {
-      bindingId = await ctx.db.insert("datasetBindings", {
-        collectionId,
-        lastSyncedAt: syncedAt,
-        schemaId,
-        source: SOURCE_KEY,
-        syncedEntryCount: entries.length,
-      });
-    }
-    await ctx.db.insert("datasetActivity", {
-      added: diff.added,
-      bindingId,
-      entryCount: entries.length,
-      ops: diff.ops.slice(0, ACTIVITY_OPS_LIMIT),
-      removed: diff.removed,
-      schemaId,
-      syncedAt,
-      truncated: diff.ops.length > ACTIVITY_OPS_LIMIT,
-      updated: diff.updated,
-    });
-
-    return {
-      changes: { added: diff.added, removed: diff.removed, updated: diff.updated },
-      collectionId,
-      entries: entries.length,
-      schemaId,
-    };
+        return {
+          _creationTime: binding._creationTime,
+          _id: binding._id,
+          lastReconciledAt: binding.lastReconciledAt,
+          lastSyncedAt: binding.lastSyncedAt,
+          source: binding.source,
+          sourceUpdatedAt: binding.sourceUpdatedAt,
+          syncedEntryCount: binding.syncedEntryCount,
+          // A binding whose dataset vanished mid-unbind still lists — the
+          // next sync recreates it — but with nothing to show.
+          datasetExists: schema !== null,
+          datasetTitle:
+            schema !== null ? schema.title : binding.source,
+        };
+      }),
+    );
   },
-  returns: v.object({
-    changes: v.object({ added: v.number(), removed: v.number(), updated: v.number() }),
-    collectionId: v.string(),
-    entries: v.number(),
-    schemaId: v.string(),
-  }),
+  returns: v.array(
+    v.object({
+      _creationTime: v.number(),
+      _id: v.id("datasetBindings"),
+      lastReconciledAt: v.optional(v.number()),
+      lastSyncedAt: v.optional(v.number()),
+      source: v.string(),
+      sourceUpdatedAt: v.optional(v.number()),
+      syncedEntryCount: v.optional(v.number()),
+      datasetExists: v.boolean(),
+      datasetTitle: v.string(),
+    }),
+  ),
 });
 
 /**
  * Detaches a bound live dataset: deletes the projected dataset (allowed by
  * the component's read-only gate because this flow attests
- * `boundWrite: "unbind"`), then removes the binding row and its activity
- * history. The source tables are untouched — a later sync simply re-creates
- * the projection. Deleting a bound dataset any other way stays blocked.
+ * `boundWrite: "unbind"`), then removes the binding row, its activity
+ * history, and the projection's key map. The source tables are untouched —
+ * a later sync simply re-creates the projection. Deleting a bound dataset
+ * any other way stays blocked.
  */
 export const unbind = mutation({
   args: { schemaId: v.string() },
@@ -339,21 +89,33 @@ export const unbind = mutation({
       boundWrite: "unbind",
       schemaId: binding.schemaId,
     });
-    // The activity log describes the projection it synced — it goes with it.
-    const activity = await ctx.db
-      .query("datasetActivity")
-      .withIndex("by_bindingId", (q) => q.eq("bindingId", binding._id))
-      .collect();
+    // The activity log describes the projection it synced, and the key map
+    // points into it — both go with it.
+    const [activity, mappings] = await Promise.all([
+      ctx.db
+        .query("datasetActivity")
+        .withIndex("by_bindingId", (q) => q.eq("bindingId", binding._id))
+        .take(1000),
+      ctx.db
+        .query("bindingEntries")
+        .withIndex("by_binding", (q) => q.eq("bindingId", binding._id))
+        .take(1000),
+    ]);
     await Promise.all([
-      ...activity.map((row) => ctx.db.delete(row._id)),
+      ...activity.map(async (row) => {
+        await ctx.db.delete(row._id);
+      }),
+      ...mappings.map(async (row) => {
+        await ctx.db.delete(row._id);
+      }),
       ctx.db.delete(binding._id),
     ]);
   },
 });
 
 /**
- * Binding + projected dataset status, for CLI checks and a future
- * "synced N minutes ago" UI badge.
+ * Binding + projected dataset status for the primary demo source — CLI
+ * checks and the dashboard's badge. `null` before the first sync.
  */
 export const status = query({
   args: {},
@@ -400,6 +162,7 @@ const activityValidator = v.object({
   added: v.number(),
   bindingId: v.id("datasetBindings"),
   entryCount: v.number(),
+  kind: v.optional(v.union(v.literal("sync"), v.literal("reconcile"))),
   ops: v.array(
     v.object({
       detail: v.optional(v.string()),
@@ -415,9 +178,9 @@ const activityValidator = v.object({
 });
 
 /**
- * The sync activity log for one bound dataset, newest first — the History
- * tab's data. Bounded to the 50 most recent syncs; this is per-sync
- * granularity until the design's commit-level feed lands (phase 4).
+ * The sync/reconcile activity log for one bound dataset, newest first —
+ * the History tab's data. Bounded to the 50 most recent entries; per-run
+ * granularity until the design's commit-level feed lands (phase 4, #77).
  */
 export const history = query({
   args: { bindingId: v.id("datasetBindings") },

@@ -11,6 +11,7 @@
 import type * as auth from "../auth.js";
 import type * as bindings from "../bindings.js";
 import type * as collections from "../collections.js";
+import type * as crons from "../crons.js";
 import type * as dashboard from "../dashboard.js";
 import type * as entries from "../entries.js";
 import type * as geometries from "../geometries.js";
@@ -19,6 +20,8 @@ import type * as imports from "../imports.js";
 import type * as maps from "../maps.js";
 import type * as schemas from "../schemas.js";
 import type * as seed from "../seed.js";
+import type * as sources from "../sources.js";
+import type * as sync from "../sync.js";
 import type * as tags from "../tags.js";
 import type * as tile_archives from "../tile_archives.js";
 
@@ -32,6 +35,7 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   bindings: typeof bindings;
   collections: typeof collections;
+  crons: typeof crons;
   dashboard: typeof dashboard;
   entries: typeof entries;
   geometries: typeof geometries;
@@ -40,6 +44,8 @@ declare const fullApi: ApiFromModules<{
   maps: typeof maps;
   schemas: typeof schemas;
   seed: typeof seed;
+  sources: typeof sources;
+  sync: typeof sync;
   tags: typeof tags;
   tile_archives: typeof tile_archives;
 }>;

@@ -21,6 +21,9 @@ export default defineSchema({
     added: v.number(),
     bindingId: v.id("datasetBindings"),
     entryCount: v.number(),
+    // "sync" (the regular pull, also the pre-field default) or "reconcile"
+    // (the periodic/manual full diff-and-repair pass).
+    kind: v.optional(v.union(v.literal("sync"), v.literal("reconcile"))),
     ops: v.array(
       v.object({
         detail: v.optional(v.string()),
@@ -35,6 +38,20 @@ export default defineSchema({
     updated: v.number(),
   }).index("by_bindingId", ["bindingId"]),
 
+  // The projection's key map (docs/bound-datasets-design.md §4): one row per
+  // projected foreign row, `entryKey` → the json-cms entry holding it (a
+  // component id as a plain string — component tables don't exist in this
+  // deployment's generated data model). This is what makes the durable sync
+  // idempotent (an interrupted run re-applies by key without duplicating)
+  // and delete detection possible (keys the completing run didn't see are
+  // gone from the source). `seenRun` names the last run that saw the key.
+  bindingEntries: defineTable({
+    bindingId: v.id("datasetBindings"),
+    entryId: v.string(),
+    entryKey: v.string(),
+    seenRun: v.optional(v.string()),
+  }).index("by_binding", ["bindingId", "entryKey"]),
+
   // The binding registry — one row per json-cms dataset projected from a
   // source in this schema. `source` is a stable key for the source table
   // (today only "restaurantLocations"); `schemaId`/`collectionId` hold the
@@ -44,6 +61,11 @@ export default defineSchema({
   datasetBindings: defineTable({
     collectionId: v.optional(v.string()),
     lastSyncedAt: v.optional(v.number()),
+    // Set when the last full reconcile (the drift-repair pass) finished.
+    lastReconciledAt: v.optional(v.number()),
+    // The source's declared projection mapping (see sources.ts), snapshotted
+    // at bind time so the binding is self-describing.
+    schemaMapping: v.optional(v.any()),
     schemaId: v.string(),
     source: v.string(),
     // Set by the dashboard's source-table mutations on every write, so the
@@ -54,6 +76,45 @@ export default defineSchema({
   })
     .index("by_source", ["source"])
     .index("by_schema", ["schemaId"]),
+
+  // One durable sync run (docs/bound-datasets-design.md §5): the run's
+  // source rows are chunked into app-storage blobs during "collecting", then
+  // applied keyed and idempotently during "applying" — checkpointed at
+  // `chunkIndex`/`rowOffset` and progressed at `lastProgressAt`, so an
+  // interrupted run resumes exactly where it stopped without duplicating or
+  // losing rows. `ops` is the activity summary, capped at 200 like
+  // `datasetActivity.ops`. The engine lives in sync.ts.
+  syncRuns: defineTable({
+    added: v.number(),
+    applied: v.number(),
+    bindingId: v.id("datasetBindings"),
+    chunkIndex: v.number(),
+    chunkStorageIds: v.array(v.id("_storage")),
+    error: v.optional(v.string()),
+    finishedAt: v.optional(v.number()),
+    lastProgressAt: v.number(),
+    mode: v.union(v.literal("sync"), v.literal("reconcile")),
+    ops: v.array(
+      v.object({
+        detail: v.optional(v.string()),
+        label: v.string(),
+        op: v.union(v.literal("add"), v.literal("remove"), v.literal("update")),
+      }),
+    ),
+    removed: v.number(),
+    rowOffset: v.number(),
+    source: v.string(),
+    startedAt: v.number(),
+    status: v.union(
+      v.literal("collecting"),
+      v.literal("applying"),
+      v.literal("completed"),
+      v.literal("failed"),
+    ),
+    total: v.number(),
+    truncated: v.boolean(),
+    updated: v.number(),
+  }).index("by_binding", ["bindingId"]),
 
   locations: defineTable({
     address: v.string(),
