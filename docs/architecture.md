@@ -169,15 +169,15 @@ The tile path exists because the 2026-09 audit measured the row path at
 ```bash
 bun install
 bun --filter=app run dev     # app (vite + convex dev)
-bun test                     # vitest across workspaces
-bunx tsc --noEmit            # from app/ — the app has no typecheck script
-bun run lint                 # oxlint (type-aware) at the root
+bun run test                # vitest — the app workspace only
+bunx tsc --noEmit           # from app/ — the app has no typecheck script
+bun run lint                # oxlint (type-aware) at the root
 ```
 
 Component-package changes need a rebuild before the app picks them up:
 `bun run build` inside `packages/json-cms` (the app consumes `dist`).
 json-cms develops against its own `example/` host (`bun run dev` there runs
-backend + example + codegen watch).
+backend + example + codegen watch) and carries its own vitest suite.
 
 Deployment has been volatile — the cloud dev deployment was disabled on
 free-plan limits (2026-09-19) and the app currently runs against a local
