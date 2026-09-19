@@ -54,11 +54,15 @@ export async function auth(
 }
 
 async function isBoundDataset(ctx: MutationCtx, schemaId: string): Promise<boolean> {
+  // `.first()` resolves to NULL when nothing matches — `!== undefined` was
+  // always true, which gated every dataset (all entry writes rejected) as
+  // soon as the bindings feature deployed. Found while setting up the
+  // #71 two-tab rebuild drive.
   const binding = await ctx.db
     .query("datasetBindings")
     .withIndex("by_schema", (q) => q.eq("schemaId", schemaId))
     .first();
-  return binding !== undefined;
+  return binding !== null;
 }
 
 async function entrySchemaId(ctx: MutationCtx, entryId: string): Promise<string | undefined> {
