@@ -96,6 +96,12 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "Polygon"
             | "MultiPolygon";
           kind?: "standard" | "geospatial";
+          lineage?: {
+            frozenAt: number;
+            snapshotRef?: string;
+            sourceSchemaId: string;
+            versionLabel: string;
+          };
           schema: any;
           simplifyGeometry?: boolean;
           source?: { name: string };
@@ -283,6 +289,54 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "MultiPolygon";
           groupId?: string;
           kind?: "standard" | "geospatial";
+          lineage?: {
+            frozenAt: number;
+            snapshotRef?: string;
+            sourceSchemaId: string;
+            versionLabel: string;
+          };
+          mapTileArchiveBuiltVersion?: number;
+          mapTileArchiveBytes?: number;
+          mapTileArchiveMaxZoom?: number;
+          mapTileArchiveStorageId?: string;
+          mapTileCacheVersion?: number;
+          schema: any;
+          simplifyGeometry?: boolean;
+          source?: { name: string };
+          sourceFileName?: string;
+          sourceFileSize?: number;
+          sourceFileStorageId?: string;
+          title: string;
+          uiSchema?: any;
+        },
+        Name
+      >;
+      getSchemaVersionBySnapshotRef: FunctionReference<
+        "query",
+        "internal",
+        { snapshotRef: string },
+        null | {
+          _creationTime: number;
+          _id: string;
+          boundingBox?: Array<number>;
+          description?: string;
+          entryCount?: number;
+          featureCount?: number;
+          geometryType?:
+            | "Point"
+            | "MultiPoint"
+            | "LineString"
+            | "MultiLineString"
+            | "Polygon"
+            | "MultiPolygon";
+          groupId?: string;
+          kind?: "standard" | "geospatial";
+          lineage?: {
+            frozenAt: number;
+            snapshotRef?: string;
+            sourceSchemaId: string;
+            versionLabel: string;
+          };
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
           mapTileArchiveMaxZoom?: number;
@@ -607,6 +661,12 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "MultiPolygon";
           groupId?: string;
           kind?: "standard" | "geospatial";
+          lineage?: {
+            frozenAt: number;
+            snapshotRef?: string;
+            sourceSchemaId: string;
+            versionLabel: string;
+          };
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
           mapTileArchiveMaxZoom?: number;
@@ -643,6 +703,54 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "MultiPolygon";
           groupId?: string;
           kind?: "standard" | "geospatial";
+          lineage?: {
+            frozenAt: number;
+            snapshotRef?: string;
+            sourceSchemaId: string;
+            versionLabel: string;
+          };
+          mapTileArchiveBuiltVersion?: number;
+          mapTileArchiveBytes?: number;
+          mapTileArchiveMaxZoom?: number;
+          mapTileArchiveStorageId?: string;
+          mapTileCacheVersion?: number;
+          schema: any;
+          simplifyGeometry?: boolean;
+          source?: { name: string };
+          sourceFileName?: string;
+          sourceFileSize?: number;
+          sourceFileStorageId?: string;
+          title: string;
+          uiSchema?: any;
+        }>,
+        Name
+      >;
+      listSchemaVersions: FunctionReference<
+        "query",
+        "internal",
+        { sourceSchemaId: string },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          boundingBox?: Array<number>;
+          description?: string;
+          entryCount?: number;
+          featureCount?: number;
+          geometryType?:
+            | "Point"
+            | "MultiPoint"
+            | "LineString"
+            | "MultiLineString"
+            | "Polygon"
+            | "MultiPolygon";
+          groupId?: string;
+          kind?: "standard" | "geospatial";
+          lineage?: {
+            frozenAt: number;
+            snapshotRef?: string;
+            sourceSchemaId: string;
+            versionLabel: string;
+          };
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
           mapTileArchiveMaxZoom?: number;

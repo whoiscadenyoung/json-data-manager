@@ -80,4 +80,20 @@ export default defineSchema({
     cuisine: v.string(),
     name: v.string(),
   }).index("by_name", ["name"]),
+
+  // The foreign app's tag registry — the PoC stand-in for its snapshot
+  // mechanism (docs/bound-datasets-design.md §6/§8.3): one row per snapshot
+  // the foreign app has taken of the restaurants domain. `ref` is the
+  // foreign app's opaque snapshot id (unique; the ingest's idempotency
+  // key), and `fileStorageId` points at the snapshot file — JSONL of
+  // {data, geometry} projection rows, the transport shape the design
+  // specifies. json-cms never writes here: tags.ts reads the listing and
+  // ingests missing snapshots into frozen version datasets.
+  restaurantSnapshots: defineTable({
+    createdAt: v.number(),
+    fileStorageId: v.id("_storage"),
+    label: v.string(),
+    ref: v.string(),
+    rowCount: v.number(),
+  }).index("by_ref", ["ref"]),
 });

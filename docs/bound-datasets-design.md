@@ -176,8 +176,7 @@ first thing the PoC proves:
   page/map render the points with zero frontend changes.
 
 What the PoC does not cover yet: commit-tail sync (v1 is full rebuild),
-tag/version freezing, the commits table, overlay rendering, and
-remote-source transport.
+the commits table, overlay rendering, and remote-source transport.
 
 **Read-only marking (phase 1, shipped 2026-09-18):** the component's
 `schemas` table carries `source: { name }` (set via `createSchema`), marking
@@ -207,6 +206,29 @@ with anonymous access, any client could claim a sync exemption), gating
 organization ops in the current `auth` operation shape), and an
 unbind-then-delete flow.
 
+**Tag ingest + lineage (phase 3, shipped 2026-09-19):** the foreign app's
+snapshot timeline is modeled by the `restaurantSnapshots` table. Taking a
+snapshot (`tags:createRestaurantSnapshot`) serializes the joined tables to a
+JSONL file of `{data, geometry}` rows in file storage and registers the tag —
+the snapshot file is the point-in-time truth, so freezes never re-read the
+live tables. `tags:ingestSnapshots` is the design's pull reconcile: it
+freezes every snapshot without a version yet, through the existing import
+pipeline (chunk upload → `startImport` → durable workflow → per-chunk
+insert), so pagination, denormalized summaries, and archive staleness work
+unchanged. Each snapshot becomes a frozen version dataset — the component's
+`schemas` doc carries `lineage: { sourceSchemaId, versionLabel, snapshotRef,
+frozenAt }` (indexed by source for listings and by ref for idempotency),
+the same read-only `source` marker as the live dataset, and its own
+entries/geometries/archive. The auth gate treats `lineage` like a binding:
+version datasets reject entry writes and deletes while staying
+metadata-editable. UI: version + Synced badges in every list view, a Version
+row in the details card, a Versions card on the live dataset's page, and a
+dashboard Snapshots card (take snapshot / ingest missing — idempotent, and a
+failed ingest deletes its half-built version so the ref stays retryable).
+Remaining from this phase: deltas computed at ingest (deferred to phase 4 —
+the commits ops shape and the compare view that renders them land together)
+and version retention (pin/unpin or keep-N; versions accumulate until then).
+
 ## 10. Phased roadmap (candidate sub-issues, in order)
 
 1. **Read-only bound datasets** — DONE 2026-09-18 for the app-side half:
@@ -216,11 +238,17 @@ unbind-then-delete flow.
    conversion/simplification ops (see §9).
 2. **Source interface + co-deployed sync** — formalize the source descriptor
    (state reader + geometry mapping) and the durable sync workflow with
-   reconcile; UI "synced N minutes ago" + Sync button.
-3. **Tag ingest + lineage** — freeze versions from snapshot files via the
-   import pipeline; lineage fields; versions surfaced in browser/maps;
-   auto-ingest (pull + push hook).
+   reconcile. The UI half (Sync button, "synced N ago", Out-of-date badge)
+   shipped with phase 1 (2026-09-18).
+3. **Tag ingest + lineage** — DONE 2026-09-19: snapshot files (JSONL) frozen
+   into version datasets via the import pipeline; `lineage` on the
+   component's `schemas` doc (+ two indexes); versions surfaced in the
+   browser, dataset pages, and maps; pull-based auto-ingest with per-ref
+   idempotency (dashboard Snapshots card; `createRestaurantSnapshot` stands
+   in for the foreign app's push hook). Remaining: delta-at-ingest (moved to
+   4) and version retention.
 4. **Commits + overlay rendering** — `commits` table, commit feed apply as
-   the primary sync path, history rail, diff overlay, tag-compare view.
+   the primary sync path, history rail, diff overlay, tag-compare view
+   (absorbs the tag-delta computation deferred from 3).
 5. **Remote transport (if side-by-side)** — reader/commit-feed/tag adapter
    on the foreign app + cross-deployment auth; retires at the merge.

@@ -2,7 +2,7 @@ import { v } from "convex/values";
 
 import { components } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import type { MutationCtx } from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 
 /**
@@ -55,8 +55,48 @@ type ProjectionRow = {
     restaurantName: string;
     state: string;
   };
-  geometry: string;
+  // GeoJSON Point — [lng, lat]. Sync serializes this to a JSON string for
+  // the component's bulk-insert (its 8192-element array cap never applies
+  // to Points); snapshot files keep the object as-is (JSONL transport).
+  geometry: { coordinates: [number, number]; type: "Point" };
 };
+
+/**
+ * Joins the foreign tables into the projection's row shape — the one
+ * definition of what a projected row looks like, shared by the live sync
+ * and the snapshot-file export (tags.ts), so the two can't drift.
+ */
+export async function collectProjectionRows(
+  ctx: Pick<QueryCtx, "db">,
+): Promise<ProjectionRow[]> {
+  const links = await ctx.db.query("restaurantLocations").take(1000);
+  const joined = await Promise.all(
+    links.map(async (link) => {
+      const location = await ctx.db.get(link.locationId);
+      const restaurant = await ctx.db.get(link.restaurantId);
+      if (!location || !restaurant) {
+        return null;
+      }
+      return {
+        data: {
+          address: location.address,
+          city: location.city,
+          cuisine: restaurant.cuisine,
+          label: location.label,
+          lat: location.lat,
+          lng: location.lng,
+          restaurantName: restaurant.name,
+          state: location.state,
+        },
+        geometry: {
+          coordinates: [location.lng, location.lat] as [number, number],
+          type: "Point" as const,
+        },
+      };
+    }),
+  );
+  return joined.filter((entry) => entry !== null);
+}
 
 const ACTIVITY_OPS_LIMIT = 200;
 
@@ -68,7 +108,7 @@ const ACTIVITY_OPS_LIMIT = 200;
  */
 function diffProjection(
   previousData: Array<unknown>,
-  nextRows: Array<ProjectionRow>,
+  nextRows: Array<{ data: ProjectionRow["data"] }>,
 ): {
   added: number;
   ops: Array<{
@@ -214,35 +254,12 @@ export const syncRestaurantLocations = mutation({
     // of the previous projection is invalidated before we write.
     await ctx.runMutation(components.jsonCms.lib.deleteEntriesBySchema, { schemaId });
 
-    const links = await ctx.db.query("restaurantLocations").take(1000);
-    const joined = await Promise.all(
-      links.map(async (link) => {
-        const location = await ctx.db.get(link.locationId);
-        const restaurant = await ctx.db.get(link.restaurantId);
-        if (!location || !restaurant) {
-          return null;
-        }
-        return {
-          data: {
-            address: location.address,
-            city: location.city,
-            cuisine: restaurant.cuisine,
-            label: location.label,
-            lat: location.lat,
-            lng: location.lng,
-            restaurantName: restaurant.name,
-            state: location.state,
-          },
-          // GeoJSON is [lng, lat]; geometry travels to the component as a
-          // JSON string (its 8192-element array cap never applies to Points).
-          geometry: JSON.stringify({
-            coordinates: [location.lng, location.lat],
-            type: "Point",
-          }),
-        };
-      }),
-    );
-    const entries = joined.filter((entry) => entry !== null);
+    const rows = await collectProjectionRows(ctx),
+      entries = rows.map((row) => ({
+        data: row.data,
+        // Geometry travels to the component as a JSON string.
+        geometry: JSON.stringify(row.geometry),
+      }));
     const diff = diffProjection(previousEntries, entries);
     await ctx.runMutation(components.jsonCms.lib.createEntriesBulk, {
       entries,

@@ -117,6 +117,38 @@ export const getSchema = query({
 });
 
 /**
+ * Frozen versions (tags) of one bound dataset, newest freeze first — the
+ * dataset page's "Versions" list. Only docs carrying `lineage` are in the
+ * index, so ordinary datasets list nothing here.
+ */
+export const listSchemaVersions = query({
+  args: { sourceSchemaId: v.id("schemas") },
+  handler: async (ctx, args) =>
+    ctx.db
+      .query("schemas")
+      .withIndex("by_lineage_source", (q) => q.eq("lineage.sourceSchemaId", args.sourceSchemaId))
+      .order("desc")
+      .collect(),
+  returns: v.array(schemaValidator),
+});
+
+/**
+ * The frozen version ingested from one snapshot ref, if any — the tag
+ * ingest's idempotency check. Matches a ref already frozen under an older
+ * live dataset too, so re-ingesting after the live dataset was re-created
+ * can't duplicate versions of the same snapshot.
+ */
+export const getSchemaVersionBySnapshotRef = query({
+  args: { snapshotRef: v.string() },
+  handler: async (ctx, args) =>
+    ctx.db
+      .query("schemas")
+      .withIndex("by_lineage_snapshotRef", (q) => q.eq("lineage.snapshotRef", args.snapshotRef))
+      .first(),
+  returns: v.union(v.null(), schemaValidator),
+});
+
+/**
  * A fetchable URL for the original file this dataset was imported from
  * (retained through `startImport`'s `sourceFile`), or `null` when the
  * dataset has no retained source file or its blob is gone. Lets clients
@@ -298,6 +330,17 @@ export const createSchema = mutation({
     // source — see the `source` field's doc on the `schemas` table. Absent
     // for ordinary user-created datasets.
     source: v.optional(v.object({ name: v.string() })),
+    // Marks the dataset as a frozen point-in-time version (tag) of a bound
+    // live dataset — see the `lineage` field's doc on the `schemas` table.
+    // Written by the host's tag-ingest flow, never by user-facing creates.
+    lineage: v.optional(
+      v.object({
+        frozenAt: v.number(),
+        snapshotRef: v.optional(v.string()),
+        sourceSchemaId: v.id("schemas"),
+        versionLabel: v.string(),
+      }),
+    ),
     // Normalize every geometry coordinate to GEOMETRY_SIMPLIFY_DECIMAL_PLACES
     // on write — see `simplifyGeometryPayload` below. Geospatial-only.
     simplifyGeometry: v.optional(v.boolean()),
@@ -330,6 +373,7 @@ export const createSchema = mutation({
       featureCount: args.kind === "geospatial" ? 0 : undefined,
       geometryType: args.geometryType,
       kind: args.kind,
+      lineage: args.lineage,
       schema: args.schema,
       simplifyGeometry: args.simplifyGeometry,
       source: args.source,

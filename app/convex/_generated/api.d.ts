@@ -19,6 +19,7 @@ import type * as imports from "../imports.js";
 import type * as maps from "../maps.js";
 import type * as schemas from "../schemas.js";
 import type * as seed from "../seed.js";
+import type * as tags from "../tags.js";
 import type * as tile_archives from "../tile_archives.js";
 
 import type {
@@ -39,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   maps: typeof maps;
   schemas: typeof schemas;
   seed: typeof seed;
+  tags: typeof tags;
   tile_archives: typeof tile_archives;
 }>;
 

@@ -1,5 +1,5 @@
 import type { FunctionReturnType } from "convex/server";
-import { Database, MapPin, RefreshCw } from "lucide-react";
+import { Database, MapPin, RefreshCw, Tag } from "lucide-react";
 
 import { Badge } from "#/components/ui/badge";
 import { api } from "#convex/_generated/api";
@@ -9,7 +9,8 @@ export type DatasetSummary = FunctionReturnType<typeof api.schemas.list>[number]
 /**
  * Type tags for a dataset: Geospatial plus its geometry type, or Regular —
  * plus a "Synced" marker when the dataset is a read-only projection of a
- * connected external source. Rendered above/next to dataset titles across
+ * connected external source, and the snapshot version label when it's a
+ * frozen tag version (lineage). Rendered above/next to dataset titles across
  * the list views (browser cards, group rows, collection rows) so each list
  * reads at a glance.
  */
@@ -28,6 +29,15 @@ export function DatasetTypeTags({ dataset }: { dataset: DatasetSummary }) {
         </Badge>
       )}
       {dataset.geometryType && <Badge variant="outline">{dataset.geometryType}</Badge>}
+      {dataset.lineage !== undefined && (
+        <Badge
+          variant="outline"
+          title={`Frozen snapshot version "${dataset.lineage.versionLabel}" — a point-in-time copy, read-only here.`}
+        >
+          <Tag />
+          {dataset.lineage.versionLabel}
+        </Badge>
+      )}
       {dataset.source && (
         <Badge
           variant="outline"

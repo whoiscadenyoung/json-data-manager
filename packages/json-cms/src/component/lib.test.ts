@@ -381,6 +381,99 @@ describe("json-cms component", () => {
     });
   });
 
+  describe("schema lineage (bound-dataset tag versions)", () => {
+    const versionedSchema = {
+        properties: { name: { type: "string" } },
+        title: "Versioned Schema",
+        type: "object",
+      },
+      createLive = (t: TestCtx) =>
+        t.mutation(api.lib.createSchema, { schema: versionedSchema }),
+      freezeVersion = (t: TestCtx, sourceSchemaId: Id<"schemas">, versionLabel: string) =>
+        t.mutation(api.lib.createSchema, {
+          lineage: {
+            frozenAt: Date.now(),
+            snapshotRef: `snap_${versionLabel}`,
+            sourceSchemaId,
+            versionLabel,
+          },
+          schema: { ...versionedSchema, title: `${versionedSchema.title} — ${versionLabel}` },
+          source: { name: "restaurantLocations" },
+        });
+
+    it("createSchema stores lineage and source on the frozen version", async () => {
+      const t = initConvexTest(),
+        liveId = await createLive(t),
+        frozenAt = Date.now(),
+        versionId = await t.mutation(api.lib.createSchema, {
+          lineage: {
+            frozenAt,
+            snapshotRef: "snap_v1",
+            sourceSchemaId: liveId,
+            versionLabel: "v1",
+          },
+          schema: versionedSchema,
+          source: { name: "restaurantLocations" },
+        }),
+        version = await t.query(api.lib.getSchema, { schemaId: versionId });
+      assertDefined(version);
+      expect(version.lineage).toEqual({
+        frozenAt,
+        snapshotRef: "snap_v1",
+        sourceSchemaId: liveId,
+        versionLabel: "v1",
+      });
+      expect(version.source).toEqual({ name: "restaurantLocations" });
+      // The live dataset itself carries no lineage.
+      const live = await t.query(api.lib.getSchema, { schemaId: liveId });
+      assertDefined(live);
+      expect(live.lineage).toBeUndefined();
+    });
+
+    it("listSchemaVersions returns only that source's versions, newest first", async () => {
+      const t = initConvexTest(),
+        liveId = await createLive(t),
+        otherLiveId = await createLive(t);
+      await freezeVersion(t, liveId, "v1");
+      // A tick so the second freeze sorts after the first.
+      vi.advanceTimersByTime(1);
+      await freezeVersion(t, liveId, "v2");
+      // A different live dataset's version — proves the listing is scoped.
+      await freezeVersion(t, otherLiveId, "other-v1");
+
+      const versions = await t.query(api.lib.listSchemaVersions, { sourceSchemaId: liveId });
+      expect(versions).toHaveLength(2);
+      expect(versions.map((version) => version.title)).toEqual([
+        "Versioned Schema — v2",
+        "Versioned Schema — v1",
+      ]);
+
+      const otherVersions = await t.query(api.lib.listSchemaVersions, {
+        sourceSchemaId: otherLiveId,
+      });
+      expect(otherVersions).toHaveLength(1);
+
+      // Ordinary datasets (no versions) list nothing.
+      const plainId = await t.mutation(api.lib.createSchema, { schema: versionedSchema });
+      const none = await t.query(api.lib.listSchemaVersions, { sourceSchemaId: plainId });
+      expect(none).toHaveLength(0);
+    });
+
+    it("getSchemaVersionBySnapshotRef resolves the frozen version by ref", async () => {
+      const t = initConvexTest(),
+        liveId = await createLive(t),
+        versionId = await freezeVersion(t, liveId, "v1"),
+        found = await t.query(api.lib.getSchemaVersionBySnapshotRef, { snapshotRef: "snap_v1" });
+      assertDefined(found);
+      expect(found._id).toBe(versionId);
+
+      const unknown = await t.query(api.lib.getSchemaVersionBySnapshotRef, {
+        snapshotRef: "snap_missing",
+      });
+      expect(unknown).toBeNull();
+    });
+  });
+
   describe("collections & groups", () => {
     async function createTestCollection(t: TestCtx, name: string) {
       return t.mutation(api.lib.createCollection, { name });
