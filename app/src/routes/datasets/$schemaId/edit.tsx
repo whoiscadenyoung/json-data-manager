@@ -44,10 +44,9 @@ function EditSchemaPage() {
   const { schemaId } = Route.useParams(),
     navigate = useNavigate(),
     schema = useQuery(api.schemas.get, { schemaId }),
-    entries = useQuery(api.entries.list, { schemaId }),
     updateSchema = useMutation(api.schemas.update);
 
-  if (schema === undefined || entries === undefined) {
+  if (schema === undefined) {
     return (
       <div className="flex justify-center items-center min-h-100">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
@@ -66,7 +65,9 @@ function EditSchemaPage() {
     );
   }
 
-  const hasEntries = entries.length > 0;
+  // The denormalized `entryCount` (issue #54) — this page used to fetch the
+  // dataset's every entry just to compute this one boolean.
+  const hasEntries = (schema.entryCount ?? 0) > 0;
 
   return (
     <div className={`mx-auto py-8 px-4 ${hasEntries ? "max-w-2xl" : "max-w-7xl"}`}>

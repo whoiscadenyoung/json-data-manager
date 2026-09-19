@@ -42,6 +42,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         any,
         Name
       >;
+      backfillDatasetSummaries: FunctionReference<
+        "mutation",
+        "internal",
+        {},
+        { membershipsPatched: number; schemasPatched: number },
+        Name
+      >;
       createCollection: FunctionReference<
         "mutation",
         "internal",
@@ -265,6 +272,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           _id: string;
           boundingBox?: Array<number>;
           description?: string;
+          entryCount?: number;
           featureCount?: number;
           geometryType?:
             | "Point"
@@ -358,7 +366,27 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       listEntriesByCollection: FunctionReference<
         "query",
         "internal",
-        { collectionId: string },
+        { collectionId: string; limit?: number },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          data: any;
+          geometryId?: string;
+          geometryType?:
+            | "Point"
+            | "MultiPoint"
+            | "LineString"
+            | "MultiLineString"
+            | "Polygon"
+            | "MultiPolygon";
+          schemaId: string;
+        }>,
+        Name
+      >;
+      listEntriesForIds: FunctionReference<
+        "query",
+        "internal",
+        { entryIds: Array<string> },
         Array<{
           _creationTime: number;
           _id: string;
@@ -378,7 +406,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       listEntriesForSchemas: FunctionReference<
         "query",
         "internal",
-        { schemaIds: Array<string> },
+        { limit?: number; schemaIds: Array<string> },
         Array<{
           _creationTime: number;
           _id: string;
@@ -393,6 +421,42 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "MultiPolygon";
           schemaId: string;
         }>,
+        Name
+      >;
+      listEntriesPage: FunctionReference<
+        "query",
+        "internal",
+        {
+          paginationOpts: {
+            cursor: string | null;
+            endCursor?: string | null;
+            id?: number;
+            maximumBytesRead?: number;
+            maximumRowsRead?: number;
+            numItems: number;
+          };
+          schemaId: string;
+        },
+        {
+          continueCursor: string;
+          isDone: boolean;
+          page: Array<{
+            _creationTime: number;
+            _id: string;
+            data: any;
+            geometryId?: string;
+            geometryType?:
+              | "Point"
+              | "MultiPoint"
+              | "LineString"
+              | "MultiLineString"
+              | "Polygon"
+              | "MultiPolygon";
+            schemaId: string;
+          }>;
+          pageStatus?: "SplitRecommended" | "SplitRequired" | null;
+          splitCursor?: string | null;
+        },
         Name
       >;
       listGeometries: FunctionReference<
@@ -518,6 +582,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           _creationTime: number;
           _id: string;
           collectionId: string;
+          kind?: "standard" | "geospatial";
           schemaId: string;
         }>,
         Name
@@ -531,6 +596,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           _id: string;
           boundingBox?: Array<number>;
           description?: string;
+          entryCount?: number;
           featureCount?: number;
           geometryType?:
             | "Point"
@@ -566,6 +632,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           _id: string;
           boundingBox?: Array<number>;
           description?: string;
+          entryCount?: number;
           featureCount?: number;
           geometryType?:
             | "Point"

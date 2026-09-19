@@ -319,11 +319,12 @@ export function exposeApi(
     // `listGeometries` once per schema, merging client-side — see
     // `useAllPaginated` in the `react` package.
     listEntriesByCollection: queryGeneric({
-      args: { collectionId: v.string() },
+      args: { collectionId: v.string(), limit: v.optional(v.number()) },
       handler: async (ctx, args) => {
         await options.auth(ctx, { collectionId: args.collectionId, type: "read" });
         return ctx.runQuery(component.lib.listEntriesByCollection, {
           collectionId: args.collectionId,
+          limit: args.limit,
         });
       },
     }),
@@ -501,6 +502,32 @@ export function exposeApi(
         });
       },
     }),
+    // Server-side paginated view of one dataset's entries (issue #54) — the
+    // entries-table counterpart of `listGeometries`. Prefer this over
+    // `listEntries` for anything rendered per page: it keeps every query
+    // execution bounded no matter how big the dataset grows.
+    listEntriesPage: queryGeneric({
+      args: { paginationOpts: paginationOptsValidator, schemaId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { schemaId: args.schemaId, type: "read" });
+        return ctx.runQuery(component.lib.listEntriesPage, {
+          paginationOpts: args.paginationOpts,
+          schemaId: args.schemaId,
+        });
+      },
+    }),
+    // Entries by id — the reference-field label lookup (issue #54): fetch
+    // exactly the entries some loaded rows reference instead of every row of
+    // every referenced dataset.
+    listEntriesForIds: queryGeneric({
+      args: { entryIds: v.array(v.string()) },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { type: "read" });
+        return ctx.runQuery(component.lib.listEntriesForIds, {
+          entryIds: args.entryIds,
+        });
+      },
+    }),
     getEntry: queryGeneric({
       args: { entryId: v.string() },
       handler: async (ctx, args) => {
@@ -511,12 +538,14 @@ export function exposeApi(
       },
     }),
     // Entries from several datasets at once — e.g. building a reference
-    // field's candidate picker without one round trip per dataset.
+    // field's candidate picker without one round trip per dataset. `limit`
+    // optionally caps rows taken per dataset (issue #54).
     listEntriesForSchemas: queryGeneric({
-      args: { schemaIds: v.array(v.string()) },
+      args: { limit: v.optional(v.number()), schemaIds: v.array(v.string()) },
       handler: async (ctx, args) => {
         await options.auth(ctx, { type: "read" });
         return ctx.runQuery(component.lib.listEntriesForSchemas, {
+          limit: args.limit,
           schemaIds: args.schemaIds,
         });
       },

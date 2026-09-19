@@ -24,6 +24,8 @@ import { createPortal } from "react-dom";
 import { cn } from "#/lib/utils.ts";
 import { pmtilesProtocol } from "#/lib/pmtiles-protocol.ts";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
+import darkMatterStyleJson from "@/assets/basemaps/dark-matter-gl-style.json?raw";
+import positronStyleJson from "@/assets/basemaps/positron-gl-style.json?raw";
 
 // Same-origin module worker, bundled by vite (`?worker&url`). The previous
 // unpkg CDN URL made maps die silently: cross-origin Worker construction is
@@ -79,9 +81,21 @@ if (typeof window !== "undefined") {
   MapLibreGL.addProtocol("pmtiles", pmtilesProtocol.tile);
 }
 
+// Basemap style documents vendored in-tree (issue #54): these used to be
+// fetched from basemaps.cartocdn.com at map mount — a third-party network
+// dependency on the map's critical path (latency, offline breakage). The
+// vector tiles, glyphs, and sprite the styles REFERENCE stay on CARTO's CDN
+// (source attribution arrives at runtime with the TileJSON); only the style
+// document itself moved into the bundle. Re-vendor deliberately, not
+// casually — an in-tree snapshot drifts from CARTO's live document.
+// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- vendored CARTO style document, validated against the Positron schema it was downloaded from.
+const darkMatterStyle = JSON.parse(darkMatterStyleJson) as MapLibreGL.StyleSpecification;
+// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- vendored CARTO style document, validated against the Positron schema it was downloaded from.
+const positronStyle = JSON.parse(positronStyleJson) as MapLibreGL.StyleSpecification;
+
 const defaultStyles = {
-  dark: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
-  light: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+  dark: darkMatterStyle,
+  light: positronStyle,
 };
 
 // A tile-less, dependency-free style with a transparent background. Use it for

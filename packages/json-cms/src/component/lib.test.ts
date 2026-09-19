@@ -81,6 +81,11 @@ async function createImportSchema(t: TestCtx) {
   });
 }
 
+/** An entries page's row names in page order — pagination assertions read these. */
+function pageNames(page: { page: Array<{ data: { name: string } }> }): string[] {
+  return page.page.map((entry) => entry.data.name);
+}
+
 async function storeRows(t: TestCtx, rows: unknown[]) {
   return t.run(async (ctx) =>
     ctx.storage.store(new Blob([JSON.stringify(rows)], { type: "application/json" })),
@@ -1113,6 +1118,173 @@ describe("json-cms component", () => {
 
       const entries = await t.query(api.lib.listEntries, { schemaId });
       expect(entries).toHaveLength(0);
+    });
+  });
+
+  describe("entry pagination and denormalized summaries (issue #54)", () => {
+    async function getSchemaEntryCount(t: TestCtx, schemaId: Id<"schemas">) {
+      const doc = await t.run(async (ctx) => ctx.db.get(schemaId));
+      assertDefined(doc);
+      return doc.entryCount;
+    }
+
+    async function getMembershipRow(t: TestCtx, schemaId: Id<"schemas">) {
+      const row = await t.run(async (ctx) =>
+        ctx.db
+          .query("schemaCollections")
+          .withIndex("by_schema", (q) => q.eq("schemaId", schemaId))
+          .unique(),
+      );
+      assertDefined(row);
+      return row;
+    }
+
+    it("listEntriesPage paginates newest-first through cursors", async () => {
+      const t = initConvexTest(),
+        schemaId = await createTestSchema(t),
+        // One bulk seed — convex-test bumps `_creationTime` on ties in
+        // insertion order, so the page order is deterministic here.
+        names = ["a", "b", "c", "d", "e"];
+      await t.mutation(api.lib.createEntriesBulk, {
+        entries: names.map((name) => ({ data: { name } })),
+        schemaId,
+      });
+
+      const page1 = await t.query(api.lib.listEntriesPage, {
+        paginationOpts: { cursor: null, numItems: 3 },
+        schemaId,
+      });
+      expect(pageNames(page1)).toStrictEqual(["e", "d", "c"]);
+      expect(page1.isDone).toBe(false);
+
+      const page2 = await t.query(api.lib.listEntriesPage, {
+        paginationOpts: { cursor: page1.continueCursor, numItems: 3 },
+        schemaId,
+      });
+      expect(pageNames(page2)).toStrictEqual(["b", "a"]);
+      expect(page2.isDone).toBe(true);
+    });
+
+    it("listEntriesPage throws for a deleted schema", async () => {
+      const t = initConvexTest(),
+        schemaId = await createTestSchema(t);
+      await t.mutation(api.lib.deleteSchema, { schemaId });
+      await expect(
+        t.query(api.lib.listEntriesPage, {
+          paginationOpts: { cursor: null, numItems: 10 },
+          schemaId,
+        }),
+      ).rejects.toThrow("Schema not found");
+    });
+
+    it("entryCount stays exact across create, bulk, delete, and reset", async () => {
+      const t = initConvexTest(),
+        schemaId = await createTestSchema(t);
+      expect(await getSchemaEntryCount(t, schemaId)).toBe(0);
+
+      const firstId = await t.mutation(api.lib.createEntry, {
+        data: { name: "John" },
+        schemaId,
+      });
+      expect(await getSchemaEntryCount(t, schemaId)).toBe(1);
+
+      await t.mutation(api.lib.createEntriesBulk, {
+        entries: [{ data: { name: "A" } }, { data: { name: "B" } }],
+        schemaId,
+      });
+      expect(await getSchemaEntryCount(t, schemaId)).toBe(3);
+
+      // A data-only UPDATE must not touch the count.
+      await t.mutation(api.lib.updateEntry, { data: { name: "Johnny" }, entryId: firstId });
+      expect(await getSchemaEntryCount(t, schemaId)).toBe(3);
+
+      await t.mutation(api.lib.deleteEntry, { entryId: firstId });
+      expect(await getSchemaEntryCount(t, schemaId)).toBe(2);
+
+      await t.mutation(api.lib.deleteEntriesBySchema, { schemaId });
+      expect(await getSchemaEntryCount(t, schemaId)).toBe(0);
+    });
+
+    it("addSchemaToCollection stamps the dataset kind onto the membership row", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Point"),
+        collectionId = await t.mutation(api.lib.createCollection, { name: "Geo collection" });
+      await t.mutation(api.lib.addSchemaToCollection, { collectionId, schemaId });
+      expect((await getMembershipRow(t, schemaId)).kind).toBe("geospatial");
+    });
+
+    it("backfillDatasetSummaries repairs pre-field counts and membership kinds", async () => {
+      const t = initConvexTest(),
+        schemaId = await createTestSchema(t),
+        collectionId = await t.mutation(api.lib.createCollection, { name: "Collection" });
+      await t.mutation(api.lib.addSchemaToCollection, { collectionId, schemaId });
+      await t.mutation(api.lib.createEntriesBulk, {
+        entries: [{ data: { name: "A" } }, { data: { name: "B" } }, { data: { name: "C" } }],
+        schemaId,
+      });
+
+      // Simulate rows that predate the denormalized fields.
+      await t.run(async (ctx) => {
+        await ctx.db.patch(schemaId, { entryCount: undefined });
+        const row = await ctx.db
+          .query("schemaCollections")
+          .withIndex("by_schema", (q) => q.eq("schemaId", schemaId))
+          .unique();
+        if (row) {
+          await ctx.db.patch(row._id, { kind: undefined });
+        }
+      });
+
+      const stats = await t.mutation(api.lib.backfillDatasetSummaries, {});
+      expect(stats.schemasPatched).toBe(1);
+      expect(stats.membershipsPatched).toBe(1);
+      expect(await getSchemaEntryCount(t, schemaId)).toBe(3);
+      expect((await getMembershipRow(t, schemaId)).kind).toBe("standard");
+    });
+
+    it("listEntriesForIds returns only existing entries, deduplicated", async () => {
+      const t = initConvexTest(),
+        schemaId = await createTestSchema(t),
+        kept = await t.mutation(api.lib.createEntry, { data: { name: "kept" }, schemaId }),
+        deleted = await t.mutation(api.lib.createEntry, { data: { name: "gone" }, schemaId });
+      await t.mutation(api.lib.deleteEntry, { entryId: deleted });
+
+      const rows = await t.query(api.lib.listEntriesForIds, {
+        entryIds: [kept, deleted, kept],
+      });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]._id).toBe(kept);
+    });
+
+    it("listEntriesForIds rejects oversized id lists", async () => {
+      const t = initConvexTest(),
+        schemaId = await createTestSchema(t),
+        entryId = await t.mutation(api.lib.createEntry, { data: { name: "x" }, schemaId });
+      await expect(
+        t.query(api.lib.listEntriesForIds, {
+          entryIds: Array.from({ length: 201 }, () => entryId),
+        }),
+      ).rejects.toThrow("exceeds 200 items");
+    });
+
+    it("listEntriesByCollection limit caps rows per dataset", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Point"),
+        collectionId = await t.mutation(api.lib.createCollection, { name: "Collection" });
+      await t.mutation(api.lib.addSchemaToCollection, { collectionId, schemaId });
+      await t.mutation(api.lib.createEntriesBulk, {
+        entries: [{ data: { name: "A" } }, { data: { name: "B" } }, { data: { name: "C" } }],
+        schemaId,
+      });
+
+      const capped = await t.query(api.lib.listEntriesByCollection, {
+        collectionId,
+        limit: 2,
+      });
+      expect(capped).toHaveLength(2);
+
+      const all = await t.query(api.lib.listEntriesByCollection, { collectionId });
+      expect(all).toHaveLength(3);
     });
   });
 

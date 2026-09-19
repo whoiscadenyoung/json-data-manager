@@ -37,6 +37,7 @@ import { GeospatialConversionPanel } from "@/components/geospatial-conversion-pa
 import { RouterButton } from "@/components/router-button";
 import { SchemaVisualizer } from "@/components/schema-visualizer";
 import { SimplifyGeometryPanel } from "@/components/simplify-geometry-panel";
+import { TileBuildStatus } from "@/components/tile-build-status";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -65,6 +66,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { fetchAllEntryRows, useEntriesPages } from "@/lib/entries-pages";
 import {
   buildGeoJsonCollection,
   buildJsonPayload,
@@ -95,8 +97,20 @@ type Schema = NonNullable<FunctionReturnType<typeof api.schemas.get>>;
 // `listGeometries` is paginated (see its doc comment in the component) — the
 // per-item shape is still `PaginationResult["page"][number]`.
 type Geometry = FunctionReturnType<typeof api.geometries.list>["page"][number];
-type Entry = FunctionReturnType<typeof api.entries.list>[number];
+// Entries stream in through `useEntriesPages` (`entries.listPage`, issue #54);
+// per-row shape is one element of a page.
+type Entry = FunctionReturnType<typeof api.entries.listPage>["page"][number];
 type EntryPanelSearch = z.infer<typeof entryPanelSearchSchema>;
+
+/** Display count: the denormalized total when the schema carries it, else what's loaded so far. */
+function displayCount(entryCount: number | undefined, loadedCount: number): number {
+  return entryCount ?? loadedCount;
+}
+
+/** Empty-dataset gate — reads the exact denormalized count, not just page 1. */
+function datasetIsEmpty(entryCount: number | undefined, loadedCount: number): boolean {
+  return displayCount(entryCount, loadedCount) === 0;
+}
 
 /**
  * Fetches this dataset's geometries — only when it's actually geospatial AND
@@ -227,7 +241,18 @@ function EntryPanelHost({
   search: EntryPanelSearch;
   onOpenChange: (open: boolean) => void;
 }) {
-  const entry = resolveEntryForPanel(entries, search),
+  const loadedEntry = resolveEntryForPanel(entries, search),
+    // Deep links (`?panel=edit&entryId=…`) can target a row the table hasn't
+    // streamed to yet (issue #54) — the single-entry read resolves those. A
+    // `null` result means the entry is gone and the panel stays closed, same
+    // as a stale id did before pagination.
+    fetchedEntry = useConvexQuery(
+      api.entries.get,
+      loadedEntry === undefined && search.panel === "edit" && search.entryId !== undefined
+        ? { entryId: search.entryId }
+        : "skip",
+    ),
+    entry = loadedEntry ?? (fetchedEntry ?? undefined),
     isOpen = search.panel === "create" || entry !== undefined,
     // The on-demand single-entry read, only while the panel targets an entry
     // AND the dataset's rows aren't in hand (the tile path). Deliberately on
@@ -302,10 +327,15 @@ function SchemaDetailPage() {
     search = Route.useSearch(),
     navigate = Route.useNavigate(),
     // Light queries through the TanStack bridge (issue #58 part 5): the
-    // dataset's schema and entries table render from the persisted cache on a
-    // cold start; the live WebSocket subscription updates the same entries.
+    // dataset's schema and entries pages render from the persisted cache on a
+    // cold start; the live WebSocket subscriptions update the same entries.
     schema = useQuery({ ...convexQuery(api.schemas.get, { schemaId }) }).data,
-    entries = useQuery({ ...convexQuery(api.entries.list, { schemaId }) }).data,
+    // Entries stream in as server-side pages (issue #54) — one
+    // `entries.listPage` query per cursor instead of one unbounded collect of
+    // every row, so a 20k-row import can't hit the ~16 MiB per-execution
+    // read cap. The table renders incrementally as pages resolve.
+    entriesPages = useEntriesPages(schemaId),
+    entries = entriesPages.entries,
     // Layer-source decision (issue #58 part 4): fresh tile archive → the map
     // renders from vector tiles and geometry rows are never fetched;
     // otherwise the row path applies exactly as before.
@@ -429,7 +459,17 @@ function SchemaDetailPage() {
           },
         ],
     handleExportConfirm = async (format: ExportFormat, includeSchema: boolean) => {
-      if (!schema || !entries) {
+      if (!schema) {
+        return;
+      }
+      // An export always writes the WHOLE dataset, but the page only holds
+      // the table's loaded pages (issue #54) — materialize every row on
+      // demand instead of keeping the full set as a standing subscription.
+      let exportEntries: Entry[];
+      try {
+        exportEntries = await fetchAllEntryRows(schemaId);
+      } catch {
+        toast.error("Could not load all rows for the export.");
         return;
       }
       const slug = slugify(schema.title),
@@ -447,7 +487,7 @@ function SchemaDetailPage() {
       if (format === "geojson") {
         downloadText(
           JSON.stringify(
-            buildGeoJsonCollection(entries, exportResolvedGeometries, schemaId),
+            buildGeoJsonCollection(exportEntries, exportResolvedGeometries, schemaId),
             null,
             2,
           ),
@@ -456,20 +496,20 @@ function SchemaDetailPage() {
         downloadSchemaFile();
       } else if (format === "json") {
         downloadText(
-          JSON.stringify(buildJsonPayload(schema.schema, entries), null, 2),
+          JSON.stringify(buildJsonPayload(schema.schema, exportEntries), null, 2),
           `${slug}.json`,
         );
         downloadSchemaFile();
       } else {
         await exportExcelWorkbook(
-          [{ name: schema.title, rows: entryRows(entries) }],
+          [{ name: schema.title, rows: entryRows(exportEntries) }],
           `${slug}.xlsx`,
         );
       }
       toast.success("Export downloaded.");
     };
 
-  if (schema === undefined || entries === undefined) {
+  if (schema === undefined || entriesPages.isLoading) {
     return (
       <div className="flex justify-center items-center min-h-100">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
@@ -541,7 +581,7 @@ function SchemaDetailPage() {
           {!isBoundToSource && (
             <MakeGeospatialButton
               schema={schema}
-              entryCount={entries.length}
+              entryCount={displayCount(schema.entryCount, entries.length)}
               onClick={() => {
                 setMakeGeospatialOpen(true);
               }}
@@ -551,11 +591,11 @@ function SchemaDetailPage() {
             onClick={() => {
               setExportOpen(true);
             }}
-            disabled={entries.length === 0}
+            disabled={datasetIsEmpty(schema.entryCount, entries.length)}
             variant="outline"
           >
             <Download className="h-4 w-4 mr-2" />
-            Export ({entries.length})
+            Export ({displayCount(schema.entryCount, entries.length)})
           </Button>
           {!isBoundToSource && (
             <RouterButton
@@ -626,7 +666,7 @@ function SchemaDetailPage() {
       )}
 
       {schema.kind === "geospatial" && (
-        <section className="mb-6">
+        <section className="relative mb-6">
           <EntriesMap
             key={schemaId}
             entries={entries}
@@ -637,13 +677,18 @@ function SchemaDetailPage() {
             initialBbox={schema.boundingBox as [number, number, number, number] | undefined}
             className="h-[420px]"
           />
+          {/* Live tile-archive build state (issue #71): previously the state
+          store existed with no surface — failed builds were invisible. */}
+          <TileBuildStatus schemaId={schemaId} />
         </section>
       )}
 
       <Tabs value={activeView} onValueChange={handleTabChange}>
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="entries">Data ({entries.length})</TabsTrigger>
+          <TabsTrigger value="entries">
+            Data ({displayCount(schema.entryCount, entries.length)})
+          </TabsTrigger>
           {isBoundToSource && binding !== undefined && binding !== null && (
             <TabsTrigger value="history">History</TabsTrigger>
           )}
@@ -657,11 +702,11 @@ function SchemaDetailPage() {
         <TabsContent value="entries">
           <Card>
             <CardHeader>
-              <CardTitle>Data ({entries.length})</CardTitle>
+              <CardTitle>Data ({displayCount(schema.entryCount, entries.length)})</CardTitle>
               <CardDescription>Data entries created from this schema</CardDescription>
             </CardHeader>
             <CardContent>
-              {entries.length === 0 ? (
+              {datasetIsEmpty(schema.entryCount, entries.length) ? (
                 <Empty>
                   <EmptyHeader>
                     <EmptyMedia variant="icon">
@@ -683,6 +728,10 @@ function SchemaDetailPage() {
                   schema={schema.schema}
                   properties={Object.keys(schema.schema.properties ?? {})}
                   entries={entries}
+                  entryCount={schema.entryCount}
+                  hasMore={entriesPages.canLoadMore}
+                  isLoadingMore={entriesPages.isLoadingMore}
+                  onLoadMore={entriesPages.loadMore}
                   isGeospatial={schema.kind === "geospatial"}
                   onEdit={openEditPanel}
                 />
@@ -758,7 +807,7 @@ function SchemaDetailPage() {
       <ExportDialog
         open={exportOpen}
         onOpenChange={setExportOpen}
-        heading={`Export "${schema.title}" (${entries.length} entries)`}
+        heading={`Export "${schema.title}" (${displayCount(schema.entryCount, entries.length)} entries)`}
         formatOptions={exportFormats}
         defaultFormat={isGeospatialDataset ? "geojson" : "json"}
         schemaLabel="dataset"
@@ -774,7 +823,7 @@ function SchemaDetailPage() {
             (data): data is Record<string, unknown> =>
               typeof data === "object" && data !== null && !Array.isArray(data),
           )}
-        entryCount={entries.length}
+        entryCount={displayCount(schema.entryCount, entries.length)}
         open={makeGeospatialOpen}
         onOpenChange={setMakeGeospatialOpen}
         onConversionComplete={setConversionSuccess}
