@@ -36,6 +36,9 @@ import type { ResolvedGeometry } from "./geometry_storage.js";
 import schema from "./schema.js";
 
 const SCHEMA_SIZE_LIMIT = 102_400, // 100 KB
+  // Hard cap on `listEntriesForIds` — one indexed `get` per id, but an
+  // unbounded id list would still be an unbounded read.
+  LIST_ENTRIES_FOR_IDS_MAX = 200,
   // Durable workflow engine (nested component) that drives batched imports.
   workflow = new WorkflowManager(components.workflow),
   collectionValidator = schema.tables.collections.validator.extend({
@@ -323,6 +326,7 @@ export const createSchema = mutation({
     const schemaId = await ctx.db.insert("schemas", {
       boundingBox: undefined,
       description: args.schema.description,
+      entryCount: 0,
       featureCount: args.kind === "geospatial" ? 0 : undefined,
       geometryType: args.geometryType,
       kind: args.kind,
@@ -726,6 +730,10 @@ export const addSchemaToCollection = mutation({
     }
     await ctx.db.insert("schemaCollections", {
       collectionId: args.collectionId,
+      // Denormalized for `listGeospatialSchemaIdsByCollection` (see the
+      // field's doc comment in schema.ts) — read at insert time so the
+      // membership row never needs the schema doc to answer "geospatial?".
+      kind: dataset.kind,
       schemaId: args.schemaId,
     });
   },
@@ -1494,19 +1502,30 @@ export const getEntryGeometry = query({
   returns: v.union(v.null(), geometryOutputValidator),
 });
 
-/** The `_id`s of every geospatial dataset in a collection, via its `schemaCollections` membership rows. */
+/**
+ * The `_id`s of every geospatial dataset in a collection, via its
+ * `schemaCollections` membership rows. Each row carries a denormalized
+ * `kind` (see schema.ts), so the common case reads only the membership rows —
+ * no `schemas` doc fetch per membership (issue #54's collection-level N+1).
+ * Rows from before the denormalization have no `kind` and fall back to one
+ * schema-doc read, so results are identical either way; the
+ * `backfillDatasetSummaries` maintenance mutation stamps them in one pass.
+ */
 async function listGeospatialSchemaIdsByCollection(ctx: QueryCtx, collectionId: Id<"collections">) {
   const memberships = await ctx.db
     .query("schemaCollections")
     .withIndex("by_collection", (q) => q.eq("collectionId", collectionId))
     .collect();
-  const datasets = await Promise.all(memberships.map((row) => ctx.db.get(row.schemaId)));
-  return datasets
-    .filter(
-      (schemaDoc): schemaDoc is NonNullable<typeof schemaDoc> =>
-        schemaDoc !== null && schemaDoc.kind === "geospatial",
-    )
-    .map((schemaDoc) => schemaDoc._id);
+  const ids = await Promise.all(
+    memberships.map(async (row) => {
+      if (row.kind !== undefined) {
+        return row.kind === "geospatial" ? row.schemaId : null;
+      }
+      const schemaDoc = await ctx.db.get(row.schemaId);
+      return schemaDoc !== null && schemaDoc.kind === "geospatial" ? row.schemaId : null;
+    }),
+  );
+  return ids.filter((id): id is Id<"schemas"> => id !== null);
 }
 
 // NOTE on the collection-level map view: there is deliberately no
@@ -1528,9 +1547,16 @@ async function listGeospatialSchemaIdsByCollection(ctx: QueryCtx, collectionId: 
 /**
  * Aggregated entry rows for every geospatial dataset in a collection — joined
  * client-side for feature-detail popups on the collection map view.
+ *
+ * `limit` optionally caps rows taken PER DATASET (issue #54): these per-dataset
+ * collects are unbounded by nature (a collection spans several datasets), and
+ * a dataset past Convex's ~16 MiB per-execution read budget would fail the
+ * whole query. Pass a cap at call sites that don't need the full set; the
+ * group-page export is the one caller that legitimately wants everything and
+ * omits the cap.
  */
 export const listEntriesByCollection = query({
-  args: { collectionId: v.id("collections") },
+  args: { collectionId: v.id("collections"), limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const schemaIds = await listGeospatialSchemaIdsByCollection(ctx, args.collectionId),
       rows = await Promise.all(
@@ -1538,7 +1564,9 @@ export const listEntriesByCollection = query({
           ctx.db
             .query("entries")
             .withIndex("by_schema", (q) => q.eq("schemaId", schemaId))
-            .collect(),
+            // An omitted cap reads as "no cap" — `take` with the max safe
+            // integer simply runs until the index range is exhausted.
+            .take(args.limit ?? Number.MAX_SAFE_INTEGER),
         ),
       );
     return rows.flat();
@@ -1556,9 +1584,13 @@ export const getEntry = query({
  * Entries from several datasets at once, flattened into one list (each row
  * still carries its own `schemaId`). Powers building a reference field's
  * candidate picker without one round trip per referenced dataset.
+ *
+ * `limit` optionally caps rows taken PER DATASET (issue #54) — same rationale
+ * as `listEntriesByCollection`. The map workspace's popup lookup passes a cap;
+ * callers that genuinely need every row omit it.
  */
 export const listEntriesForSchemas = query({
-  args: { schemaIds: v.array(v.id("schemas")) },
+  args: { limit: v.optional(v.number()), schemaIds: v.array(v.id("schemas")) },
   handler: async (ctx, args) => {
     const unique = [...new Set(args.schemaIds)],
       rows = await Promise.all(
@@ -1566,10 +1598,64 @@ export const listEntriesForSchemas = query({
           ctx.db
             .query("entries")
             .withIndex("by_schema", (q) => q.eq("schemaId", schemaId))
-            .collect(),
+            .take(args.limit ?? Number.MAX_SAFE_INTEGER),
         ),
       );
     return rows.flat();
+  },
+  returns: v.array(entryValidator),
+});
+
+/** Largest number of rows one `listEntriesPage` page may return — entries are
+ * thin (see CONVERSION_BATCH_SIZE's note), so a fixed row cap is the honest
+ * read bound; payload-budgeted chunking would only matter for pathological
+ * `data` payloads that already break every other entries read today. */
+const MAX_ENTRY_PAGE_ROWS = 500;
+
+/**
+ * Server-side paginated view of one dataset's entries (issue #54): the
+ * entries-table equivalent of `listGeometries`. Entries pages keep every
+ * query execution bounded no matter how big the dataset grows — an unbounded
+ * read of a 20k-row import would blow the ~16 MiB per-execution cap (Convex
+ * components cannot call `.paginate()`; see `paginateEntriesBySchema`).
+ * Ordered newest-first, matching the pre-pagination table.
+ */
+export const listEntriesPage = query({
+  args: { paginationOpts: paginationOptsValidator, schemaId: v.id("schemas") },
+  handler: async (ctx, args) => {
+    const schemaDoc = await ctx.db.get(args.schemaId);
+    if (!schemaDoc) {
+      throw new ConvexError("Schema not found");
+    }
+    const { page, isDone, continueCursor } = await paginateEntriesBySchema(
+      ctx,
+      args.schemaId,
+      args.paginationOpts.cursor,
+      Math.max(1, Math.min(args.paginationOpts.numItems, MAX_ENTRY_PAGE_ROWS)),
+      "desc",
+    );
+    return { continueCursor, isDone, page };
+  },
+  returns: paginationResultValidator(entryValidator),
+});
+
+/**
+ * Entries by id — the reference-field label lookup (issue #54): the entries
+ * table resolves the human-readable labels for exactly the entries its loaded
+ * rows reference, instead of loading every row of every referenced dataset
+ * just to label a handful of links. Missing/deleted ids are simply absent
+ * from the result; callers render the raw id as a fallback.
+ */
+export const listEntriesForIds = query({
+  args: { entryIds: v.array(v.id("entries")) },
+  handler: async (ctx, args) => {
+    if (args.entryIds.length > LIST_ENTRIES_FOR_IDS_MAX) {
+      throw new ConvexError(`entryIds exceeds ${LIST_ENTRIES_FOR_IDS_MAX} items`);
+    }
+    const seen = new Set(args.entryIds);
+    return (await Promise.all([...seen].map(async (entryId) => await ctx.db.get(entryId)))).filter(
+      (entry): entry is NonNullable<typeof entry> => entry !== null,
+    );
   },
   returns: v.array(entryValidator),
 });
@@ -1772,6 +1858,28 @@ async function applyGeometryStatsDelta(
 }
 
 /**
+ * Folds an entry add/remove into a schema doc's denormalized `entryCount`
+ * (clamped at 0). The entry-side counterpart of `applyGeometryStatsDelta`:
+ * deliberately separate, because a data-only write (rows with no geometry)
+ * changes `entryCount` but must NOT bump `mapTileCacheVersion` — the tile
+ * archive is a pure function of the geometries, and a spurious version bump
+ * would schedule a pointless rebuild.
+ */
+async function applyEntryCountDelta(
+  ctx: MutationCtx,
+  schemaId: Id<"schemas">,
+  schemaDoc: { entryCount?: number },
+  delta: number,
+): Promise<void> {
+  if (delta === 0) {
+    return;
+  }
+  await ctx.db.patch(schemaId, {
+    entryCount: Math.max(0, (schemaDoc.entryCount ?? 0) + delta),
+  });
+}
+
+/**
  * Monotonically bumps a schema's `mapTileCacheVersion` (`absent = 0`) — the
  * invalidation signal for the dataset's tile archive (issue #58): a rebuild
  * worker snapshots the version before generating, and `setMapTileArchive`
@@ -1968,6 +2076,7 @@ async function insertEntryBatch(
     geometryType?: GeometryTypeArg;
     simplifyGeometry?: boolean;
     featureCount?: number;
+    entryCount?: number;
     boundingBox?: number[];
   },
   rows: Array<{ data: unknown; geometry?: PendingGeometry }>,
@@ -2003,6 +2112,8 @@ async function insertEntryBatch(
   if (addedCount > 0) {
     await applyGeometryStatsDelta(ctx, schemaId, schemaDoc, addedCount, unionedBbox);
   }
+  // Every inserted row counts toward `entryCount`, geometry or not.
+  await applyEntryCountDelta(ctx, schemaId, schemaDoc, rows.length);
 
   return ids;
 }
@@ -2018,11 +2129,14 @@ async function deleteEntryCascading(ctx: MutationCtx, entryId: Id<"entries">): P
   if (!existing) {
     return;
   }
+  const [schemaDoc, geometryDoc] = await Promise.all([
+    ctx.db.get(existing.schemaId),
+    existing.geometryId !== undefined ? ctx.db.get(existing.geometryId) : Promise.resolve(null),
+  ]);
+  if (schemaDoc) {
+    await applyEntryCountDelta(ctx, existing.schemaId, schemaDoc, -1);
+  }
   if (existing.geometryId !== undefined) {
-    const [schemaDoc, geometryDoc] = await Promise.all([
-      ctx.db.get(existing.schemaId),
-      ctx.db.get(existing.geometryId),
-    ]);
     await ctx.db.delete(existing.geometryId);
     await deleteGeometryStorageIfAny(ctx, geometryDoc);
     if (schemaDoc) {
@@ -2217,6 +2331,7 @@ export const deleteEntriesBySchema = mutation({
     // a fresh import starts from a clean version-0 slate.
     await ctx.db.patch(args.schemaId, {
       boundingBox: undefined,
+      entryCount: 0,
       featureCount: schemaDoc.kind === "geospatial" ? 0 : undefined,
       mapTileArchiveBuiltVersion: undefined,
       mapTileArchiveBytes: undefined,
@@ -2278,6 +2393,61 @@ export const deleteEntryInternal = internalMutation({
   handler: async (ctx, args) => {
     await deleteEntryCascading(ctx, args.entryId);
   },
+});
+
+/**
+ * One-off maintenance for the denormalized summaries (issue #54): stamps
+ * `entryCount` onto every dataset and `kind` onto every collection-membership
+ * row that predates the fields. Idempotent — counts are recomputed from the
+ * entries themselves, so re-running also repairs any drift (the incremental
+ * maintainers keep it exact; this is the bootstrap/repair path).
+ *
+ * Bounds: membership rows are a small table, and per-dataset counting
+ * iterates that dataset's entries via async iteration (never `.collect()` of
+ * everything at once — but the whole mutation still reads every entry doc
+ * once, so a dataset beyond Convex's ~16 MiB per-execution read budget would
+ * need a sliced variant rather than this one).
+ *
+ * Public (not internal) so a host app can wrap it — component internals are
+ * only reachable inside the component. Hosts should put their own auth gate
+ * in front, as `app/convex/schemas.ts` does.
+ */
+export const backfillDatasetSummaries = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const stats = { membershipsPatched: 0, schemasPatched: 0 };
+
+    const memberships = await ctx.db.query("schemaCollections").collect();
+    await Promise.all(
+      memberships.map(async (row) => {
+        if (row.kind !== undefined) {
+          return;
+        }
+        const schemaDoc = await ctx.db.get(row.schemaId);
+        if (!schemaDoc) {
+          return;
+        }
+        await ctx.db.patch(row._id, { kind: schemaDoc.kind ?? "standard" });
+        stats.membershipsPatched += 1;
+      }),
+    );
+
+    for await (const schemaDoc of ctx.db.query("schemas")) {
+      let total = 0;
+      for await (const _entry of ctx.db
+        .query("entries")
+        .withIndex("by_schema", (q) => q.eq("schemaId", schemaDoc._id))) {
+        total += 1;
+      }
+      if (schemaDoc.entryCount !== total) {
+        await ctx.db.patch(schemaDoc._id, { entryCount: total });
+        stats.schemasPatched += 1;
+      }
+    }
+
+    return stats;
+  },
+  returns: v.object({ membershipsPatched: v.number(), schemasPatched: v.number() }),
 });
 
 // ---------------------------------------------------------------------------
@@ -2704,24 +2874,32 @@ interface EntryDbRow {
 /**
  * Manual cursor-based pagination over one schema's `entries` rows — the same
  * hand-rolled approach as `paginateGeometriesBySchema` (components can't call
- * `.paginate()`), sized for entries instead of geometries.
+ * `.paginate()`), sized for entries instead of geometries. `order` selects
+ * oldest-first (the conversion workflow's resume order) or newest-first
+ * (`listEntriesPage`, matching the pre-pagination table); the cursor is the
+ * last-returned row's `_creationTime` either way, resumed against the same
+ * index range's trailing sort key.
  */
 async function paginateEntriesBySchema(
   ctx: QueryCtx,
   schemaId: Id<"schemas">,
   cursor: string | null,
   limit: number,
+  order: "asc" | "desc" = "asc",
 ): Promise<{ continueCursor: string; isDone: boolean; page: EntryDbRow[] }> {
-  const afterCreationTime = parseCreationTimeCursor(cursor);
+  const atCreationTime = parseCreationTimeCursor(cursor);
 
   const page = await ctx.db
     .query("entries")
-    .withIndex("by_schema", (q) =>
-      afterCreationTime === undefined
-        ? q.eq("schemaId", schemaId)
-        : q.eq("schemaId", schemaId).gt("_creationTime", afterCreationTime),
-    )
-    .order("asc")
+    .withIndex("by_schema", (q) => {
+      if (atCreationTime === undefined) {
+        return q.eq("schemaId", schemaId);
+      }
+      return order === "desc"
+        ? q.eq("schemaId", schemaId).lt("_creationTime", atCreationTime)
+        : q.eq("schemaId", schemaId).gt("_creationTime", atCreationTime);
+    })
+    .order(order)
     .take(limit);
 
   const lastRow = page[page.length - 1];
@@ -2909,6 +3087,20 @@ export const startGeospatialConversion = mutation({
       geometryType: "Point",
       kind: "geospatial",
     });
+    // Membership rows cache `kind` (see `schemaCollections` in schema.ts) —
+    // rewrite this dataset's rows in the same transaction so collection
+    // views see the flip immediately.
+    const memberships = await ctx.db
+      .query("schemaCollections")
+      .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
+      .collect();
+    await Promise.all(
+      memberships.map(async (row) => {
+        if (row.kind !== "geospatial") {
+          await ctx.db.patch(row._id, { kind: "geospatial" });
+        }
+      }),
+    );
 
     const importId = await ctx.db.insert("imports", {
         processed: 0,

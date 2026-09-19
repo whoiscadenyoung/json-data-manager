@@ -15,6 +15,14 @@ describe("isPersistableQueryHash", () => {
   it("persists light Convex namespaces", () => {
     expect(isPersistableQueryHash("convexQuery|schemas:list|{}")).toBe(true);
     expect(isPersistableQueryHash("convexQuery|entries:list|{\"schemaId\":\"abc\"}")).toBe(true);
+    // Issue #54: the entries table streams server-side pages now — each
+    // `entries.listPage` page (one query per cursor) must stay persistable so
+    // the table still renders from light state on a cold start.
+    expect(
+      isPersistableQueryHash(
+        'convexQuery|entries:listPage|{"schemaId":"abc","paginationOpts":{"numItems":200,"cursor":null}}',
+      ),
+    ).toBe(true);
     expect(isPersistableQueryHash("convexQuery|tile_archives:metas|{\"schemaIds\":[]}")).toBe(true);
   });
 

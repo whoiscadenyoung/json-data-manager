@@ -4,7 +4,7 @@ import { exposeApi } from "@caden/json-cms";
 
 import { components } from "./_generated/api";
 import { auth } from "./auth";
-import { query } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 
 export const {
   listSchemas: list,
@@ -38,4 +38,23 @@ export const maxTileCacheVersion = query({
     return max;
   },
   returns: v.number(),
+});
+
+/**
+ * One-off maintenance for the denormalized dataset summaries (issue #54):
+ * stamps `entryCount` onto every dataset and `kind` onto pre-field collection
+ * membership rows inside the component. Idempotent — run via
+ * `bunx convex run schemas:backfillSummaries` after a deploy that introduces
+ * the fields, or any time drift is suspected (it recomputes from source).
+ */
+export const backfillSummaries = mutation({
+  args: {},
+  handler: async (ctx) => {
+    await auth(ctx);
+    return ctx.runMutation(components.jsonCms.lib.backfillDatasetSummaries, {});
+  },
+  returns: v.object({
+    membershipsPatched: v.number(),
+    schemasPatched: v.number(),
+  }),
 });

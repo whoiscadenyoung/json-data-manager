@@ -33,7 +33,7 @@ import {
 import { buildLabelsByField, referencedEntryIds } from "#/lib/reference-labels";
 import { api } from "#convex/_generated/api";
 
-type Entry = FunctionReturnType<typeof api.entries.list>[number];
+type Entry = FunctionReturnType<typeof api.entries.listPage>["page"][number];
 
 /** A JSON value formatted for a table cell: quotes stripped from strings, everything else stringified as JSON. */
 function formatCellValue(value: unknown): string {
@@ -252,12 +252,44 @@ function buildColumns(
 /** Estimated row height in px, used to seed the virtualizer before rows are measured. */
 const ESTIMATED_ROW_HEIGHT = 37;
 
+/** Upper bound on ids sent to `listForIds` for label resolution (the component
+ * rejects more); links beyond the cap render their raw id as today. */
+const LABEL_IDS_CAP = 200;
+
+/**
+ * Collects the union of entry ids the table's loaded rows reference across
+ * all reference fields — exactly the entries whose labels are worth fetching.
+ * Used to be "every row of every referenced dataset" via
+ * `listEntriesForSchemas`, which quietly loaded whole other datasets just to
+ * label a handful of links (issue #54).
+ */
+function collectReferencedIds(entries: Entry[], referenceFields: ReferenceField[]): string[] {
+  const ids = new Set<string>();
+  if (referenceFields.length === 0) {
+    return [];
+  }
+  for (const entry of entries) {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- `data` is `v.any()` in the component schema; reference values were validated at write time.
+    const data = entry.data as Record<string, unknown>;
+    for (const field of referenceFields) {
+      for (const id of referencedEntryIds(data[field.name])) {
+        ids.add(id);
+      }
+    }
+  }
+  return [...ids].slice(0, LABEL_IDS_CAP);
+}
+
 /** A niko-table (TanStack Table v9) view of a dataset's entries: one column per schema property, with search/sort/filter/column-visibility. */
 export function EntriesTable({
   schemaId,
   schema,
   properties,
   entries,
+  entryCount,
+  hasMore,
+  isLoadingMore,
+  onLoadMore,
   isGeospatial,
   onEdit,
 }: {
@@ -266,15 +298,23 @@ export function EntriesTable({
   schema: unknown;
   properties: string[];
   entries: Entry[];
+  /** The dataset's total row count (`entryCount`), for the load-more label. */
+  entryCount: number | undefined;
+  hasMore: boolean;
+  isLoadingMore: boolean;
+  onLoadMore: () => void;
   isGeospatial: boolean;
   onEdit: (entry: Entry) => void;
 }) {
   const referenceFields = getReferenceFields(schema),
     referenceFieldsByName = new Map(referenceFields.map((f) => [f.name, f])),
-    targetSchemaIds = [...new Set(referenceFields.map((f) => f.meta.datasetId))],
+    // Derived per render (cheap row scan); convex `useQuery` hashes the args
+    // below, so an equal id list re-subscribes nothing. The list feeds the
+    // label-id query — exactly the referenced entries, not whole datasets.
+    referencedIds = collectReferencedIds(entries, referenceFields),
     candidateEntries = useQuery(
-      api.entries.listEntriesForSchemas,
-      targetSchemaIds.length > 0 ? { schemaIds: targetSchemaIds } : "skip",
+      api.entries.listForIds,
+      referencedIds.length > 0 ? { entryIds: referencedIds } : "skip",
     ),
     labelsByField = buildLabelsByField(referenceFields, candidateEntries ?? []),
     columns = buildColumns(
@@ -304,12 +344,28 @@ export function EntriesTable({
 
       <DataTable className="max-h-[70vh]">
         <DataTableVirtualizedHeader />
-        <DataTableVirtualizedBody estimateSize={ESTIMATED_ROW_HEIGHT}>
+        {/* Streaming load-more: scrolling within `prefetchThreshold` rows of
+        the end triggers the next server page, so paging is invisible until
+        the very last page boundary. */}
+        <DataTableVirtualizedBody
+          estimateSize={ESTIMATED_ROW_HEIGHT}
+          onNearEnd={hasMore && !isLoadingMore ? onLoadMore : undefined}
+          prefetchThreshold={15}
+        >
           <DataTableVirtualizedEmptyBody>
             No entries match your filters.
           </DataTableVirtualizedEmptyBody>
         </DataTableVirtualizedBody>
       </DataTable>
+      {hasMore && (
+        <div className="flex items-center justify-center border-t pt-3">
+          <Button variant="outline" size="sm" disabled={isLoadingMore} onClick={onLoadMore}>
+            {isLoadingMore
+              ? "Loading…"
+              : `Load more (${entries.length} of ${entryCount ?? "…"} rows)`}
+          </Button>
+        </div>
+      )}
     </DataTableRoot>
   );
 }
