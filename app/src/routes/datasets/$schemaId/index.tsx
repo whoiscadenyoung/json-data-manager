@@ -113,6 +113,20 @@ function datasetIsEmpty(entryCount: number | undefined, loadedCount: number): bo
 }
 
 /**
+ * A dataset synced from a connected external source is read-only here — its
+ * rows are owned by the source's sync flow. A frozen tag version is
+ * read-only for the same reason: its rows are a point-in-time copy owned by
+ * the source's history, not by users. (The server's auth gate enforces the
+ * same rule for both.)
+ */
+function isReadOnlyDataset(schema: Schema | null | undefined): boolean {
+  if (schema === undefined || schema === null) {
+    return false;
+  }
+  return schema.source !== undefined || schema.lineage !== undefined;
+}
+
+/**
  * Fetches this dataset's geometries — only when it's actually geospatial AND
  * the row path is serving it (`rowPath` false covers both the tile path —
  * issue #58 part 4: an above-threshold dataset's fresh archive renders the
@@ -398,6 +412,8 @@ function SchemaDetailPage() {
     // its rows are owned by the source's sync flow, so the write actions are
     // hidden (and the mutations they call are rejected server-side too).
     isBoundToSource = schema !== undefined && schema !== null && schema.source !== undefined,
+    // Frozen tag versions hide the same write actions — see isReadOnlyDataset.
+    readOnly = isReadOnlyDataset(schema),
     // Sync state of the bound dataset — last-synced time, staleness, and the
     // History tab all read from the binding (undefined while loading, null
     // for ordinary datasets).
@@ -572,13 +588,13 @@ function SchemaDetailPage() {
           <p className="text-lg text-muted-foreground mt-2">{schema.description}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {!isBoundToSource && (
+          {!readOnly && (
             <RouterButton variant="outline" to="/datasets/$schemaId/edit" params={{ schemaId }}>
               <Pencil className="h-4 w-4 mr-2" />
               Edit
             </RouterButton>
           )}
-          {!isBoundToSource && (
+          {!readOnly && (
             <MakeGeospatialButton
               schema={schema}
               entryCount={displayCount(schema.entryCount, entries.length)}
@@ -597,7 +613,7 @@ function SchemaDetailPage() {
             <Download className="h-4 w-4 mr-2" />
             Export ({displayCount(schema.entryCount, entries.length)})
           </Button>
-          {!isBoundToSource && (
+          {!readOnly && (
             <RouterButton
               variant="outline"
               to="/datasets/$schemaId/bulk-upload"
@@ -607,7 +623,7 @@ function SchemaDetailPage() {
               Bulk Upload
             </RouterButton>
           )}
-          {!isBoundToSource && (
+          {!readOnly && (
             <Button onClick={openCreatePanel}>
               <Plus className="h-4 w-4 mr-2" />
               Create Entry
@@ -631,7 +647,7 @@ function SchemaDetailPage() {
                     Add to map…
                   </DropdownMenuItem>
                 )}
-                {isGeospatialDataset && !isBoundToSource && (
+                {isGeospatialDataset && !readOnly && (
                   <DropdownMenuItem
                     onClick={() => {
                       setSimplifyOpen(true);

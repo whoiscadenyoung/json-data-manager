@@ -156,6 +156,23 @@ export default defineSchema({
     // on the dataset belong to that source's sync flow, not to users —
     // hosts gate their own wrapped mutations on this field's presence.
     source: v.optional(v.object({ name: v.string() })),
+    // Set when this dataset is a frozen point-in-time version (a tag) of a
+    // bound live dataset — the host's tag-ingest flow writes it alongside
+    // `source` (docs/bound-datasets-design.md §6). `sourceSchemaId` is the
+    // live dataset the version froze; `versionLabel`/`snapshotRef` identify
+    // the foreign snapshot it came from (`snapshotRef` is the host's
+    // idempotency key — a ref never freezes twice); `frozenAt` is the freeze
+    // time. The host gates data mutations on its presence, exactly like
+    // `source`. Two indexes serve the version reads: "versions of X"
+    // listings and the already-ingested lookup.
+    lineage: v.optional(
+      v.object({
+        frozenAt: v.number(),
+        snapshotRef: v.optional(v.string()),
+        sourceSchemaId: v.id("schemas"),
+        versionLabel: v.string(),
+      }),
+    ),
     schema: v.any(), // JSON schema object
     // The exact file the dataset was imported from, kept in file storage so
     // it can be re-downloaded even though every stored geometry was
@@ -166,7 +183,10 @@ export default defineSchema({
     sourceFileSize: v.optional(v.number()),
     title: v.string(),
     uiSchema: v.optional(v.any()), // RJSF UI schema object
-  }).index("by_group", ["groupId"]),
+  })
+    .index("by_group", ["groupId"])
+    .index("by_lineage_source", ["lineage.sourceSchemaId"])
+    .index("by_lineage_snapshotRef", ["lineage.snapshotRef"]),
 
   entries: defineTable({
     data: v.any(), // Entry data conforming to the schema

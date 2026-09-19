@@ -53,6 +53,36 @@ detail. Shared `app/src/lib/sync-staleness.ts` (dashboard card + dataset page).
 Gotcha: the diff must read `entry.data.label`, not `entry.label` (component
 docs wrap row data).
 
+**Tag ingest + lineage (phase 3, shipped 2026-09-19):** foreign snapshots →
+frozen version datasets, verified end-to-end (snapshot → ingest → versions
+render with own maps → read-only). `app/convex/tags.ts`: `createRestaurantSnapshot`
+(action — ctx.storage.store lives on the ACTION writer in Convex 1.45, not
+mutations; internally splits into collectProjectionRowsQuery +
+registerSnapshot) serializes the joined tables to a JSONL snapshot file +
+registers a `restaurantSnapshots` row (ref = opaque unique id, the
+idempotency key). `ingestSnapshots` (action = the design's PULL) freezes each
+not-yet-ingested ref through the real import pipeline (generateUploadUrl+POST
+chunks → component startImport → durable workflow) and polls import status;
+a failed ingest deletes its half-built version so the ref retries clean.
+Component: `schemas.lineage {sourceSchemaId, versionLabel, snapshotRef,
+frozenAt}` + indexes `by_lineage_source`/`by_lineage_snapshotRef` (nested
+index paths; docs missing the path just aren't indexed), createSchema takes
+`lineage`, new queries `listSchemaVersions`/`getSchemaVersionBySnapshotRef`
+(global by ref — survives re-binds). auth.ts gate: binding row OR lineage ⇒
+read-only. UI: Tag badge (versionLabel) in DatasetTypeTags, Version row in
+details card, Versions card on live dataset's page (api.tags.listVersions —
+light projection), dashboard SnapshotsCard. Shared projection row builder
+`bindings.collectProjectionRows` (geometry as OBJECT; sync stringifies it
+for createEntriesBulk, snapshot JSONL keeps it whole).
+Phase-3 gotchas: rebuilding a narrowed geometry object in ingest dropped
+coordinates (caught E2E as "position must have 2 or 3 coordinate values" —
+pass parsed objects through by reference); handlers referencing
+`internal.<file>.*` need EXPLICIT handler return types (api.d.ts resolves
+`typeof <module>` back through the file ⇒ inferred returns are circular);
+app `internal` exports from `./_generated/api` not `./_generated/server`;
+chunk uploads from actions must go through the component's generateUploadUrl
+(component-scoped storage — app-stored blob ids may not resolve there).
+
 **Environment (2026-09-18 evening):** the app dev stack (convex dev on 3212 +
 vite on 3000) died mid-session and `bunx convex dev` from app/ then failed
 with "You don't have access to the selected project" + non-interactive prompt
@@ -86,6 +116,23 @@ deployment woozy-husky-92). Mechanics that matter:
 - The vite/convex-dev nohup processes started by agents may still be reaped
   between turns — if the app stops loading data, rerun the convex dev command
   above (ideally from the user's own terminal).
+
+**CLOUD DISABLED (2026-09-19):** the user's Convex account exceeded free
+plan limits — every cloud deployment (incl. dev/caden-young woozy-husky-92)
+rejects function execution with "You have exceeded the free plan limits, so
+your deployments have been disabled" (pushes still succeed). The app on :3000
+therefore can't load data until the user upgrades or a new deployment is
+provisioned. To verify work despite this: the OLD local backend (3212) still
+runs with the pre-cloud seed data; push to it with
+`bunx convex dev --once --url http://127.0.0.1:3212 --admin-key <key from
+app/.convex/local/default/config.json>` (move app/.env aside first so
+CONVEX_DEPLOY_KEY doesn't route to cloud — RESTORE it after; also restore
+the CONVEX_DEPLOYMENT line the CLI strips from .env.local — a byte-exact
+copy lives at app/.env.local.local-backup). Drive functions via unauthenticated
+dev-mode HTTP: `curl -X POST http://127.0.0.1:3212/api/query -d
+'{"path":"file:fn","args":{...},"format":"json"}'` (+ /api/mutation, /api/action
+— numbers come back as floats). UI against local data: second vite with
+VITE_CONVEX_URL=http://127.0.0.1:3212 on another port.
 
 **Dashboard CRUD shipped** (second iteration, same day): `/dashboard` route +
 `app/src/components/dashboard/*` panels do CRUD over the three source tables;

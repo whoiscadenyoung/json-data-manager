@@ -7,20 +7,23 @@ import type { MutationCtx } from "./_generated/server";
 /**
  * TODO(auth): the app has no authentication yet, so identity is a constant
  * "anonymous". The operation-aware half below is the bound-datasets read-only
- * gate instead: writes targeting a dataset that has a `datasetBindings` row
- * (a synced external source) are rejected here — the one choke point every
- * exposeApi-wrapped mutation flows through. The sync itself calls the
- * component directly (not through exposeApi), so it is unaffected.
+ * gate instead: writes targeting a read-only dataset are rejected here — the
+ * one choke point every exposeApi-wrapped mutation flows through. Two kinds
+ * of dataset are read-only: a live projection with a `datasetBindings` row
+ * (a synced external source) and a frozen tag version (`lineage` on the
+ * component's schema doc). The sync and tag ingest call the component
+ * directly (not through exposeApi), so both are unaffected.
  *
- * Allowed on bound datasets: schema metadata edits (`updateSchema`) and
+ * Allowed on read-only datasets: schema metadata edits (`updateSchema`) and
  * organization (collection/group membership) — the data is read-only, not the
  * filing. Deletion is blocked too: removing a bound dataset starts with
  * removing its binding row ("unbinding"), which turns it back into an
- * ordinary dataset. Known gaps while auth is anonymous:
- * `startSimplification`/`startGeospatialConversion` pass the same
- * `{schemaId, "update"}` shape as the organization ops and so are not
- * distinguishable here — component-level enforcement lands with real auth
- * (docs/bound-datasets-design.md phase 1).
+ * ordinary dataset, and version datasets are the source's history — they go
+ * when the source's retention says so, not via stray deletes. Known gaps
+ * while auth is anonymous: `startSimplification`/`startGeospatialConversion`
+ * pass the same `{schemaId, "update"}` shape as the organization ops and so
+ * are not distinguishable here — component-level enforcement lands with real
+ * auth (docs/bound-datasets-design.md phase 1).
  */
 export async function auth(
   ctx: { auth: Auth },
@@ -43,7 +46,7 @@ export async function auth(
     if (
       schemaId !== undefined &&
       (operation.entryId !== undefined || operation.type !== "update") &&
-      (await isBoundDataset(mutationCtx, schemaId))
+      (await isReadOnlyDataset(mutationCtx, schemaId))
     ) {
       throw new ConvexError(
         "This dataset is synced from a connected source and is read-only here — edit the source data and re-sync instead.",
@@ -53,7 +56,7 @@ export async function auth(
   return "anonymous";
 }
 
-async function isBoundDataset(ctx: MutationCtx, schemaId: string): Promise<boolean> {
+async function isReadOnlyDataset(ctx: MutationCtx, schemaId: string): Promise<boolean> {
   // `.first()` resolves to NULL when nothing matches — `!== undefined` was
   // always true, which gated every dataset (all entry writes rejected) as
   // soon as the bindings feature deployed. Found while setting up the
@@ -62,7 +65,14 @@ async function isBoundDataset(ctx: MutationCtx, schemaId: string): Promise<boole
     .query("datasetBindings")
     .withIndex("by_schema", (q) => q.eq("schemaId", schemaId))
     .first();
-  return binding !== null;
+  if (binding !== null) {
+    return true;
+  }
+  // A frozen tag version has no binding row of its own — its lineage marks
+  // it read-only the same way. Only the datasets that fail the binding
+  // check pay this extra component read.
+  const schema = await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId });
+  return schema !== null && schema.lineage !== undefined;
 }
 
 async function entrySchemaId(ctx: MutationCtx, entryId: string): Promise<string | undefined> {

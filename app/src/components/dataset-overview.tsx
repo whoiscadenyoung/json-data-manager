@@ -11,6 +11,7 @@ import {
   Pencil,
   Plus,
   Search,
+  Tag,
   X,
 } from "lucide-react";
 import { useState } from "react";
@@ -38,6 +39,7 @@ type CollectionDoc = FunctionReturnType<typeof api.collections.list>[number];
 type GroupDoc = FunctionReturnType<typeof api.groups.list>[number];
 type DatasetDoc = FunctionReturnType<typeof api.schemas.list>[number];
 type BindingDoc = NonNullable<FunctionReturnType<typeof api.bindings.getBySchema>>;
+type VersionDoc = FunctionReturnType<typeof api.tags.listVersions>[number];
 
 const NO_PARENT = "none";
 
@@ -67,6 +69,39 @@ function SourceRow({ binding, source }: { binding?: BindingDoc; source: { name: 
         )}
         {binding !== undefined && isSyncStale(binding) && (
           <Badge variant="destructive">Out of date</Badge>
+        )}
+      </dd>
+    </div>
+  );
+}
+
+/** The lineage row for frozen tag versions: which snapshot, when, of what. */
+function LineageRow({ lineage }: { lineage: NonNullable<DatasetDoc["lineage"]> }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Version
+      </dt>
+      <dd className="flex flex-wrap items-center gap-1.5 text-sm">
+        <Badge variant="outline">
+          <Tag />
+          {lineage.versionLabel}
+        </Badge>
+        <span>
+          frozen {formatDistanceToNow(new Date(lineage.frozenAt), { addSuffix: true })}
+        </span>
+        <span className="text-muted-foreground">
+          · point-in-time copy of{" "}
+          <Link
+            to="/datasets/$schemaId"
+            params={{ schemaId: lineage.sourceSchemaId }}
+            className="font-medium hover:underline"
+          >
+            its live dataset
+          </Link>
+        </span>
+        {lineage.snapshotRef !== undefined && (
+          <span className="font-mono text-xs text-muted-foreground">· {lineage.snapshotRef}</span>
         )}
       </dd>
     </div>
@@ -122,6 +157,7 @@ function DetailsCard({ schema, binding }: { binding?: BindingDoc; schema: Datase
             </div>
           )}
           {schema.source && <SourceRow binding={binding} source={schema.source} />}
+          {schema.lineage !== undefined && <LineageRow lineage={schema.lineage} />}
           <div className="flex flex-col gap-1.5">
             <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Created
@@ -695,6 +731,71 @@ function GroupSection({ schemaId, groupId }: { schemaId: string; groupId?: strin
   );
 }
 
+/**
+ * Frozen snapshot versions of a bound live dataset, newest first — the tag
+ * ingest's mirror of the foreign app's tag graph. Each version is a normal
+ * read-only dataset: its own rows, its own map, pinned in time.
+ */
+function VersionsCard({ sourceSchemaId }: { sourceSchemaId: string }) {
+  const versions = useQuery(api.tags.listVersions, { sourceSchemaId });
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Tag className="h-5 w-5" />
+          Versions ({versions === undefined ? "…" : versions.length})
+        </CardTitle>
+        <CardDescription>
+          Frozen snapshots ingested from the connected source — each one is a read-only,
+          point-in-time copy with its own map layer.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {versions === undefined ? null : versions.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No versions yet — take a snapshot of the source data and ingest it from the dashboard's
+            Snapshots card.
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-1">
+            {versions.map((version) => (
+              <VersionRow key={version.schemaId} version={version} />
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function VersionRow({ version }: { version: VersionDoc }) {
+  const label = version.lineage === undefined ? undefined : version.lineage.versionLabel;
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2">
+      <Link
+        to="/datasets/$schemaId"
+        params={{ schemaId: version.schemaId }}
+        className="flex min-w-0 items-center gap-2"
+      >
+        <Tag className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium hover:underline">{version.title}</p>
+          <p className="truncate text-xs text-muted-foreground">
+            {version.entryCount ?? version.featureCount ?? 0} entries · frozen{" "}
+            {formatDistanceToNow(new Date(version._creationTime), { addSuffix: true })}
+          </p>
+        </div>
+      </Link>
+      {label !== undefined && (
+        <Badge variant="outline" className="shrink-0">
+          <Tag />
+          {label}
+        </Badge>
+      )}
+    </li>
+  );
+}
+
 /** The Overview tab's content: dataset details plus inline collection/group management. */
 export function DatasetOverview({
   binding,
@@ -708,6 +809,7 @@ export function DatasetOverview({
   return (
     <div className="space-y-6">
       <DetailsCard binding={binding} schema={schema} />
+      {binding !== undefined && <VersionsCard sourceSchemaId={schemaId} />}
       <CollectionsSection schemaId={schemaId} />
       <GroupSection schemaId={schemaId} groupId={schema.groupId} />
     </div>

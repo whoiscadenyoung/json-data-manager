@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { LinksPanel } from "#/components/dashboard/links-panel";
 import { LocationsPanel } from "#/components/dashboard/locations-panel";
 import { RestaurantsPanel } from "#/components/dashboard/restaurants-panel";
+import { SnapshotsCard } from "#/components/dashboard/snapshots-card";
 import { SyncStatusCard } from "#/components/dashboard/sync-status-card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "#/components/ui/tabs";
 
@@ -26,6 +27,7 @@ function DashboardPage() {
         </p>
       </div>
       <SyncStatusCard />
+      <SnapshotsCard />
       <Tabs defaultValue="restaurants">
         <TabsList>
           <TabsTrigger value="restaurants">Restaurants</TabsTrigger>
