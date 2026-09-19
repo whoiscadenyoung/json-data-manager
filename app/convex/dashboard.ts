@@ -3,7 +3,7 @@ import { ConvexError, v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
-import { SOURCE_KEY } from "./bindings";
+import { SOURCE_KEY } from "./sources";
 
 /**
  * Basic CRUD over the foreign-domain stand-in tables for the /dashboard

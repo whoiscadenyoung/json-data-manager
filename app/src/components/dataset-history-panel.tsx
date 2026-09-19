@@ -57,10 +57,12 @@ function HistoryEntry({ entry }: { entry: Activity }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-sm font-medium">
           <RefreshCw className="h-3.5 w-3.5 text-muted-foreground" />
-          Synced {formatDistanceToNow(new Date(entry.syncedAt), { addSuffix: true })}
+          {entry.kind === "reconcile" ? "Reconciled" : "Synced"}{" "}
+          {formatDistanceToNow(new Date(entry.syncedAt), { addSuffix: true })}
           <span className="text-xs font-normal text-muted-foreground">
             {new Date(entry.syncedAt).toLocaleString()}
           </span>
+          {entry.kind === "reconcile" && <Badge variant="outline">Full reconcile</Badge>}
         </div>
         <div className="flex items-center gap-1.5">
           {touched === 0 && <Badge variant="outline">No changes</Badge>}
