@@ -1,14 +1,21 @@
 import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { formatDistanceToNow } from "date-fns";
-import { RefreshCw } from "lucide-react";
+import { GitCommitHorizontal, RefreshCw } from "lucide-react";
+import { useState } from "react";
 
+import {
+  DiffOverlayMap,
+  type DiffPoint,
+  type DiffPointStatus,
+} from "#/components/diff-overlay-map";
 import { Badge } from "#/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
 import { api } from "#convex/_generated/api";
 
 type Binding = NonNullable<FunctionReturnType<typeof api.bindings.getBySchema>>;
 type Activity = FunctionReturnType<typeof api.bindings.history>[number];
+type Commit = FunctionReturnType<typeof api.sync.listCommits>[number];
 
 const OP_LABELS = {
   add: "Added",
@@ -16,37 +23,215 @@ const OP_LABELS = {
   update: "Updated",
 } as const;
 
+const COMMIT_OP_LABELS = {
+  add: "Added",
+  delete: "Removed",
+  update: "Modified",
+} as const;
+
 /**
- * History tab for a bound dataset: one entry per sync, with the diff the
- * sync computed against the previous projection (added/removed/updated
- * locations, field-level detail on updates). Per-sync granularity until the
- * design's commit-level feed lands (docs/bound-datasets-design.md phase 4).
+ * The History tab (docs/bound-datasets-design.md §7): a commit rail — the
+ * applied foreign commit log, git-log style — plus the per-sync summary
+ * list. Selecting a commit highlights its affected features on a dedicated
+ * GeoJSON overlay (never the tile source) beside a field-level before/after
+ * panel.
  */
 export function DatasetHistoryPanel({ binding }: { binding: Binding }) {
-  const activity = useQuery(api.bindings.history, { bindingId: binding._id });
+  const commits = useQuery(api.sync.listCommits, { bindingId: binding._id }),
+    features = useQuery(api.sync.commitFeatureMap, { bindingId: binding._id }),
+    activity = useQuery(api.bindings.history, { bindingId: binding._id }),
+    [selectedCommitId, setSelectedCommitId] = useState<string | undefined>();
 
-  if (activity === undefined) {
-    return <p className="text-sm text-muted-foreground">Loading history…</p>;
+  // Commit ops name entries by foreign key; the feature map resolves each
+  // key to its current projected position (the design's "current position"
+  // rule — deletes are listed in the panel, not drawn).
+  const selected =
+    commits === undefined ? undefined : commits.find((commit) => commit._id === selectedCommitId);
+  let selectedPoints: DiffPoint[] | undefined;
+  if (selected !== undefined && features !== undefined) {
+    const featureMap = features;
+    selectedPoints = selected.ops.flatMap((op) => {
+      const status: DiffPointStatus =
+        op.op === "add" ? "add" : op.op === "delete" ? "delete" : "update";
+      if (status === "delete") {
+        return [];
+      }
+      const feature = featureMap.find((candidate) => candidate.entryKey === op.entryKey);
+      if (feature === undefined) {
+        return [];
+      }
+      const lat = feature.data.lat,
+        lng = feature.data.lng;
+      if (typeof lat !== "number" || typeof lng !== "number") {
+        return [];
+      }
+      return [
+        {
+          key: op.entryKey,
+          label: feature.label,
+          lat,
+          lng,
+          status,
+        },
+      ];
+    });
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Sync history</CardTitle>
-        <CardDescription>
-          What each sync of the connected source changed in this dataset.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        {activity.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No syncs recorded yet — history starts with the next sync.
-          </p>
-        ) : (
-          activity.map((entry) => <HistoryEntry key={entry._id} entry={entry} />)
-        )}
-      </CardContent>
-    </Card>
+    <div className="flex flex-col gap-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>Commit history</CardTitle>
+          <CardDescription>
+            The source's applied commits, newest first — the foreign app's git log for this
+            dataset. Select one to see exactly what it changed.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          {commits === undefined ? (
+            <p className="text-sm text-muted-foreground">Loading commits…</p>
+          ) : commits.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No commits applied yet — edits made on the dashboard since the last full sync will
+              appear here after the next sync.
+            </p>
+          ) : (
+            <ul className="flex flex-col gap-1">
+              {commits.map((commit) => (
+                <CommitRow
+                  isSelected={commit._id === selectedCommitId}
+                  key={commit._id}
+                  onSelect={() => {
+                    setSelectedCommitId((current) =>
+                      current === commit._id ? undefined : commit._id,
+                    );
+                  }}
+                  commit={commit}
+                />
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      {selected !== undefined && features !== undefined && selectedPoints !== undefined && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <GitCommitHorizontal className="h-5 w-5" />
+              {selected.message}
+            </CardTitle>
+            <CardDescription>
+              {selected.foreignCommitId} · applied{" "}
+              {formatDistanceToNow(new Date(selected.appliedAt), { addSuffix: true })}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 lg:grid-cols-2">
+            <DiffOverlayMap points={selectedPoints} />
+            <ul className="flex flex-col gap-2">
+              {selected.ops.map((op) => (
+                <li className="rounded-md border px-3 py-2" key={`${op.op}-${op.entryKey}`}>
+                  <div className="flex items-center gap-2">
+                    <Badge
+                      variant={
+                        op.op === "add"
+                          ? "default"
+                          : op.op === "delete"
+                            ? "destructive"
+                            : "secondary"
+                      }
+                    >
+                      {COMMIT_OP_LABELS[op.op]}
+                    </Badge>
+                    <span className="text-sm">
+                      {labelFor(features, op.entryKey)}
+                    </span>
+                  </div>
+                  {op.fields.length > 0 && (
+                    <ul className="mt-1.5 flex flex-col gap-0.5 font-mono text-xs text-muted-foreground">
+                      {op.fields.map((field) => (
+                        <li key={field.name}>
+                          {field.name}: {JSON.stringify(field.before)} →{" "}
+                          {JSON.stringify(field.after)}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Sync runs</CardTitle>
+          <CardDescription>
+            The full syncs and reconciles that carry the commit tail — one entry per run.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          {activity === undefined ? (
+            <p className="text-sm text-muted-foreground">Loading history…</p>
+          ) : activity.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No syncs recorded yet — history starts with the next sync.
+            </p>
+          ) : (
+            activity.map((entry) => <HistoryEntry key={entry._id} entry={entry} />)
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function labelFor(
+  features: Array<{ entryKey: string; label: string }>,
+  entryKey: string,
+): string {
+  const match = features.find((candidate) => candidate.entryKey === entryKey);
+  return match !== undefined ? match.label : entryKey;
+}
+
+function CommitRow({
+  commit,
+  isSelected,
+  onSelect,
+}: {
+  commit: Commit;
+  isSelected: boolean;
+  onSelect: () => void;
+}) {
+  const added = commit.ops.filter((op) => op.op === "add").length,
+    removed = commit.ops.filter((op) => op.op === "delete").length,
+    updated = commit.ops.filter((op) => op.op === "update").length;
+  return (
+    <li>
+      <button
+        type="button"
+        className={`flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left ${
+          isSelected ? "border-primary bg-primary/5" : ""
+        }`}
+        onClick={onSelect}
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <GitCommitHorizontal className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-medium">{commit.message}</span>
+            <span className="block truncate text-xs text-muted-foreground">
+              #{commit.seq} · {formatDistanceToNow(new Date(commit.appliedAt), { addSuffix: true })}
+            </span>
+          </span>
+        </span>
+        <span className="flex shrink-0 items-center gap-1">
+          {added > 0 && <Badge variant="default">+{added}</Badge>}
+          {removed > 0 && <Badge variant="destructive">−{removed}</Badge>}
+          {updated > 0 && <Badge variant="secondary">~{updated}</Badge>}
+        </span>
+      </button>
+    </li>
   );
 }
 

@@ -10,7 +10,13 @@ import {
   mutation,
   query,
 } from "./_generated/server";
-import { chunkByJsonBytes, getSource, type ProjectionRow, SOURCE_KEY } from "./sources";
+import {
+  chunkByJsonBytes,
+  getSource,
+  type CommitFeedEntry,
+  type ProjectionRow,
+  SOURCE_KEY,
+} from "./sources";
 
 /**
  * The durable sync engine for bound datasets (docs/bound-datasets-design.md
@@ -42,6 +48,9 @@ const ACTIVITY_OPS_LIMIT = 200,
   // Rows per applying batch — entries are thin (Points), so 100 writes with
   // their geometry reads sit far inside a transaction's limits.
   APPLY_BATCH_ROWS = 100,
+  // The commit mirror keeps the newest N applied commits per binding
+  // (finalizeRun prunes beyond this after every run).
+  COMMIT_MIRROR_LIMIT = 200,
   // A run whose checkpoint hasn't moved for this long is considered dead
   // (its action was lost to a restart) and gets resumed rather than blocked
   // on.
@@ -96,7 +105,11 @@ async function ensureCollection(ctx: MutationCtx): Promise<string> {
 async function ensureBoundDataset(
   ctx: MutationCtx,
   sourceKey: string,
-): Promise<{ bindingId: Id<"datasetBindings">; schemaId: string }> {
+): Promise<{
+  binding: { lastAppliedCommitSeq?: number };
+  bindingId: Id<"datasetBindings">;
+  schemaId: string;
+}> {
   const source = getSource(sourceKey);
   const collectionId = await ensureCollection(ctx);
 
@@ -121,7 +134,7 @@ async function ensureBoundDataset(
       schemaMapping: source.mapping,
       source: sourceKey,
     });
-    return { bindingId, schemaId };
+    return { binding: {}, bindingId, schemaId };
   }
 
   // Migrate datasets created before the source marker existed: a bound
@@ -146,7 +159,7 @@ async function ensureBoundDataset(
     });
   }
   await ctx.db.patch(binding._id, { collectionId, schemaId, schemaMapping: source.mapping });
-  return { bindingId: binding._id, schemaId };
+  return { binding, bindingId: binding._id, schemaId };
 }
 
 async function startRunInternal(
@@ -154,7 +167,7 @@ async function startRunInternal(
   args: { mode: "reconcile" | "sync"; source: string },
 ): Promise<{ alreadyRunning: boolean; runId: Id<"syncRuns"> }> {
   const source = getSource(args.source);
-  const { bindingId, schemaId } = await ensureBoundDataset(ctx, args.source);
+  const { binding, bindingId, schemaId } = await ensureBoundDataset(ctx, args.source);
 
   // First engine run over a pre-engine projection: its rows predate the
   // key map, so a keyed apply would leave them as unmanaged strays. Clear
@@ -199,6 +212,18 @@ async function startRunInternal(
     return { alreadyRunning: true, runId: lastRun._id };
   }
 
+  // Mode decision: "sync" prefers the design's primary path — the commit
+  // tail since the binding's last-applied commit — whenever the source has a
+  // commit feed and the binding has a keyed baseline. Full passes
+  // re-baseline the cursor; "reconcile" always diffs full state.
+  const tailEligible =
+    args.mode === "sync" &&
+    source.commitsSince !== undefined &&
+    binding.lastAppliedCommitSeq !== undefined;
+  const runMode: "commit-tail" | "reconcile" | "sync" = tailEligible
+    ? "commit-tail"
+    : args.mode;
+
   const runId = await ctx.db.insert("syncRuns", {
     added: 0,
     applied: 0,
@@ -206,7 +231,7 @@ async function startRunInternal(
     chunkIndex: 0,
     chunkStorageIds: [],
     lastProgressAt: Date.now(),
-    mode: args.mode,
+    mode: runMode,
     ops: [],
     removed: 0,
     rowOffset: 0,
@@ -291,7 +316,7 @@ export const latestRun = query({
       applied: v.number(),
       error: v.optional(v.string()),
       finishedAt: v.optional(v.number()),
-      mode: v.union(v.literal("reconcile"), v.literal("sync")),
+      mode: v.union(v.literal("commit-tail"), v.literal("reconcile"), v.literal("sync")),
       removed: v.number(),
       startedAt: v.number(),
       status: v.union(
@@ -319,6 +344,36 @@ export const readSourceRows = internalQuery({
   ),
 });
 
+/** Reads one source's commit tail after `sinceSeq` — the §8.2 feed. */
+export const readCommitTail = internalQuery({
+  args: { sinceSeq: v.number(), source: v.string() },
+  handler: async (ctx, args) => {
+    const source = getSource(args.source);
+    if (source.commitsSince === undefined) {
+      return [];
+    }
+    return source.commitsSince(ctx, args.sinceSeq);
+  },
+  returns: v.array(
+    v.object({
+      at: v.number(),
+      foreignCommitId: v.string(),
+      message: v.string(),
+      ops: v.array(
+        v.object({
+          entryKey: v.string(),
+          fields: v.array(
+            v.object({ after: v.optional(v.any()), before: v.optional(v.any()), name: v.string() }),
+          ),
+          geometryChanged: v.boolean(),
+          op: v.union(v.literal("add"), v.literal("delete"), v.literal("update")),
+        }),
+      ),
+      seq: v.number(),
+    }),
+  ),
+});
+
 export const collectRows = internalAction({
   args: { runId: v.id("syncRuns"), source: v.string() },
   handler: async (ctx, args): Promise<null> => {
@@ -326,14 +381,39 @@ export const collectRows = internalAction({
     if (run === null || run.status !== "collecting") {
       return null;
     }
-    const rows: ProjectionRow[] = await ctx.runQuery(internal.sync.readSourceRows, {
-      source: args.source,
-    });
-    // Store the source state as chunk blobs. App storage (not the
+
+    // Commit-tail runs transport the feed since the binding's cursor; full
+    // runs transport the whole state and re-baseline the cursor to the
+    // source's newest commit.
+    let payload: CommitFeedEntry[] | ProjectionRow[],
+      total: number,
+      newest: CommitFeedEntry | null;
+    if (run.mode === "commit-tail") {
+      const binding = await ctx.runQuery(internal.sync.getBindingDoc, {
+        bindingId: run.bindingId,
+      });
+      if (binding === null) {
+        throw new Error("The binding vanished before the tail was read.");
+      }
+      newest = await ctx.runQuery(internal.sync.readNewestCommit, { source: args.source });
+      payload = await ctx.runQuery(internal.sync.readCommitTail, {
+        sinceSeq: binding.lastAppliedCommitSeq ?? 0,
+        source: args.source,
+      });
+      total = payload.length;
+    } else {
+      payload = await ctx.runQuery(internal.sync.readSourceRows, {
+        source: args.source,
+      });
+      newest = await ctx.runQuery(internal.sync.readNewestCommit, { source: args.source });
+      total = payload.length;
+    }
+
+    // Store the collected state as chunk blobs. App storage (not the
     // component's — the apply action reads these back with its own
     // ctx.storage, and component blobs only resolve inside the component).
     const chunkStorageIds: Array<Id<"_storage">> = [];
-    for (const chunk of chunkByJsonBytes(rows)) {
+    for (const chunk of chunkByJsonBytes<CommitFeedEntry | ProjectionRow>(payload)) {
       // oxlint-disable-next-line no-await-in-loop -- sequential uploads keep action memory bounded, mirroring the importer.
       const storageId = await ctx.storage.store(
         new Blob([JSON.stringify(chunk)], { type: "application/json" }),
@@ -342,12 +422,48 @@ export const collectRows = internalAction({
     }
     await ctx.runMutation(internal.sync.markCollected, {
       chunkStorageIds,
+      lastCommitId: newest !== null ? newest.foreignCommitId : undefined,
+      lastSeq: newest !== null ? newest.seq : undefined,
       runId: args.runId,
-      total: rows.length,
+      total,
     });
     await ctx.scheduler.runAfter(0, internal.sync.applyChunks, { runId: args.runId });
     return null;
   },
+});
+
+/** Reads one source's newest commit, if its descriptor carries a feed. */
+export const readNewestCommit = internalQuery({
+  args: { source: v.string() },
+  handler: async (ctx, args) => {
+    const source = getSource(args.source);
+    return source.newestCommit === undefined ? null : source.newestCommit(ctx);
+  },
+  returns: v.union(
+    v.null(),
+    v.object({
+      at: v.number(),
+      foreignCommitId: v.string(),
+      message: v.string(),
+      ops: v.array(
+        v.object({
+          entryKey: v.string(),
+          fields: v.array(
+            v.object({ after: v.optional(v.any()), before: v.optional(v.any()), name: v.string() }),
+          ),
+          geometryChanged: v.boolean(),
+          op: v.union(v.literal("add"), v.literal("delete"), v.literal("update")),
+        }),
+      ),
+      seq: v.number(),
+    }),
+  ),
+});
+
+export const getBindingDoc = internalQuery({
+  args: { bindingId: v.id("datasetBindings") },
+  handler: async (ctx, args) => ctx.db.get(args.bindingId),
+  returns: v.any(),
 });
 
 export const getRunDoc = internalQuery({
@@ -361,6 +477,8 @@ export const getRunDoc = internalQuery({
 export const markCollected = internalMutation({
   args: {
     chunkStorageIds: v.array(v.id("_storage")),
+    lastCommitId: v.optional(v.string()),
+    lastSeq: v.optional(v.number()),
     runId: v.id("syncRuns"),
     total: v.number(),
   },
@@ -385,7 +503,9 @@ export const markCollected = internalMutation({
     await ctx.db.patch(args.runId, {
       chunkIndex: 0,
       chunkStorageIds: args.chunkStorageIds,
+      lastCommitId: args.lastCommitId,
       lastProgressAt: Date.now(),
+      lastSeq: args.lastSeq,
       rowOffset: 0,
       status: "applying",
       total: args.total,
@@ -393,12 +513,17 @@ export const markCollected = internalMutation({
   },
 });
 
+// Commits are small (a few field-level ops each), so a tail batch carries
+// many more of them than a full-run batch carries rows.
+const APPLY_BATCH_COMMITS = 25;
+
 export const applyChunks = internalAction({
   args: { runId: v.id("syncRuns") },
   handler: async (ctx, args): Promise<null> => {
     const run: {
       chunkIndex: number;
       chunkStorageIds: Array<Id<"_storage">>;
+      mode: string;
       rowOffset: number;
       status: string;
     } | null = await ctx.runQuery(internal.sync.getRunDoc, { runId: args.runId });
@@ -418,17 +543,28 @@ export const applyChunks = internalAction({
           throw new Error(`Sync chunk ${chunkIndex} is missing from storage.`);
         }
         // oxlint-disable-next-line no-await-in-loop
-        const rows = JSON.parse(await blob.text()) as ProjectionRow[];
+        const items = JSON.parse(await blob.text()) as Array<Record<string, unknown>>;
         const startOffset = chunkIndex === run.chunkIndex ? run.rowOffset : 0;
-        for (let offset = startOffset; offset < rows.length; offset += APPLY_BATCH_ROWS) {
-          const batch = rows.slice(offset, offset + APPLY_BATCH_ROWS);
+        const batchSize = run.mode === "commit-tail" ? APPLY_BATCH_COMMITS : APPLY_BATCH_ROWS;
+        for (let offset = startOffset; offset < items.length; offset += batchSize) {
+          const batch = items.slice(offset, offset + batchSize),
+            rowOffset = offset + batch.length;
           // oxlint-disable-next-line no-await-in-loop -- each batch's checkpoint depends on the previous one committing.
-          await ctx.runMutation(internal.sync.applyRowsBatch, {
-            chunkIndex,
-            rowOffset: offset + batch.length,
-            rows: batch,
-            runId: args.runId,
-          });
+          if (run.mode === "commit-tail") {
+            await ctx.runMutation(internal.sync.applyCommitsBatch, {
+              chunkIndex,
+              commits: batch as unknown as CommitFeedEntry[],
+              rowOffset,
+              runId: args.runId,
+            });
+          } else {
+            await ctx.runMutation(internal.sync.applyRowsBatch, {
+              chunkIndex,
+              rowOffset,
+              rows: batch as unknown as ProjectionRow[],
+              runId: args.runId,
+            });
+          }
         }
       }
       await ctx.runMutation(internal.sync.finalizeRun, { runId: args.runId });
@@ -441,6 +577,217 @@ export const applyChunks = internalAction({
     return null;
   },
 });
+
+/**
+ * Applies one batch of commit-feed entries — the design's primary sync path
+ * (§5). Each commit's ops apply by key through the map: `add` builds the
+ * full entry from the ops' after-values (geometry rebuilt from the merged
+ * data), `update` merges field deltas into the stored entry,
+ * `delete` removes the entry and its map row. Every applied commit is
+ * mirrored into the `commits` table — the History rail's and commit
+ * overlays' data, kept host-side so the foreign app can prune its own log.
+ */
+export const applyCommitsBatch = internalMutation({
+  args: {
+    chunkIndex: v.number(),
+    commits: v.array(
+      v.object({
+        at: v.number(),
+        foreignCommitId: v.string(),
+        message: v.string(),
+        ops: v.array(
+          v.object({
+            entryKey: v.string(),
+            fields: v.array(
+              v.object({
+                after: v.optional(v.any()),
+                before: v.optional(v.any()),
+                name: v.string(),
+              }),
+            ),
+            geometryChanged: v.boolean(),
+            op: v.union(v.literal("add"), v.literal("delete"), v.literal("update")),
+          }),
+        ),
+        seq: v.number(),
+      }),
+    ),
+    rowOffset: v.number(),
+    runId: v.id("syncRuns"),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (run === null || run.status !== "applying") {
+      return;
+    }
+    const binding = await ctx.db.get(run.bindingId);
+    if (binding === null) {
+      throw new ConvexError("The binding vanished mid-sync.");
+    }
+    const source = getSource(run.source);
+
+    const ops = [...run.ops];
+    let truncated = run.truncated;
+    let added = 0,
+      removed = 0,
+      updated = 0;
+    for (const commit of args.commits) {
+      for (const op of commit.ops) {
+        // oxlint-disable-next-line no-await-in-loop -- sequential keyed applies inside one transaction.
+        const mapping = await ctx.db
+          .query("bindingEntries")
+          .withIndex("by_binding", (q) =>
+            q.eq("bindingId", run.bindingId).eq("entryKey", op.entryKey),
+          )
+          .first();
+
+        if (op.op === "delete") {
+          if (mapping !== null) {
+            // oxlint-disable-next-line no-await-in-loop
+            await ctx.runMutation(components.jsonCms.lib.deleteEntry, {
+              boundWrite: "sync",
+              entryId: mapping.entryId,
+            });
+            await ctx.db.delete(mapping._id);
+          }
+          removed += 1;
+          if (ops.length < ACTIVITY_OPS_LIMIT) {
+            ops.push({ label: opLabelFor(op), op: "remove" });
+          } else {
+            truncated = true;
+          }
+          continue;
+        }
+
+        // `add` builds the entry from the op's after-values; `update` merges
+        // the deltas into what's stored. A `update` with no map row (a
+        // missed earlier commit) degrades to an add of its after-state.
+        const baseData: Record<string, unknown> = {};
+        if (op.op === "update" && mapping !== null) {
+          // oxlint-disable-next-line no-await-in-loop
+          const existing = await ctx.runQuery(components.jsonCms.lib.getEntry, {
+            entryId: mapping.entryId,
+          });
+          if (existing !== null && typeof existing.data === "object" && existing.data !== null) {
+            for (const [name, value] of Object.entries(existing.data)) {
+              baseData[name] = value;
+            }
+          }
+        }
+        for (const field of op.fields) {
+          baseData[field.name] = field.after;
+        }
+        const geometryJson =
+          source.buildGeometry === undefined
+            ? undefined
+            : source.buildGeometry(baseData);
+        const geometry =
+          geometryJson === undefined || geometryJson === null
+            ? undefined
+            : JSON.stringify(geometryJson);
+
+        if (mapping === null) {
+          // oxlint-disable-next-line no-await-in-loop
+          const entryId: string = await ctx.runMutation(components.jsonCms.lib.createEntry, {
+            boundWrite: "sync",
+            data: baseData,
+            geometry,
+            schemaId: binding.schemaId,
+          });
+          await ctx.db.insert("bindingEntries", {
+            bindingId: run.bindingId,
+            entryId,
+            entryKey: op.entryKey,
+            seenRun: `commit:${commit.seq}`,
+          });
+          added += 1;
+          if (ops.length < ACTIVITY_OPS_LIMIT) {
+            ops.push({
+              detail: detailFor(op),
+              label: typeof baseData.label === "string" ? baseData.label : opLabelFor(op),
+              op: "add",
+            });
+          } else {
+            truncated = true;
+          }
+          continue;
+        }
+
+        // oxlint-disable-next-line no-await-in-loop
+        await ctx.runMutation(components.jsonCms.lib.updateEntry, {
+          boundWrite: "sync",
+          data: baseData,
+          entryId: mapping.entryId,
+          geometry: op.geometryChanged ? geometry : undefined,
+        });
+        await ctx.db.patch(mapping._id, { seenRun: `commit:${commit.seq}` });
+        updated += 1;
+        if (ops.length < ACTIVITY_OPS_LIMIT) {
+          ops.push({
+            detail: detailFor(op),
+            label: typeof baseData.label === "string" ? baseData.label : opLabelFor(op),
+            op: "update",
+          });
+        } else {
+          truncated = true;
+        }
+      }
+      // The applied commit mirrors into the host's log — the History rail
+      // and commit overlays read this, not the foreign app's feed.
+      await ctx.db.insert("commits", {
+        appliedAt: Date.now(),
+        at: commit.at,
+        bindingId: run.bindingId,
+        foreignCommitId: commit.foreignCommitId,
+        message: commit.message,
+        ops: commit.ops,
+        seq: commit.seq,
+      });
+    }
+
+    await ctx.db.patch(args.runId, {
+      added: run.added + added,
+      applied: run.applied + args.commits.length,
+      chunkIndex: args.chunkIndex,
+      lastProgressAt: Date.now(),
+      ops: ops.slice(0, ACTIVITY_OPS_LIMIT),
+      removed: run.removed + removed,
+      rowOffset: args.rowOffset,
+      truncated,
+      updated: run.updated + updated,
+    });
+  },
+});
+
+/** The op's own label: a label/name field value when present, else the key. */
+function opLabelFor(op: {
+  entryKey: string;
+  fields: Array<{ after?: unknown; before?: unknown; name: string }>;
+}): string {
+  for (const field of op.fields) {
+    if (field.name === "label" || field.name === "name") {
+      if (typeof field.after === "string") {
+        return field.after;
+      }
+      if (typeof field.before === "string") {
+        return field.before;
+      }
+    }
+  }
+  return op.entryKey;
+}
+
+/** Field-level before→after detail for one commit op (History-tab format). */
+function detailFor(op: {
+  fields: Array<{ after?: unknown; before?: unknown; name: string }>;
+}): string | undefined {
+  const changes = op.fields
+    .filter((field) => field.name !== "lat" && field.name !== "lng")
+    .map(
+      (field) => `${field.name}: ${JSON.stringify(field.before)} → ${JSON.stringify(field.after)}`,
+    );
+  return changes.length === 0 ? undefined : changes.join("; ");
+}
 
 /**
  * Applies one batch of source rows, keyed and idempotently: a key with no
@@ -586,9 +933,11 @@ export const applyRowsBatch = internalMutation({
 });
 
 /**
- * Completes a run: deletes every mapped key the run never saw (source
- * deletes, finally for free), stamps the binding, writes the activity row,
- * and cleans up the chunk blobs.
+ * Completes a run and stamps the binding. Full runs first sweep the key map
+ * for keys the run never saw (source deletes, finally for free); tail runs
+ * skip that — their commits carried the deletes explicitly. Both stamp the
+ * binding's commit cursor (a full run re-baselines it to the newest commit
+ * it observed), write the activity row, and clean up the chunk blobs.
  */
 export const finalizeRun = internalMutation({
   args: { runId: v.id("syncRuns") },
@@ -602,24 +951,30 @@ export const finalizeRun = internalMutation({
       throw new ConvexError("The binding vanished mid-sync.");
     }
 
-    const mappings = await ctx.db
-      .query("bindingEntries")
-      .withIndex("by_binding", (q) => q.eq("bindingId", run.bindingId))
-      .collect();
-    const stale = mappings.filter((mapping) => mapping.seenRun !== args.runId);
-    const ops = [...run.ops];
+    // Full modes count deletes from the sweep below; a tail run already
+    // accumulated its deletes (applied ops) on the run doc — keep them.
+    let removed = run.mode === "commit-tail" ? run.removed : 0;
+    let ops = [...run.ops];
     let truncated = run.truncated;
-    for (const mapping of stale) {
-      // oxlint-disable-next-line no-await-in-loop -- ordered deletes under the transaction's write budget.
-      await ctx.runMutation(components.jsonCms.lib.deleteEntry, {
-        boundWrite: "sync",
-        entryId: mapping.entryId,
-      });
-      await ctx.db.delete(mapping._id);
-      if (ops.length < ACTIVITY_OPS_LIMIT) {
-        ops.push({ label: mapping.entryKey, op: "remove" });
-      } else {
-        truncated = true;
+    if (run.mode !== "commit-tail") {
+      const mappings = await ctx.db
+        .query("bindingEntries")
+        .withIndex("by_binding", (q) => q.eq("bindingId", run.bindingId))
+        .collect();
+      const stale = mappings.filter((mapping) => mapping.seenRun !== args.runId);
+      for (const mapping of stale) {
+        // oxlint-disable-next-line no-await-in-loop -- ordered deletes under the transaction's write budget.
+        await ctx.runMutation(components.jsonCms.lib.deleteEntry, {
+          boundWrite: "sync",
+          entryId: mapping.entryId,
+        });
+        await ctx.db.delete(mapping._id);
+        removed += 1;
+        if (ops.length < ACTIVITY_OPS_LIMIT) {
+          ops.push({ label: mapping.entryKey, op: "remove" });
+        } else {
+          truncated = true;
+        }
       }
     }
 
@@ -628,8 +983,11 @@ export const finalizeRun = internalMutation({
     });
     const finishedAt = Date.now(),
       syncedAt = finishedAt,
-      finalEntryCount = schema !== null ? (schema.entryCount ?? 0) : run.total - stale.length;
+      finalEntryCount =
+        schema !== null ? (schema.entryCount ?? 0) : Math.max(0, run.total - removed);
     await ctx.db.patch(binding._id, {
+      lastAppliedCommitId: run.lastCommitId,
+      lastAppliedCommitSeq: run.lastSeq,
       lastReconciledAt: run.mode === "reconcile" ? syncedAt : binding.lastReconciledAt,
       lastSyncedAt: syncedAt,
       syncedEntryCount: finalEntryCount,
@@ -638,9 +996,9 @@ export const finalizeRun = internalMutation({
       added: run.added,
       bindingId: binding._id,
       entryCount: finalEntryCount,
-      kind: run.mode,
+      kind: run.mode === "reconcile" ? "reconcile" : "sync",
       ops: ops.slice(0, ACTIVITY_OPS_LIMIT),
-      removed: stale.length,
+      removed,
       schemaId: binding.schemaId,
       syncedAt,
       truncated,
@@ -648,9 +1006,24 @@ export const finalizeRun = internalMutation({
     });
     await ctx.db.patch(args.runId, {
       finishedAt,
-      removed: stale.length,
+      removed,
       status: "completed",
     });
+
+    // Keep the commit mirror bounded: the newest COMMIT_MIRROR_LIMIT rows
+    // per binding stay; older mirrors are pruned (the foreign feed remains
+    // the durable record, and the cursor still advances from it).
+    let seenMirrors = 0;
+    for await (const mirror of ctx.db
+      .query("commits")
+      .withIndex("by_binding_seq", (q) => q.eq("bindingId", run.bindingId))
+      .order("desc")) {
+      seenMirrors += 1;
+      if (seenMirrors > COMMIT_MIRROR_LIMIT) {
+        // oxlint-disable-next-line no-await-in-loop -- bounded pruning deletes.
+        await ctx.db.delete(mirror._id);
+      }
+    }
 
     await Promise.all(
       run.chunkStorageIds.map(async (storageId) => {
@@ -711,4 +1084,85 @@ export const reconcileOne = internalMutation({
   args: { source: v.string() },
   handler: async (ctx, args) => startRunInternal(ctx, { mode: "reconcile", source: args.source }),
   returns: v.object({ alreadyRunning: v.boolean(), runId: v.id("syncRuns") }),
+});
+
+/**
+ * The applied-commit mirror for one binding, newest first — the dataset
+ * History rail's data. Each row carries the foreign commit's message and
+ * field-level ops, so selecting one can highlight exactly what it changed.
+ */
+export const listCommits = query({
+  args: { bindingId: v.id("datasetBindings") },
+  handler: async (ctx, args) =>
+    ctx.db
+      .query("commits")
+      .withIndex("by_binding_seq", (q) => q.eq("bindingId", args.bindingId))
+      .order("desc")
+      .take(50),
+  returns: v.array(
+    v.object({
+      _creationTime: v.number(),
+      _id: v.id("commits"),
+      appliedAt: v.number(),
+      at: v.number(),
+      bindingId: v.id("datasetBindings"),
+      foreignCommitId: v.string(),
+      message: v.string(),
+      ops: v.array(
+        v.object({
+          entryKey: v.string(),
+          fields: v.array(
+            v.object({ after: v.optional(v.any()), before: v.optional(v.any()), name: v.string() }),
+          ),
+          geometryChanged: v.boolean(),
+          op: v.union(v.literal("add"), v.literal("delete"), v.literal("update")),
+        }),
+      ),
+      seq: v.number(),
+    }),
+  ),
+});
+
+/**
+ * The projection's key → feature map for one binding: the commit overlay's
+ * lookup (a commit's ops name entries by foreign key; this resolves each key
+ * to its current label and geometry-relevant data so the client can draw
+ * what the commit touched). Bounded — this serves the demo-scale datasets.
+ */
+export const commitFeatureMap = query({
+  args: { bindingId: v.id("datasetBindings") },
+  handler: async (ctx, args) => {
+    const mappings = await ctx.db
+      .query("bindingEntries")
+      .withIndex("by_binding", (q) => q.eq("bindingId", args.bindingId))
+      .take(2000);
+    return Promise.all(
+      mappings.map(async (mapping) => {
+        const entry = await ctx.runQuery(components.jsonCms.lib.getEntry, {
+          entryId: mapping.entryId,
+        });
+        const data =
+          entry !== null && typeof entry.data === "object" && entry.data !== null
+            ? (entry.data as Record<string, unknown>)
+            : {};
+        return {
+          data,
+          entryKey: mapping.entryKey,
+          label:
+            typeof data.label === "string"
+              ? data.label
+              : typeof data.name === "string"
+                ? data.name
+                : mapping.entryKey,
+        };
+      }),
+    );
+  },
+  returns: v.array(
+    v.object({
+      data: v.record(v.string(), v.any()),
+      entryKey: v.string(),
+      label: v.string(),
+    }),
+  ),
 });

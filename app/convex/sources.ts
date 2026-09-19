@@ -49,12 +49,50 @@ export type SourceDataset = {
   title: string;
 };
 
+/** One field-level change inside a commit op — the design's [name, before, after]. */
+export type CommitField = {
+  after?: unknown;
+  before?: unknown;
+  name: string;
+};
+
+/** One entry's change in a commit: adds carry full after-state, deletes nothing, updates the touched fields. */
+export type CommitOp = {
+  entryKey: string;
+  fields: CommitField[];
+  geometryChanged: boolean;
+  op: "add" | "delete" | "update";
+};
+
+/** One entry of the design's §8.2 commit feed (co-deployed form). */
+export type CommitFeedEntry = {
+  at: number;
+  foreignCommitId: string;
+  message: string;
+  ops: CommitOp[];
+  seq: number;
+};
+
 export interface BoundSource {
   dataset: SourceDataset;
   key: string;
   mapping: SourceMapping;
   /** The design's §8.1 state reader, co-deployed form: read every row. */
   listRows(ctx: Pick<QueryCtx, "db">): Promise<ProjectionRow[]>;
+  /**
+   * The design's §8.2 ordered commit feed — everything after `sinceSeq`,
+   * ascending. Absent means the source has no commit log; sync for such a
+   * source always takes the full-state path.
+   */
+  commitsSince?(ctx: Pick<QueryCtx, "db">, sinceSeq: number): Promise<CommitFeedEntry[]>;
+  /** The newest commit this source has issued, or null when it has none. */
+  newestCommit?(ctx: Pick<QueryCtx, "db">): Promise<CommitFeedEntry | null>;
+  /**
+   * Rebuilds a row's geometry from its (merged) data — the commit-tail apply
+   * uses this to refresh geometry after field deltas touch it. Absent for
+   * non-geospatial sources.
+   */
+  buildGeometry?(data: Record<string, unknown>): { coordinates: number[]; type: string } | null;
 }
 
 /** The primary demo source's stable key (the running example from the PoC). */
@@ -114,6 +152,43 @@ const restaurantLocationsSource: BoundSource = {
       }),
     );
     return joined.filter((row) => row !== null);
+  },
+  commitsSince: async (ctx, sinceSeq) => {
+    const feed = await ctx.db
+      .query("sourceCommits")
+      .withIndex("by_source_seq", (q) =>
+        q.eq("source", SOURCE_KEY).gt("seq", sinceSeq),
+      )
+      .take(500);
+    return feed.map((commit) => ({
+      at: commit.at,
+      foreignCommitId: commit.foreignCommitId,
+      message: commit.message,
+      ops: commit.ops,
+      seq: commit.seq,
+    }));
+  },
+  newestCommit: async (ctx) => {
+    const newest = await ctx.db
+      .query("sourceCommits")
+      .withIndex("by_source_seq", (q) => q.eq("source", SOURCE_KEY))
+      .order("desc")
+      .first();
+    return newest !== null
+      ? {
+          at: newest.at,
+          foreignCommitId: newest.foreignCommitId,
+          message: newest.message,
+          ops: newest.ops,
+          seq: newest.seq,
+        }
+      : null;
+  },
+  buildGeometry: (data) => {
+    if (typeof data.lat !== "number" || typeof data.lng !== "number") {
+      return null;
+    }
+    return { coordinates: [data.lng, data.lat], type: "Point" };
   },
   mapping: {
     entryKey: "restaurantLocations._id",

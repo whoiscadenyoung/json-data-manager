@@ -88,6 +88,186 @@ async function deleteCascadingLinks(
   return links.length;
 }
 
+// -------------------------------------------------------- commit feed (#77)
+//
+// The foreign app versions its data git-style; this stand-in's equivalent is
+// a commit row per dashboard write, in the design's ops shape
+// (docs/bound-datasets-design.md §4/§8.2). The sync engine's primary path
+// pages this feed; the full reconcile remains the drift fallback. Ops name
+// projected rows by their foreign key (the restaurantLocations id), so
+// editing a location or restaurant expands to one op per joined link row.
+
+type ProjectionRowSnapshot = {
+  data: Record<string, unknown>;
+  geometry: { coordinates: number[]; type: string } | null;
+};
+
+type ProjectionSnapshot = Map<string, ProjectionRowSnapshot>;
+
+/** Joins one link row into its projection row shape (mirrors sources.ts). */
+async function projectionRowForLink(
+  ctx: Pick<MutationCtx, "db">,
+  link: {
+    _id: Id<"restaurantLocations">;
+    locationId: Id<"locations">;
+    restaurantId: Id<"restaurants">;
+    openedYear?: number;
+  },
+): Promise<ProjectionRowSnapshot | null> {
+  const location = await ctx.db.get(link.locationId),
+    restaurant = await ctx.db.get(link.restaurantId);
+  if (!location || !restaurant) {
+    return null;
+  }
+  return {
+    data: {
+      address: location.address,
+      city: location.city,
+      cuisine: restaurant.cuisine,
+      label: location.label,
+      lat: location.lat,
+      lng: location.lng,
+      restaurantName: restaurant.name,
+      state: location.state,
+    },
+    geometry: { coordinates: [location.lng, location.lat], type: "Point" },
+  };
+}
+
+async function snapshotKeys(
+  ctx: Pick<MutationCtx, "db">,
+  keys: Array<Id<"restaurantLocations">>,
+): Promise<ProjectionSnapshot> {
+  const snapshot: ProjectionSnapshot = new Map();
+  for (const key of keys) {
+    // oxlint-disable-next-line no-await-in-loop -- dashboard-sized key sets; reads are cheap.
+    const link = await ctx.db.get(key);
+    if (link === null) {
+      continue;
+    }
+    const row = await projectionRowForLink(ctx, link);
+    if (row !== null) {
+      snapshot.set(key, row);
+    }
+  }
+  return snapshot;
+}
+
+async function linkKeysForRestaurant(
+  ctx: Pick<MutationCtx, "db">,
+  restaurantId: Id<"restaurants">,
+): Promise<Array<Id<"restaurantLocations">>> {
+  const links = await ctx.db
+    .query("restaurantLocations")
+    .withIndex("by_restaurantId_and_locationId", (q) => q.eq("restaurantId", restaurantId))
+    .take(LIST_LIMIT);
+  return links.map((link) => link._id);
+}
+
+async function linkKeysForLocation(
+  ctx: Pick<MutationCtx, "db">,
+  locationId: Id<"locations">,
+): Promise<Array<Id<"restaurantLocations">>> {
+  const links = await ctx.db
+    .query("restaurantLocations")
+    .withIndex("by_locationId", (q) => q.eq("locationId", locationId))
+    .take(LIST_LIMIT);
+  return links.map((link) => link._id);
+}
+
+const COMMIT_FIELDS = [
+  "address",
+  "city",
+  "cuisine",
+  "label",
+  "lat",
+  "lng",
+  "restaurantName",
+  "state",
+] as const;
+
+/** Diffs two projection snapshots into the commits' ops shape. */
+function diffProjectionSnapshots(before: ProjectionSnapshot, after: ProjectionSnapshot) {
+  const ops: Array<{
+    entryKey: string;
+    fields: Array<{ after?: unknown; before?: unknown; name: string }>;
+    geometryChanged: boolean;
+    op: "add" | "delete" | "update";
+  }> = [];
+  const keys = new Set([...before.keys(), ...after.keys()]);
+  for (const key of keys) {
+    const beforeRow = before.get(key),
+      afterRow = after.get(key);
+    if (afterRow === undefined) {
+      ops.push({ entryKey: key, fields: [], geometryChanged: false, op: "delete" });
+      continue;
+    }
+    if (beforeRow === undefined) {
+      ops.push({
+        entryKey: key,
+        fields: COMMIT_FIELDS.filter((name) => afterRow.data[name] !== undefined).map(
+          (name) => ({ after: afterRow.data[name], name }),
+        ),
+        geometryChanged: afterRow.geometry !== null,
+        op: "add",
+      });
+      continue;
+    }
+    const fields = COMMIT_FIELDS.filter(
+      (name) => JSON.stringify(beforeRow.data[name]) !== JSON.stringify(afterRow.data[name]),
+    ).map((name) => ({
+      after: afterRow.data[name],
+      before: beforeRow.data[name],
+      name,
+    }));
+    const geometryChanged =
+      afterRow.geometry !== null &&
+      (beforeRow.geometry === null ||
+        JSON.stringify(beforeRow.geometry.coordinates) !==
+          JSON.stringify(afterRow.geometry.coordinates));
+    if (fields.length > 0 || geometryChanged) {
+      ops.push({ entryKey: key, fields, geometryChanged, op: "update" });
+    }
+  }
+  return ops;
+}
+
+/** Appends one commit to the source's feed. No-op when nothing changed. */
+async function appendSourceCommit(
+  ctx: Pick<MutationCtx, "db">,
+  message: string,
+  ops: ReturnType<typeof diffProjectionSnapshots>,
+): Promise<void> {
+  if (ops.length === 0) {
+    return;
+  }
+  const newest = await ctx.db
+    .query("sourceCommits")
+    .withIndex("by_source_seq", (q) => q.eq("source", SOURCE_KEY))
+    .order("desc")
+    .first();
+  const seq = newest !== null ? newest.seq + 1 : 1;
+  await ctx.db.insert("sourceCommits", {
+    at: Date.now(),
+    foreignCommitId: `${SOURCE_KEY}:${seq}`,
+    message,
+    ops,
+    seq,
+    source: SOURCE_KEY,
+  });
+}
+
+/** Re-snapshots the affected keys and appends the commit for one write. */
+async function recordProjectionCommit(
+  ctx: Pick<MutationCtx, "db">,
+  message: string,
+  keys: Array<Id<"restaurantLocations">>,
+  before: ProjectionSnapshot,
+): Promise<void> {
+  const after = await snapshotKeys(ctx, keys);
+  await appendSourceCommit(ctx, message, diffProjectionSnapshots(before, after));
+}
+
 const linkRowValidator = v.object({
   _creationTime: v.number(),
   _id: v.id("restaurantLocations"),
@@ -148,8 +328,11 @@ export const updateRestaurant = mutation({
     if (collision && collision._id !== args.id) {
       throw new ConvexError(`A restaurant named "${fields.name}" already exists.`);
     }
+    const keys = await linkKeysForRestaurant(ctx, args.id),
+      before = await snapshotKeys(ctx, keys);
     await ctx.db.patch(args.id, fields);
     await touchBindingSource(ctx);
+    await recordProjectionCommit(ctx, `Updated restaurant ${fields.name}`, keys, before);
   },
   returns: v.null(),
 });
@@ -157,14 +340,20 @@ export const updateRestaurant = mutation({
 export const deleteRestaurant = mutation({
   args: { id: v.id("restaurants") },
   handler: async (ctx, args) => {
+    const existing = await ctx.db.get(args.id);
     // Prefix query on the compound index — restaurantId is its first column.
     const links = await ctx.db
       .query("restaurantLocations")
       .withIndex("by_restaurantId_and_locationId", (q) => q.eq("restaurantId", args.id))
       .take(LIST_LIMIT);
+    const keys = links.map((link) => link._id),
+      before = await snapshotKeys(ctx, keys);
     const cascaded = await deleteCascadingLinks(ctx, links);
     await ctx.db.delete(args.id);
     await touchBindingSource(ctx);
+    const deletedName =
+      existing !== null && existing !== undefined ? existing.name : args.id;
+    await recordProjectionCommit(ctx, `Deleted restaurant ${deletedName}`, keys, before);
     return cascaded;
   },
   returns: v.number(),
@@ -239,8 +428,11 @@ export const updateLocation = mutation({
     if (collision && collision._id !== args.id) {
       throw new ConvexError(`A location labeled "${validated.label}" already exists.`);
     }
+    const keys = await linkKeysForLocation(ctx, args.id),
+      before = await snapshotKeys(ctx, keys);
     await ctx.db.patch(args.id, validated);
     await touchBindingSource(ctx);
+    await recordProjectionCommit(ctx, `Updated location ${validated.label}`, keys, before);
   },
   returns: v.null(),
 });
@@ -248,13 +440,19 @@ export const updateLocation = mutation({
 export const deleteLocation = mutation({
   args: { id: v.id("locations") },
   handler: async (ctx, args) => {
+    const existing = await ctx.db.get(args.id);
     const links = await ctx.db
       .query("restaurantLocations")
       .withIndex("by_locationId", (q) => q.eq("locationId", args.id))
       .take(LIST_LIMIT);
+    const keys = links.map((link) => link._id),
+      before = await snapshotKeys(ctx, keys);
     const cascaded = await deleteCascadingLinks(ctx, links);
     await ctx.db.delete(args.id);
     await touchBindingSource(ctx);
+    const deletedLabel =
+      existing !== null && existing !== undefined ? existing.label : args.id;
+    await recordProjectionCommit(ctx, `Deleted location ${deletedLabel}`, keys, before);
     return cascaded;
   },
   returns: v.number(),
@@ -320,6 +518,14 @@ export const createLink = mutation({
       restaurantId: args.restaurantId,
     });
     await touchBindingSource(ctx);
+    // The link's key didn't exist before, so an empty before-snapshot yields
+    // the add op.
+    await recordProjectionCommit(
+      ctx,
+      `Linked ${restaurant.name} ↔ ${location.label}`,
+      [id],
+      new Map(),
+    );
     return id;
   },
   returns: v.id("restaurantLocations"),
@@ -344,8 +550,15 @@ export const updateLink = mutation({
 export const deleteLink = mutation({
   args: { id: v.id("restaurantLocations") },
   handler: async (ctx, args) => {
+    const before = await snapshotKeys(ctx, [args.id]),
+      firstRow = [...before.values()][0],
+      label =
+        firstRow !== undefined && typeof firstRow.data.label === "string"
+          ? firstRow.data.label
+          : args.id;
     await ctx.db.delete(args.id);
     await touchBindingSource(ctx);
+    await recordProjectionCommit(ctx, `Unlinked ${label}`, [args.id], before);
   },
   returns: v.null(),
 });

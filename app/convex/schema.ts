@@ -60,9 +60,20 @@ export default defineSchema({
   // UI "synced N minutes ago" badge needs no extra queries.
   datasetBindings: defineTable({
     collectionId: v.optional(v.string()),
+    // The foreign commit cursor: the last commit the sync engine applied
+    // (its stable foreignCommitId and per-source monotonic seq). Commit-tail
+    // sync pages the source's feed since this; a full sync/reconcile
+    // re-baselines it to the source's newest seq.
+    lastAppliedCommitId: v.optional(v.string()),
+    lastAppliedCommitSeq: v.optional(v.number()),
     lastSyncedAt: v.optional(v.number()),
     // Set when the last full reconcile (the drift-repair pass) finished.
     lastReconciledAt: v.optional(v.number()),
+    // Version retention (docs/bound-datasets-design.md §7): keep the newest
+    // N unpinned frozen versions (default DEFAULT_KEEP_VERSIONS); pinned
+    // refs are exempt and never auto-retire.
+    keepVersions: v.optional(v.number()),
+    pinnedRefs: v.optional(v.array(v.string())),
     // The source's declared projection mapping (see sources.ts), snapshotted
     // at bind time so the binding is self-describing.
     schemaMapping: v.optional(v.any()),
@@ -93,7 +104,15 @@ export default defineSchema({
     error: v.optional(v.string()),
     finishedAt: v.optional(v.number()),
     lastProgressAt: v.number(),
-    mode: v.union(v.literal("sync"), v.literal("reconcile")),
+    // "sync" prefers the source's commit tail (the design's primary path);
+    // it falls back to a full pass when the source has no commit feed or the
+    // binding has no baseline yet. "reconcile" always diffs full state.
+    mode: v.union(v.literal("commit-tail"), v.literal("reconcile"), v.literal("sync")),
+    // The newest source seq observed at collect time — the baseline a full
+    // run stamps onto the binding, or the tail's last seq a tail run applies.
+    // `lastCommitId` is that commit's stable foreignCommitId (the cursor).
+    lastCommitId: v.optional(v.string()),
+    lastSeq: v.optional(v.number()),
     ops: v.array(
       v.object({
         detail: v.optional(v.string()),
@@ -136,6 +155,89 @@ export default defineSchema({
   })
     .index("by_locationId", ["locationId"])
     .index("by_restaurantId_and_locationId", ["restaurantId", "locationId"]),
+
+  // The json-cms mirror of the applied commit tail (docs/bound-datasets-design.md
+  // §4): one row per foreign commit the sync engine applied to a binding,
+  // kept host-side so the History rail and commit overlays survive the
+  // foreign app pruning its own log. `ops` is capped by pruning (only the
+  // newest COMMIT_MIRROR_LIMIT rows per binding are kept), not per row.
+  commits: defineTable({
+    appliedAt: v.number(),
+    at: v.number(),
+    bindingId: v.id("datasetBindings"),
+    foreignCommitId: v.string(),
+    message: v.string(),
+    ops: v.array(
+      v.object({
+        // The projected row's foreign key.
+        entryKey: v.string(),
+        fields: v.array(
+          v.object({
+            after: v.optional(v.any()),
+            before: v.optional(v.any()),
+            name: v.string(),
+          }),
+        ),
+        geometryChanged: v.boolean(),
+        op: v.union(v.literal("add"), v.literal("delete"), v.literal("update")),
+      }),
+    ),
+    seq: v.number(),
+  }).index("by_binding_seq", ["bindingId", "seq"]),
+
+  // The delta between two consecutive frozen versions, computed at ingest
+  // into the commits' ops shape (docs/bound-datasets-design.md §6) — the
+  // historical record of "what changed between tag N-1 and tag N". The
+  // compare view computes arbitrary pairs on demand instead (see
+  // tags.getVersionDelta), so only sequential pairs are stored.
+  tagDeltas: defineTable({
+    at: v.number(),
+    fromRef: v.optional(v.string()),
+    ops: v.array(
+      v.object({
+        entryKey: v.string(),
+        fields: v.array(
+          v.object({
+            after: v.optional(v.any()),
+            before: v.optional(v.any()),
+            name: v.string(),
+          }),
+        ),
+        geometryChanged: v.boolean(),
+        op: v.union(v.literal("add"), v.literal("delete"), v.literal("update")),
+      }),
+    ),
+    sourceSchemaId: v.string(),
+    toRef: v.optional(v.string()),
+  }).index("by_source", ["sourceSchemaId"]),
+
+  // The foreign app's own commit log — the stand-in for its git-like
+  // versioning (commits are small field-level deltas). The dashboard's
+  // source-table writes append one row per user action; the sync engine's
+  // primary path pages this feed since the binding's last-applied commit.
+  // `seq` is monotonic per source and `foreignCommitId` is stable forever —
+  // together they make the feed idempotent to re-read.
+  sourceCommits: defineTable({
+    at: v.number(),
+    foreignCommitId: v.string(),
+    message: v.string(),
+    ops: v.array(
+      v.object({
+        entryKey: v.string(),
+        fields: v.array(
+          v.object({
+            after: v.optional(v.any()),
+            before: v.optional(v.any()),
+            name: v.string(),
+          }),
+        ),
+        geometryChanged: v.boolean(),
+        op: v.union(v.literal("add"), v.literal("delete"), v.literal("update")),
+      }),
+    ),
+    seq: v.number(),
+    source: v.string(),
+  }).index("by_source_seq", ["source", "seq"]),
 
   restaurants: defineTable({
     cuisine: v.string(),

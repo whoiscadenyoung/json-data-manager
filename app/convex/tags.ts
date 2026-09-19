@@ -1,8 +1,8 @@
 import { ConvexError, v } from "convex/values";
 
 import { components, internal } from "./_generated/api";
+import type { ActionCtx, QueryCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
-import type { ActionCtx } from "./_generated/server";
 import {
   action,
   internalMutation,
@@ -504,6 +504,104 @@ async function cleanupPartialVersion(
   }
 }
 
+/** The natural display key of a version entry (the diff's join key). */
+function naturalKeyOf(data: Record<string, unknown>): string | undefined {
+  if (typeof data.label === "string") {
+    return data.label;
+  }
+  if (typeof data.name === "string") {
+    return data.name;
+  }
+  return undefined;
+}
+
+const VERSION_DIFF_LIMIT = 2000;
+
+/** Reads one version's entries as light {key, data} rows, bounded. */
+async function versionRows(
+  ctx: { runQuery: QueryCtx["runQuery"] },
+  schemaId: string,
+): Promise<Array<{ data: Record<string, unknown>; key: string }>> {
+  const entries = await ctx.runQuery(components.jsonCms.lib.listEntriesForSchemas, {
+    limit: VERSION_DIFF_LIMIT,
+    schemaIds: [schemaId],
+  });
+  return entries.flatMap((entry) => {
+    const data = entry.data as Record<string, unknown> | null;
+    if (data === null || typeof data !== "object") {
+      return [];
+    }
+    const key = naturalKeyOf(data) ?? entry._id;
+    return [{ data, key }];
+  });
+}
+
+/**
+ * Diffs two versions into the commits' ops shape — the same record both the
+ * ingest stores sequentially (tagDeltas) and the compare view computes for
+ * arbitrary pairs. Deletes carry the before-state's fields so the overlay
+ * can still show what a removal took away.
+ */
+function diffVersionRows(
+  before: Array<{ data: Record<string, unknown>; key: string }>,
+  after: Array<{ data: Record<string, unknown>; key: string }>,
+) {
+  const beforeByKey = new Map(before.map((row) => [row.key, row.data])),
+    afterByKey = new Map(after.map((row) => [row.key, row.data])),
+    ops: Array<{
+      entryKey: string;
+      fields: Array<{ after?: unknown; before?: unknown; name: string }>;
+      geometryChanged: boolean;
+      op: "add" | "delete" | "update";
+    }> = [];
+  const names = new Set<string>();
+  for (const data of beforeByKey.values()) {
+    for (const name of Object.keys(data)) {
+      names.add(name);
+    }
+  }
+  for (const data of afterByKey.values()) {
+    for (const name of Object.keys(data)) {
+      names.add(name);
+    }
+  }
+  for (const [key, afterData] of afterByKey) {
+    const beforeData = beforeByKey.get(key);
+    if (beforeData === undefined) {
+      ops.push({
+        entryKey: key,
+        fields: [...names].filter((name) => afterData[name] !== undefined).map((name) => ({
+          after: afterData[name],
+          name,
+        })),
+        geometryChanged: true,
+        op: "add",
+      });
+      continue;
+    }
+    const fields = [...names]
+      .filter((name) => JSON.stringify(beforeData[name]) !== JSON.stringify(afterData[name]))
+      .map((name) => ({ after: afterData[name], before: beforeData[name], name }));
+    const geometryChanged = fields.some((field) => field.name === "lat" || field.name === "lng");
+    if (fields.length > 0) {
+      ops.push({ entryKey: key, fields, geometryChanged, op: "update" });
+    }
+  }
+  for (const [key, beforeData] of beforeByKey) {
+    if (!afterByKey.has(key)) {
+      ops.push({
+        entryKey: key,
+        fields: [...names]
+          .filter((name) => beforeData[name] !== undefined)
+          .map((name) => ({ before: beforeData[name], name })),
+        geometryChanged: false,
+        op: "delete",
+      });
+    }
+  }
+  return ops;
+}
+
 type IngestOutcome =
   | { kind: "failed"; error: string }
   | { kind: "ingested"; entryCount: number; schemaId: string }
@@ -529,6 +627,16 @@ async function ingestOneSnapshot(
       return { kind: "skipped" };
     }
     const entryCount = await waitForImport(ctx, freeze.importId, freeze.schemaId, rows.length);
+    // The design's §6 delta-at-ingest: diff the new version against the
+    // previous one into the commits' ops shape, then apply the retention
+    // policy (keep-N unpinned versions, oldest retire first).
+    await ctx.runMutation(internal.tags.recordTagDelta, {
+      fromRef: undefined,
+      sourceSchemaId,
+      toSchemaId: freeze.schemaId,
+      toRef: snapshot.ref,
+    });
+    await ctx.runMutation(internal.tags.enforceRetention, { sourceSchemaId });
     return { entryCount, kind: "ingested", schemaId: freeze.schemaId };
   } catch (error) {
     await cleanupPartialVersion(ctx, snapshot.ref);
@@ -589,5 +697,240 @@ export const ingestSnapshots = action({
         schemaId: v.string(),
       }),
     ),
+  }),
+});
+
+// ---------------------------------------------------------------------------
+// Version deltas + retention (#77): the ingest stores the sequential delta
+// between consecutive versions (the design's §6 "diff the new version
+// against the previous"), the retention policy keeps unpinned versions
+// bounded, and the compare view computes any pair on demand.
+// ---------------------------------------------------------------------------
+
+/** Unpinned versions kept per binding when no explicit keep-N is set. */
+const DEFAULT_KEEP_VERSIONS = 10;
+
+const commitOpValidator = v.object({
+  entryKey: v.string(),
+  fields: v.array(
+    v.object({ after: v.optional(v.any()), before: v.optional(v.any()), name: v.string() }),
+  ),
+  geometryChanged: v.boolean(),
+  op: v.union(v.literal("add"), v.literal("delete"), v.literal("update")),
+});
+
+/**
+ * Diffs the newly frozen version against the previous one (newest version of
+ * the same source frozen before it) and stores the sequential delta. No
+ * previous version → no delta (the first tag has nothing to diff against).
+ */
+export const recordTagDelta = internalMutation({
+  args: {
+    fromRef: v.optional(v.string()),
+    sourceSchemaId: v.string(),
+    toSchemaId: v.string(),
+    toRef: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const target = await ctx.runQuery(components.jsonCms.lib.getSchema, {
+      schemaId: args.toSchemaId,
+    });
+    if (target === null || target.lineage === undefined) {
+      return;
+    }
+    const versions = await ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+      sourceSchemaId: args.sourceSchemaId,
+    });
+    const targetFrozenAt =
+      target.lineage !== undefined ? target.lineage.frozenAt : 0;
+    const candidates = versions
+      .filter(
+        (version) =>
+          version._id !== args.toSchemaId &&
+          version.lineage !== undefined &&
+          version.lineage.frozenAt <= targetFrozenAt,
+      )
+      .map((version) => ({
+        frozenAt: version.lineage !== undefined ? version.lineage.frozenAt : 0,
+        id: version._id,
+        ref: version.lineage !== undefined ? version.lineage.snapshotRef : undefined,
+      }))
+      .sort((a, b) => b.frozenAt - a.frozenAt);
+    const previous = candidates[0];
+    if (previous === undefined) {
+      return;
+    }
+    const [before, after] = await Promise.all([
+      versionRows(ctx, previous.id),
+      versionRows(ctx, args.toSchemaId),
+    ]);
+    await ctx.db.insert("tagDeltas", {
+      at: Date.now(),
+      fromRef: previous.ref,
+      ops: diffVersionRows(before, after),
+      sourceSchemaId: args.sourceSchemaId,
+      toRef: args.toRef,
+    });
+  },
+  returns: v.null(),
+});
+
+/**
+ * The retention policy: keep the newest N unpinned frozen versions of one
+ * source (default DEFAULT_KEEP_VERSIONS); pinned refs are exempt. Runs
+ * after every ingest, so version storage stays bounded no matter how often
+ * the foreign app snapshots.
+ */
+export const enforceRetention = internalMutation({
+  args: { sourceSchemaId: v.string() },
+  handler: async (ctx, args) => {
+    const binding = await ctx.db
+      .query("datasetBindings")
+      .withIndex("by_schema", (q) => q.eq("schemaId", args.sourceSchemaId))
+      .first();
+    const keep =
+      binding !== null && binding.keepVersions !== undefined
+        ? binding.keepVersions
+        : DEFAULT_KEEP_VERSIONS;
+    const pinned = new Set(binding !== null && binding.pinnedRefs !== undefined ? binding.pinnedRefs : []);
+    const versions = await ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+      sourceSchemaId: args.sourceSchemaId,
+    });
+    const unpinnedNewestFirst = versions
+      .filter((version) => {
+        if (version.lineage === undefined) {
+          return true;
+        }
+        const ref = version.lineage.snapshotRef;
+        return ref === undefined || !pinned.has(ref);
+      })
+      .map((version) => ({
+        frozenAt: version.lineage !== undefined ? version.lineage.frozenAt : 0,
+        id: version._id,
+      }))
+      .sort((a, b) => b.frozenAt - a.frozenAt);
+    const retired = unpinnedNewestFirst.slice(keep);
+    for (const version of retired) {
+      // oxlint-disable-next-line no-await-in-loop -- ordered retirements under the write budget.
+      await ctx.runMutation(components.jsonCms.lib.deleteSchema, {
+        boundWrite: "retire",
+        schemaId: version.id,
+      });
+    }
+    return retired.length;
+  },
+  returns: v.number(),
+});
+
+/** Pins (or unpins) one frozen version — pinned versions never auto-retire. */
+export const setVersionPinned = mutation({
+  args: { pinned: v.boolean(), schemaId: v.string() },
+  handler: async (ctx, args) => {
+    const schema = await ctx.runQuery(components.jsonCms.lib.getSchema, {
+      schemaId: args.schemaId,
+    });
+    if (schema === null || schema.lineage === undefined) {
+      throw new ConvexError("Only a frozen version dataset can be pinned.");
+    }
+    const ref = schema.lineage.snapshotRef;
+    if (ref === undefined) {
+      throw new ConvexError("This version has no snapshot ref to pin.");
+    }
+    const sourceSchemaId =
+      schema.lineage !== undefined ? schema.lineage.sourceSchemaId : schema._id;
+    const binding = await ctx.db
+      .query("datasetBindings")
+      .withIndex("by_schema", (q) => q.eq("schemaId", sourceSchemaId))
+      .first();
+    if (binding === null) {
+      throw new ConvexError("The source binding no longer exists.");
+    }
+    const pinned = new Set(binding.pinnedRefs !== undefined ? binding.pinnedRefs : []);
+    if (args.pinned) {
+      pinned.add(ref);
+    } else {
+      pinned.delete(ref);
+    }
+    await ctx.db.patch(binding._id, { pinnedRefs: [...pinned] });
+  },
+  returns: v.null(),
+});
+
+/** Sets the keep-N retention count and enforces it immediately. */
+export const setKeepVersions = mutation({
+  args: { keep: v.number(), sourceSchemaId: v.string() },
+  handler: async (ctx, args) => {
+    if (args.keep < 1) {
+      throw new ConvexError("Keep at least one version.");
+    }
+    const binding = await ctx.db
+      .query("datasetBindings")
+      .withIndex("by_schema", (q) => q.eq("schemaId", args.sourceSchemaId))
+      .first();
+    if (binding === null) {
+      throw new ConvexError("The source binding no longer exists.");
+    }
+    await ctx.db.patch(binding._id, { keepVersions: args.keep });
+    await ctx.runMutation(internal.tags.enforceRetention, {
+      sourceSchemaId: args.sourceSchemaId,
+    });
+  },
+  returns: v.null(),
+});
+
+/** The binding's retention settings + a version's pin state, for the UI. */
+export const retentionSettings = query({
+  args: { sourceSchemaId: v.string() },
+  handler: async (ctx, args) => {
+    const binding = await ctx.db
+      .query("datasetBindings")
+      .withIndex("by_schema", (q) => q.eq("schemaId", args.sourceSchemaId))
+      .first();
+    return {
+      keepVersions:
+        binding !== null && binding.keepVersions !== undefined
+          ? binding.keepVersions
+          : DEFAULT_KEEP_VERSIONS,
+      pinnedRefs: binding !== null && binding.pinnedRefs !== undefined ? binding.pinnedRefs : [],
+    };
+  },
+  returns: v.object({ keepVersions: v.number(), pinnedRefs: v.array(v.string()) }),
+});
+
+/** Light entry rows for one version — the compare overlay's base features. */
+export const versionEntries = query({
+  args: { schemaId: v.string() },
+  handler: async (ctx, args) => versionRows(ctx, args.schemaId),
+  returns: v.array(
+    v.object({ data: v.record(v.string(), v.any()), key: v.string() }),
+  ),
+});
+
+/**
+ * The delta between any two frozen versions, computed on demand into the
+ * commits' ops shape — the compare view's add/remove/modify overlay. The
+ * ingest's stored sequential deltas (tagDeltas) are the historical record;
+ * this is the always-correct arbitrary-pair path.
+ */
+export const getVersionDelta = query({
+  args: { aSchemaId: v.string(), bSchemaId: v.string() },
+  handler: async (ctx, args) => {
+    const [before, after] = await Promise.all([
+      versionRows(ctx, args.aSchemaId),
+      versionRows(ctx, args.bSchemaId),
+    ]);
+    const ops = diffVersionRows(before, after);
+    return {
+      added: ops.filter((op) => op.op === "add").length,
+      ops,
+      removed: ops.filter((op) => op.op === "delete").length,
+      updated: ops.filter((op) => op.op === "update").length,
+    };
+  },
+  returns: v.object({
+    added: v.number(),
+    ops: v.array(commitOpValidator),
+    removed: v.number(),
+    updated: v.number(),
   }),
 });

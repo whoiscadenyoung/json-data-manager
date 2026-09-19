@@ -6,9 +6,12 @@ import {
   Calendar,
   Database,
   FolderTree,
+  GitCompareArrows,
   Layers,
   MapPin,
   Pencil,
+  Pin,
+  PinOff,
   Plus,
   Search,
   Tag,
@@ -20,6 +23,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { ConfirmDeleteDialog } from "#/components/dashboard/confirm-delete-dialog";
+import { VersionCompare } from "#/components/version-compare";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
@@ -790,10 +794,29 @@ function GroupSection({ schemaId, groupId }: { schemaId: string; groupId?: strin
 /**
  * Frozen snapshot versions of a bound live dataset, newest first — the tag
  * ingest's mirror of the foreign app's tag graph. Each version is a normal
- * read-only dataset: its own rows, its own map, pinned in time.
+ * read-only dataset: its own rows, its own map, pinned in time. Retention
+ * (keep-N, pin exemption) and the pairwise compare view live here too.
  */
 function VersionsCard({ sourceSchemaId }: { sourceSchemaId: string }) {
-  const versions = useQuery(api.tags.listVersions, { sourceSchemaId });
+  const versions = useQuery(api.tags.listVersions, { sourceSchemaId }),
+    retention = useQuery(api.tags.retentionSettings, { sourceSchemaId }),
+    setKeepVersions = useMutation(api.tags.setKeepVersions),
+    [keepInput, setKeepInput] = useState<string>(),
+    [compareOpen, setCompareOpen] = useState(false),
+    handleKeepSave = () => {
+      const keep = Number(keepInput);
+      if (!Number.isInteger(keep) || keep < 1) {
+        toast.error("Keep must be a positive whole number.");
+        return;
+      }
+      setKeepVersions({ keep, sourceSchemaId })
+        .then(() => {
+          toast.success(`Keeping the newest ${keep} unpinned versions.`);
+        })
+        .catch((error: unknown) => {
+          toast.error(errorMessage(error, "Failed to set retention."));
+        });
+    };
   return (
     <Card>
       <CardHeader>
@@ -803,10 +826,61 @@ function VersionsCard({ sourceSchemaId }: { sourceSchemaId: string }) {
         </CardTitle>
         <CardDescription>
           Frozen snapshots ingested from the connected source — each one is a read-only,
-          point-in-time copy with its own map layer.
+          point-in-time copy with its own map layer. Unpinned versions beyond the keep count
+          retire automatically at the next ingest.
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex flex-col gap-3">
+        {retention !== undefined && (
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground">Keep newest</span>
+            <Input
+              className="h-8 w-20"
+              inputMode="numeric"
+              value={keepInput ?? String(retention.keepVersions)}
+              onChange={(event) => {
+                setKeepInput(event.target.value);
+              }}
+            />
+            <span className="text-muted-foreground">unpinned versions</span>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={keepInput === undefined || keepInput === String(retention.keepVersions)}
+              onClick={handleKeepSave}
+            >
+              Save
+            </Button>
+          </div>
+        )}
+        {versions !== undefined && versions.length > 1 && (
+          <div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setCompareOpen((open) => !open);
+              }}
+            >
+              <GitCompareArrows className="h-3.5 w-3.5" />
+              {compareOpen ? "Hide compare" : "Compare versions"}
+            </Button>
+            {compareOpen && (
+              <div className="mt-2">
+                <VersionCompare
+                  versions={versions.map((version) => ({
+                    label:
+                      version.lineage === undefined
+                        ? "?"
+                        : version.lineage.versionLabel,
+                    schemaId: version.schemaId,
+                    title: version.title,
+                  }))}
+                />
+              </div>
+            )}
+          </div>
+        )}
         {versions === undefined ? null : versions.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             No versions yet — take a snapshot of the source data and ingest it from the dashboard's
@@ -826,9 +900,20 @@ function VersionsCard({ sourceSchemaId }: { sourceSchemaId: string }) {
 
 function VersionRow({ version }: { version: VersionDoc }) {
   const retire = useMutation(api.tags.retireVersion),
+    setPinned = useMutation(api.tags.setVersionPinned),
+    retention = useQuery(api.tags.retentionSettings, {
+      sourceSchemaId:
+        version.lineage === undefined ? version.schemaId : version.lineage.sourceSchemaId,
+    }),
     [retireTarget, setRetireTarget] = useState<string | undefined>(),
     [isRetiring, setIsRetiring] = useState(false),
     label = version.lineage === undefined ? undefined : version.lineage.versionLabel,
+    ref = version.lineage === undefined ? undefined : version.lineage.snapshotRef,
+    isPinned =
+      ref !== undefined &&
+      retention !== undefined &&
+      retention.pinnedRefs !== undefined &&
+      retention.pinnedRefs.includes(ref),
     handleRetire = async () => {
       setIsRetiring(true);
       try {
@@ -839,6 +924,18 @@ function VersionRow({ version }: { version: VersionDoc }) {
       } finally {
         setIsRetiring(false);
       }
+    },
+    handlePinToggle = () => {
+      if (ref === undefined) {
+        return;
+      }
+      setPinned({ pinned: !isPinned, schemaId: version.schemaId })
+        .then(() => {
+          toast.success(isPinned ? "Unpinned — retention may retire it." : "Pinned — never auto-retired.");
+        })
+        .catch((error: unknown) => {
+          toast.error(errorMessage(error, "Failed to update pin."));
+        });
     };
   return (
     <li className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2">
@@ -863,6 +960,21 @@ function VersionRow({ version }: { version: VersionDoc }) {
             {label}
           </Badge>
         )}
+        {isPinned && (
+          <Badge variant="secondary">
+            <Pin />
+            Pinned
+          </Badge>
+        )}
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={isPinned ? `Unpin ${version.title}` : `Pin ${version.title}`}
+          disabled={ref === undefined}
+          onClick={handlePinToggle}
+        >
+          {isPinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+        </Button>
         <Button
           variant="ghost"
           size="icon"
