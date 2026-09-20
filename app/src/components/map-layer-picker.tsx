@@ -17,7 +17,7 @@ import { api } from "#convex/_generated/api";
 
 type CollectionDoc = FunctionReturnType<typeof api.collections.list>[number];
 type GroupDoc = FunctionReturnType<typeof api.groups.list>[number];
-type DatasetSummary = FunctionReturnType<typeof api.schemas.list>[number];
+type DatasetSummary = FunctionReturnType<typeof api.schemas.listSummaries>[number];
 
 export type LayerTarget = { targetId: string; targetType: LayerTargetType };
 

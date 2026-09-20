@@ -170,10 +170,14 @@ function MapDetailPage() {
   const { mapId } = Route.useParams(),
     map = useQuery(api.maps.get, { mapId }),
     layers = useQuery(api.maps.listLayers, { mapId }),
-    datasets = useQuery(api.schemas.list),
+    datasets = useQuery(api.schemas.listSummaries),
     collections = useQuery(api.collections.list),
     groups = useQuery(api.groups.list, {}),
     memberships = useQuery(api.collections.listSchemaCollections),
+    // Child-visibility overrides for THIS map's layers only (issue #53) —
+    // the wrapper reads through the map's `by_map` layers rather than
+    // collecting every map's override rows.
+    overrides = useQuery(api.maps.listMapLayerOverrides, { mapId }),
     addLayer = useMutation(api.maps.addLayer),
     [editingMap, setEditingMap] = useState(false),
     [addLayerOpen, setAddLayerOpen] = useState(false),
@@ -190,8 +194,7 @@ function MapDetailPage() {
   // to load geometry for — ALL layers' datasets (visible or not), so showing
   // a hidden layer is an instant render filter, not a refetch. Derived
   // plainly (no useMemo): the React Compiler memoizes these automatically.
-  const overrides = useQuery(api.maps.listMapLayerOverrides),
-    expanded =
+  const expanded =
       layers !== undefined &&
       datasets !== undefined &&
       memberships !== undefined &&
@@ -212,27 +215,9 @@ function MapDetailPage() {
     tileSources = split.tileSources,
     sourcesPending = split.sourcesPending,
     { geometries, servedGeometries, loaders } = useGeometriesBySchemas(rowSchemaIds),
-    // Entry data feeds the map's feature-detail popups.
-    entriesQuery = useQuery(
-      api.entries.listEntriesForSchemas,
-      schemaIds.length > 0 ? { schemaIds } : "skip",
-    ),
-    entries = schemaIds.length === 0 ? [] : entriesQuery,
     // Tile sources report `idle` once their viewport tiles have arrived; the
     // set of arrived sources feeds the chip's completeness below.
     [arrivedTileSchemaIds, setArrivedTileSchemaIds] = useState<Set<string>>(() => new Set()),
-    // The map mounts as soon as the FIRST schema's pagination completes
-    // (`servedGeometries` carries the completed schemas' rows while the rest
-    // stream in) — or immediately when any layer renders from tiles — and
-    // then stays mounted across layer adds/removes, visibility toggles, and
-    // background re-reads, exactly like the dataset map's "never
-    // re-skeleton a map the user is looking at" behavior (229150b). The
-    // loading chip stays up until EVERY layer is complete: each row-path
-    // layer's full pagination pass (`geometries`), each tile-path layer's
-    // post-load `idle`, and no layer's source decision still pending (a
-    // pending decision would otherwise flash an empty map with the chip
-    // hidden — the empty row fan-out resolves immediately while the tile
-    // metadata is still in flight).
     // The map mounts as soon as the FIRST schema's pagination completes
     // (`servedGeometries` carries the completed schemas' rows while the rest
     // stream in) — or immediately when any layer renders from tiles — and
@@ -397,7 +382,6 @@ function MapDetailPage() {
               <LayersMap
                 datasets={mapDatasets}
                 geometries={withEmptyRows(servedGeometries)}
-                entries={withEmptyRows(entries)}
                 visibleSchemaIds={visibleSchemaIds}
                 colorBySchema={colorBySchema}
                 tileSources={tileSources}

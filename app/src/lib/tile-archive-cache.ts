@@ -498,7 +498,7 @@ export function unwireProtocolSources(schemaId: string, keep?: number): void {
  * `tile-archive.ts`.
  */
 export function TileArchiveCacheManager(): null {
-  const schemas = useQuery(api.schemas.list);
+  const schemas = useQuery(api.schemas.listSummaries);
   const geospatialIds = useMemo(
     () =>
       (schemas ?? [])

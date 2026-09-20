@@ -2,7 +2,7 @@ import { useResolvedGeometries } from "@caden/json-cms/react";
 import type { Geometry } from "@caden/json-cms/react";
 import { ConfirmDialog } from "@caden/json-cms/react/ui";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMutation, useQuery } from "convex/react";
+import { useConvex, useMutation, useQuery } from "convex/react";
 import { Download, Layers, MapIcon, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -92,13 +92,14 @@ export const Route = createFileRoute("/groups/$groupId")({
 function GroupDetailPage() {
   const { groupId } = Route.useParams(),
     navigate = useNavigate(),
+    convex = useConvex(),
     group = useQuery(api.groups.get, { groupId }),
     parentCollection = useQuery(
       api.collections.get,
       group && group.collectionId !== undefined ? { collectionId: group.collectionId } : "skip",
     ),
     groups = useQuery(api.groups.list, {}),
-    allDatasets = useQuery(api.schemas.list),
+    allDatasets = useQuery(api.schemas.listSummaries),
     datasets = (allDatasets ?? []).filter((dataset) => dataset.groupId === groupId),
     addCandidates = (allDatasets ?? []).filter((dataset) => dataset.groupId !== groupId),
     memberSchemaIds = datasets.map((dataset) => dataset._id),
@@ -202,14 +203,28 @@ function GroupDetailPage() {
       if (!entries) {
         return;
       }
-      const entriesOf = (dataset: Dataset) =>
+      // Dataset rows are summaries (issue #53) — the JSON-schema payloads only
+      // exist on the full docs, so an export that wants them reads each one
+      // here, on demand, instead of the page carrying them all the time.
+      const schemaDocs = await Promise.all(
+          datasets.map((dataset) => convex.query(api.schemas.get, { schemaId: dataset._id })),
+        ),
+        schemasById = new globalThis.Map(
+          datasets.flatMap((dataset, index) => {
+            const doc = schemaDocs[index];
+            return doc !== null && doc !== undefined
+              ? [[dataset._id, doc.schema] as const]
+              : [];
+          }),
+        ),
+        entriesOf = (dataset: Dataset) =>
           entries.filter((entry) => entry.schemaId === dataset._id),
         downloadSchemaFile = (dataset: Dataset) => {
           if (includeSchema) {
-            downloadText(
-              JSON.stringify(dataset.schema, null, 2),
-              `${slugify(dataset.title)}-schema.json`,
-            );
+            const schema = schemasById.get(dataset._id);
+            if (schema !== undefined) {
+              downloadText(JSON.stringify(schema, null, 2), `${slugify(dataset.title)}-schema.json`);
+            }
           }
         },
         // Tile-path datasets' geometry rows were never fetched (their maps
@@ -237,7 +252,7 @@ function GroupDetailPage() {
       if (format === "json") {
         for (const dataset of datasets) {
           downloadText(
-            JSON.stringify(buildJsonPayload(dataset.schema, entriesOf(dataset)), null, 2),
+            JSON.stringify(buildJsonPayload(schemasById.get(dataset._id), entriesOf(dataset)), null, 2),
             `${slugify(dataset.title)}.json`,
           );
           downloadSchemaFile(dataset);

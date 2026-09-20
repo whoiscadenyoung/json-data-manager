@@ -364,19 +364,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         null | string,
         Name
       >;
-      listAllMapLayerOverrides: FunctionReference<
-        "query",
-        "internal",
-        {},
-        Array<{
-          _creationTime: number;
-          _id: string;
-          childKey: string;
-          layerId: string;
-          visible: boolean;
-        }>,
-        Name
-      >;
       listCollections: FunctionReference<
         "query",
         "internal",
@@ -581,6 +568,19 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         }>,
         Name
       >;
+      listMapLayerOverridesForMap: FunctionReference<
+        "query",
+        "internal",
+        { mapId: string },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          childKey: string;
+          layerId: string;
+          visible: boolean;
+        }>,
+        Name
+      >;
       listMapLayers: FunctionReference<
         "query",
         "internal",
@@ -726,6 +726,43 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           sourceFileStorageId?: string;
           title: string;
           uiSchema?: any;
+        }>,
+        Name
+      >;
+      listSchemaSummaries: FunctionReference<
+        "query",
+        "internal",
+        {},
+        Array<{
+          _creationTime: number;
+          _id: string;
+          boundingBox?: Array<number>;
+          description?: string;
+          entryCount?: number;
+          featureCount?: number;
+          fieldCount: number;
+          geometryType?:
+            | "Point"
+            | "MultiPoint"
+            | "LineString"
+            | "MultiLineString"
+            | "Polygon"
+            | "MultiPolygon";
+          groupId?: string;
+          kind?: "standard" | "geospatial";
+          lineage?: {
+            frozenAt: number;
+            snapshotRef?: string;
+            sourceSchemaId: string;
+            versionLabel: string;
+          };
+          mapTileArchiveBuiltVersion?: number;
+          mapTileArchiveBytes?: number;
+          mapTileArchiveMaxZoom?: number;
+          mapTileArchiveStorageId?: string;
+          mapTileCacheVersion?: number;
+          source?: { name: string };
+          title: string;
         }>,
         Name
       >;

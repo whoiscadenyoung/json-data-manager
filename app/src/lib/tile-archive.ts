@@ -346,7 +346,7 @@ function isTileArchiveStale(schema: TileArchiveSchemaRow, currentVersion: number
  * `mapTileCacheVersion` server-side with no client hook.
  */
 export function useMapTileArchiveManager(): void {
-  const schemas = useQuery(api.schemas.list);
+  const schemas = useQuery(api.schemas.listSummaries);
   useEffect(() => {
     if (schemas === undefined) return;
     const scheduler = getScheduler();

@@ -199,8 +199,7 @@ function CollectionDetailPage() {
     collections = useQuery(api.collections.list),
     groups = useQuery(api.groups.list, { collectionId }),
     allGroups = useQuery(api.groups.list, {}),
-    collectionDatasets = useQuery(api.collections.listDatasets, { collectionId }),
-    allDatasets = useQuery(api.schemas.list),
+    allDatasets = useQuery(api.schemas.listSummaries),
     memberships = useQuery(api.collections.listSchemaCollections),
     deleteCollectionMutation = useMutation(api.collections.remove),
     deleteGroupMutation = useMutation(api.groups.remove),
@@ -254,7 +253,6 @@ function CollectionDetailPage() {
     collections === undefined ||
     groups === undefined ||
     allGroups === undefined ||
-    collectionDatasets === undefined ||
     allDatasets === undefined ||
     memberships === undefined
   ) {
@@ -283,8 +281,15 @@ function CollectionDetailPage() {
 
   const groupIds = new Set(groups.map((group) => group._id)),
     // Datasets joined to this collection that don't sit in one of its groups.
-    ungrouped = collectionDatasets.filter(
-      (dataset) => dataset.groupId === undefined || !groupIds.has(dataset.groupId),
+    // Derived from the summaries + membership rows — the old source
+    // (`collections.listDatasets`) shipped full schema docs just to be
+    // re-filtered by `groupId` here (issue #53).
+    ungrouped = allDatasets.filter(
+      (dataset) =>
+        memberships.some(
+          (membership) =>
+            membership.collectionId === collectionId && membership.schemaId === dataset._id,
+        ) && (dataset.groupId === undefined || !groupIds.has(dataset.groupId)),
     ),
     // Everything the collection contains: datasets joined directly, plus
     // every dataset of a group living in the collection — a group joins as a

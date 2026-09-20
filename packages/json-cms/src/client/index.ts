@@ -29,6 +29,7 @@ export type GroupId = Id<"groups">;
  * ```ts
  * export const {
  *   listSchemas,
+ *   listSchemaSummaries,
  *   getSchema,
  *   createSchema,
  *   updateSchema,
@@ -137,6 +138,15 @@ export function exposeApi(
       handler: async (ctx) => {
         await options.auth(ctx, { type: "read" });
         return ctx.runQuery(component.lib.listSchemas, {});
+      },
+    }),
+    // List-page projection — no `schema`/`uiSchema` payloads (issue #53).
+    // Structure/editor surfaces keep using `getSchema`.
+    listSchemaSummaries: queryGeneric({
+      args: {},
+      handler: async (ctx) => {
+        await options.auth(ctx, { type: "read" });
+        return ctx.runQuery(component.lib.listSchemaSummaries, {});
       },
     }),
     getSchema: queryGeneric({
@@ -472,10 +482,12 @@ export function exposeApi(
     // explicitly-toggled children have rows — clients match them against the
     // layers' live children and ignore stale ones).
     listMapLayerOverrides: queryGeneric({
-      args: {},
-      handler: async (ctx) => {
-        await options.auth(ctx, { type: "read" });
-        return ctx.runQuery(component.lib.listAllMapLayerOverrides, {});
+      args: { mapId: v.string() },
+      handler: async (ctx, args) => {
+        await options.auth(ctx, { mapId: args.mapId, type: "read" });
+        return ctx.runQuery(component.lib.listMapLayerOverridesForMap, {
+          mapId: args.mapId,
+        });
       },
     }),
     // Sets (or clears, via `visible: undefined`) a child's visibility

@@ -25,7 +25,6 @@ import {
   EmptyTitle,
 } from "#/components/ui/empty";
 import { Input } from "#/components/ui/input";
-import { fieldCount } from "#/lib/json-schema";
 import { cn } from "#/lib/utils";
 
 import { api } from "../../../convex/_generated/api";
@@ -50,7 +49,7 @@ const TYPE_OPTIONS: { value: TypeFilter; label: string }[] = [
   { label: "Regular", value: "regular" },
 ];
 
-type DatasetSummary = FunctionReturnType<typeof api.schemas.list>[number];
+type DatasetSummary = FunctionReturnType<typeof api.schemas.listSummaries>[number];
 type GroupSummary = FunctionReturnType<typeof api.groups.list>[number];
 
 function matchesTypeFilter(dataset: DatasetSummary, typeFilter: TypeFilter): boolean {
@@ -180,7 +179,7 @@ function DatasetCard({ dataset }: { dataset: DatasetSummary }) {
           <div className="flex flex-wrap items-center gap-2">
             <DatasetTypeTags dataset={dataset} />
             <span className="text-xs text-muted-foreground">
-              {fieldCount(dataset.schema)} {fieldCount(dataset.schema) === 1 ? "field" : "fields"}
+              {dataset.fieldCount} {dataset.fieldCount === 1 ? "field" : "fields"}
             </span>
           </div>
           <div>
@@ -329,7 +328,7 @@ function filterBrowserItems(
 function useBrowserLightQueries() {
   return {
     collections: useQuery({ ...convexQuery(api.collections.list) }).data,
-    datasets: useQuery({ ...convexQuery(api.schemas.list) }).data,
+    datasets: useQuery({ ...convexQuery(api.schemas.listSummaries) }).data,
     groups: useQuery({ ...convexQuery(api.groups.list, {}) }).data,
   };
 }

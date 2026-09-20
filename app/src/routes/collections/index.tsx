@@ -93,7 +93,7 @@ function CollectionCard({
  */
 function countByCollection(
   memberships: FunctionReturnType<typeof api.collections.listSchemaCollections>,
-  datasets: FunctionReturnType<typeof api.schemas.list>,
+  datasets: FunctionReturnType<typeof api.schemas.listSummaries>,
   groups: FunctionReturnType<typeof api.groups.list>,
   collectionId: string,
 ): number {
@@ -113,7 +113,7 @@ function countByCollection(
 function CollectionsPage() {
   const collections = useQuery(api.collections.list),
     memberships = useQuery(api.collections.listSchemaCollections),
-    datasets = useQuery(api.schemas.list),
+    datasets = useQuery(api.schemas.listSummaries),
     groups = useQuery(api.groups.list, {}),
     deleteCollection = useMutation(api.collections.remove),
     [formOpen, setFormOpen] = useState(false),

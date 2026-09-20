@@ -273,7 +273,7 @@ function EntryDetailPage() {
   const { schemaId, entryId } = Route.useParams(),
     entry = useQuery(api.entries.get, { entryId }),
     schema = useQuery(api.schemas.get, { schemaId }),
-    allSchemas = useQuery(api.schemas.list),
+    allSchemas = useQuery(api.schemas.listSummaries),
     referencingEntries = useQuery(api.entries.listReferencingEntries, { entryId }),
     geometryRow = useQuery(api.geometries.getEntryGeometry, { entryId }),
     // Resolves the row's payload — inline `geometryJson` synchronously, a

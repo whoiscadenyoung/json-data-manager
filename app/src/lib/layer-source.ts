@@ -21,7 +21,7 @@ import type { FunctionReturnType } from "convex/server";
 
 import { api } from "#convex/_generated/api";
 
-/** One schema doc, as `api.schemas.list`/`api.schemas.get` return it. */
+/** One schema doc's tile-relevant fields, as `api.schemas.listSummaries`/`api.schemas.get` return them. */
 export interface TileSourceSchemaRow {
   _id: string;
   geometryType?: string;

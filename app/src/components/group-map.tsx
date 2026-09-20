@@ -17,7 +17,7 @@ import {
 } from "#/lib/point-geometry";
 
 type EntryDoc = FunctionReturnType<typeof api.entries.listEntriesForSchemas>[number];
-type Dataset = FunctionReturnType<typeof api.schemas.list>[number];
+type Dataset = FunctionReturnType<typeof api.schemas.listSummaries>[number];
 
 import { api } from "#convex/_generated/api";
 

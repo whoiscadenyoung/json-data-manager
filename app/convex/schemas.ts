@@ -8,6 +8,7 @@ import { mutation, query } from "./_generated/server";
 
 export const {
   listSchemas: list,
+  listSchemaSummaries: listSummaries,
   getSchema: get,
   getSourceFileUrl,
   createSchema: create,
@@ -24,13 +25,14 @@ export const {
  * common case) keep their persisted instant-open.
  *
  * Runs the fold server-side so the client pays one number over the wire, not
- * every schema row.
+ * every schema row — over the summaries projection (issue #53), so the
+ * component→host hop doesn't carry `schema`/`uiSchema` payloads either.
  */
 export const maxTileCacheVersion = query({
   args: {},
   handler: async (ctx) => {
     await auth(ctx);
-    const schemas = await ctx.runQuery(components.jsonCms.lib.listSchemas, {});
+    const schemas = await ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, {});
     let max = 0;
     for (const schema of schemas) {
       max = Math.max(max, schema.mapTileCacheVersion ?? 0);

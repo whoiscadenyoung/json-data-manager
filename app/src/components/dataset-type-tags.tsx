@@ -4,7 +4,7 @@ import { Database, MapPin, RefreshCw, Tag } from "lucide-react";
 import { Badge } from "#/components/ui/badge";
 import { api } from "#convex/_generated/api";
 
-export type DatasetSummary = FunctionReturnType<typeof api.schemas.list>[number];
+export type DatasetSummary = FunctionReturnType<typeof api.schemas.listSummaries>[number];
 
 /**
  * Type tags for a dataset: Geospatial plus its geometry type, or Regular —

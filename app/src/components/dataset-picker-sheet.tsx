@@ -14,7 +14,7 @@ import {
 } from "#/components/ui/sheet";
 import { api } from "#convex/_generated/api";
 
-type DatasetSummary = FunctionReturnType<typeof api.schemas.list>[number];
+type DatasetSummary = FunctionReturnType<typeof api.schemas.listSummaries>[number];
 
 /** Side panel listing `candidates` (datasets not already assigned) so the user can pick one to add. */
 export function DatasetPickerSheet({

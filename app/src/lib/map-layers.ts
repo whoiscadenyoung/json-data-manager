@@ -3,7 +3,7 @@ import type { FunctionReturnType } from "convex/server";
 import { api } from "#convex/_generated/api";
 
 export type MapLayerDoc = FunctionReturnType<typeof api.maps.listLayers>[number];
-export type DatasetSummary = FunctionReturnType<typeof api.schemas.list>[number];
+export type DatasetSummary = FunctionReturnType<typeof api.schemas.listSummaries>[number];
 export type GroupSummary = FunctionReturnType<typeof api.groups.list>[number];
 export type MembershipRow = FunctionReturnType<
   typeof api.collections.listSchemaCollections

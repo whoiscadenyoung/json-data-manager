@@ -381,6 +381,94 @@ describe("json-cms component", () => {
     });
   });
 
+  describe("listSchemaSummaries (issue #53)", () => {
+    it("projects list-page fields without the schema/uiSchema payloads", async () => {
+      const t = initConvexTest(),
+        schemaId = await t.mutation(api.lib.createSchema, {
+          kind: "geospatial",
+          geometryType: "Point",
+          schema: {
+            description: "Summary projection fixture",
+            properties: {
+              age: { type: "number" },
+              name: { type: "string" },
+            },
+            title: "Summary Schema",
+            type: "object",
+          },
+          uiSchema: { name: { "ui:widget": "text" } },
+        }),
+        summaries = await t.query(api.lib.listSchemaSummaries, {}),
+        row = summaries.find((summary) => summary._id === schemaId);
+      assertDefined(row);
+      expect(row.title).toBe("Summary Schema");
+      expect(row.description).toBe("Summary projection fixture");
+      expect(row.kind).toBe("geospatial");
+      expect(row.geometryType).toBe("Point");
+      expect(row.fieldCount).toBe(2);
+      // The heavy fields the projection exists to drop are genuinely absent…
+      expect("schema" in row).toBe(false);
+      expect("uiSchema" in row).toBe(false);
+      // …and the full-doc query still carries them for the editor surfaces.
+      const full = await t.query(api.lib.getSchema, { schemaId });
+      assertDefined(full);
+      expect(full.schema).toBeDefined();
+      expect(full.uiSchema).toBeDefined();
+    });
+
+    it("counts zero fields for a schema without properties", async () => {
+      const t = initConvexTest(),
+        schemaId = await t.mutation(api.lib.createSchema, {
+          schema: { title: "No Properties", type: "string" },
+        }),
+        summaries = await t.query(api.lib.listSchemaSummaries, {}),
+        row = summaries.find((summary) => summary._id === schemaId);
+      assertDefined(row);
+      expect(row.fieldCount).toBe(0);
+    });
+  });
+
+  describe("listMapLayerOverridesForMap (issue #53)", () => {
+    it("returns one map's override rows, not every map's", async () => {
+      const t = initConvexTest(),
+        schemaId = await createTestSchema(t),
+        mapA = await t.mutation(api.lib.createMap, { name: "Map A" }),
+        mapB = await t.mutation(api.lib.createMap, { name: "Map B" });
+      // `addMapLayer` returns null when the layer already exists — fresh maps
+      // here, so each add must produce a layer.
+      const layerA = await t.mutation(api.lib.addMapLayer, {
+          mapId: mapA,
+          targetId: schemaId,
+          targetType: "dataset",
+        }),
+        layerB = await t.mutation(api.lib.addMapLayer, {
+          mapId: mapB,
+          targetId: schemaId,
+          targetType: "dataset",
+        });
+      assertDefined(layerA);
+      assertDefined(layerB);
+      await t.mutation(api.lib.setMapLayerOverride, {
+        childKey: `dataset:${schemaId}`,
+        layerId: layerA,
+        visible: false,
+      });
+      await t.mutation(api.lib.setMapLayerOverride, {
+        childKey: `dataset:${schemaId}`,
+        layerId: layerB,
+        visible: false,
+      });
+
+      const overridesA = await t.query(api.lib.listMapLayerOverridesForMap, { mapId: mapA });
+      expect(overridesA).toHaveLength(1);
+      expect(overridesA[0].layerId).toBe(layerA);
+
+      // A map with no overrides lists nothing — even though overrides exist elsewhere.
+      const mapC = await t.mutation(api.lib.createMap, { name: "Map C" });
+      expect(await t.query(api.lib.listMapLayerOverridesForMap, { mapId: mapC })).toHaveLength(0);
+    });
+  });
+
   describe("schema lineage (bound-dataset tag versions)", () => {
     const versionedSchema = {
         properties: { name: { type: "string" } },

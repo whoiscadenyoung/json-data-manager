@@ -17,7 +17,7 @@ import {
 import { api } from "#convex/_generated/api";
 
 export type GroupDoc = FunctionReturnType<typeof api.groups.list>[number];
-export type Dataset = FunctionReturnType<typeof api.schemas.list>[number];
+export type Dataset = FunctionReturnType<typeof api.schemas.listSummaries>[number];
 
 /** Row/feature count shown next to a dataset's tags, or undefined when unknown. Geospatial datasets carry an exactly-maintained feature count on the schema doc itself; regular datasets count rows, which only some host pages have fetched. */
 function datasetCountLabel(

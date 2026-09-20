@@ -146,6 +146,79 @@ export const listSchemas = query({
   returns: v.array(schemaValidator),
 });
 
+/** Number of top-level `properties` on a stored JSON schema — the datasets
+ * browser's "N fields" badge. Mirrors the app's `fieldCount` helper so the
+ * projection can replace the raw `schema` payload there (issue #53). */
+function storedSchemaFieldCount(schemaJson: unknown): number {
+  if (typeof schemaJson !== "object" || schemaJson === null || Array.isArray(schemaJson)) {
+    return 0;
+  }
+  const properties = (schemaJson as { properties?: unknown }).properties;
+  if (typeof properties !== "object" || properties === null || Array.isArray(properties)) {
+    return 0;
+  }
+  return Object.keys(properties).length;
+}
+
+/**
+ * List-page projection of `listSchemas` (issue #53): every field the
+ * datasets browser, groups/collections pages, pickers, and the map workspace
+ * read — but NOT `schema`/`uiSchema` (each up to the 100 KB
+ * `SCHEMA_SIZE_LIMIT`, dead weight on pages that only show titles, counts,
+ * and type tags). The only schema-derived value is `fieldCount`, computed
+ * here so the browser card doesn't need the raw payload either. The Structure
+ * tab and schema editor keep reading the full doc via `getSchema`.
+ */
+export const listSchemaSummaries = query({
+  args: {},
+  handler: async (ctx) => {
+    const docs = await ctx.db.query("schemas").order("desc").collect();
+    return docs.map((doc) => ({
+      _creationTime: doc._creationTime,
+      _id: doc._id,
+      boundingBox: doc.boundingBox,
+      description: doc.description,
+      entryCount: doc.entryCount,
+      featureCount: doc.featureCount,
+      fieldCount: storedSchemaFieldCount(doc.schema),
+      geometryType: doc.geometryType,
+      groupId: doc.groupId,
+      kind: doc.kind,
+      lineage: doc.lineage,
+      mapTileArchiveBuiltVersion: doc.mapTileArchiveBuiltVersion,
+      mapTileArchiveBytes: doc.mapTileArchiveBytes,
+      mapTileArchiveMaxZoom: doc.mapTileArchiveMaxZoom,
+      mapTileArchiveStorageId: doc.mapTileArchiveStorageId,
+      mapTileCacheVersion: doc.mapTileCacheVersion,
+      source: doc.source,
+      title: doc.title,
+    }));
+  },
+  returns: v.array(
+    schemaValidator
+      .pick(
+        "_creationTime",
+        "_id",
+        "boundingBox",
+        "description",
+        "entryCount",
+        "featureCount",
+        "geometryType",
+        "groupId",
+        "kind",
+        "lineage",
+        "mapTileArchiveBuiltVersion",
+        "mapTileArchiveBytes",
+        "mapTileArchiveMaxZoom",
+        "mapTileArchiveStorageId",
+        "mapTileCacheVersion",
+        "source",
+        "title",
+      )
+      .extend({ fieldCount: v.number() }),
+  ),
+});
+
 export const getSchema = query({
   args: { schemaId: v.id("schemas") },
   handler: async (ctx, args) => ctx.db.get(args.schemaId),
@@ -1141,10 +1214,29 @@ export const listMapLayerOverrides = query({
   returns: v.array(mapLayerOverrideValidator),
 });
 
-/** Every override row across all layers — one query instead of one per layer. */
-export const listAllMapLayerOverrides = query({
-  args: {},
-  handler: async (ctx) => ctx.db.query("mapLayerOverrides").collect(),
+/** Every override row within ONE map's layers — the saved-map workspace's
+ * single read for child visibility (issue #53's opportunistic scoping: the
+ * old variant collected the whole `mapLayerOverrides` table across all
+ * maps). Resolves the map's layers through the `by_map` index, then each
+ * layer's overrides through `by_layer`, so the read stays proportional to
+ * this map's own toggled children no matter how many maps exist. */
+export const listMapLayerOverridesForMap = query({
+  args: { mapId: v.id("maps") },
+  handler: async (ctx, args) => {
+    const layers = await ctx.db
+        .query("mapLayers")
+        .withIndex("by_map", (q) => q.eq("mapId", args.mapId))
+        .collect(),
+      rows = await Promise.all(
+        layers.map((layer) =>
+          ctx.db
+            .query("mapLayerOverrides")
+            .withIndex("by_layer", (q) => q.eq("layerId", layer._id))
+            .collect(),
+        ),
+      );
+    return rows.flat();
+  },
   returns: v.array(mapLayerOverrideValidator),
 });
 

@@ -1,10 +1,12 @@
 import { buildFeatureCollection, unionBbox, useResolvedGeometries } from "@caden/json-cms/react";
 import type { BoundingBox, Geometry } from "@caden/json-cms/react";
 import { Link } from "@tanstack/react-router";
+import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { ChevronRight, X } from "lucide-react";
 import { Fragment, useState } from "react";
 
+import type { DatasetSummary } from "#/lib/map-layers";
 import type { GeometryEntry } from "#/components/schema-geometries-loader";
 import { Button } from "#/components/ui/button";
 import { Map, MapClusterLayer, MapGeoJSON, MapVectorTiles } from "#/components/ui/map";
@@ -12,21 +14,25 @@ import { asBoundingBox, buildPointFeatureCollection, splitPointLikeGeometries } 
 import { formatPropertyValue } from "#/lib/format";
 import { api } from "#convex/_generated/api";
 
-type EntryDoc = FunctionReturnType<typeof api.entries.listEntriesForSchemas>[number];
-type Dataset = FunctionReturnType<typeof api.schemas.list>[number];
+type EntryDoc = NonNullable<FunctionReturnType<typeof api.entries.get>>;
 
 type FeatureProperties = { entryId: string; schemaId: string };
 
 function FeatureDetailsPanel({
   entry,
+  entryId,
+  schemaId,
   datasetTitle,
   onClose,
 }: {
-  entry: EntryDoc;
+  /** `undefined` while the on-demand read is in flight, `null` if the entry is gone. */
+  entry: EntryDoc | null | undefined;
+  entryId: string;
+  schemaId: string;
   datasetTitle: string;
   onClose: () => void;
 }) {
-  const data = entry.data,
+  const data = entry !== null && entry !== undefined ? entry.data : undefined,
     fields =
       typeof data === "object" && data !== null && !Array.isArray(data) ? Object.entries(data) : [];
 
@@ -42,8 +48,12 @@ function FeatureDetailsPanel({
         </Button>
       </div>
       <dl className="flex-1 space-y-3 overflow-y-auto p-3">
-        {fields.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No properties on this entry.</p>
+        {entry === undefined ? (
+          <dd className="text-sm text-muted-foreground">Loading properties…</dd>
+        ) : entry === null ? (
+          <dd className="text-sm text-muted-foreground">This entry no longer exists.</dd>
+        ) : fields.length === 0 ? (
+          <dd className="text-sm text-muted-foreground">No properties on this entry.</dd>
         ) : (
           fields.map(([key, value]) => (
             <div key={key}>
@@ -55,7 +65,7 @@ function FeatureDetailsPanel({
       </dl>
       <Link
         to="/datasets/$schemaId/$entryId"
-        params={{ schemaId: entry.schemaId, entryId: entry._id }}
+        params={{ schemaId, entryId }}
         className="flex items-center justify-center gap-1.5 border-t border-border px-3 py-2 text-xs font-medium text-primary hover:bg-muted/50"
       >
         View details
@@ -103,7 +113,7 @@ function toFeatureRow(geometry: GeometryEntry, resolved: Geometry) {
 
 /** Falls back to `fallback` when the dataset isn't found — avoids an optional-chained `?.title`. */
 function getDatasetTitle(
-  datasetById: globalThis.Map<string, Dataset>,
+  datasetById: globalThis.Map<string, DatasetSummary>,
   schemaId: string,
   fallback: string,
 ) {
@@ -123,9 +133,13 @@ function getDatasetTitle(
  * arrive as `tileSources` instead of rows: each renders a `MapVectorTiles`
  * layer with the same per-dataset color, and visibility rides the layout
  * property so toggling show/hide keeps the source + its tile cache warm.
- * Tile features carry id-only properties (`entryId`), so a click reports the
- * entry and the detail panel loads its entry from the already-fetched
- * entries list.
+ * Tile features carry id-only properties (`entryId`), so both paths click
+ * through the same `{entryId, schemaId}` pair.
+ *
+ * Entry properties load on demand (issue #52): clicking a feature starts one
+ * indexed single-entry read (`entries.get`), subscribed — and live — only
+ * while the popup is open. The map's first paint no longer pays an
+ * O(total mapped rows) entries fetch that existed just to power this panel.
  *
  * The viewport fits exactly once, when the component mounts (the parent
  * mounts it as soon as the first layer's rows complete or the first tile
@@ -138,16 +152,14 @@ function getDatasetTitle(
 export function LayersMap({
   datasets,
   geometries,
-  entries,
   visibleSchemaIds,
   colorBySchema,
   tileSources,
   sourcesPending = false,
   onTileSourceIdle,
 }: {
-  datasets: Dataset[];
+  datasets: DatasetSummary[];
   geometries: GeometryEntry[];
-  entries: EntryDoc[];
   visibleSchemaIds: Set<string>;
   colorBySchema: globalThis.Map<string, string>;
   /** Above-threshold datasets rendering from their fresh tile archive. */
@@ -157,8 +169,7 @@ export function LayersMap({
   /** Fired once per tile source, after it loaded and the map reached `idle`. */
   onTileSourceIdle?: (schemaId: string) => void;
 }) {
-  const entryById = new globalThis.Map(entries.map((entry) => [entry._id, entry])),
-    datasetById = new globalThis.Map(datasets.map((dataset) => [dataset._id, dataset])),
+  const datasetById = new globalThis.Map(datasets.map((dataset) => [dataset._id, dataset])),
     resolvedGeometries = useResolvedGeometries(geometries),
     // Most rows resolve synchronously (inline `geometryJson`); a row backed
     // by external storage is simply absent until its `fetch` completes.
@@ -185,7 +196,13 @@ export function LayersMap({
       }
       return bbox;
     }),
-    [selected, setSelected] = useState<FeatureProperties | null>(null);
+    [selected, setSelected] = useState<FeatureProperties | null>(null),
+    // The clicked feature's entry, read on demand (issue #52): one indexed
+    // single-doc query per selection, live only while the popup is open.
+    // Re-selecting the same feature re-subscribes without a client-side
+    // fetch of anything else; closing drops the subscription.
+    selectedEntry = useQuery(api.entries.get, selected ? { entryId: selected.entryId } : "skip"),
+    selectedDatasetTitle = selected ? getDatasetTitle(datasetById, selected.schemaId, "") : "";
 
   const bySchema = new globalThis.Map<string, GeometryEntry[]>();
   for (const { g } of visibleGeometries) {
@@ -215,9 +232,7 @@ export function LayersMap({
         color: colorBySchema.get(schemaId) ?? "#3b82f6",
       })),
     visibleTileSources = tileSources.filter((source) => visibleSchemaIds.has(source.schemaId))
-      .length,
-    selectedEntry = selected ? entryById.get(selected.entryId) : undefined,
-    selectedDatasetTitle = selected ? getDatasetTitle(datasetById, selected.schemaId, "") : "";
+      .length;
 
   return (
     <div className="relative h-full w-full">
@@ -301,9 +316,11 @@ export function LayersMap({
         </div>
       )}
       <MapLegend datasets={legendDatasets} />
-      {selectedEntry && (
+      {selected && (
         <FeatureDetailsPanel
           entry={selectedEntry}
+          entryId={selected.entryId}
+          schemaId={selected.schemaId}
           datasetTitle={selectedDatasetTitle}
           onClose={() => {
             setSelected(null);

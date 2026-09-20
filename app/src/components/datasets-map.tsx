@@ -14,7 +14,7 @@ import { Map, MapGeoJSON } from "#/components/ui/map";
 import { asBoundingBox, bboxFeature } from "#/lib/point-geometry";
 import { api } from "#convex/_generated/api";
 
-type Dataset = FunctionReturnType<typeof api.schemas.list>[number];
+type Dataset = FunctionReturnType<typeof api.schemas.listSummaries>[number];
 
 // Cycled per dataset so each shows up as a distinct color on the map/legend.
 const DATASET_COLORS = [
