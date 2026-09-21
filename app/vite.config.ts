@@ -8,6 +8,9 @@ import { defineConfig } from "vite";
 const config = defineConfig({
   plugins: [devtools(), tailwindcss(), tanstackStart(), nitro({ preset: "bun" }), viteReact()],
   resolve: { tsconfigPaths: true },
+  // @convex-dev/better-auth ships untranspiled — it must stay in the SSR
+  // bundle for Vite to process it.
+  ssr: { noExternal: ["@convex-dev/better-auth"] },
   // Module workers (maplibre's, `tile-archive.worker.ts`) must build as ES —
   // the default iife wrap breaks `new Worker(url, { type: "module" })`.
   worker: { format: "es" },
