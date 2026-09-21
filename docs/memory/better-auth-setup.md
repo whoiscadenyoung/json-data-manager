@@ -40,6 +40,21 @@ cost time:
 - **Better-auth POSTs require an `Origin` header** matching a trusted
   origin (curl: `-H "Origin: http://localhost:3000"`) or the request fails
   with MISSING_OR_NULL_ORIGIN.
+- **Changing the deployment's `SITE_URL` env invalidates existing sessions**
+  (2026-09-21, found while verifying [[user-profiles]] on :3002): cookies
+  signed under the old config stop resolving — `/api/auth/get-session`
+  returns `null` and the header silently drops to "Sign in" (looks like a
+  client race, it isn't). Sign in again after any `convex env set SITE_URL`.
+  The deployment's `SITE_URL` must also match the origin the app is actually
+  served on — running vite on a nonstandard port needs
+  `SITE_URL=http://localhost:<port>` on the deployment, not just in the vite
+  env.
+- Running the app when `bun run dev` can't (cloud deployment disabled and
+  `convex dev` won't attach): start the local backend (recipe above), push
+  once with `convex dev --once`, then start vite directly
+  (`SITE_URL=http://localhost:<port> bunx vite dev --port <port>` — port 3000
+  is often taken by other projects; vite env comes from `.env.local` which
+  the `--once` push rewrites to the local URLs).
 - `bun add` in `app/` bumps `@tanstack/react-query` "latest" past the
   5.103.1 persist stack → duplicate query-core breaks
   `root-provider.tsx` typecheck. Restore 5.103.1 after any bun add.

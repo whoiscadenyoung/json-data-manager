@@ -168,6 +168,8 @@ function storedSchemaFieldCount(schemaJson: unknown): number {
  * and type tags). The only schema-derived value is `fieldCount`, computed
  * here so the browser card doesn't need the raw payload either. The Structure
  * tab and schema editor keep reading the full doc via `getSchema`.
+ * `createdBy` (ADR 0007's authorship stamp) rides along so host list
+ * surfaces can attribute datasets without the payloads.
  */
 export const listSchemaSummaries = query({
   args: {},
@@ -177,6 +179,11 @@ export const listSchemaSummaries = query({
       _creationTime: doc._creationTime,
       _id: doc._id,
       boundingBox: doc.boundingBox,
+      // Authorship rides the projection so list surfaces (the profile page's
+      // per-creator listing, the browser's "by X" line) can show and group by
+      // creator without pulling the heavy schema payloads. The host resolves
+      // the opaque id to a display name via its own users mirror.
+      createdBy: doc.createdBy,
       description: doc.description,
       entryCount: doc.entryCount,
       featureCount: doc.featureCount,
@@ -200,6 +207,7 @@ export const listSchemaSummaries = query({
         "_creationTime",
         "_id",
         "boundingBox",
+        "createdBy",
         "description",
         "entryCount",
         "featureCount",

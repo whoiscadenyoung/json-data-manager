@@ -432,6 +432,7 @@ describe("json-cms component", () => {
     it("projects list-page fields without the schema/uiSchema payloads", async () => {
       const t = initConvexTest(),
         schemaId = await t.mutation(api.lib.createSchema, {
+          actorId: "user-123",
           kind: "geospatial",
           geometryType: "Point",
           schema: {
@@ -453,6 +454,9 @@ describe("json-cms component", () => {
       expect(row.kind).toBe("geospatial");
       expect(row.geometryType).toBe("Point");
       expect(row.fieldCount).toBe(2);
+      // Authorship rides the projection (ADR 0007 display side) so host list
+      // surfaces can attribute datasets without the heavy payloads.
+      expect(row.createdBy).toBe("user-123");
       // The heavy fields the projection exists to drop are genuinely absent…
       expect("schema" in row).toBe(false);
       expect("uiSchema" in row).toBe(false);

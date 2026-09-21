@@ -124,6 +124,9 @@ function CreatedByRow({ authId }: { authId: string }) {
     profile === undefined
       ? "…"
       : ((profile !== null ? (profile.name ?? profile.email) : undefined) ?? authId);
+  // A real mirror row links to the person's profile; system actors (no row)
+  // fall back to the raw id, unlinked.
+  const hasProfile = profile !== undefined && profile !== null;
   return (
     <div className="flex flex-col gap-1.5">
       <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -131,7 +134,18 @@ function CreatedByRow({ authId }: { authId: string }) {
       </dt>
       <dd className="flex items-center gap-1 text-sm">
         <User className="h-3.5 w-3.5 text-muted-foreground" />
-        {label}
+        {hasProfile ? (
+          <Link
+            to="/users/$userId"
+            params={{ userId: authId }}
+            className="hover:underline"
+            title="View profile"
+          >
+            {label}
+          </Link>
+        ) : (
+          label
+        )}
       </dd>
     </div>
   );

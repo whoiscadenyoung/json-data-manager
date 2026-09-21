@@ -1,9 +1,11 @@
 import { Link } from "@tanstack/react-router";
 import { useConvexAuth, useQuery } from "convex/react";
 
-import { api } from "#convex/_generated/api";
 import { Button } from "#/components/ui/button";
+import { UserAvatar } from "#/components/user-avatar";
 import { authClient } from "#/lib/auth-client";
+import { api } from "#convex/_generated/api";
+
 import { ThemeToggle } from "./theme-toggle";
 
 /**
@@ -28,21 +30,36 @@ function UserMenu() {
   }
   if (!isAuthenticated) {
     return (
-      <Link
-        to="/signin"
-        className="text-sm text-muted-foreground hover:text-foreground"
-      >
+      <Link to="/signin" className="text-sm text-muted-foreground hover:text-foreground">
         Sign in
       </Link>
     );
   }
-  const label =
-    me === undefined || me === null ? "Signed in" : (me.name ?? me.email);
+  // The chip doubles as the "your profile" button — avatar + name linking to
+  // /users/$authId. The plain "Signed in" fallback covers the edge where the
+  // session is live but the mirror row hasn't been created (or was deleted).
+  if (me === undefined || me === null) {
+    return (
+      <div className="flex items-center gap-3">
+        <span className="text-sm text-muted-foreground">Signed in</span>
+        <Button onClick={onSignOut} size="sm" type="button" variant="outline">
+          Sign out
+        </Button>
+      </div>
+    );
+  }
+  const label = me.name ?? me.email;
   return (
     <div className="flex items-center gap-3">
-      <span className="max-w-48 truncate text-sm text-muted-foreground" title={label}>
-        {label}
-      </span>
+      <Link
+        to="/users/$userId"
+        params={{ userId: me.authId }}
+        className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+        title="View your profile"
+      >
+        <UserAvatar className="h-6 w-6 text-[10px]" image={me.image} name={me.name} />
+        <span className="max-w-48 truncate">{label}</span>
+      </Link>
       <Button onClick={onSignOut} size="sm" type="button" variant="outline">
         Sign out
       </Button>
