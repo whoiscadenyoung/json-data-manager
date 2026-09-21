@@ -266,7 +266,7 @@ function EntryPanelHost({
         ? { entryId: search.entryId }
         : "skip",
     ),
-    entry = loadedEntry ?? (fetchedEntry ?? undefined),
+    entry = loadedEntry ?? fetchedEntry ?? undefined,
     isOpen = search.panel === "create" || entry !== undefined,
     // The on-demand single-entry read, only while the panel targets an entry
     // AND the dataset's rows aren't in hand (the tile path). Deliberately on
@@ -556,7 +556,7 @@ function SchemaDetailPage() {
               <BreadcrumbItem>
                 <BreadcrumbLink render={<Link to="/datasets" />}>Datasets</BreadcrumbLink>
               </BreadcrumbItem>
-              {group != null && (
+              {group !== null && group !== undefined && (
                 <>
                   <BreadcrumbSeparator />
                   <BreadcrumbItem>

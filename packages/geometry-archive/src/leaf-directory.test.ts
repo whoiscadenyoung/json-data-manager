@@ -5,6 +5,7 @@
  * reader must resolve tiles through that indirection.
  */
 import { describe, expect, test } from "bun:test";
+
 import { VectorTile } from "@mapbox/vector-tile";
 import { PbfReader } from "pbf";
 import { PMTiles, type Source } from "pmtiles";
@@ -23,9 +24,13 @@ function memorySource(bytes: Uint8Array): Source {
 /** Deterministic xorshift32; Math.random would make the sizes flaky. */
 let seed = 0x2545f491;
 function random(): number {
+  // oxlint-disable-next-line eslint/no-bitwise -- xorshift32 steps are shifts and XOR by definition.
   seed ^= seed << 13;
+  // oxlint-disable-next-line eslint/no-bitwise -- xorshift32 steps are shifts and XOR by definition.
   seed ^= seed >>> 17;
+  // oxlint-disable-next-line eslint/no-bitwise -- xorshift32 steps are shifts and XOR by definition.
   seed ^= seed << 5;
+  // oxlint-disable-next-line eslint/no-bitwise -- coerces to an unsigned 32-bit int before formatting.
   return (seed >>> 0) / 4294967296;
 }
 

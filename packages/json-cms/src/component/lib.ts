@@ -834,7 +834,7 @@ export const listSchemasByCollection = query({
       .query("schemaCollections")
       .withIndex("by_collection", (q) => q.eq("collectionId", args.collectionId))
       .collect();
-    const datasets = await Promise.all(memberships.map((row) => ctx.db.get(row.schemaId)));
+    const datasets = await Promise.all(memberships.map(async (row) => ctx.db.get(row.schemaId)));
     return datasets.filter((dataset) => dataset !== null);
   },
   returns: v.array(schemaValidator),
@@ -855,7 +855,9 @@ export const listCollectionsBySchema = query({
       .query("schemaCollections")
       .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
       .collect();
-    const collections = await Promise.all(memberships.map((row) => ctx.db.get(row.collectionId)));
+    const collections = await Promise.all(
+      memberships.map(async (row) => ctx.db.get(row.collectionId)),
+    );
     return collections.filter((collection) => collection !== null);
   },
   returns: v.array(collectionValidator),
@@ -1228,7 +1230,7 @@ export const listMapLayerOverridesForMap = query({
         .withIndex("by_map", (q) => q.eq("mapId", args.mapId))
         .collect(),
       rows = await Promise.all(
-        layers.map((layer) =>
+        layers.map(async (layer) =>
           ctx.db
             .query("mapLayerOverrides")
             .withIndex("by_layer", (q) => q.eq("layerId", layer._id))

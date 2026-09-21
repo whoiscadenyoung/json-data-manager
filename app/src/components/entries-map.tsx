@@ -2,9 +2,9 @@ import { buildFeatureCollection, computeBbox, useResolvedGeometries } from "@cad
 import type { BoundingBox, Geometry } from "@caden/json-cms/react";
 import { Link } from "@tanstack/react-router";
 import type { FunctionReturnType } from "convex/server";
+import type * as GeoJSON from "geojson";
 import { ChevronRight, Loader2, Map as MapIcon, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import type * as GeoJSON from "geojson";
 
 import { Button } from "#/components/ui/button";
 import {
@@ -16,14 +16,14 @@ import {
 } from "#/components/ui/empty";
 import { Map, MapClusterLayer, MapGeoJSON, MapVectorTiles } from "#/components/ui/map";
 import { Skeleton } from "#/components/ui/skeleton";
+import { formatPropertyValue } from "#/lib/format";
+import { layerSourceKind, layerSourceUrl } from "#/lib/layer-source";
+import type { TileSourceDecision } from "#/lib/layer-source";
 import {
   bboxFeature,
   buildPointFeatureCollection,
   splitPointLikeGeometries,
 } from "#/lib/point-geometry";
-import { formatPropertyValue } from "#/lib/format";
-import { layerSourceKind, layerSourceUrl } from "#/lib/layer-source";
-import type { TileSourceDecision } from "#/lib/layer-source";
 import { cn } from "#/lib/utils";
 import { api } from "#convex/_generated/api";
 
@@ -152,6 +152,7 @@ function useEntriesRowReadiness(geometries: GeometryEntry[], isLoading: boolean)
 
   useEffect(() => {
     if (rowReady) {
+      // oxlint-disable-next-line react/set-state-in-effect -- one-way latch: flips once after the first complete render so live updates never re-skeleton (see 229150b).
       setHasRenderedOnce(true);
     }
   }, [rowReady]);
@@ -291,12 +292,10 @@ export function EntriesMap({
     // hot-swap re-adds the source in place; the map the user is looking at
     // stays mounted and keeps rendering the previous archive meanwhile).
     [tilesReady, setTilesReady] = useState(false),
-    {
-      resolvableGeometries,
-      graceElapsed,
-      hasRenderedOnce,
-      rowReady,
-    } = useEntriesRowReadiness(geometries, isLoading),
+    { resolvableGeometries, graceElapsed, hasRenderedOnce, rowReady } = useEntriesRowReadiness(
+      geometries,
+      isLoading,
+    ),
     // A pending decision (fresh archive whose URL hasn't landed) holds
     // readiness too — the chip covers the map until the decision resolves
     // either way.
@@ -308,13 +307,7 @@ export function EntriesMap({
   // is missing) is the only way the latch can ever fire. A pending decision
   // resolves by itself (the metadata round trip), so its chip is safe too.
   if (
-    entriesSkeletonHolds(
-      tilePath,
-      initialBbox !== undefined,
-      hasRenderedOnce,
-      ready,
-      graceElapsed,
-    )
+    entriesSkeletonHolds(tilePath, initialBbox !== undefined, hasRenderedOnce, ready, graceElapsed)
   ) {
     return (
       <div

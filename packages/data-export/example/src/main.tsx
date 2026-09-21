@@ -9,6 +9,10 @@ import "./index.css";
 
 const address = import.meta.env.VITE_CONVEX_URL;
 
+if (address === undefined) {
+  throw new Error("VITE_CONVEX_URL is not set — start `convex dev` to populate .env.local.");
+}
+
 const convex = new ConvexReactClient(address);
 
 // oxlint-disable-next-line typescript/no-non-null-assertion

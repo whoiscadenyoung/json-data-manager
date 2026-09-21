@@ -2,6 +2,7 @@
 export function formatPropertyValue(value: unknown): string {
   if (value === null || value === undefined) return "—";
   if (typeof value === "object") return JSON.stringify(value);
+  // oxlint-disable-next-line typescript/no-base-to-string -- narrowed to primitives here: nullish and objects return above.
   return String(value);
 }
 

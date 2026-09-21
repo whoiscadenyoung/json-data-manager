@@ -207,23 +207,23 @@ function GroupDetailPage() {
       // exist on the full docs, so an export that wants them reads each one
       // here, on demand, instead of the page carrying them all the time.
       const schemaDocs = await Promise.all(
-          datasets.map((dataset) => convex.query(api.schemas.get, { schemaId: dataset._id })),
+          datasets.map(async (dataset) => convex.query(api.schemas.get, { schemaId: dataset._id })),
         ),
         schemasById = new globalThis.Map(
           datasets.flatMap((dataset, index) => {
             const doc = schemaDocs[index];
-            return doc !== null && doc !== undefined
-              ? [[dataset._id, doc.schema] as const]
-              : [];
+            return doc !== null && doc !== undefined ? [[dataset._id, doc.schema] as const] : [];
           }),
         ),
-        entriesOf = (dataset: Dataset) =>
-          entries.filter((entry) => entry.schemaId === dataset._id),
+        entriesOf = (dataset: Dataset) => entries.filter((entry) => entry.schemaId === dataset._id),
         downloadSchemaFile = (dataset: Dataset) => {
           if (includeSchema) {
             const schema = schemasById.get(dataset._id);
             if (schema !== undefined) {
-              downloadText(JSON.stringify(schema, null, 2), `${slugify(dataset.title)}-schema.json`);
+              downloadText(
+                JSON.stringify(schema, null, 2),
+                `${slugify(dataset.title)}-schema.json`,
+              );
             }
           }
         },
@@ -252,7 +252,11 @@ function GroupDetailPage() {
       if (format === "json") {
         for (const dataset of datasets) {
           downloadText(
-            JSON.stringify(buildJsonPayload(schemasById.get(dataset._id), entriesOf(dataset)), null, 2),
+            JSON.stringify(
+              buildJsonPayload(schemasById.get(dataset._id), entriesOf(dataset)),
+              null,
+              2,
+            ),
             `${slugify(dataset.title)}.json`,
           );
           downloadSchemaFile(dataset);

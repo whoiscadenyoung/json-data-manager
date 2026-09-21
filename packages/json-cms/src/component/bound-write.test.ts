@@ -63,9 +63,9 @@ describe("bound dataset read-only enforcement", () => {
       geometry: POINT,
       schemaId,
     });
-    await expect(t.mutation(api.lib.updateEntry, { data: { label: "B" }, entryId })).rejects.toThrow(
-      "read-only projection",
-    );
+    await expect(
+      t.mutation(api.lib.updateEntry, { data: { label: "B" }, entryId }),
+    ).rejects.toThrow("read-only projection");
     await expect(t.mutation(api.lib.deleteEntry, { entryId })).rejects.toThrow(
       "read-only projection",
     );
@@ -91,6 +91,7 @@ describe("bound dataset read-only enforcement", () => {
     });
     await t.mutation(api.lib.deleteEntry, { boundWrite: "sync", entryId });
     await t.mutation(api.lib.deleteEntriesBySchema, { boundWrite: "sync", schemaId });
+    expect(await t.query(api.lib.listEntries, { schemaId })).toHaveLength(0);
   });
 
   it("rejects schema deletion and the import/simplify/conversion workflows on bound datasets", async () => {
@@ -151,6 +152,7 @@ describe("bound dataset read-only enforcement", () => {
     });
     await t.mutation(api.lib.updateEntry, { data: { label: "B" }, entryId });
     await t.mutation(api.lib.deleteEntry, { entryId });
+    expect(await t.query(api.lib.listEntries, { schemaId })).toHaveLength(0);
   });
 
   it("keeps metadata edits allowed on bound datasets", async () => {
@@ -159,6 +161,6 @@ describe("bound dataset read-only enforcement", () => {
 
     await t.mutation(api.lib.updateSchema, { schemaId, title: "Renamed" });
     const doc = await t.query(api.lib.getSchema, { schemaId });
-    expect(doc?.title).toBe("Renamed");
+    expect(doc !== null && doc.title).toBe("Renamed");
   });
 });

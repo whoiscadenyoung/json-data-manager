@@ -923,8 +923,8 @@ export function SchemaEditor({
       />
 
       <DatasetInfoCard
-        title={schemaMeta?.title ?? ""}
-        description={schemaMeta?.description ?? ""}
+        title={schemaMeta === undefined ? "" : schemaMeta.title}
+        description={schemaMeta === undefined ? "" : schemaMeta.description}
         canEdit={schemaMeta !== undefined || !schemaJson.trim()}
         onChange={handleMetaChange}
       />

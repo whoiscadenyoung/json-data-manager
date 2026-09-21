@@ -82,8 +82,11 @@ async function createImportSchema(t: TestCtx) {
 }
 
 /** An entries page's row names in page order — pagination assertions read these. */
-function pageNames(page: { page: Array<{ data: { name: string } }> }): string[] {
-  return page.page.map((entry) => entry.data.name);
+function pageNames(page: { page: Array<{ data: unknown }> }): string[] {
+  return page.page.map(
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- every fixture row is created with a `name` property.
+    (entry) => (entry.data as { name: string }).name,
+  );
 }
 
 async function storeRows(t: TestCtx, rows: unknown[]) {
@@ -125,7 +128,7 @@ async function createGeospatialSchema(
       title: "Geospatial Schema",
       type: "object",
     },
-    simplifyGeometry: options?.simplifyGeometry,
+    simplifyGeometry: options === undefined ? undefined : options.simplifyGeometry,
   });
 }
 
@@ -475,9 +478,9 @@ describe("json-cms component", () => {
         title: "Versioned Schema",
         type: "object",
       },
-      createLive = (t: TestCtx) =>
+      createLive = async (t: TestCtx) =>
         t.mutation(api.lib.createSchema, { schema: versionedSchema }),
-      freezeVersion = (t: TestCtx, sourceSchemaId: Id<"schemas">, versionLabel: string) =>
+      freezeVersion = async (t: TestCtx, sourceSchemaId: Id<"schemas">, versionLabel: string) =>
         t.mutation(api.lib.createSchema, {
           lineage: {
             frozenAt: Date.now(),
@@ -1880,9 +1883,7 @@ describe("json-cms component", () => {
         // Geometry lands exactly on the rows with valid coordinates.
         const hasGeometry = entry.geometryId !== undefined;
         expect(hasGeometry).toBe(i < 2);
-        if (hasGeometry) {
-          expect(entry.geometryType).toBe("Point");
-        }
+        expect(i < 2 ? entry.geometryType : undefined).toBe(i < 2 ? "Point" : undefined);
       }
 
       const geometries = await listAllGeometries(t, schemaId);
@@ -1933,16 +1934,20 @@ describe("json-cms component", () => {
       });
 
       const simplified = await listAllGeometries(t, simplifiedSchemaId),
-        exact = await listAllGeometries(t, exactSchemaId);
-      assertDefined(simplified[0]?.geometryJson);
-      assertDefined(exact[0]?.geometryJson);
+        exact = await listAllGeometries(t, exactSchemaId),
+        simplifiedRow = simplified[0],
+        exactRow = exact[0];
+      assertDefined(simplifiedRow);
+      assertDefined(exactRow);
+      assertDefined(simplifiedRow.geometryJson);
+      assertDefined(exactRow.geometryJson);
       // Rounded to 6dp on the simplifying dataset…
-      expect(JSON.parse(simplified[0].geometryJson)).toStrictEqual({
+      expect(JSON.parse(simplifiedRow.geometryJson)).toStrictEqual({
         coordinates: [0.123457, 0.987654],
         type: "Point",
       });
       // …and byte-for-byte on the dataset that didn't opt in.
-      expect(JSON.parse(exact[0].geometryJson)).toStrictEqual(geometry);
+      expect(JSON.parse(exactRow.geometryJson)).toStrictEqual(geometry);
     });
 
     it("simplifyGeometryBatchInternal rounds inline and blob-backed payloads, re-decides each row's storage form, and deletes the blob it replaced", async () => {
@@ -2144,7 +2149,10 @@ describe("json-cms component", () => {
 
       await t.mutation(internal.lib.insertEntriesChunkInternal, {
         dataArray: [
-          { data: { n: 3 }, resolvedGeometry: { geometryJson: JSON.stringify(point), type: "Point" } },
+          {
+            data: { n: 3 },
+            resolvedGeometry: { geometryJson: JSON.stringify(point), type: "Point" },
+          },
         ],
         schemaId,
       });
