@@ -36,8 +36,7 @@ export function coalesceGeometryTypes(types: GeometryType[]): CoalesceOutcome {
   if (families.size > 1) {
     return {
       ok: false,
-      // oxlint-disable-next-line unicorn/no-array-sort -- `.toSorted()` needs ES2023 lib; this repo targets ES2021, and the copy here is never reused so mutating it is harmless.
-      error: `Incompatible geometry types in the same dataset: ${[...distinct].sort().join(", ")}.`,
+      error: `Incompatible geometry types in the same dataset: ${[...distinct].toSorted().join(", ")}.`,
     };
   }
   const [family] = families;

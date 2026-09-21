@@ -151,8 +151,7 @@ function bestValidPair(
       columns
         .map((name) => ({ name, score: rankColumn(name, words) }))
         .filter((c) => c.score >= 0)
-        // oxlint-disable-next-line unicorn/no-array-sort -- `.toSorted()` needs ES2023 lib; this repo targets ES2021, and the array is already a fresh one from `.map()`/`.filter()`, so mutating it in place is harmless.
-        .sort((a, b) => a.score - b.score),
+        .toSorted((a, b) => a.score - b.score),
     latCandidates = rank(latWords),
     lonCandidates = rank(lonWords);
   for (const lat of latCandidates) {
