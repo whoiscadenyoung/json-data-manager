@@ -10,6 +10,23 @@ import { v } from "convex/values";
 // expected to take. `datasetBindings` is the first cut of the design's
 // binding registry: it points a json-cms dataset at one of these sources.
 export default defineSchema({
+  // The app-side user profile, one row per Better Auth user. `authId` is the
+  // Better Auth user id (the `user._id` inside the @convex-dev/better-auth
+  // component — Better Auth's user/session/account tables stay namespaced in
+  // the component and never appear in this schema). Rows are maintained
+  // exclusively by the component's user triggers in auth.ts; don't insert or
+  // delete them anywhere else. Email/name mirror the auth record so UI can
+  // render the signed-in user from one query.
+  users: defineTable({
+    authId: v.string(),
+    email: v.string(),
+    emailVerified: v.boolean(),
+    image: v.optional(v.string()),
+    name: v.optional(v.string()),
+  })
+    .index("by_authId", ["authId"])
+    .index("by_email", ["email"]),
+
   // One row per sync of a bound dataset — the activity log the dataset
   // page's History tab renders (per-sync granularity for now; the design's
   // commit-level feed upgrades this later). `ops` summarizes what changed,

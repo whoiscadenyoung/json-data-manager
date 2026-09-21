@@ -15,6 +15,9 @@
     /* These compiler options are required by Convex */
     "target": "ESNext",
     "lib": ["ES2021", "dom"],
+    // Better Auth reads deployment env vars (SITE_URL) via process.env in
+    // convex functions.
+    "types": ["node"],
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
     "isolatedModules": true,

@@ -11,12 +11,14 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DashboardRouteImport } from './routes/dashboard'
+import { Route as SigninRouteImport } from './routes/signin'
 import { Route as CollectionsIndexRouteImport } from './routes/collections/index'
 import { Route as DatasetsIndexRouteImport } from './routes/datasets/index'
 import { Route as DatasetsCreateRouteImport } from './routes/datasets/create'
 import { Route as GroupsGroupIdRouteImport } from './routes/groups/$groupId'
 import { Route as MapsIndexRouteImport } from './routes/maps/index'
 import { Route as MapsMapIdRouteImport } from './routes/maps/$mapId'
+import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as CollectionsCollectionIdIndexRouteImport } from './routes/collections/$collectionId/index'
 import { Route as DatasetsSchemaIdIndexRouteImport } from './routes/datasets/$schemaId/index'
 import { Route as DatasetsSchemaIdEntryIdRouteImport } from './routes/datasets/$schemaId/$entryId'
@@ -31,6 +33,11 @@ const IndexRoute = IndexRouteImport.update({
 const DashboardRoute = DashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SigninRoute = SigninRouteImport.update({
+  id: '/signin',
+  path: '/signin',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CollectionsIndexRoute = CollectionsIndexRouteImport.update({
@@ -61,6 +68,11 @@ const MapsIndexRoute = MapsIndexRouteImport.update({
 const MapsMapIdRoute = MapsMapIdRouteImport.update({
   id: '/maps/$mapId',
   path: '/maps/$mapId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
+  id: '/api/auth/$',
+  path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CollectionsCollectionIdIndexRoute =
@@ -94,12 +106,14 @@ const DatasetsSchemaIdEditRoute = DatasetsSchemaIdEditRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
+  '/signin': typeof SigninRoute
   '/datasets/create': typeof DatasetsCreateRoute
   '/groups/$groupId': typeof GroupsGroupIdRoute
   '/maps/$mapId': typeof MapsMapIdRoute
   '/collections/': typeof CollectionsIndexRoute
   '/datasets/': typeof DatasetsIndexRoute
   '/maps/': typeof MapsIndexRoute
+  '/api/auth/$': typeof ApiAuthSplatRoute
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
   '/datasets/$schemaId/bulk-upload': typeof DatasetsSchemaIdBulkUploadRoute
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
@@ -109,12 +123,14 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
+  '/signin': typeof SigninRoute
   '/datasets/create': typeof DatasetsCreateRoute
   '/groups/$groupId': typeof GroupsGroupIdRoute
   '/maps/$mapId': typeof MapsMapIdRoute
   '/collections': typeof CollectionsIndexRoute
   '/datasets': typeof DatasetsIndexRoute
   '/maps': typeof MapsIndexRoute
+  '/api/auth/$': typeof ApiAuthSplatRoute
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
   '/datasets/$schemaId/bulk-upload': typeof DatasetsSchemaIdBulkUploadRoute
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
@@ -125,12 +141,14 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
+  '/signin': typeof SigninRoute
   '/datasets/create': typeof DatasetsCreateRoute
   '/groups/$groupId': typeof GroupsGroupIdRoute
   '/maps/$mapId': typeof MapsMapIdRoute
   '/collections/': typeof CollectionsIndexRoute
   '/datasets/': typeof DatasetsIndexRoute
   '/maps/': typeof MapsIndexRoute
+  '/api/auth/$': typeof ApiAuthSplatRoute
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
   '/datasets/$schemaId/bulk-upload': typeof DatasetsSchemaIdBulkUploadRoute
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
@@ -142,12 +160,14 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/dashboard'
+    | '/signin'
     | '/datasets/create'
     | '/groups/$groupId'
     | '/maps/$mapId'
     | '/collections/'
     | '/datasets/'
     | '/maps/'
+    | '/api/auth/$'
     | '/datasets/$schemaId/$entryId'
     | '/datasets/$schemaId/bulk-upload'
     | '/datasets/$schemaId/edit'
@@ -157,12 +177,14 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/dashboard'
+    | '/signin'
     | '/datasets/create'
     | '/groups/$groupId'
     | '/maps/$mapId'
     | '/collections'
     | '/datasets'
     | '/maps'
+    | '/api/auth/$'
     | '/datasets/$schemaId/$entryId'
     | '/datasets/$schemaId/bulk-upload'
     | '/datasets/$schemaId/edit'
@@ -172,12 +194,14 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/dashboard'
+    | '/signin'
     | '/datasets/create'
     | '/groups/$groupId'
     | '/maps/$mapId'
     | '/collections/'
     | '/datasets/'
     | '/maps/'
+    | '/api/auth/$'
     | '/datasets/$schemaId/$entryId'
     | '/datasets/$schemaId/bulk-upload'
     | '/datasets/$schemaId/edit'
@@ -188,12 +212,14 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DashboardRoute: typeof DashboardRoute
+  SigninRoute: typeof SigninRoute
   DatasetsCreateRoute: typeof DatasetsCreateRoute
   GroupsGroupIdRoute: typeof GroupsGroupIdRoute
   MapsMapIdRoute: typeof MapsMapIdRoute
   CollectionsIndexRoute: typeof CollectionsIndexRoute
   DatasetsIndexRoute: typeof DatasetsIndexRoute
   MapsIndexRoute: typeof MapsIndexRoute
+  ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   DatasetsSchemaIdEntryIdRoute: typeof DatasetsSchemaIdEntryIdRoute
   DatasetsSchemaIdBulkUploadRoute: typeof DatasetsSchemaIdBulkUploadRoute
   DatasetsSchemaIdEditRoute: typeof DatasetsSchemaIdEditRoute
@@ -215,6 +241,13 @@ declare module '@tanstack/react-router' {
       path: '/dashboard'
       fullPath: '/dashboard'
       preLoaderRoute: typeof DashboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/signin': {
+      id: '/signin'
+      path: '/signin'
+      fullPath: '/signin'
+      preLoaderRoute: typeof SigninRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/collections/': {
@@ -259,6 +292,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MapsMapIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/auth/$': {
+      id: '/api/auth/$'
+      path: '/api/auth/$'
+      fullPath: '/api/auth/$'
+      preLoaderRoute: typeof ApiAuthSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/collections/$collectionId/': {
       id: '/collections/$collectionId/'
       path: '/collections/$collectionId'
@@ -300,12 +340,14 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DashboardRoute: DashboardRoute,
+  SigninRoute: SigninRoute,
   DatasetsCreateRoute: DatasetsCreateRoute,
   GroupsGroupIdRoute: GroupsGroupIdRoute,
   MapsMapIdRoute: MapsMapIdRoute,
   CollectionsIndexRoute: CollectionsIndexRoute,
   DatasetsIndexRoute: DatasetsIndexRoute,
   MapsIndexRoute: MapsIndexRoute,
+  ApiAuthSplatRoute: ApiAuthSplatRoute,
   DatasetsSchemaIdEntryIdRoute: DatasetsSchemaIdEntryIdRoute,
   DatasetsSchemaIdBulkUploadRoute: DatasetsSchemaIdBulkUploadRoute,
   DatasetsSchemaIdEditRoute: DatasetsSchemaIdEditRoute,

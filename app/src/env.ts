@@ -5,6 +5,9 @@ export const env = createEnv({
   client: {
     VITE_APP_TITLE: z.string().min(1).optional(),
     VITE_CONVEX_URL: z.url(),
+    // The deployment's .site counterpart — the auth server proxy forwards
+    // Better Auth requests here (src/lib/auth-server.ts).
+    VITE_CONVEX_SITE_URL: z.url(),
   },
 
   /**
