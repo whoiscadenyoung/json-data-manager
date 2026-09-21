@@ -2383,3 +2383,24 @@ describe("json-cms component", () => {
     });
   });
 });
+
+describe("createSchema actor stamping", () => {
+  it("stores the host's actor id as createdBy when one is passed", async () => {
+    const t = initConvexTest(),
+      schemaId = await t.mutation(api.lib.createSchema, {
+        actorId: "user-123",
+        schema: { properties: { n: { type: "number" } }, title: "Authored", type: "object" },
+      }),
+      doc = await t.query(api.lib.getSchema, { schemaId });
+
+    expect(doc !== null && doc.createdBy).toBe("user-123");
+  });
+
+  it("leaves createdBy absent when no actor is passed (host flows, pre-field rows)", async () => {
+    const t = initConvexTest(),
+      schemaId = await createTestSchema(t),
+      doc = await t.query(api.lib.getSchema, { schemaId });
+
+    expect(doc === null ? undefined : doc.createdBy).toBeUndefined();
+  });
+});

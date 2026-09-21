@@ -93,6 +93,14 @@ export default defineSchema({
     .index("by_collection", ["collectionId"]),
 
   schemas: defineTable({
+    // The host's identity string for whoever created this dataset — stamped
+    // by `createSchema` from its optional `actorId` argument (the exposeApi
+    // wrapper forwards its `auth` hook's return value there; host flows that
+    // call the component directly may pass their own, or omit it). Opaque to
+    // the component by design: the host decides what the string means (a
+    // user id, "system", …) and how to resolve it for display. Absent on
+    // datasets created before the field existed.
+    createdBy: v.optional(v.string()),
     // Optional — a dataset needs a title, but a description is fine to omit.
     description: v.optional(v.string()),
     // Absent/undefined means "standard" (a plain JSON-schema dataset). No

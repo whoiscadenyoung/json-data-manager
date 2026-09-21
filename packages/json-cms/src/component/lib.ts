@@ -432,6 +432,14 @@ function assertSimplifyGeometryApplies(
 
 export const createSchema = mutation({
   args: {
+    // The host's identity string for the actor creating this dataset —
+    // stored on the doc as `createdBy` (see the field's doc on the
+    // `schemas` table). The exposeApi wrapper fills this from its `auth`
+    // hook's return value; clients can't set it directly (the wrapper's
+    // validators are exact and it builds the component call itself).
+    // Optional so host flows that create datasets without an acting user
+    // (bound-sync re-creates, tag ingest) can omit it.
+    actorId: v.optional(v.string()),
     geometryType: v.optional(geometryTypeValidator),
     kind: v.optional(v.union(v.literal("standard"), v.literal("geospatial"))),
     schema: v.any(),
@@ -477,6 +485,7 @@ export const createSchema = mutation({
 
     const schemaId = await ctx.db.insert("schemas", {
       boundingBox: undefined,
+      createdBy: args.actorId,
       description: args.schema.description,
       entryCount: 0,
       featureCount: args.kind === "geospatial" ? 0 : undefined,

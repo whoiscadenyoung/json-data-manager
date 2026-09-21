@@ -1,6 +1,7 @@
 import { createClient, type AuthFunctions, type GenericCtx } from "@convex-dev/better-auth";
 import { convex } from "@convex-dev/better-auth/plugins";
 import { betterAuth } from "better-auth/minimal";
+import type { ExposeApiOperation } from "@caden/json-cms";
 import type { Auth } from "convex/server";
 import { ConvexError } from "convex/values";
 
@@ -141,11 +142,7 @@ async function appUserForAuthId(ctx: MutationCtx, authId: string) {
  */
 export async function auth(
   ctx: { auth: Auth },
-  operation?: {
-    type: "read" | "create" | "update" | "delete";
-    schemaId?: string;
-    entryId?: string;
-  },
+  operation?: ExposeApiOperation,
 ): Promise<string> {
   if (operation !== undefined && operation.type !== "read") {
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- every caller passes a full MutationCtx; the narrow `{ auth }` param keeps the read path callable from http actions.

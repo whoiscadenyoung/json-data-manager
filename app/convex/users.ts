@@ -1,4 +1,5 @@
 import { query } from "./_generated/server";
+import { v } from "convex/values";
 
 import { authComponent } from "./auth";
 
@@ -19,4 +20,19 @@ export const me = query({
       .withIndex("by_authId", (q) => q.eq("authId", authUser._id))
       .first();
   },
+});
+
+/**
+ * Resolve any Better Auth user id to its app profile — the display side of
+ * the component's `createdBy` stamping (dataset overview shows who created
+ * a dataset). null when the id has no mirror row (deleted user, or a
+ * system/foreign actor the host's auth hook invented).
+ */
+export const profileByAuthId = query({
+  args: { authId: v.string() },
+  handler: async (ctx, args) =>
+    ctx.db
+      .query("users")
+      .withIndex("by_authId", (q) => q.eq("authId", args.authId))
+      .first(),
 });

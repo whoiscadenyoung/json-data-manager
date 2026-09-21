@@ -22,8 +22,45 @@ export type GroupId = Id<"groups">;
 // See the example/convex/example.ts file for how to use this component.
 
 /**
+ * What the host's `auth` hook sees on every exposed call: the coarse CRUD
+ * `type`, the targeted entity's id when one is in play, and `fn` — the name
+ * of the exposed wrapper the caller invoked. `fn` is what makes per-function
+ * policy possible (e.g. allow `listSchemas` for everyone but gate
+ * `deleteSchema` behind a role) without re-deriving it from `type` + ids.
+ */
+export type ExposeApiOperation = {
+  /** The exposed wrapper's name — e.g. `"createSchema"`, `"listGeometries"`. */
+  fn: string;
+  schemaId?: string;
+  entryId?: string;
+  collectionId?: string;
+  groupId?: string;
+  mapId?: string;
+  type: "read" | "create" | "update" | "delete";
+};
+
+/** The options `exposeApi` takes. */
+export type ExposeApiOptions = {
+  /**
+   * It's very important to authenticate any functions that users will export.
+   * This function should return the authorized user's ID (an opaque string —
+   * stored as `createdBy` on datasets created through `createSchema`).
+   * For read operations, you may want to allow anonymous access. Throw to
+   * reject the call.
+   */
+  auth: (ctx: { auth: Auth }, operation: ExposeApiOperation) => Promise<string>;
+};
+
+/**
  * For re-exporting of an API accessible from React clients.
  * This exposes the full JSON CMS API with authentication.
+ *
+ * `auth` runs host-side inside every generated wrapper, before the component
+ * is invoked. It returns the acting identity as an opaque string — the
+ * component stores it as `createdBy` on datasets created through
+ * `createSchema`, so hosts can show authorship; what the string means (a
+ * user id, "system", …) is entirely the host's choice. Throw to reject the
+ * call.
  *
  * Example usage:
  * ```ts
@@ -76,6 +113,9 @@ export type GroupId = Id<"groups">;
  *   auth: async (ctx, operation) => {
  *     const userId = await getAuthUserId(ctx);
  *     if (!userId) throw new Error("Unauthorized");
+ *     if (operation.type === "delete" && !isModerator(userId)) {
+ *       throw new Error("Forbidden"); // per-function policy via operation.fn
+ *     }
  *     return userId;
  *   },
  * });
@@ -83,48 +123,7 @@ export type GroupId = Id<"groups">;
  */
 export function exposeApi(
   component: ComponentApi,
-  options: {
-    /**
-     * It's very important to authenticate any functions that users will export.
-     * This function should return the authorized user's ID.
-     * For read operations, you may want to allow anonymous access.
-     */
-    auth: (
-      ctx: { auth: Auth },
-      operation:
-        | {
-            type: "read";
-            schemaId?: string;
-            entryId?: string;
-            collectionId?: string;
-            groupId?: string;
-            mapId?: string;
-          }
-        | {
-            type: "create";
-            schemaId?: string;
-            collectionId?: string;
-            groupId?: string;
-            mapId?: string;
-          }
-        | {
-            type: "update";
-            schemaId?: string;
-            entryId?: string;
-            collectionId?: string;
-            groupId?: string;
-            mapId?: string;
-          }
-        | {
-            type: "delete";
-            schemaId?: string;
-            entryId?: string;
-            collectionId?: string;
-            groupId?: string;
-            mapId?: string;
-          },
-    ) => Promise<string>;
-  },
+  options: ExposeApiOptions,
 ) {
   // Note: id arguments are validated as `v.string()`, not `v.id(...)`.
   // These ids reference the component's own tables, which do not exist in
@@ -136,7 +135,7 @@ export function exposeApi(
     listSchemas: queryGeneric({
       args: {},
       handler: async (ctx) => {
-        await options.auth(ctx, { type: "read" });
+        await options.auth(ctx, { fn: "listSchemas", type: "read" });
         return ctx.runQuery(component.lib.listSchemas, {});
       },
     }),
@@ -145,14 +144,14 @@ export function exposeApi(
     listSchemaSummaries: queryGeneric({
       args: {},
       handler: async (ctx) => {
-        await options.auth(ctx, { type: "read" });
+        await options.auth(ctx, { fn: "listSchemaSummaries", type: "read" });
         return ctx.runQuery(component.lib.listSchemaSummaries, {});
       },
     }),
     getSchema: queryGeneric({
       args: { schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { schemaId: args.schemaId, type: "read" });
+        await options.auth(ctx, { fn: "getSchema", schemaId: args.schemaId, type: "read" });
         return ctx.runQuery(component.lib.getSchema, {
           schemaId: args.schemaId,
         });
@@ -180,8 +179,9 @@ export function exposeApi(
         // smuggle them in — see `assertDataWritable` in the component.
       },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "create" });
+        const actorId = await options.auth(ctx, { fn: "createSchema", type: "create" });
         return ctx.runMutation(component.lib.createSchema, {
+          actorId,
           geometryType: args.geometryType,
           kind: args.kind,
           schema: args.schema,
@@ -199,14 +199,14 @@ export function exposeApi(
         uiSchema: v.optional(v.any()),
       },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { schemaId: args.schemaId, type: "update" });
+        await options.auth(ctx, { fn: "updateSchema", schemaId: args.schemaId, type: "update" });
         return ctx.runMutation(component.lib.updateSchema, args);
       },
     }),
     deleteSchema: mutationGeneric({
       args: { schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { schemaId: args.schemaId, type: "delete" });
+        await options.auth(ctx, { fn: "deleteSchema", schemaId: args.schemaId, type: "delete" });
         return ctx.runMutation(component.lib.deleteSchema, args);
       },
     }),
@@ -215,14 +215,14 @@ export function exposeApi(
     listCollections: queryGeneric({
       args: {},
       handler: async (ctx) => {
-        await options.auth(ctx, { type: "read" });
+        await options.auth(ctx, { fn: "listCollections", type: "read" });
         return ctx.runQuery(component.lib.listCollections, {});
       },
     }),
     getCollection: queryGeneric({
       args: { collectionId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { collectionId: args.collectionId, type: "read" });
+        await options.auth(ctx, { fn: "getCollection", collectionId: args.collectionId, type: "read" });
         return ctx.runQuery(component.lib.getCollection, {
           collectionId: args.collectionId,
         });
@@ -231,7 +231,7 @@ export function exposeApi(
     createCollection: mutationGeneric({
       args: { description: v.optional(v.string()), name: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "create" });
+        await options.auth(ctx, { fn: "createCollection", type: "create" });
         return ctx.runMutation(component.lib.createCollection, args);
       },
     }),
@@ -242,14 +242,14 @@ export function exposeApi(
         name: v.optional(v.string()),
       },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { collectionId: args.collectionId, type: "update" });
+        await options.auth(ctx, { fn: "updateCollection", collectionId: args.collectionId, type: "update" });
         return ctx.runMutation(component.lib.updateCollection, args);
       },
     }),
     deleteCollection: mutationGeneric({
       args: { collectionId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { collectionId: args.collectionId, type: "delete" });
+        await options.auth(ctx, { fn: "deleteCollection", collectionId: args.collectionId, type: "delete" });
         return ctx.runMutation(component.lib.deleteCollection, args);
       },
     }),
@@ -260,6 +260,7 @@ export function exposeApi(
       handler: async (ctx, args) => {
         await options.auth(ctx, {
           collectionId: args.collectionId,
+          fn: "listGroups",
           type: "read",
         });
         return ctx.runQuery(component.lib.listGroups, {
@@ -270,7 +271,7 @@ export function exposeApi(
     getGroup: queryGeneric({
       args: { groupId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { groupId: args.groupId, type: "read" });
+        await options.auth(ctx, { fn: "getGroup", groupId: args.groupId, type: "read" });
         return ctx.runQuery(component.lib.getGroup, { groupId: args.groupId });
       },
     }),
@@ -281,7 +282,7 @@ export function exposeApi(
         name: v.string(),
       },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { collectionId: args.collectionId, type: "create" });
+        await options.auth(ctx, { fn: "createGroup", collectionId: args.collectionId, type: "create" });
         return ctx.runMutation(component.lib.createGroup, args);
       },
     }),
@@ -292,14 +293,14 @@ export function exposeApi(
         name: v.optional(v.string()),
       },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { groupId: args.groupId, type: "update" });
+        await options.auth(ctx, { fn: "updateGroup", groupId: args.groupId, type: "update" });
         return ctx.runMutation(component.lib.updateGroup, args);
       },
     }),
     deleteGroup: mutationGeneric({
       args: { groupId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { groupId: args.groupId, type: "delete" });
+        await options.auth(ctx, { fn: "deleteGroup", groupId: args.groupId, type: "delete" });
         return ctx.runMutation(component.lib.deleteGroup, args);
       },
     }),
@@ -311,7 +312,7 @@ export function exposeApi(
     listSchemasByCollection: queryGeneric({
       args: { collectionId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { collectionId: args.collectionId, type: "read" });
+        await options.auth(ctx, { fn: "listSchemasByCollection", collectionId: args.collectionId, type: "read" });
         return ctx.runQuery(component.lib.listSchemasByCollection, {
           collectionId: args.collectionId,
         });
@@ -331,7 +332,7 @@ export function exposeApi(
     listEntriesByCollection: queryGeneric({
       args: { collectionId: v.string(), limit: v.optional(v.number()) },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { collectionId: args.collectionId, type: "read" });
+        await options.auth(ctx, { fn: "listEntriesByCollection", collectionId: args.collectionId, type: "read" });
         return ctx.runQuery(component.lib.listEntriesByCollection, {
           collectionId: args.collectionId,
           limit: args.limit,
@@ -343,7 +344,7 @@ export function exposeApi(
     listSchemaCollections: queryGeneric({
       args: {},
       handler: async (ctx) => {
-        await options.auth(ctx, { type: "read" });
+        await options.auth(ctx, { fn: "listSchemaCollections", type: "read" });
         return ctx.runQuery(component.lib.listSchemaCollections, {});
       },
     }),
@@ -351,7 +352,7 @@ export function exposeApi(
     listCollectionsBySchema: queryGeneric({
       args: { schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { schemaId: args.schemaId, type: "read" });
+        await options.auth(ctx, { fn: "listCollectionsBySchema", schemaId: args.schemaId, type: "read" });
         return ctx.runQuery(component.lib.listCollectionsBySchema, {
           schemaId: args.schemaId,
         });
@@ -361,7 +362,7 @@ export function exposeApi(
     addSchemaToCollection: mutationGeneric({
       args: { collectionId: v.string(), schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { schemaId: args.schemaId, type: "update" });
+        await options.auth(ctx, { fn: "addSchemaToCollection", schemaId: args.schemaId, type: "update" });
         return ctx.runMutation(component.lib.addSchemaToCollection, args);
       },
     }),
@@ -370,14 +371,14 @@ export function exposeApi(
     removeSchemaFromCollection: mutationGeneric({
       args: { collectionId: v.string(), schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { schemaId: args.schemaId, type: "update" });
+        await options.auth(ctx, { fn: "removeSchemaFromCollection", schemaId: args.schemaId, type: "update" });
         return ctx.runMutation(component.lib.removeSchemaFromCollection, args);
       },
     }),
     setSchemaGroup: mutationGeneric({
       args: { groupId: v.union(v.string(), v.null()), schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { schemaId: args.schemaId, type: "update" });
+        await options.auth(ctx, { fn: "setSchemaGroup", schemaId: args.schemaId, type: "update" });
         return ctx.runMutation(component.lib.setSchemaGroup, args);
       },
     }),
@@ -387,7 +388,7 @@ export function exposeApi(
     setGroupCollection: mutationGeneric({
       args: { collectionId: v.union(v.string(), v.null()), groupId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { groupId: args.groupId, type: "update" });
+        await options.auth(ctx, { fn: "setGroupCollection", groupId: args.groupId, type: "update" });
         return ctx.runMutation(component.lib.setGroupCollection, args);
       },
     }),
@@ -399,21 +400,21 @@ export function exposeApi(
     listMaps: queryGeneric({
       args: {},
       handler: async (ctx) => {
-        await options.auth(ctx, { type: "read" });
+        await options.auth(ctx, { fn: "listMaps", type: "read" });
         return ctx.runQuery(component.lib.listMaps, {});
       },
     }),
     getMap: queryGeneric({
       args: { mapId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { mapId: args.mapId, type: "read" });
+        await options.auth(ctx, { fn: "getMap", mapId: args.mapId, type: "read" });
         return ctx.runQuery(component.lib.getMap, { mapId: args.mapId });
       },
     }),
     createMap: mutationGeneric({
       args: { description: v.optional(v.string()), name: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "create" });
+        await options.auth(ctx, { fn: "createMap", type: "create" });
         return ctx.runMutation(component.lib.createMap, args);
       },
     }),
@@ -424,14 +425,14 @@ export function exposeApi(
         name: v.optional(v.string()),
       },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { mapId: args.mapId, type: "update" });
+        await options.auth(ctx, { fn: "updateMap", mapId: args.mapId, type: "update" });
         return ctx.runMutation(component.lib.updateMap, args);
       },
     }),
     deleteMap: mutationGeneric({
       args: { mapId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { mapId: args.mapId, type: "delete" });
+        await options.auth(ctx, { fn: "deleteMap", mapId: args.mapId, type: "delete" });
         return ctx.runMutation(component.lib.deleteMap, args);
       },
     }),
@@ -440,7 +441,7 @@ export function exposeApi(
     listMapLayers: queryGeneric({
       args: { mapId: v.optional(v.string()) },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { mapId: args.mapId, type: "read" });
+        await options.auth(ctx, { fn: "listMapLayers", mapId: args.mapId, type: "read" });
         return ctx.runQuery(component.lib.listMapLayers, { mapId: args.mapId });
       },
     }),
@@ -452,21 +453,21 @@ export function exposeApi(
         targetType: v.union(v.literal("collection"), v.literal("group"), v.literal("dataset")),
       },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { mapId: args.mapId, type: "update" });
+        await options.auth(ctx, { fn: "addMapLayer", mapId: args.mapId, type: "update" });
         return ctx.runMutation(component.lib.addMapLayer, args);
       },
     }),
     removeMapLayer: mutationGeneric({
       args: { layerId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "update" });
+        await options.auth(ctx, { fn: "removeMapLayer", type: "update" });
         return ctx.runMutation(component.lib.removeMapLayer, args);
       },
     }),
     setMapLayerVisibility: mutationGeneric({
       args: { layerId: v.string(), visible: v.boolean() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "update" });
+        await options.auth(ctx, { fn: "setMapLayerVisibility", type: "update" });
         return ctx.runMutation(component.lib.setMapLayerVisibility, args);
       },
     }),
@@ -474,7 +475,7 @@ export function exposeApi(
     moveMapLayer: mutationGeneric({
       args: { direction: v.union(v.literal("up"), v.literal("down")), layerId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "update" });
+        await options.auth(ctx, { fn: "moveMapLayer", type: "update" });
         return ctx.runMutation(component.lib.moveMapLayer, args);
       },
     }),
@@ -484,7 +485,7 @@ export function exposeApi(
     listMapLayerOverrides: queryGeneric({
       args: { mapId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { mapId: args.mapId, type: "read" });
+        await options.auth(ctx, { fn: "listMapLayerOverrides", mapId: args.mapId, type: "read" });
         return ctx.runQuery(component.lib.listMapLayerOverridesForMap, {
           mapId: args.mapId,
         });
@@ -499,7 +500,7 @@ export function exposeApi(
         visible: v.optional(v.boolean()),
       },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "update" });
+        await options.auth(ctx, { fn: "setMapLayerOverride", type: "update" });
         return ctx.runMutation(component.lib.setMapLayerOverride, args);
       },
     }),
@@ -508,7 +509,7 @@ export function exposeApi(
     listEntries: queryGeneric({
       args: { schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { schemaId: args.schemaId, type: "read" });
+        await options.auth(ctx, { fn: "listEntries", schemaId: args.schemaId, type: "read" });
         return ctx.runQuery(component.lib.listEntries, {
           schemaId: args.schemaId,
         });
@@ -521,7 +522,7 @@ export function exposeApi(
     listEntriesPage: queryGeneric({
       args: { paginationOpts: paginationOptsValidator, schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { schemaId: args.schemaId, type: "read" });
+        await options.auth(ctx, { fn: "listEntriesPage", schemaId: args.schemaId, type: "read" });
         return ctx.runQuery(component.lib.listEntriesPage, {
           paginationOpts: args.paginationOpts,
           schemaId: args.schemaId,
@@ -534,7 +535,7 @@ export function exposeApi(
     listEntriesForIds: queryGeneric({
       args: { entryIds: v.array(v.string()) },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "read" });
+        await options.auth(ctx, { fn: "listEntriesForIds", type: "read" });
         return ctx.runQuery(component.lib.listEntriesForIds, {
           entryIds: args.entryIds,
         });
@@ -543,7 +544,7 @@ export function exposeApi(
     getEntry: queryGeneric({
       args: { entryId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { entryId: args.entryId, type: "read" });
+        await options.auth(ctx, { fn: "getEntry", entryId: args.entryId, type: "read" });
         return ctx.runQuery(component.lib.getEntry, {
           entryId: args.entryId,
         });
@@ -555,7 +556,7 @@ export function exposeApi(
     listEntriesForSchemas: queryGeneric({
       args: { limit: v.optional(v.number()), schemaIds: v.array(v.string()) },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "read" });
+        await options.auth(ctx, { fn: "listEntriesForSchemas", type: "read" });
         return ctx.runQuery(component.lib.listEntriesForSchemas, {
           limit: args.limit,
           schemaIds: args.schemaIds,
@@ -567,7 +568,7 @@ export function exposeApi(
     listReferencingEntries: queryGeneric({
       args: { entryId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { entryId: args.entryId, type: "read" });
+        await options.auth(ctx, { fn: "listReferencingEntries", entryId: args.entryId, type: "read" });
         return ctx.runQuery(component.lib.listReferencingEntries, {
           entryId: args.entryId,
         });
@@ -582,7 +583,7 @@ export function exposeApi(
     listGeometries: queryGeneric({
       args: { paginationOpts: paginationOptsValidator, schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { schemaId: args.schemaId, type: "read" });
+        await options.auth(ctx, { fn: "listGeometries", schemaId: args.schemaId, type: "read" });
         return ctx.runQuery(component.lib.listGeometries, {
           paginationOpts: args.paginationOpts,
           schemaId: args.schemaId,
@@ -594,7 +595,7 @@ export function exposeApi(
     getEntryGeometry: queryGeneric({
       args: { entryId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { entryId: args.entryId, type: "read" });
+        await options.auth(ctx, { fn: "getEntryGeometry", entryId: args.entryId, type: "read" });
         return ctx.runQuery(component.lib.getEntryGeometry, {
           entryId: args.entryId,
         });
@@ -609,7 +610,7 @@ export function exposeApi(
     getMapTileArchiveMeta: queryGeneric({
       args: { schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { schemaId: args.schemaId, type: "read" });
+        await options.auth(ctx, { fn: "getMapTileArchiveMeta", schemaId: args.schemaId, type: "read" });
         return ctx.runQuery(component.lib.getMapTileArchiveMeta, {
           schemaId: args.schemaId,
         });
@@ -628,7 +629,7 @@ export function exposeApi(
     createEntry: mutationGeneric({
       args: { data: v.any(), geometry: v.optional(v.string()), schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { schemaId: args.schemaId, type: "create" });
+        await options.auth(ctx, { fn: "createEntry", schemaId: args.schemaId, type: "create" });
         return ctx.runMutation(component.lib.createEntry, args);
       },
     }),
@@ -638,7 +639,7 @@ export function exposeApi(
         schemaId: v.string(),
       },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { schemaId: args.schemaId, type: "create" });
+        await options.auth(ctx, { fn: "createEntriesBulk", schemaId: args.schemaId, type: "create" });
         return ctx.runMutation(component.lib.createEntriesBulk, args);
       },
     }),
@@ -649,21 +650,21 @@ export function exposeApi(
         geometry: v.optional(v.union(v.string(), v.null())),
       },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { entryId: args.entryId, type: "update" });
+        await options.auth(ctx, { fn: "updateEntry", entryId: args.entryId, type: "update" });
         return ctx.runMutation(component.lib.updateEntry, args);
       },
     }),
     deleteEntry: mutationGeneric({
       args: { entryId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { entryId: args.entryId, type: "delete" });
+        await options.auth(ctx, { fn: "deleteEntry", entryId: args.entryId, type: "delete" });
         return ctx.runMutation(component.lib.deleteEntry, args);
       },
     }),
     deleteEntriesBySchema: mutationGeneric({
       args: { schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { schemaId: args.schemaId, type: "delete" });
+        await options.auth(ctx, { fn: "deleteEntriesBySchema", schemaId: args.schemaId, type: "delete" });
         return ctx.runMutation(component.lib.deleteEntriesBySchema, args);
       },
     }),
@@ -672,7 +673,7 @@ export function exposeApi(
     generateImportUploadUrl: mutationGeneric({
       args: {},
       handler: async (ctx) => {
-        await options.auth(ctx, { type: "create" });
+        await options.auth(ctx, { fn: "generateImportUploadUrl", type: "create" });
         return ctx.runMutation(component.lib.generateUploadUrl, {});
       },
     }),
@@ -693,7 +694,7 @@ export function exposeApi(
         total: v.number(),
       },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { schemaId: args.schemaId, type: "create" });
+        await options.auth(ctx, { fn: "startImport", schemaId: args.schemaId, type: "create" });
         return ctx.runMutation(component.lib.startImport, {
           sourceFile: args.sourceFile,
           schemaId: args.schemaId,
@@ -705,7 +706,7 @@ export function exposeApi(
     getImportStatus: queryGeneric({
       args: { importId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { type: "read" });
+        await options.auth(ctx, { fn: "getImportStatus", type: "read" });
         return ctx.runQuery(component.lib.getImportStatus, {
           importId: args.importId,
         });
@@ -718,7 +719,7 @@ export function exposeApi(
     getSourceFileUrl: queryGeneric({
       args: { schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { schemaId: args.schemaId, type: "read" });
+        await options.auth(ctx, { fn: "getSourceFileUrl", schemaId: args.schemaId, type: "read" });
         return ctx.runQuery(component.lib.getSourceFileUrl, { schemaId: args.schemaId });
       },
     }),
@@ -730,7 +731,7 @@ export function exposeApi(
     startSimplification: mutationGeneric({
       args: { schemaId: v.string(), total: v.number() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { schemaId: args.schemaId, type: "update" });
+        await options.auth(ctx, { fn: "startSimplification", schemaId: args.schemaId, type: "update" });
         return ctx.runMutation(component.lib.startSimplification, {
           schemaId: args.schemaId,
           total: args.total,
@@ -750,7 +751,7 @@ export function exposeApi(
         total: v.number(),
       },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { schemaId: args.schemaId, type: "update" });
+        await options.auth(ctx, { fn: "startGeospatialConversion", schemaId: args.schemaId, type: "update" });
         return ctx.runMutation(component.lib.startGeospatialConversion, {
           latField: args.latField,
           lonField: args.lonField,
