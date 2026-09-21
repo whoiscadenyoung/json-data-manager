@@ -1,6 +1,6 @@
 ---
 name: derived-datasets-brainstorm
-description: Tableau-like transformation design (specs → virtual derived datasets) captured in docs/derived-datasets-design.md + ADR 0005; Projects layer deferred, references-not-containment is the binding rule
+description: Transformation design (specs → virtual derived datasets) + catalog lifecycle (projects virtual / catalog materialized) — docs/derived-datasets-design.md, docs/catalog-lifecycle-design.md, ADRs 0005 and 0008
 metadata:
   type: project
 ---
@@ -21,14 +21,28 @@ and a client-side key map). Primitives: lookup (many-to-one) then rollup
 (group-by); composition forms a DAG; match-rate diagnostics in the preview
 UI are a first-class requirement.
 
-Projects layer: DEFERRED (design §9). The user's multi-consumer concern is
-solved by derived datasets, not Projects. The binding rule that keeps a
-future Projects layer cheap is **references-not-containment**: derived
-datasets are global catalog citizens, never nested/owned. Triggers to
-revisit: real multi-user with a permission story, or map sprawl beyond
-lightweight grouping. Open question for the user: multi-user future = shared
-deployment or isolated audiences?
+**2026-09-21 update — catalog lifecycle designed** (`docs/catalog-lifecycle-design.md`,
+ADR 0008, superseding ADR 0005's Projects deferral): **projects are the
+virtual working layer; the catalog is materialized; publish is the
+crossing.** Publish materializes + freezes (imports → version datasets;
+derived specs executed once into version datasets with lineage) — the
+earlier "register the virtual spec" lean is dead, virtual artifacts would
+have to penetrate the whole perf stack (archives/extents/pagination). Catalog
+append-only, republish = new immutable version, consumers pin/float with
+in-app notify + diff (`tagDeltas` machinery) + sync (re-run + re-freeze) +
+revert (repin) — generalizes the shipped frozen-version machinery. Auto-
+publish dependencies; exposure decoupled (a materialized derived dataset is
+self-contained, sources publish only if chosen — answers the restaurant-
+join scenario). Bundle rule: one project = one publishable bundle
+(collection + maps + datasets; SMART per-year projects). New spec field
+`geometrySource` (derived rows can take geometry from a joined side).
+Mapping: datasets atomic+versioned; collections = publish bundles; groups
+demoted to display folders, no schema rework. Durability: drafts are
+server-side documents — autosave specs/maps early, publishes checkpoint
+like `syncRuns`. **Auth gating (Better Auth follow-up) gates the
+projects/sharing stage only**; staging still engine-first (ADR 0005 §10,
+then materialized publish, then version UX, then projects).
 
 Related: [[bound-datasets-poc]] (frozen tag versions pin lineage; live bound
 datasets compute live), [[break-initiatives-into-ordered-agent-issues]]
-(candidate issue sequence is design §10).
+(candidate issue sequence is design §10 / lifecycle §8).

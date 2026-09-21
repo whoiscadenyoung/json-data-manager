@@ -7,6 +7,14 @@ data — without ever altering an imported dataset. Captured 2026-09-21 from
 the brainstorm; **design only, nothing implemented yet**. The Projects-layer
 question raised in the same discussion is assessed and deferred in §9.
 
+> **Superseded 2026-09-21 (in part)** by
+> [`catalog-lifecycle-design.md`](./catalog-lifecycle-design.md) and
+> [ADR 0008](./decisions/0008-catalog-lifecycle.md): §9's Projects deferral
+> is reversed by the catalog-lifecycle design (projects = the virtual
+> working layer; publish materializes), and §11's materialization question
+> is answered (publish materializes and freezes). The engine and execution
+> design in §§2–8 stands; implementation remains staged per lifecycle §8.
+
 ## 1. Context and goal
 
 The app's datasets are imported once and then consumed by maps, tables, and
@@ -157,6 +165,14 @@ Derived specs over bound data follow `docs/bound-datasets-design.md`:
 
 ## 9. The Projects layer — assessed, deferred
 
+> **Superseded 2026-09-21** by
+> [`catalog-lifecycle-design.md`](./catalog-lifecycle-design.md) / ADR 0008:
+> Projects are now designed (the virtual working layer; publish
+> materializes into the catalog). The references-not-containment rule below
+> survives inside the working layer, and the *implementation* deferral still
+> holds — projects land last, behind auth gating (lifecycle §8). The
+> original assessment is kept for the record.
+
 The same discussion raised a **Projects** concept: a layer under which maps
 fall, where consumers could "import" catalog datasets, define derived views,
 and organize maps/exports — making imports a catalog view.
@@ -218,6 +234,10 @@ If/when approved, this breaks into ordered implementation issues:
   fields (popups)?
 - Popup executor: key→entryId index table vs. client-side key map (§5).
 - Appetite for materialization ("flatten this derived view into a real
-  dataset") — strictly virtual for now.
-- Multi-user future: shared deployment or isolated audiences? Decides how
-  soon the Projects question comes back.
+  dataset") — **answered 2026-09-21**: publish materializes and freezes;
+  see [`catalog-lifecycle-design.md`](./catalog-lifecycle-design.md) /
+  ADR 0008.
+- Multi-user future: shared deployment or isolated audiences? **Partially
+  answered**: the lifecycle is designed (lifecycle doc + ADR 0008) with
+  auth gating as the prerequisite; sharing granularity stays open until
+  auth lands.
