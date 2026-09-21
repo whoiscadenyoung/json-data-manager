@@ -138,7 +138,9 @@ export function TableColumnSortOptions<TData extends RowData, TValue>({
             )}
           </div>
           <Tooltip>
-            <TooltipTrigger render={<CircleHelp className="size-3.5 cursor-help" />}></TooltipTrigger>
+            <TooltipTrigger
+              render={<CircleHelp className="size-3.5 cursor-help" />}
+            ></TooltipTrigger>
             <TooltipContent side="right">
               TIP: Hold &apos;shift&apos; key to enable multi sort
             </TooltipContent>

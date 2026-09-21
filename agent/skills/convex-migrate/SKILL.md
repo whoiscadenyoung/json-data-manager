@@ -3,6 +3,7 @@ name: convex-migrate
 description: Migrate schema + backfill data on a deployed Convex app using
   @convex-dev/migrations.
 ---
+
 <!-- GENERATED from convex-agents content/capabilities/migrate.json — do not edit by hand. -->
 
 # Migrate the schema / data on a live app

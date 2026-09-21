@@ -3,6 +3,7 @@ name: convex-optimize
 description: "Audit and optimize an existing Convex app: security, scale,
   upgrades, observability."
 ---
+
 <!-- GENERATED from convex-agents content/capabilities/optimize.json — do not edit by hand. -->
 
 # Audit and optimize an existing Convex app

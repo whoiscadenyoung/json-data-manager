@@ -23,7 +23,7 @@ export function zxyToTileId(z: number, x: number, y: number): number {
   if (z === 0) {
     return 0;
   }
-  let acc = (2 ** z * (2 ** z) - 1) / 3;
+  let acc = (2 ** z * 2 ** z - 1) / 3;
   let n = z - 1;
   let tx = x;
   let ty = y;
@@ -44,7 +44,7 @@ export function tileIdToZxy(id: number): [number, number, number] {
     throw new Error("tile ID exceeds MAX_SAFE_INTEGER");
   }
   const z = Math.floor(tileIdToZ(id) / 2);
-  const base = (2 ** z * (2 ** z) - 1) / 3;
+  const base = (2 ** z * 2 ** z - 1) / 3;
   let t = id - base;
   let x = 0;
   let y = 0;

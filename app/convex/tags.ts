@@ -1,16 +1,9 @@
 import { ConvexError, v } from "convex/values";
 
 import { components, internal } from "./_generated/api";
-import type { ActionCtx, QueryCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
-import {
-  action,
-  internalMutation,
-  internalQuery,
-  mutation,
-  query,
-} from "./_generated/server";
-
+import type { ActionCtx, QueryCtx } from "./_generated/server";
+import { action, internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { chunkByJsonBytes, getSource, SOURCE_KEY } from "./sources";
 
 /**
@@ -81,9 +74,7 @@ function parseSnapshotRows(text: string): SnapshotRow[] {
     }
     const row = asProjectionRow(parsed);
     if (row === null) {
-      throw new ConvexError(
-        `Snapshot line ${index + 1} is not a {data, geometry} projection row.`,
-      );
+      throw new ConvexError(`Snapshot line ${index + 1} is not a {data, geometry} projection row.`);
     }
     rows.push(row);
   }
@@ -471,9 +462,7 @@ async function waitForImport(
       throw new ConvexError("Import status doc disappeared.");
     }
     if (status.status === "failed") {
-      throw new ConvexError(
-        status.error === undefined ? "Snapshot import failed." : status.error,
-      );
+      throw new ConvexError(status.error === undefined ? "Snapshot import failed." : status.error);
     }
     if (status.status === "completed") {
       // oxlint-disable-next-line no-await-in-loop
@@ -570,10 +559,12 @@ function diffVersionRows(
     if (beforeData === undefined) {
       ops.push({
         entryKey: key,
-        fields: [...names].filter((name) => afterData[name] !== undefined).map((name) => ({
-          after: afterData[name],
-          name,
-        })),
+        fields: [...names]
+          .filter((name) => afterData[name] !== undefined)
+          .map((name) => ({
+            after: afterData[name],
+            name,
+          })),
         geometryChanged: true,
         op: "add",
       });
@@ -657,7 +648,9 @@ export const ingestSnapshots = action({
   args: {},
   // Explicit return type — same same-module `internal.tags.*` circularity
   // as createRestaurantSnapshot above.
-  handler: async (ctx): Promise<{
+  handler: async (
+    ctx,
+  ): Promise<{
     failed: Array<{ error: string; label: string; ref: string }>;
     ingested: Array<{ entryCount: number; label: string; ref: string; schemaId: string }>;
   }> => {
@@ -741,8 +734,7 @@ export const recordTagDelta = internalMutation({
     const versions = await ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
       sourceSchemaId: args.sourceSchemaId,
     });
-    const targetFrozenAt =
-      target.lineage !== undefined ? target.lineage.frozenAt : 0;
+    const targetFrozenAt = target.lineage !== undefined ? target.lineage.frozenAt : 0;
     const candidates = versions
       .filter(
         (version) =>
@@ -792,7 +784,9 @@ export const enforceRetention = internalMutation({
       binding !== null && binding.keepVersions !== undefined
         ? binding.keepVersions
         : DEFAULT_KEEP_VERSIONS;
-    const pinned = new Set(binding !== null && binding.pinnedRefs !== undefined ? binding.pinnedRefs : []);
+    const pinned = new Set(
+      binding !== null && binding.pinnedRefs !== undefined ? binding.pinnedRefs : [],
+    );
     const versions = await ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
       sourceSchemaId: args.sourceSchemaId,
     });
@@ -901,9 +895,7 @@ export const retentionSettings = query({
 export const versionEntries = query({
   args: { schemaId: v.string() },
   handler: async (ctx, args) => versionRows(ctx, args.schemaId),
-  returns: v.array(
-    v.object({ data: v.record(v.string(), v.any()), key: v.string() }),
-  ),
+  returns: v.array(v.object({ data: v.record(v.string(), v.any()), key: v.string() })),
 });
 
 /**

@@ -4,12 +4,13 @@
  * correctness, and id-only property projection.
  */
 import { describe, expect, test } from "bun:test";
+
 import { VectorTile } from "@mapbox/vector-tile";
 import { PbfReader } from "pbf";
 import { PMTiles, tileIdToZxy, zxyToTileId, type Source } from "pmtiles";
 
-import { buildGeometryArchive } from "./index";
 import { zxyToTileId as myZxyToTileId, tileIdToZxy as myTileIdToZxy } from "./hilbert";
+import { buildGeometryArchive } from "./index";
 
 function memorySource(bytes: Uint8Array): Source {
   return {
@@ -20,10 +21,7 @@ function memorySource(bytes: Uint8Array): Source {
   };
 }
 
-function sfFeature(
-  id: string,
-  geometry: { type: string; coordinates: unknown },
-): GeoJSON.Feature {
+function sfFeature(id: string, geometry: { type: string; coordinates: unknown }): GeoJSON.Feature {
   return {
     type: "Feature",
     _id: id,
@@ -34,14 +32,24 @@ function sfFeature(
 
 const SF_FEATURES: GeoJSON.Feature[] = [
   sfFeature("aaa", { type: "Point", coordinates: [-122.4, 37.8] }),
-  sfFeature("bbb", { type: "LineString", coordinates: [[-122.5, 37.7], [-122.3, 37.9]] }),
-  sfFeature(
-    "ccc",
-    {
-      type: "Polygon",
-      coordinates: [[[-122.45, 37.75], [-122.35, 37.75], [-122.35, 37.85], [-122.45, 37.75]]],
-    },
-  ),
+  sfFeature("bbb", {
+    type: "LineString",
+    coordinates: [
+      [-122.5, 37.7],
+      [-122.3, 37.9],
+    ],
+  }),
+  sfFeature("ccc", {
+    type: "Polygon",
+    coordinates: [
+      [
+        [-122.45, 37.75],
+        [-122.35, 37.75],
+        [-122.35, 37.85],
+        [-122.45, 37.75],
+      ],
+    ],
+  }),
 ];
 
 describe("hilbert tile id codec", () => {
@@ -153,7 +161,12 @@ describe("buildGeometryArchive roundtrip through the reference reader", () => {
     // Four z1 tiles each containing one point at the same relative position
     // produce byte-identical MVT; the Hilbert run 1..4 merges into one entry.
     const features: GeoJSON.Feature[] = [];
-    for (const [tileX, tileY] of [[0, 0], [0, 1], [1, 1], [1, 0]] as const) {
+    for (const [tileX, tileY] of [
+      [0, 0],
+      [0, 1],
+      [1, 1],
+      [1, 0],
+    ] as const) {
       const lon = -180 + (tileX * 360) / 2 + 90 / 2;
       // Relative y 0.5 within each tile: mercator 0.25 / 0.75 → lat ±66.51.
       const lat = tileY === 0 ? 66.51326037225083 : -66.51326037225083;

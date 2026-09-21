@@ -7,7 +7,7 @@
 A geospatial JSON data manager: define datasets (JSON Schema), import rows
 (JSON/CSV/XLSX/GeoJSON), browse and edit them in tables and on maps, organize
 them into collections/groups, and compose saved map views. It also renders
-data owned by a *different* Convex app as read-only "bound datasets" with
+data owned by a _different_ Convex app as read-only "bound datasets" with
 git-style commits and tag versions.
 
 The core data layer is not in the app — it is a reusable Convex component,
@@ -20,13 +20,13 @@ bound-datasets sync layer on top.
 
 Bun workspace (`bun.lock` at the root; use `bun`, not node/npm):
 
-| Path | What it is |
-| --- | --- |
-| `app/` | The application: TanStack Start (React 19) frontend in `app/src`, Convex host functions in `app/convex`. |
-| `packages/json-cms/` | `@caden/json-cms` — the CMS Convex component (`src/component`), a typed client facade with `exposeApi` (`src/client`), React hooks + prop-driven UI (`src/react`), backend-free shared geojson/reference code (`src/shared`). Keeps its own `example/` app as dev/codegen host. |
-| `packages/geometry-archive/` | `@caden/geometry-archive` — PMTiles archive writer + tile logic used by the map tile pipeline (issue #58). |
-| `packages/data-export/` | `@caden/data-export` — durable snapshot-export component. **Built but not wired in**: no consumer, not registered in `app/convex/convex.config.ts`. Decision pending: wire in as the backup story or archive it. |
-| `docs/` | Design docs, decision records, and project memory (see the map at the end). |
+| Path                         | What it is                                                                                                                                                                                                                                                                      |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app/`                       | The application: TanStack Start (React 19) frontend in `app/src`, Convex host functions in `app/convex`.                                                                                                                                                                        |
+| `packages/json-cms/`         | `@caden/json-cms` — the CMS Convex component (`src/component`), a typed client facade with `exposeApi` (`src/client`), React hooks + prop-driven UI (`src/react`), backend-free shared geojson/reference code (`src/shared`). Keeps its own `example/` app as dev/codegen host. |
+| `packages/geometry-archive/` | `@caden/geometry-archive` — PMTiles archive writer + tile logic used by the map tile pipeline (issue #58).                                                                                                                                                                      |
+| `packages/data-export/`      | `@caden/data-export` — durable snapshot-export component. **Built but not wired in**: no consumer, not registered in `app/convex/convex.config.ts`. Decision pending: wire in as the backup story or archive it.                                                                |
+| `docs/`                      | Design docs, decision records, and project memory (see the map at the end).                                                                                                                                                                                                     |
 
 ## Runtime topology
 
@@ -36,7 +36,7 @@ Browser ── TanStack Start (Vite + nitro, bun preset; SSR shell + SPA)
    │  sessionStorage for instant re-opens (app/src/integrations/tanstack-query)
    ▼
 Convex backend (cloud dev when available; local backend is the current
-   │  fallback — see "Development") 
+   │  fallback — see "Development")
    ├── component tables  (json-cms: datasets, entries, geometries, org, maps)
    ├── host tables       (bound-datasets sync state + foreign-domain stand-ins)
    └── file storage      (source files, geometry blobs, tile archives,
@@ -188,13 +188,13 @@ ages fast.
 
 ## Documentation map
 
-| Doc | Status | What it holds |
-| --- | --- | --- |
-| [`bound-datasets-design.md`](./bound-datasets-design.md) | current | The full bound-datasets design: concept mapping, data model, sync, tag ingest, adapter contract, PoC status, phased roadmap (#72–#78). |
-| [`map-performance-audit-2026-09-16.md`](./map-performance-audit-2026-09-16.md) | historical record | The audit that produced #48–#55; method + measurements still cited by the geometry path. |
-| [`gis-geometry-transport-survey.md`](./gis-geometry-transport-survey.md) | research (2026-09-17) | Survey of how major GIS platforms transport geometry; rationale companion to the tile path. |
-| [`decisions/`](./decisions/) | living log | Numbered decision records (ADR-style). |
-| [`memory/`](./memory/MEMORY.md) | living log | Project memory: durable lessons, verification gotchas, per-initiative records. Policy in the repo `AGENTS.md`. |
+| Doc                                                                            | Status                | What it holds                                                                                                                          |
+| ------------------------------------------------------------------------------ | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| [`bound-datasets-design.md`](./bound-datasets-design.md)                       | current               | The full bound-datasets design: concept mapping, data model, sync, tag ingest, adapter contract, PoC status, phased roadmap (#72–#78). |
+| [`map-performance-audit-2026-09-16.md`](./map-performance-audit-2026-09-16.md) | historical record     | The audit that produced #48–#55; method + measurements still cited by the geometry path.                                               |
+| [`gis-geometry-transport-survey.md`](./gis-geometry-transport-survey.md)       | research (2026-09-17) | Survey of how major GIS platforms transport geometry; rationale companion to the tile path.                                            |
+| [`decisions/`](./decisions/)                                                   | living log            | Numbered decision records (ADR-style).                                                                                                 |
+| [`memory/`](./memory/MEMORY.md)                                                | living log            | Project memory: durable lessons, verification gotchas, per-initiative records. Policy in the repo `AGENTS.md`.                         |
 
 ## Known gaps
 

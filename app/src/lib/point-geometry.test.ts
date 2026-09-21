@@ -123,11 +123,21 @@ describe("buildPointFeatureCollection", () => {
       {
         id: "entry-3",
         // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberately exercising the defensive branch with a geometry type that should never reach this function.
-        geometry: { type: "LineString", coordinates: [[0, 0], [1, 1]] } as never,
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [0, 0],
+            [1, 1],
+          ],
+        } as never,
         properties: { entryId: "entry-3" },
       },
     ]);
 
-    expect(collection.features.map((f) => f.id)).toStrictEqual(["entry-1", "entry-2:0", "entry-2:1"]);
+    expect(collection.features.map((f) => f.id)).toStrictEqual([
+      "entry-1",
+      "entry-2:0",
+      "entry-2:1",
+    ]);
   });
 });

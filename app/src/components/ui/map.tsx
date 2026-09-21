@@ -6,6 +6,7 @@ import { X, Minus, Plus, Locate, Maximize, Loader2 } from "lucide-react";
 import "maplibre-gl/dist/maplibre-gl.css";
 import * as MapLibreGL from "maplibre-gl";
 import type { PopupOptions, MarkerOptions } from "maplibre-gl";
+import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import {
   createContext,
   forwardRef,
@@ -21,9 +22,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
-import { cn } from "#/lib/utils.ts";
 import { pmtilesProtocol } from "#/lib/pmtiles-protocol.ts";
-import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
+import { cn } from "#/lib/utils.ts";
 import darkMatterStyleJson from "@/assets/basemaps/dark-matter-gl-style.json?raw";
 import positronStyleJson from "@/assets/basemaps/positron-gl-style.json?raw";
 
@@ -1590,7 +1590,17 @@ function MapVectorTiles<P extends TileFeatureProperties = TileFeatureProperties>
       setHover(null);
       map.getCanvas().style.cursor = "";
     };
-  }, [isLoaded, map, sourceId, fillLayerId, lineLayerId, circleLayerId, interactive, showFill, showLine]);
+  }, [
+    isLoaded,
+    map,
+    sourceId,
+    fillLayerId,
+    lineLayerId,
+    circleLayerId,
+    interactive,
+    showFill,
+    showLine,
+  ]);
 
   return null;
 }

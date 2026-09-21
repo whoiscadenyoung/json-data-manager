@@ -100,7 +100,10 @@ export function useEntriesPages(schemaId: string) {
   const cursors = activeCursors(chain, schemaId);
 
   const results = useQueries({
-    queries: useMemo(() => cursors.map((cursor) => pageQuery(schemaId, cursor)), [cursors, schemaId]),
+    queries: useMemo(
+      () => cursors.map((cursor) => pageQuery(schemaId, cursor)),
+      [cursors, schemaId],
+    ),
   });
 
   const lastPage = pageData(results[cursors.length - 1]);

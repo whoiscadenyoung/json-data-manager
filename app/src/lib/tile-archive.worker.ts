@@ -20,8 +20,9 @@ import {
 } from "@caden/geometry-archive";
 import { ConvexClient } from "convex/browser";
 
-import { api } from "#convex/_generated/api";
 import { env } from "#/env";
+import { api } from "#convex/_generated/api";
+
 import type {
   TileArchiveBuildPhase,
   TileArchiveWorkerInbound,
@@ -69,9 +70,7 @@ self.addEventListener("message", (event: MessageEvent<TileArchiveWorkerInbound>)
   const message = event.data;
   if (!message || message.type !== "build") return;
   const { schemaId } = message;
-  buildQueue = buildQueue
-    .then(async () => runBuild(schemaId))
-    .catch(() => undefined); // runBuild reports its own error message; the queue keeps draining.
+  buildQueue = buildQueue.then(async () => runBuild(schemaId)).catch(() => undefined); // runBuild reports its own error message; the queue keeps draining.
 });
 
 /** One geometry row, as `listGeometries` resolves it for the client. */

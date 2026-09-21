@@ -12,10 +12,7 @@ declare module "vt-pbf" {
     (tile: { layers: Record<string, unknown> }): Uint8Array;
     fromVectorTileJs(tile: { layers: Record<string, unknown> }): Uint8Array;
     /** Serializes geojson-vt tiles: layer name → tile object with `.features`. */
-    fromGeojsonVt(
-      layers: Record<string, unknown>,
-      options?: VtPbfOptions,
-    ): Uint8Array;
+    fromGeojsonVt(layers: Record<string, unknown>, options?: VtPbfOptions): Uint8Array;
     GeoJSONWrapper: new (features: unknown[], options?: VtPbfOptions) => unknown;
   };
 

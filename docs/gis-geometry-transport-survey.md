@@ -16,8 +16,8 @@ read over HTTP range requests, cached in layers, and invalidated by version.**
 quantized-binary feature transport. The Query API serves features as
 **PBF (protobuf)** — not JSON — with `quantizationParameters`: geometry is
 projected onto a virtual integer grid (e.g. screen pixels), coordinates return
-as integers relative to a fixed origin, and *consecutive coordinates that snap
-to the same grid cell are removed*. `mode: view` quantizes for display;
+as integers relative to a fixed origin, and _consecutive coordinates that snap
+to the same grid cell are removed_. `mode: view` quantizes for display;
 `mode: edit` returns full resolution for editing. Further levers:
 `maxAllowableOffset`, `geometryPrecision`, `returnGeometry=false`, and
 `resultOffset`/`resultRecordCount` pagination with `exceededTransferLimit`.
@@ -55,7 +55,7 @@ left JSON text: loaders.gl treats **Apache Arrow** as a first-class input, and
 kepler's overlays render WebGL-native. kepler keeps everything in browser
 memory (analysis tool, not a hosted platform).
 
-**Overture Maps Foundation** — the canonical cloud-native *distribution*
+**Overture Maps Foundation** — the canonical cloud-native _distribution_
 pattern: data published as **GeoParquet on S3**, queried directly over HTTP by
 DuckDB (`httpfs` + `spatial`), with a download tool that "transfers only the
 data inside your bounding box" by reading columnar files remotely — plus
@@ -117,12 +117,12 @@ failure mode our FY22 dataset hit. [dev overview](https://docs.umap-project.org/
 2. **Quantize to integer grids.** MVT encodes coordinates at extent 4096 with
    zigzag varints; ArcGIS quantizes to pixel grids and drops consecutive
    same-cell coordinates. Integer coords are 4–8 bytes/vertex vs ~23 bytes of
-   decimal JSON text, and the snap-to-grid dedup reduces vertex *count*, not
+   decimal JSON text, and the snap-to-grid dedup reduces vertex _count_, not
    just encoding.
 3. **Per-zoom tiling bounds bytes to the viewport.** Tiles are generated per
    zoom with a simplification schedule (tippecanoe defaults; GeoLens drops
    attributes below z10; ArcGIS uses `maxAllowableOffset`). The client fetches
-   only visible tiles — first open cost scales with the *view*, not the
+   only visible tiles — first open cost scales with the _view_, not the
    dataset.
 4. **Cloud-optimized single files over range requests.** PMTiles (tiles) and
    FlatGeobuf/GeoParquet (features) let static storage serve random-access
@@ -156,23 +156,23 @@ failure mode our FY22 dataset hit. [dev overview](https://docs.umap-project.org/
 
 ## Format decision matrix
 
-| Format | Best for | Over HTTP | Client support | Not for |
-|---|---|---|---|---|
-| **MVT + PMTiles** | Map rendering, any size | Range requests; CDN-friendly | MapLibre native decode in worker | Feature querying/analysis |
-| **FlatGeobuf** | Random-access feature reads, spatial filtering | Range requests + R-tree | fgb bundles for MapLibre/OL/Leaflet | Random writes; tile-based rendering |
-| **GeoParquet / GeoArrow** | Analytics, bulk distribution, columnar reads | Partial bbox reads (Overture pattern) | DuckDB-WASM, loaders.gl/Arrow | Low-latency interactive rendering |
-| **GeoJSON** | Small datasets, detail views, editing payloads | Plain fetch | Everything | Anything vertex-heavy |
-| **TopoJSON** | Adjacent shared boundaries (arcs dedup) | Plain fetch | Modest | Point/line data; editing |
+| Format                    | Best for                                       | Over HTTP                             | Client support                      | Not for                             |
+| ------------------------- | ---------------------------------------------- | ------------------------------------- | ----------------------------------- | ----------------------------------- |
+| **MVT + PMTiles**         | Map rendering, any size                        | Range requests; CDN-friendly          | MapLibre native decode in worker    | Feature querying/analysis           |
+| **FlatGeobuf**            | Random-access feature reads, spatial filtering | Range requests + R-tree               | fgb bundles for MapLibre/OL/Leaflet | Random writes; tile-based rendering |
+| **GeoParquet / GeoArrow** | Analytics, bulk distribution, columnar reads   | Partial bbox reads (Overture pattern) | DuckDB-WASM, loaders.gl/Arrow       | Low-latency interactive rendering   |
+| **GeoJSON**               | Small datasets, detail views, editing payloads | Plain fetch                           | Everything                          | Anything vertex-heavy               |
+| **TopoJSON**              | Adjacent shared boundaries (arcs dedup)        | Plain fetch                           | Modest                              | Point/line data; editing            |
 
 ## How our plan maps to the patterns
 
-| Our design | Pattern | Deliberate deviation |
-|---|---|---|
-| #59 PMTiles v3 writer, gzip, extent 4096, maxZoom 14 | 1–3 | — |
-| #60 version field + new blob per rebuild | 5 | Bumps are unconditional, not threshold-gated (simpler invariant) |
-| #61 client-side generation in a web worker | 3, 10 | No tile server / no PostGIS — Convex has neither; generation moves to import time (Felt's vt-chopper pattern) |
-| #62 `pmtiles://` sources, id-only hit-testing, row-path fallback | 3, 7, 8, 9 | Chips keyed on version-currency ∧ map-idle instead of Exhausted (tile path has no Exhausted) |
-| #63 OPFS pin + Query persister (light state) | 6 | No service worker; OPFS instead of Mapbox-style offline MBTiles |
+| Our design                                                       | Pattern    | Deliberate deviation                                                                                          |
+| ---------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------- |
+| #59 PMTiles v3 writer, gzip, extent 4096, maxZoom 14             | 1–3        | —                                                                                                             |
+| #60 version field + new blob per rebuild                         | 5          | Bumps are unconditional, not threshold-gated (simpler invariant)                                              |
+| #61 client-side generation in a web worker                       | 3, 10      | No tile server / no PostGIS — Convex has neither; generation moves to import time (Felt's vt-chopper pattern) |
+| #62 `pmtiles://` sources, id-only hit-testing, row-path fallback | 3, 7, 8, 9 | Chips keyed on version-currency ∧ map-idle instead of Exhausted (tile path has no Exhausted)                  |
+| #63 OPFS pin + Query persister (light state)                     | 6          | No service worker; OPFS instead of Mapbox-style offline MBTiles                                               |
 
 Gaps we haven't addressed (all documented in #58's risks): cloud-deployment
 range-request parity; geojson-vt simplification quality vs tippecanoe; a

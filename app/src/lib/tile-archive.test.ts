@@ -22,13 +22,11 @@ function deferredStartBuild(): {
   const calls: Array<BuildDeferral> = [];
   return {
     calls,
-    startBuild: vi.fn<(schemaId: string) => Promise<TileArchiveBuildOutcome>>(
-      async (_schemaId) => {
-        const deferral = deferred<TileArchiveBuildOutcome>();
-        calls.push(deferral);
-        return await deferral.promise;
-      },
-    ),
+    startBuild: vi.fn<(schemaId: string) => Promise<TileArchiveBuildOutcome>>(async (_schemaId) => {
+      const deferral = deferred<TileArchiveBuildOutcome>();
+      calls.push(deferral);
+      return await deferral.promise;
+    }),
   };
 }
 

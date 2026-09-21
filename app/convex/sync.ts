@@ -220,9 +220,7 @@ async function startRunInternal(
     args.mode === "sync" &&
     source.commitsSince !== undefined &&
     binding.lastAppliedCommitSeq !== undefined;
-  const runMode: "commit-tail" | "reconcile" | "sync" = tailEligible
-    ? "commit-tail"
-    : args.mode;
+  const runMode: "commit-tail" | "reconcile" | "sync" = tailEligible ? "commit-tail" : args.mode;
 
   const runId = await ctx.db.insert("syncRuns", {
     added: 0,
@@ -334,7 +332,7 @@ export const latestRun = query({
 /** Reads one source's full state — the action-side bridge to its descriptor. */
 export const readSourceRows = internalQuery({
   args: { source: v.string() },
-  handler: async (ctx, args) => (await getSource(args.source).listRows(ctx)),
+  handler: async (ctx, args) => await getSource(args.source).listRows(ctx),
   returns: v.array(
     v.object({
       data: v.record(v.string(), v.any()),
@@ -385,9 +383,7 @@ export const collectRows = internalAction({
     // Commit-tail runs transport the feed since the binding's cursor; full
     // runs transport the whole state and re-baseline the cursor to the
     // source's newest commit.
-    let payload: CommitFeedEntry[] | ProjectionRow[],
-      total: number,
-      newest: CommitFeedEntry | null;
+    let payload: CommitFeedEntry[] | ProjectionRow[], total: number, newest: CommitFeedEntry | null;
     if (run.mode === "commit-tail") {
       const binding = await ctx.runQuery(internal.sync.getBindingDoc, {
         bindingId: run.bindingId,
@@ -678,9 +674,7 @@ export const applyCommitsBatch = internalMutation({
           baseData[field.name] = field.after;
         }
         const geometryJson =
-          source.buildGeometry === undefined
-            ? undefined
-            : source.buildGeometry(baseData);
+          source.buildGeometry === undefined ? undefined : source.buildGeometry(baseData);
         const geometry =
           geometryJson === undefined || geometryJson === null
             ? undefined
@@ -828,12 +822,9 @@ export const applyRowsBatch = internalMutation({
       // oxlint-disable-next-line no-await-in-loop -- sequential keyed applies; each write feeds the next read in this transaction.
       const mapping = await ctx.db
         .query("bindingEntries")
-        .withIndex("by_binding", (q) =>
-          q.eq("bindingId", run.bindingId).eq("entryKey", row.key),
-        )
+        .withIndex("by_binding", (q) => q.eq("bindingId", run.bindingId).eq("entryKey", row.key))
         .first();
-      const hasGeometry =
-        row.geometry !== undefined && row.geometry !== null ? true : false;
+      const hasGeometry = row.geometry !== undefined && row.geometry !== null ? true : false;
       const geometryJson = hasGeometry ? JSON.stringify(row.geometry) : undefined;
 
       if (mapping === null) {

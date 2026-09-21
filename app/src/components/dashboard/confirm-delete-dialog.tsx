@@ -45,8 +45,7 @@ export function ConfirmDeleteDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            {title ??
-              (name === undefined ? `Delete ${entityLabel}` : `Delete "${name}"?`)}
+            {title ?? (name === undefined ? `Delete ${entityLabel}` : `Delete "${name}"?`)}
           </DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>

@@ -52,12 +52,12 @@ own tables, and eventually the two apps merge. Constraints and desires:
 
 ## 3. Concept mapping
 
-| Foreign app concept | json-cms artifact | Rendered as |
-| --- | --- | --- |
-| Current head ("main") | The **bound live dataset** — a `schemas` doc carrying a source binding | Tile/row path, normal dataset page, layerable in maps |
-| Tag / snapshot | A frozen **version dataset** (`schemas` doc + lineage fields, own entries/geometries/archive) | Normal dataset; a layer pointed at it is pinned in time |
-| Commit / change | A **patch record** in a `commits` table (small: field-level before/after, op per entry) | GeoJSON overlay on the base map + field-diff panel |
-| Tag ↔ tag diff | Derived **delta record** (same ops shape), computed at tag ingest | "Compare" overlay: adds/removes/modifies between two versions |
+| Foreign app concept   | json-cms artifact                                                                             | Rendered as                                                   |
+| --------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Current head ("main") | The **bound live dataset** — a `schemas` doc carrying a source binding                        | Tile/row path, normal dataset page, layerable in maps         |
+| Tag / snapshot        | A frozen **version dataset** (`schemas` doc + lineage fields, own entries/geometries/archive) | Normal dataset; a layer pointed at it is pinned in time       |
+| Commit / change       | A **patch record** in a `commits` table (small: field-level before/after, op per entry)       | GeoJSON overlay on the base map + field-diff panel            |
+| Tag ↔ tag diff        | Derived **delta record** (same ops shape), computed at tag ingest                             | "Compare" overlay: adds/removes/modifies between two versions |
 
 ## 4. Data model (increment on the component schema)
 
@@ -73,7 +73,7 @@ own tables, and eventually the two apps merge. Constraints and desires:
 - **`commits`** table: per bound dataset, an ordered log of
   `{ foreignCommitId, seq, at, message, ops }` where each op is
   `{ entryKey, op: "add"|"update"|"delete", fields: [[name, before, after]],
-  geometryChanged }`. Geometry-valued patches are the one size risk: inline
+geometryChanged }`. Geometry-valued patches are the one size risk: inline
   below a cap, storage blob above, with a GeoLibre-style budget/trim policy
   for retention.
 

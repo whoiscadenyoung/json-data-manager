@@ -4,6 +4,7 @@ description: Explain an existing Convex app — data model + relationships, publ
   vs internal functions, auth/ownership model, components, a request→data flow —
   read from the schema and function surface. Read-only.
 ---
+
 <!-- GENERATED from convex-agents content/capabilities/explain-app.json — do not edit by hand. -->
 
 # Explain this Convex app

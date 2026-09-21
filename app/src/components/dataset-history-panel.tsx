@@ -83,8 +83,8 @@ export function DatasetHistoryPanel({ binding }: { binding: Binding }) {
         <CardHeader>
           <CardTitle>Commit history</CardTitle>
           <CardDescription>
-            The source's applied commits, newest first — the foreign app's git log for this
-            dataset. Select one to see exactly what it changed.
+            The source's applied commits, newest first — the foreign app's git log for this dataset.
+            Select one to see exactly what it changed.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-2">
@@ -143,9 +143,7 @@ export function DatasetHistoryPanel({ binding }: { binding: Binding }) {
                     >
                       {COMMIT_OP_LABELS[op.op]}
                     </Badge>
-                    <span className="text-sm">
-                      {labelFor(features, op.entryKey)}
-                    </span>
+                    <span className="text-sm">{labelFor(features, op.entryKey)}</span>
                   </div>
                   {op.fields.length > 0 && (
                     <ul className="mt-1.5 flex flex-col gap-0.5 font-mono text-xs text-muted-foreground">
@@ -187,10 +185,7 @@ export function DatasetHistoryPanel({ binding }: { binding: Binding }) {
   );
 }
 
-function labelFor(
-  features: Array<{ entryKey: string; label: string }>,
-  entryKey: string,
-): string {
+function labelFor(features: Array<{ entryKey: string; label: string }>, entryKey: string): string {
   const match = features.find((candidate) => candidate.entryKey === entryKey);
   return match !== undefined ? match.label : entryKey;
 }

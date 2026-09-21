@@ -205,9 +205,10 @@ function diffProjectionSnapshots(before: ProjectionSnapshot, after: ProjectionSn
     if (beforeRow === undefined) {
       ops.push({
         entryKey: key,
-        fields: COMMIT_FIELDS.filter((name) => afterRow.data[name] !== undefined).map(
-          (name) => ({ after: afterRow.data[name], name }),
-        ),
+        fields: COMMIT_FIELDS.filter((name) => afterRow.data[name] !== undefined).map((name) => ({
+          after: afterRow.data[name],
+          name,
+        })),
         geometryChanged: afterRow.geometry !== null,
         op: "add",
       });
@@ -351,8 +352,7 @@ export const deleteRestaurant = mutation({
     const cascaded = await deleteCascadingLinks(ctx, links);
     await ctx.db.delete(args.id);
     await touchBindingSource(ctx);
-    const deletedName =
-      existing !== null && existing !== undefined ? existing.name : args.id;
+    const deletedName = existing !== null && existing !== undefined ? existing.name : args.id;
     await recordProjectionCommit(ctx, `Deleted restaurant ${deletedName}`, keys, before);
     return cascaded;
   },
@@ -450,8 +450,7 @@ export const deleteLocation = mutation({
     const cascaded = await deleteCascadingLinks(ctx, links);
     await ctx.db.delete(args.id);
     await touchBindingSource(ctx);
-    const deletedLabel =
-      existing !== null && existing !== undefined ? existing.label : args.id;
+    const deletedLabel = existing !== null && existing !== undefined ? existing.label : args.id;
     await recordProjectionCommit(ctx, `Deleted location ${deletedLabel}`, keys, before);
     return cascaded;
   },

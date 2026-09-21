@@ -289,7 +289,8 @@ function CollectionDetailPage() {
         memberships.some(
           (membership) =>
             membership.collectionId === collectionId && membership.schemaId === dataset._id,
-        ) && (dataset.groupId === undefined || !groupIds.has(dataset.groupId)),
+        ) &&
+        (dataset.groupId === undefined || !groupIds.has(dataset.groupId)),
     ),
     // Everything the collection contains: datasets joined directly, plus
     // every dataset of a group living in the collection — a group joins as a

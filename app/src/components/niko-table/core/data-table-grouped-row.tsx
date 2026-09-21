@@ -138,7 +138,8 @@ export const GroupedBodyRow = React.memo(function GroupedBodyRow<TData extends R
 }: GroupedBodyRowProps<TData>) {
   const groupedColumnId = row.groupingColumnId;
   const groupValue = groupedColumnId ? row.getGroupingValue(groupedColumnId) : undefined;
-  const groupLabel = groupValue === null || groupValue === undefined ? "" : stringifyValue(groupValue);
+  const groupLabel =
+    groupValue === null || groupValue === undefined ? "" : stringifyValue(groupValue);
 
   const toggle = React.useCallback(() => {
     row.toggleExpanded();

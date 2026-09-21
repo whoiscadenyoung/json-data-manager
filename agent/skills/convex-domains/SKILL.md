@@ -3,6 +3,7 @@ name: convex-domains
 description: Point a domain you already own at your Convex app (DNS records,
   custom-domain attach, auth-origin rebind).
 ---
+
 <!-- GENERATED from convex-agents content/capabilities/domains.json — do not edit by hand. -->
 
 # Set up a custom domain with your own provider

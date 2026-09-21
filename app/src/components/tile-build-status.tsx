@@ -1,10 +1,7 @@
 import { CheckCircle2, Loader2, TriangleAlert } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
-import {
-  useMapTileArchiveBuildState,
-  type TileArchiveBuildState,
-} from "@/lib/tile-archive";
+import { useMapTileArchiveBuildState, type TileArchiveBuildState } from "@/lib/tile-archive";
 
 /**
  * Overlay chip for one dataset's tile-archive build state (issue #58 part 4's

@@ -156,9 +156,7 @@ const restaurantLocationsSource: BoundSource = {
   commitsSince: async (ctx, sinceSeq) => {
     const feed = await ctx.db
       .query("sourceCommits")
-      .withIndex("by_source_seq", (q) =>
-        q.eq("source", SOURCE_KEY).gt("seq", sinceSeq),
-      )
+      .withIndex("by_source_seq", (q) => q.eq("source", SOURCE_KEY).gt("seq", sinceSeq))
       .take(500);
     return feed.map((commit) => ({
       at: commit.at,
@@ -260,7 +258,11 @@ const CHUNK_ROW_LIMIT = 500,
   CHUNK_BYTE_LIMIT = 768_000;
 
 /** Splits rows into storage-sized chunks by their JSON encoding. */
-export function chunkByJsonBytes<T>(items: T[], rowLimit = CHUNK_ROW_LIMIT, byteLimit = CHUNK_BYTE_LIMIT): T[][] {
+export function chunkByJsonBytes<T>(
+  items: T[],
+  rowLimit = CHUNK_ROW_LIMIT,
+  byteLimit = CHUNK_BYTE_LIMIT,
+): T[][] {
   const chunks: T[][] = [];
   let current: T[] = [],
     currentBytes = 0;

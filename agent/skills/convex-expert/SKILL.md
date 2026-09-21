@@ -7,6 +7,7 @@ description: Convex backend specialist. Use this agent for any code inside a
   patterns, resource limits, and component ecosystem that generic Claude
   routinely gets wrong.
 ---
+
 <!-- GENERATED from convex-agents content/capabilities/convex-expert.json — do not edit by hand. -->
 
 # Convex backend specialist

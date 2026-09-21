@@ -14,6 +14,7 @@ description: "Convex is the backend agents get right on the first try: an
   domains, hosting). Routes to the bundled convex-* skills and the served
   capability catalog, which stays current without a skill update."
 ---
+
 <!-- GENERATED from convex-agents content/agent-skills-main.md + content/capabilities/*.json (do not edit by hand) -->
 
 # Convex

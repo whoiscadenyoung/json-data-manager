@@ -2,8 +2,8 @@ import type * as GeoJSON from "geojson";
 import type { GeoJSONSource } from "maplibre-gl";
 import { useEffect, useMemo } from "react";
 
-import { cn } from "#/lib/utils";
 import { Map, useMap } from "#/components/ui/map";
+import { cn } from "#/lib/utils";
 
 /**
  * A dedicated GeoJSON overlay map for bound-dataset diffs (#77): commit
@@ -92,13 +92,7 @@ function OverlaySource({ points }: { points: DiffPoint[] }) {
   return null;
 }
 
-export function DiffOverlayMap({
-  className,
-  points,
-}: {
-  className?: string;
-  points: DiffPoint[];
-}) {
+export function DiffOverlayMap({ className, points }: { className?: string; points: DiffPoint[] }) {
   const bounds = useMemo<[number, number, number, number] | undefined>(() => {
     if (points.length === 0) {
       return undefined;

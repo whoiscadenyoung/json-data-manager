@@ -4,6 +4,7 @@ description: Preview Convex spend — rank functions by bytes/documents-read ×
   call-volume from insights, project each cost driver's growth curve, name the
   cheapest fix; confirm-cost for paid actions.
 ---
+
 <!-- GENERATED from convex-agents content/capabilities/convex-cost.json — do not edit by hand. -->
 
 # Preview what this app will cost

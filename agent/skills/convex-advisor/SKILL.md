@@ -4,6 +4,7 @@ description: Read the Convex deployment's 72h insights (read limits, OCC
   contention), root-cause each event in code, report evidence-backed perf/cost
   findings with fixes.
 ---
+
 <!-- GENERATED from convex-agents content/capabilities/convex-advisor.json — do not edit by hand. -->
 
 # Live-deployment advisor

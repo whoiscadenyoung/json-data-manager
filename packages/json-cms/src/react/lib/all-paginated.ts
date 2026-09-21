@@ -43,7 +43,9 @@ function nextAllPaginatedState<Item>(
   if (status === "Exhausted") {
     // A fully completed pass is always authoritative — replace whatever
     // was there before, growing or shrinking as needed.
-    return prev.results === results && prev.hasCompletedPass ? prev : { argsKey, hasCompletedPass: true, results };
+    return prev.results === results && prev.hasCompletedPass
+      ? prev
+      : { argsKey, hasCompletedPass: true, results };
   }
   if (prev.hasCompletedPass) {
     // A later pass reset mid-flight while a complete snapshot from a prior
@@ -59,7 +61,9 @@ function nextAllPaginatedState<Item>(
   // reset regress what's already rendered; only grow toward the eventual
   // complete pass, which is what actually corrects any real shrink (e.g.
   // rows genuinely deleted).
-  return results.length > prev.results.length ? { argsKey, hasCompletedPass: false, results } : prev;
+  return results.length > prev.results.length
+    ? { argsKey, hasCompletedPass: false, results }
+    : prev;
 }
 
 /**

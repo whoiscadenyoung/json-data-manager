@@ -9,9 +9,9 @@ import { createStore, del, get, set } from "idb-keyval";
 import type { UseStore } from "idb-keyval";
 import { useMemo, type ReactNode } from "react";
 
-import { api } from "#convex/_generated/api";
 import { convexQueryClient } from "#/integrations/convex/provider";
 import { isPersistableQueryHash } from "#/integrations/tanstack-query/light-namespaces";
+import { api } from "#convex/_generated/api";
 
 /**
  * Persisted light state (issue #58 part 5): schema rows, entries pages and

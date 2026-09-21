@@ -28,6 +28,9 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "#/components/ui/empty";
+import type { TileSourceSchemaRow } from "#/lib/layer-source";
+import type { LayerSourceSplit } from "#/lib/layer-source";
+import { splitSchemaIdsByDecision, useTileArchiveSources } from "#/lib/layer-source";
 import {
   assignDatasetColors,
   buildLayerChildren,
@@ -36,9 +39,6 @@ import {
   resolveVisibleSchemaIds,
 } from "#/lib/map-layers";
 import type { DatasetSummary, MapLayerDoc } from "#/lib/map-layers";
-import type { TileSourceSchemaRow } from "#/lib/layer-source";
-import type { LayerSourceSplit } from "#/lib/layer-source";
-import { splitSchemaIdsByDecision, useTileArchiveSources } from "#/lib/layer-source";
 import { api } from "#convex/_generated/api";
 
 /** This map's geospatial datasets, in schema-id order (the only rows the source decisions need). */

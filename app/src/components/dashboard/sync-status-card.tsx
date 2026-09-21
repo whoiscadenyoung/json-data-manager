@@ -94,8 +94,8 @@ function SourceRow({ binding }: { binding: BindingRow }) {
       {lastRun !== null && lastRun.status === "completed" && lastRun.finishedAt !== undefined && (
         <p className="text-xs text-muted-foreground">
           Last run {lastRun.mode === "reconcile" ? "reconciled" : "synced"}{" "}
-          {formatDistanceToNow(new Date(lastRun.finishedAt), { addSuffix: true })} —{" "}
-          {lastRun.added} added, {lastRun.removed} removed, {lastRun.updated} updated.
+          {formatDistanceToNow(new Date(lastRun.finishedAt), { addSuffix: true })} — {lastRun.added}{" "}
+          added, {lastRun.removed} removed, {lastRun.updated} updated.
         </p>
       )}
       <div className="flex gap-2">
@@ -163,8 +163,8 @@ export function SyncStatusCard() {
         <CardHeader>
           <CardTitle>Bound datasets</CardTitle>
           <CardDescription>
-            No projected datasets yet — the first sync creates the geospatial "Restaurant
-            locations" dataset from the tables below.
+            No projected datasets yet — the first sync creates the geospatial "Restaurant locations"
+            dataset from the tables below.
           </CardDescription>
         </CardHeader>
         <CardContent>

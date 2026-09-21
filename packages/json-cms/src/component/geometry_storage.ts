@@ -108,8 +108,6 @@ export async function resolveGeometryStorage(
   if (byteLength(json) <= INLINE_GEOMETRY_BYTE_LIMIT) {
     return { bbox, geometryJson: json, type };
   }
-  const geometryStorageId = await ctx.storage.store(
-    new Blob([json], { type: "application/json" }),
-  );
+  const geometryStorageId = await ctx.storage.store(new Blob([json], { type: "application/json" }));
   return { bbox, geometryStorageId, type };
 }

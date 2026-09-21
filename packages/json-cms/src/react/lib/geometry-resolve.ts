@@ -40,7 +40,9 @@ async function fetchGeometry(url: string): Promise<Geometry> {
 }
 
 /** Rows whose geometry is stored externally (only `geometryUrl` set) and so need a `fetch` to resolve. */
-function urlOnlyRows<T extends ResolvableGeometryRow>(rows: T[]): Array<{ id: string; url: string }> {
+function urlOnlyRows<T extends ResolvableGeometryRow>(
+  rows: T[],
+): Array<{ id: string; url: string }> {
   return rows.flatMap((row) => {
     if (row.geometryJson !== undefined || row.geometryUrl === undefined) {
       return [];
@@ -145,7 +147,9 @@ export function useResolvedGeometries<T extends ResolvableGeometryRow>(
             // without this check a cache-hit re-resolution (harmless on its
             // own) would still trigger a state update, a re-render, and
             // (upstream) another pass through this same effect.
-            setFetched((prev) => (prev.get(row.id) === geometry ? prev : new Map(prev).set(row.id, geometry)));
+            setFetched((prev) =>
+              prev.get(row.id) === geometry ? prev : new Map(prev).set(row.id, geometry),
+            );
           }
         })
         .catch(() => {

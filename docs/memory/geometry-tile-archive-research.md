@@ -9,8 +9,8 @@ metadata:
 
 Research done 2026-09-17 (main thread — subagent spawning still unavailable) for
 issue #58 (`perf(geometry): render maps from per-dataset vector-tile archives +
-layered client caching`), which supersedes #51's GeoJSON blob as the *rendering
-cache format* while keeping #51's version/invalidate/rebuild/threshold design
+layered client caching`), which supersedes #51's GeoJSON blob as the _rendering
+cache format_ while keeping #51's version/invalidate/rebuild/threshold design
 verbatim. Extends [[geometry-transport-research]] and [[map-performance-audit-2026-09]].
 
 **Survey (all links in issue #58):** ArcGIS serves PBF with integer-grid

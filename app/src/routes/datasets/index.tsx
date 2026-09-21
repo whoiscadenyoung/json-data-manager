@@ -1,19 +1,12 @@
-import { Link, createFileRoute } from "@tanstack/react-router";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
+import { Link, createFileRoute } from "@tanstack/react-router";
 import type { FunctionReturnType } from "convex/server";
-import {
-  Calendar,
-  ChevronRight,
-  FolderOpen,
-  Layers,
-  Plus,
-  Search,
-} from "lucide-react";
+import { Calendar, ChevronRight, FolderOpen, Layers, Plus, Search } from "lucide-react";
 import { useState } from "react";
 
-import { RouterButton } from "#/components/router-button";
 import { DatasetTypeTags } from "#/components/dataset-type-tags";
+import { RouterButton } from "#/components/router-button";
 import { Badge } from "#/components/ui/badge";
 import { Card } from "#/components/ui/card";
 import {
@@ -227,8 +220,7 @@ function GroupCard({
           <div>
             <h3 className="text-base font-semibold">{group.name}</h3>
             <p className="line-clamp-1 text-sm text-muted-foreground">
-              {group.description ??
-                (collectionName ? `In ${collectionName}` : "Standalone group")}
+              {group.description ?? (collectionName ? `In ${collectionName}` : "Standalone group")}
             </p>
           </div>
         </div>
@@ -299,8 +291,7 @@ function filterBrowserItems(
   }
   for (const group of groups) {
     const members = byGroup.get(group._id) ?? [],
-      groupMatches =
-        normalized !== "" && matchesSearch(group.name, group.description, normalized),
+      groupMatches = normalized !== "" && matchesSearch(group.name, group.description, normalized),
       visibleMembers = members.filter(
         (member) =>
           matchesTypeFilter(member, typeFilter) &&

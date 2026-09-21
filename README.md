@@ -14,13 +14,13 @@ bound-datasets sync engine.
 
 ## Repo layout
 
-| Path | What it is |
-| --- | --- |
-| `app/` | The application — TanStack Start (React 19) in `app/src`, Convex host functions in `app/convex`. |
-| `packages/json-cms/` | `@caden/json-cms` — the CMS Convex component, its typed client, and React hooks/UI. |
-| `packages/geometry-archive/` | `@caden/geometry-archive` — PMTiles archive writer for the map tile pipeline. |
-| `packages/data-export/` | `@caden/data-export` — snapshot-export component (built, not yet wired in). |
-| `docs/` | Architecture, decision records, design docs, and project memory. |
+| Path                         | What it is                                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------------------------ |
+| `app/`                       | The application — TanStack Start (React 19) in `app/src`, Convex host functions in `app/convex`. |
+| `packages/json-cms/`         | `@caden/json-cms` — the CMS Convex component, its typed client, and React hooks/UI.              |
+| `packages/geometry-archive/` | `@caden/geometry-archive` — PMTiles archive writer for the map tile pipeline.                    |
+| `packages/data-export/`      | `@caden/data-export` — snapshot-export component (built, not yet wired in).                      |
+| `docs/`                      | Architecture, decision records, design docs, and project memory.                                 |
 
 ## Getting started
 

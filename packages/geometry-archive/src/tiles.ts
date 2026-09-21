@@ -8,6 +8,7 @@
  */
 import GeoJSONVT from "geojson-vt";
 import vtPbf from "vt-pbf";
+
 import { gzip } from "./compress";
 import { zxyToTileId } from "./hilbert";
 import type { ArchiveTile, GeoJSONFeature, GeoJSONGeometry } from "./types";
@@ -207,10 +208,7 @@ function candidateRange(
 
 /** Encodes one geojson-vt tile to gzip-compressed MVT bytes. */
 function encodeTile(tile: { features: unknown[] }): Uint8Array {
-  const pbf = vtPbf.fromGeojsonVt(
-    { geojson: tile },
-    { extent: MVT_EXTENT, version: 2 },
-  );
+  const pbf = vtPbf.fromGeojsonVt({ geojson: tile }, { extent: MVT_EXTENT, version: 2 });
   return gzip(new Uint8Array(pbf));
 }
 

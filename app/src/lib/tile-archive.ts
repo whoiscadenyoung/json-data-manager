@@ -213,7 +213,9 @@ export function getTileArchiveBuildState(schemaId: string): TileArchiveBuildStat
 
 /** The current build state for one dataset (`"idle"` when nothing is running). */
 export function useMapTileArchiveBuildState(schemaId: string): TileArchiveBuildState {
-  return useSyncExternalStore(subscribeTileArchiveBuildState, () => getTileArchiveBuildState(schemaId));
+  return useSyncExternalStore(subscribeTileArchiveBuildState, () =>
+    getTileArchiveBuildState(schemaId),
+  );
 }
 
 // --- Worker lifecycle + message protocol ---
@@ -250,8 +252,7 @@ function handleWorkerMessage(event: MessageEvent<unknown>): void {
     pending.resolve("skipped");
   } else {
     setBuildState(schemaId, "error");
-    const message =
-      typeof data.message === "string" ? data.message : "Tile-archive build failed.";
+    const message = typeof data.message === "string" ? data.message : "Tile-archive build failed.";
     // Issue #71: a failed build used to flash an in-memory state nothing
     // rendered — users never saw it. The toast persists past the 4s state
     // revert and is the one surface that follows the user across pages.

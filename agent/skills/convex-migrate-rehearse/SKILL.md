@@ -4,6 +4,7 @@ description: Rehearse a live-app schema change + backfill on a snapshot-seeded
   preview deployment, verify, then promote the proven change to prod with the
   snapshot as rollback.
 ---
+
 <!-- GENERATED from convex-agents content/capabilities/migrate-rehearse.json — do not edit by hand. -->
 
 # Rehearse a schema change on a preview before prod

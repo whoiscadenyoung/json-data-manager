@@ -4,6 +4,7 @@ description: "Query a running Convex app's logs + health in natural language
   (official MCP): failures, slow/expensive functions, deploy causality — scoped,
   evidence-backed, with a dashboard deep link."
 ---
+
 <!-- GENERATED from convex-agents content/capabilities/convex-insights.json — do not edit by hand. -->
 
 # Query logs + health in natural language

@@ -6,9 +6,8 @@ import type { FunctionReturnType } from "convex/server";
 import { ArrowLeft, Calendar, ChevronDown, Code2, FileJson, MapPinned } from "lucide-react";
 import { useState } from "react";
 
-import { formatBytes, formatPropertyValue } from "@/lib/format";
-import { buildPointFeatureCollection } from "@/lib/point-geometry";
 import { RouterButton } from "@/components/router-button";
+import { Badge } from "@/components/ui/badge";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -17,10 +16,11 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Map, MapClusterLayer, MapGeoJSON } from "@/components/ui/map";
+import { formatBytes, formatPropertyValue } from "@/lib/format";
+import { buildPointFeatureCollection } from "@/lib/point-geometry";
 import { bboxFeature } from "@/lib/point-geometry";
 import { buildLabelsByField, isRecord, referencedEntryIds } from "@/lib/reference-labels";
 
@@ -31,9 +31,7 @@ export const Route = createFileRoute("/datasets/$schemaId/$entryId")({
 });
 
 type ReferencingEntry = FunctionReturnType<typeof api.entries.listReferencingEntries>[number];
-type GeometryRowDoc = NonNullable<
-  FunctionReturnType<typeof api.geometries.getEntryGeometry>
->;
+type GeometryRowDoc = NonNullable<FunctionReturnType<typeof api.geometries.getEntryGeometry>>;
 
 /** Paints matching the dataset map's feature styling, so an entry reads the same in both places. */
 const FEATURE_FILL_PAINT = { "fill-color": "#3b82f6", "fill-opacity": 0.2 },
@@ -197,7 +195,8 @@ function GeometryCard({ row, geometry }: { row: GeometryRowDoc; geometry: Geomet
     bbox = geometry ? computeBbox(geometry) : undefined,
     // Fill/line layers draw nothing for point geometries — those render via
     // the circle-layer cluster component instead (same split as the dataset map).
-    isPointLike = geometry !== undefined && (geometry.type === "Point" || geometry.type === "MultiPoint");
+    isPointLike =
+      geometry !== undefined && (geometry.type === "Point" || geometry.type === "MultiPoint");
 
   return (
     <Card>

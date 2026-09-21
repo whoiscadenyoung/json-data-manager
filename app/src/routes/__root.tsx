@@ -8,8 +8,8 @@ import { Toaster } from "#/components/ui/sonner";
 import { AppConvexProvider } from "#/integrations/convex/provider";
 import { tanStackQueryDevtools } from "#/integrations/tanstack-query/devtools";
 import { TanStackQueryProvider } from "#/integrations/tanstack-query/root-provider";
-import { TileArchiveCacheManager } from "#/lib/tile-archive-cache";
 import { TileArchiveManager } from "#/lib/tile-archive";
+import { TileArchiveCacheManager } from "#/lib/tile-archive-cache";
 
 import appCss from "#/styles.css?url";
 

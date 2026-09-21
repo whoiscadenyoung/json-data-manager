@@ -1,4 +1,9 @@
-import { buildFeatureCollection, computeBbox, useResolvedGeometries, unionBbox } from "@caden/json-cms/react";
+import {
+  buildFeatureCollection,
+  computeBbox,
+  useResolvedGeometries,
+  unionBbox,
+} from "@caden/json-cms/react";
 import type { BoundingBox, Geometry } from "@caden/json-cms/react";
 import { Link } from "@tanstack/react-router";
 import type { FunctionReturnType } from "convex/server";

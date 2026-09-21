@@ -2,6 +2,7 @@
 name: convex-crons
 description: Add recurring scheduled jobs (crons) to the Convex app.
 ---
+
 <!-- GENERATED from convex-agents content/capabilities/crons.json — do not edit by hand. -->
 
 # Add scheduled jobs (crons)

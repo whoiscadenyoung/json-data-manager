@@ -5,6 +5,7 @@ description: Pull version-current Convex docs for the version this project uses
   types, freshness hierarchy — instead of writing a possibly-stale API from
   memory.
 ---
+
 <!-- GENERATED from convex-agents content/capabilities/convex-docs.json — do not edit by hand. -->
 
 # Pull version-current Convex docs

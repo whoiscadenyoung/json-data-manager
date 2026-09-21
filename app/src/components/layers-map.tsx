@@ -6,12 +6,16 @@ import type { FunctionReturnType } from "convex/server";
 import { ChevronRight, X } from "lucide-react";
 import { Fragment, useState } from "react";
 
-import type { DatasetSummary } from "#/lib/map-layers";
 import type { GeometryEntry } from "#/components/schema-geometries-loader";
 import { Button } from "#/components/ui/button";
 import { Map, MapClusterLayer, MapGeoJSON, MapVectorTiles } from "#/components/ui/map";
-import { asBoundingBox, buildPointFeatureCollection, splitPointLikeGeometries } from "#/lib/point-geometry";
 import { formatPropertyValue } from "#/lib/format";
+import type { DatasetSummary } from "#/lib/map-layers";
+import {
+  asBoundingBox,
+  buildPointFeatureCollection,
+  splitPointLikeGeometries,
+} from "#/lib/point-geometry";
 import { api } from "#convex/_generated/api";
 
 type EntryDoc = NonNullable<FunctionReturnType<typeof api.entries.get>>;
@@ -231,8 +235,9 @@ export function LayersMap({
         title: getDatasetTitle(datasetById, schemaId, "Untitled dataset"),
         color: colorBySchema.get(schemaId) ?? "#3b82f6",
       })),
-    visibleTileSources = tileSources.filter((source) => visibleSchemaIds.has(source.schemaId))
-      .length;
+    visibleTileSources = tileSources.filter((source) =>
+      visibleSchemaIds.has(source.schemaId),
+    ).length;
 
   return (
     <div className="relative h-full w-full">

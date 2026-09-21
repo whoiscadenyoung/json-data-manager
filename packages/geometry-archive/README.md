@@ -8,9 +8,9 @@ workers, and Node. Pure library: features in, one `Uint8Array` archive out.
 import { buildGeometryArchive } from "@caden/geometry-archive";
 
 const archiveBytes = await buildGeometryArchive({
-  features,              // GeoJSON.Feature[] (full-res, from the row path)
-  minZoom: 0,            // default 0
-  maxZoom: 14,           // default 14 — GEOMETRY_ARCHIVE_MAX_ZOOM
+  features, // GeoJSON.Feature[] (full-res, from the row path)
+  minZoom: 0, // default 0
+  maxZoom: 14, // default 14 — GEOMETRY_ARCHIVE_MAX_ZOOM
   includeProperties: [], // default [] — id-only projection
 });
 ```

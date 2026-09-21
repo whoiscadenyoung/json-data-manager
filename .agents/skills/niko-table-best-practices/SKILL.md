@@ -77,18 +77,18 @@ Use **direct file paths only**. Do not use `index.ts` re-exports for core, compo
 Examples:
 
 ```ts
-import { DataTableRoot } from "@/components/niko-table/core/data-table-root"
-import { DataTable } from "@/components/niko-table/core/data-table"
+import { DataTableRoot } from "@/components/niko-table/core/data-table-root";
+import { DataTable } from "@/components/niko-table/core/data-table";
 import {
   DataTableHeader,
   DataTableBody,
   DataTableSkeleton,
   DataTableEmptyBody,
-} from "@/components/niko-table/core/data-table-structure"
-import { DataTableToolbarSection } from "@/components/niko-table/components/data-table-toolbar-section"
-import { DataTableSearchFilter } from "@/components/niko-table/components/data-table-search-filter"
-import { DataTablePagination } from "@/components/niko-table/components/data-table-pagination"
-import type { DataTableColumnDef } from "@/components/niko-table/types"
+} from "@/components/niko-table/core/data-table-structure";
+import { DataTableToolbarSection } from "@/components/niko-table/components/data-table-toolbar-section";
+import { DataTableSearchFilter } from "@/components/niko-table/components/data-table-search-filter";
+import { DataTablePagination } from "@/components/niko-table/components/data-table-pagination";
+import type { DataTableColumnDef } from "@/components/niko-table/types";
 ```
 
 ## Two-Layer Component Pattern
@@ -154,7 +154,12 @@ Example toolbar with search + faceted + advanced + clear:
 ```tsx
 <DataTableToolbarSection>
   <DataTableSearchFilter placeholder="Search..." />
-  <DataTableFacetedFilter accessorKey="category" title="Category" options={categoryOptions} multiple />
+  <DataTableFacetedFilter
+    accessorKey="category"
+    title="Category"
+    options={categoryOptions}
+    multiple
+  />
   <DataTableFacetedFilter accessorKey="brand" limitToFilteredRows />
   <DataTableFilterMenu autoOptions dynamicCounts showCounts mergeStrategy="augment" />
   <DataTableViewMenu />
@@ -214,27 +219,27 @@ Use semantic color tokens (e.g. `bg-success`, `text-destructive`) instead of har
 ## Minimal Table Template
 
 ```tsx
-"use client"
+"use client";
 
-import { DataTableRoot } from "@/components/niko-table/core/data-table-root"
-import { DataTable } from "@/components/niko-table/core/data-table"
+import { DataTableRoot } from "@/components/niko-table/core/data-table-root";
+import { DataTable } from "@/components/niko-table/core/data-table";
 import {
   DataTableHeader,
   DataTableBody,
   DataTableSkeleton,
   DataTableEmptyBody,
-} from "@/components/niko-table/core/data-table-structure"
-import { DataTableToolbarSection } from "@/components/niko-table/components/data-table-toolbar-section"
-import { DataTableSearchFilter } from "@/components/niko-table/components/data-table-search-filter"
-import { DataTablePagination } from "@/components/niko-table/components/data-table-pagination"
-import type { DataTableColumnDef } from "@/components/niko-table/types"
+} from "@/components/niko-table/core/data-table-structure";
+import { DataTableToolbarSection } from "@/components/niko-table/components/data-table-toolbar-section";
+import { DataTableSearchFilter } from "@/components/niko-table/components/data-table-search-filter";
+import { DataTablePagination } from "@/components/niko-table/components/data-table-pagination";
+import type { DataTableColumnDef } from "@/components/niko-table/types";
 
-type User = { id: string; name: string; email: string }
+type User = { id: string; name: string; email: string };
 
 const columns: DataTableColumnDef<User>[] = [
   { accessorKey: "name", header: "Name" },
   { accessorKey: "email", header: "Email" },
-]
+];
 
 export function UsersTable({ data, isLoading }: { data: User[]; isLoading?: boolean }) {
   return (
@@ -251,7 +256,7 @@ export function UsersTable({ data, isLoading }: { data: User[]; isLoading?: bool
       </DataTable>
       <DataTablePagination />
     </DataTableRoot>
-  )
+  );
 }
 ```
 

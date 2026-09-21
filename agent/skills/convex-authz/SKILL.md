@@ -7,6 +7,7 @@ description: "Audit and harden a Convex app's authorization: identity-from-arg
   verifies with tsc. TRIGGER on 'secure my app', 'audit auth/authz', 'who can
   access this data'. SKIP when there is no convex/ directory."
 ---
+
 <!-- GENERATED from convex-agents content/capabilities/convex-authz.json — do not edit by hand. -->
 
 # Convex Authz Auditor/Hardener

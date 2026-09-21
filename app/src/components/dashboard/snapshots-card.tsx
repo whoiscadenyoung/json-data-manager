@@ -52,8 +52,8 @@ export function SnapshotsCard() {
         <CardHeader>
           <CardTitle>Snapshots</CardTitle>
           <CardDescription>
-            No bound dataset yet — sync once (card above) so snapshots have a live dataset to
-            freeze against.
+            No bound dataset yet — sync once (card above) so snapshots have a live dataset to freeze
+            against.
           </CardDescription>
         </CardHeader>
       </Card>
@@ -75,8 +75,7 @@ function SnapshotsPanel({ liveSchemaId }: { liveSchemaId: string }) {
     [isBusy, setIsBusy] = useState(false),
     suggestedLabel = snapshots === undefined ? "" : `v${snapshots.length + 1}`,
     ingestedByRef = indexVersionsByRef(versions),
-    pendingCount = (snapshots ?? []).filter((snapshot) => !ingestedByRef.has(snapshot.ref))
-      .length,
+    pendingCount = (snapshots ?? []).filter((snapshot) => !ingestedByRef.has(snapshot.ref)).length,
     handleCreate = async () => {
       setIsBusy(true);
       try {

@@ -50,8 +50,7 @@ export const list = query({
           // A binding whose dataset vanished mid-unbind still lists — the
           // next sync recreates it — but with nothing to show.
           datasetExists: schema !== null,
-          datasetTitle:
-            schema !== null ? schema.title : binding.source,
+          datasetTitle: schema !== null ? schema.title : binding.source,
         };
       }),
     );

@@ -32,7 +32,8 @@ export function chunkRowsForImport(
   rows: ImportRow[],
   options?: { maxRows?: number; maxBytes?: number },
 ): ImportRow[][] {
-  const maxRows = options && options.maxRows !== undefined ? options.maxRows : DEFAULT_MAX_ROWS_PER_CHUNK,
+  const maxRows =
+      options && options.maxRows !== undefined ? options.maxRows : DEFAULT_MAX_ROWS_PER_CHUNK,
     maxBytes =
       options && options.maxBytes !== undefined ? options.maxBytes : DEFAULT_MAX_BYTES_PER_CHUNK,
     chunks: ImportRow[][] = [];

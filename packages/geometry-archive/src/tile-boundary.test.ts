@@ -3,6 +3,7 @@
  * every tile they geometrically intersect (buffer handling).
  */
 import { describe, expect, test } from "bun:test";
+
 import { VectorTile } from "@mapbox/vector-tile";
 import { PbfReader } from "pbf";
 import { PMTiles, type Source } from "pmtiles";
@@ -18,10 +19,7 @@ function memorySource(bytes: Uint8Array): Source {
   };
 }
 
-function feature(
-  id: string,
-  geometry: { type: string; coordinates: unknown },
-): GeoJSON.Feature {
+function feature(id: string, geometry: { type: string; coordinates: unknown }): GeoJSON.Feature {
   return {
     type: "Feature",
     _id: id,
@@ -37,7 +35,10 @@ describe("tile boundaries", () => {
     const features = [
       feature("crossing", {
         type: "LineString",
-        coordinates: [[21.5, 2.0], [23.5, 2.0]],
+        coordinates: [
+          [21.5, 2.0],
+          [23.5, 2.0],
+        ],
       }),
     ];
     const archive = await buildGeometryArchive({ features, minZoom: 4, maxZoom: 4 });
@@ -62,7 +63,15 @@ describe("tile boundaries", () => {
     const features = [
       feature("span", {
         type: "Polygon",
-        coordinates: [[[22.0, 1.5], [23.0, 1.5], [23.0, 2.5], [22.0, 2.5], [22.0, 1.5]]],
+        coordinates: [
+          [
+            [22.0, 1.5],
+            [23.0, 1.5],
+            [23.0, 2.5],
+            [22.0, 2.5],
+            [22.0, 1.5],
+          ],
+        ],
       }),
     ];
     const archive = await buildGeometryArchive({ features, minZoom: 4, maxZoom: 4 });
@@ -83,9 +92,7 @@ describe("tile boundaries", () => {
   test("a buffered point near the boundary repeats into the neighbouring tile", async () => {
     // 0.1 degrees left of the z4 boundary at lon 22.5 sits inside tile x=8
     // strictly; the 64-unit buffer pulls it into tile x=9 as well.
-    const features = [
-      feature("near", { type: "Point", coordinates: [22.4, 0.0] }),
-    ];
+    const features = [feature("near", { type: "Point", coordinates: [22.4, 0.0] })];
     const archive = await buildGeometryArchive({ features, minZoom: 4, maxZoom: 4 });
     const pmtiles = new PMTiles(memorySource(archive));
 
@@ -121,7 +128,10 @@ describe("tile boundaries", () => {
     const features = [
       feature("crossing-y", {
         type: "LineString",
-        coordinates: [[30.0, 21.0], [30.0, 23.0]],
+        coordinates: [
+          [30.0, 21.0],
+          [30.0, 23.0],
+        ],
       }),
     ];
     const archive = await buildGeometryArchive({ features, minZoom: 4, maxZoom: 4 });
@@ -145,9 +155,7 @@ describe("tile boundaries", () => {
   test("a buffered point near a horizontal boundary repeats into the row above", async () => {
     // Lat 21.9 is just inside row 7 (south of the 6/7 boundary at ≈21.93);
     // the 64-unit buffer pulls it into row 6 as well.
-    const features = [
-      feature("near-y", { type: "Point", coordinates: [30.0, 21.9] }),
-    ];
+    const features = [feature("near-y", { type: "Point", coordinates: [30.0, 21.9] })];
     const archive = await buildGeometryArchive({ features, minZoom: 4, maxZoom: 4 });
     const pmtiles = new PMTiles(memorySource(archive));
 

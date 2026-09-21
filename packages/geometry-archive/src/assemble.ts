@@ -125,9 +125,10 @@ function deduplicateTiles(sorted: readonly ArchiveTile[]): Deduplicated {
 }
 
 /** Chooses the root directory: tile entries directly, or leaf directories. */
-function chooseRootDirectory(
-  entries: readonly DirectoryEntry[],
-): { rootData: Uint8Array; leafData: Uint8Array[] } {
+function chooseRootDirectory(entries: readonly DirectoryEntry[]): {
+  rootData: Uint8Array;
+  leafData: Uint8Array[];
+} {
   const directRoot = gzip(serializeDirectory(entries));
   if (directRoot.length <= MAX_ROOT_DIRECTORY_BYTES) {
     return { rootData: directRoot, leafData: [] };

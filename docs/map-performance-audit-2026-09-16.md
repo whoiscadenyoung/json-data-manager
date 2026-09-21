@@ -19,18 +19,18 @@ live in [`docs/memory/`](./memory/MEMORY.md) (`map-performance-audit-2026-09`,
 
 ## Measurements (SS4A data, live dev deployment)
 
-| Dataset | Features | Geometry payload | `listGeometries` pages (1 page = 1 round trip) |
-|---|---|---|---|
-| SS4A FY22 Action Plan Grant Awards | 450 | 46.55 MB (avg 106 KB/row, max 878 KB) | **57** |
-| SS4A FY23 IG Awards | 48 | 5.16 MB | 7 |
-| SMART (points) | 134 | **0.013 MB** | **17** |
-| SS4A FY22 IG Awards | 37 | 4.20 MB | — |
-| …(6dp twin, byte-identical) | 37 | 4.20 MB | — |
+| Dataset                            | Features | Geometry payload                      | `listGeometries` pages (1 page = 1 round trip) |
+| ---------------------------------- | -------- | ------------------------------------- | ---------------------------------------------- |
+| SS4A FY22 Action Plan Grant Awards | 450      | 46.55 MB (avg 106 KB/row, max 878 KB) | **57**                                         |
+| SS4A FY23 IG Awards                | 48       | 5.16 MB                               | 7                                              |
+| SMART (points)                     | 134      | **0.013 MB**                          | **17**                                         |
+| SS4A FY22 IG Awards                | 37       | 4.20 MB                               | —                                              |
+| …(6dp twin, byte-identical)        | 37       | 4.20 MB                               | —                                              |
 
 Popup-properties payload (entries, incl. CLI startup): FY22 Action Plan 0.27 MB
 / 450 rows; SMART 0.10 MB / 134 rows.
 
-**Negative finding:** 6dp simplification is *not* a performance lever for this
+**Negative finding:** 6dp simplification is _not_ a performance lever for this
 data — the (6dp) dataset and its full-precision twin are byte-identical; the
 SS4A source is already ≤6 decimal places. The 46 MB is inherent vertex density;
 only round-trip count and transport can improve it.
@@ -64,15 +64,15 @@ only round-trip count and transport can improve it.
 
 ## Issues filed (2026-09-16)
 
-| # | Priority | Summary |
-|---|---|---|
-| [#48](https://github.com/whoiscadenyoung/json-data-manager/issues/48) | P0 | Byte-budgeted geometry pagination (57 → ~5 pages; SMART 17 → 1) |
-| [#49](https://github.com/whoiscadenyoung/json-data-manager/issues/49) | P0 | Collection extent map from stored `boundingBox` — zero geometry loads |
-| [#50](https://github.com/whoiscadenyoung/json-data-manager/issues/50) | P1 | Visible map layers first; hidden layers prefetch in background |
-| [#51](https://github.com/whoiscadenyoung/json-data-manager/issues/51) | P1 | Per-dataset FeatureCollection blobs fetched + parsed by MapLibre off-thread; **design reviewed**: writes only invalidate (monotonic `mapFeatureCollectionVersion`), rebuild is a lazy debounced internal action, imports rebuild once at `handleImportComplete`, blob path only above a size threshold. **Implementation deferred** |
-| [#52](https://github.com/whoiscadenyoung/json-data-manager/issues/52) | P2 | Popup entry properties fetched on click, not up front |
-| [#53](https://github.com/whoiscadenyoung/json-data-manager/issues/53) | P2 | Lightweight `listSchemaSummaries` projection for list pages |
-| [#55](https://github.com/whoiscadenyoung/json-data-manager/issues/55) | P3 | Entries-table server pagination + CDN worker/basemap self-hosting + small N+1 hygiene |
+| #                                                                     | Priority | Summary                                                                                                                                                                                                                                                                                                                             |
+| --------------------------------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [#48](https://github.com/whoiscadenyoung/json-data-manager/issues/48) | P0       | Byte-budgeted geometry pagination (57 → ~5 pages; SMART 17 → 1)                                                                                                                                                                                                                                                                     |
+| [#49](https://github.com/whoiscadenyoung/json-data-manager/issues/49) | P0       | Collection extent map from stored `boundingBox` — zero geometry loads                                                                                                                                                                                                                                                               |
+| [#50](https://github.com/whoiscadenyoung/json-data-manager/issues/50) | P1       | Visible map layers first; hidden layers prefetch in background                                                                                                                                                                                                                                                                      |
+| [#51](https://github.com/whoiscadenyoung/json-data-manager/issues/51) | P1       | Per-dataset FeatureCollection blobs fetched + parsed by MapLibre off-thread; **design reviewed**: writes only invalidate (monotonic `mapFeatureCollectionVersion`), rebuild is a lazy debounced internal action, imports rebuild once at `handleImportComplete`, blob path only above a size threshold. **Implementation deferred** |
+| [#52](https://github.com/whoiscadenyoung/json-data-manager/issues/52) | P2       | Popup entry properties fetched on click, not up front                                                                                                                                                                                                                                                                               |
+| [#53](https://github.com/whoiscadenyoung/json-data-manager/issues/53) | P2       | Lightweight `listSchemaSummaries` projection for list pages                                                                                                                                                                                                                                                                         |
+| [#55](https://github.com/whoiscadenyoung/json-data-manager/issues/55) | P3       | Entries-table server pagination + CDN worker/basemap self-hosting + small N+1 hygiene                                                                                                                                                                                                                                               |
 
 Recommended order: #48 + #49 first (quick wins), #51's blob path designed and
 waiting for when datasets outgrow the row path.
@@ -86,7 +86,7 @@ Cloned and reviewed three reference projects (findings also in
 
 - Change capture = patch-based inverse "Moments"
   (`app/lib/persistence/moment.ts`): a Moment holds `{putFeatures: <full old
-  values>, deleteFeatures: <ids>}`; one `apply(moment)` computes its own
+values>, deleteFeatures: <ids>}`; one `apply(moment)` computes its own
   reverse as a side effect, so undo and redo are the same code path
   (`app/lib/persistence/memory.ts`). History capped at 100; drags coalesce via
   pause/resume; `quiet` flag skips history. Maps cleanly onto our per-entry +

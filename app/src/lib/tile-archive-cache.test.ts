@@ -121,9 +121,7 @@ describe("OpfsArchiveCache", () => {
     const cache = new OpfsArchiveCache(store, async () => bytes(1, 0));
     await cache.init();
     expect(cache.hasLocal("s1", 4)).toBe(true);
-    expect(cache.allEntries()).toEqual([
-      { bytes: 10, lastUsed: 0, schemaId: "s1", version: 4 },
-    ]);
+    expect(cache.allEntries()).toEqual([{ bytes: 10, lastUsed: 0, schemaId: "s1", version: 4 }]);
   });
 
   it("backfills a missing archive on observation, once per archive", async () => {

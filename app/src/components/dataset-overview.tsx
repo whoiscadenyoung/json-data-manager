@@ -23,7 +23,6 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { ConfirmDeleteDialog } from "#/components/dashboard/confirm-delete-dialog";
-import { VersionCompare } from "#/components/version-compare";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
@@ -38,6 +37,7 @@ import {
 } from "#/components/ui/select";
 import { Separator } from "#/components/ui/separator";
 import { Textarea } from "#/components/ui/textarea";
+import { VersionCompare } from "#/components/version-compare";
 import { fieldCount } from "#/lib/json-schema";
 import { isSyncStale } from "#/lib/sync-staleness";
 import { api } from "#convex/_generated/api";
@@ -86,17 +86,13 @@ function SourceRow({ binding, source }: { binding?: BindingDoc; source: { name: 
 function LineageRow({ lineage }: { lineage: NonNullable<DatasetDoc["lineage"]> }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        Version
-      </dt>
+      <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Version</dt>
       <dd className="flex flex-wrap items-center gap-1.5 text-sm">
         <Badge variant="outline">
           <Tag />
           {lineage.versionLabel}
         </Badge>
-        <span>
-          frozen {formatDistanceToNow(new Date(lineage.frozenAt), { addSuffix: true })}
-        </span>
+        <span>frozen {formatDistanceToNow(new Date(lineage.frozenAt), { addSuffix: true })}</span>
         <span className="text-muted-foreground">
           · point-in-time copy of{" "}
           <Link
@@ -826,8 +822,8 @@ function VersionsCard({ sourceSchemaId }: { sourceSchemaId: string }) {
         </CardTitle>
         <CardDescription>
           Frozen snapshots ingested from the connected source — each one is a read-only,
-          point-in-time copy with its own map layer. Unpinned versions beyond the keep count
-          retire automatically at the next ingest.
+          point-in-time copy with its own map layer. Unpinned versions beyond the keep count retire
+          automatically at the next ingest.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
@@ -869,10 +865,7 @@ function VersionsCard({ sourceSchemaId }: { sourceSchemaId: string }) {
               <div className="mt-2">
                 <VersionCompare
                   versions={versions.map((version) => ({
-                    label:
-                      version.lineage === undefined
-                        ? "?"
-                        : version.lineage.versionLabel,
+                    label: version.lineage === undefined ? "?" : version.lineage.versionLabel,
                     schemaId: version.schemaId,
                     title: version.title,
                   }))}
@@ -931,7 +924,9 @@ function VersionRow({ version }: { version: VersionDoc }) {
       }
       setPinned({ pinned: !isPinned, schemaId: version.schemaId })
         .then(() => {
-          toast.success(isPinned ? "Unpinned — retention may retire it." : "Pinned — never auto-retired.");
+          toast.success(
+            isPinned ? "Unpinned — retention may retire it." : "Pinned — never auto-retired.",
+          );
         })
         .catch((error: unknown) => {
           toast.error(errorMessage(error, "Failed to update pin."));

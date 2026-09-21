@@ -5,6 +5,7 @@ description: Suggest the matching Convex component when the user hand-rolls a
   search, presence, workflow, RAG, prosemirror-sync). Passive — suggest after
   the task, never interrupt. Never install without consent.
 ---
+
 <!-- GENERATED from convex-agents content/capabilities/suggest.json — do not edit by hand. -->
 
 # Proactively suggest the right Convex component

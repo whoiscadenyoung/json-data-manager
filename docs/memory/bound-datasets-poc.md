@@ -152,27 +152,29 @@ with "You don't have access to the selected project" + non-interactive prompt
 DIFFERENT team/project in its .env.local: caden-young/json-cms vs the app's
 caden-young-noblis-org/app). Workaround used: launch the local backend binary
 directly (instance name/secret from app/.convex/local/default/config.json)
-+ a keeper loop (`/tmp/convex-keeper.sh`) that revives it every 2 min
-(something kills it repeatedly), + push code via
-`bunx convex deploy --env-file /tmp/convex-selfhost.env` (self-hosted mode
-bypasses the cloud check; env file holds CONVEX_SELF_HOSTED_URL/ADMIN_KEY).
-USER TODO: run `bunx convex dev` interactively in app/ (re-login if prompted)
-to restore the normal dev loop. Agent-started backend processes are lossy —
-writes right before a kill can vanish.
+
+- a keeper loop (`/tmp/convex-keeper.sh`) that revives it every 2 min
+  (something kills it repeatedly), + push code via
+  `bunx convex deploy --env-file /tmp/convex-selfhost.env` (self-hosted mode
+  bypasses the cloud check; env file holds CONVEX_SELF_HOSTED_URL/ADMIN_KEY).
+  USER TODO: run `bunx convex dev` interactively in app/ (re-login if prompted)
+  to restore the normal dev loop. Agent-started backend processes are lossy —
+  writes right before a kill can vanish.
 
 **RESOLVED same evening — switched to the cloud dev deployment.** App now runs
 against `dev/caden-young` (project json-data-manager, team caden-young,
 deployment woozy-husky-92). Mechanics that matter:
+
 - `--deployment`/`deployment select` cannot be combined with CONVEX_DEPLOY_KEY;
   the working pattern is `CONVEX_DEPLOYMENT=dev:caden-young bunx convex dev
-  --start 'vite dev'` with CONVEX_DEPLOY_KEY in app/.env (user-managed, do not
+--start 'vite dev'` with CONVEX_DEPLOY_KEY in app/.env (user-managed, do not
   read). convex dev then re-provisioned app/.env.local with the cloud
   VITE_CONVEX_URL/SITE_URL itself.
 - Old .env.local (local deployment) preserved at
   `app/.env.local.local-backup`; local backend data exported (with file
   storage) to `exports/local-dev-20260918` (568 MB zip) and imported into the
   cloud with `CONVEX_DEPLOYMENT=dev:caden-young bunx convex import
-  --replace-all --format zip <path>` (1756 docs + 13 storage files).
+--replace-all --format zip <path>` (1756 docs + 13 storage files).
 - CLI commands against the deployment: prefix
   `CONVEX_DEPLOYMENT=dev:caden-young` (deploy key auto-loads from .env).
 - The vite/convex-dev nohup processes started by agents may still be reaped
@@ -205,6 +207,7 @@ VITE_CONVEX_URL=http://127.0.0.1:3212 on another port.
 map → cleanup → sync → 16).
 
 Gotchas learned building it:
+
 - Host calls component functions directly via `components.jsonCms.lib.*`
   passing plain-string component ids (component re-validates against its own
   tables) — pattern from `app/convex/tile_archives.ts`; calls join the

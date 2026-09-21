@@ -29,9 +29,9 @@
  * on the main thread anyway.
  */
 import { useQuery } from "convex/react";
-import { useEffect, useMemo } from "react";
 import { FetchSource, PMTiles } from "pmtiles";
 import type { RangeResponse, Source } from "pmtiles";
+import { useEffect, useMemo } from "react";
 
 import { api } from "#convex/_generated/api";
 
@@ -208,7 +208,11 @@ export class OpfsArchiveCache {
    * failed or short read evicts the local entry so the next backfill re-fetches
    * a fresh copy.
    */
-  async read(key: CachedArchiveKey, offset: number, length: number): Promise<ArrayBuffer | undefined> {
+  async read(
+    key: CachedArchiveKey,
+    offset: number,
+    length: number,
+  ): Promise<ArrayBuffer | undefined> {
     const versions = this.#entries.get(key.schemaId);
     const entry = versions === undefined ? undefined : versions.get(key.version);
     if (entry === undefined) return undefined;

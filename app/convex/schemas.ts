@@ -1,10 +1,9 @@
+import { exposeApi } from "@caden/json-cms";
 import { v } from "convex/values";
 
-import { exposeApi } from "@caden/json-cms";
-
 import { components } from "./_generated/api";
-import { auth } from "./auth";
 import { mutation, query } from "./_generated/server";
+import { auth } from "./auth";
 
 export const {
   listSchemas: list,

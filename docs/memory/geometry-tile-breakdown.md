@@ -112,7 +112,7 @@ cache, HTTP cache + MapLibre cache + OPFS pin + persisted light state. #63,
   pmtiles `Protocol` checks pre-added instances by `source.getKey()` before
   creating an implicit `FetchSource` — so the protocol instance moved to
   `app/src/lib/pmtiles-protocol.ts` and the pin calls `protocol.add(new
-  PMTiles(OpfsBackfillSource))` keyed by the bare storage URL; the
+PMTiles(OpfsBackfillSource))` keyed by the bare storage URL; the
   `pmtiles://` tile URL string is UNCHANGED from part 4 (zero consumer
   changes). `asyncThrottle`-free, storage access via async OPFS API.
 - **Persister:** the app's data was ALL `convex/react` WebSocket hooks — the
@@ -121,16 +121,16 @@ cache, HTTP cache + MapLibre cache + OPFS pin + persisted light state. #63,
   defaults + `connect`) and migrated only the light queries on the two table
   surfaces (datasets browser: schemas/groups/collections; dataset page:
   schemas.get/entries.list) to `convexQuery()`. `PersistQueryClientProvider`
-  + `createAsyncStoragePersister` + idb-keyval; buster = new trivial
-  `schemas:maxTileCacheVersion` (server-side fold over the component list);
-  light-namespace allowlist in `light-namespaces.ts` (default-deny — keeps
-  `geometries:*` out of persisted state by construction); maxAge 7d, gcTime
-  maxAge+1d; `onSuccess` fires an initial save. `convexQuery` keys are
-  JSON-safe BY DESIGN (function NAME string, not the opaque ref — "Make
-  query key serializable") — that is what makes persist/restore round-trip:
-  `hydrate` rebuilds with the persisted hash, the integration's cache
-  `"added"` listener re-subscribes (getFunctionName passes strings through),
-  pushes land via setQueryData into the restored entry.
+  - `createAsyncStoragePersister` + idb-keyval; buster = new trivial
+    `schemas:maxTileCacheVersion` (server-side fold over the component list);
+    light-namespace allowlist in `light-namespaces.ts` (default-deny — keeps
+    `geometries:*` out of persisted state by construction); maxAge 7d, gcTime
+    maxAge+1d; `onSuccess` fires an initial save. `convexQuery` keys are
+    JSON-safe BY DESIGN (function NAME string, not the opaque ref — "Make
+    query key serializable") — that is what makes persist/restore round-trip:
+    `hydrate` rebuilds with the persisted hash, the integration's cache
+    `"added"` listener re-subscribes (getFunctionName passes strings through),
+    pushes land via setQueryData into the restored entry.
 - **Persister gotchas that cost real debugging:** (1) a bare
   `convexQueryClient.connect()` throws "already subscribed" after an HMR
   module re-eval — and since the `context` memo is set after connect, EVERY
@@ -174,7 +174,7 @@ cache, HTTP cache + MapLibre cache + OPFS pin + persisted light state. #63,
   fixed by serving the worker same-origin via vite `?worker&url` +
   `worker: { format: "es" }` (also required for `tile-archive.worker.ts` in
   prod builds). (2) ZCode's in-app browser reports `visibilityState:
-  "visible"` while requestAnimationFrame NEVER ticks (0 frames / 2s
+"visible"` while requestAnimationFrame NEVER ticks (0 frames / 2s
   measured) — MapLibre's render loop is rAF-driven, so style + worker were
   fine yet the first frame never rendered. Fixed with a one-time startup
   probe in `map.tsx`: if rAF doesn't tick within 300 ms, swap in a
@@ -306,12 +306,12 @@ meta.
 - **App-side type/lint gotchas hit:** `oxc/no-optional-chaining` is an ERROR
   repo-wide (use `??`/explicit undefined checks; `??` is fine — the component
   uses it); worker-scope `postMessage`/`onmessage` → use `self.addEventListener`
-  + an inline `unicorn/require-post-message-target-origin` disable (the
-  rule's targetOrigin argument doesn't exist in worker scope); `Blob` part
-  typing wants `Uint8Array<ArrayBuffer>` (copy once with `new Uint8Array(archive)`
-  — fresh buffer, no cast); `vi.fn` needs explicit type params; don't run
-  convex CLI from `packages/json-cms` mid-session (cwd gotcha — confirmed
-  again).
+  - an inline `unicorn/require-post-message-target-origin` disable (the
+    rule's targetOrigin argument doesn't exist in worker scope); `Blob` part
+    typing wants `Uint8Array<ArrayBuffer>` (copy once with `new Uint8Array(archive)`
+    — fresh buffer, no cast); `vi.fn` needs explicit type params; don't run
+    convex CLI from `packages/json-cms` mid-session (cwd gotcha — confirmed
+    again).
 - Part 4 kickoff (`docs/kickoffs/part-4-render-from-tiles.md`) amended with
   the part-3 surface + the built-version semantics + the "row path fallback
   when the archive is stale or missing" clarification.
@@ -319,6 +319,7 @@ meta.
   session's chunk.**
 
 ## #60 part-2 status (2026-09-17, merged to `main`)
+
 Server plumbing shipped: schema fields (`mapTileCacheVersion`,
 `mapTileArchiveStorageId/Bytes/MaxZoom`), unconditional version bumps on every
 geometry-affecting write, `setMapTileArchive` with the `expectedVersion` guard,
