@@ -17,6 +17,7 @@ import {
   Tag,
   Trash2,
   Unplug,
+  User,
   X,
 } from "lucide-react";
 import { useState } from "react";
@@ -111,6 +112,31 @@ function LineageRow({ lineage }: { lineage: NonNullable<DatasetDoc["lineage"]> }
   );
 }
 
+/**
+ * The dataset's creator — the component stamps `createdBy` with the host
+ * auth hook's identity string; this resolves it to the person's name (or
+ * email) via the users mirror, falling back to the raw id when the actor
+ * has no profile (e.g. a system actor).
+ */
+function CreatedByRow({ authId }: { authId: string }) {
+  const profile = useQuery(api.users.profileByAuthId, { authId });
+  const label =
+    profile === undefined
+      ? "…"
+      : ((profile !== null ? (profile.name ?? profile.email) : undefined) ?? authId);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Created by
+      </dt>
+      <dd className="flex items-center gap-1 text-sm">
+        <User className="h-3.5 w-3.5 text-muted-foreground" />
+        {label}
+      </dd>
+    </div>
+  );
+}
+
 /** The dataset's type, field count, feature count and creation date at a glance. */
 function DetailsCard({ binding, schema }: { binding?: BindingDoc; schema: DatasetDoc }) {
   const fields = fieldCount(schema.schema),
@@ -186,6 +212,7 @@ function DetailsCard({ binding, schema }: { binding?: BindingDoc; schema: Datase
               {new Date(schema._creationTime).toLocaleDateString()}
             </dd>
           </div>
+          {schema.createdBy !== undefined && <CreatedByRow authId={schema.createdBy} />}
         </dl>
         {binding !== undefined && (
           <>

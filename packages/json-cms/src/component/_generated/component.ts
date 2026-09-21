@@ -32,7 +32,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           targetId: string;
           targetType: "collection" | "group" | "dataset";
         },
-        any,
+        string | null,
         Name
       >;
       addSchemaToCollection: FunctionReference<
@@ -92,6 +92,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "mutation",
         "internal",
         {
+          actorId?: string;
           geometryType?:
             | "Point"
             | "MultiPoint"
@@ -281,6 +282,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           _creationTime: number;
           _id: string;
           boundingBox?: Array<number>;
+          createdBy?: string;
           description?: string;
           entryCount?: number;
           featureCount?: number;
@@ -323,6 +325,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           _creationTime: number;
           _id: string;
           boundingBox?: Array<number>;
+          createdBy?: string;
           description?: string;
           entryCount?: number;
           featureCount?: number;
@@ -653,6 +656,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           _creationTime: number;
           _id: string;
           boundingBox?: Array<number>;
+          createdBy?: string;
           description?: string;
           entryCount?: number;
           featureCount?: number;
@@ -695,6 +699,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           _creationTime: number;
           _id: string;
           boundingBox?: Array<number>;
+          createdBy?: string;
           description?: string;
           entryCount?: number;
           featureCount?: number;
@@ -774,6 +779,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           _creationTime: number;
           _id: string;
           boundingBox?: Array<number>;
+          createdBy?: string;
           description?: string;
           entryCount?: number;
           featureCount?: number;
