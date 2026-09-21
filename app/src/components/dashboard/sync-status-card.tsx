@@ -29,6 +29,7 @@ function errorMessage(error: unknown, fallback: string): string {
  * server-side (sync.ts) — the buttons only kick it off, and the row
  * subscribes to the run's progress until it settles.
  */
+// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 function SourceRow({ binding }: { binding: BindingRow }) {
   const run = useQuery(api.sync.latestRun, { source: binding.source }),
     startRun = useMutation(api.sync.startRun),

@@ -36,6 +36,7 @@ const COMMIT_OP_LABELS = {
  * GeoJSON overlay (never the tile source) beside a field-level before/after
  * panel.
  */
+// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 export function DatasetHistoryPanel({ binding }: { binding: Binding }) {
   const commits = useQuery(api.sync.listCommits, { bindingId: binding._id }),
     features = useQuery(api.sync.commitFeatureMap, { bindingId: binding._id }),

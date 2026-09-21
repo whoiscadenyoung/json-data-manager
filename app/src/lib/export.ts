@@ -81,6 +81,7 @@ function cellValue(value: unknown): string | number | null {
   if (typeof value === "object") {
     return JSON.stringify(value);
   }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- narrowed to primitives above (nullish and objects return early); cell values are strings or numbers by construction.
   return value as string | number;
 }
 
@@ -106,7 +107,8 @@ export function sanitizeSheetName(title: string, used: Set<string>): string {
 export function entryRows(entries: ExportableEntry[]): Array<Record<string, unknown>> {
   return entries.map((entry) =>
     typeof entry.data === "object" && entry.data !== null && !Array.isArray(entry.data)
-      ? (entry.data as Record<string, unknown>)
+      ? // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the typeof/Array guards above exclude null and arrays; entry data is a plain JSON object by construction.
+        (entry.data as Record<string, unknown>)
       : { value: entry.data },
   );
 }

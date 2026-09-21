@@ -166,6 +166,7 @@ function useMapLayerActions(mapId: string) {
   };
 }
 
+// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 function MapDetailPage() {
   const { mapId } = Route.useParams(),
     map = useQuery(api.maps.get, { mapId }),

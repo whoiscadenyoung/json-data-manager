@@ -145,6 +145,7 @@ async function snapshotKeys(
     if (link === null) {
       continue;
     }
+    // oxlint-disable-next-line no-await-in-loop -- same dashboard-sized key-set tradeoff as the link read above.
     const row = await projectionRowForLink(ctx, link);
     if (row !== null) {
       snapshot.set(key, row);

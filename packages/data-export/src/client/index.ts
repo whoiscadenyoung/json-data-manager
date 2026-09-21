@@ -40,6 +40,7 @@ export function extractSchemas(schema: SchemaLike, tableNames: string[]): Record
   for (const name of tableNames) {
     const table = schema.tables[name];
     if (table) {
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- validators expose a serializable `.json` at runtime even though it isn't in their public type.
       out[name] = (table.validator as { json: unknown }).json;
     }
   }
@@ -98,6 +99,7 @@ export function exportReader() {
       // `table` is a runtime string; with the host's concrete data model this
       // reads whichever table was requested.
       const result = await ctx.db
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the runtime table name can't be a static type; the generic component boundary is the point.
         .query(args.table as unknown as never)
         .paginate({ cursor: args.cursor, numItems: args.numItems });
       return {
@@ -142,6 +144,7 @@ export async function startExport(
   const readerHandle = await createFunctionHandle(args.reader);
   const schemas =
     args.schemas ?? (args.schema ? extractSchemas(args.schema, args.tableNames) : undefined);
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the component runs on generic table ids; the host brands the returned id as ExportId.
   return (await ctx.runMutation(component.lib.start, {
     tableNames: args.tableNames,
     readerHandle,
@@ -221,6 +224,7 @@ export async function readExportTable<T = unknown>(
       schemaVersion: string | null;
       schema: unknown;
       rowCount: number;
+      // oxlint-disable-next-line no-await-in-loop -- each page's cursor comes from the previous response; inherently sequential.
     } = await ctx.runAction(component.lib.readTable, {
       exportId: args.exportId,
       tableName: args.table,
@@ -228,6 +232,7 @@ export async function readExportTable<T = unknown>(
       numItems: args.batchSize,
     });
     for (const doc of page.rows) {
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- rows are the exported table's documents; the codec (or the caller's T) owns the shape claim.
       out.push(args.codec ? args.codec.decode(doc, page.schemaVersion) : (doc as T));
     }
     if (page.isDone) break;
@@ -250,6 +255,7 @@ export function decodeExportText<T = unknown>(
     .filter((line) => line.length > 0)
     .map((line) => {
       const doc = JSON.parse(line) as unknown;
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- rows are the exported table's documents; the codec (or the caller's T) owns the shape claim.
       return codec ? codec.decode(doc, schemaVersion) : (doc as T);
     });
 }

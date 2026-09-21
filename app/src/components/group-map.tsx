@@ -71,7 +71,8 @@ function FeatureDetailsPanel({
   datasetTitle: string;
   onClose: () => void;
 }) {
-  const fields = Object.entries(entry.data as Record<string, unknown>);
+  const data: Record<string, unknown> = entry.data,
+    fields = Object.entries(data);
 
   return (
     <div className="absolute top-3 right-3 bottom-3 z-10 flex w-64 flex-col overflow-hidden rounded-lg border border-border bg-card/95 shadow-lg backdrop-blur-sm">

@@ -192,6 +192,7 @@ function CollectionMapSection({ datasets }: { datasets: Dataset[] }) {
   );
 }
 
+// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 function CollectionDetailPage() {
   const { collectionId } = Route.useParams(),
     navigate = useNavigate(),

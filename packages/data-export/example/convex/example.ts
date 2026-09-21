@@ -28,10 +28,12 @@ export const seed = mutation({
   handler: async (ctx, args) => {
     const count = args.users ?? 3;
     for (let i = 0; i < count; i += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- demo seed; the post needs its author's id.
       const userId = await ctx.db.insert("users", {
         name: `User ${i}`,
         email: `user${i}@example.com`,
       });
+      // oxlint-disable-next-line no-await-in-loop -- demo seed; sequential inserts keep the story simple.
       await ctx.db.insert("posts", {
         authorId: userId,
         title: `Post by user ${i}`,
@@ -81,6 +83,7 @@ export const readExportedUsers = action({
   args: { exportId: v.string() },
   handler: async (ctx, args): Promise<Array<{ name: string; email: string }>> => {
     return await readExportTable(ctx, components.dataExport, {
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the id arrives over the API as a plain string; the component brands it.
       exportId: args.exportId as ExportId,
       table: "users",
       codec: usersCodec,

@@ -69,6 +69,7 @@ export const exportTable = internalAction({
   handler: async (ctx, args): Promise<TableResult> => {
     // A serialized function handle is a branded string that doubles as a
     // FunctionReference at runtime; the cast restores its call signature.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- see the comment beside it.
     const reader = args.readerHandle as unknown as ReaderRef;
 
     const lines: string[] = [];
@@ -76,6 +77,7 @@ export const exportTable = internalAction({
     let cursor: string | null = null;
     // Guard against a misbehaving reader that never reports done.
     for (;;) {
+      // oxlint-disable-next-line no-await-in-loop -- each page's cursor comes from the previous response; inherently sequential.
       const result: ReaderPage = await ctx.runQuery(reader, {
         table: args.tableName,
         cursor,
@@ -265,6 +267,7 @@ export const exportWorkflow = workflow.define({
     let rows = 0;
     let bytes = 0;
     for (const tableName of args.tableNames) {
+      // oxlint-disable-next-line no-await-in-loop -- one workflow step per table, sequential by design (durable step history).
       const res = await step.runAction(internal.workflows.exportTable, {
         exportId: args.exportId,
         tableName,

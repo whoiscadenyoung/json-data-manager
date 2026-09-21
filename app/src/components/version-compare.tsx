@@ -27,6 +27,7 @@ type VersionOption = { label: string; schemaId: string; title: string };
  * (tags.getVersionDelta) into the commits' ops shape; positions come from
  * whichever version still has the feature.
  */
+// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 export function VersionCompare({ versions }: { versions: Array<VersionOption> }) {
   const newest = versions.at(0),
     oldest = versions.at(1) ?? newest,

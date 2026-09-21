@@ -119,6 +119,7 @@ export const cancelExport = mutation({
       throw new ConvexError("Export not found");
     }
     if (exp.workflowId && exp.status === "running") {
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- workflow ids are stored as plain strings; the workflow component brands them.
       await cancel(ctx, components.workflow, exp.workflowId as WorkflowId);
     }
     return null;
@@ -145,7 +146,9 @@ export const deleteExport = mutation({
       .withIndex("by_export", (q) => q.eq("exportId", args.exportId))
       .collect();
     for (const file of files) {
+      // oxlint-disable-next-line no-await-in-loop -- ordered deletes under the transaction's write budget.
       await ctx.storage.delete(file.storageId);
+      // oxlint-disable-next-line no-await-in-loop
       await ctx.db.delete(file._id);
     }
     if (exp.manifestStorageId) {
@@ -247,6 +250,7 @@ export const workflowStatus = action({
   args: { workflowId: v.string() },
   returns: v.any(),
   handler: async (ctx, args): Promise<unknown> => {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- workflow ids arrive as plain strings over the API; the workflow component brands them.
     return await getStatus(ctx, components.workflow, args.workflowId as WorkflowId);
   },
 });
@@ -310,10 +314,10 @@ export const readTable = action({
     const text = blob ? await blob.text() : "";
     const lines = text.length > 0 ? text.split("\n").filter((l) => l.length > 0) : [];
 
-    const start = args.cursor ? Number.parseInt(args.cursor, 10) || 0 : 0;
+    const startLine = args.cursor ? Number.parseInt(args.cursor, 10) || 0 : 0;
     const numItems = Math.max(1, args.numItems ?? 1000);
-    const end = Math.min(start + numItems, lines.length);
-    const rows = lines.slice(start, end).map((l) => JSON.parse(l) as unknown);
+    const end = Math.min(startLine + numItems, lines.length);
+    const rows = lines.slice(startLine, end).map((l) => JSON.parse(l) as unknown);
 
     return {
       rows,
