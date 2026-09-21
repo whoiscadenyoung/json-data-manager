@@ -241,3 +241,7 @@ If/when approved, this breaks into ordered implementation issues:
   answered**: the lifecycle is designed (lifecycle doc + ADR 0008) with
   auth gating as the prerequisite; sharing granularity stays open until
   auth lands.
+- Analysis/SQL over datasets (DuckDB-style) is a future layer designed in
+  [`analysis-layer-design.md`](./analysis-layer-design.md): the rollup
+  primitive and freeform SQL should share one engine interface, and specs
+  stay serializable so SQL-backed operations can join as another spec type.

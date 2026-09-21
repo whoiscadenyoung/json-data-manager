@@ -192,3 +192,7 @@ The lifecycle changes *what* gets built late, not *what* gets built first:
   defaults; confirm per-artifact).
 - Whether published collections pin exact dataset versions or float on head
   (lean: float with a "changed" badge, since versions are cheap to repin).
+- Analytics over draft/published data (a DuckDB-style SQL layer) is designed
+  separately — [`analysis-layer-design.md`](./analysis-layer-design.md);
+  its row-resolution and typed-structure invariants constrain the seams in
+  this design.
