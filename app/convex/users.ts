@@ -1,6 +1,7 @@
-import { query } from "./_generated/server";
 import { v } from "convex/values";
 
+import { components } from "./_generated/api";
+import { query } from "./_generated/server";
 import { authComponent } from "./auth";
 
 /**
@@ -35,4 +36,55 @@ export const profileByAuthId = query({
       .query("users")
       .withIndex("by_authId", (q) => q.eq("authId", args.authId))
       .first(),
+});
+
+/**
+ * One profile page load: the user's mirror row plus the datasets they've
+ * created, newest first. `authId` here is the Better Auth user id — the same
+ * string the component stamps as `schemas.createdBy`, so every "Created by"
+ * surface can deep-link here without an extra resolution hop. `user` is null
+ * when the id has no mirror row (deleted user or a system actor) — the page
+ * renders a not-found state.
+ *
+ * Creator filtering happens host-side over the component's summaries
+ * projection (the same light read the datasets browser already pays on every
+ * load) — the component's table is host-only, and dataset counts are far
+ * below anything that would want a component-side creator query. No `returns`
+ * validator: it would have to re-declare the component's whole summary shape.
+ */
+export const profile = query({
+  args: { authId: v.string() },
+  handler: async (ctx, args) => {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_authId", (q) => q.eq("authId", args.authId))
+      .first();
+    const summaries = await ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, {});
+    return {
+      datasets: summaries.filter((summary) => summary.createdBy === args.authId),
+      user,
+    };
+  },
+});
+
+/**
+ * Every user's display surface — authId, name, image — for building
+ * authId → name maps on list pages (the datasets browser's "by X" lines).
+ * Deliberately omits the email: the broadest surface gets the least PII,
+ * and names (falling back to nothing) are all a card needs. The dataset
+ * overview keeps using profileByAuthId, which does resolve email.
+ */
+export const listProfiles = query({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("users").collect();
+    return rows.map((row) => ({ authId: row.authId, image: row.image, name: row.name }));
+  },
+  returns: v.array(
+    v.object({
+      authId: v.string(),
+      image: v.optional(v.string()),
+      name: v.optional(v.string()),
+    }),
+  ),
 });

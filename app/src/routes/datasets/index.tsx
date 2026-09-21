@@ -18,6 +18,7 @@ import {
   EmptyTitle,
 } from "#/components/ui/empty";
 import { Input } from "#/components/ui/input";
+import { UserAvatar } from "#/components/user-avatar";
 import { cn } from "#/lib/utils";
 
 import { api } from "../../../convex/_generated/api";
@@ -44,6 +45,7 @@ const TYPE_OPTIONS: { value: TypeFilter; label: string }[] = [
 
 type DatasetSummary = FunctionReturnType<typeof api.schemas.listSummaries>[number];
 type GroupSummary = FunctionReturnType<typeof api.groups.list>[number];
+type UserProfile = FunctionReturnType<typeof api.users.listProfiles>[number];
 
 function matchesTypeFilter(dataset: DatasetSummary, typeFilter: TypeFilter): boolean {
   if (typeFilter === "all") {
@@ -164,29 +166,44 @@ function FiltersSidebar({
   );
 }
 
-function DatasetCard({ dataset }: { dataset: DatasetSummary }) {
+function DatasetCard({ dataset, profile }: { dataset: DatasetSummary; profile?: UserProfile }) {
   return (
-    <Link to="/datasets/$schemaId" params={{ schemaId: dataset._id }} className="block">
-      <Card className="flex-row items-center gap-4 px-4 transition-shadow hover:shadow-md">
-        <div className="flex min-w-0 flex-1 flex-col gap-2 py-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <DatasetTypeTags dataset={dataset} />
-            <span className="text-xs text-muted-foreground">
-              {dataset.fieldCount} {dataset.fieldCount === 1 ? "field" : "fields"}
-            </span>
-          </div>
-          <div>
-            <h3 className="text-base font-semibold">{dataset.title}</h3>
-            <p className="line-clamp-2 text-sm text-muted-foreground">{dataset.description}</p>
-          </div>
-          <div className="flex items-center text-xs text-muted-foreground">
-            <Calendar className="mr-1.5 h-3.5 w-3.5" />
-            Created {new Date(dataset._creationTime).toLocaleDateString()}
-          </div>
+    <Card className="flex-row items-center gap-4 px-4 transition-shadow hover:shadow-md">
+      <Link
+        to="/datasets/$schemaId"
+        params={{ schemaId: dataset._id }}
+        className="flex min-w-0 flex-1 flex-col gap-2 py-0"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <DatasetTypeTags dataset={dataset} />
+          <span className="text-xs text-muted-foreground">
+            {dataset.fieldCount} {dataset.fieldCount === 1 ? "field" : "fields"}
+          </span>
         </div>
-        <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
-      </Card>
-    </Link>
+        <div>
+          <h3 className="text-base font-semibold">{dataset.title}</h3>
+          <p className="line-clamp-2 text-sm text-muted-foreground">{dataset.description}</p>
+        </div>
+        <div className="flex items-center text-xs text-muted-foreground">
+          <Calendar className="mr-1.5 h-3.5 w-3.5" />
+          Created {new Date(dataset._creationTime).toLocaleDateString()}
+        </div>
+      </Link>
+      {/* A sibling link, not a nested one — anchors can't nest, and the
+          creator chip must stay clickable inside the card. */}
+      {dataset.createdBy !== undefined && profile !== undefined && (
+        <Link
+          to="/users/$userId"
+          params={{ userId: dataset.createdBy }}
+          className="flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          title={`View ${profile.name ?? "this user"}'s profile`}
+        >
+          <UserAvatar className="h-4 w-4 text-[7px]" image={profile.image} name={profile.name} />
+          {profile.name ?? "Unnamed"}
+        </Link>
+      )}
+      <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
+    </Card>
   );
 }
 
@@ -322,18 +339,24 @@ function useBrowserLightQueries() {
     collections: useQuery({ ...convexQuery(api.collections.list) }).data,
     datasets: useQuery({ ...convexQuery(api.schemas.listSummaries) }).data,
     groups: useQuery({ ...convexQuery(api.groups.list, {}) }).data,
+    // authId → display profile, for the cards' creator chips.
+    profiles: useQuery({ ...convexQuery(api.users.listProfiles) }).data,
   };
 }
 
 // oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 function DatasetsPage() {
-  const { datasets, groups, collections } = useBrowserLightQueries(),
+  const { datasets, groups, collections, profiles } = useBrowserLightQueries(),
     [search, setSearch] = useState(""),
     [sort, setSort] = useState<SortOption>("newest"),
     [typeFilter, setTypeFilter] = useState<TypeFilter>("all"),
     collectionNames = new Map<string, string>();
   for (const collection of collections ?? []) {
     collectionNames.set(collection._id, collection.name);
+  }
+  const profilesByAuthId = new Map<string, UserProfile>();
+  for (const profile of profiles ?? []) {
+    profilesByAuthId.set(profile.authId, profile);
   }
   const collectionName = (collectionId: string | undefined) =>
       collectionId === undefined ? undefined : collectionNames.get(collectionId),
@@ -420,7 +443,15 @@ function DatasetsPage() {
                       collectionName={collectionName(item.group.collectionId)}
                     />
                   ) : (
-                    <DatasetCard key={item.dataset._id} dataset={item.dataset} />
+                    <DatasetCard
+                      key={item.dataset._id}
+                      dataset={item.dataset}
+                      profile={
+                        item.dataset.createdBy === undefined
+                          ? undefined
+                          : profilesByAuthId.get(item.dataset.createdBy)
+                      }
+                    />
                   ),
                 )}
               </div>

@@ -742,6 +742,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           _creationTime: number;
           _id: string;
           boundingBox?: Array<number>;
+          createdBy?: string;
           description?: string;
           entryCount?: number;
           featureCount?: number;
