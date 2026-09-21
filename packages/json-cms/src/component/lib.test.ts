@@ -22,12 +22,6 @@ function bigRing(pointCount: number): number[][] {
   return ring;
 }
 
-/** Order-insensitive comparison for freshly mapped/array-literal string-id lists — the arrays are throwaways, so an in-place sort is safe, and `.toSorted()` needs an ES2023 lib this package doesn't target. */
-function sorted(values: string[]): string[] {
-  // oxlint-disable-next-line unicorn/no-array-sort -- see above: fresh throwaway arrays, ES2021 lib.
-  return values.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-}
-
 /** Seeds a collection row for collections-and-groups tests. */
 async function createTestCollection(t: TestCtx, name: string) {
   return t.mutation(api.lib.createCollection, { name });
@@ -648,7 +642,7 @@ describe("json-cms component", () => {
         standaloneId = await t.mutation(api.lib.createGroup, { name: "Standalone" });
 
       const all = await t.query(api.lib.listGroups, {});
-      expect(sorted(all.map((group) => group._id))).toEqual(sorted([nestedId, standaloneId]));
+      expect(all.map((group) => group._id).toSorted()).toEqual([nestedId, standaloneId].toSorted());
 
       const nested = await t.query(api.lib.listGroups, { collectionId });
       expect(nested.map((group) => group._id)).toEqual([nestedId]);
@@ -666,8 +660,8 @@ describe("json-cms component", () => {
       await t.mutation(api.lib.addSchemaToCollection, { collectionId: firstId, schemaId });
 
       const collections = await t.query(api.lib.listCollectionsBySchema, { schemaId });
-      expect(sorted(collections.map((collection) => collection._id))).toEqual(
-        sorted([firstId, secondId]),
+      expect(collections.map((collection) => collection._id).toSorted()).toEqual(
+        [firstId, secondId].toSorted(),
       );
       expect(await t.query(api.lib.listSchemaCollections, {})).toHaveLength(2);
 

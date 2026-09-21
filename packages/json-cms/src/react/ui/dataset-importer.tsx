@@ -106,9 +106,7 @@ function summarizeGeometryTypes(
   geometryType: GeometryType | null,
   geometrylessCount: number,
 ): string {
-  const entries =
-      // oxlint-disable-next-line unicorn/no-array-sort -- `.toSorted()` needs ES2023 lib; this repo targets ES2021, and `Object.entries()` already returns a fresh array so mutating it in place is harmless.
-      Object.entries(typeCounts).sort(([a], [b]) => a.localeCompare(b)),
+  const entries = Object.entries(typeCounts).toSorted(([a], [b]) => a.localeCompare(b)),
     parts: string[] = [];
   if (entries.length > 0) {
     const countsPart = entries.map(([type, count]) => `${count} ${type}`).join(" + ");
