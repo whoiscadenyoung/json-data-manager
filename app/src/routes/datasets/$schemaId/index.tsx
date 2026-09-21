@@ -336,6 +336,7 @@ function MakeGeospatialButton({
   );
 }
 
+// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 function SchemaDetailPage() {
   const { schemaId } = Route.useParams(),
     search = Route.useSearch(),

@@ -261,6 +261,7 @@ export function useDatasetImport(): DatasetImportHandle {
     [importId, setImportId] = useState<string | undefined>(),
     status = useQuery(api.getImportStatus, importId ? { importId } : "skip"),
     start = useCallback(
+      // oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
       async ({
         schema,
         uiSchema,

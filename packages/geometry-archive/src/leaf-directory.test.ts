@@ -67,6 +67,7 @@ describe("leaf directories", () => {
       const y = Math.floor(
         (0.5 - Math.asinh(Math.tan((lat * Math.PI) / 180)) / (2 * Math.PI)) * 4096,
       );
+      // oxlint-disable-next-line no-await-in-loop -- spot-checks walk every leaf chunk; each tile read is independent but sequential reads keep the failure message precise.
       const resolved = await pmtiles.getZxy(12, x, y);
       if (resolved === undefined) {
         throw new Error(`tile 12/${x}/${y} missing from the archive`);

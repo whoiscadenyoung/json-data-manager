@@ -298,6 +298,7 @@ export class OpfsArchiveCache {
     const versions = this.#entries.get(schemaId);
     if (versions === undefined) return;
     for (const version of supersededVersions([...versions.keys()], currentVersion)) {
+      // oxlint-disable-next-line no-await-in-loop -- sequential OPFS removals; pruning order keeps the pin set consistent.
       await this.#remove(schemaId, version);
     }
   }
@@ -310,6 +311,7 @@ export class OpfsArchiveCache {
     // Deleting from a Map during key iteration is safe — each removed key is
     // visited at most once and removed keys are never revisited.
     for (const version of versions.keys()) {
+      // oxlint-disable-next-line no-await-in-loop -- sequential OPFS removals, see #pruneSuperseded.
       await this.#remove(schemaId, version);
     }
   }
@@ -526,6 +528,7 @@ export function TileArchiveCacheManager(): null {
         const geospatial = new Set(geospatialIds);
         for (const schemaId of new Set(wiredUrls.keys())) {
           if (!geospatial.has(schemaId)) {
+            // oxlint-disable-next-line no-await-in-loop -- sequential pin drops; each observes then unwires.
             await cache.observeMeta(schemaId, null);
             unwireProtocolSources(schemaId);
           }
@@ -535,11 +538,13 @@ export function TileArchiveCacheManager(): null {
         const meta = metas[index];
         if (meta === undefined) continue;
         if (meta === null) {
+          // oxlint-disable-next-line no-await-in-loop -- sequential pin drops; each observes then unwires.
           await cache.observeMeta(schemaId, null);
           unwireProtocolSources(schemaId);
           continue;
         }
         wireProtocolSource(schemaId, meta.version, meta.url);
+        // oxlint-disable-next-line no-await-in-loop -- sequential pin updates; ordering keeps the backfill generation sane.
         await cache.observeMeta(schemaId, { url: meta.url, version: meta.version });
       }
     })();

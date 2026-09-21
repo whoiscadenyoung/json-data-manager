@@ -516,6 +516,7 @@ async function versionRows(
     schemaIds: [schemaId],
   });
   return entries.flatMap((entry) => {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- listEntriesForSchemas returns untyped rows; the guards right below enforce the shape at runtime.
     const data = entry.data as Record<string, unknown> | null;
     if (data === null || typeof data !== "object") {
       return [];
@@ -747,6 +748,7 @@ export const recordTagDelta = internalMutation({
         id: version._id,
         ref: version.lineage !== undefined ? version.lineage.snapshotRef : undefined,
       }))
+      // oxlint-disable-next-line unicorn/no-array-sort -- freshly mapped throwaway array; `.toSorted()` isn't in the lib app/convex typechecks against.
       .sort((a, b) => b.frozenAt - a.frozenAt);
     const previous = candidates[0];
     if (previous === undefined) {
@@ -802,6 +804,7 @@ export const enforceRetention = internalMutation({
         frozenAt: version.lineage !== undefined ? version.lineage.frozenAt : 0,
         id: version._id,
       }))
+      // oxlint-disable-next-line unicorn/no-array-sort -- freshly mapped throwaway array; `.toSorted()` isn't in the lib app/convex typechecks against.
       .sort((a, b) => b.frozenAt - a.frozenAt);
     const retired = unpinnedNewestFirst.slice(keep);
     for (const version of retired) {

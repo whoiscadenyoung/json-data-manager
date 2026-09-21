@@ -94,6 +94,7 @@ function parsedSchemaMeta(schemaJson: string): { description: string; title: str
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     return undefined;
   }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the guards above exclude null and arrays; property types are checked per-field below.
   const record = parsed as Record<string, unknown>;
   return {
     description: typeof record.description === "string" ? record.description : "",
@@ -716,6 +717,7 @@ function EditorTabPanel({
   );
 }
 
+// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 export function SchemaEditor({
   initialJson = "",
   initialUiSchemaJson = "",
@@ -896,7 +898,8 @@ export function SchemaEditor({
       }
       const base =
         typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-          ? (parsed as Record<string, unknown>)
+          ? // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the guards above exclude null and arrays.
+            (parsed as Record<string, unknown>)
           : // Typing into the card on an empty editor starts a minimal schema.
             { properties: {}, type: "object" };
       setSchemaJson(JSON.stringify({ ...base, ...patch }, null, 2));

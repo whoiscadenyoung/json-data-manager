@@ -1143,6 +1143,7 @@ export const addMapLayer = mutation({
     targetId: v.string(),
     targetType: mapLayerTargetTypeValidator,
   },
+  returns: v.union(v.id("mapLayers"), v.null()),
   handler: async (ctx, args) => {
     const map = await ctx.db.get(args.mapId);
     if (!map) {
@@ -1157,7 +1158,7 @@ export const addMapLayer = mutation({
     if (
       layers.some((layer) => layer.targetType === args.targetType && layer.targetId === targetId)
     ) {
-      return;
+      return null;
     }
 
     return ctx.db.insert("mapLayers", {
@@ -1923,6 +1924,18 @@ function simplifyGeometryPayload(
   return { geometry: rounded, geometryJson: JSON.stringify(rounded) };
 }
 
+/** Runs `fn`, rethrowing geometry parse/validate failures as client-facing ConvexErrors. */
+function asConvexError<T>(fn: () => T): T {
+  try {
+    return fn();
+  } catch (err) {
+    if (err instanceof GeometryError || err instanceof GeoParseError) {
+      throw new ConvexError(err.message);
+    }
+    throw err;
+  }
+}
+
 /**
  * Validates a JSON-string geometry argument against the schema doc's
  * `kind`/`geometryType`, and resolves it to the fields a `geometries` row
@@ -1949,29 +1962,14 @@ function validateEntryGeometry(
   if (kind !== "geospatial" || schemaDoc.geometryType === undefined) {
     throw new ConvexError("Cannot attach geometry to a standard dataset.");
   }
-  let geometry: Geometry;
-  try {
-    geometry = parseAndValidateGeometry(geometryJsonArg);
-  } catch (err) {
-    if (err instanceof GeometryError || err instanceof GeoParseError) {
-      throw new ConvexError(err.message);
-    }
-    throw err;
-  }
+  const geometry = asConvexError(() => parseAndValidateGeometry(geometryJsonArg));
   if (!isGeometryCompatibleWithDatasetType(geometry.type, schemaDoc.geometryType)) {
     throw new ConvexError(
       `Geometry type "${geometry.type}" is not compatible with this dataset's "${schemaDoc.geometryType}" geometry type.`,
     );
   }
   const resolved = simplifyGeometryPayload(geometry, geometryJsonArg, schemaDoc);
-  try {
-    return inlineGeometryFieldsOrThrow(resolved.geometryJson, resolved.geometry);
-  } catch (err) {
-    if (err instanceof GeometryError) {
-      throw new ConvexError(err.message);
-    }
-    throw err;
-  }
+  return asConvexError(() => inlineGeometryFieldsOrThrow(resolved.geometryJson, resolved.geometry));
 }
 
 /**
@@ -2796,6 +2794,33 @@ async function tryDeleteStorage(ctx: MutationCtx, storageId: string): Promise<vo
  * `storageIds`) — deleting an already-consumed blob is a harmless no-op
  * (see `tryDeleteStorage`).
  */
+/** Unpacks the context the import workflow stored: the import row id and the chunk blob ids. */
+function unpackImportContext(context: unknown): { importId: unknown; storageIds: unknown } {
+  const isObject = context !== null && typeof context === "object";
+  return {
+    importId:
+      isObject && "importId" in context ? (context as { importId?: unknown }).importId : undefined,
+    storageIds:
+      isObject && "storageIds" in context
+        ? (context as { storageIds?: unknown }).storageIds
+        : undefined,
+  };
+}
+
+/** Best-effort delete any chunk blobs the workflow never got to (a failed/canceled import may have stopped partway through `storageIds`) — deleting an already-consumed blob is a harmless no-op (see `tryDeleteStorage`). */
+async function deleteLeftoverChunks(ctx: MutationCtx, storageIds: unknown): Promise<void> {
+  if (!Array.isArray(storageIds)) {
+    return;
+  }
+  await Promise.all(
+    storageIds.map(async (id: unknown) => {
+      if (typeof id === "string") {
+        await tryDeleteStorage(ctx, id);
+      }
+    }),
+  );
+}
+
 export const handleImportComplete = internalMutation({
   args: {
     context: v.any(),
@@ -2804,29 +2829,12 @@ export const handleImportComplete = internalMutation({
   },
   handler: async (ctx, args) => {
     const result = args.result,
-      context: unknown = args.context,
-      importId =
-        context && typeof context === "object" && "importId" in context
-          ? (context as { importId?: unknown }).importId
-          : undefined,
-      storageIds =
-        context && typeof context === "object" && "storageIds" in context
-          ? (context as { storageIds?: unknown }).storageIds
-          : undefined;
+      { importId, storageIds } = unpackImportContext(args.context);
 
     if (result && result.kind === "success") {
       return;
     }
-
-    if (Array.isArray(storageIds)) {
-      await Promise.all(
-        storageIds.map(async (id: unknown) => {
-          if (typeof id === "string") {
-            await tryDeleteStorage(ctx, id);
-          }
-        }),
-      );
-    }
+    await deleteLeftoverChunks(ctx, storageIds);
 
     if (typeof importId !== "string") {
       return;
@@ -3411,6 +3419,7 @@ export const applySimplifiedGeometriesInternal = internalMutation({
   handler: async (ctx, args) => {
     let touchedSchemaId: Id<"schemas"> | undefined;
     for (const update of args.updates) {
+      // oxlint-disable-next-line no-await-in-loop -- the batch is one transaction; row writes land in order under its write budget.
       const existing = await ctx.db.get(update.id);
       if (existing === null) {
         continue; // Deleted (or its whole dataset went) mid-run — nothing to round.
@@ -3419,7 +3428,9 @@ export const applySimplifiedGeometriesInternal = internalMutation({
       // The row's old blob is always superseded by this write: either the
       // rounded payload moved back inline, or it was re-stored as a NEW blob
       // (storage blobs are immutable), so the old one is unreferenced now.
+      // oxlint-disable-next-line no-await-in-loop
       await deleteGeometryStorageIfAny(ctx, existing);
+      // oxlint-disable-next-line no-await-in-loop
       await ctx.db.patch(update.id, {
         bbox: update.bbox,
         geometry: undefined,
@@ -3510,19 +3521,24 @@ export const simplifyGeometryBatchInternal = internalAction({
         if (row.geometryJson !== undefined) {
           raw = row.geometryJson;
         } else {
+          // oxlint-disable-next-line no-await-in-loop -- per-row payload reads; the batch is bounded by the shared paginator's byte budget.
           const blob =
             row.geometryStorageId !== undefined
-              ? await ctx.storage.get(row.geometryStorageId)
+              ? // oxlint-disable-next-line no-await-in-loop
+                await ctx.storage.get(row.geometryStorageId)
               : null;
           if (blob === null) {
             throw new Error("Geometry payload blob is missing.");
           }
+          // oxlint-disable-next-line no-await-in-loop
           raw = await blob.text();
         }
         const parsedGeometry = parseAndValidateGeometry(raw);
+        // oxlint-disable-next-line no-await-in-loop -- storage-form resolution writes per row, chunked into the pending flush below.
         const rounded = roundGeometryCoordinates(parsedGeometry, GEOMETRY_SIMPLIFY_DECIMAL_PLACES),
-          roundedJson = JSON.stringify(rounded),
-          resolved = await resolveGeometryStorage(ctx, rounded, roundedJson);
+          roundedJson = JSON.stringify(rounded);
+        // oxlint-disable-next-line no-await-in-loop
+        const resolved = await resolveGeometryStorage(ctx, rounded, roundedJson);
         // `resolved` also carries `type` (unchanged by rounding) — only the
         // fields this write actually touches travel to the mutation.
         pending.push({

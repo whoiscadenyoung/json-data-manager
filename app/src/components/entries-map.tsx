@@ -50,7 +50,8 @@ const FEATURE_FILL_PAINT = { "fill-color": "#3b82f6", "fill-opacity": 0.2 },
   PENDING_GRACE_MS = 20_000;
 
 function FeatureDetailsPanel({ entry, onClose }: { entry: EntryDoc; onClose: () => void }) {
-  const fields = Object.entries(entry.data as Record<string, unknown>);
+  const data: Record<string, unknown> = entry.data,
+    fields = Object.entries(data);
 
   return (
     <div className="absolute top-3 right-3 bottom-3 z-10 flex w-64 flex-col overflow-hidden rounded-lg border border-border bg-card/95 shadow-lg backdrop-blur-sm">
@@ -159,7 +160,7 @@ function useEntriesRowReadiness(geometries: GeometryEntry[], isLoading: boolean)
 
   useEffect(() => {
     if (isLoading || pendingCount === 0) {
-      return;
+      return undefined;
     }
     const timer = setTimeout(() => {
       setGraceElapsed(true);
@@ -245,6 +246,7 @@ function entriesIsEmpty(
  * exact extent only if it differs (it can only be stale-wider, after
  * deletions).
  */
+// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 export function EntriesMap({
   geometries,
   entries,

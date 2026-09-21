@@ -10,6 +10,22 @@ import { initConvexTest } from "./setup.test.js";
 // @convex-dev/workflow and cannot be driven to completion under convex-test
 // because the workflow patches the shared JS global scope — is validated
 // end-to-end against a real Convex backend (see the example and README).
+
+/** Seeds one `running` export row and returns its id. */
+async function makeExport(t: ReturnType<typeof initConvexTest>) {
+  return await t.run(async (ctx) => {
+    return await ctx.db.insert("exports", {
+      label: "test",
+      status: "running" as const,
+      tableNames: ["users"],
+      readerHandle: "function://host#file:reader",
+      format: "jsonl" as const,
+      batchSize: 100,
+      requestedAt: Date.now(),
+    });
+  });
+}
+
 describe("data-export component", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -17,20 +33,6 @@ describe("data-export component", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
-
-  async function makeExport(t: ReturnType<typeof initConvexTest>) {
-    return await t.run(async (ctx) => {
-      return await ctx.db.insert("exports", {
-        label: "test",
-        status: "running" as const,
-        tableNames: ["users"],
-        readerHandle: "function://host#file:reader",
-        format: "jsonl" as const,
-        batchSize: 100,
-        requestedAt: Date.now(),
-      });
-    });
-  }
 
   test("recordFile rolls totals up onto the export", async () => {
     const t = initConvexTest();

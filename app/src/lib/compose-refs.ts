@@ -14,6 +14,7 @@ function setRef<T>(ref: PossibleRef<T>, value: T) {
   if (ref !== null && ref !== undefined) {
     ref.current = value;
   }
+  return undefined;
 }
 
 /**
@@ -46,6 +47,7 @@ function composeRefs<T>(...refs: PossibleRef<T>[]): React.RefCallback<T> {
         }
       };
     }
+    return undefined;
   };
 }
 

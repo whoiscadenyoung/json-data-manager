@@ -29,6 +29,7 @@ async function fetchGeometry(url: string): Promise<Geometry> {
       if (!res.ok) {
         throw new Error(`Failed to fetch geometry (HTTP ${res.status}).`);
       }
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- geometry blobs are server-written GeoJSON documents.
       return (await res.json()) as Geometry;
     })
     .catch((err: unknown) => {
@@ -40,9 +41,7 @@ async function fetchGeometry(url: string): Promise<Geometry> {
 }
 
 /** Rows whose geometry is stored externally (only `geometryUrl` set) and so need a `fetch` to resolve. */
-function urlOnlyRows<T extends ResolvableGeometryRow>(
-  rows: T[],
-): Array<{ id: string; url: string }> {
+function urlOnlyRows(rows: ResolvableGeometryRow[]): Array<{ id: string; url: string }> {
   return rows.flatMap((row) => {
     if (row.geometryJson !== undefined || row.geometryUrl === undefined) {
       return [];
@@ -74,9 +73,7 @@ function urlOnlyRows<T extends ResolvableGeometryRow>(
  * changes (a geometry edit rewrites the payload); the per-arrival cost is
  * then just parsing the new rows.
  */
-export function useResolvedGeometries<T extends ResolvableGeometryRow>(
-  rows: T[],
-): Map<string, Geometry> {
+export function useResolvedGeometries(rows: ResolvableGeometryRow[]): Map<string, Geometry> {
   const parsedCacheRef = useRef(new Map<string, { geometry: Geometry; json: string }>()),
     inlineResolved = useMemo(() => {
       const cache = parsedCacheRef.current,
@@ -97,6 +94,7 @@ export function useResolvedGeometries<T extends ResolvableGeometryRow>(
           continue;
         }
         try {
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- inline payloads are server-written GeoJSON; a malformed row is caught and skipped below.
           const geometry = JSON.parse(row.geometryJson) as Geometry;
           cache.set(row._id, { geometry, json: row.geometryJson });
           map.set(row._id, geometry);
@@ -141,16 +139,18 @@ export function useResolvedGeometries<T extends ResolvableGeometryRow>(
     for (const row of pending) {
       void fetchGeometry(row.url)
         .then((geometry) => {
-          if (!cancelled) {
-            // Bail out when this id already resolved to the same fetch
-            // result — `new Map(prev)` always returns a new reference, and
-            // without this check a cache-hit re-resolution (harmless on its
-            // own) would still trigger a state update, a re-render, and
-            // (upstream) another pass through this same effect.
-            setFetched((prev) =>
-              prev.get(row.id) === geometry ? prev : new Map(prev).set(row.id, geometry),
-            );
+          if (cancelled) {
+            return undefined;
           }
+          // Bail out when this id already resolved to the same fetch
+          // result — `new Map(prev)` always returns a new reference, and
+          // without this check a cache-hit re-resolution (harmless on its
+          // own) would still trigger a state update, a re-render, and
+          // (upstream) another pass through this same effect.
+          setFetched((prev) =>
+            prev.get(row.id) === geometry ? prev : new Map(prev).set(row.id, geometry),
+          );
+          return undefined;
         })
         .catch(() => {
           // Leave this row unresolved; everything else still renders.

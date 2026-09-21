@@ -110,6 +110,7 @@ export function ExportDialog({
               <Checkbox
                 checked={includeSchema}
                 onCheckedChange={(checked) => {
+                  // oxlint-disable-next-line typescript/no-unnecessary-boolean-literal-compare -- Radix types `checked` as boolean | "indeterminate"; the compare narrows out "indeterminate".
                   setIncludeSchema(checked === true);
                 }}
               />

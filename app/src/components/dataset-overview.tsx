@@ -592,7 +592,13 @@ function CollectionsSection({ schemaId }: { schemaId: string }) {
 }
 
 /** The dataset's single group (0–1), managed inline — standalone groups included. */
-function GroupSection({ schemaId, groupId }: { schemaId: string; groupId?: string }) {
+function GroupSection({
+  schemaId,
+  groupId: activeGroupId,
+}: {
+  schemaId: string;
+  groupId?: string;
+}) {
   const allGroups = useQuery(api.groups.list, {}),
     allCollections = useQuery(api.collections.list),
     setSchemaGroup = useMutation(api.collections.setSchemaGroup),
@@ -604,7 +610,7 @@ function GroupSection({ schemaId, groupId }: { schemaId: string; groupId?: strin
     [parentId, setParentId] = useState(NO_PARENT),
     groups = allGroups ?? [],
     currentGroup =
-      groupId === undefined ? undefined : groups.find((group) => group._id === groupId),
+      activeGroupId === undefined ? undefined : groups.find((group) => group._id === activeGroupId),
     collectionName = (collectionId: string) => {
       const match = (allCollections ?? []).find((collection) => collection._id === collectionId);
       return match ? match.name : undefined;
@@ -614,7 +620,7 @@ function GroupSection({ schemaId, groupId }: { schemaId: string; groupId?: strin
         ? `in ${collectionName(group.collectionId) ?? "collection"}`
         : "Standalone",
     candidates = groups
-      .filter((group) => group._id !== groupId)
+      .filter((group) => group._id !== activeGroupId)
       .map((group) => ({ id: group._id, label: group.name, subtitle: subtitle(group) }));
 
   return (
@@ -793,25 +799,25 @@ function GroupSection({ schemaId, groupId }: { schemaId: string; groupId?: strin
  * read-only dataset: its own rows, its own map, pinned in time. Retention
  * (keep-N, pin exemption) and the pairwise compare view live here too.
  */
+// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 function VersionsCard({ sourceSchemaId }: { sourceSchemaId: string }) {
   const versions = useQuery(api.tags.listVersions, { sourceSchemaId }),
     retention = useQuery(api.tags.retentionSettings, { sourceSchemaId }),
     setKeepVersions = useMutation(api.tags.setKeepVersions),
     [keepInput, setKeepInput] = useState<string>(),
     [compareOpen, setCompareOpen] = useState(false),
-    handleKeepSave = () => {
+    handleKeepSave = async () => {
       const keep = Number(keepInput);
       if (!Number.isInteger(keep) || keep < 1) {
         toast.error("Keep must be a positive whole number.");
         return;
       }
-      setKeepVersions({ keep, sourceSchemaId })
-        .then(() => {
-          toast.success(`Keeping the newest ${keep} unpinned versions.`);
-        })
-        .catch((error: unknown) => {
-          toast.error(errorMessage(error, "Failed to set retention."));
-        });
+      try {
+        await setKeepVersions({ keep, sourceSchemaId });
+        toast.success(`Keeping the newest ${keep} unpinned versions.`);
+      } catch (error: unknown) {
+        toast.error(errorMessage(error, "Failed to set retention."));
+      }
     };
   return (
     <Card>
@@ -891,6 +897,7 @@ function VersionsCard({ sourceSchemaId }: { sourceSchemaId: string }) {
   );
 }
 
+// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 function VersionRow({ version }: { version: VersionDoc }) {
   const retire = useMutation(api.tags.retireVersion),
     setPinned = useMutation(api.tags.setVersionPinned),
@@ -918,19 +925,18 @@ function VersionRow({ version }: { version: VersionDoc }) {
         setIsRetiring(false);
       }
     },
-    handlePinToggle = () => {
+    handlePinToggle = async () => {
       if (ref === undefined) {
         return;
       }
-      setPinned({ pinned: !isPinned, schemaId: version.schemaId })
-        .then(() => {
-          toast.success(
-            isPinned ? "Unpinned — retention may retire it." : "Pinned — never auto-retired.",
-          );
-        })
-        .catch((error: unknown) => {
-          toast.error(errorMessage(error, "Failed to update pin."));
-        });
+      try {
+        await setPinned({ pinned: !isPinned, schemaId: version.schemaId });
+        toast.success(
+          isPinned ? "Unpinned — retention may retire it." : "Pinned — never auto-retired.",
+        );
+      } catch (error: unknown) {
+        toast.error(errorMessage(error, "Failed to update pin."));
+      }
     };
   return (
     <li className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2">

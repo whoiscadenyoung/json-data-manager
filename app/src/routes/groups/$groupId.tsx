@@ -89,6 +89,7 @@ export const Route = createFileRoute("/groups/$groupId")({
  * edited and datasets can be added directly, whether the group is nested in
  * a collection or standalone.
  */
+// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 function GroupDetailPage() {
   const { groupId } = Route.useParams(),
     navigate = useNavigate(),
@@ -235,7 +236,7 @@ function GroupDetailPage() {
       if (format === "geojson") {
         // GeoJSON is a geospatial format — regular datasets in the group
         // have no geometry to express and are skipped.
-        for (const dataset of datasets.filter((dataset) => dataset.kind === "geospatial")) {
+        for (const dataset of datasets.filter((candidate) => candidate.kind === "geospatial")) {
           downloadText(
             JSON.stringify(
               buildGeoJsonCollection(entriesOf(dataset), exportResolvedGeometries, dataset._id),

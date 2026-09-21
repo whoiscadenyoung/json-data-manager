@@ -213,8 +213,7 @@ export function roundGeometryCoordinates<G extends Geometry>(geometry: G, decima
   return {
     ...geometry,
     coordinates: roundDeep(geometry.coordinates),
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- `roundDeep` preserves the exact nesting shape each geometry type's `coordinates` expects; the per-type tuples can't be expressed through one generic walk.
-  } as G;
+  };
 }
 
 /**

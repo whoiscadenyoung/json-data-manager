@@ -57,11 +57,13 @@ function OverlaySource({ points }: { points: DiffPoint[] }) {
 
   useEffect(() => {
     if (!isLoaded || map === null) {
-      return;
+      return undefined;
     }
-    if (map.getSource(sourceId) !== undefined) {
-      void (map.getSource(sourceId) as GeoJSONSource).setData(featureCollection);
-      return;
+    const source = map.getSource(sourceId);
+    if (source !== undefined) {
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the only source ever created under this id is the geojson one added below.
+      void (source as GeoJSONSource).setData(featureCollection);
+      return undefined;
     }
     map.addSource(sourceId, { data: featureCollection, type: "geojson" });
     map.addLayer({

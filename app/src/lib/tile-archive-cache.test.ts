@@ -77,6 +77,7 @@ function release(
 
 async function flushMicrotasks(): Promise<void> {
   for (let i = 0; i < 5; i += 1) {
+    // oxlint-disable-next-line no-await-in-loop -- flushing the microtask queue N levels deep; the awaits are the point.
     await Promise.resolve();
   }
 }

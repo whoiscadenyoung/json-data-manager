@@ -255,6 +255,7 @@ function GroupCard({
  * search/type filters) plus datasets without a group. Grouped datasets are
  * represented by their group, never listed at top level.
  */
+// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 function filterBrowserItems(
   datasets: DatasetSummary[] | undefined,
   groups: GroupSummary[] | undefined,
@@ -324,6 +325,7 @@ function useBrowserLightQueries() {
   };
 }
 
+// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 function DatasetsPage() {
   const { datasets, groups, collections } = useBrowserLightQueries(),
     [search, setSearch] = useState(""),

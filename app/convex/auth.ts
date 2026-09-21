@@ -40,6 +40,7 @@ export async function auth(
   },
 ): Promise<string> {
   if (operation !== undefined && operation.type !== "read") {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- every caller passes a full MutationCtx; the narrow `{ auth }` param keeps the read path callable from http actions.
     const mutationCtx = ctx as MutationCtx;
     let schemaId = operation.schemaId;
     if (schemaId === undefined && operation.entryId !== undefined) {

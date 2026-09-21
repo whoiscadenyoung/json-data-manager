@@ -8,21 +8,71 @@ import { INLINE_GEOMETRY_BYTE_LIMIT } from "./geometry_storage.js";
 import { GEOMETRY_PAGE_BYTE_BUDGET, MAP_TILE_ARCHIVE_MIN_BYTES } from "./lib.js";
 import { initConvexTest } from "./setup.test.js";
 
+/** `|| 0` normalizes a `-0` result (e.g. right at an angle where sin/cos rounds to negative zero) to plain `0` — `JSON.stringify(-0) === "0"`, so without this a fixture value could "round-trip" through JSON as `0` instead of `-0` and fail a strict-equality assertion for a reason that has nothing to do with the code under test. */
+const round = (n: number) => Number(n.toFixed(6)) || 0;
+
 /** Builds a synthetic closed ring with `pointCount` positions — used to exercise geometries whose coordinate array exceeds Convex's 8192-elements-per-array limit, without needing a real multi-MB fixture file. Points are spread around a small circle so they're structurally valid (finite, in-range) and distinct. */
 function bigRing(pointCount: number): number[][] {
-  // `|| 0` normalizes a `-0` result (e.g. right at an angle where sin/cos
-  // rounds to negative zero) to plain `0` — `JSON.stringify(-0) === "0"`, so
-  // without this a fixture value could "round-trip" through JSON as `0`
-  // instead of `-0` and fail a strict-equality assertion for a reason that
-  // has nothing to do with the code under test.
-  const round = (n: number) => Number(n.toFixed(6)) || 0,
-    ring: number[][] = [];
+  const ring: number[][] = [];
   for (let i = 0; i < pointCount - 1; i += 1) {
     const angle = (2 * Math.PI * i) / (pointCount - 1);
     ring.push([round(Math.cos(angle) * 0.01), round(Math.sin(angle) * 0.01)]);
   }
   ring.push(ring[0]); // Close the ring (first === last).
   return ring;
+}
+
+/** Order-insensitive comparison for freshly mapped/array-literal string-id lists — the arrays are throwaways, so an in-place sort is safe, and `.toSorted()` needs an ES2023 lib this package doesn't target. */
+function sorted(values: string[]): string[] {
+  // oxlint-disable-next-line unicorn/no-array-sort -- see above: fresh throwaway arrays, ES2021 lib.
+  return values.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/** Seeds a collection row for collections-and-groups tests. */
+async function createTestCollection(t: TestCtx, name: string) {
+  return t.mutation(api.lib.createCollection, { name });
+}
+
+/** Schema for the geospatial-conversion tests: plain tabular rows with Latitude/Longitude columns. */
+async function createCoordinateSchema(t: TestCtx) {
+  return t.mutation(api.lib.createSchema, {
+    schema: {
+      description: "Tabular rows with coordinate columns",
+      properties: {
+        Latitude: { type: "number" },
+        Longitude: { type: "number" },
+        Name: { type: "string" },
+      },
+      title: "Coordinate Schema",
+      type: "object",
+    },
+  });
+}
+
+/** `convertEntriesBatchInternal`'s result, declared explicitly to break the circular reference through `internal.lib`'s own type. */
+type ConversionBatchResult = { continueCursor: string; geocoded: number; isDone: boolean };
+
+/** Drives `convertEntriesBatchInternal` to completion page by page, exactly as geospatialConversionWorkflow would. Returns the total geocoded count. */
+async function runConversion(t: TestCtx, schemaId: Id<"schemas">) {
+  let cursor: string | null = null,
+    geocoded = 0,
+    isDone = false;
+  while (!isDone) {
+    // oxlint-disable-next-line no-await-in-loop -- each page's cursor depends on the previous one.
+    const result: ConversionBatchResult = await t.mutation(
+      internal.lib.convertEntriesBatchInternal,
+      {
+        cursor,
+        latField: "Latitude",
+        lonField: "Longitude",
+        schemaId,
+      },
+    );
+    cursor = result.continueCursor;
+    geocoded += result.geocoded;
+    isDone = result.isDone;
+  }
+  return geocoded;
 }
 
 type TestCtx = ReturnType<typeof initConvexTest>;
@@ -566,10 +616,6 @@ describe("json-cms component", () => {
   });
 
   describe("collections & groups", () => {
-    async function createTestCollection(t: TestCtx, name: string) {
-      return t.mutation(api.lib.createCollection, { name });
-    }
-
     it("creates standalone groups without a collection", async () => {
       const t = initConvexTest(),
         groupId = await t.mutation(api.lib.createGroup, { name: "Standalone group" }),
@@ -602,7 +648,7 @@ describe("json-cms component", () => {
         standaloneId = await t.mutation(api.lib.createGroup, { name: "Standalone" });
 
       const all = await t.query(api.lib.listGroups, {});
-      expect(all.map((group) => group._id).sort()).toEqual([nestedId, standaloneId].sort());
+      expect(sorted(all.map((group) => group._id))).toEqual(sorted([nestedId, standaloneId]));
 
       const nested = await t.query(api.lib.listGroups, { collectionId });
       expect(nested.map((group) => group._id)).toEqual([nestedId]);
@@ -620,8 +666,8 @@ describe("json-cms component", () => {
       await t.mutation(api.lib.addSchemaToCollection, { collectionId: firstId, schemaId });
 
       const collections = await t.query(api.lib.listCollectionsBySchema, { schemaId });
-      expect(collections.map((collection) => collection._id).sort()).toEqual(
-        [firstId, secondId].sort(),
+      expect(sorted(collections.map((collection) => collection._id))).toEqual(
+        sorted([firstId, secondId]),
       );
       expect(await t.query(api.lib.listSchemaCollections, {})).toHaveLength(2);
 
@@ -1735,6 +1781,7 @@ describe("json-cms component", () => {
 
       let totalInserted = 0;
       for (const chunk of chunks) {
+        // oxlint-disable-next-line no-await-in-loop -- each chunk needs its own storage blob before its insert action runs.
         const storageId = await storeRows(t, chunk);
         // oxlint-disable-next-line no-await-in-loop
         totalInserted += await t.action(internal.lib.insertChunkFromStorage, {
@@ -1788,45 +1835,8 @@ describe("json-cms component", () => {
     // startGeospatialConversion's happy path kicks off the workflow Engine,
     // which isn't unit-testable here (see the dataset import note above), so
     // these assert the guard and the batch primitive the workflow drives —
-    // exactly, page by page, as geospatialConversionWorkflow would.
-    async function createCoordinateSchema(t: TestCtx) {
-      return t.mutation(api.lib.createSchema, {
-        schema: {
-          description: "Tabular rows with coordinate columns",
-          properties: {
-            Latitude: { type: "number" },
-            Longitude: { type: "number" },
-            Name: { type: "string" },
-          },
-          title: "Coordinate Schema",
-          type: "object",
-        },
-      });
-    }
-
-    async function runConversion(t: TestCtx, schemaId: Id<"schemas">) {
-      let cursor: string | null = null,
-        geocoded = 0,
-        isDone = false;
-      while (!isDone) {
-        // oxlint-disable-next-line no-await-in-loop -- each page's cursor depends on the previous one.
-        // Explicitly typed to break the circular reference through `internal.lib`'s own type.
-        const result: {
-          continueCursor: string;
-          geocoded: number;
-          isDone: boolean;
-        } = await t.mutation(internal.lib.convertEntriesBatchInternal, {
-          cursor,
-          latField: "Latitude",
-          lonField: "Longitude",
-          schemaId,
-        });
-        cursor = result.continueCursor;
-        geocoded += result.geocoded;
-        isDone = result.isDone;
-      }
-      return geocoded;
-    }
+    // the module-scope `runConversion` helper drives the same internal batch
+    // mutation page by page, as the workflow would.
 
     it("startGeospatialConversion rejects converting an already-geospatial dataset", async () => {
       const t = initConvexTest(),
