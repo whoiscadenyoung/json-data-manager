@@ -43,6 +43,15 @@ like `syncRuns`. **Auth gating (Better Auth follow-up) gates the
 projects/sharing stage only**; staging still engine-first (ADR 0005 §10,
 then materialized publish, then version UX, then projects).
 
+**2026-09-22 — umbrella roadmap** (`docs/data-platform-roadmap.md`): Phase 0
+prep (0.1 auth gating, 0.2 one row-resolution seam, 0.3 generalize version-
+freezing out of the bound-tag path, 0.4 key/coercion utils, 0.5 CI) then
+stages 1–9 in dependency order (engine → registry/preview → surfacing →
+rollup+geometrySource → draft flag + materialized publish → version
+consumption UX → projects → sharing → analysis). Value checkpoint after
+stage 3 (enriched tooltips/exports work). Issue filing (parent + per-stage,
+per the standing ordered-issues convention) awaits approval.
+
 Related: [[bound-datasets-poc]] (frozen tag versions pin lineage; live bound
 datasets compute live), [[break-initiatives-into-ordered-agent-issues]]
 (candidate issue sequence is design §10 / lifecycle §8).
