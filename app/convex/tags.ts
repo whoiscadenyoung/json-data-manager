@@ -4,6 +4,7 @@ import { components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import type { ActionCtx, QueryCtx } from "./_generated/server";
 import { action, internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import { auth } from "./auth";
 import { chunkByJsonBytes, getSource, SOURCE_KEY } from "./sources";
 
 /**
@@ -151,17 +152,17 @@ export const registerSnapshot = internalMutation({
 /**
  * The foreign app takes a snapshot: serializes the current state to a JSONL
  * file and registers the tag. Stands in for the design's "push hook on
- * snapshot creation" — the dashboard's snapshots card drives it, and
- * `bunx convex run tags:createRestaurantSnapshot '{"label":"v1"}'` works
- * too. Every call is a NEW foreign snapshot (a fresh ref): idempotency
- * belongs to ingest, not to the foreign app's timeline. An action because
- * file storage writes (`ctx.storage.store`) live on the action writer.
+ * snapshot creation" — the dashboard's snapshots card drives it. Every call
+ * is a NEW foreign snapshot (a fresh ref): idempotency belongs to ingest,
+ * not to the foreign app's timeline. An action because file storage writes
+ * (`ctx.storage.store`) live on the action writer.
  */
 export const createRestaurantSnapshot = action({
   args: { label: v.string() },
   // Explicit return type: this handler references `internal.tags.*`, whose
   // type resolves back through this module — inferring it would be circular.
   handler: async (ctx, args): Promise<{ label: string; ref: string; rowCount: number }> => {
+    await auth(ctx);
     const label = args.label.trim();
     if (label === "") {
       throw new ConvexError("A snapshot label is required.");
@@ -190,7 +191,10 @@ export const createRestaurantSnapshot = action({
 /** The foreign app's tag listing, newest first — the snapshots card's rows. */
 export const listSnapshots = query({
   args: {},
-  handler: async (ctx) => ctx.db.query("restaurantSnapshots").order("desc").take(200),
+  handler: async (ctx) => {
+    await auth(ctx);
+    return ctx.db.query("restaurantSnapshots").order("desc").take(200);
+  },
   returns: v.array(snapshotValidator),
 });
 
@@ -205,6 +209,7 @@ export const listSnapshots = query({
 export const retireVersion = mutation({
   args: { schemaId: v.string() },
   handler: async (ctx, args) => {
+    await auth(ctx);
     const schema = await ctx.runQuery(components.jsonCms.lib.getSchema, {
       schemaId: args.schemaId,
     });
@@ -245,6 +250,7 @@ const versionValidator = v.object({
 export const listVersions = query({
   args: { sourceSchemaId: v.string() },
   handler: async (ctx, args) => {
+    await auth(ctx);
     const versions = await ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
       sourceSchemaId: args.sourceSchemaId,
     });
@@ -655,6 +661,7 @@ export const ingestSnapshots = action({
     failed: Array<{ error: string; label: string; ref: string }>;
     ingested: Array<{ entryCount: number; label: string; ref: string; schemaId: string }>;
   }> => {
+    await auth(ctx);
     const plan = await ctx.runQuery(internal.tags.ingestPlan, {}),
       ingested: Array<{
         entryCount: number;
@@ -823,6 +830,7 @@ export const enforceRetention = internalMutation({
 export const setVersionPinned = mutation({
   args: { pinned: v.boolean(), schemaId: v.string() },
   handler: async (ctx, args) => {
+    await auth(ctx);
     const schema = await ctx.runQuery(components.jsonCms.lib.getSchema, {
       schemaId: args.schemaId,
     });
@@ -857,6 +865,7 @@ export const setVersionPinned = mutation({
 export const setKeepVersions = mutation({
   args: { keep: v.number(), sourceSchemaId: v.string() },
   handler: async (ctx, args) => {
+    await auth(ctx);
     if (args.keep < 1) {
       throw new ConvexError("Keep at least one version.");
     }
@@ -879,6 +888,7 @@ export const setKeepVersions = mutation({
 export const retentionSettings = query({
   args: { sourceSchemaId: v.string() },
   handler: async (ctx, args) => {
+    await auth(ctx);
     const binding = await ctx.db
       .query("datasetBindings")
       .withIndex("by_schema", (q) => q.eq("schemaId", args.sourceSchemaId))
@@ -897,7 +907,10 @@ export const retentionSettings = query({
 /** Light entry rows for one version — the compare overlay's base features. */
 export const versionEntries = query({
   args: { schemaId: v.string() },
-  handler: async (ctx, args) => versionRows(ctx, args.schemaId),
+  handler: async (ctx, args) => {
+    await auth(ctx);
+    return versionRows(ctx, args.schemaId);
+  },
   returns: v.array(v.object({ data: v.record(v.string(), v.any()), key: v.string() })),
 });
 
@@ -910,6 +923,7 @@ export const versionEntries = query({
 export const getVersionDelta = query({
   args: { aSchemaId: v.string(), bSchemaId: v.string() },
   handler: async (ctx, args) => {
+    await auth(ctx);
     const [before, after] = await Promise.all([
       versionRows(ctx, args.aSchemaId),
       versionRows(ctx, args.bSchemaId),

@@ -111,7 +111,7 @@ async function appUserForAuthId(ctx: MutationCtx, authId: string) {
 
 /**
  * The app's identity gate (the one choke point every exposeApi-wrapped
- * mutation flows through) plus the app-side half of the bound-datasets
+ * call flows through) plus the app-side half of the bound-datasets
  * read-only gate: writes targeting a read-only dataset are rejected here.
  * Two kinds of dataset are read-only: a live projection with a
  * `datasetBindings` row (a synced external source) and a frozen tag version
@@ -134,16 +134,24 @@ async function appUserForAuthId(ctx: MutationCtx, authId: string) {
  * ops here. This gate stays as the user-facing first line (friendlier error,
  * one fewer round trip) and for the paths only it can see.
  *
- * Authentication itself now rides on Better Auth (above): callers receive
- * the signed-in Better Auth user id as the identity string, falling back to
- * "anonymous" for unauthenticated callers. Nothing requires sign-in yet —
- * the app's reads and writes still work signed out; gating is a separate
- * decision layered on top of this return value.
+ * Authentication rides on Better Auth (above) and is REQUIRED (roadmap
+ * 0.1): callers receive the signed-in Better Auth user id as the identity
+ * string, and unauthenticated callers are rejected here — this one throw
+ * gates every exposeApi wrapper (read and write) plus every host function
+ * that calls `await auth(ctx)`, with no parallel authz mechanism. The
+ * check runs first so a signed-out caller learns nothing (not even whether
+ * a dataset exists) from the read-only-dataset lookups below.
  */
 export async function auth(
   ctx: { auth: Auth },
   operation?: ExposeApiOperation,
 ): Promise<string> {
+  // The Better Auth session token's subject is the Better Auth user id —
+  // the same value `users.authId` holds.
+  const identity = await ctx.auth.getUserIdentity();
+  if (identity === null) {
+    throw new ConvexError("You're signed out — sign in to continue.");
+  }
   if (operation !== undefined && operation.type !== "read") {
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- every caller passes a full MutationCtx; the narrow `{ auth }` param keeps the read path callable from http actions.
     const mutationCtx = ctx as MutationCtx;
@@ -164,13 +172,6 @@ export async function auth(
         "This dataset is synced from a connected source and is read-only here — edit the source data and re-sync instead.",
       );
     }
-  }
-  // The Better Auth session token's subject is the Better Auth user id —
-  // the same value `users.authId` holds. Unauthenticated callers (the norm
-  // today) keep the historical constant.
-  const identity = await ctx.auth.getUserIdentity();
-  if (identity === null) {
-    return "anonymous";
   }
   return identity.subject;
 }

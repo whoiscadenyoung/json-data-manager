@@ -11,6 +11,7 @@ import {
   mutation,
   query,
 } from "./_generated/server";
+import { auth } from "./auth";
 import {
   chunkByJsonBytes,
   getSource,
@@ -304,17 +305,26 @@ export const startRun = mutation({
     mode: v.union(v.literal("reconcile"), v.literal("sync")),
     source: v.string(),
   },
-  handler: async (ctx, args) => startRunInternal(ctx, args),
+  handler: async (ctx, args) => {
+    await auth(ctx);
+    return startRunInternal(ctx, args);
+  },
   returns: v.object({
     alreadyRunning: v.boolean(),
     runId: v.id("syncRuns"),
   }),
 });
 
-/** Convenience wrapper for the primary demo source (CLI + old bookmarks). */
+/**
+ * Convenience wrapper for the primary demo source — no app surface calls it
+ * (the dashboard's sync card invokes startRun with this same
+ * `{mode: "sync", source: SOURCE_KEY}` shape); kept as a public one-shot
+ * entry for external/CLI-style callers carrying identity.
+ */
 export const syncRestaurantLocations = mutation({
   args: {},
   handler: async (ctx) => {
+    await auth(ctx);
     const result = await startRunInternal(ctx, { mode: "sync", source: SOURCE_KEY });
     return { alreadyRunning: result.alreadyRunning, runId: result.runId };
   },
@@ -325,6 +335,7 @@ export const syncRestaurantLocations = mutation({
 export const latestRun = query({
   args: { source: v.string() },
   handler: async (ctx, args) => {
+    await auth(ctx);
     const binding = await ctx.db
       .query("datasetBindings")
       .withIndex("by_source", (q) => q.eq("source", args.source))
@@ -1219,12 +1230,14 @@ export const reconcileOne = internalMutation({
  */
 export const listCommits = query({
   args: { bindingId: v.id("datasetBindings") },
-  handler: async (ctx, args) =>
-    ctx.db
+  handler: async (ctx, args) => {
+    await auth(ctx);
+    return ctx.db
       .query("commits")
       .withIndex("by_binding_seq", (q) => q.eq("bindingId", args.bindingId))
       .order("desc")
-      .take(50),
+      .take(50);
+  },
   returns: v.array(
     v.object({
       _creationTime: v.number(),
@@ -1258,6 +1271,7 @@ export const listCommits = query({
 export const commitFeatureMap = query({
   args: { bindingId: v.id("datasetBindings") },
   handler: async (ctx, args) => {
+    await auth(ctx);
     const mappings = await ctx.db
       .query("bindingEntries")
       .withIndex("by_binding", (q) => q.eq("bindingId", args.bindingId))

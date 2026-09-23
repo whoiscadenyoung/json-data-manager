@@ -19,7 +19,8 @@ import { auth } from "./auth";
  * standalone ConvexClient — reaches this mutation. Ids arrive as plain
  * strings (`v.string()`, like every exposeApi boundary); the component
  * re-validates them against its own tables. `auth` runs here so the seam
- * matches every exposeApi wrapper (anonymous while the app has no auth).
+ * matches every exposeApi wrapper (the worker's client authenticates via
+ * the tile-archive manager's token round-trip).
  *
  * Returns whether the install took: `setMapTileArchive` is
  * indistinguishable-by-result between "installed" and "stale-discarded"
