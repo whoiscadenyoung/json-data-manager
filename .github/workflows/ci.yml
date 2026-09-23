@@ -1,0 +1,88 @@
+# Root CI gate — docs/data-platform-roadmap.md §3 item 0.5: lint + typecheck +
+# test on every PR, one job so the PR carries a single green/red signal.
+#
+# Deliberately out of scope here: deploys, publishing (the
+# packages/data-export workflow inherited from its standalone-repo days stays
+# inert), formatting enforcement, coverage thresholds.
+#
+# `oxfmt --check` is intentionally NOT a gate: it currently fails on pre-existing
+# files unrelated to any given PR (including docs); formatting is separate work.
+name: CI
+
+on:
+  pull_request:
+    branches: ["**"]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Same cancellation pattern as packages/data-export/.github/workflows/test.yml:
+# superseded PR runs cancel; pushes to main and manual runs never do.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: Lint, typecheck, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # Same commit the repo's existing workflow pins.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Bun setup
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          # Pinned to the dev machine's version (`bun --version`); bump it
+          # alongside bun upgrades.
+          bun-version: 1.3.5
+
+      - name: Cache bun install
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # app consumes @caden/json-cms and @caden/geometry-archive only through
+      # their built dist (each package's exports point at ./dist/...), and every
+      # dist is gitignored (root .gitignore: `dist`) — so CI must rebuild both
+      # before anything resolves those imports (type-aware lint, app typecheck).
+      # No codegen step: app/convex/_generated and the json-cms _generated dirs
+      # are committed, so typecheck does not depend on regenerating.
+      - name: Build workspace dists
+        run: |
+          bun --filter=@caden/json-cms run build
+          bun --filter=@caden/geometry-archive run build
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Typecheck (@caden/json-cms)
+        run: bun --filter=@caden/json-cms run typecheck
+
+      - name: Typecheck (@caden/geometry-archive)
+        run: bun --filter=@caden/geometry-archive run typecheck
+
+      # app has no typecheck script — bunx tsc --noEmit is the verified command
+      # (docs/memory/local-dev-verification.md).
+      - name: Typecheck (app)
+        run: bunx tsc --noEmit
+        working-directory: app
+
+      - name: Test (@caden/json-cms)
+        run: bun --filter=@caden/json-cms run test
+
+      - name: Test (@caden/geometry-archive)
+        run: bun --filter=@caden/geometry-archive run test
+
+      - name: Test (app)
+        run: bun --filter=app run test
