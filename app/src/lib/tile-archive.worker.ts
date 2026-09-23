@@ -10,7 +10,9 @@
  *
  * Runs inside a web worker: the standalone `ConvexClient` keeps every page
  * fetch and its `JSON.parse` off the main thread, and builds serialize
- * (promise-chained) so the CPU-bound tile math never interleaves.
+ * (promise-chained) so the CPU-bound tile math never interleaves. The
+ * client authenticates by requesting the session's Convex JWT from the
+ * main thread over the message channel — see `fetchTokenFromMain` below.
  */
 import {
   buildGeometryArchive,
@@ -56,8 +58,31 @@ function postPhase(schemaId: string, phase: TileArchiveBuildPhase): void {
 
 let client: ConvexClient | undefined;
 
+/**
+ * The standalone client authenticates through the main thread: its setAuth
+ * fetcher round-trips a token request over the message channel (the worker
+ * has no Better Auth session of its own). Since the sign-in gate (roadmap
+ * 0.1) every data call — geometry paging, the schema read, the upload URL,
+ * the install — is rejected without identity. The main thread replies with
+ * null when signed out; the client then runs unauthenticated and builds
+ * fail with the gate's sign-in error.
+ */
+let tokenRequestSeq = 0;
+const pendingTokenRequests = new Map<number, (token: string | null) => void>();
+
+async function fetchTokenFromMain(): Promise<string | null> {
+  return new Promise((resolve) => {
+    tokenRequestSeq += 1;
+    pendingTokenRequests.set(tokenRequestSeq, resolve);
+    post({ requestId: tokenRequestSeq, type: "token-request" });
+  });
+}
+
 function convexClient(): ConvexClient {
-  client ??= new ConvexClient(env.VITE_CONVEX_URL);
+  if (client === undefined) {
+    client = new ConvexClient(env.VITE_CONVEX_URL);
+    client.setAuth(fetchTokenFromMain);
+  }
   return client;
 }
 
@@ -67,8 +92,21 @@ let buildQueue: Promise<void> = Promise.resolve();
 
 self.addEventListener("message", (event: MessageEvent<TileArchiveWorkerInbound>) => {
   const message = event.data;
-  if (!message || message.type !== "build") return;
+  if (!message) return;
+  if (message.type === "token") {
+    const resolve = pendingTokenRequests.get(message.requestId);
+    if (resolve !== undefined) {
+      pendingTokenRequests.delete(message.requestId);
+      resolve(message.token);
+    }
+    return;
+  }
+  if (message.type !== "build") return;
   const { schemaId } = message;
+  // Re-assert auth per build so a client first created signed out
+  // authenticates as soon as a session exists (sign-out reloads the page,
+  // but sign-in does not).
+  convexClient().setAuth(fetchTokenFromMain);
   buildQueue = buildQueue.then(async () => runBuild(schemaId)).catch(() => undefined); // runBuild reports its own error message; the queue keeps draining.
 });
 

@@ -16,6 +16,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
 import { api } from "#convex/_generated/api";
+import { fetchConvexToken } from "#/lib/convex-auth-token";
 
 /** Transient phases the worker posts while a build runs. */
 export type TileArchiveBuildPhase = "fetching" | "building" | "uploading" | "installing";
@@ -32,14 +33,14 @@ export type TileArchiveBuildState =
   | "stale-discarded"
   | "error";
 
-/** Main thread → worker. One build per message. */
-export interface TileArchiveWorkerInbound {
-  schemaId: string;
-  type: "build";
-}
+/** Main thread → worker: one build per message, plus token-fetch replies. */
+export type TileArchiveWorkerInbound =
+  | { schemaId: string; type: "build" }
+  | { requestId: number; token: string | null; type: "token" };
 
-/** Worker → main thread: transient `phase` messages, then one terminal message. */
+/** Worker → main thread: token requests, transient `phase` messages, then one terminal message. */
 export type TileArchiveWorkerOutbound =
+  | { requestId: number; type: "token-request" }
   | { schemaId: string; type: "phase"; phase: TileArchiveBuildPhase }
   | {
       builtVersion: number;
@@ -230,6 +231,32 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+/**
+ * Answers the worker's token requests on the same message channel the build
+ * protocol rides: the worker's standalone ConvexClient authenticates through
+ * here (its `setAuth` fetcher), since the sign-in gate (roadmap 0.1) rejects
+ * every unauthenticated data call. `fetchConvexToken` never rejects — null
+ * when signed out or the fetch fails — so a request never hangs.
+ */
+async function replyToken(requestId: number): Promise<void> {
+  const worker = archiveWorker;
+  if (worker === undefined) return;
+  const token = await fetchConvexToken();
+  // `Worker.postMessage` takes (message, transfer) — there is no
+  // `targetOrigin` parameter to pass at the worker boundary.
+  // oxlint-disable-next-line unicorn/require-post-message-target-origin
+  worker.postMessage({ requestId, token, type: "token" } satisfies TileArchiveWorkerInbound);
+}
+
+/** Replies to the worker's Convex-token requests; other messages pass it by. */
+function handleWorkerTokenRequest(event: MessageEvent<unknown>): void {
+  const data: unknown = event.data;
+  if (!isRecord(data) || typeof data.requestId !== "number" || data.type !== "token-request") {
+    return;
+  }
+  void replyToken(data.requestId);
+}
+
 function handleWorkerMessage(event: MessageEvent<unknown>): void {
   const data: unknown = event.data;
   if (!isRecord(data) || typeof data.schemaId !== "string") return;
@@ -272,6 +299,7 @@ function getWorker(): Worker {
     const spawned = new Worker(new URL("./tile-archive.worker.ts", import.meta.url), {
       type: "module",
     });
+    spawned.addEventListener("message", handleWorkerTokenRequest);
     spawned.addEventListener("message", handleWorkerMessage);
     spawned.addEventListener("error", (event) => {
       // The worker itself died (not just one build): fail everything pending

@@ -26,6 +26,7 @@ import type * as sync from "../sync.js";
 import type * as tags from "../tags.js";
 import type * as tile_archives from "../tile_archives.js";
 import type * as users from "../users.js";
+import type * as versioning from "../versioning.js";
 
 import type {
   ApiFromModules,
@@ -52,6 +53,7 @@ declare const fullApi: ApiFromModules<{
   tags: typeof tags;
   tile_archives: typeof tile_archives;
   users: typeof users;
+  versioning: typeof versioning;
 }>;
 
 /**

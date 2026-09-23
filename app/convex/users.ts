@@ -2,12 +2,17 @@ import { v } from "convex/values";
 
 import { components } from "./_generated/api";
 import { query } from "./_generated/server";
-import { authComponent } from "./auth";
+import { auth, authComponent } from "./auth";
 
 /**
  * The signed-in viewer's app profile row (the `users` mirror of the Better
  * Auth user), or null when signed out. Everything the header/user surfaces
  * need rides on the mirror — this stays one indexed read past identity.
+ *
+ * The one deliberate exception to the sign-in gate (roadmap 0.1): this query
+ * IS the app's auth-state probe — the header renders "Sign in" from its
+ * signed-out null, so it must stay callable unauthenticated. It discloses
+ * nothing: signed out it returns null, signed in only the caller's own row.
  */
 export const me = query({
   args: {},
@@ -31,11 +36,13 @@ export const me = query({
  */
 export const profileByAuthId = query({
   args: { authId: v.string() },
-  handler: async (ctx, args) =>
-    ctx.db
+  handler: async (ctx, args) => {
+    await auth(ctx);
+    return ctx.db
       .query("users")
       .withIndex("by_authId", (q) => q.eq("authId", args.authId))
-      .first(),
+      .first();
+  },
 });
 
 /**
@@ -55,6 +62,7 @@ export const profileByAuthId = query({
 export const profile = query({
   args: { authId: v.string() },
   handler: async (ctx, args) => {
+    await auth(ctx);
     const user = await ctx.db
       .query("users")
       .withIndex("by_authId", (q) => q.eq("authId", args.authId))
@@ -77,6 +85,7 @@ export const profile = query({
 export const listProfiles = query({
   args: {},
   handler: async (ctx) => {
+    await auth(ctx);
     const rows = await ctx.db.query("users").collect();
     return rows.map((row) => ({ authId: row.authId, image: row.image, name: row.name }));
   },
