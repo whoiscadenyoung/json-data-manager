@@ -1,7 +1,6 @@
 import { buildFeatureCollection, computeBbox, useResolvedGeometries } from "@caden/json-cms/react";
 import type { BoundingBox, Geometry } from "@caden/json-cms/react";
 import { Link } from "@tanstack/react-router";
-import type { FunctionReturnType } from "convex/server";
 import type * as GeoJSON from "geojson";
 import { ChevronRight, Loader2, Map as MapIcon, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -16,6 +15,7 @@ import {
 } from "#/components/ui/empty";
 import { Map, MapClusterLayer, MapGeoJSON, MapVectorTiles } from "#/components/ui/map";
 import { Skeleton } from "#/components/ui/skeleton";
+import type { DatasetEntryRow, DatasetGeometryRow } from "#/lib/dataset-rows";
 import { formatPropertyValue } from "#/lib/format";
 import { layerSourceKind, layerSourceUrl } from "#/lib/layer-source";
 import type { TileSourceDecision } from "#/lib/layer-source";
@@ -25,14 +25,13 @@ import {
   splitPointLikeGeometries,
 } from "#/lib/point-geometry";
 import { cn } from "#/lib/utils";
-import { api } from "#convex/_generated/api";
 
-// `listGeometries` is paginated (see its doc comment in the component) — the
-// per-item shape is still `PaginationResult["page"][number]`. `geometries`
-// below is a flat array the caller already assembled from every page (see
-// `useGeometriesForSchema` in the dataset detail route).
-type GeometryEntry = FunctionReturnType<typeof api.geometries.list>["page"][number];
-type EntryDoc = FunctionReturnType<typeof api.entries.list>[number];
+// Row shapes come from the row-resolution seam: `geometries` below is a flat
+// array the caller already assembled from every page (via
+// `useDatasetGeometryRows` in `lib/dataset-rows-react.tsx`), and the popup's
+// entry docs are the same rows `entries.listPage` pages.
+type GeometryEntry = DatasetGeometryRow;
+type EntryDoc = DatasetEntryRow;
 
 type FeatureProperties = { entryId: string };
 

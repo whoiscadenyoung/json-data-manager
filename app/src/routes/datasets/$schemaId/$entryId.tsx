@@ -19,6 +19,8 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Map, MapClusterLayer, MapGeoJSON } from "@/components/ui/map";
+import type { DatasetGeometryRow } from "@/lib/dataset-rows";
+import { useDatasetEntryGeometryRow, useDatasetEntryRow } from "@/lib/dataset-rows-react";
 import { formatBytes, formatPropertyValue } from "@/lib/format";
 import { buildPointFeatureCollection } from "@/lib/point-geometry";
 import { bboxFeature } from "@/lib/point-geometry";
@@ -31,7 +33,8 @@ export const Route = createFileRoute("/datasets/$schemaId/$entryId")({
 });
 
 type ReferencingEntry = FunctionReturnType<typeof api.entries.listReferencingEntries>[number];
-type GeometryRowDoc = NonNullable<FunctionReturnType<typeof api.geometries.getEntryGeometry>>;
+// The entry's own row and geometry row resolve through the seam's point reads.
+type GeometryRowDoc = DatasetGeometryRow;
 
 /** Paints matching the dataset map's feature styling, so an entry reads the same in both places. */
 const FEATURE_FILL_PAINT = { "fill-color": "#3b82f6", "fill-opacity": 0.2 },
@@ -271,11 +274,15 @@ function GeometryCard({ row, geometry }: { row: GeometryRowDoc; geometry: Geomet
 // oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 function EntryDetailPage() {
   const { schemaId, entryId } = Route.useParams(),
-    entry = useQuery(api.entries.get, { entryId }),
+    // This entry's row and geometry row resolve through the seam's on-demand
+    // point reads — the same path a map popup takes (#52); the schema,
+    // summaries, and reference lookups around them are label/relationship
+    // reads, not row resolution.
+    entry = useDatasetEntryRow(entryId),
+    geometryRow = useDatasetEntryGeometryRow(entryId),
     schema = useQuery(api.schemas.get, { schemaId }),
     allSchemas = useQuery(api.schemas.listSummaries),
     referencingEntries = useQuery(api.entries.listReferencingEntries, { entryId }),
-    geometryRow = useQuery(api.geometries.getEntryGeometry, { entryId }),
     // Resolves the row's payload — inline `geometryJson` synchronously, a
     // storage-backed `geometryUrl` via fetch (see the hook's doc).
     resolvedGeometries = useResolvedGeometries(geometryRow ? [geometryRow] : []),

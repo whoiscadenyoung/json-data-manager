@@ -23,6 +23,7 @@ import { ConvexClient } from "convex/browser";
 import { env } from "#/env";
 import { api } from "#convex/_generated/api";
 
+import { forEachDatasetGeometryPage, type DatasetGeometryRow } from "./dataset-rows";
 import type {
   TileArchiveBuildPhase,
   TileArchiveWorkerInbound,
@@ -37,8 +38,6 @@ import type {
  * `skipped`.
  */
 const MAP_TILE_ARCHIVE_MIN_BYTES = 262_144; // 256 KB
-
-const GEOMETRY_PAGE_ROWS = 500; // `listGeometries` clamps here server-side; the page byte budget actually bounds each page.
 
 // Worker scope (`DedicatedWorkerGlobalScope`) isn't available to name under
 // the app's DOM-lib tsconfig, but `self.postMessage` / `self.addEventListener`
@@ -72,13 +71,6 @@ self.addEventListener("message", (event: MessageEvent<TileArchiveWorkerInbound>)
   const { schemaId } = message;
   buildQueue = buildQueue.then(async () => runBuild(schemaId)).catch(() => undefined); // runBuild reports its own error message; the queue keeps draining.
 });
-
-/** One geometry row, as `listGeometries` resolves it for the client. */
-interface GeometryOutputRow {
-  entryId: string;
-  geometryJson?: string;
-  geometryUrl?: string;
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -128,7 +120,7 @@ interface ResolvedGeometryRow {
   geometry: GeoJSONGeometry;
 }
 
-async function resolveRow(row: GeometryOutputRow): Promise<ResolvedGeometryRow | null> {
+async function resolveRow(row: DatasetGeometryRow): Promise<ResolvedGeometryRow | null> {
   if (row.geometryJson !== undefined) {
     return {
       bytes: row.geometryJson.length,
@@ -142,9 +134,12 @@ async function resolveRow(row: GeometryOutputRow): Promise<ResolvedGeometryRow |
 }
 
 /**
- * Pages the dataset to exhaustion (`isDone`) and accumulates its features.
- * Sequential pages resume from the previous cursor — the same completeness
- * semantics `useAllPaginated` rides; there is no `isLoading` to misread here.
+ * Pages the dataset to exhaustion (`isDone`) and accumulates its features —
+ * the cursor chain, page size, and completeness semantics live in the
+ * row-resolution seam (`forEachDatasetGeometryPage`, run here on this
+ * worker's own client). Rows within a page resolve in parallel; each batch
+ * is settled together with every other page's batch once the sequential
+ * paging ends.
  */
 async function fetchAllGeometryFeatures(
   convex: ConvexClient,
@@ -152,20 +147,14 @@ async function fetchAllGeometryFeatures(
 ): Promise<{ features: Array<GeoJSONFeature>; payloadBytes: number }> {
   const features: Array<GeoJSONFeature> = [],
     pageRowBatches: Array<Promise<Array<ResolvedGeometryRow | null>>> = [];
-  let payloadBytes = 0,
-    cursor = "";
-  for (;;) {
-    // oxlint-disable-next-line no-await-in-loop -- each page resumes from the previous page's cursor; inherently sequential.
-    const page = await convex.query(api.geometries.list, {
-      paginationOpts: { cursor, numItems: GEOMETRY_PAGE_ROWS },
-      schemaId,
-    });
-    // Rows within a page resolve in parallel; each batch is settled together
-    // with every other page's batch once the sequential paging ends.
-    pageRowBatches.push(Promise.all(page.page.map(resolveRow)));
-    if (page.isDone) break;
-    cursor = page.continueCursor;
-  }
+  let payloadBytes = 0;
+  await forEachDatasetGeometryPage(
+    schemaId,
+    (rows) => {
+      pageRowBatches.push(Promise.all(rows.map(resolveRow)));
+    },
+    { convex },
+  );
   const resolvedRows = await Promise.all(pageRowBatches);
   for (const resolved of resolvedRows.flat()) {
     if (resolved === null) continue;

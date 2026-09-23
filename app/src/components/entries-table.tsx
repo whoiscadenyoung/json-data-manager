@@ -2,7 +2,6 @@ import type { ReferenceField } from "@caden/json-cms/react";
 import { getReferenceFields } from "@caden/json-cms/react";
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
-import type { FunctionReturnType } from "convex/server";
 import { Copy, Eye, MoreHorizontal, Pencil } from "lucide-react";
 import { toast } from "sonner";
 
@@ -30,10 +29,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "#/components/ui/dropdown-menu";
+import type { DatasetEntryRow } from "#/lib/dataset-rows";
 import { buildLabelsByField, referencedEntryIds } from "#/lib/reference-labels";
 import { api } from "#convex/_generated/api";
 
-type Entry = FunctionReturnType<typeof api.entries.listPage>["page"][number];
+// One seam row (`entries.listPage` page item, via the row-resolution seam).
+type Entry = DatasetEntryRow;
 
 /** A JSON value formatted for a table cell: quotes stripped from strings, everything else stringified as JSON. */
 function formatCellValue(value: unknown): string {

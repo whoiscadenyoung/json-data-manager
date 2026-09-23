@@ -1,9 +1,8 @@
 import type { Geometry as GeometryShape } from "@caden/json-cms/react";
-import { useAllPaginated, useResolvedGeometries } from "@caden/json-cms/react";
+import { useResolvedGeometries } from "@caden/json-cms/react";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { useQuery as useConvexQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import {
   CheckCircle,
@@ -66,7 +65,19 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { fetchAllEntryRows, useEntriesPages } from "@/lib/entries-pages";
+import {
+  fetchDatasetEntryRows,
+  fetchDatasetGeometryRows,
+  resolveGeometryRows,
+  type DatasetEntryRow,
+  type DatasetGeometryRow,
+} from "@/lib/dataset-rows";
+import {
+  useDatasetEntryGeometryRow,
+  useDatasetEntryPages,
+  useDatasetEntryRow,
+  useDatasetGeometryRows,
+} from "@/lib/dataset-rows-react";
 import {
   buildGeoJsonCollection,
   buildJsonPayload,
@@ -75,7 +86,6 @@ import {
   exportExcelWorkbook,
   slugify,
 } from "@/lib/export";
-import { fetchAllGeometryRows, resolveGeometryRows } from "@/lib/geometry-rows";
 import { layerSourceKind, useTileArchiveSource } from "@/lib/layer-source";
 import { isSyncStale } from "@/lib/sync-staleness";
 
@@ -94,12 +104,10 @@ export const Route = createFileRoute("/datasets/$schemaId/")({
 });
 
 type Schema = NonNullable<FunctionReturnType<typeof api.schemas.get>>;
-// `listGeometries` is paginated (see its doc comment in the component) — the
-// per-item shape is still `PaginationResult["page"][number]`.
-type Geometry = FunctionReturnType<typeof api.geometries.list>["page"][number];
-// Entries stream in through `useEntriesPages` (`entries.listPage`, issue #54);
-// per-row shape is one element of a page.
-type Entry = FunctionReturnType<typeof api.entries.listPage>["page"][number];
+// Row shapes come from the row-resolution seam (`lib/dataset-rows.ts`): the
+// page items of `geometries.list` and `entries.listPage` respectively.
+type Geometry = DatasetGeometryRow;
+type Entry = DatasetEntryRow;
 type EntryPanelSearch = z.infer<typeof entryPanelSearchSchema>;
 
 /** Display count: the denormalized total when the schema carries it, else what's loaded so far. */
@@ -124,37 +132,6 @@ function isReadOnlyDataset(schema: Schema | null | undefined): boolean {
     return false;
   }
   return schema.source !== undefined || schema.lineage !== undefined;
-}
-
-/**
- * Fetches this dataset's geometries — only when it's actually geospatial AND
- * the row path is serving it (`rowPath` false covers both the tile path —
- * issue #58 part 4: an above-threshold dataset's fresh archive renders the
- * map with zero geometry-row traffic — and the pending state where the
- * archive's metadata is still landing). `listGeometries` is paginated
- * server-side (a dataset's cumulative geometry payload can exceed Convex's
- * per-execution read-byte budget even though each row is safely under its own
- * document-size limit), so this fetches every page. `geometries` is
- * `undefined` only until the first rows exist; `isComplete` is the real
- * "everything is loaded" signal — a full pagination pass has finished, so the
- * array is the complete dataset. (`isLoading` alone drops back to false after
- * the first page, which is why the map's skeleton gate must key off
- * `isComplete`.)
- */
-function useGeometriesForSchema(
-  schema: Schema | null | undefined,
-  schemaId: string,
-  rowPath: boolean,
-) {
-  const shouldFetch = schema ? schema.kind === "geospatial" && rowPath : false,
-    { isLoading, results, status } = useAllPaginated(
-      api.geometries.list,
-      shouldFetch ? { schemaId } : "skip",
-    );
-  return {
-    geometries: isLoading ? undefined : results,
-    isComplete: status === "Exhausted",
-  };
 }
 
 /**
@@ -203,7 +180,9 @@ async function resolveExportGeometries(
   if (!tilePath) {
     return rowPathResolved;
   }
-  return await resolveGeometryRows(await fetchAllGeometryRows(schemaId));
+  // Geometry rows were never fetched for tile-path rendering — the seam
+  // materializes them (paginated to exhaustion) just for the export.
+  return await resolveGeometryRows(await fetchDatasetGeometryRows(schemaId));
 }
 
 /**
@@ -257,24 +236,20 @@ function EntryPanelHost({
 }) {
   const loadedEntry = resolveEntryForPanel(entries, search),
     // Deep links (`?panel=edit&entryId=…`) can target a row the table hasn't
-    // streamed to yet (issue #54) — the single-entry read resolves those. A
-    // `null` result means the entry is gone and the panel stays closed, same
-    // as a stale id did before pagination.
-    fetchedEntry = useConvexQuery(
-      api.entries.get,
-      loadedEntry === undefined && search.panel === "edit" && search.entryId !== undefined
-        ? { entryId: search.entryId }
-        : "skip",
+    // streamed to yet (issue #54) — the seam's on-demand single-entry read
+    // resolves those. A `null` result means the entry is gone and the panel
+    // stays closed, same as a stale id did before pagination.
+    fetchedEntry = useDatasetEntryRow(
+      loadedEntry === undefined && search.panel === "edit" ? search.entryId : undefined,
     ),
     entry = loadedEntry ?? fetchedEntry ?? undefined,
     isOpen = search.panel === "create" || entry !== undefined,
-    // The on-demand single-entry read, only while the panel targets an entry
-    // AND the dataset's rows aren't in hand (the tile path). Deliberately on
-    // the plain Convex subscription path, not the TanStack cache — geometry
+    // The on-demand single-geometry read, only while the panel targets an
+    // entry AND the dataset's rows aren't in hand (the tile path). Deliberately
+    // on the plain Convex subscription path, not the TanStack cache — geometry
     // payloads never enter the persisted-state system (part 5's invariant).
-    fetchedRow = useConvexQuery(
-      api.geometries.getEntryGeometry,
-      isOpen && entry !== undefined && geometries === undefined ? { entryId: entry._id } : "skip",
+    fetchedRow = useDatasetEntryGeometryRow(
+      isOpen && entry !== undefined && geometries === undefined ? entry._id : undefined,
     ),
     initialGeometry = resolveInitialGeometry(entry, geometries, fetchedRow);
 
@@ -345,11 +320,12 @@ function SchemaDetailPage() {
     // dataset's schema and entries pages render from the persisted cache on a
     // cold start; the live WebSocket subscriptions update the same entries.
     schema = useQuery({ ...convexQuery(api.schemas.get, { schemaId }) }).data,
-    // Entries stream in as server-side pages (issue #54) — one
-    // `entries.listPage` query per cursor instead of one unbounded collect of
-    // every row, so a 20k-row import can't hit the ~16 MiB per-execution
-    // read cap. The table renders incrementally as pages resolve.
-    entriesPages = useEntriesPages(schemaId),
+    // Entries stream in through the row-resolution seam as server-side pages
+    // (issue #54) — one `entries.listPage` query per cursor instead of one
+    // unbounded collect of every row, so a 20k-row import can't hit the
+    // ~16 MiB per-execution read cap. The table renders incrementally as
+    // pages resolve.
+    entriesPages = useDatasetEntryPages(schemaId),
     entries = entriesPages.entries,
     // Layer-source decision (issue #58 part 4): fresh tile archive → the map
     // renders from vector tiles and geometry rows are never fetched;
@@ -357,7 +333,14 @@ function SchemaDetailPage() {
     sourceDecision = useTileArchiveSource(schema, schemaId),
     tilePath = layerSourceKind(sourceDecision) === "vector",
     rowPath = layerSourceKind(sourceDecision) === "rows",
-    { geometries, isComplete } = useGeometriesForSchema(schema, schemaId, rowPath),
+    // Geometry rows resolve through the seam too — only when this dataset is
+    // actually geospatial AND the row path is serving it (`rowPath` false
+    // covers both the tile path and the pending state where the archive's
+    // metadata is still landing).
+    { geometryRows: geometries, isComplete } = useDatasetGeometryRows(
+      schemaId,
+      schema ? schema.kind === "geospatial" && rowPath : false,
+    ),
     resolvedGeometries = useResolvedGeometries(geometries ?? []),
     // The dataset's group, for the breadcrumb — skipped unless it's grouped
     // (also skips while `schema` itself is still loading, and yields null for
@@ -480,11 +463,12 @@ function SchemaDetailPage() {
         return;
       }
       // An export always writes the WHOLE dataset, but the page only holds
-      // the table's loaded pages (issue #54) — materialize every row on
-      // demand instead of keeping the full set as a standing subscription.
+      // the table's loaded pages (issue #54) — the seam materializes every
+      // row on demand instead of keeping the full set as a standing
+      // subscription.
       let exportEntries: Entry[];
       try {
-        exportEntries = await fetchAllEntryRows(schemaId);
+        exportEntries = await fetchDatasetEntryRows(schemaId);
       } catch {
         toast.error("Could not load all rows for the export.");
         return;
