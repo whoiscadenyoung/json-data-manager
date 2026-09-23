@@ -16,7 +16,6 @@ import { ExportDialog } from "@/components/export-dialog";
 import type { ExportFormat, ExportFormatOption } from "@/components/export-dialog";
 import { GroupFormPanel } from "@/components/group-form-panel";
 import { GroupMap } from "@/components/group-map";
-import { useGeometriesBySchemas } from "@/components/schema-geometries-loader";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -27,6 +26,8 @@ import {
 } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { resolveDatasetGeometryRows } from "@/lib/dataset-rows";
+import { useGeometriesBySchemas } from "@/lib/dataset-rows-react";
 import {
   buildGeoJsonCollection,
   buildJsonPayload,
@@ -35,7 +36,6 @@ import {
   exportExcelWorkbook,
   slugify,
 } from "@/lib/export";
-import { resolveDatasetGeometryRows } from "@/lib/geometry-rows";
 import type { LayerSourceSplit } from "@/lib/layer-source";
 import { splitSchemaIdsByDecision, useTileArchiveSources } from "@/lib/layer-source";
 

@@ -25,11 +25,13 @@ import {
   SheetTitle,
 } from "#/components/ui/sheet";
 import { Textarea } from "#/components/ui/textarea";
+import type { DatasetEntryRow } from "#/lib/dataset-rows";
 import { cn } from "#/lib/utils";
 import { api } from "#convex/_generated/api";
 
 type Schema = NonNullable<FunctionReturnType<typeof api.schemas.get>>;
-type Entry = FunctionReturnType<typeof api.entries.list>[number];
+// One seam row (`entries.listPage` page item, via the row-resolution seam).
+type Entry = DatasetEntryRow;
 
 interface GeometryParseResult {
   geometry?: Geometry;

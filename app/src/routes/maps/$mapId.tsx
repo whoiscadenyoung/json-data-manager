@@ -9,7 +9,6 @@ import { LayersMap } from "#/components/layers-map";
 import { MapFormPanel } from "#/components/map-form-panel";
 import { MapLayerPanel } from "#/components/map-layer-panel";
 import { MapLayerPickerSheet } from "#/components/map-layer-picker";
-import { useGeometriesBySchemas } from "#/components/schema-geometries-loader";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -28,6 +27,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "#/components/ui/empty";
+import { useGeometriesBySchemas } from "#/lib/dataset-rows-react";
 import type { TileSourceSchemaRow } from "#/lib/layer-source";
 import type { LayerSourceSplit } from "#/lib/layer-source";
 import { splitSchemaIdsByDecision, useTileArchiveSources } from "#/lib/layer-source";

@@ -10,9 +10,9 @@ import type { FunctionReturnType } from "convex/server";
 import { ChevronRight, X } from "lucide-react";
 import { Fragment, useState } from "react";
 
-import type { GeometryEntry } from "#/components/schema-geometries-loader";
 import { Button } from "#/components/ui/button";
 import { Map, MapClusterLayer, MapGeoJSON, MapVectorTiles } from "#/components/ui/map";
+import type { DatasetGeometryRow } from "#/lib/dataset-rows";
 import { formatPropertyValue } from "#/lib/format";
 import {
   asBoundingBox,
@@ -21,8 +21,11 @@ import {
   splitPointLikeGeometries,
 } from "#/lib/point-geometry";
 
+// This page's entry docs are the group summary read (`listEntriesForSchemas`);
+// its geometry rows come from the row-resolution seam's fan-out.
 type EntryDoc = FunctionReturnType<typeof api.entries.listEntriesForSchemas>[number];
 type Dataset = FunctionReturnType<typeof api.schemas.listSummaries>[number];
+type GeometryEntry = DatasetGeometryRow;
 
 import { api } from "#convex/_generated/api";
 

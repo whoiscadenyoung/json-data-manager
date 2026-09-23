@@ -1,14 +1,13 @@
 import { buildFeatureCollection, unionBbox, useResolvedGeometries } from "@caden/json-cms/react";
 import type { BoundingBox, Geometry } from "@caden/json-cms/react";
 import { Link } from "@tanstack/react-router";
-import { useQuery } from "convex/react";
-import type { FunctionReturnType } from "convex/server";
 import { ChevronRight, X } from "lucide-react";
 import { Fragment, useState } from "react";
 
-import type { GeometryEntry } from "#/components/schema-geometries-loader";
 import { Button } from "#/components/ui/button";
 import { Map, MapClusterLayer, MapGeoJSON, MapVectorTiles } from "#/components/ui/map";
+import type { DatasetEntryRow, DatasetGeometryRow } from "#/lib/dataset-rows";
+import { useDatasetEntryRow } from "#/lib/dataset-rows-react";
 import { formatPropertyValue } from "#/lib/format";
 import type { DatasetSummary } from "#/lib/map-layers";
 import {
@@ -16,9 +15,11 @@ import {
   buildPointFeatureCollection,
   splitPointLikeGeometries,
 } from "#/lib/point-geometry";
-import { api } from "#convex/_generated/api";
 
-type EntryDoc = NonNullable<FunctionReturnType<typeof api.entries.get>>;
+type EntryDoc = DatasetEntryRow;
+
+// Layer rows come from the seam's fan-out (`useGeometriesBySchemas`).
+type GeometryEntry = DatasetGeometryRow;
 
 type FeatureProperties = { entryId: string; schemaId: string };
 
@@ -201,11 +202,12 @@ export function LayersMap({
       return bbox;
     }),
     [selected, setSelected] = useState<FeatureProperties | null>(null),
-    // The clicked feature's entry, read on demand (issue #52): one indexed
-    // single-doc query per selection, live only while the popup is open.
-    // Re-selecting the same feature re-subscribes without a client-side
-    // fetch of anything else; closing drops the subscription.
-    selectedEntry = useQuery(api.entries.get, selected ? { entryId: selected.entryId } : "skip"),
+    // The clicked feature's entry, read on demand through the seam's
+    // point-read path (issue #52): one indexed single-doc subscription per
+    // selection, live only while the popup is open. Re-selecting the same
+    // feature re-subscribes without a client-side fetch of anything else;
+    // closing drops the subscription.
+    selectedEntry = useDatasetEntryRow(selected !== null ? selected.entryId : undefined),
     selectedDatasetTitle = selected ? getDatasetTitle(datasetById, selected.schemaId, "") : "";
 
   const bySchema = new globalThis.Map<string, GeometryEntry[]>();
