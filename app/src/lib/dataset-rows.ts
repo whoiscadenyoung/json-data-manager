@@ -37,6 +37,7 @@ import type { FunctionReturnType } from "convex/server";
 
 import { env } from "#/env";
 import { api } from "#convex/_generated/api";
+import { fetchConvexToken } from "#/lib/convex-auth-token";
 
 /** One entry row, as `entries.listPage` pages it. */
 export type DatasetEntryRow = FunctionReturnType<typeof api.entries.listPage>["page"][number];
@@ -128,6 +129,9 @@ let client: ConvexClient | undefined;
 
 function sharedClient(): ConvexClient {
   client ??= new ConvexClient(env.VITE_CONVEX_URL);
+  // Identity for the sign-in gate — re-asserted per call so a client first
+  // created signed out still authenticates once the session exists.
+  client.setAuth(fetchConvexToken);
   return client;
 }
 

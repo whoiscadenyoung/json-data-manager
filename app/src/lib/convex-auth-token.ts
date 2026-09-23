@@ -2,9 +2,9 @@ import { authClient } from "#/lib/auth-client";
 
 /**
  * The current session's Convex JWT, for standalone `ConvexClient`s that sit
- * outside the authenticated React provider: the export helpers'
- * shared clients (entries-pages.ts, geometry-rows.ts) and the tile-archive
- * worker's client. Since the sign-in gate (roadmap 0.1) every data call
+ * outside the authenticated React provider: the row-resolution seam's
+ * imperative client (dataset-rows.ts) and the tile-archive worker's
+ * client. Since the sign-in gate (roadmap 0.1) every data call
  * needs identity — without `setAuth` these clients fail the gate even for
  * signed-in users.
  *
