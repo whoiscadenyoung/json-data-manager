@@ -3,6 +3,7 @@ import { ConvexError, v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
+import { auth } from "./auth";
 import { SOURCE_KEY } from "./sources";
 
 /**
@@ -285,8 +286,10 @@ const linkRowValidator = v.object({
 
 export const listRestaurants = query({
   args: {},
-  handler: async (ctx) =>
-    ctx.db.query("restaurants").withIndex("by_name").order("asc").take(LIST_LIMIT),
+  handler: async (ctx) => {
+    await auth(ctx);
+    return ctx.db.query("restaurants").withIndex("by_name").order("asc").take(LIST_LIMIT);
+  },
   returns: v.array(
     v.object({
       _creationTime: v.number(),
@@ -300,6 +303,7 @@ export const listRestaurants = query({
 export const createRestaurant = mutation({
   args: { cuisine: v.string(), name: v.string() },
   handler: async (ctx, args) => {
+    await auth(ctx);
     const fields = assertValidRestaurant(args.name, args.cuisine);
     const existing = await ctx.db
       .query("restaurants")
@@ -318,6 +322,7 @@ export const createRestaurant = mutation({
 export const updateRestaurant = mutation({
   args: { cuisine: v.string(), id: v.id("restaurants"), name: v.string() },
   handler: async (ctx, args) => {
+    await auth(ctx);
     const fields = assertValidRestaurant(args.name, args.cuisine);
     const existing = await ctx.db.get(args.id);
     if (!existing) {
@@ -342,6 +347,7 @@ export const updateRestaurant = mutation({
 export const deleteRestaurant = mutation({
   args: { id: v.id("restaurants") },
   handler: async (ctx, args) => {
+    await auth(ctx);
     const existing = await ctx.db.get(args.id);
     // Prefix query on the compound index — restaurantId is its first column.
     const links = await ctx.db
@@ -364,8 +370,10 @@ export const deleteRestaurant = mutation({
 
 export const listLocations = query({
   args: {},
-  handler: async (ctx) =>
-    ctx.db.query("locations").withIndex("by_label").order("asc").take(LIST_LIMIT),
+  handler: async (ctx) => {
+    await auth(ctx);
+    return ctx.db.query("locations").withIndex("by_label").order("asc").take(LIST_LIMIT);
+  },
   returns: v.array(
     v.object({
       _creationTime: v.number(),
@@ -390,6 +398,7 @@ export const createLocation = mutation({
     state: v.string(),
   },
   handler: async (ctx, args) => {
+    await auth(ctx);
     const fields = assertValidLocation(args);
     const existing = await ctx.db
       .query("locations")
@@ -416,6 +425,7 @@ export const updateLocation = mutation({
     state: v.string(),
   },
   handler: async (ctx, args) => {
+    await auth(ctx);
     const existing = await ctx.db.get(args.id);
     if (!existing) {
       throw new ConvexError("Location not found.");
@@ -441,6 +451,7 @@ export const updateLocation = mutation({
 export const deleteLocation = mutation({
   args: { id: v.id("locations") },
   handler: async (ctx, args) => {
+    await auth(ctx);
     const existing = await ctx.db.get(args.id);
     const links = await ctx.db
       .query("restaurantLocations")
@@ -463,6 +474,7 @@ export const deleteLocation = mutation({
 export const listLinks = query({
   args: {},
   handler: async (ctx) => {
+    await auth(ctx);
     const links = await ctx.db.query("restaurantLocations").take(LIST_LIMIT);
     const joined = await Promise.all(
       links.map(async (link) => {
@@ -495,6 +507,7 @@ export const createLink = mutation({
     restaurantId: v.id("restaurants"),
   },
   handler: async (ctx, args) => {
+    await auth(ctx);
     assertOpenedYear(args.openedYear);
     const [restaurant, location] = await Promise.all([
       ctx.db.get(args.restaurantId),
@@ -534,6 +547,7 @@ export const createLink = mutation({
 export const updateLink = mutation({
   args: { id: v.id("restaurantLocations"), openedYear: v.union(v.number(), v.null()) },
   handler: async (ctx, args) => {
+    await auth(ctx);
     assertOpenedYear(args.openedYear);
     const existing = await ctx.db.get(args.id);
     if (!existing) {
@@ -550,6 +564,7 @@ export const updateLink = mutation({
 export const deleteLink = mutation({
   args: { id: v.id("restaurantLocations") },
   handler: async (ctx, args) => {
+    await auth(ctx);
     const before = await snapshotKeys(ctx, [args.id]),
       firstRow = [...before.values()][0],
       label =

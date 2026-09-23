@@ -58,3 +58,18 @@ cost time:
 - `bun add` in `app/` bumps `@tanstack/react-query` "latest" past the
   5.103.1 persist stack → duplicate query-core breaks
   `root-provider.tsx` typecheck. Restore 5.103.1 after any bun add.
+- **Standalone `ConvexClient`s need `setAuth` since the 0.1 sign-in gate**
+  (2026-09-23): the export helpers' shared clients (`entries-pages.ts`,
+  `geometry-rows.ts`) and the tile-archive worker's client sit outside
+  `ConvexBetterAuthProvider`, so without identity every data call fails the
+  gate even for a signed-in user. The token endpoint is
+  `authClient.convex.token()` (what the react provider's own fetcher
+  calls); its JWTs expire in ~15 min, so pass a LIVE fetcher —
+  `client.setAuth(fetchConvexToken)` from `#/lib/convex-auth-token` — and
+  the client re-invokes it near expiry. The worker has no authClient of its
+  own: it round-trips token requests to the main thread over its message
+  channel (`tile-archive.ts` ↔ `tile-archive.worker.ts`). `bunx convex run`
+  of PUBLIC functions also carries no identity → rejected by the gate; the
+  escape hatch for operator/maintenance functions is internalizing them —
+  internal functions run via `convex run` with admin auth (the `seed.ts`
+  precedent, followed by `schemas.backfillSummaries`).

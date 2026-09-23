@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values";
 
 import { components } from "./_generated/api";
 import { mutation, query } from "./_generated/server";
+import { auth } from "./auth";
 import { SOURCE_KEY } from "./sources";
 
 /**
@@ -33,6 +34,7 @@ const bindingValidator = v.object({
 export const list = query({
   args: {},
   handler: async (ctx) => {
+    await auth(ctx);
     const bindings = await ctx.db.query("datasetBindings").take(100);
     return Promise.all(
       bindings.map(async (binding) => {
@@ -81,6 +83,7 @@ export const list = query({
 export const unbind = mutation({
   args: { schemaId: v.string() },
   handler: async (ctx, args) => {
+    await auth(ctx);
     const binding = await ctx.db
       .query("datasetBindings")
       .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
@@ -123,6 +126,7 @@ export const unbind = mutation({
 export const status = query({
   args: {},
   handler: async (ctx) => {
+    await auth(ctx);
     const binding = await ctx.db
       .query("datasetBindings")
       .withIndex("by_source", (q) => q.eq("source", SOURCE_KEY))
@@ -151,11 +155,13 @@ export const status = query({
  */
 export const getBySchema = query({
   args: { schemaId: v.string() },
-  handler: async (ctx, args) =>
-    ctx.db
+  handler: async (ctx, args) => {
+    await auth(ctx);
+    return ctx.db
       .query("datasetBindings")
       .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
-      .first(),
+      .first();
+  },
   returns: v.union(v.null(), bindingValidator),
 });
 
@@ -187,11 +193,13 @@ const activityValidator = v.object({
  */
 export const history = query({
   args: { bindingId: v.id("datasetBindings") },
-  handler: async (ctx, args) =>
-    ctx.db
+  handler: async (ctx, args) => {
+    await auth(ctx);
+    return ctx.db
       .query("datasetActivity")
       .withIndex("by_bindingId", (q) => q.eq("bindingId", args.bindingId))
       .order("desc")
-      .take(50),
+      .take(50);
+  },
   returns: v.array(activityValidator),
 });

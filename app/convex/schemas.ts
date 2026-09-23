@@ -2,7 +2,7 @@ import { exposeApi } from "@caden/json-cms";
 import { v } from "convex/values";
 
 import { components } from "./_generated/api";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, query } from "./_generated/server";
 import { auth } from "./auth";
 
 export const {
@@ -44,16 +44,20 @@ export const maxTileCacheVersion = query({
 /**
  * One-off maintenance for the denormalized dataset summaries (issue #54):
  * stamps `entryCount` onto every dataset and `kind` onto pre-field collection
- * membership rows inside the component. Idempotent — run via
- * `bunx convex run schemas:backfillSummaries` after a deploy that introduces
- * the fields, or any time drift is suspected (it recomputes from source).
+ * membership rows inside the component. Idempotent — rerun any time drift is
+ * suspected (it recomputes from source). Internal on purpose: no app surface
+ * drives it, and a signed-in gate would be theater — internal functions are
+ * already unreachable by clients. The sign-in gate (roadmap 0.1) rejected
+ * its old `convex run` path only because that ran it as a PUBLIC function
+ * with no identity; internal functions run via the CLI with admin auth
+ * (the seed.ts precedent).
+ *
+ * Run with: `bunx convex run schemas:backfillSummaries` (from app/)
  */
-export const backfillSummaries = mutation({
+export const backfillSummaries = internalMutation({
   args: {},
-  handler: async (ctx) => {
-    await auth(ctx);
-    return ctx.runMutation(components.jsonCms.lib.backfillDatasetSummaries, {});
-  },
+  handler: async (ctx) =>
+    ctx.runMutation(components.jsonCms.lib.backfillDatasetSummaries, {}),
   returns: v.object({
     membershipsPatched: v.number(),
     schemasPatched: v.number(),

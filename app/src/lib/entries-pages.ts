@@ -21,6 +21,7 @@ import { useCallback, useMemo, useState } from "react";
 
 import { env } from "#/env";
 import { api } from "#convex/_generated/api";
+import { fetchConvexToken } from "#/lib/convex-auth-token";
 
 export type EntryDoc = FunctionReturnType<typeof api.entries.listPage>["page"][number];
 type EntriesPage = FunctionReturnType<typeof api.entries.listPage>;
@@ -133,6 +134,9 @@ let client: ConvexClient | undefined;
 
 function sharedClient(): ConvexClient {
   client ??= new ConvexClient(env.VITE_CONVEX_URL);
+  // Identity for the sign-in gate — re-asserted per call so a client first
+  // created signed out still authenticates once the session exists.
+  client.setAuth(fetchConvexToken);
   return client;
 }
 
