@@ -122,6 +122,18 @@ export type {
 export { looksLikeGeoJson, parseGeoJsonFeatures } from "./lib/geojson-import.js";
 export type { GeoJsonRow, GeoJsonParseResult, GeoJsonFeatureError } from "./lib/geojson-import.js";
 
+// Derived-dataset transform engine (roadmap stage 1) — declarative,
+// serializable lookup specs (see ../shared/transform/spec.ts) plus the pure
+// enrichment engine over generic rows (../shared/transform/lookup.ts):
+// namespaced fields in, base rows never mutated, match-rate diagnostics out.
+export { applyLookup, LookupKeyConflictError } from "../shared/transform/lookup.js";
+export type { LookupDiagnostics, LookupResult } from "../shared/transform/lookup.js";
+export type {
+  TransformSpec,
+  TransformOperation,
+  LookupOperation,
+} from "../shared/transform/spec.js";
+
 // Resolves a `GeometryDoc`'s `geometryJson`/`geometryUrl` (see its doc
 // comment in types.ts) into an actual `Geometry` — handles the client-side
 // fetch + cache for the (rare) storage-backed case transparently.
