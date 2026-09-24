@@ -6,6 +6,7 @@
  * server-side geospatial-conversion workflow), so both sides agree on what
  * counts as a valid coordinate.
  */
+import { coerceNumber as parseCoordinateValue } from "./coercion.js";
 import type { Point } from "./geojson/types.js";
 
 const LAT_WORDS = ["latitude", "lat"],
@@ -24,21 +25,15 @@ export interface CoordinateColumnGuess {
   confidence: "high" | "low";
 }
 
-/** Parses a coordinate cell (already-numeric, or a numeric string) to a finite number, or `undefined` if it isn't one. */
-export function parseCoordinateValue(value: unknown): number | undefined {
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : undefined;
-  }
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (trimmed === "") {
-      return undefined;
-    }
-    const parsed = Number(trimmed);
-    return Number.isFinite(parsed) ? parsed : undefined;
-  }
-  return undefined;
-}
+/**
+ * Parses a coordinate cell (already-numeric, or a numeric string) to a finite number, or `undefined` if it isn't one.
+ *
+ * An alias of `coerceNumber` (./coercion.js) — the dedupe coercion.ts asked
+ * roadmap stage 1 (the lookup engine) to make so the two implementations
+ * cannot drift. One policy, two names: coordinate callers keep theirs, join
+ * keys keep theirs.
+ */
+export { parseCoordinateValue };
 
 export function isValidLatitude(value: number): boolean {
   return value >= -90 && value <= 90;

@@ -35,11 +35,9 @@ export function normalizeText(text: string): string {
  * `Number()`'s truthiness table. Shared by join keys (as the number-vs-string
  * policy) and column typing (a numeric column's string cells).
  *
- * This body intentionally mirrors `parseCoordinateValue` in
- * `coordinate-columns.ts` (kept separate here: touching that file is outside
- * 0.4's "nothing else changes" scope). When the lookup engine lands (roadmap
- * stage 1) and wires its first consumer, dedupe the coordinate call site
- * onto this helper so the two cannot drift.
+ * `parseCoordinateValue` in `coordinate-columns.ts` is an alias of this
+ * function — the dedupe roadmap stage 1 made when the lookup engine landed,
+ * so the two implementations cannot drift.
  */
 export function coerceNumber(value: unknown): number | undefined {
   if (typeof value === "number") {
