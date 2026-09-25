@@ -13,6 +13,8 @@ import type * as bindings from "../bindings.js";
 import type * as collections from "../collections.js";
 import type * as crons from "../crons.js";
 import type * as dashboard from "../dashboard.js";
+import type * as derivedDatasets from "../derivedDatasets.js";
+import type * as derivedSpec from "../derivedSpec.js";
 import type * as entries from "../entries.js";
 import type * as geometries from "../geometries.js";
 import type * as groups from "../groups.js";
@@ -40,6 +42,8 @@ declare const fullApi: ApiFromModules<{
   collections: typeof collections;
   crons: typeof crons;
   dashboard: typeof dashboard;
+  derivedDatasets: typeof derivedDatasets;
+  derivedSpec: typeof derivedSpec;
   entries: typeof entries;
   geometries: typeof geometries;
   groups: typeof groups;
