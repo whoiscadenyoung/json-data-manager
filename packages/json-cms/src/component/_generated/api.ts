@@ -9,6 +9,7 @@
  */
 
 import type * as geometry_storage from "../geometry_storage.js";
+import type * as host_support from "../host_support.js";
 import type * as lib from "../lib.js";
 
 import type {
@@ -20,6 +21,7 @@ import { anyApi, componentsGeneric } from "convex/server";
 
 const fullApi: ApiFromModules<{
   geometry_storage: typeof geometry_storage;
+  host_support: typeof host_support;
   lib: typeof lib;
 }> = anyApi as any;
 

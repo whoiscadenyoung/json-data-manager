@@ -3,6 +3,52 @@ import { v } from "convex/values";
 
 import { geometryArgsValidator, geometryTypeValidator } from "../shared/geojson/validators.js";
 
+/**
+ * The `lineage` object a frozen version dataset carries (see the `schemas`
+ * field below). Declared once so the table and `createSchema`'s argument
+ * validator can never drift. Additive-growth shape (the lifecycle-flag
+ * precedent): every field the materialized publish (roadmap 5b) added is
+ * OPTIONAL, so pre-5b rows — the tag path's narrow
+ * `{frozenAt, snapshotRef?, sourceSchemaId, versionLabel}` — keep reading
+ * untouched.
+ *
+ * The generalization (docs/catalog-lifecycle-design.md §7): a version's
+ * lineage names its recipe and source versions, not just one source ref.
+ * - `sourceSchemaId` became OPTIONAL: an imported draft's publish anchors
+ *   its chain here as before, but a derived dataset's publish has no
+ *   component source row to point at (the derived draft is a HOST-side
+ *   registry row) — its chain anchor is the host id in `sourceKey` instead.
+ *   Both stay absent/unset on rows that are their own origin.
+ * - `sourceKey` is a plain string per the host-boundary id rule (the
+ *   datasetBindings precedent: component tables don't exist in the host's
+ *   generated data model, so host ids travel untyped and each side asks its
+ *   own tables in turn).
+ * - `recipe` is the stored TransformSpec, shapeless (`v.any()`) exactly
+ *   like the registry's `spec` column — a per-operation validator would
+ *   reject future operation kinds and force a stored-spec migration.
+ * - `sourceVersions` records what each read source contributed at freeze
+ *   time: the source's id and, when the source was itself a frozen version,
+ *   that version's ref and freeze time — the seam stage 6's "source
+ *   published vN" badge compares against.
+ */
+export const lineageValidator = v.object({
+  frozenAt: v.number(),
+  recipe: v.optional(v.any()),
+  snapshotRef: v.optional(v.string()),
+  sourceKey: v.optional(v.string()),
+  sourceSchemaId: v.optional(v.id("schemas")),
+  sourceVersions: v.optional(
+    v.array(
+      v.object({
+        datasetId: v.string(),
+        frozenAt: v.optional(v.number()),
+        ref: v.optional(v.string()),
+      }),
+    ),
+  ),
+  versionLabel: v.string(),
+});
+
 export default defineSchema({
   // A named grouping of datasets. Top-level organizational unit — e.g. "Grant
   // data" holding every dataset for a multi-year grant program.
@@ -202,24 +248,17 @@ export default defineSchema({
     // flow attests them with `boundWrite` (see `assertDataWritable` in
     // lib.ts) — hosts additionally gate their own wrapped mutations.
     source: v.optional(v.object({ name: v.string() })),
-    // Set when this dataset is a frozen point-in-time version (a tag) of a
-    // bound live dataset — the host's tag-ingest flow writes it alongside
-    // `source` (docs/bound-datasets-design.md §6). `sourceSchemaId` is the
-    // live dataset the version froze; `versionLabel`/`snapshotRef` identify
-    // the foreign snapshot it came from (`snapshotRef` is the host's
-    // idempotency key — a ref never freezes twice); `frozenAt` is the freeze
-    // time. Like `source`, its presence makes the dataset read-only at the
-    // component level (see `assertDataWritable` in lib.ts). Two indexes
-    // serve the version reads: "versions of X"
-    // listings and the already-ingested lookup.
-    lineage: v.optional(
-      v.object({
-        frozenAt: v.number(),
-        snapshotRef: v.optional(v.string()),
-        sourceSchemaId: v.id("schemas"),
-        versionLabel: v.string(),
-      }),
-    ),
+    // Set when this dataset is a frozen point-in-time version — of a bound
+    // live dataset (the host's tag-ingest flow, docs/bound-datasets-design.md
+    // §6) or a materialized publish (roadmap 5b; lifecycle doc §2/§7). The
+    // shared shape lives in `lineageValidator` above; the per-field docs
+    // there cover the generalized (recipe + source versions) form. Two
+    // indexes serve the version reads: "versions of X" listings (only rows
+    // with `sourceSchemaId` set appear there) and the already-frozen lookup
+    // by `snapshotRef` (the host's idempotency key — a ref never freezes
+    // twice). Like `source`, its presence makes the dataset read-only at the
+    // component level (see `assertDataWritable` in lib.ts).
+    lineage: v.optional(lineageValidator),
     schema: v.any(), // JSON schema object
     // The exact file the dataset was imported from, kept in file storage so
     // it can be re-downloaded even though every stored geometry was

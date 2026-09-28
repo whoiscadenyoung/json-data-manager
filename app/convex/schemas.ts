@@ -33,10 +33,10 @@ export const {
  *
  * Drafts (roadmap 5a, #99) are excluded: they ride the draft-filtered
  * `listSchemaSummaries`, which is correct while they're invisible (nothing
- * persisted renders a draft). When 5b's publish flips a draft to published,
- * its archive version enters this fold and the buster changes once — exactly
- * when the dataset becomes consumer-visible, which is when stale persisted
- * state must be discarded.
+ * persisted renders a draft). When 5b's publish births a published version
+ * row (the draft itself is never flipped), that row's archive version enters
+ * this fold and the buster changes once — exactly when the dataset becomes
+ * consumer-visible, which is when stale persisted state must be discarded.
  */
 export const maxTileCacheVersion = query({
   args: {},

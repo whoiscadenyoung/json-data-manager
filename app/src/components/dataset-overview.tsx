@@ -83,7 +83,10 @@ function SourceRow({ binding, source }: { binding?: BindingDoc; source: { name: 
   );
 }
 
-/** The lineage row for frozen tag versions: which snapshot, when, of what. */
+/** The lineage row for frozen versions: which version, when, of what. The
+ * "live dataset" link only exists when the chain anchors on a component
+ * dataset (`sourceSchemaId`) — a derived publish anchors on a host registry
+ * id (`sourceKey`) with no dataset page to link to (roadmap 5b). */
 function LineageRow({ lineage }: { lineage: NonNullable<DatasetDoc["lineage"]> }) {
   return (
     <div className="flex flex-col gap-1.5">
@@ -94,16 +97,21 @@ function LineageRow({ lineage }: { lineage: NonNullable<DatasetDoc["lineage"]> }
           {lineage.versionLabel}
         </Badge>
         <span>frozen {formatDistanceToNow(new Date(lineage.frozenAt), { addSuffix: true })}</span>
-        <span className="text-muted-foreground">
-          · point-in-time copy of{" "}
-          <Link
-            to="/datasets/$schemaId"
-            params={{ schemaId: lineage.sourceSchemaId }}
-            className="font-medium hover:underline"
-          >
-            its live dataset
-          </Link>
-        </span>
+        {lineage.sourceSchemaId !== undefined && (
+          <span className="text-muted-foreground">
+            · point-in-time copy of{" "}
+            <Link
+              to="/datasets/$schemaId"
+              params={{ schemaId: lineage.sourceSchemaId }}
+              className="font-medium hover:underline"
+            >
+              its live dataset
+            </Link>
+          </span>
+        )}
+        {lineage.sourceKey !== undefined && (
+          <span className="text-muted-foreground">· derived from a transform recipe</span>
+        )}
         {lineage.snapshotRef !== undefined && (
           <span className="font-mono text-xs text-muted-foreground">· {lineage.snapshotRef}</span>
         )}
@@ -940,12 +948,17 @@ function VersionsCard({ sourceSchemaId }: { sourceSchemaId: string }) {
 
 // oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 function VersionRow({ version }: { version: VersionDoc }) {
+  // A 5b derived publish carries `sourceKey` instead of a component source
+  // id — the tag-path retention UI doesn't apply to it (its chain anchor is
+  // host-side), so the row skips the retention query.
+  const sourceSchemaId =
+    version.lineage === undefined ? undefined : version.lineage.sourceSchemaId;
   const retire = useMutation(api.tags.retireVersion),
     setPinned = useMutation(api.tags.setVersionPinned),
-    retention = useQuery(api.tags.retentionSettings, {
-      sourceSchemaId:
-        version.lineage === undefined ? version.schemaId : version.lineage.sourceSchemaId,
-    }),
+    retention = useQuery(
+      api.tags.retentionSettings,
+      sourceSchemaId === undefined ? "skip" : { sourceSchemaId },
+    ),
     [retireTarget, setRetireTarget] = useState<string | undefined>(),
     [isRetiring, setIsRetiring] = useState(false),
     label = version.lineage === undefined ? undefined : version.lineage.versionLabel,

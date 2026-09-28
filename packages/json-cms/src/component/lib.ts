@@ -33,7 +33,7 @@ import {
   resolveGeometryStorage,
 } from "./geometry_storage.js";
 import type { ResolvedGeometry } from "./geometry_storage.js";
-import schema from "./schema.js";
+import schema, { lineageValidator } from "./schema.js";
 
 const SCHEMA_SIZE_LIMIT = 102_400, // 100 KB
   // Hard cap on `listEntriesForIds` — one indexed `get` per id, but an
@@ -505,17 +505,12 @@ export const createSchema = mutation({
     // source — see the `source` field's doc on the `schemas` table. Absent
     // for ordinary user-created datasets.
     source: v.optional(v.object({ name: v.string() })),
-    // Marks the dataset as a frozen point-in-time version (tag) of a bound
-    // live dataset — see the `lineage` field's doc on the `schemas` table.
-    // Written by the host's tag-ingest flow, never by user-facing creates.
-    lineage: v.optional(
-      v.object({
-        frozenAt: v.number(),
-        snapshotRef: v.optional(v.string()),
-        sourceSchemaId: v.id("schemas"),
-        versionLabel: v.string(),
-      }),
-    ),
+    // Marks the dataset as a frozen point-in-time version — of a bound live
+    // dataset (the tag-ingest flow) or a materialized publish (roadmap 5b).
+    // See the `lineage` field's doc on the `schemas` table and the shared
+    // `lineageValidator` in schema.ts. Written by host flows, never by
+    // user-facing creates.
+    lineage: v.optional(lineageValidator),
     // Catalog lifecycle state (roadmap 5a, #99) — see the `lifecycle` field's
     // doc on the `schemas` table. Host-flow-only like `source`/`lineage`: the
     // exposeApi wrapper deliberately omits it, so no client path can create a

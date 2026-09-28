@@ -23,6 +23,22 @@ import type { FunctionReference } from "convex/server";
  */
 export type ComponentApi<Name extends string | undefined = string | undefined> =
   {
+    host_support: {
+      deleteStorageBlobs: FunctionReference<
+        "mutation",
+        "internal",
+        { storageIds: Array<string> },
+        number,
+        Name
+      >;
+      storeTestBlob: FunctionReference<
+        "action",
+        "internal",
+        { bytes: ArrayBuffer },
+        string,
+        Name
+      >;
+    };
     lib: {
       addMapLayer: FunctionReference<
         "mutation",
@@ -104,8 +120,15 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           lifecycle?: "draft" | "published";
           lineage?: {
             frozenAt: number;
+            recipe?: any;
             snapshotRef?: string;
-            sourceSchemaId: string;
+            sourceKey?: string;
+            sourceSchemaId?: string;
+            sourceVersions?: Array<{
+              datasetId: string;
+              frozenAt?: number;
+              ref?: string;
+            }>;
             versionLabel: string;
           };
           schema: any;
@@ -299,8 +322,15 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           lifecycle?: "draft" | "published";
           lineage?: {
             frozenAt: number;
+            recipe?: any;
             snapshotRef?: string;
-            sourceSchemaId: string;
+            sourceKey?: string;
+            sourceSchemaId?: string;
+            sourceVersions?: Array<{
+              datasetId: string;
+              frozenAt?: number;
+              ref?: string;
+            }>;
             versionLabel: string;
           };
           mapTileArchiveBuiltVersion?: number;
@@ -343,8 +373,15 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           lifecycle?: "draft" | "published";
           lineage?: {
             frozenAt: number;
+            recipe?: any;
             snapshotRef?: string;
-            sourceSchemaId: string;
+            sourceKey?: string;
+            sourceSchemaId?: string;
+            sourceVersions?: Array<{
+              datasetId: string;
+              frozenAt?: number;
+              ref?: string;
+            }>;
             versionLabel: string;
           };
           mapTileArchiveBuiltVersion?: number;
@@ -419,8 +456,15 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           lifecycle?: "draft" | "published";
           lineage?: {
             frozenAt: number;
+            recipe?: any;
             snapshotRef?: string;
-            sourceSchemaId: string;
+            sourceKey?: string;
+            sourceSchemaId?: string;
+            sourceVersions?: Array<{
+              datasetId: string;
+              frozenAt?: number;
+              ref?: string;
+            }>;
             versionLabel: string;
           };
           mapTileArchiveBuiltVersion?: number;
@@ -715,8 +759,15 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           lifecycle?: "draft" | "published";
           lineage?: {
             frozenAt: number;
+            recipe?: any;
             snapshotRef?: string;
-            sourceSchemaId: string;
+            sourceKey?: string;
+            sourceSchemaId?: string;
+            sourceVersions?: Array<{
+              datasetId: string;
+              frozenAt?: number;
+              ref?: string;
+            }>;
             versionLabel: string;
           };
           mapTileArchiveBuiltVersion?: number;
@@ -759,8 +810,15 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           lifecycle?: "draft" | "published";
           lineage?: {
             frozenAt: number;
+            recipe?: any;
             snapshotRef?: string;
-            sourceSchemaId: string;
+            sourceKey?: string;
+            sourceSchemaId?: string;
+            sourceVersions?: Array<{
+              datasetId: string;
+              frozenAt?: number;
+              ref?: string;
+            }>;
             versionLabel: string;
           };
           mapTileArchiveBuiltVersion?: number;
@@ -804,8 +862,15 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           lifecycle?: "draft" | "published";
           lineage?: {
             frozenAt: number;
+            recipe?: any;
             snapshotRef?: string;
-            sourceSchemaId: string;
+            sourceKey?: string;
+            sourceSchemaId?: string;
+            sourceVersions?: Array<{
+              datasetId: string;
+              frozenAt?: number;
+              ref?: string;
+            }>;
             versionLabel: string;
           };
           mapTileArchiveBuiltVersion?: number;
@@ -842,8 +907,15 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           lifecycle?: "draft" | "published";
           lineage?: {
             frozenAt: number;
+            recipe?: any;
             snapshotRef?: string;
-            sourceSchemaId: string;
+            sourceKey?: string;
+            sourceSchemaId?: string;
+            sourceVersions?: Array<{
+              datasetId: string;
+              frozenAt?: number;
+              ref?: string;
+            }>;
             versionLabel: string;
           };
           mapTileArchiveBuiltVersion?: number;
