@@ -26,9 +26,14 @@ import {
 } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { resolveDatasetGeometryRows } from "@/lib/dataset-rows";
+import {
+  fetchDatasetEntryRows,
+  resolveDatasetGeometryRows,
+  type DatasetEntryRow,
+} from "@/lib/dataset-rows";
 import { useGeometriesBySchemas } from "@/lib/dataset-rows-react";
 import {
+  applyJoinedFields,
   buildGeoJsonCollection,
   buildJsonPayload,
   downloadText,
@@ -38,6 +43,26 @@ import {
 } from "@/lib/export";
 import type { LayerSourceSplit } from "@/lib/layer-source";
 import { splitSchemaIdsByDecision, useTileArchiveSources } from "@/lib/layer-source";
+
+/**
+ * The group members' JSON-schema payloads, read on demand for an export that
+ * wants them (issue #53: dataset rows are summaries — only the full docs
+ * carry the schemas). Datasets whose doc vanished drop out.
+ */
+async function fetchSchemasById(
+  convex: ReturnType<typeof useConvex>,
+  datasets: Dataset[],
+): Promise<globalThis.Map<string, unknown>> {
+  const schemaDocs = await Promise.all(
+    datasets.map(async (dataset) => convex.query(api.schemas.get, { schemaId: dataset._id })),
+  );
+  return new globalThis.Map(
+    datasets.flatMap((dataset, index) => {
+      const doc = schemaDocs[index];
+      return doc !== null && doc !== undefined ? [[dataset._id, doc.schema] as const] : [];
+    }),
+  );
+}
 
 /**
  * The group map's on-demand export materialization: tile-path datasets'
@@ -70,6 +95,28 @@ function isGroupWorkspaceLoading(
     split.sourcesPending ||
     (geometries === undefined && split.tileSources.length === 0)
   );
+}
+
+/**
+ * Streams each member's export rows through the 0.2 seam, keyed by dataset
+ * id (issue #96's no-bespoke-pagination rule: the export no longer rides the
+ * one-unbounded-collect `listEntriesForSchemas` query the popups use).
+ * Ascending order: the pre-3a read was `listEntriesForSchemas`'s plain index
+ * scan, so the untoggled export's row order stays byte-identical.
+ */
+async function fetchRowsByDataset(
+  datasets: Dataset[],
+): Promise<globalThis.Map<string, DatasetEntryRow[]>> {
+  const pairs = await Promise.all(
+    datasets.map(
+      async (dataset) =>
+        [
+          dataset._id,
+          await fetchDatasetEntryRows(dataset._id, { entryOrder: "asc" }),
+        ] as const,
+    ),
+  );
+  return new globalThis.Map(pairs);
 }
 
 /** A nullable list as an empty list — the row path serves `undefined` before its first rows land, and the map renders tile sources (or nothing) then. */
@@ -116,12 +163,30 @@ function GroupDetailPage() {
     split = splitSchemaIdsByDecision(geospatialSchemaIds, sourceBySchema),
     rowSchemaIds = split.rowSchemaIds,
     tileSources = split.tileSources,
-    // Entry data feeds both the map's feature-detail popups and the export
-    // dialog (regular datasets export too, so every member is fetched).
+    // Entry data feeds both the map's feature-detail popups and the member
+    // list's per-dataset counts. The EXPORT no longer reads here (issue #96):
+    // its row-streams materialize through the 0.2 seam per dataset instead of
+    // this one unpaginated collect.
     entries = useQuery(
       api.entries.listEntriesForSchemas,
       memberSchemaIds.length > 0 ? { schemaIds: memberSchemaIds } : "skip",
     ),
+    // The saved transforms authored over this group's members (read-time
+    // health included) — the summaries projection is stage 3's designated
+    // merge point. Only "ready" rows back the export toggle.
+    savedTransforms = useQuery(api.derivedDatasets.summaries),
+    readyTransforms =
+      savedTransforms === undefined
+        ? undefined
+        : savedTransforms.filter(
+            (row) => row.health === "ready" && memberSchemaIds.includes(row.sourceDatasetId),
+          ),
+    joinedFieldsHint =
+      readyTransforms === undefined || readyTransforms.length === 0
+        ? undefined
+        : readyTransforms.length === 1
+          ? "Include joined fields from the members' saved transform"
+          : `Include joined fields from the members' ${readyTransforms.length} saved transforms`,
     { geometries, loaders } = useGeometriesBySchemas(rowSchemaIds),
     resolvedGeometries = useResolvedGeometries(geometries ?? []),
     // Per-dataset row counts for the member list, derived from the entries
@@ -200,23 +265,52 @@ function GroupDetailPage() {
               hint: `One workbook with a worksheet per dataset (${datasets.length} sheet(s)).`,
             },
           ],
-    handleExportConfirm = async (format: ExportFormat, includeSchema: boolean) => {
-      if (!entries) {
+    // oxlint-disable-next-line eslint/complexity -- per-format download paths; ad hoc splitting risks these render paths (the same #82 phase-2 note the page carries).
+    handleExportConfirm = async (
+      format: ExportFormat,
+      includeSchema: boolean,
+      includeJoinedFields: boolean,
+    ) => {
+      // Row-streams read through the 0.2 seam (issue #96's AC): each member's
+      // export rows materialize per dataset through the seam's paginated
+      // reads — the one-unbounded-collect query the export used to share with
+      // the popups is gone from this path.
+      let rowsByDataset: globalThis.Map<string, DatasetEntryRow[]>;
+      try {
+        rowsByDataset = await fetchRowsByDataset(datasets);
+      } catch {
+        toast.error("Could not load all rows for the export.");
         return;
       }
+      // "Include joined fields" (roadmap 3a, #96): each member's ready saved
+      // transforms fold through the stage 1 engine onto that member's rows.
+      // One lookup-row fetch per lookup dataset, shared across members — and
+      // scoped to THIS group's members, so specs over unrelated datasets
+      // (and their lookup rows) are never loaded.
+      let skippedTransforms = 0;
+      if (includeJoinedFields) {
+        const memberSummaries =
+          savedTransforms === undefined
+            ? undefined
+            : savedTransforms.filter((row) => memberSchemaIds.includes(row.sourceDatasetId));
+        try {
+          skippedTransforms = await applyJoinedFields(convex, memberSummaries, rowsByDataset);
+        } catch (error) {
+          toast.error(
+            error instanceof Error ? error.message : "Could not apply the saved transforms.",
+          );
+          return;
+        }
+      }
+      const skippedNotice =
+        skippedTransforms === 0
+          ? undefined
+          : `Skipped ${skippedTransforms} saved transform(s) that aren't currently ready.`;
       // Dataset rows are summaries (issue #53) — the JSON-schema payloads only
       // exist on the full docs, so an export that wants them reads each one
       // here, on demand, instead of the page carrying them all the time.
-      const schemaDocs = await Promise.all(
-          datasets.map(async (dataset) => convex.query(api.schemas.get, { schemaId: dataset._id })),
-        ),
-        schemasById = new globalThis.Map(
-          datasets.flatMap((dataset, index) => {
-            const doc = schemaDocs[index];
-            return doc !== null && doc !== undefined ? [[dataset._id, doc.schema] as const] : [];
-          }),
-        ),
-        entriesOf = (dataset: Dataset) => entries.filter((entry) => entry.schemaId === dataset._id),
+      const schemasById = await fetchSchemasById(convex, datasets),
+        entriesOf = (dataset: Dataset) => rowsByDataset.get(dataset._id) ?? [],
         downloadSchemaFile = (dataset: Dataset) => {
           if (includeSchema) {
             const schema = schemasById.get(dataset._id);
@@ -247,7 +341,9 @@ function GroupDetailPage() {
           );
           downloadSchemaFile(dataset);
         }
-        toast.success(`Exported ${geospatialSchemaIds.length} GeoJSON file(s).`);
+        toast.success(`Exported ${geospatialSchemaIds.length} GeoJSON file(s).`, {
+          description: skippedNotice,
+        });
         return;
       }
       if (format === "json") {
@@ -262,14 +358,16 @@ function GroupDetailPage() {
           );
           downloadSchemaFile(dataset);
         }
-        toast.success(`Exported ${datasets.length} JSON file(s).`);
+        toast.success(`Exported ${datasets.length} JSON file(s).`, {
+          description: skippedNotice,
+        });
         return;
       }
       await exportExcelWorkbook(
         datasets.map((dataset) => ({ name: dataset.title, rows: entryRows(entriesOf(dataset)) })),
         `${slugify(group ? group.name : "group")}.xlsx`,
       );
-      toast.success("Exported workbook.");
+      toast.success("Exported workbook.", { description: skippedNotice });
     };
 
   if (group === undefined || groups === undefined || allDatasets === undefined) {
@@ -473,6 +571,7 @@ function GroupDetailPage() {
         formatOptions={exportFormats}
         defaultFormat={geospatialSchemaIds.length > 0 ? "geojson" : "json"}
         schemaLabel="each dataset"
+        joinedFieldsHint={joinedFieldsHint}
         onConfirm={handleExportConfirm}
       />
     </div>

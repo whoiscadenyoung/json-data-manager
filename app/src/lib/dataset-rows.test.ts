@@ -82,11 +82,16 @@ describe("ENTRIES_FETCH_PAGE_SIZE / GEOMETRY_PAGE_ROWS", () => {
 
 /** One recorded query call, narrowed to the pagination args the seam sends. */
 function recordedArgs(call: unknown): {
+  order?: "asc" | "desc";
   paginationOpts: { cursor: string | null; numItems: number };
   schemaId: string;
 } {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- test-only narrowing of the recorded stub call.
-  return call as { paginationOpts: { cursor: string | null; numItems: number }; schemaId: string };
+  return call as {
+    order?: "asc" | "desc";
+    paginationOpts: { cursor: string | null; numItems: number };
+    schemaId: string;
+  };
 }
 
 describe("forEachDatasetEntryPage", () => {
@@ -113,11 +118,26 @@ describe("forEachDatasetEntryPage", () => {
     // and pretty-printing one crashes the differ. The pagination ARGS are the
     // byte-identical-export contract; assert those.
     expect(recordedArgs(calls[0][1])).toStrictEqual({
+      order: undefined,
       paginationOpts: { cursor: null, numItems: ENTRIES_FETCH_PAGE_SIZE },
       schemaId: "schema-1",
     });
     expect(recordedArgs(calls[1][1])).toStrictEqual({
+      order: undefined,
       paginationOpts: { cursor: "cursor-a", numItems: ENTRIES_FETCH_PAGE_SIZE },
+      schemaId: "schema-1",
+    });
+  });
+
+  it("forwards the requested entry order (the group export's ascending byte-identity contract)", async () => {
+    const { calls, client } = stubClient([{ isDone: true }]);
+    await forEachDatasetEntryPage("schema-1", () => undefined, {
+      convex: asClient(client),
+      entryOrder: "asc",
+    });
+    expect(recordedArgs(calls[0][1])).toStrictEqual({
+      order: "asc",
+      paginationOpts: { cursor: null, numItems: ENTRIES_FETCH_PAGE_SIZE },
       schemaId: "schema-1",
     });
   });
