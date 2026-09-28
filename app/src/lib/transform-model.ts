@@ -155,11 +155,6 @@ export function draftToSpec(sourceDatasetId: string, operations: BuilderOperatio
   };
 }
 
-/** The datasets the spec reads — what the registry denormalizes into `dependsOn` at save time. */
-export function specDatasetIds(spec: TransformSpec): string[] {
-  return [spec.sourceDatasetId, ...spec.operations.map((operation) => operation.lookupDatasetId)];
-}
-
 /**
  * The §6 stat line, dataset-true: the diagnostics come from one
  * full-dataset `applyLookup` call over the row-resolution seam's imperative

@@ -7,5 +7,15 @@
  * stage 1 block; the two cannot drift because both point at these modules.
  */
 export { applyLookup, LookupKeyConflictError } from "./lookup.js";
+export { applyRollup } from "./rollup.js";
+export { transformSpecDependencies, geometrySourceOperationOf } from "./spec.js";
 export type { LookupDiagnostics, LookupResult } from "./lookup.js";
-export type { LookupOperation, TransformOperation, TransformSpec } from "./spec.js";
+export type { RollupDiagnostics, RollupResult } from "./rollup.js";
+export type {
+  GeometrySource,
+  LookupOperation,
+  RollupMeasure,
+  RollupOperation,
+  TransformOperation,
+  TransformSpec,
+} from "./spec.js";

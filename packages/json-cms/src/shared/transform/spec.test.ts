@@ -49,4 +49,41 @@ describe("TransformSpec", () => {
     };
     expect(JSON.parse(JSON.stringify(minimal))).toStrictEqual(minimal);
   });
+
+  it("round-trips the stage 4 union — rollup operations and a geometrySource rule are stored serializable data", () => {
+    const stage4Spec: TransformSpec = {
+      sourceDatasetId: "restaurantLocations",
+      operations: [
+        {
+          kind: "lookup",
+          lookupDatasetId: "locations",
+          baseKey: "locationId",
+          lookupKey: "locationId",
+        },
+        {
+          kind: "rollup",
+          groupBy: ["restaurantId", "openedYear"],
+          measures: [
+            { alias: "locationCount", fn: "count" },
+            { alias: "yearsSum", fn: "sum", column: "openedYear" },
+            { alias: "distinctCities", fn: "distinctCount", column: "locations.city" },
+          ],
+          namespace: "perRestaurant",
+        },
+      ],
+      geometrySource: { lookupDatasetId: "locations", side: "lookup", column: "geometryId" },
+    };
+    expect(JSON.parse(JSON.stringify(stage4Spec))).toStrictEqual(stage4Spec);
+  });
+
+  it("round-trips a rollup-only spec with every optional cell absent — no migration for stored stage 1-3 specs (shape rule 1)", () => {
+    const rollupOnly: TransformSpec = {
+      sourceDatasetId: "restaurantLocations",
+      operations: [
+        { kind: "rollup", groupBy: ["restaurantId"], measures: [{ alias: "n", fn: "count" }] },
+      ],
+    };
+    expect(JSON.parse(JSON.stringify(rollupOnly))).toStrictEqual(rollupOnly);
+    expect("geometrySource" in rollupOnly).toBe(false);
+  });
 });
