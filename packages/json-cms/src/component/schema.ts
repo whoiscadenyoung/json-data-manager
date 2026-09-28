@@ -31,22 +31,45 @@ export default defineSchema({
     name: v.string(),
   }),
 
-  // One layer of a map: a pointer at a whole collection, a group, or a single
-  // dataset, plus its display state. `targetType` names the table `targetId`
-  // points into (the union of typed ids makes a mismatched pair
-  // unrepresentable). Collection/group layers expand to every geospatial
-  // dataset they currently contain at read time — membership changes flow
-  // through live, no denormalization. Deletion of a target cascades to its
-  // layer rows (see deleteSchema/deleteGroup/deleteCollection), so a layer
-  // never dangles. `order` is the draw/list position — written contiguously
-  // by addMapLayer, swapped by moveMapLayer, and may hold gaps after
-  // removals (only relative order matters; `by_map` indexes it so an index
-  // scan yields draw order directly).
+  // One layer of a map: a pointer at a whole collection, a group, a single
+  // dataset, or a host-side derived dataset, plus its display state.
+  // `targetType` names what `targetId` points into. Collection/group layers
+  // expand to every geospatial dataset they currently contain at read time —
+  // membership changes flow through live, no denormalization. Deletion of a
+  // component target cascades to its layer rows (see
+  // deleteSchema/deleteGroup/deleteCollection), so a component layer never
+  // dangles. `order` is the draw/list position — written contiguously by
+  // addMapLayer, swapped by moveMapLayer, and may hold gaps after removals
+  // (only relative order matters; `by_map` indexes it so an index scan yields
+  // draw order directly).
+  //
+  // The "derived" target (roadmap 3a, #96; ADR 0005): `targetId` holds a
+  // HOST-side registry id (the app's derivedDatasets row — a plain string
+  // here, the datasetBindings precedent). The component cannot query host
+  // tables, so the schema only narrows the stored shape: the string branch is
+  // shape-checked by normalizeMapLayerTarget at write time, and existence is
+  // the HOST wrapper's job (api.maps.addDerivedLayer validates the registry
+  // row before calling addMapLayer). Cascade deletes deliberately do NOT
+  // cover host ids — deleting a derived dataset leaves its layer rows in
+  // place, and readers answer "deleted derived dataset" defensively, exactly
+  // like the other dangling-target cases they already handle. mapLayers /
+  // mapLayerOverrides are the structure stage 7b's bundle publish must
+  // preserve ("published shapes identical") — this widening adds a target
+  // kind without touching that structure.
   mapLayers: defineTable({
     mapId: v.id("maps"),
     order: v.number(),
-    targetId: v.union(v.id("collections"), v.id("groups"), v.id("schemas")),
-    targetType: v.union(v.literal("collection"), v.literal("group"), v.literal("dataset")),
+    // The trailing string branch makes every id valid as a plain string; the
+    // per-targetType runtime checks in normalizeMapLayerTarget (plus the
+    // host wrapper for "derived") are what keep stored rows pointing at real
+    // targets.
+    targetId: v.union(v.id("collections"), v.id("groups"), v.id("schemas"), v.string()),
+    targetType: v.union(
+      v.literal("collection"),
+      v.literal("group"),
+      v.literal("dataset"),
+      v.literal("derived"),
+    ),
     visible: v.boolean(),
   })
     .index("by_map", ["mapId", "order"])

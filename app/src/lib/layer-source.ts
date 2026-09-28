@@ -15,11 +15,22 @@
  * re-derived here: an archive's existence already implies the dataset was
  * above `MAP_TILE_ARCHIVE_MIN_BYTES` when the worker built it (small datasets
  * are skipped before upload), so "archive present ∧ fresh" is the whole test.
+ *
+ * Derived datasets (roadmap 3a, #96) are ROWS by explicit rule, never by
+ * accident: a registry id has no `schemas` row — no boundingBox, no
+ * `mapTileArchive*` fields, nothing for `selectLayerSource` to answer from —
+ * and the tile decision only ever sees the component dataset rows
+ * `geospatialDatasetsFor` passes it. `splitSchemaIdsByDecision` takes the
+ * derived render ids explicitly and files them under `derivedRowIds` (the
+ * pre-3a behavior silently dropped any id without a decision); the tile
+ * REBUILD side is structurally out too — the rebuild manager subscribes
+ * `api.schemas.listSummaries`, which derived ids never appear in.
  */
 import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 
 import { api } from "#convex/_generated/api";
+import type { DatasetSummary } from "#/lib/map-layers";
 
 /** One schema doc's tile-relevant fields, as `api.schemas.listSummaries`/`api.schemas.get` return them. */
 export interface TileSourceSchemaRow {
@@ -88,6 +99,10 @@ export function selectLayerSource(
  * Rows not in `datasets` never appear in the result. Decisions re-evaluate
  * reactively: a version bump flips the dataset to rows (the rebuild is
  * scheduled by the root manager), the completed install flips it back.
+ *
+ * Inputs are component schema rows only (pass them through
+ * `geospatialDatasetsFor`) — a derived registry id has no schemas row and
+ * must never enter this decision (3a, #96).
  */
 export function useTileArchiveSources(
   datasets: TileSourceSchemaRow[] | undefined,
@@ -130,18 +145,33 @@ export function useTileArchiveSource(
 export interface LayerSourceSplit {
   /** Datasets the row path serves (paginated geometry rows). */
   rowSchemaIds: string[];
+  /**
+   * Derived datasets on the row path by RULE (3a, #96): their geometry rides
+   * the bottom source dataset of their spec chain, so these ids key
+   * rendering/visibility while their SOURCE ids key the geometry
+   * subscription (the caller re-keys via `renderTargetsForDerivedLayers`).
+   * Never a tile candidate: no schemas row, no archive, ever.
+   */
+  derivedRowIds: string[];
   /** Datasets rendering from their fresh tile archive (`pmtiles://`). */
   tileSources: Array<{ schemaId: string; url: string }>;
   /** True while any id's decision is still resolving — hold rather than render either path. */
   sourcesPending: boolean;
 }
 
-/** Decides rendering per schema id from its dataset list and decisions. */
+/**
+ * Decides rendering per schema id from its dataset list and decisions.
+ * `derivedRowIds` are the render ids `expandLayerDatasets` contributed for
+ * derived layers (3a): they take the row path explicitly instead of the old
+ * silent drop (any id without a decision was skipped), and their geometry
+ * subscription keys are the caller's job (the bottom source ids).
+ */
 export function splitSchemaIdsByDecision(
   schemaIds: string[],
   decisions: globalThis.Map<string, TileSourceDecision>,
+  derivedRowIds: readonly string[] = [],
 ): LayerSourceSplit {
-  const rowSchemaIds: string[] = [],
+  const rows: string[] = [],
     tileSources: Array<{ schemaId: string; url: string }> = [];
   let sourcesPending = false;
   for (const schemaId of schemaIds) {
@@ -152,12 +182,35 @@ export function splitSchemaIdsByDecision(
     if (decision.kind === "vector") {
       tileSources.push({ schemaId, url: decision.url });
     } else if (decision.kind === "rows") {
-      rowSchemaIds.push(schemaId);
+      rows.push(schemaId);
     } else {
       sourcesPending = true;
     }
   }
-  return { rowSchemaIds, sourcesPending, tileSources };
+  return { derivedRowIds: [...derivedRowIds], rowSchemaIds: rows, sourcesPending, tileSources };
+}
+
+/**
+ * This map's component geospatial datasets, in schema-id order — the ONLY
+ * rows a tile decision may see (the explicit 3a rule, #96): a derived
+ * dataset's registry id has no schemas row, so it can never be mistaken for
+ * a tile candidate — the filter drops it here, before
+ * `useTileArchiveSources` would subscribe archive metadata for it. The map
+ * page passes every render id (datasets and derived layers together) and
+ * only component rows come back.
+ */
+export function geospatialDatasetsFor(
+  schemaIds: readonly string[],
+  datasets: readonly DatasetSummary[] | undefined,
+): TileSourceSchemaRow[] {
+  if (datasets === undefined) {
+    return [];
+  }
+  const byId = new globalThis.Map(datasets.map((dataset) => [dataset._id, dataset]));
+  return schemaIds.flatMap((schemaId) => {
+    const dataset = byId.get(schemaId);
+    return dataset !== undefined && dataset.kind === "geospatial" ? [dataset] : [];
+  });
 }
 
 /** The coarse kind of one dataset's rendering, for pages that branch on it. `"none"` = the dataset isn't geospatial (no decision exists). */

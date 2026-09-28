@@ -323,9 +323,10 @@ function sharedClient(): ConvexClient {
   return client;
 }
 
-/** Options for the imperative reads: pass `convex` to run on a specific client (the tile-archive worker passes its own); defaults to the shared main-thread client. */
+/** Options for the imperative reads: pass `convex` to run on a specific client (the tile-archive worker passes its own); defaults to the shared main-thread client. `entryOrder` picks the entries page direction — the table's newest-first default ("desc") or the ascending scan callers whose pre-seam read was `entries.listEntriesForSchemas` need for byte-identical output (the group export, 3a). */
 export interface DatasetRowsOptions {
   convex?: ConvexClient;
+  entryOrder?: "asc" | "desc";
 }
 
 function rowsClient(options: DatasetRowsOptions | undefined): ConvexClient {
@@ -348,11 +349,13 @@ export async function forEachDatasetEntryPage(
   onPage: (rows: DatasetEntryRow[]) => void,
   options?: DatasetRowsOptions,
 ): Promise<void> {
-  const convex = rowsClient(options);
+  const convex = rowsClient(options),
+    entryOrder = options === undefined ? undefined : options.entryOrder;
   let cursor: string | null = null;
   for (;;) {
     // oxlint-disable-next-line no-await-in-loop -- each page resumes from the previous page's cursor; inherently sequential.
     const page: EntriesPage = await convex.query(api.entries.listPage, {
+      order: entryOrder,
       paginationOpts: { cursor, numItems: ENTRIES_FETCH_PAGE_SIZE },
       schemaId,
     });
@@ -367,6 +370,10 @@ export async function forEachDatasetEntryPage(
 /**
  * Materializes the dataset's full entry row set (specs applied) —
  * `forEachDatasetEntryPage` accumulated. The export's whole-dataset read.
+ * `options.entryOrder` preserves each dialog's pre-seam row order: the
+ * dataset dialog has streamed newest-first since the seam landed (0.2);
+ * the group dialog's pre-3a read was the ascending index scan, so it asks
+ * for "asc" to keep its untoggled output byte-identical.
  */
 export async function fetchDatasetEntryRows(
   schemaId: string,

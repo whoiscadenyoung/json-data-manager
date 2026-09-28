@@ -30,7 +30,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         {
           mapId: string;
           targetId: string;
-          targetType: "collection" | "group" | "dataset";
+          targetType: "collection" | "group" | "dataset" | "derived";
         },
         string | null,
         Name
@@ -475,6 +475,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "query",
         "internal",
         {
+          order?: "asc" | "desc";
           paginationOpts: {
             cursor: string | null;
             endCursor?: string | null;
@@ -593,8 +594,8 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           _id: string;
           mapId: string;
           order: number;
-          targetId: string | string | string;
-          targetType: "collection" | "group" | "dataset";
+          targetId: string | string | string | string;
+          targetType: "collection" | "group" | "dataset" | "derived";
           visible: boolean;
         }>,
         Name

@@ -28,33 +28,22 @@ import {
   EmptyTitle,
 } from "#/components/ui/empty";
 import { useGeometriesBySchemas } from "#/lib/dataset-rows-react";
-import type { TileSourceSchemaRow } from "#/lib/layer-source";
 import type { LayerSourceSplit } from "#/lib/layer-source";
-import { splitSchemaIdsByDecision, useTileArchiveSources } from "#/lib/layer-source";
+import {
+  geospatialDatasetsFor,
+  splitSchemaIdsByDecision,
+  useTileArchiveSources,
+} from "#/lib/layer-source";
 import {
   assignDatasetColors,
   buildLayerChildren,
   expandLayerDatasets,
   overridesByLayerId,
+  renderTargetsForDerivedLayers,
   resolveVisibleSchemaIds,
 } from "#/lib/map-layers";
-import type { DatasetSummary, MapLayerDoc } from "#/lib/map-layers";
+import type { DerivedDatasetSummary, MapLayerDoc } from "#/lib/map-layers";
 import { api } from "#convex/_generated/api";
-
-/** This map's geospatial datasets, in schema-id order (the only rows the source decisions need). */
-function geospatialDatasetsFor(
-  schemaIds: string[],
-  datasets: DatasetSummary[] | undefined,
-): TileSourceSchemaRow[] {
-  if (datasets === undefined) {
-    return [];
-  }
-  const byId = new globalThis.Map(datasets.map((dataset) => [dataset._id, dataset]));
-  return schemaIds.flatMap((schemaId) => {
-    const dataset = byId.get(schemaId);
-    return dataset !== undefined && dataset.kind === "geospatial" ? [dataset] : [];
-  });
-}
 
 /** The arrived-set update for one tile source's `idle` report (bails out of the state update when already present). */
 function withArrivedTileSchema(prev: Set<string>, schemaId: string): Set<string> {
@@ -175,11 +164,16 @@ function MapDetailPage() {
     collections = useQuery(api.collections.list),
     groups = useQuery(api.groups.list, {}),
     memberships = useQuery(api.collections.listSchemaCollections),
+    // Saved derived datasets (read-time health included) — the summaries
+    // projection is stage 3's single merge point. Feeds the picker's
+    // candidates, the layer expansion, and the popup-title lookups.
+    derivedSummaries = useQuery(api.derivedDatasets.summaries),
     // Child-visibility overrides for THIS map's layers only (issue #53) —
     // the wrapper reads through the map's `by_map` layers rather than
     // collecting every map's override rows.
     overrides = useQuery(api.maps.listMapLayerOverrides, { mapId }),
     addLayer = useMutation(api.maps.addLayer),
+    addDerivedLayer = useMutation(api.maps.addDerivedLayer),
     [editingMap, setEditingMap] = useState(false),
     [addLayerOpen, setAddLayerOpen] = useState(false),
     [pendingDeleteMap, setPendingDeleteMap] = useState(false),
@@ -191,20 +185,30 @@ function MapDetailPage() {
       handleToggleVisibility,
     } = useMapLayerActions(mapId);
 
-  // Layer → dataset expansion, dataset colors, and the unique schema id set
-  // to load geometry for — ALL layers' datasets (visible or not), so showing
-  // a hidden layer is an instant render filter, not a refetch. Derived
-  // plainly (no useMemo): manual memoization over these live-query results
-  // can't be preserved under oxlint's react/preserve-manual-memoization
-  // rule, and plain consts stay lint-clean and correct — the React
-  // Compiler memoizes them when it is enabled (not part of this build
-  // today; these derivations are cheap).
-  const expanded =
+  // Which saved derived datasets can render, and what each one's geometry
+  // rides (3a, #96): ready health + a chain bottoming out at a geospatial
+  // dataset. Everything downstream treats these as first-class render ids in
+  // the layer pipeline (colors, visibility, expansion); only the geometry
+  // subscription re-keys to the bottom source id.
+  const renderableDerived =
+      derivedSummaries !== undefined && datasets !== undefined
+        ? renderTargetsForDerivedLayers(derivedSummaries, datasets)
+        : undefined,
+    // Layer → dataset expansion, dataset colors, and the unique render-id set
+    // to load geometry for — ALL layers' datasets (visible or not), so showing
+    // a hidden layer is an instant render filter, not a refetch. Derived
+    // plainly (no useMemo): manual memoization over these live-query results
+    // can't be preserved under oxlint's react/preserve-manual-memoization
+    // rule, and plain consts stay lint-clean and correct — the React
+    // Compiler memoizes them when it is enabled (not part of this build
+    // today; these derivations are cheap).
+    expanded =
       layers !== undefined &&
       datasets !== undefined &&
       memberships !== undefined &&
-      groups !== undefined
-        ? expandLayerDatasets(layers, datasets, memberships, groups)
+      groups !== undefined &&
+      renderableDerived !== undefined
+        ? expandLayerDatasets(layers, datasets, memberships, groups, renderableDerived)
         : undefined,
     colorBySchema =
       layers !== undefined && expanded !== undefined
@@ -213,13 +217,36 @@ function MapDetailPage() {
     schemaIds = expanded === undefined ? [] : [...new Set([...expanded.values()].flat())];
   // Layer-source decisions (issue #58 part 4): a dataset with a fresh tile
   // archive renders via `pmtiles://` range requests (no geometry-row traffic
-  // for it at all); everything else stays on today's row path.
-  const sourceBySchema = useTileArchiveSources(geospatialDatasetsFor(schemaIds, datasets)),
-    split = splitSchemaIdsByDecision(schemaIds, sourceBySchema),
-    rowSchemaIds = split.rowSchemaIds,
+  // for it at all); everything else stays on the row path. Derived render
+  // ids never enter the decision (3a's explicit rule) — they take the row
+  // path through `splitSchemaIdsByDecision`'s `derivedRowIds`, and their
+  // geometry subscription re-keys to each one's bottom source dataset.
+  // Derived render ids take the row path explicitly (3a's rule), and their
+  // geometry subscriptions ride the BOTTOM SOURCE ids (a registry id has no
+  // geometry rows — the source dataset's rows draw under the derived id).
+  // `undefined` renderableDerived means the page is still loading; `schemaIds`
+  // is empty then too, so the fallback branch streams nothing.
+  const derivedRowIds: string[] = [],
+    datasetSubscriptionIds: string[] = [];
+  if (renderableDerived === undefined) {
+    datasetSubscriptionIds.push(...schemaIds);
+  } else {
+    for (const schemaId of schemaIds) {
+      const sourceId = renderableDerived.get(schemaId);
+      if (sourceId === undefined) {
+        datasetSubscriptionIds.push(schemaId);
+        continue;
+      }
+      derivedRowIds.push(schemaId);
+      datasetSubscriptionIds.push(sourceId);
+    }
+  }
+  const geometrySubscriptionIds = [...new Set(datasetSubscriptionIds)],
+    sourceBySchema = useTileArchiveSources(geospatialDatasetsFor(schemaIds, datasets)),
+    split = splitSchemaIdsByDecision(schemaIds, sourceBySchema, derivedRowIds),
     tileSources = split.tileSources,
     sourcesPending = split.sourcesPending,
-    { geometries, servedGeometries, loaders } = useGeometriesBySchemas(rowSchemaIds),
+    { geometries, servedGeometries, loaders } = useGeometriesBySchemas(geometrySubscriptionIds),
     // Tile sources report `idle` once their viewport tiles have arrived; the
     // set of arrived sources feeds the chip's completeness below.
     [arrivedTileSchemaIds, setArrivedTileSchemaIds] = useState<Set<string>>(() => new Set()),
@@ -244,6 +271,8 @@ function MapDetailPage() {
     collections === undefined ||
     groups === undefined ||
     memberships === undefined ||
+    derivedSummaries === undefined ||
+    renderableDerived === undefined ||
     overrides === undefined ||
     expanded === undefined ||
     colorBySchema === undefined
@@ -274,11 +303,23 @@ function MapDetailPage() {
   const collectionById = new Map(collections.map((collection) => [collection._id, collection])),
     groupById = new Map(groups.map((group) => [group._id, group])),
     datasetById = new Map(datasets.map((dataset) => [dataset._id, dataset])),
+    // Keyed by plain string: registry ids arrive branded from the validator,
+    // but every layer/dataset id comparison here is string-typed.
+    derivedById = new globalThis.Map<string, DerivedDatasetSummary>(
+      derivedSummaries.map((summary) => [summary._id, summary]),
+    ),
     // This map's datasets only — LayersMap frames its one-shot viewport from
     // these stored extents, so unrelated app datasets must not widen it.
+    // Derived layers contribute nothing here on purpose: a registry row is
+    // virtual (no stored extent), and a derived-only map opens on the
+    // default view rather than deriving bounds from streaming rows (see
+    // LayersMap's doc comment).
     mapDatasets = datasets.filter((dataset) => schemaIds.includes(dataset._id)),
-    // Cascading deletes keep layers from dangling at missing targets, but
+    // Cascading deletes keep layers from dangling at component targets, but
     // read the label defensively anyway — a stale label never beats a crash.
+    // A "derived" target dangles whenever its registry row is deleted (the
+    // component's cascade deletes cover component ids only), so its case is
+    // the defensive one by construction.
     layerName = (layer: MapLayerDoc) => {
       switch (layer.targetType) {
         case "collection": {
@@ -288,6 +329,10 @@ function MapDetailPage() {
         case "group": {
           const group = groupById.get(layer.targetId);
           return group ? group.name : "Deleted group";
+        }
+        case "derived": {
+          const derived = derivedById.get(layer.targetId);
+          return derived ? derived.title : "Deleted derived dataset";
         }
         default: {
           const dataset = datasetById.get(layer.targetId);
@@ -301,6 +346,14 @@ function MapDetailPage() {
     visibleSchemaIds = resolveVisibleSchemaIds(layers, datasets, expanded, overridesByLayer),
     datasetColorsByLayer = (layer: MapLayerDoc) =>
       (expanded.get(layer._id) ?? []).map((schemaId) => colorBySchema.get(schemaId) ?? "#3b82f6"),
+    // Titles for the render ids that aren't component datasets (3a): the
+    // legend and popup header resolve derived ids through the registry.
+    derivedTitlesById = new globalThis.Map(
+      derivedRowIds.flatMap((derivedId) => {
+        const summary = derivedById.get(derivedId);
+        return summary !== undefined ? [[derivedId, summary.title] as const] : [];
+      }),
+    ),
     hasLayers = layers.length > 0;
 
   return (
@@ -349,7 +402,12 @@ function MapDetailPage() {
             onClick={() => {
               setAddLayerOpen(true);
             }}
-            disabled={collections.length === 0 && groups.length === 0 && datasets.length === 0}
+            disabled={
+              collections.length === 0 &&
+              groups.length === 0 &&
+              datasets.length === 0 &&
+              derivedSummaries.length === 0
+            }
           >
             <Plus className="mr-2 h-4 w-4" />
             Add layer
@@ -365,7 +423,8 @@ function MapDetailPage() {
             </EmptyMedia>
             <EmptyTitle>No layers yet</EmptyTitle>
             <EmptyDescription>
-              Add a collection, group, or dataset and its geometries will draw here.
+              Add a collection, group, dataset, or derived dataset and its geometries will draw
+              here.
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
@@ -386,7 +445,14 @@ function MapDetailPage() {
             {layersMapShouldMount(servedGeometries, split) && (
               <LayersMap
                 datasets={mapDatasets}
+                derivedLayers={derivedRowIds.flatMap((derivedId) => {
+                  const source = renderableDerived.get(derivedId);
+                  return source === undefined
+                    ? []
+                    : [{ derivedId, sourceSchemaId: source }];
+                })}
                 geometries={withEmptyRows(servedGeometries)}
+                titlesById={derivedTitlesById}
                 visibleSchemaIds={visibleSchemaIds}
                 colorBySchema={colorBySchema}
                 tileSources={tileSources}
@@ -437,11 +503,36 @@ function MapDetailPage() {
         groups={groups}
         datasets={datasets}
         memberships={memberships}
+        derivedCandidates={[...renderableDerived].flatMap(([derivedId, sourceId]) => {
+          const summary = derivedById.get(derivedId),
+            source = datasetById.get(sourceId);
+          return summary === undefined
+            ? []
+            : [
+                {
+                  // Every renderable derived dataset is a candidate — the
+                  // ones already on this map are filtered by addedTargets in
+                  // the picker, so building from this map's layers alone
+                  // would leave the section permanently empty.
+                  detail: source === undefined ? "Derived dataset" : `Derived from ${source.title}`,
+                  id: derivedId,
+                  title: summary.title,
+                },
+              ];
+        })}
         open={addLayerOpen}
         onOpenChange={setAddLayerOpen}
         onPick={async (target) => {
           try {
-            await addLayer({ mapId, ...target });
+            // A derived target goes through the app wrapper that validates
+            // the registry row before the component records the layer
+            // (maps.ts addDerivedLayer — the component can't see app tables).
+            if (target.targetType === "derived") {
+              await addDerivedLayer({ mapId, targetId: target.targetId });
+            } else {
+              const { targetId, targetType } = target;
+              await addLayer({ mapId, targetId, targetType });
+            }
             toast.success("Layer added.");
           } catch (error) {
             toast.error(error instanceof Error ? error.message : "Failed to add layer.");

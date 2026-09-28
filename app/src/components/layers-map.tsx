@@ -10,6 +10,8 @@ import type { DatasetEntryRow, DatasetGeometryRow } from "#/lib/dataset-rows";
 import { useEnrichedDatasetEntryRow } from "#/lib/dataset-rows-react";
 import { formatPropertyValue } from "#/lib/format";
 import type { DatasetSummary } from "#/lib/map-layers";
+import { keyedGeometryRows, toFeatureRow } from "#/lib/map-layers";
+import type { KeyedGeometryEntry } from "#/lib/map-layers";
 import {
   asBoundingBox,
   buildPointFeatureCollection,
@@ -124,23 +126,56 @@ function MapLegend({
   );
 }
 
-/** Builds a map-renderable feature row given its already-resolved `Geometry` (see `useResolvedGeometries`). */
-function toFeatureRow(geometry: GeometryEntry, resolved: Geometry) {
-  return {
-    id: geometry.entryId,
-    geometry: resolved,
-    properties: { entryId: geometry.entryId, schemaId: geometry.schemaId },
-  };
-}
-
-/** Falls back to `fallback` when the dataset isn't found — avoids an optional-chained `?.title`. */
+/** Falls back to `fallback` when neither title map has the id — avoids an optional-chained `?.title`. */
 function getDatasetTitle(
   datasetById: globalThis.Map<string, DatasetSummary>,
+  titlesById: globalThis.Map<string, string> | undefined,
   schemaId: string,
   fallback: string,
 ) {
+  if (titlesById !== undefined) {
+    const titled = titlesById.get(schemaId);
+    if (titled !== undefined) {
+      return titled;
+    }
+  }
   const dataset = datasetById.get(schemaId);
   return dataset ? dataset.title : fallback;
+}
+
+/** The stable empty list behind LayersMap's `derivedLayers` default (the default-prop rule). */
+const NO_DERIVED_LAYERS: Array<{ derivedId: string; sourceSchemaId: string }> = [];
+
+/** A derived layer's source id → the derived ids drawing it (multi-layer sharing of one source). */
+function derivedIdsBySourceOf(
+  derivedLayers: Array<{ derivedId: string; sourceSchemaId: string }>,
+): globalThis.Map<string, string[]> {
+  const bySource = new globalThis.Map<string, string[]>();
+  for (const layer of derivedLayers) {
+    const ids = bySource.get(layer.sourceSchemaId);
+    if (ids === undefined) {
+      bySource.set(layer.sourceSchemaId, [layer.derivedId]);
+    } else {
+      ids.push(layer.derivedId);
+    }
+  }
+  return bySource;
+}
+
+/** Groups the visible, resolved rows by their render id (a derived id for re-keyed copies) — the per-dataset layering order. */
+function geometryRowsBySchema(
+  visibleGeometries: Array<{ g: KeyedGeometryEntry; resolved: Geometry }>,
+): globalThis.Map<string, KeyedGeometryEntry[]> {
+  const bySchema = new globalThis.Map<string, KeyedGeometryEntry[]>();
+  for (const { g } of visibleGeometries) {
+    const existing = bySchema.get(g.schemaId);
+    if (existing) {
+      existing.push(g);
+    } else {
+      bySchema.set(g.schemaId, [g]);
+    }
+  }
+  return bySchema;
 }
 
 /**
@@ -158,6 +193,15 @@ function getDatasetTitle(
  * Tile features carry id-only properties (`entryId`), so both paths click
  * through the same `{entryId, schemaId}` pair.
  *
+ * Derived-dataset layers (roadmap 3a, #96) render ROW-PATH ONLY, from their
+ * spec chain's bottom source dataset: geometry has no derived form until
+ * stage 4's `geometrySource`, so each `derivedLayers` entry re-keys its
+ * source's geometry rows under the derived id — the source's rows draw once
+ * per derived layer that shows them (and once more if the source itself is
+ * also a layer), each with its own color and visibility toggle. A feature
+ * from a derived layer clicks through to the SOURCE dataset's entry (the
+ * popup stays un-enriched until 3b).
+ *
  * Entry properties load on demand (issue #52): clicking a feature starts one
  * indexed single-entry read (`entries.get`), subscribed — and live — only
  * while the popup is open. The map's first paint no longer pays an
@@ -174,11 +218,17 @@ function getDatasetTitle(
  * `boundingBox` extents via a lazy initializer and never change afterwards.
  * Hiding or showing layers (or any of their datasets), adding or removing
  * layers, or late-resolving payloads never moves the camera again; a fresh
- * page load re-fits.
+ * page load re-fits. Derived layers contribute no bounds — a registry row is
+ * deliberately virtual (no `boundingBox`, no stored extent), so a map whose
+ * ONLY layers are derived ones opens on the default world view rather than
+ * deriving bounds from rows (row-derived bounds would understate the extent
+ * mid-stream — the exact bug the stored extents exist to prevent).
  */
 export function LayersMap({
   datasets,
+  derivedLayers = NO_DERIVED_LAYERS,
   geometries,
+  titlesById,
   visibleSchemaIds,
   colorBySchema,
   tileSources,
@@ -186,7 +236,11 @@ export function LayersMap({
   onTileSourceIdle,
 }: {
   datasets: DatasetSummary[];
+  /** Derived layers on this map: render id → the bottom source dataset its geometry rides. */
+  derivedLayers?: Array<{ derivedId: string; sourceSchemaId: string }>;
   geometries: GeometryEntry[];
+  /** Titles for ids that aren't component datasets (derived registry rows), for legends and popup headers. */
+  titlesById?: globalThis.Map<string, string>;
   visibleSchemaIds: Set<string>;
   colorBySchema: globalThis.Map<string, string>;
   /** Above-threshold datasets rendering from their fresh tile archive. */
@@ -198,9 +252,14 @@ export function LayersMap({
 }) {
   const datasetById = new globalThis.Map(datasets.map((dataset) => [dataset._id, dataset])),
     resolvedGeometries = useResolvedGeometries(geometries),
+    // Derived layers re-key their source's rows (see `keyedGeometryRows`):
+    // the plain rows stay so a source that is ALSO a layer keeps drawing as
+    // itself; each showing derived layer gets its own copy of the row under
+    // its id (shared objects re-wrapped, not re-fetched).
+    keyedGeometries = keyedGeometryRows(geometries, derivedIdsBySourceOf(derivedLayers)),
     // Most rows resolve synchronously (inline `geometryJson`); a row backed
     // by external storage is simply absent until its `fetch` completes.
-    visibleGeometries = geometries.flatMap((g) => {
+    visibleGeometries = keyedGeometries.flatMap((g) => {
       if (!visibleSchemaIds.has(g.schemaId)) {
         return [];
       }
@@ -231,17 +290,11 @@ export function LayersMap({
     // and lookup-row reads that join the namespaced fields in. All of it
     // lives only while the popup is open; closing drops every subscription.
     popup = useEnrichedDatasetEntryRow(selected === null ? undefined : selected),
-    selectedDatasetTitle = selected ? getDatasetTitle(datasetById, selected.schemaId, "") : "";
+    selectedDatasetTitle = selected
+      ? getDatasetTitle(datasetById, titlesById, selected.schemaId, "")
+      : "";
 
-  const bySchema = new globalThis.Map<string, GeometryEntry[]>();
-  for (const { g } of visibleGeometries) {
-    const existing = bySchema.get(g.schemaId);
-    if (existing) {
-      existing.push(g);
-    } else {
-      bySchema.set(g.schemaId, [g]);
-    }
-  }
+  const bySchema = geometryRowsBySchema(visibleGeometries);
   // Every dataset with something on the map right now: row-path schemas with
   // geometry, plus the tile-path sources — in a stable order for the legend.
   const schemaIds = [...new Set([...bySchema.keys(), ...tileSources.map((s) => s.schemaId)])],
@@ -257,7 +310,7 @@ export function LayersMap({
       )
       .map((schemaId) => ({
         schemaId,
-        title: getDatasetTitle(datasetById, schemaId, "Untitled dataset"),
+        title: getDatasetTitle(datasetById, titlesById, schemaId, "Untitled dataset"),
         color: colorBySchema.get(schemaId) ?? "#3b82f6",
       })),
     visibleTileSources = tileSources.filter((source) =>

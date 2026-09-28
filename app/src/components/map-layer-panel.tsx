@@ -1,4 +1,5 @@
 import {
+  Blend,
   ChevronDown,
   ChevronUp,
   Eye,
@@ -23,12 +24,14 @@ import {
 
 const LAYER_ICONS = {
   collection: LayersIcon,
+  derived: Blend,
   group: FolderOpen,
   dataset: MapPin,
 } as const;
 
 const LAYER_KINDS = {
   collection: "Collection",
+  derived: "Derived dataset",
   group: "Group",
   dataset: "Dataset",
 } as const;

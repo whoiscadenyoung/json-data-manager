@@ -520,10 +520,18 @@ export function exposeApi(
     // `listEntries` for anything rendered per page: it keeps every query
     // execution bounded no matter how big the dataset grows.
     listEntriesPage: queryGeneric({
-      args: { paginationOpts: paginationOptsValidator, schemaId: v.string() },
+      args: {
+        // Newest-first by default (the table's direction); "asc" serves the
+        // callers whose pre-pagination read was the ascending index scan
+        // (the group export's byte-identical off-path, 3a).
+        order: v.optional(v.union(v.literal("asc"), v.literal("desc"))),
+        paginationOpts: paginationOptsValidator,
+        schemaId: v.string(),
+      },
       handler: async (ctx, args) => {
         await options.auth(ctx, { fn: "listEntriesPage", schemaId: args.schemaId, type: "read" });
         return ctx.runQuery(component.lib.listEntriesPage, {
+          order: args.order,
           paginationOpts: args.paginationOpts,
           schemaId: args.schemaId,
         });

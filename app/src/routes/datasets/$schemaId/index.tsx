@@ -4,6 +4,7 @@ import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import type { FunctionReturnType } from "convex/server";
+import { useConvex } from "convex/react";
 import {
   CheckCircle,
   ChevronDown,
@@ -80,6 +81,7 @@ import {
   useDatasetGeometryRows,
 } from "@/lib/dataset-rows-react";
 import {
+  applyJoinedFields,
   buildGeoJsonCollection,
   buildJsonPayload,
   downloadText,
@@ -460,7 +462,31 @@ function SchemaDetailPage() {
             hint: "One worksheet with the entries as rows.",
           },
         ],
-    handleExportConfirm = async (format: ExportFormat, includeSchema: boolean) => {
+    // The transforms authored over THIS dataset (roadmap stage 2) — gated to
+    // explicitly SAVED rows with read-time health "ready" (the registry's
+    // catalog-consumer rule: listBySource's drafts are the Transform tab's
+    // business; a mid-edit autosave must never back the export toggle).
+    convex = useConvex(),
+    savedTransforms = useQuery({
+      ...convexQuery(api.derivedDatasets.listBySource, { sourceDatasetId: schemaId }),
+    }).data,
+    readyTransforms =
+      savedTransforms === undefined
+        ? undefined
+        : savedTransforms.filter((row) => row.status === "saved" && row.health === "ready"),
+    joinedFieldsHint =
+      readyTransforms === undefined || readyTransforms.length === 0
+        ? undefined
+        : `Include joined fields from ${
+            readyTransforms.length === 1
+              ? "its saved transform"
+              : `its ${readyTransforms.length} saved transforms`
+          }`,
+    handleExportConfirm = async (
+      format: ExportFormat,
+      includeSchema: boolean,
+      includeJoinedFields: boolean,
+    ) => {
       if (!schema) {
         return;
       }
@@ -474,6 +500,23 @@ function SchemaDetailPage() {
       } catch {
         toast.error("Could not load all rows for the export.");
         return;
+      }
+      // "Include joined fields" (roadmap 3a, #96): the ready saved transforms
+      // authored over THIS dataset fold through the stage 1 engine. Only the
+      // toggled path allocates anything — an untoggled export skips
+      // enrichment entirely so it stays byte-identical to today's output.
+      let skippedTransforms = 0;
+      if (includeJoinedFields) {
+        try {
+          const rowsBySource = new globalThis.Map<string, Entry[]>([[schemaId, exportEntries]]);
+          skippedTransforms = await applyJoinedFields(convex, savedTransforms, rowsBySource);
+          exportEntries = rowsBySource.get(schemaId) ?? exportEntries;
+        } catch (error) {
+          toast.error(
+            error instanceof Error ? error.message : "Could not apply the saved transforms.",
+          );
+          return;
+        }
       }
       const slug = slugify(schema.title),
         downloadSchemaFile = () => {
@@ -509,7 +552,12 @@ function SchemaDetailPage() {
           `${slug}.xlsx`,
         );
       }
-      toast.success("Export downloaded.");
+      toast.success("Export downloaded.", {
+        description:
+          skippedTransforms === 0
+            ? undefined
+            : `Skipped ${skippedTransforms} saved transform(s) that aren't currently ready.`,
+      });
     };
 
   if (schema === undefined || entriesPages.isLoading) {
@@ -823,6 +871,7 @@ function SchemaDetailPage() {
         formatOptions={exportFormats}
         defaultFormat={isGeospatialDataset ? "geojson" : "json"}
         schemaLabel="dataset"
+        joinedFieldsHint={joinedFieldsHint}
         onConfirm={handleExportConfirm}
       />
 

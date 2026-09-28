@@ -1,5 +1,5 @@
 import type { FunctionReturnType } from "convex/server";
-import { FolderOpen, Layers, MapPin, Plus, Search } from "lucide-react";
+import { Blend, FolderOpen, Layers, MapPin, Plus, Search } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "#/components/ui/button";
@@ -21,6 +21,14 @@ type DatasetSummary = FunctionReturnType<typeof api.schemas.listSummaries>[numbe
 
 export type LayerTarget = { targetId: string; targetType: LayerTargetType };
 
+/**
+ * One addable derived dataset, pre-filtered by the caller to the renderable
+ * ones (read-time health "ready", geometry-backed source — see
+ * `renderTargetsForDerivedLayers`): the picker never offers a derived
+ * dataset it couldn't draw (3a, #96 risk 6).
+ */
+export type DerivedLayerCandidate = { detail: string; id: string; title: string };
+
 type LayerCandidate = {
   target: LayerTarget;
   icon: typeof Layers;
@@ -32,6 +40,7 @@ function buildCandidates(
   collections: CollectionDoc[],
   groups: GroupDoc[],
   datasets: DatasetSummary[],
+  derivedCandidates: DerivedLayerCandidate[],
   memberships: MembershipRow[],
   addedTargets: Set<string>,
 ): LayerCandidate[] {
@@ -93,6 +102,14 @@ function buildCandidates(
         name: dataset.title,
         detail: dataset.geometryType ?? "Geospatial",
       })),
+    // Derived datasets (3a, #96): the caller pre-filters to the renderable
+    // ones — health "ready", geometry-backed source chain.
+    ...derivedCandidates.map((derived): LayerCandidate => ({
+      target: { targetId: derived.id, targetType: "derived" },
+      icon: Blend,
+      name: derived.title,
+      detail: derived.detail,
+    })),
   ].filter(
     (candidate) => !addedTargets.has(`${candidate.target.targetType}:${candidate.target.targetId}`),
   );
@@ -102,15 +119,18 @@ const SECTION_ORDER: Array<{ targetType: LayerTargetType; label: string }> = [
   { targetType: "collection", label: "Collections" },
   { targetType: "group", label: "Groups" },
   { targetType: "dataset", label: "Datasets" },
+  { targetType: "derived", label: "Derived datasets" },
 ];
 
 /**
- * Side panel for adding a layer to a map: every collection, group, and
- * geospatial dataset that isn't already a layer, searchable, grouped by kind.
+ * Side panel for adding a layer to a map: every collection, group,
+ * geospatial dataset, and renderable derived dataset that isn't already a
+ * layer, searchable, grouped by kind.
  */
 export function MapLayerPickerSheet({
   addedTargets,
   collections,
+  derivedCandidates,
   groups,
   datasets,
   memberships,
@@ -120,6 +140,7 @@ export function MapLayerPickerSheet({
 }: {
   addedTargets: Set<string>;
   collections: CollectionDoc[];
+  derivedCandidates: DerivedLayerCandidate[];
   groups: GroupDoc[];
   datasets: DatasetSummary[];
   memberships: MembershipRow[];
@@ -130,7 +151,14 @@ export function MapLayerPickerSheet({
   const [search, setSearch] = useState(""),
     [pendingKey, setPendingKey] = useState<string | undefined>(),
     normalizedSearch = search.trim().toLowerCase(),
-    candidates = buildCandidates(collections, groups, datasets, memberships, addedTargets),
+    candidates = buildCandidates(
+      collections,
+      groups,
+      datasets,
+      derivedCandidates,
+      memberships,
+      addedTargets,
+    ),
     visible = normalizedSearch
       ? candidates.filter((candidate) => candidate.name.toLowerCase().includes(normalizedSearch))
       : candidates,
@@ -150,7 +178,8 @@ export function MapLayerPickerSheet({
         <SheetHeader className="border-b">
           <SheetTitle>Add layer</SheetTitle>
           <SheetDescription>
-            Add a collection, group, or dataset to this map. Layers draw in list order.
+            Add a collection, group, dataset, or derived dataset to this map. Layers draw in list
+            order.
           </SheetDescription>
         </SheetHeader>
         <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-6">
@@ -161,7 +190,7 @@ export function MapLayerPickerSheet({
               onChange={(e) => {
                 setSearch(e.target.value);
               }}
-              placeholder="Search collections, groups, datasets…"
+              placeholder="Search collections, groups, datasets, derived datasets…"
               className="pl-7"
             />
           </div>
@@ -171,8 +200,8 @@ export function MapLayerPickerSheet({
               <EmptyTitle>{hasCandidates ? "No matches" : "Nothing to add"}</EmptyTitle>
               <EmptyDescription>
                 {hasCandidates
-                  ? "No collections, groups, or datasets match your search."
-                  : "Every collection, group, and geospatial dataset is already a layer of this map."}
+                  ? "No collections, groups, datasets, or derived datasets match your search."
+                  : "Every collection, group, geospatial dataset, and derived dataset is already a layer of this map."}
               </EmptyDescription>
             </Empty>
           ) : (
