@@ -152,6 +152,54 @@ export default defineSchema({
     updated: v.number(),
   }).index("by_binding", ["bindingId"]),
 
+  // The derived-dataset registry (roadmap stage 2, #95; ADR 0005 §10.2): one
+  // row per transform spec producing a virtual derived dataset. Catalog-level,
+  // never map-level (ADR 0005): the row's own _id is the derived dataset's
+  // stable id, and nothing nests under a map, layer, or (future) project.
+  // Deliberately virtual — no entries/geometries rows, no boundingBox, none
+  // of the published-layer machinery; every consumer computes rows client-side
+  // through the row-resolution seam (docs/derived-datasets-design.md §5).
+  // Convex is uninvolved in computation: this table stores specs.
+  derivedDatasets: defineTable({
+    // Attribution (ADR 0007): the Better Auth user id — the same string
+    // schemas.createdBy holds (the auth() hook's identity.subject).
+    createdBy: v.string(),
+    // The persisted dependency edges, denormalized from the spec at save
+    // time: [sourceDatasetId, ...each operation's dataset], distinct,
+    // first-seen order. The spec itself still carries everything (the
+    // component's spec.ts:16-19) — these edges are what the save-time
+    // cycle walk follows (findCycleToOrigin reads them, not the stored
+    // spec), and they are the material stage 3's reverse "what reads this
+    // dataset" lookups will index.
+    dependsOn: v.array(v.string()),
+    description: v.optional(v.string()),
+    // A component dataset id (or another registry row's id, for
+    // derived-of-derived) stored as a plain string — the datasetBindings
+    // precedent: component tables don't exist in this deployment's generated
+    // data model.
+    sourceDatasetId: v.string(),
+    // The serializable TransformSpec
+    // (packages/json-cms/src/shared/transform/spec.ts), stored shapeless like
+    // datasetBindings' schemaMapping above: a per-operation validator would
+    // reject stage 4's new operation kinds and force a stored-spec migration
+    // the shape rules forbid (spec.ts:13-15). Structural sanity is checked in
+    // the save mutation instead — narrowly enough to stay additive.
+    spec: v.any(),
+    // "draft" (builder autosave, still being authored) vs "saved" (explicitly
+    // saved). Stage 5's publish lifecycle extends this additively with new
+    // literals — which is why it is an open union, not a virtual-only
+    // boolean that lineage/publish fields can't grow past.
+    status: v.union(v.literal("draft"), v.literal("saved")),
+    // The derived dataset's display name — the only required field (the
+    // UI-polish rule: title required, description optional, everywhere).
+    title: v.string(),
+  })
+    .index("by_source", ["sourceDatasetId"])
+    // Status leads so the catalog projection can scan saved rows directly
+    // (drafts are invisible to catalog consumers — lifecycle doc §3); the
+    // trailing sourceDatasetId keeps every index field in the name.
+    .index("by_status_and_source", ["status", "sourceDatasetId"]),
+
   locations: defineTable({
     address: v.string(),
     city: v.string(),

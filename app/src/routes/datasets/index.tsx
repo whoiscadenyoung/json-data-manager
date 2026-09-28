@@ -5,7 +5,7 @@ import type { FunctionReturnType } from "convex/server";
 import { Calendar, ChevronRight, FolderOpen, Layers, Plus, Search } from "lucide-react";
 import { useState } from "react";
 
-import { DatasetTypeTags } from "#/components/dataset-type-tags";
+import { DerivedDatasetBadge, DatasetTypeTags, DerivedHealthBadges } from "#/components/dataset-type-tags";
 import { RouterButton } from "#/components/router-button";
 import { Badge } from "#/components/ui/badge";
 import { Card } from "#/components/ui/card";
@@ -44,8 +44,30 @@ const TYPE_OPTIONS: { value: TypeFilter; label: string }[] = [
 ];
 
 type DatasetSummary = FunctionReturnType<typeof api.schemas.listSummaries>[number];
+type DerivedSummary = FunctionReturnType<typeof api.derivedDatasets.summaries>[number];
 type GroupSummary = FunctionReturnType<typeof api.groups.list>[number];
 type UserProfile = FunctionReturnType<typeof api.users.listProfiles>[number];
+
+/**
+ * Where a derived dataset's spec lives, for card linking: a component
+ * dataset (link to its Transform tab — the authoring surface) or another
+ * derived dataset (title only; first-class derived pages are stage 3).
+ */
+type DerivedCardSource =
+  | { dataset: DatasetSummary; kind: "component" }
+  | { dataset: DerivedSummary; kind: "derived" };
+
+/**
+ * One top-level item in the browser: either a group (whose member datasets
+ * render nested right below it), an individual dataset, or a derived
+ * dataset (registry row, badged; §3 — derived datasets appear in the
+ * browser). Datasets that belong to a group are never top-level — the group
+ * represents them.
+ */
+type BrowserItem =
+  | { datasets: DatasetSummary[]; group: GroupSummary; kind: "group" }
+  | { dataset: DatasetSummary; kind: "dataset" }
+  | { dataset: DerivedSummary; kind: "derived" };
 
 function matchesTypeFilter(dataset: DatasetSummary, typeFilter: TypeFilter): boolean {
   if (typeFilter === "all") {
@@ -62,15 +84,6 @@ function matchesSearch(title: string, description: string | undefined, query: st
     (description !== undefined && description.toLowerCase().includes(query))
   );
 }
-
-/**
- * One top-level item in the browser: either a group (whose member datasets
- * render nested right below it) or an individual dataset. Datasets that
- * belong to a group are never top-level — the group represents them.
- */
-type BrowserItem =
-  | { datasets: DatasetSummary[]; group: GroupSummary; kind: "group" }
-  | { dataset: DatasetSummary; kind: "dataset" };
 
 function itemCreatedTime(item: BrowserItem): number {
   return item.kind === "group" ? item.group._creationTime : item.dataset._creationTime;
@@ -207,6 +220,65 @@ function DatasetCard({ dataset, profile }: { dataset: DatasetSummary; profile?: 
   );
 }
 
+/**
+ * A derived dataset's browser card (§3 lines 84-86): badged as derived, with
+ * its read-time health. It opens the SOURCE dataset's Transform tab — the
+ * place its spec is authored and edited; first-class derived pages are
+ * stage 3.
+ */
+function DerivedDatasetCard({ dataset, source }: { dataset: DerivedSummary; source: DerivedCardSource | undefined }) {
+  const body = (
+    <>
+      <div className="flex flex-wrap items-center gap-2">
+        <DerivedDatasetBadge />
+        <DerivedHealthBadges health={dataset.health} reason={dataset.healthReason} />
+      </div>
+      <div>
+        <h3 className="text-base font-semibold">{dataset.title}</h3>
+        <p className="line-clamp-2 text-sm text-muted-foreground">{dataset.description}</p>
+      </div>
+      <div className="flex items-center text-xs text-muted-foreground">
+        <Calendar className="mr-1.5 h-3.5 w-3.5" />
+        Created {new Date(dataset._creationTime).toLocaleDateString()}
+        {source !== undefined && (
+          <>
+            {" · Derived from "}
+            {source.dataset.title}
+            {source.kind === "derived" ? " (derived)" : ""}
+          </>
+        )}
+      </div>
+    </>
+  );
+  // The card links only when its source is a component dataset — the place
+  // its spec is authored. A derived-of-derived card has no page to open yet
+  // (stage 3), so it carries no navigation affordance.
+  const linked = source !== undefined && source.kind === "component";
+  return (
+    <Card
+      className={
+        linked
+          ? "flex-row items-center gap-4 px-4 transition-shadow hover:shadow-md"
+          : "flex-row items-center gap-4 px-4"
+      }
+    >
+      {linked ? (
+        <Link
+          to="/datasets/$schemaId"
+          params={{ schemaId: source.dataset._id }}
+          search={(prev) => ({ ...prev, view: "transform" })}
+          className="flex min-w-0 flex-1 flex-col gap-2 py-0"
+        >
+          {body}
+        </Link>
+      ) : (
+        <div className="flex min-w-0 flex-1 flex-col gap-2 py-0">{body}</div>
+      )}
+      {linked && <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />}
+    </Card>
+  );
+}
+
 /** A group item: the group's own header row, with its member datasets listed directly beneath it. */
 function GroupCard({
   group,
@@ -276,6 +348,7 @@ function GroupCard({
 function filterBrowserItems(
   datasets: DatasetSummary[] | undefined,
   groups: GroupSummary[] | undefined,
+  derived: DerivedSummary[] | undefined,
   search: string,
   sort: SortOption,
   typeFilter: TypeFilter,
@@ -325,19 +398,34 @@ function filterBrowserItems(
       items.push({ datasets: visibleMembers, group, kind: "group" });
     }
   }
+  // Derived datasets are neither geospatial nor regular — they show under
+  // the "all" filter, sorted among everything else.
+  for (const item of derived ?? []) {
+    if (
+      typeFilter === "all" &&
+      (normalized === "" || matchesSearch(item.title, item.description, normalized))
+    ) {
+      items.push({ dataset: item, kind: "derived" });
+    }
+  }
 
   return sortItems(items, sort);
 }
 
 /**
- * The browser's three light queries, through the TanStack bridge (issue #58
+ * The browser's light queries, through the TanStack bridge (issue #58
  * part 5): they render from the persisted cache on a cold start and stay live
- * via WebSocket updates pushed into the same cache entries.
+ * via WebSocket updates pushed into the same cache entries. The derived
+ * summaries are the registry's list projection — the one app-side union
+ * point with the component's summaries (stage 3's map layers and exports
+ * read the same projection; the component's own projection is never
+ * widened).
  */
 function useBrowserLightQueries() {
   return {
     collections: useQuery({ ...convexQuery(api.collections.list) }).data,
     datasets: useQuery({ ...convexQuery(api.schemas.listSummaries) }).data,
+    derived: useQuery({ ...convexQuery(api.derivedDatasets.summaries, {}) }).data,
     groups: useQuery({ ...convexQuery(api.groups.list, {}) }).data,
     // authId → display profile, for the cards' creator chips.
     profiles: useQuery({ ...convexQuery(api.users.listProfiles) }).data,
@@ -346,7 +434,7 @@ function useBrowserLightQueries() {
 
 // oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 function DatasetsPage() {
-  const { datasets, groups, collections, profiles } = useBrowserLightQueries(),
+  const { datasets, groups, collections, profiles, derived } = useBrowserLightQueries(),
     [search, setSearch] = useState(""),
     [sort, setSort] = useState<SortOption>("newest"),
     [typeFilter, setTypeFilter] = useState<TypeFilter>("all"),
@@ -358,11 +446,27 @@ function DatasetsPage() {
   for (const profile of profiles ?? []) {
     profilesByAuthId.set(profile.authId, profile);
   }
+  const componentById = new Map<string, DatasetSummary>();
+  for (const dataset of datasets ?? []) {
+    componentById.set(dataset._id, dataset);
+  }
+  const derivedById = new Map<string, DerivedSummary>();
+  for (const item of derived ?? []) {
+    derivedById.set(item._id, item);
+  }
   const collectionName = (collectionId: string | undefined) =>
       collectionId === undefined ? undefined : collectionNames.get(collectionId),
-    visible = filterBrowserItems(datasets, groups, search, sort, typeFilter);
+    derivedSourceOf = (sourceDatasetId: string): DerivedCardSource | undefined => {
+      const component = componentById.get(sourceDatasetId);
+      if (component !== undefined) {
+        return { dataset: component, kind: "component" };
+      }
+      const derivedSource = derivedById.get(sourceDatasetId);
+      return derivedSource === undefined ? undefined : { dataset: derivedSource, kind: "derived" };
+    },
+    visible = filterBrowserItems(datasets, groups, derived, search, sort, typeFilter);
 
-  if (datasets === undefined || groups === undefined) {
+  if (datasets === undefined || groups === undefined || derived === undefined) {
     return (
       <div className="flex justify-center items-center min-h-100">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
@@ -385,7 +489,7 @@ function DatasetsPage() {
         </RouterButton>
       </div>
 
-      {datasets.length === 0 && groups.length === 0 ? (
+      {datasets.length === 0 && groups.length === 0 && derived.length === 0 ? (
         <Empty className="min-h-80 border">
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -441,6 +545,12 @@ function DatasetsPage() {
                       group={item.group}
                       members={item.datasets}
                       collectionName={collectionName(item.group.collectionId)}
+                    />
+                  ) : item.kind === "derived" ? (
+                    <DerivedDatasetCard
+                      key={item.dataset._id}
+                      dataset={item.dataset}
+                      source={derivedSourceOf(item.dataset.sourceDatasetId)}
                     />
                   ) : (
                     <DatasetCard

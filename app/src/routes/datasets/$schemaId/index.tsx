@@ -37,6 +37,7 @@ import { RouterButton } from "@/components/router-button";
 import { SchemaVisualizer } from "@/components/schema-visualizer";
 import { SimplifyGeometryPanel } from "@/components/simplify-geometry-panel";
 import { TileBuildStatus } from "@/components/tile-build-status";
+import { TransformBuilder } from "@/components/transform-builder";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -95,7 +96,7 @@ const entryPanelSearchSchema = z.object({
   entryId: z.string().optional(),
   panel: z.enum(["create", "edit"]).optional(),
   // Active tab ("overview" is the default and deliberately absent from the URL).
-  view: z.enum(["overview", "entries", "history", "structure"]).optional(),
+  view: z.enum(["overview", "entries", "history", "structure", "transform"]).optional(),
 });
 
 export const Route = createFileRoute("/datasets/$schemaId/")({
@@ -375,7 +376,7 @@ function SchemaDetailPage() {
     // Tab switches write `?view=` so the active tab survives reloads and is
     // linkable; "overview" is the default and stays out of the URL. Panel
     // navigations above merge (not replace) so they never drop it.
-    setView = async (view: "entries" | "history" | "overview" | "structure") => {
+    setView = async (view: "entries" | "history" | "overview" | "structure" | "transform") => {
       await navigate({
         search: (prev) => ({ ...prev, view: view === "overview" ? undefined : view }),
       });
@@ -385,7 +386,8 @@ function SchemaDetailPage() {
         value === "entries" ||
         value === "history" ||
         value === "overview" ||
-        value === "structure"
+        value === "structure" ||
+        value === "transform"
       ) {
         void setView(value);
       }
@@ -694,6 +696,7 @@ function SchemaDetailPage() {
             <TabsTrigger value="history">History</TabsTrigger>
           )}
           <TabsTrigger value="structure">Structure</TabsTrigger>
+          <TabsTrigger value="transform">Transform</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6">
@@ -789,6 +792,14 @@ function SchemaDetailPage() {
               </CollapsibleContent>
             </Card>
           </Collapsible>
+        </TabsContent>
+
+        <TabsContent value="transform" className="space-y-6">
+          <TransformBuilder
+            columns={Object.keys(schema.schema.properties ?? {})}
+            datasetTitle={schema.title}
+            schemaId={schemaId}
+          />
         </TabsContent>
       </Tabs>
 
