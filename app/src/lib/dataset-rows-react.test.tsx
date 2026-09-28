@@ -31,6 +31,10 @@ vi.mock("@caden/json-cms/react", () => ({ useAllPaginated: mocks.useAllPaginated
 vi.mock("@convex-dev/react-query", () => ({
   convexQuery: (reference: unknown, args: unknown) => ({ reference, args }),
 }));
+// The seam's imperative layer derives its client from `#/env` at import
+// time; the reactive tests stub every client boundary, so the env module
+// never has to load.
+vi.mock("#/env", () => ({ env: { VITE_CONVEX_URL: "http://127.0.0.1:3212" } }));
 
 afterEach(() => {
   cleanup();
