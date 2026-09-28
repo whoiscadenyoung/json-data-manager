@@ -18,7 +18,15 @@ import {
 import type { LayerTargetType, MapLayerDoc } from "#/lib/map-layers";
 import { api } from "#convex/_generated/api";
 
-type AddToMapTarget = { targetId: string; targetType: LayerTargetType; targetName: string };
+/**
+ * The component targets the "add to map" sheets offer. Derived layers are
+ * deliberately absent (3a, #96): a derived dataset joins a map from the map
+ * workspace's own layer picker, through the wrapper that validates the
+ * registry row — never as a side effect of adding a dataset or group.
+ */
+type AddToMapTargetType = Exclude<LayerTargetType, "derived">;
+
+type AddToMapTarget = { targetId: string; targetType: AddToMapTargetType; targetName: string };
 
 type MapSummary = { _id: string; name: string };
 

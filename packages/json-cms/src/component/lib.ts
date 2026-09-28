@@ -1102,25 +1102,59 @@ const mapLayerTargetTypeValidator = v.union(
   v.literal("collection"),
   v.literal("group"),
   v.literal("dataset"),
+  // A HOST-side derived dataset (roadmap 3a, #96): `targetId` is the app's
+  // derivedDatasets registry id. The component cannot query host tables, so
+  // this branch is validated shape-level here; existence is the host
+  // wrapper's job (api.maps.addDerivedLayer checks the registry row before
+  // delegating to addMapLayer). A layer whose registry row is later deleted
+  // dangles by design — cascade deletes cover component targets only — and
+  // host readers render it defensively ("deleted derived dataset"), the same
+  // way they already answer dangling component targets.
+  v.literal("derived"),
 );
+
+/** Display labels per target type, for the not-found errors. */
+const TARGET_LABELS: Record<"collection" | "dataset" | "derived" | "group", string> = {
+  collection: "Collection",
+  dataset: "Dataset",
+  derived: "Derived dataset",
+  group: "Group",
+};
+
+/**
+ * The "derived" branch's shape-level check (see mapLayerTargetTypeValidator):
+ * the component cannot query host tables, so only the string's presence is
+ * verified here — registry existence is inverted into the host wrapper
+ * (api.maps.addDerivedLayer), which validates before delegating.
+ */
+function normalizeDerivedLayerTarget(targetId: string): string {
+  if (targetId === "") {
+    throw new ConvexError(`${TARGET_LABELS.derived} not found`);
+  }
+  return targetId;
+}
 
 /**
  * Validates that `targetId` — a plain string from the host app (see
  * exposeApi's note on id validation) — names an existing row of the table
- * `targetType` implies, returning its normalized component id.
+ * `targetType` implies, returning its normalized component id. The
+ * "derived" branch has no component table to check: it is shape-level only
+ * and passes through (see normalizeDerivedLayerTarget).
  */
 async function normalizeMapLayerTarget(
   ctx: MutationCtx,
-  targetType: "collection" | "group" | "dataset",
+  targetType: "collection" | "group" | "dataset" | "derived",
   targetId: string,
-): Promise<Id<"collections"> | Id<"groups"> | Id<"schemas">> {
-  const label =
-    targetType === "collection" ? "Collection" : targetType === "group" ? "Group" : "Dataset";
-  const assertFound = (doc: unknown) => {
-    if (doc === null) {
-      throw new ConvexError(`${label} not found`);
-    }
-  };
+): Promise<string> {
+  if (targetType === "derived") {
+    return normalizeDerivedLayerTarget(targetId);
+  }
+  const label = TARGET_LABELS[targetType],
+    assertFound = (doc: unknown) => {
+      if (doc === null) {
+        throw new ConvexError(`${label} not found`);
+      }
+    };
   switch (targetType) {
     case "collection": {
       const id = ctx.db.normalizeId("collections", targetId);
@@ -1815,10 +1849,16 @@ const MAX_ENTRY_PAGE_ROWS = 500;
  * query execution bounded no matter how big the dataset grows — an unbounded
  * read of a 20k-row import would blow the ~16 MiB per-execution cap (Convex
  * components cannot call `.paginate()`; see `paginateEntriesBySchema`).
- * Ordered newest-first, matching the pre-pagination table.
+ * Ordered newest-first by default, matching the pre-pagination table;
+ * `order: "asc"` serves the callers whose pre-pagination read was the plain
+ * ascending index scan (the group export's byte-identical off-path, 3a).
  */
 export const listEntriesPage = query({
-  args: { paginationOpts: paginationOptsValidator, schemaId: v.id("schemas") },
+  args: {
+    order: v.optional(v.union(v.literal("asc"), v.literal("desc"))),
+    paginationOpts: paginationOptsValidator,
+    schemaId: v.id("schemas"),
+  },
   handler: async (ctx, args) => {
     const schemaDoc = await ctx.db.get(args.schemaId);
     if (!schemaDoc) {
@@ -1829,7 +1869,7 @@ export const listEntriesPage = query({
       args.schemaId,
       args.paginationOpts.cursor,
       Math.max(1, Math.min(args.paginationOpts.numItems, MAX_ENTRY_PAGE_ROWS)),
-      "desc",
+      args.order ?? "desc",
     );
     return { continueCursor, isDone, page };
   },
