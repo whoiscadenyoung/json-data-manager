@@ -43,9 +43,33 @@
  *   `unmatchedKeys` lists the *raw* (pre-normalization), distinct orphan
  *   key values in first-seen order, for the preview's "214 orphan
  *   GrantIds" (§6); `droppedRows` covers the inner-join removals.
+ * - **Geometry emission (stage 4, #98 — lifecycle §5.2:134-139).** When the
+ *   spec's `geometrySource` rule addresses this operation (addressing is
+ *   `geometrySourceOperationOf` (spec.ts) — first lookup op matching the
+ *   rule's `lookupDatasetId`, `undefined` when none does; the engine is
+ *   per-operation and does not re-verify), the result carries
+ *   `geometryReferences`: one value per OUTPUT row, index-paired, read raw
+ *   from the rule's side and column — the matched lookup row's cell under
+ *   side "lookup" (null for unmatched rows and absent cells), the source
+ *   row's own cell under side "base". Chosen over a reserved row key
+ *   deliberately: a reserved key collides with schemaless data (the
+ *   enrichment-wins rule above) and would leak into exports, while a
+ *   parallel array keeps rows clean; stage 5's materialization pairs
+ *   references to rows by index when writing geometryIds into published
+ *   entries (§5.2). The reference comes from the side's own row — NOT from
+ *   the namespaced enrichment — so it resolves even when the op's `fields`
+ *   did not pick the geometry column. **References pair with THIS call's
+ *   rows only:** a multi-operation spec resolves the rule at the geometry
+ *   op's position and consumes THAT call's rows and array — any later
+ *   operation that changes row count (e.g. `match: "inner"`, which the
+ *   canonical §5.2 two-lookup join chains after it) shifts indices, and no
+ *   previously emitted array adjusts (pinned by composition.test.ts's
+ *   desync test). Rollup output has no geometry: a group spans many rows,
+ *   so `geometrySource` addresses lookup operations only (recorded,
+ *   spec.ts).
  */
 import { normalizeKey } from "../coercion.js";
-import type { LookupOperation } from "./spec.js";
+import type { GeometrySource, LookupOperation } from "./spec.js";
 
 /**
  * Match-rate diagnostics for one `applyLookup` call — what stage 2's
@@ -76,6 +100,13 @@ export interface LookupResult<R extends Record<string, unknown>> {
   /** New rows — never the input row objects, and never the input array. */
   rows: R[];
   diagnostics: LookupDiagnostics;
+  /**
+   * Present only when a `geometrySource` rule was passed: one geometry
+   * reference per row of `rows`, index-paired, resolved from the rule's
+   * side and column (see the module doc). Plain serializable values, null
+   * where a row has none.
+   */
+  geometryReferences?: unknown[];
 }
 
 /** Thrown when `onDuplicateKey` is "error" and two lookup rows normalize to the same key (§6: decided, not implicit). */
@@ -183,10 +214,33 @@ function orphanKeyText(value: unknown): string | undefined {
 }
 
 /**
+ * The geometry reference one output row carries under a `geometrySource`
+ * rule, read RAW from the rule's side — a reference is data, not a key, so
+ * no normalization applies — with absent cells (and, side "lookup", unmatched
+ * rows) resolving to null, never an error (the `?? null` enrichment
+ * precedent).
+ */
+function geometryReferenceOf(
+  geometrySource: GeometrySource,
+  row: Record<string, unknown>,
+  matched: Record<string, unknown> | undefined,
+): unknown {
+  const cell =
+    geometrySource.side === "base"
+      ? row[geometrySource.column]
+      : matched === undefined
+        ? undefined
+        : matched[geometrySource.column];
+  return cell === undefined ? null : cell;
+}
+
+/**
  * Applies one lookup operation (§4.1): enrich `sourceRows` with namespaced
  * fields from `lookupRows` — many-to-one, per the op's match, duplicate-key
  * and namespacing policies documented on `LookupOperation` and in the
- * module header. Inputs are never mutated; every returned row is a fresh
+ * module header. Pass the spec's `geometrySource` rule (when it addresses
+ * THIS operation — see the module doc) to also emit per-row geometry
+ * references. Inputs are never mutated; every returned row is a fresh
  * object, so the result feeds directly into the next `applyLookup` call of
  * a multi-operation spec. Never throws except the explicit
  * `LookupKeyConflictError`.
@@ -195,13 +249,21 @@ export function applyLookup<R extends Record<string, unknown>>(
   operation: LookupOperation,
   sourceRows: readonly R[],
   lookupRows: readonly Record<string, unknown>[],
+  geometrySource?: GeometrySource,
 ): LookupResult<R> {
   const namespace = operation.namespace ?? operation.lookupDatasetId,
     fields = enrichmentFields(operation, lookupRows),
     byKey = buildKeyMap(operation, lookupRows),
     matchPolicy = operation.match ?? "left",
+    geometry = geometrySource,
+    references = geometry === undefined ? undefined : ([] as unknown[]),
     rows: R[] = [],
     orphanKeys = new Set<string>();
+  const pushReference = (row: R, matched: Record<string, unknown> | undefined): void => {
+    if (geometry !== undefined && references !== undefined) {
+      references.push(geometryReferenceOf(geometry, row, matched));
+    }
+  };
   let matchedRows = 0,
     droppedRows = 0;
   for (const row of sourceRows) {
@@ -211,6 +273,7 @@ export function applyLookup<R extends Record<string, unknown>>(
     if (matched !== undefined) {
       matchedRows += 1;
       rows.push({ ...row, ...enrichmentFor(namespace, fields, matched) });
+      pushReference(row, matched);
       continue;
     }
     const orphan = orphanKeyText(rawKey);
@@ -222,8 +285,9 @@ export function applyLookup<R extends Record<string, unknown>>(
       continue;
     }
     rows.push({ ...row, ...enrichmentFor(namespace, fields, undefined) });
+    pushReference(row, undefined);
   }
-  return {
+  const result: LookupResult<R> = {
     rows,
     diagnostics: {
       totalSourceRows: sourceRows.length,
@@ -233,4 +297,8 @@ export function applyLookup<R extends Record<string, unknown>>(
       droppedRows,
     },
   };
+  if (references !== undefined) {
+    result.geometryReferences = references;
+  }
+  return result;
 }

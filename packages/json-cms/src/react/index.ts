@@ -122,16 +122,24 @@ export type {
 export { looksLikeGeoJson, parseGeoJsonFeatures } from "./lib/geojson-import.js";
 export type { GeoJsonRow, GeoJsonParseResult, GeoJsonFeatureError } from "./lib/geojson-import.js";
 
-// Derived-dataset transform engine (roadmap stage 1) — declarative,
-// serializable lookup specs (see ../shared/transform/spec.ts) plus the pure
-// enrichment engine over generic rows (../shared/transform/lookup.ts):
-// namespaced fields in, base rows never mutated, match-rate diagnostics out.
+// Derived-dataset transform engine (roadmap stages 1+4) — declarative,
+// serializable specs (see ../shared/transform/spec.ts) plus the pure engine
+// over generic rows: namespaced fields in, base rows never mutated,
+// diagnostics out. Stage 4 (#98) added the rollup primitive, the
+// `geometrySource` spec field (per-row references, index-paired), and the
+// union-aware dependency helper.
 export { applyLookup, LookupKeyConflictError } from "../shared/transform/lookup.js";
+export { applyRollup } from "../shared/transform/rollup.js";
+export { transformSpecDependencies, geometrySourceOperationOf } from "../shared/transform/spec.js";
 export type { LookupDiagnostics, LookupResult } from "../shared/transform/lookup.js";
+export type { RollupDiagnostics, RollupResult } from "../shared/transform/rollup.js";
 export type {
   TransformSpec,
   TransformOperation,
   LookupOperation,
+  RollupOperation,
+  RollupMeasure,
+  GeometrySource,
 } from "../shared/transform/spec.js";
 
 // Resolves a `GeometryDoc`'s `geometryJson`/`geometryUrl` (see its doc
