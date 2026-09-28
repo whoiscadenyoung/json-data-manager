@@ -140,12 +140,24 @@ export function exposeApi(
       },
     }),
     // List-page projection — no `schema`/`uiSchema` payloads (issue #53).
-    // Structure/editor surfaces keep using `getSchema`.
+    // Structure/editor surfaces keep using `getSchema`. Drafts are filtered
+    // server-side; this is the catalog consumers' read.
     listSchemaSummaries: queryGeneric({
       args: {},
       handler: async (ctx) => {
         await options.auth(ctx, { fn: "listSchemaSummaries", type: "read" });
         return ctx.runQuery(component.lib.listSchemaSummaries, {});
+      },
+    }),
+    // The opt-in drafts view (roadmap 5a, #99): the same projection, drafts
+    // only. The default reads (`listSchemas`/`listSchemaSummaries`) exclude
+    // drafts server-side, so this wrapper is the only client-facing path that
+    // returns them — the datasets browser's drafts toggle subscribes to it.
+    listDraftSchemaSummaries: queryGeneric({
+      args: {},
+      handler: async (ctx) => {
+        await options.auth(ctx, { fn: "listDraftSchemaSummaries", type: "read" });
+        return ctx.runQuery(component.lib.listDraftSchemaSummaries, {});
       },
     }),
     getSchema: queryGeneric({
@@ -176,7 +188,12 @@ export function exposeApi(
         // Deliberately NO `source`/`lineage` here: the read-only markers are
         // host-flow-only (set by the host's sync/tag-ingest code invoking the
         // component directly). Convex validators are exact, so clients can't
-        // smuggle them in — see `assertDataWritable` in the component.
+        // smuggle them in — see `assertDataWritable` in the component. Same
+        // for `lifecycle` (roadmap 5a): the draft/published state is written
+        // by host-side component calls only (5b's publish), so nothing
+        // created through a wrapper can land as a draft — absent reads as
+        // published, which is what keeps today's create/import flows
+        // catalog-visible.
       },
       handler: async (ctx, args) => {
         const actorId = await options.auth(ctx, { fn: "createSchema", type: "create" });

@@ -134,6 +134,19 @@ export default defineSchema({
     // implicitly in the group's collection.
     groupId: v.optional(v.id("groups")),
     kind: v.optional(v.union(v.literal("standard"), v.literal("geospatial"))),
+    // Catalog lifecycle state (roadmap 5a, #99; docs/catalog-lifecycle-design.md
+    // §3): `"draft"` hides the dataset from the catalog's list reads
+    // (`listSchemas`/`listSchemaSummaries` — see lib.ts), `"published"` and
+    // ABSENT both show it. Absent-reads-as-published is the polarity that
+    // keeps every pre-field row and every dataset created through today's
+    // flows catalog-visible without a backfill — which is also why this is a
+    // literal union, not a boolean: stages 5b/6 grow it with new states
+    // (republish/versioning) instead of flipping polarity. The only writer is
+    // host-side code invoking the component directly (the `source`/`lineage`
+    // pattern — the exposeApi wrapper deliberately omits the field, and 5b's
+    // publish action writes it the same way); until then no user flow
+    // produces drafts.
+    lifecycle: v.optional(v.union(v.literal("draft"), v.literal("published"))),
     // Denormalized dataset-level summary, maintained incrementally by the
     // entry/geometry mutations in component/lib.ts (never recomputed from a
     // full scan). `featureCount` is kept exactly accurate — cheap to keep
