@@ -21,6 +21,7 @@ import type * as groups from "../groups.js";
 import type * as http from "../http.js";
 import type * as imports from "../imports.js";
 import type * as maps from "../maps.js";
+import type * as publish from "../publish.js";
 import type * as schemas from "../schemas.js";
 import type * as seed from "../seed.js";
 import type * as sources from "../sources.js";
@@ -50,6 +51,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   imports: typeof imports;
   maps: typeof maps;
+  publish: typeof publish;
   schemas: typeof schemas;
   seed: typeof seed;
   sources: typeof sources;

@@ -240,11 +240,26 @@ const versionValidator = v.object({
   _creationTime: v.number(),
   entryCount: v.optional(v.number()),
   featureCount: v.optional(v.number()),
+  // Mirrors the component's widened lineage (roadmap 5b): sourceSchemaId
+  // became optional (a derived publish anchors on sourceKey instead) and the
+  // recipe/source-versions fields ride along additively — this light
+  // projection only forwards them.
   lineage: v.optional(
     v.object({
       frozenAt: v.number(),
+      recipe: v.optional(v.any()),
       snapshotRef: v.optional(v.string()),
-      sourceSchemaId: v.string(),
+      sourceKey: v.optional(v.string()),
+      sourceSchemaId: v.optional(v.string()),
+      sourceVersions: v.optional(
+        v.array(
+          v.object({
+            datasetId: v.string(),
+            frozenAt: v.optional(v.number()),
+            ref: v.optional(v.string()),
+          }),
+        ),
+      ),
       versionLabel: v.string(),
     }),
   ),
@@ -603,8 +618,15 @@ export const setVersionPinned = mutation({
     if (ref === undefined) {
       throw new ConvexError("This version has no snapshot ref to pin.");
     }
-    const sourceSchemaId =
-      schema.lineage !== undefined ? schema.lineage.sourceSchemaId : schema._id;
+    // 5b's derived publishes carry `sourceKey` (a host registry id) instead
+    // of a component source row — there is no binding policy store to pin
+    // them under until stage 6 builds the derived-side policy store.
+    const sourceSchemaId = schema.lineage.sourceSchemaId;
+    if (sourceSchemaId === undefined) {
+      throw new ConvexError(
+        "This published version has no live source dataset here — its lineage names a derived dataset, not a bound one.",
+      );
+    }
     const binding = await ctx.db
       .query("datasetBindings")
       .withIndex("by_schema", (q) => q.eq("schemaId", sourceSchemaId))

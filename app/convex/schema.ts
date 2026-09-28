@@ -152,6 +152,74 @@ export default defineSchema({
     updated: v.number(),
   }).index("by_binding", ["bindingId"]),
 
+  // One materialized-publish attempt (roadmap 5b, #100; lifecycle doc §6):
+  // the syncRuns-pattern durability row for the window the sync engine never
+  // had — chunk production is CLIENT-side (roadmap §2), so the attempt
+  // persists each uploaded chunk's storage id as it lands, letting a resumed
+  // browser re-execute the spec and upload only the missing chunks. One
+  // attempt per publish click; `publishKey` is its idempotency key, re-checked
+  // INSIDE the freeze transaction (the by-ref lookup — a retried/killed
+  // publish cannot fork two v1s; uniqueness is enforced there, not by an
+  // index — Convex has none). After the freeze hands off to the component's
+  // import workflow (`importId`), durability is already the workflow's: the
+  // attempt only mirrors its outcome (pollImport). Two layers, one handoff —
+  // deliberately never merged (issue scope note).
+  //
+  // The frozen row's creation inputs ride the attempt so the freeze is
+  // host-side and atomic: for a derived publish the client reports the
+  // executed output's schema/kind/geometryType plus the spec it actually ran
+  // (`planned*`/`spec`); a draft publish resolves all of it from the draft at
+  // freeze time. `publishedSchemaId` + `publishKey` per completed attempt are
+  // the host-side version chain for derived datasets (whose component lineage
+  // anchors on `sourceKey`, not a component row) — the seam stage 6 builds
+  // on, laid down and nothing more.
+  publishAttempts: defineTable({
+    // Component-storage ids, PLAIN STRINGS: the blobs live in the COMPONENT's
+    // namespaced storage (the client uploads through the component's upload
+    // URL), so a host `_storage` id validator would vouch for the wrong table
+    // — the same boundary rule `importId`/`publishedSchemaId` below follow,
+    // and `versioning.freezeVersion`'s own `chunkStorageIds` argument.
+    chunkStorageIds: v.array(v.string()),
+    // Attribution (ADR 0007), like every host-written row. Deliberately NOT
+    // enforced: per-creator isolation is stage 8 (roadmap) — until then the
+    // attempt is joinable by any signed-in editor, exactly like a saved
+    // derivedDatasets draft (the registry's recorded stance).
+    createdBy: v.string(),
+    // The dataset being published: a component dataset id (a lifecycle
+    // "draft" import) or a derivedDatasets registry row id — plain strings,
+    // the datasetBindings precedent (which table answers is `datasetKind`).
+    datasetKey: v.string(),
+    datasetKind: v.union(v.literal("draft"), v.literal("derived")),
+    error: v.optional(v.string()),
+    finishedAt: v.optional(v.number()),
+    importId: v.optional(v.string()),
+    lastProgressAt: v.number(),
+    plannedChunkCount: v.optional(v.number()),
+    plannedGeometryType: v.optional(v.string()),
+    plannedKind: v.optional(v.union(v.literal("standard"), v.literal("geospatial"))),
+    plannedSchema: v.optional(v.any()),
+    plannedTotalRows: v.optional(v.number()),
+    publishKey: v.string(),
+    publishedSchemaId: v.optional(v.string()),
+    // The spec the client executed (derived publishes only) — kept so the
+    // frozen row's `lineage.recipe` records the rows that actually landed,
+    // not whatever the registry row holds at freeze time.
+    spec: v.optional(v.any()),
+    startedAt: v.number(),
+    status: v.union(
+      v.literal("uploading"),
+      v.literal("importing"),
+      v.literal("completed"),
+      v.literal("failed"),
+    ),
+    title: v.string(),
+    versionLabel: v.string(),
+  })
+    // Uniqueness of publishKey is NOT an index: Convex has none, and the
+    // enforcement point is the freeze transaction's global by-ref re-check
+    // (the component's by_lineage_snapshotRef lookup).
+    .index("by_dataset", ["datasetKey"]),
+
   // The derived-dataset registry (roadmap stage 2, #95; ADR 0005 §10.2): one
   // row per transform spec producing a virtual derived dataset. Catalog-level,
   // never map-level (ADR 0005): the row's own _id is the derived dataset's

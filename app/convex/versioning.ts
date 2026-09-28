@@ -1,7 +1,8 @@
+import type { FunctionReturnType } from "convex/server";
 import { ConvexError, v } from "convex/values";
 
 import { components } from "./_generated/api";
-import type { QueryCtx } from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { internalMutation } from "./_generated/server";
 import type { CommitOp } from "./sources";
 
@@ -35,6 +36,14 @@ import type { CommitOp } from "./sources";
 
 /** Unpinned versions kept per source when no explicit keep-N is set. */
 export const DEFAULT_KEEP_VERSIONS = 10;
+
+/**
+ * A component schema doc as this host sees it, and the geometry-type literal
+ * union derived from it — never re-declared by hand, so the component's
+ * validator stays the single source of the six names.
+ */
+type SchemaDoc = NonNullable<FunctionReturnType<typeof components.jsonCms.lib.getSchema>>;
+export type SchemaGeometryType = NonNullable<SchemaDoc["geometryType"]>;
 
 /** The component's validator for one commit-ops entry — the delta ops shape. */
 export const commitOpValidator = v.object({
@@ -223,6 +232,83 @@ export function diffVersionRows(before: VersionRow[], after: VersionRow[]): Comm
 // ---------------------------------------------------------------------------
 
 /**
+ * The already-frozen lookup both freeze cores share: the GLOBAL by-ref read
+ * ("a ref never freezes twice" — including across a re-bind to a recreated
+ * live dataset), as a plain helper so each calling mutation re-checks inside
+ * its own transaction before any write.
+ */
+export async function alreadyFrozenByRef(
+  ctx: { runQuery: QueryCtx["runQuery"] },
+  ref: string,
+): Promise<{ _id: string } | null> {
+  return ctx.runQuery(components.jsonCms.lib.getSchemaVersionBySnapshotRef, { snapshotRef: ref });
+}
+
+/**
+ * Everything one freeze does AFTER its by-ref re-check, shared verbatim by
+ * the tag path's `freezeVersion` and the materialized publish's
+ * recipe-carrying freeze (roadmap 5b): create the frozen row (explicit
+ * schema shape + generalized `lineage`), file it into the caller's
+ * collections, and start the import workflow over the uploaded chunks with
+ * the calling flow's `boundWrite` attestation. Runs inside the caller's
+ * transaction (nested component calls are subtransactions). An empty freeze
+ * still gets an import doc — zero chunks complete immediately, and status
+ * reads uniformly for every version.
+ */
+export async function createFrozenVersion(
+  ctx: MutationCtx,
+  args: {
+    boundWrite: string;
+    chunkStorageIds: string[];
+    /** File the new version into this dataset's collections (the tag path's shape). */
+    collectionsSourceSchemaId?: string;
+    geometryType?: SchemaGeometryType;
+    kind?: "standard" | "geospatial";
+    lineage: {
+      frozenAt: number;
+      recipe?: unknown;
+      snapshotRef?: string;
+      sourceKey?: string;
+      sourceSchemaId?: string;
+      sourceVersions?: Array<{ datasetId: string; frozenAt?: number; ref?: string }>;
+      versionLabel: string;
+    };
+    schema: Record<string, unknown>;
+    source?: { name: string };
+    total: number;
+  },
+): Promise<{ importId: string; schemaId: string }> {
+  const schemaId = await ctx.runMutation(components.jsonCms.lib.createSchema, {
+    geometryType: args.geometryType,
+    kind: args.kind,
+    lineage: args.lineage,
+    schema: args.schema,
+    source: args.source,
+  });
+  if (args.collectionsSourceSchemaId !== undefined) {
+    const collections = await ctx.runQuery(components.jsonCms.lib.listCollectionsBySchema, {
+      schemaId: args.collectionsSourceSchemaId,
+    });
+    for (const collection of collections) {
+      // oxlint-disable-next-line no-await-in-loop -- one membership write per collection, ordered and trivial.
+      await ctx.runMutation(components.jsonCms.lib.addSchemaToCollection, {
+        collectionId: collection._id,
+        schemaId,
+      });
+    }
+  }
+  // The `boundWrite` attestation marks this as the calling flow (the
+  // component's read-only gate requires it on a lineage-marked schema).
+  const importId = await ctx.runMutation(components.jsonCms.lib.startImport, {
+    boundWrite: args.boundWrite,
+    schemaId,
+    storageIds: args.chunkStorageIds,
+    total: args.total,
+  });
+  return { importId, schemaId };
+}
+
+/**
  * Freezes one version of a source dataset: creates the version dataset (the
  * source's schema shape + read-only `source` marker + `lineage`), files it
  * into the same collections, and starts the import workflow over the
@@ -240,9 +326,7 @@ export const freezeVersion = internalMutation({
     total: v.number(),
   },
   handler: async (ctx, args) => {
-    const existing = await ctx.runQuery(components.jsonCms.lib.getSchemaVersionBySnapshotRef, {
-      snapshotRef: args.ref,
-    });
+    const existing = await alreadyFrozenByRef(ctx, args.ref);
     if (existing !== null) {
       return { alreadyFrozen: true, importId: undefined, schemaId: existing._id };
     }
@@ -252,45 +336,29 @@ export const freezeVersion = internalMutation({
     if (live === null) {
       throw new ConvexError("The bound live dataset no longer exists — sync and retry.");
     }
-    const frozenAt = Date.now(),
-      // The version's description rides on the schema object (createSchema
-      // reads it from there); the title stays the source dataset's. The
-      // wording is the tag path's (a frozen snapshot) — the machinery's
-      // first caller.
-      versionSchema = {
-        ...live.schema,
-        description: `Frozen snapshot "${args.label}" of ${live.title} — a point-in-time copy, read-only here.`,
-      },
-      schemaId = await ctx.runMutation(components.jsonCms.lib.createSchema, {
-        geometryType: live.geometryType,
-        kind: live.kind,
-        lineage: {
-          frozenAt,
-          snapshotRef: args.ref,
-          sourceSchemaId: args.sourceSchemaId,
-          versionLabel: args.label,
-        },
-        schema: versionSchema,
-        source: live.source,
-      });
-    const collections = await ctx.runQuery(components.jsonCms.lib.listCollectionsBySchema, {
-      schemaId: args.sourceSchemaId,
-    });
-    for (const collection of collections) {
-      // oxlint-disable-next-line no-await-in-loop -- one membership write per collection, ordered and trivial.
-      await ctx.runMutation(components.jsonCms.lib.addSchemaToCollection, {
-        collectionId: collection._id,
-        schemaId,
-      });
-    }
-    // An empty freeze still gets an import doc — zero chunks complete
-    // immediately, and status reads uniformly for every version. The
-    // `boundWrite` attestation marks this as the calling flow (the
-    // component's read-only gate requires it on a lineage-marked schema).
-    const importId = await ctx.runMutation(components.jsonCms.lib.startImport, {
+    const frozenAt = Date.now();
+    // The version's description rides on the schema object (createSchema
+    // reads it from there); the title stays the source dataset's. The
+    // wording is the tag path's (a frozen snapshot) — the machinery's
+    // first caller.
+    const versionSchema = {
+      ...live.schema,
+      description: `Frozen snapshot "${args.label}" of ${live.title} — a point-in-time copy, read-only here.`,
+    };
+    const { importId, schemaId } = await createFrozenVersion(ctx, {
       boundWrite: args.boundWrite,
-      schemaId,
-      storageIds: args.chunkStorageIds,
+      chunkStorageIds: args.chunkStorageIds,
+      collectionsSourceSchemaId: args.sourceSchemaId,
+      geometryType: live.geometryType,
+      kind: live.kind,
+      lineage: {
+        frozenAt,
+        snapshotRef: args.ref,
+        sourceSchemaId: args.sourceSchemaId,
+        versionLabel: args.label,
+      },
+      schema: versionSchema,
+      source: live.source,
       total: args.total,
     });
     return { alreadyFrozen: false, importId, schemaId };

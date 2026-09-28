@@ -312,10 +312,13 @@ export function applyGeometryRowSpec(row: DatasetGeometryRow): DatasetGeometryRo
 // One shared client for the imperative all-rows reads: exports materialize
 // rarely, and `ConvexClient` shares the worker's proven pattern for
 // imperative one-shot calls. (Reactive reads ride the app provider's
-// ConvexReactClient instead — see `dataset-rows-react.tsx`.)
+// ConvexReactClient instead — see `dataset-rows-react.tsx`.) The publish
+// orchestrator (`./publish`) rides the same client — one socket for every
+// imperative, signed-in flow.
 let client: ConvexClient | undefined;
 
-function sharedClient(): ConvexClient {
+/** The shared imperative client, identity attached. Exported for the publish orchestrator; every other consumer goes through the read functions. */
+export function sharedClient(): ConvexClient {
   client ??= new ConvexClient(env.VITE_CONVEX_URL);
   // Identity for the sign-in gate — re-asserted per call so a client first
   // created signed out still authenticates once the session exists.

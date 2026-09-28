@@ -73,9 +73,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * nothing. A registry id is told apart from a component id by
  * `normalizeId` — both are plain strings in storage (the id-duality trap:
  * every dependency walk stays uniform over strings and asks each table in
- * turn).
+ * turn). Exported for the publish flow's freeze-time health gate (roadmap
+ * 5b), which runs the same `specStatus` walk over the same resolver.
  */
-function resolveDataset(ctx: QueryCtx): DatasetResolver {
+export function resolveDataset(ctx: QueryCtx): DatasetResolver {
   return async (id) => {
     const registryId = ctx.db.normalizeId("derivedDatasets", id);
     if (registryId !== null) {
