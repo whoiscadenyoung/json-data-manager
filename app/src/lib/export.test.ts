@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   enrichExportEntries,
@@ -8,6 +8,11 @@ import {
   type ExportableEntry,
   type TransformSummaryLike,
 } from "./export";
+
+// The export helpers derive their row loading from `#/lib/dataset-rows`,
+// which reads `#/env` at import time; the tests exercise pure logic against
+// injected stub rows, so the env module never has to load.
+vi.mock("#/env", () => ({ env: { VITE_CONVEX_URL: "http://127.0.0.1:3212" } }));
 
 function spec(operations: unknown[]): ExportTransformSpec {
   return { operations };
