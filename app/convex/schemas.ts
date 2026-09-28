@@ -8,6 +8,10 @@ import { auth } from "./auth";
 export const {
   listSchemas: list,
   listSchemaSummaries: listSummaries,
+  // The opt-in drafts view (roadmap 5a, #99): `listSummaries` filters drafts
+  // server-side, so this is the only host read that returns them — the
+  // datasets browser's drafts toggle subscribes to it.
+  listDraftSchemaSummaries: listDraftSummaries,
   getSchema: get,
   getSourceFileUrl,
   createSchema: create,
@@ -26,6 +30,13 @@ export const {
  * Runs the fold server-side so the client pays one number over the wire, not
  * every schema row — over the summaries projection (issue #53), so the
  * component→host hop doesn't carry `schema`/`uiSchema` payloads either.
+ *
+ * Drafts (roadmap 5a, #99) are excluded: they ride the draft-filtered
+ * `listSchemaSummaries`, which is correct while they're invisible (nothing
+ * persisted renders a draft). When 5b's publish flips a draft to published,
+ * its archive version enters this fold and the buster changes once — exactly
+ * when the dataset becomes consumer-visible, which is when stale persisted
+ * state must be discarded.
  */
 export const maxTileCacheVersion = query({
   args: {},

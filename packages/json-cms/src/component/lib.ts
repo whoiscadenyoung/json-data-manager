@@ -140,9 +140,25 @@ function assertDataWritable(
 
 // Schema queries
 
+/**
+ * Catalog visibility (roadmap 5a, #99; docs/catalog-lifecycle-design.md §3):
+ * drafts are invisible to catalog consumers. ABSENT reads as published — the
+ * polarity that keeps every pre-field row and every dataset created through
+ * today's flows catalog-visible with no backfill — so the only excluded state
+ * is an explicit `"draft"`. No index serves absent-OR-published (not an
+ * eq-prefix), and both catalog reads are already full scans, so this
+ * predicate is applied in-memory over the collected rows.
+ */
+function isCatalogVisible(doc: Pick<Doc<"schemas">, "lifecycle">): boolean {
+  return doc.lifecycle !== "draft";
+}
+
 export const listSchemas = query({
   args: {},
-  handler: async (ctx) => ctx.db.query("schemas").order("desc").collect(),
+  handler: async (ctx) => {
+    const docs = await ctx.db.query("schemas").order("desc").collect();
+    return docs.filter(isCatalogVisible);
+  },
   returns: v.array(schemaValidator),
 });
 
@@ -171,60 +187,94 @@ function storedSchemaFieldCount(schemaJson: unknown): number {
  * `createdBy` (ADR 0007's authorship stamp) rides along so host list
  * surfaces can attribute datasets without the payloads.
  */
+/**
+ * The list-page projection shared by `listSchemaSummaries` (published view)
+ * and `listDraftSchemaSummaries` (the opt-in drafts view) — one shape, so a
+ * consumer can merge the two reads without a second type.
+ */
+function toSchemaSummary(doc: Doc<"schemas">) {
+  return {
+    _creationTime: doc._creationTime,
+    _id: doc._id,
+    boundingBox: doc.boundingBox,
+    // Authorship rides the projection so list surfaces (the profile page's
+    // per-creator listing, the browser's "by X" line) can show and group by
+    // creator without pulling the heavy schema payloads. The host resolves
+    // the opaque id to a display name via its own users mirror.
+    createdBy: doc.createdBy,
+    description: doc.description,
+    entryCount: doc.entryCount,
+    featureCount: doc.featureCount,
+    fieldCount: storedSchemaFieldCount(doc.schema),
+    geometryType: doc.geometryType,
+    groupId: doc.groupId,
+    kind: doc.kind,
+    // The lifecycle state rides the projection (roadmap 5a, #99) so
+    // consumers can tell an absent/published row from a draft one without
+    // the payloads.
+    lifecycle: doc.lifecycle,
+    lineage: doc.lineage,
+    mapTileArchiveBuiltVersion: doc.mapTileArchiveBuiltVersion,
+    mapTileArchiveBytes: doc.mapTileArchiveBytes,
+    mapTileArchiveMaxZoom: doc.mapTileArchiveMaxZoom,
+    mapTileArchiveStorageId: doc.mapTileArchiveStorageId,
+    mapTileCacheVersion: doc.mapTileCacheVersion,
+    source: doc.source,
+    title: doc.title,
+  };
+}
+
+const schemaSummaryValidator = schemaValidator
+  .pick(
+    "_creationTime",
+    "_id",
+    "boundingBox",
+    "createdBy",
+    "description",
+    "entryCount",
+    "featureCount",
+    "geometryType",
+    "groupId",
+    "kind",
+    "lifecycle",
+    "lineage",
+    "mapTileArchiveBuiltVersion",
+    "mapTileArchiveBytes",
+    "mapTileArchiveMaxZoom",
+    "mapTileArchiveStorageId",
+    "mapTileCacheVersion",
+    "source",
+    "title",
+  )
+  .extend({ fieldCount: v.number() });
+
 export const listSchemaSummaries = query({
   args: {},
   handler: async (ctx) => {
     const docs = await ctx.db.query("schemas").order("desc").collect();
-    return docs.map((doc) => ({
-      _creationTime: doc._creationTime,
-      _id: doc._id,
-      boundingBox: doc.boundingBox,
-      // Authorship rides the projection so list surfaces (the profile page's
-      // per-creator listing, the browser's "by X" line) can show and group by
-      // creator without pulling the heavy schema payloads. The host resolves
-      // the opaque id to a display name via its own users mirror.
-      createdBy: doc.createdBy,
-      description: doc.description,
-      entryCount: doc.entryCount,
-      featureCount: doc.featureCount,
-      fieldCount: storedSchemaFieldCount(doc.schema),
-      geometryType: doc.geometryType,
-      groupId: doc.groupId,
-      kind: doc.kind,
-      lineage: doc.lineage,
-      mapTileArchiveBuiltVersion: doc.mapTileArchiveBuiltVersion,
-      mapTileArchiveBytes: doc.mapTileArchiveBytes,
-      mapTileArchiveMaxZoom: doc.mapTileArchiveMaxZoom,
-      mapTileArchiveStorageId: doc.mapTileArchiveStorageId,
-      mapTileCacheVersion: doc.mapTileCacheVersion,
-      source: doc.source,
-      title: doc.title,
-    }));
+    return docs.filter(isCatalogVisible).map(toSchemaSummary);
   },
-  returns: v.array(
-    schemaValidator
-      .pick(
-        "_creationTime",
-        "_id",
-        "boundingBox",
-        "createdBy",
-        "description",
-        "entryCount",
-        "featureCount",
-        "geometryType",
-        "groupId",
-        "kind",
-        "lineage",
-        "mapTileArchiveBuiltVersion",
-        "mapTileArchiveBytes",
-        "mapTileArchiveMaxZoom",
-        "mapTileArchiveStorageId",
-        "mapTileCacheVersion",
-        "source",
-        "title",
-      )
-      .extend({ fieldCount: v.number() }),
-  ),
+  returns: v.array(schemaSummaryValidator),
+});
+
+/**
+ * The opt-in drafts view (roadmap 5a, #99): only datasets explicitly flagged
+ * `lifecycle: "draft"`, same projection as `listSchemaSummaries`. The default
+ * list reads exclude drafts server-side ("drafts are invisible to catalog
+ * consumers", lifecycle §3), so this is the only component read that returns
+ * them — the datasets browser's drafts toggle subscribes to it through its
+ * exposeApi wrapper. Absent lifecycle reads as published (see
+ * `isCatalogVisible`), so pre-field rows never appear here either.
+ */
+export const listDraftSchemaSummaries = query({
+  args: {},
+  handler: async (ctx) => {
+    const docs = await ctx.db.query("schemas").order("desc").collect();
+    return docs
+      .filter((doc) => doc.lifecycle === "draft")
+      .map(toSchemaSummary);
+  },
+  returns: v.array(schemaSummaryValidator),
 });
 
 export const getSchema = query({
@@ -466,6 +516,13 @@ export const createSchema = mutation({
         versionLabel: v.string(),
       }),
     ),
+    // Catalog lifecycle state (roadmap 5a, #99) — see the `lifecycle` field's
+    // doc on the `schemas` table. Host-flow-only like `source`/`lineage`: the
+    // exposeApi wrapper deliberately omits it, so no client path can create a
+    // draft. Absent (every caller today, including the host's materialized
+    // version datasets) reads as published, so this arg changes nothing until
+    // a future host flow (5b's publish) sets it.
+    lifecycle: v.optional(v.union(v.literal("draft"), v.literal("published"))),
     // Normalize every geometry coordinate to GEOMETRY_SIMPLIFY_DECIMAL_PLACES
     // on write — see `simplifyGeometryPayload` below. Geospatial-only.
     simplifyGeometry: v.optional(v.boolean()),
@@ -499,6 +556,7 @@ export const createSchema = mutation({
       featureCount: args.kind === "geospatial" ? 0 : undefined,
       geometryType: args.geometryType,
       kind: args.kind,
+      lifecycle: args.lifecycle,
       lineage: args.lineage,
       schema: args.schema,
       simplifyGeometry: args.simplifyGeometry,
@@ -844,6 +902,18 @@ export const deleteGroup = mutation({
 // most one group. The two relationships are independent: neither mutation
 // side touches the other.
 
+/**
+ * One collection's member datasets as full docs. Catalog-filtered like
+ * `listSchemas` (roadmap 5a, #99): a lifecycle draft never reaches a consumer
+ * enumeration payload — it appears only via `listDraftSchemaSummaries`, the
+ * drafts-toggle read. This is an enumeration like `listSchemas`, not a
+ * per-id read, so the per-id exemption (getSchema stays unfiltered so a
+ * draft card stays openable) does not apply here. The internal full-table
+ * scans (delete cascade, `backfillDatasetSummaries`) also stay unfiltered —
+ * they must see every doc; a future host flow that legitimately needs a
+ * collection's drafts (5b/7b publish enumeration) should get its own
+ * internal component read, not widen this consumer one.
+ */
 export const listSchemasByCollection = query({
   args: { collectionId: v.id("collections") },
   handler: async (ctx, args) => {
@@ -852,7 +922,10 @@ export const listSchemasByCollection = query({
       .withIndex("by_collection", (q) => q.eq("collectionId", args.collectionId))
       .collect();
     const datasets = await Promise.all(memberships.map(async (row) => ctx.db.get(row.schemaId)));
-    return datasets.filter((dataset) => dataset !== null);
+    return datasets.filter(
+      (dataset): dataset is NonNullable<typeof dataset> =>
+        dataset !== null && isCatalogVisible(dataset),
+    );
   },
   returns: v.array(schemaValidator),
 });

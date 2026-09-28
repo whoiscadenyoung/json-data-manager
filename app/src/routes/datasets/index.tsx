@@ -19,6 +19,7 @@ import {
 } from "#/components/ui/empty";
 import { Input } from "#/components/ui/input";
 import { UserAvatar } from "#/components/user-avatar";
+import { withDrafts } from "#/lib/dataset-drafts";
 import { cn } from "#/lib/utils";
 
 import { api } from "../../../convex/_generated/api";
@@ -110,12 +111,16 @@ function FiltersSidebar({
   onSort,
   typeFilter,
   onTypeFilterChange,
+  showDrafts,
+  onShowDraftsChange,
 }: {
   total: number;
   sort: SortOption;
   onSort: (sort: SortOption) => void;
   typeFilter: TypeFilter;
   onTypeFilterChange: (typeFilter: TypeFilter) => void;
+  showDrafts: boolean;
+  onShowDraftsChange: (showDrafts: boolean) => void;
 }) {
   return (
     <aside className="w-full shrink-0 md:w-64">
@@ -148,6 +153,27 @@ function FiltersSidebar({
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="mt-4">
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Catalog
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              onShowDraftsChange(!showDrafts);
+            }}
+            aria-pressed={showDrafts}
+            className={cn(
+              "w-full rounded-md border px-3 py-1.5 text-left text-sm transition-colors",
+              showDrafts
+                ? "border-primary/30 bg-primary/5 font-medium text-primary"
+                : "border-transparent text-muted-foreground hover:bg-muted",
+            )}
+          >
+            {showDrafts ? "Showing drafts" : "Show drafts"}
+          </button>
         </div>
 
         <div className="mt-4">
@@ -421,10 +447,17 @@ function filterBrowserItems(
  * read the same projection; the component's own projection is never
  * widened).
  */
-function useBrowserLightQueries() {
+function useBrowserLightQueries(showDrafts: boolean) {
   return {
     collections: useQuery({ ...convexQuery(api.collections.list) }).data,
     datasets: useQuery({ ...convexQuery(api.schemas.listSummaries) }).data,
+    // The opt-in drafts read (roadmap 5a, #99): the server-side default
+    // (`listSummaries`) never returns drafts, so the drafts toggle is what
+    // subscribes — disabled means no payload and no subscription.
+    drafts: useQuery({
+      ...convexQuery(api.schemas.listDraftSummaries),
+      enabled: showDrafts,
+    }).data,
     derived: useQuery({ ...convexQuery(api.derivedDatasets.summaries, {}) }).data,
     groups: useQuery({ ...convexQuery(api.groups.list, {}) }).data,
     // authId → display profile, for the cards' creator chips.
@@ -434,10 +467,11 @@ function useBrowserLightQueries() {
 
 // oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 function DatasetsPage() {
-  const { datasets, groups, collections, profiles, derived } = useBrowserLightQueries(),
-    [search, setSearch] = useState(""),
+  const [search, setSearch] = useState(""),
     [sort, setSort] = useState<SortOption>("newest"),
     [typeFilter, setTypeFilter] = useState<TypeFilter>("all"),
+    [showDrafts, setShowDrafts] = useState(false),
+    { datasets, drafts, groups, collections, profiles, derived } = useBrowserLightQueries(showDrafts),
     collectionNames = new Map<string, string>();
   for (const collection of collections ?? []) {
     collectionNames.set(collection._id, collection.name);
@@ -446,8 +480,9 @@ function DatasetsPage() {
   for (const profile of profiles ?? []) {
     profilesByAuthId.set(profile.authId, profile);
   }
+  const allDatasets = withDrafts(datasets, drafts, showDrafts);
   const componentById = new Map<string, DatasetSummary>();
-  for (const dataset of datasets ?? []) {
+  for (const dataset of allDatasets) {
     componentById.set(dataset._id, dataset);
   }
   const derivedById = new Map<string, DerivedSummary>();
@@ -464,7 +499,7 @@ function DatasetsPage() {
       const derivedSource = derivedById.get(sourceDatasetId);
       return derivedSource === undefined ? undefined : { dataset: derivedSource, kind: "derived" };
     },
-    visible = filterBrowserItems(datasets, groups, derived, search, sort, typeFilter);
+    visible = filterBrowserItems(allDatasets, groups, derived, search, sort, typeFilter);
 
   if (datasets === undefined || groups === undefined || derived === undefined) {
     return (
@@ -489,7 +524,7 @@ function DatasetsPage() {
         </RouterButton>
       </div>
 
-      {datasets.length === 0 && groups.length === 0 && derived.length === 0 ? (
+      {allDatasets.length === 0 && groups.length === 0 && derived.length === 0 ? (
         <Empty className="min-h-80 border">
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -513,6 +548,8 @@ function DatasetsPage() {
             onSort={setSort}
             typeFilter={typeFilter}
             onTypeFilterChange={setTypeFilter}
+            showDrafts={showDrafts}
+            onShowDraftsChange={setShowDrafts}
           />
 
           <div className="min-w-0 flex-1">

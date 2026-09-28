@@ -101,6 +101,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "Polygon"
             | "MultiPolygon";
           kind?: "standard" | "geospatial";
+          lifecycle?: "draft" | "published";
           lineage?: {
             frozenAt: number;
             snapshotRef?: string;
@@ -295,6 +296,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "MultiPolygon";
           groupId?: string;
           kind?: "standard" | "geospatial";
+          lifecycle?: "draft" | "published";
           lineage?: {
             frozenAt: number;
             snapshotRef?: string;
@@ -338,6 +340,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "MultiPolygon";
           groupId?: string;
           kind?: "standard" | "geospatial";
+          lifecycle?: "draft" | "published";
           lineage?: {
             frozenAt: number;
             snapshotRef?: string;
@@ -388,6 +391,45 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           _id: string;
           description?: string;
           name: string;
+        }>,
+        Name
+      >;
+      listDraftSchemaSummaries: FunctionReference<
+        "query",
+        "internal",
+        {},
+        Array<{
+          _creationTime: number;
+          _id: string;
+          boundingBox?: Array<number>;
+          createdBy?: string;
+          description?: string;
+          entryCount?: number;
+          featureCount?: number;
+          fieldCount: number;
+          geometryType?:
+            | "Point"
+            | "MultiPoint"
+            | "LineString"
+            | "MultiLineString"
+            | "Polygon"
+            | "MultiPolygon";
+          groupId?: string;
+          kind?: "standard" | "geospatial";
+          lifecycle?: "draft" | "published";
+          lineage?: {
+            frozenAt: number;
+            snapshotRef?: string;
+            sourceSchemaId: string;
+            versionLabel: string;
+          };
+          mapTileArchiveBuiltVersion?: number;
+          mapTileArchiveBytes?: number;
+          mapTileArchiveMaxZoom?: number;
+          mapTileArchiveStorageId?: string;
+          mapTileCacheVersion?: number;
+          source?: { name: string };
+          title: string;
         }>,
         Name
       >;
@@ -670,6 +712,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "MultiPolygon";
           groupId?: string;
           kind?: "standard" | "geospatial";
+          lifecycle?: "draft" | "published";
           lineage?: {
             frozenAt: number;
             snapshotRef?: string;
@@ -713,6 +756,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "MultiPolygon";
           groupId?: string;
           kind?: "standard" | "geospatial";
+          lifecycle?: "draft" | "published";
           lineage?: {
             frozenAt: number;
             snapshotRef?: string;
@@ -757,6 +801,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "MultiPolygon";
           groupId?: string;
           kind?: "standard" | "geospatial";
+          lifecycle?: "draft" | "published";
           lineage?: {
             frozenAt: number;
             snapshotRef?: string;
@@ -794,6 +839,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "MultiPolygon";
           groupId?: string;
           kind?: "standard" | "geospatial";
+          lifecycle?: "draft" | "published";
           lineage?: {
             frozenAt: number;
             snapshotRef?: string;

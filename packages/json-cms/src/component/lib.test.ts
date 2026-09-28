@@ -27,6 +27,11 @@ async function createTestCollection(t: TestCtx, name: string) {
   return t.mutation(api.lib.createCollection, { name });
 }
 
+/** Plain dataset through today's create flow — no lifecycle argument, like every current caller (catalog-lifecycle tests). */
+async function createPlainDataset(t: TestCtx, title: string) {
+  return t.mutation(api.lib.createSchema, { schema: { title, type: "object" } });
+}
+
 /** Schema for the geospatial-conversion tests: plain tabular rows with Latitude/Longitude columns. */
 async function createCoordinateSchema(t: TestCtx) {
   return t.mutation(api.lib.createSchema, {
@@ -476,6 +481,107 @@ describe("json-cms component", () => {
         row = summaries.find((summary) => summary._id === schemaId);
       assertDefined(row);
       expect(row.fieldCount).toBe(0);
+    });
+
+  });
+
+  describe("catalog lifecycle (roadmap 5a, #99)", () => {
+    it("absent lifecycle reads as published — pre-field rows stay catalog-visible", async () => {
+      const t = initConvexTest(),
+        schemaId = await createPlainDataset(t, "Pre-field Dataset"),
+        listed = await t.query(api.lib.listSchemas, {}),
+        summaries = await t.query(api.lib.listSchemaSummaries, {});
+      expect(listed.map((schema) => schema._id)).toContain(schemaId);
+      const row = summaries.find((summary) => summary._id === schemaId);
+      assertDefined(row);
+      // Absent stays absent — no backfilled "published" literal, per the
+      // issue's polarity trap.
+      expect(row.lifecycle).toBeUndefined();
+    });
+
+    it("a dataset flagged draft is filtered from listSchemas and listSchemaSummaries but stays openable", async () => {
+      const t = initConvexTest(),
+        publishedId = await createPlainDataset(t, "Published Dataset"),
+        draftId = await createPlainDataset(t, "Draft Dataset");
+      // Set the flag the way only host-side flows can: direct db access — no
+      // exposeApi wrapper carries the field (validators are exact).
+      await t.run(async (ctx) => {
+        await ctx.db.patch(draftId, { lifecycle: "draft" });
+      });
+      const listed = await t.query(api.lib.listSchemas, {});
+      expect(listed.map((schema) => schema._id)).toContain(publishedId);
+      expect(listed.map((schema) => schema._id)).not.toContain(draftId);
+      const summaries = await t.query(api.lib.listSchemaSummaries, {});
+      expect(summaries.map((summary) => summary._id)).not.toContain(draftId);
+      // Per-id reads stay unfiltered — the toggle's draft cards must open.
+      const full = await t.query(api.lib.getSchema, { schemaId: draftId });
+      assertDefined(full);
+      expect(full.lifecycle).toBe("draft");
+    });
+
+    it("a draft inside a collection is filtered from listSchemasByCollection too (review: consumer enumeration)", async () => {
+      const t = initConvexTest(),
+        collectionId = await t.mutation(api.lib.createCollection, { name: "Lifecycle Collection" }),
+        publishedId = await createPlainDataset(t, "Collection Published"),
+        draftId = await createPlainDataset(t, "Collection Draft");
+      await t.mutation(api.lib.addSchemaToCollection, { collectionId, schemaId: publishedId });
+      await t.mutation(api.lib.addSchemaToCollection, { collectionId, schemaId: draftId });
+      await t.run(async (ctx) => {
+        await ctx.db.patch(draftId, { lifecycle: "draft" });
+      });
+      const listed = await t.query(api.lib.listSchemasByCollection, { collectionId });
+      expect(listed.map((schema) => schema._id)).toContain(publishedId);
+      expect(listed.map((schema) => schema._id)).not.toContain(draftId);
+    });
+
+    it("listDraftSchemaSummaries returns exactly the flagged drafts, same projection", async () => {
+      const t = initConvexTest(),
+        draftId = await createPlainDataset(t, "Draft Only");
+      await t.run(async (ctx) => {
+        await ctx.db.patch(draftId, { lifecycle: "draft" });
+      });
+      const drafts = await t.query(api.lib.listDraftSchemaSummaries, {});
+      expect(drafts.map((summary) => summary._id)).toEqual([draftId]);
+      const row = drafts[0];
+      assertDefined(row);
+      expect(row.lifecycle).toBe("draft");
+      expect(row.title).toBe("Draft Only");
+      // Same projection as the published view: heavy payloads still dropped.
+      expect("schema" in row).toBe(false);
+      expect("uiSchema" in row).toBe(false);
+    });
+
+    it("the summaries projection carries the lifecycle state", async () => {
+      const t = initConvexTest(),
+        draftId = await createPlainDataset(t, "Draft Projection"),
+        publishedId = await createPlainDataset(t, "Published Projection");
+      await t.run(async (ctx) => {
+        await ctx.db.patch(draftId, { lifecycle: "draft" });
+        await ctx.db.patch(publishedId, { lifecycle: "published" });
+      });
+      const drafts = await t.query(api.lib.listDraftSchemaSummaries, {}),
+        summaries = await t.query(api.lib.listSchemaSummaries, {});
+      const draftRow = drafts.find((summary) => summary._id === draftId);
+      assertDefined(draftRow);
+      expect(draftRow.lifecycle).toBe("draft");
+      const publishedRow = summaries.find((summary) => summary._id === publishedId);
+      assertDefined(publishedRow);
+      expect(publishedRow.lifecycle).toBe("published");
+    });
+
+    it("creating through today's flow still lands catalog-visible; createSchema's optional lifecycle arg lands", async () => {
+      const t = initConvexTest(),
+        plainId = await createPlainDataset(t, "Created Plain"),
+        // Host-flow arg (the source/lineage pattern): the component accepts
+        // lifecycle, but no exposeApi wrapper exposes it, so no client path
+        // can produce a draft.
+        flaggedId = await t.mutation(api.lib.createSchema, {
+          lifecycle: "draft",
+          schema: { title: "Created Draft", type: "object" },
+        });
+      const summaries = await t.query(api.lib.listSchemaSummaries, {});
+      expect(summaries.map((summary) => summary._id)).toContain(plainId);
+      expect(summaries.map((summary) => summary._id)).not.toContain(flaggedId);
     });
   });
 

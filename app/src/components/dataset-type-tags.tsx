@@ -1,5 +1,5 @@
 import type { FunctionReturnType } from "convex/server";
-import { AlertTriangle, Database, GitFork, MapPin, RefreshCw, Tag, Unlink } from "lucide-react";
+import { AlertTriangle, CircleDashed, Database, GitFork, MapPin, RefreshCw, Tag, Unlink } from "lucide-react";
 
 import { Badge } from "#/components/ui/badge";
 import { api } from "#convex/_generated/api";
@@ -80,6 +80,15 @@ export function DatasetTypeTags({ dataset }: { dataset: DatasetSummary }) {
         </Badge>
       )}
       {dataset.geometryType && <Badge variant="outline">{dataset.geometryType}</Badge>}
+      {dataset.lifecycle === "draft" && (
+        <Badge
+          variant="outline"
+          title="Draft — hidden from the catalog for consumers; you're seeing it via the drafts toggle."
+        >
+          <CircleDashed />
+          Draft
+        </Badge>
+      )}
       {dataset.lineage !== undefined && (
         <Badge
           variant="outline"
