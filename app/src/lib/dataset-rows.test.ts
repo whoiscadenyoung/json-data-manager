@@ -5,15 +5,17 @@ import {
   applyEntryRowSpecs,
   applyGeometryRowSpec,
   applyGeometryRowSpecs,
+  type DatasetEntryRow,
+  type DatasetGeometryRow,
   ENTRIES_FETCH_PAGE_SIZE,
   ENTRIES_PAGE_SIZE,
+  entryDataRecord,
   forEachDatasetEntryPage,
   forEachDatasetGeometryPage,
   fetchDatasetEntryRows,
   fetchDatasetGeometryRows,
   GEOMETRY_PAGE_ROWS,
-  type DatasetEntryRow,
-  type DatasetGeometryRow,
+  lookupOperationsOfSpec,
 } from "./dataset-rows";
 
 // The seam derives its client lazily from `#/env`; the tests inject a stub
@@ -204,12 +206,231 @@ describe("fetchDatasetEntryRows / fetchDatasetGeometryRows", () => {
 });
 
 describe("spec stubs", () => {
-  it("are identity — same rows, same reference — until stage 1+ replaces them", () => {
+  it("are identity — same rows, same reference — until specs are handed in", () => {
     const entries = [entryRow("e1")];
     const geometries = [geometryRow("g1")];
     expect(applyEntryRowSpecs(entries)).toBe(entries);
     expect(applyEntryRowSpec(entries[0])).toBe(entries[0]);
     expect(applyGeometryRowSpecs(geometries)).toBe(geometries);
     expect(applyGeometryRowSpec(geometries[0])).toBe(geometries[0]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyEntryRowSpec — the popup executor (issue #97, ADR 0005 addendum)
+// ---------------------------------------------------------------------------
+
+/** One stored lookup operation, in its registry shape (spec is stored as `v.any()`). */
+function lookupOp(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    kind: "lookup",
+    baseKey: "grantId",
+    lookupDatasetId: "grants",
+    lookupKey: "id",
+    ...overrides,
+  };
+}
+
+/** One stored spec: the source dataset plus its operations, exactly as `save` persists it. */
+function storedSpec(operations: unknown[]): unknown {
+  return { sourceDatasetId: "schema-1", operations };
+}
+
+function entryWithData(id: string, data: unknown): DatasetEntryRow {
+  return { ...entryRow(id), data };
+}
+
+describe("applyEntryRowSpec — the popup executor", () => {
+  it("enriches the clicked entry with namespaced fields, base keys intact, input untouched", () => {
+    const row = entryWithData("e1", { grantId: "G1", site: "Dock A" }),
+      specs = [storedSpec([lookupOp({ fields: ["status", "region"] })])],
+      sides = new Map([["grants", [{ id: "G1", status: "open", region: "west" }]]]);
+    const enriched = applyEntryRowSpec(row, specs, sides);
+    expect(enriched.data).toStrictEqual({
+      grantId: "G1",
+      site: "Dock A",
+      "grants.status": "open",
+      "grants.region": "west",
+    });
+    // Engine purity through the seam: the clicked entry is never mutated.
+    expect(row.data).toStrictEqual({ grantId: "G1", site: "Dock A" });
+  });
+
+  it("renders an unmatched key as null for every enrichment field — never an error", () => {
+    const row = entryWithData("e1", { grantId: "GX" }),
+      specs = [storedSpec([lookupOp({ fields: ["status"] })])],
+      sides = new Map([["grants", [{ id: "G1", status: "open" }]]]);
+    expect(applyEntryRowSpec(row, specs, sides).data).toStrictEqual({
+      grantId: "GX",
+      "grants.status": null,
+    });
+  });
+
+  it("joins number/string key forms per the 0.4 hygiene policy", () => {
+    const row = entryWithData("e1", { grantId: 42 }),
+      specs = [storedSpec([lookupOp({ fields: ["status"] })])],
+      sides = new Map([["grants", [{ id: " 42 ", status: "open" }]]]);
+    expect(applyEntryRowSpec(row, specs, sides).data).toStrictEqual({
+      grantId: 42,
+      "grants.status": "open",
+    });
+  });
+
+  it("treats omitted fields as the engine's omit-means-all union (as stored, §11)", () => {
+    const row = entryWithData("e1", { grantId: "G1" }),
+      specs = [storedSpec([lookupOp()])],
+      sides = new Map([["grants", [{ id: "G1", status: "open", region: "west" }]]]);
+    expect(applyEntryRowSpec(row, specs, sides).data).toStrictEqual({
+      grantId: "G1",
+      "grants.status": "open",
+      "grants.region": "west",
+    });
+  });
+
+  it("uses the op's namespace override when the spec sets one", () => {
+    const row = entryWithData("e1", { grantId: "G1" }),
+      specs = [storedSpec([lookupOp({ namespace: "grant details", fields: ["status"] })])],
+      sides = new Map([["grants", [{ id: "G1", status: "open" }]]]);
+    expect(applyEntryRowSpec(row, specs, sides).data).toStrictEqual({
+      grantId: "G1",
+      "grant details.status": "open",
+    });
+  });
+
+  it("folds ALL matching specs in order and later enrichment wins same-named keys", () => {
+    const row = entryWithData("e1", { grantId: "G1" }),
+      specs = [
+        storedSpec([lookupOp({ lookupDatasetId: "grantsA", namespace: "grant", fields: ["status"] })]),
+        storedSpec([lookupOp({ lookupDatasetId: "grantsB", namespace: "grant", fields: ["status"] })]),
+      ],
+      sides = new Map([
+        ["grantsA", [{ id: "G1", status: "first" }]],
+        ["grantsB", [{ id: "G1", status: "second" }]],
+      ]);
+    expect(applyEntryRowSpec(row, specs, sides).data).toStrictEqual({
+      grantId: "G1",
+      "grant.status": "second",
+    });
+  });
+
+  it("chains a spec onto the previous spec's output (derived-of-derived shape)", () => {
+    const row = entryWithData("e1", { grantId: "G1" }),
+      specs = [
+        storedSpec([lookupOp({ lookupDatasetId: "grants", fields: ["status"] })]),
+        storedSpec([
+          lookupOp({ baseKey: "grants.status", lookupDatasetId: "statuses", lookupKey: "code", namespace: "label", fields: ["text"] }),
+        ]),
+      ],
+      sides = new Map([
+        ["grants", [{ id: "G1", status: "open" }]],
+        ["statuses", [{ code: "open", text: "Open" }]],
+      ]);
+    expect(applyEntryRowSpec(row, specs, sides).data).toStrictEqual({
+      grantId: "G1",
+      "grants.status": "open",
+      "label.text": "Open",
+    });
+  });
+
+  it("skips unknown operation kinds without dropping the lookup beside them", () => {
+    const row = entryWithData("e1", { grantId: "G1" }),
+      specs = [
+        storedSpec([
+          { kind: "rollup", groupBy: ["grantId"] }, // stage 4's kind, unreadable today
+          lookupOp({ fields: ["status"] }),
+        ]),
+      ],
+      sides = new Map([["grants", [{ id: "G1", status: "open" }]]]);
+    expect(applyEntryRowSpec(row, specs, sides).data).toStrictEqual({
+      grantId: "G1",
+      "grants.status": "open",
+    });
+  });
+
+  it("returns the row untouched when an operation's side has not streamed", () => {
+    const row = entryWithData("e1", { grantId: "G1" }),
+      specs = [storedSpec([lookupOp({ fields: ["status"] })])];
+    expect(applyEntryRowSpec(row, specs, new Map())).toBe(row);
+  });
+
+  it("returns the row untouched when a non-record data shape can hold no join key", () => {
+    const row = entryWithData("e1", ["not", "a", "record"]),
+      specs = [storedSpec([lookupOp({ fields: ["status"] })])],
+      sides = new Map([["grants", [{ id: "G1", status: "open" }]]]);
+    expect(applyEntryRowSpec(row, specs, sides)).toBe(row);
+  });
+
+  it("keeps the base row on an inner-match miss — a popup is never dropped", () => {
+    const row = entryWithData("e1", { grantId: "GX" }),
+      specs = [storedSpec([lookupOp({ match: "inner", fields: ["status"] })])],
+      sides = new Map([["grants", [{ id: "G1", status: "open" }]]]);
+    expect(applyEntryRowSpec(row, specs, sides)).toBe(row);
+  });
+
+  it("skips only the conflicting operation when onDuplicateKey is error — still no dropped popup", () => {
+    const row = entryWithData("e1", { grantId: "G1" }),
+      conflicting = storedSpec([lookupOp({ onDuplicateKey: "error", fields: ["status"] })]),
+      sides = new Map([
+        [
+          "grants",
+          [
+            { id: "G1", status: "first" },
+            { id: "G1", status: "second" },
+          ],
+        ],
+      ]);
+    expect(applyEntryRowSpec(row, [conflicting], sides)).toBe(row);
+  });
+
+  it("is identity when no specs are handed in, even with a record data shape", () => {
+    const row = entryWithData("e1", { grantId: "G1" });
+    expect(applyEntryRowSpec(row)).toBe(row);
+    expect(applyEntryRowSpec(row, [], new Map([["grants", [{ id: "G1" }]]]))).toBe(row);
+  });
+});
+
+describe("entryDataRecord", () => {
+  it("adapts object data as the engine's record and non-object data as keyless", () => {
+    expect(entryDataRecord(entryWithData("e1", { a: 1 }))).toStrictEqual({ a: 1 });
+    expect(entryDataRecord(entryWithData("e1", [1, 2]))).toStrictEqual({});
+    expect(entryDataRecord(entryWithData("e1", "text"))).toStrictEqual({});
+  });
+});
+
+describe("lookupOperationsOfSpec", () => {
+  it("reads well-formed lookup operations structurally, defaults and all", () => {
+    const operations = lookupOperationsOfSpec(
+      storedSpec([lookupOp({ namespace: "grants", match: "inner", onDuplicateKey: "last" })]),
+    );
+    expect(operations).toStrictEqual([
+      {
+        kind: "lookup",
+        baseKey: "grantId",
+        lookupDatasetId: "grants",
+        lookupKey: "id",
+        fields: undefined,
+        match: "inner",
+        namespace: "grants",
+        onDuplicateKey: "last",
+      },
+    ]);
+  });
+
+  it("skips shapeless specs, malformed lookups, and bad optional cells", () => {
+    expect(lookupOperationsOfSpec(undefined)).toStrictEqual([]);
+    expect(lookupOperationsOfSpec("nope")).toStrictEqual([]);
+    expect(lookupOperationsOfSpec({ operations: "not-an-array" })).toStrictEqual([]);
+    expect(lookupOperationsOfSpec(storedSpec([{ kind: "lookup", baseKey: "a" }]))).toStrictEqual([]);
+    // Every optional cell is strict when present: malformed fields, match,
+    // namespace or onDuplicateKey skips the operation instead of quietly
+    // falling back to the engine default.
+    expect(
+      lookupOperationsOfSpec(storedSpec([lookupOp({ fields: ["ok", 42] })])),
+    ).toStrictEqual([]);
+    expect(lookupOperationsOfSpec(storedSpec([lookupOp({ match: "outer" })]))).toStrictEqual([]);
+    expect(lookupOperationsOfSpec(storedSpec([lookupOp({ namespace: "" })]))).toStrictEqual([]);
+    expect(
+      lookupOperationsOfSpec(storedSpec([lookupOp({ onDuplicateKey: "firstish" })])),
+    ).toStrictEqual([]);
   });
 });

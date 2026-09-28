@@ -197,7 +197,11 @@ function MapDetailPage() {
     // Layer → dataset expansion, dataset colors, and the unique render-id set
     // to load geometry for — ALL layers' datasets (visible or not), so showing
     // a hidden layer is an instant render filter, not a refetch. Derived
-    // plainly (no useMemo): the React Compiler memoizes these automatically.
+    // plainly (no useMemo): manual memoization over these live-query results
+    // can't be preserved under oxlint's react/preserve-manual-memoization
+    // rule, and plain consts stay lint-clean and correct — the React
+    // Compiler memoizes them when it is enabled (not part of this build
+    // today; these derivations are cheap).
     expanded =
       layers !== undefined &&
       datasets !== undefined &&

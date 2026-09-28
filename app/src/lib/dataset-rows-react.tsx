@@ -19,6 +19,11 @@
  *     system, the part-5 invariant).
  *   - point reads ride plain convex/react `useQuery`, subscribed only while
  *     the caller holds them (the #52 popup pattern).
+ *   - the popup executor's lookup sides (issue #97) ride `useAllPaginated`
+ *     over the entry bulk path — plain convex/react subscriptions like the
+ *     geometry rows, never persisted: they are live only while a popup is
+ *     open, so a map's first paint and a closed popup pay nothing for
+ *     joins.
  */
 import { useAllPaginated } from "@caden/json-cms/react";
 import { convexQuery } from "@convex-dev/react-query";
@@ -35,6 +40,8 @@ import {
   ENTRIES_PAGE_SIZE,
   type DatasetEntryRow,
   type DatasetGeometryRow,
+  entryDataRecord,
+  lookupOperationsOfSpec,
 } from "#/lib/dataset-rows";
 import { api } from "#convex/_generated/api";
 
@@ -180,13 +187,248 @@ export function useDatasetGeometryRows(
  * popup pattern: one indexed single-doc subscription, live only while the
  * caller holds it; closing drops it). `undefined` id subscribes to nothing;
  * the read itself is `undefined` while in flight and `null` when the entry
- * is gone. Rows come back specs applied — the popup executor's merge point.
+ * is gone. Rows come back BASE-only: bulk spec application is still
+ * identity (stage 3a, #96), and the popup executor enriches one layer up in
+ * `useEnrichedDatasetEntryRow` — this hook is that executor's entry-read
+ * substrate, and the point read every other surface (entry details, edit
+ * prefill) uses until enrichment is surfaced there.
  */
 export function useDatasetEntryRow(
   entryId: string | undefined,
 ): DatasetEntryRow | null | undefined {
   const entry = useQuery(api.entries.get, entryId === undefined ? "skip" : { entryId });
   return entry === undefined || entry === null ? entry : applyEntryRowSpec(entry);
+}
+
+/**
+ * The map's feature-click payload (layers-map's `FeatureProperties`) as the
+ * popup executor's selection shape — kept structural so any surface that
+ * clicks a feature can hand the pair straight in.
+ */
+export interface FeatureSelection {
+  entryId: string;
+  schemaId: string;
+}
+
+/**
+ * First-seen distinct lookup dataset ids across the loaded specs — the
+ * popup executor's join sides, deduped so the fan-out loads each once.
+ */
+function lookupDatasetIdsOf(specs: readonly unknown[]): string[] {
+  const seen = new Set<string>(),
+    ids: string[] = [];
+  for (const spec of specs) {
+    for (const operation of lookupOperationsOfSpec(spec)) {
+      if (!seen.has(operation.lookupDatasetId)) {
+        seen.add(operation.lookupDatasetId);
+        ids.push(operation.lookupDatasetId);
+      }
+    }
+  }
+  return ids;
+}
+
+/** The full spec docs one shortlist resolved to: `resolved` is false while any read is in flight; a vanished row (deleted mid-read) simply drops out of `specs`. */
+function dataSpecsOf(results: ReadonlyArray<{ data?: unknown }>): {
+  resolved: boolean;
+  specs: unknown[];
+} {
+  const resolved = results.every((result) => result.data !== undefined);
+  if (!resolved) {
+    return { resolved, specs: [] };
+  }
+  const specs = results.flatMap((result) => {
+    const data: unknown = result.data;
+    return typeof data === "object" && data !== null && "spec" in data ? [data.spec] : [];
+  });
+  return { resolved, specs };
+}
+
+/**
+ * The lookup sides' registry checks (`derivedDatasets.get` answers null for
+ * any id that is not a registry row): `resolved` when every side answered,
+ * `allComponent` when no side is itself a derived dataset. A registry side
+ * has no entry rows to stream — derived datasets are compute-on-read, and
+ * only publishing materializes rows — so streaming its id would hang the
+ * popup on a never-completing pagination (or worse, present a
+ * "ready"-labeled spec's answer as all-null fields). Such sides enrich
+ * nothing: the popup renders base-only until stage 4's composition gives
+ * derived rows a client-side materializer (ADR 0005 addendum).
+ */
+function lookupSidesOf(checks: ReadonlyArray<{ data?: unknown }>): {
+  resolved: boolean;
+  allComponent: boolean;
+} {
+  const resolved = checks.every((check) => check.data !== undefined);
+  return {
+    resolved,
+    allComponent: resolved && checks.every((check) => check.data === null),
+  };
+}
+
+/**
+ * Each lookup side's rows as the engine's records — keyed by dataset id so
+ * a multi-step fold reads its side per operation. A side with no report is
+ * left OUT of the map entirely (not mapped to an empty table): a gated
+ * registry side never streams, and an absent key is what makes
+ * `applyEntryRowSpec` skip its operation instead of joining against an
+ * empty table and rendering all-null fields.
+ */
+function lookupRowsByDatasetOf(
+  lookupSchemaIds: readonly string[],
+  reportsBySchema: ReadonlyMap<string, SchemaEntriesReport | undefined>,
+): ReadonlyMap<string, readonly Record<string, unknown>[]> {
+  return new globalThis.Map(
+    lookupSchemaIds.flatMap((lookupSchemaId): Array<[string, Array<Record<string, unknown>>]> => {
+      const report = reportsBySchema.get(lookupSchemaId);
+      return report === undefined ? [] : [[lookupSchemaId, report.rows.map(entryDataRecord)]];
+    }),
+  );
+}
+
+/** True when every lookup side has finished a full pagination pass (a side absent from the reports hasn't). */
+function allLookupsComplete(
+  lookupSchemaIds: readonly string[],
+  reportsBySchema: ReadonlyMap<string, SchemaEntriesReport | undefined>,
+): boolean {
+  return lookupSchemaIds.every((lookupSchemaId) => {
+    const report = reportsBySchema.get(lookupSchemaId);
+    return report !== undefined && report.complete;
+  });
+}
+
+/** The clicked entry with its saved specs folded on — or the untouched entry while nothing can be applied yet. */
+function enrichedEntryOf(
+  entry: DatasetEntryRow | null | undefined,
+  schemaId: string | undefined,
+  joinedPending: boolean,
+  specs: readonly unknown[],
+  lookupRowsByDataset: ReadonlyMap<string, readonly Record<string, unknown>[]>,
+): DatasetEntryRow | null | undefined {
+  if (entry === null || entry === undefined || schemaId === undefined || joinedPending) {
+    return entry;
+  }
+  return applyEntryRowSpec(entry, specs, lookupRowsByDataset);
+}
+
+/**
+ * True while the popup executor's spec/lookup reads are still streaming for
+ * an active selection. A settled spec whose lookup side is a derived
+ * dataset is NOT pending — it enriches nothing (see `lookupSidesOf`), so
+ * the popup settles base-only instead of spinning forever.
+ */
+function joinedPendingOf(
+  schemaId: string | undefined,
+  specsResolved: boolean,
+  sides: { resolved: boolean; allComponent: boolean },
+  lookupsComplete: boolean,
+): boolean {
+  return (
+    schemaId !== undefined &&
+    (!specsResolved || !sides.resolved || (sides.allComponent && !lookupsComplete))
+  );
+}
+
+/**
+ * The popup executor's composition (issue #97, decided as mechanism (b) —
+ * client-side enrichment; see the addendum in
+ * docs/decisions/0005-derived-datasets-catalog-level.md): the #52 point
+ * read, enriched. `undefined` (no selection) behaves exactly like
+ * `useDatasetEntryRow(undefined)`; passing the clicked feature's
+ * `{entryId, schemaId}` resolves the SAVED, read-time-healthy specs
+ * targeting that dataset (`api.derivedDatasets.listBySource` for the
+ * source-keyed shortlist, `get` for each full spec — drafts never surface
+ * to catalog consumers, and an orphaned/stale spec would render nulls at
+ * best, so neither enriches) and streams each lookup dataset's rows through
+ * the seam.
+ *
+ * Every subscription here is live only while the caller holds the hook with
+ * a selection: close the popup and the entry read, the spec reads, and the
+ * lookup-row fan-out all drop ("skip"/disabled) — a map's first paint pays
+ * nothing for joins, and a popup that opens pays only while it is open, the
+ * #52 trade made deliberately and recorded in the ADR addendum.
+ *
+ * `joinedPending` is true while those reads are still streaming: the caller
+ * renders base properties immediately and the namespaced fields arrive
+ * reactively. Once applied, an unmatched key carries null for every
+ * enrichment field — never an error, never a dropped popup. `loaders` are
+ * the seam's per-schema fan-out components — render them alongside the
+ * popup (they render nothing themselves); they are what holds the
+ * lookup-row subscriptions.
+ *
+ * Two recorded edges (both in the ADR 0005 addendum): a spec whose lookup
+ * side is itself a derived dataset enriches nothing — derived datasets have
+ * no entry rows to stream (compute-on-read; only publishing materializes),
+ * so the sides are checked against the registry and such specs settle
+ * base-only instead of hanging or rendering all-null fields; and a derived
+ * layer's feature properties (stage 3a) must carry the DEFINING SPEC'S
+ * `sourceDatasetId` as `schemaId` — this hook keys the spec shortlist on
+ * it, and `entries.get` then reads the source entry unchanged.
+ *
+ * Derived values stay plain (`const`) on purpose — oxlint's
+ * `react/preserve-manual-memoization` rejects manual `useMemo` whose
+ * dependencies come from these live-query results, and plain consts stay
+ * lint-clean while remaining correct when the React Compiler is enabled to
+ * memoize them (it is not part of this build today; the derivations are
+ * cheap and popup-scoped).
+ */
+export function useEnrichedDatasetEntryRow(selected: FeatureSelection | undefined): {
+  entry: DatasetEntryRow | null | undefined;
+  joinedPending: boolean;
+  loaders: React.ReactNode[];
+} {
+  const entryId = selected === undefined ? undefined : selected.entryId,
+    schemaId = selected === undefined ? undefined : selected.schemaId,
+    entry = useDatasetEntryRow(entryId),
+    specSummaries = useQuery(
+      api.derivedDatasets.listBySource,
+      schemaId === undefined ? "skip" : { sourceDatasetId: schemaId },
+    ),
+    readySpecSummaries =
+      specSummaries === undefined
+        ? []
+        : specSummaries.filter(
+            (summary) => summary.status === "saved" && summary.health === "ready",
+          ),
+    specResults = useQueries({
+      queries: readySpecSummaries.map((summary) =>
+        convexQuery(api.derivedDatasets.get, { id: summary._id }),
+      ),
+    }),
+    specRead = dataSpecsOf(specResults),
+    lookupSchemaIds = lookupDatasetIdsOf(specRead.specs),
+    // Each side checked against the registry before streaming: only
+    // component datasets have entry rows (see `lookupSidesOf`).
+    sideChecks = useQueries({
+      queries: lookupSchemaIds.map((lookupSchemaId) =>
+        convexQuery(api.derivedDatasets.get, { id: lookupSchemaId }),
+      ),
+    }),
+    sides = lookupSidesOf(sideChecks),
+    lookup = useEntryRowsBySchemas(
+      lookupSchemaIds,
+      schemaId !== undefined && specRead.resolved && sides.resolved && sides.allComponent,
+    ),
+    reportsBySchema = lookup.reportsBySchema,
+    lookupRowsByDataset = lookupRowsByDatasetOf(lookupSchemaIds, reportsBySchema),
+    joinedPending = joinedPendingOf(
+      schemaId,
+      specRead.resolved,
+      sides,
+      allLookupsComplete(lookupSchemaIds, reportsBySchema),
+    );
+
+  return {
+    entry: enrichedEntryOf(
+      entry,
+      schemaId,
+      joinedPending,
+      specRead.specs,
+      lookupRowsByDataset,
+    ),
+    joinedPending,
+    loaders: lookup.loaders,
+  };
 }
 
 /**
@@ -346,5 +588,121 @@ export function useGeometriesBySchemas(schemaIds: string[]): {
         onLoaded={handleGeometriesLoaded}
       />
     )),
+  };
+}
+
+/**
+ * One schema's live entry-loading state, as `SchemaEntriesLoader` reports
+ * it — the entry-row counterpart of `SchemaGeometriesReport`: `rows` are
+ * the pages fetched so far (growing as the pass streams, final once
+ * `complete`), and `complete` is true only after a FULL pagination pass.
+ */
+export interface SchemaEntriesReport {
+  complete: boolean;
+  rows: DatasetEntryRow[];
+}
+
+/**
+ * Loads one schema's ENTRY rows (every page — see `useAllPaginated` riding
+ * `entries.listPage`, the seam's reactive bulk path) and reports progress up
+ * via `onLoaded` as it arrives. Renders nothing.
+ *
+ * The popup executor's join-side reader (issue #97): a derived spec's lookup
+ * datasets stream through here only while their consumer holds the
+ * subscription. `enabled: false` reports `undefined` AND un-latches
+ * `complete`, so a reopened popup waits for a fresh full pass instead of
+ * pairing a stale `complete` with an empty result set.
+ *
+ * Rows pass through `applyEntryRowSpecs` once per page arrival (the same
+ * memo shape as `SchemaGeometriesLoader` — the fan-out's bail-out dedupes on
+ * row reference, which keeps a future non-identity bulk step from becoming a
+ * setState loop).
+ */
+export function SchemaEntriesLoader({
+  schemaId,
+  enabled,
+  onLoaded,
+}: {
+  schemaId: string;
+  enabled: boolean;
+  onLoaded: (schemaId: string, report: SchemaEntriesReport | undefined) => void;
+}) {
+  const { results, status } = useAllPaginated(
+      api.entries.listPage,
+      enabled ? { schemaId } : "skip",
+    ),
+    completedRef = useRef(false),
+    specRows = useMemo(() => applyEntryRowSpecs(results), [results]);
+  useEffect(() => {
+    if (!enabled) {
+      completedRef.current = false;
+      onLoaded(schemaId, undefined);
+      return;
+    }
+    if (status === "Exhausted") {
+      completedRef.current = true;
+    }
+    onLoaded(schemaId, { complete: completedRef.current, rows: specRows });
+  }, [schemaId, status, specRows, onLoaded, enabled]);
+  return null;
+}
+
+/**
+ * Fan-out loader for several schemas' ENTRY rows: mounts one
+ * `SchemaEntriesLoader` per schema and merges the results — the
+ * `useGeometriesBySchemas` pattern (one stable `useAllPaginated` hook call
+ * per schema component, since N reactive paginated queries cannot loop as
+ * hooks). `reportsBySchema` is the live state map — a schema absent from it
+ * (or `undefined`) has not completed a pass yet. The popup executor
+ * (issue #97) is the consumer; rendering is the caller's job via `loaders`.
+ */
+export function useEntryRowsBySchemas(
+  schemaIds: string[],
+  enabled: boolean,
+): {
+  loaders: React.ReactNode[];
+  reportsBySchema: globalThis.Map<string, SchemaEntriesReport | undefined>;
+} {
+  const [reportsBySchema, setReportsBySchema] = useState<
+      globalThis.Map<string, SchemaEntriesReport | undefined>
+    >(() => new globalThis.Map()),
+    // Reference-stable across renders (the `useGeometriesBySchemas` doc
+    // explains why this matters): the loader's own `useEffect` depends on
+    // `onLoaded`, so a fresh identity per render would re-fire it every
+    // time regardless of whether the rows changed.
+    handleEntriesLoaded = useCallback(
+      (schemaId: string, report: SchemaEntriesReport | undefined) => {
+        setReportsBySchema((prev) => {
+          const existing = prev.get(schemaId);
+          // Bail out of the update entirely when nothing changed —
+          // `new Map(prev)` always returns a new reference, so skipping it
+          // here is what actually breaks the update loop.
+          if (
+            existing === report ||
+            (existing !== undefined &&
+              report !== undefined &&
+              existing.complete === report.complete &&
+              existing.rows === report.rows)
+          ) {
+            return prev;
+          }
+          return new globalThis.Map(prev).set(schemaId, report);
+        });
+      },
+      // `setReportsBySchema` is a useState setter — stable for the
+      // component's lifetime, so the callback identity is too.
+      [setReportsBySchema],
+    );
+
+  return {
+    loaders: schemaIds.map((schemaId) => (
+      <SchemaEntriesLoader
+        key={schemaId}
+        schemaId={schemaId}
+        enabled={enabled}
+        onLoaded={handleEntriesLoaded}
+      />
+    )),
+    reportsBySchema,
   };
 }

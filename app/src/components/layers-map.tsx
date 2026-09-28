@@ -1,13 +1,13 @@
 import { buildFeatureCollection, unionBbox, useResolvedGeometries } from "@caden/json-cms/react";
 import type { BoundingBox, Geometry } from "@caden/json-cms/react";
 import { Link } from "@tanstack/react-router";
-import { ChevronRight, X } from "lucide-react";
+import { ChevronRight, Loader2, X } from "lucide-react";
 import { Fragment, useState } from "react";
 
 import { Button } from "#/components/ui/button";
 import { Map, MapClusterLayer, MapGeoJSON, MapVectorTiles } from "#/components/ui/map";
 import type { DatasetEntryRow, DatasetGeometryRow } from "#/lib/dataset-rows";
-import { useDatasetEntryRow } from "#/lib/dataset-rows-react";
+import { useEnrichedDatasetEntryRow } from "#/lib/dataset-rows-react";
 import { formatPropertyValue } from "#/lib/format";
 import type { DatasetSummary } from "#/lib/map-layers";
 import { keyedGeometryRows, toFeatureRow } from "#/lib/map-layers";
@@ -30,6 +30,7 @@ function FeatureDetailsPanel({
   entryId,
   schemaId,
   datasetTitle,
+  joinedPending,
   onClose,
 }: {
   /** `undefined` while the on-demand read is in flight, `null` if the entry is gone. */
@@ -37,6 +38,8 @@ function FeatureDetailsPanel({
   entryId: string;
   schemaId: string;
   datasetTitle: string;
+  /** True while the popup executor's spec/lookup-row reads are still streaming (issue #97). */
+  joinedPending: boolean;
   onClose: () => void;
 }) {
   const data = entry !== null && entry !== undefined ? entry.data : undefined,
@@ -59,15 +62,29 @@ function FeatureDetailsPanel({
           <dd className="text-sm text-muted-foreground">Loading properties…</dd>
         ) : entry === null ? (
           <dd className="text-sm text-muted-foreground">This entry no longer exists.</dd>
-        ) : fields.length === 0 ? (
-          <dd className="text-sm text-muted-foreground">No properties on this entry.</dd>
         ) : (
-          fields.map(([key, value]) => (
-            <div key={key}>
-              <dt className="text-xs font-medium text-muted-foreground">{key}</dt>
-              <dd className="text-sm break-words">{formatPropertyValue(value)}</dd>
-            </div>
-          ))
+          <>
+            {fields.length === 0 ? (
+              <dd className="text-sm text-muted-foreground">No properties on this entry.</dd>
+            ) : (
+              // Base properties first, then any saved transform's joined
+              // fields as `<namespace>.<field>` keys (issue #97) — an
+              // unmatched key renders as null ("—"), never an error and
+              // never a dropped popup.
+              fields.map(([key, value]) => (
+                <div key={key}>
+                  <dt className="text-xs font-medium text-muted-foreground">{key}</dt>
+                  <dd className="text-sm break-words">{formatPropertyValue(value)}</dd>
+                </div>
+              ))
+            )}
+            {joinedPending && (
+              <dd className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Loader2 className="size-3 animate-spin" />
+                Loading joined fields…
+              </dd>
+            )}
+          </>
         )}
       </dl>
       <Link
@@ -189,6 +206,11 @@ function geometryRowsBySchema(
  * indexed single-entry read (`entries.get`), subscribed — and live — only
  * while the popup is open. The map's first paint no longer pays an
  * O(total mapped rows) entries fetch that existed just to power this panel.
+ * When the clicked dataset has saved, healthy derived-dataset specs (issue
+ * #97), the popup executor additionally streams the specs' lookup datasets
+ * through the seam — still only while the popup is open — and folds the
+ * engine's namespaced fields onto the panel; a dataset without specs pays
+ * nothing beyond the single entry read it always paid.
  *
  * The viewport fits exactly once, when the component mounts (the parent
  * mounts it as soon as the first layer's rows complete or the first tile
@@ -262,11 +284,12 @@ export function LayersMap({
     }),
     [selected, setSelected] = useState<FeatureProperties | null>(null),
     // The clicked feature's entry, read on demand through the seam's
-    // point-read path (issue #52): one indexed single-doc subscription per
-    // selection, live only while the popup is open. Re-selecting the same
-    // feature re-subscribes without a client-side fetch of anything else;
-    // closing drops the subscription.
-    selectedEntry = useDatasetEntryRow(selected !== null ? selected.entryId : undefined),
+    // point-read path (issue #52) and enriched by the popup executor
+    // (issue #97): one indexed single-doc subscription per selection plus —
+    // only when the dataset has saved, healthy transform specs — the spec
+    // and lookup-row reads that join the namespaced fields in. All of it
+    // lives only while the popup is open; closing drops every subscription.
+    popup = useEnrichedDatasetEntryRow(selected === null ? undefined : selected),
     selectedDatasetTitle = selected
       ? getDatasetTitle(datasetById, titlesById, selected.schemaId, "")
       : "";
@@ -376,12 +399,16 @@ export function LayersMap({
         </div>
       )}
       <MapLegend datasets={legendDatasets} />
+      {/* The popup executor's lookup-row fan-out (issue #97): renders
+          nothing itself, holds the seam's live row subscriptions. */}
+      {popup.loaders}
       {selected && (
         <FeatureDetailsPanel
-          entry={selectedEntry}
+          entry={popup.entry}
           entryId={selected.entryId}
           schemaId={selected.schemaId}
           datasetTitle={selectedDatasetTitle}
+          joinedPending={popup.joinedPending}
           onClose={() => {
             setSelected(null);
           }}

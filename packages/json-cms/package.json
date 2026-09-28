@@ -29,6 +29,10 @@
       "types": "./dist/react/index.d.ts",
       "default": "./dist/react/index.js"
     },
+    "./transform": {
+      "types": "./dist/shared/transform/index.d.ts",
+      "default": "./dist/shared/transform/index.js"
+    },
     "./react/ui": {
       "types": "./dist/react/ui/index.d.ts",
       "default": "./dist/react/ui/index.js"

@@ -12,8 +12,12 @@
  *
  * Today "draft or published" is always the live dataset (the catalog
  * lifecycle, ADR 0008, adds the rest), and the spec-application step below
- * is identity — derived-dataset transform specs arrive in stages 1+. Both
- * land INSIDE this module; consumers never learn about either.
+ * is where derived-dataset transform specs land: the bulk step is still
+ * identity (stage 3a, #96), while the point-read step has been the popup
+ * executor since 3b (issue #97). Both live INSIDE these functions — no
+ * consumer drives a spec or paginates on its own; the popup's one extra
+ * obligation is mounting the executor's loaders (see `useEnrichedDatasetEntryRow`),
+ * which is what keeps the join subscriptions the seam's.
  *
  * Two row shapes exist:
  *   - entry rows, via `entries.listPage` (row-capped pages, cursor-chained);
@@ -32,6 +36,12 @@
  * — live in `dataset-rows-react.tsx`.
  */
 import type { Geometry } from "@caden/json-cms/react";
+// The pure engine, React-free (`./transform` subpath): this module is
+// imported by the tile-archive web worker, so it must never pull the
+// `@caden/json-cms/react` barrel (react + convex/react + the query bridge)
+// into the worker bundle.
+import { applyLookup, LookupKeyConflictError } from "@caden/json-cms/transform";
+import type { LookupOperation } from "@caden/json-cms/transform";
 import { ConvexClient } from "convex/browser";
 import type { FunctionReturnType } from "convex/server";
 
@@ -73,14 +83,130 @@ export const ENTRIES_FETCH_PAGE_SIZE = 500;
 export const GEOMETRY_PAGE_ROWS = 500;
 
 // ---------------------------------------------------------------------------
-// The spec-application step — identity until stage 1+
+// The spec-application step — bulk identity until stage 3a; the point-read
+// popup executor (issue #97) since 3b
 // ---------------------------------------------------------------------------
+
+/**
+ * `row.data` as the pure engine's generic record — `{}` when the entry
+ * carries no object (the engine is record-shaped; lookup.ts's module doc:
+ * "adapting those onto this shape is the row-resolution seam's job"). The
+ * enrichment side of the popup executor builds its lookup tables through
+ * this, so entries and lookup rows adapt in exactly one place.
+ */
+export function entryDataRecord(row: DatasetEntryRow): Record<string, unknown> {
+  return isRecordShaped(row.data) ? row.data : {};
+}
+
+function isRecordShaped(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The well-formed lookup operations of one STORED spec, read structurally
+ * (the derivedSpec.ts `TransformSpecLike` rule): only `kind: "lookup"`
+ * operations whose required columns are non-empty strings survive; unknown
+ * operation kinds (stage 4's rollup/geometrySource) and malformed operations
+ * contribute nothing instead of breaking the read — storage is `v.any()` and
+ * must stay readable across everything any stage stores. An optional cell
+ * (`fields`, `namespace`, `match`, `onDuplicateKey`) that is ABSENT passes
+ * as the engine default; one that is PRESENT but malformed skips the whole
+ * operation — the reader declines to guess.
+ */
+export function lookupOperationsOfSpec(spec: unknown): readonly LookupOperation[] {
+  if (!isRecordShaped(spec) || !Array.isArray(spec.operations)) {
+    return [];
+  }
+  const operations: LookupOperation[] = [];
+  for (const stored of spec.operations) {
+    const operation = lookupOperationOf(stored);
+    if (operation !== undefined) {
+      operations.push(operation);
+    }
+  }
+  return operations;
+}
+
+/** The lookup match policies the engine accepts (spec.ts). */
+const LOOKUP_MATCH_POLICIES = ["left", "inner"] as const;
+
+/** The duplicate-key policies the engine accepts (spec.ts). */
+const LOOKUP_DUPLICATE_POLICIES = ["first", "last", "error"] as const;
+
+/** `value` when it is a non-empty string — the required-column shape the save gate enforces. */
+function requiredString(value: unknown): string | undefined {
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+/** `value` when it is one of `literals`, else nothing (the engine's default applies). */
+function literalOrUndefined<T extends string>(value: unknown, literals: readonly T[]): T | undefined {
+  return literals.find((literal) => literal === value);
+}
+
+/** True when `cell` is present but its parsed form rejected it — a present-but-malformed optional cell, which skips the whole operation (the reader declines to guess). */
+function rejectedOptionalCell(cell: unknown, parsed: unknown): boolean {
+  return cell !== undefined && parsed === undefined;
+}
+
+/** One stored operation record as the engine's typed shape, or nothing when it isn't a runnable lookup. */
+function lookupOperationOf(stored: unknown): LookupOperation | undefined {
+  if (!isRecordShaped(stored) || stored.kind !== "lookup") {
+    return undefined;
+  }
+  const baseKey = requiredString(stored.baseKey),
+    lookupKey = requiredString(stored.lookupKey),
+    lookupDatasetId = requiredString(stored.lookupDatasetId);
+  if (baseKey === undefined || lookupKey === undefined || lookupDatasetId === undefined) {
+    return undefined;
+  }
+  // Every optional cell must be well-formed when present — malformed
+  // `fields`, `namespace`, `match` or `onDuplicateKey` skips the operation
+  // rather than quietly falling back to the engine default (the save gate
+  // already rejects these; runtime tolerance just declines to guess).
+  const fields = stringArrayOrUndefined(stored.fields),
+    match = literalOrUndefined(stored.match, LOOKUP_MATCH_POLICIES),
+    namespace = requiredString(stored.namespace),
+    onDuplicateKey = literalOrUndefined(stored.onDuplicateKey, LOOKUP_DUPLICATE_POLICIES);
+  if (
+    rejectedOptionalCell(stored.fields, fields) ||
+    rejectedOptionalCell(stored.match, match) ||
+    rejectedOptionalCell(stored.namespace, namespace) ||
+    rejectedOptionalCell(stored.onDuplicateKey, onDuplicateKey)
+  ) {
+    return undefined;
+  }
+  return {
+    kind: "lookup",
+    baseKey,
+    lookupDatasetId,
+    lookupKey,
+    fields,
+    match,
+    namespace,
+    onDuplicateKey,
+  };
+}
+
+/** `value` as a string array, or nothing when any element isn't a string (malformed, not filtered). */
+function stringArrayOrUndefined(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const fields: string[] = [];
+  for (const field of value) {
+    if (typeof field !== "string") {
+      return undefined;
+    }
+    fields.push(field);
+  }
+  return fields;
+}
 
 /**
  * The seam's spec-application step for entry rows. Derived-dataset transform
  * specs (docs/derived-datasets-design.md §5) apply here — every bulk page
- * and point read routes through these stubs, so specs land without touching
- * a single consumer. Identity until specs exist.
+ * routes through this, so specs land without touching a single consumer.
+ * Bulk enrichment is stage 3a's (#96): identity until it lands.
  *
  * Seam-internal (exported only for the reactive layer); consumers receive
  * specs-applied rows automatically and must never call these directly.
@@ -90,12 +216,74 @@ export function applyEntryRowSpecs(rows: DatasetEntryRow[]): DatasetEntryRow[] {
 }
 
 /**
- * The point-read (popup-path) counterpart of `applyEntryRowSpecs` — §5's
- * on-demand lookup executor (merge related rows into one clicked entry)
- * plugs in here. Identity until specs exist. Seam-internal, as above.
+ * The point-read half of the spec-application step — §5's popup executor
+ * (issue #97, decided as mechanism (b): client-side enrichment, see the
+ * addendum in docs/decisions/0005-derived-datasets-catalog-level.md). Folds
+ * the stage 1 engine over this one entry's `data` with the given saved
+ * specs, joining each operation's side from `lookupRowsByDataset` (records
+ * from `entryDataRecord`, keyed by dataset id).
+ *
+ * Semantics, each pinned by a test in `dataset-rows.test.ts`:
+ * - **Identity without work.** No specs (or a non-record `data`, which can
+ *   hold no join key and must not be silently replaced) returns the row
+ *   UNTOUCHED — same reference — so unenriched datasets pay nothing and the
+ *   off-path stays byte-identical.
+ * - **Fold, in spec order.** Each spec's operations apply in order, each
+ *   consuming the previous result (the TransformPreview pattern); later
+ *   enrichment wins same-named keys, per the engine.
+ * - **A side that hasn't streamed skips its operation.** An absent
+ *   `lookupRowsByDataset` entry means the read is still in flight — the
+ *   caller (the reactive layer) gates on completeness instead of letting a
+ *   half-loaded table fabricate all-null fields.
+ * - **A popup is never dropped and never throws.** An inner-match miss
+ *   leaves the base row (the bulk path drops it; a popup cannot disappear),
+ *   and an `onDuplicateKey: "error"` conflict skips just that operation —
+ *   issue #97: "never an error, never a dropped popup".
+ *
+ * Seam-internal, as above.
  */
-export function applyEntryRowSpec(row: DatasetEntryRow): DatasetEntryRow {
-  return row;
+export function applyEntryRowSpec(
+  row: DatasetEntryRow,
+  specs: readonly unknown[] = [],
+  lookupRowsByDataset: ReadonlyMap<string, readonly Record<string, unknown>[]> = new Map(),
+): DatasetEntryRow {
+  if (specs.length === 0 || !isRecordShaped(row.data)) {
+    return row;
+  }
+  let data = row.data,
+    applied = false;
+  for (const spec of specs) {
+    for (const operation of lookupOperationsOfSpec(spec)) {
+      const next = applyLookupOperation(operation, data, lookupRowsByDataset);
+      if (next !== undefined) {
+        data = next;
+        applied = true;
+      }
+    }
+  }
+  return applied ? { ...row, data } : row;
+}
+
+/** One operation's enrichment of `data`, or nothing when its side hasn't streamed or its duplicate-key policy rejected the table. */
+function applyLookupOperation(
+  operation: LookupOperation,
+  data: Record<string, unknown>,
+  lookupRowsByDataset: ReadonlyMap<string, readonly Record<string, unknown>[]>,
+): Record<string, unknown> | undefined {
+  const lookupRows = lookupRowsByDataset.get(operation.lookupDatasetId);
+  if (lookupRows === undefined) {
+    return undefined;
+  }
+  try {
+    return applyLookup(operation, [data], lookupRows).rows[0];
+  } catch (error) {
+    if (!(error instanceof LookupKeyConflictError)) {
+      throw error;
+    }
+    // The operation's duplicate-key policy rejected the lookup table —
+    // it enriches nothing; the popup keeps the row it had.
+    return undefined;
+  }
 }
 
 /**
