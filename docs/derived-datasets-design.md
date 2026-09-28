@@ -123,7 +123,11 @@ candidates:
   fully loaded client-side.
 
 Lean: same spec, two executors — bulk client-side, popup via option (a).
-Decide at implementation time.
+Decide at implementation time. (**Decided 2026-09, stage 3b / issue #97** —
+the other way: mechanism (b), generalized to on-demand-at-click-time via
+the row-resolution seam, which needs no key→entryId index and no
+import-completion trigger; see the addendum in
+[`decisions/0005-derived-datasets-catalog-level.md`](./decisions/0005-derived-datasets-catalog-level.md).)
 
 ## 6. Join and aggregation semantics
 
@@ -233,6 +237,10 @@ If/when approved, this breaks into ordered implementation issues:
 - Should enrichment default to a picked subset of fields (exports) or all
   fields (popups)?
 - Popup executor: key→entryId index table vs. client-side key map (§5).
+  **Answered 2026-09 (stage 3b / issue #97)**: client-side, on demand at
+  click time through the row-resolution seam — no index table; see the
+  addendum in
+  [`decisions/0005-derived-datasets-catalog-level.md`](./decisions/0005-derived-datasets-catalog-level.md).
 - Appetite for materialization ("flatten this derived view into a real
   dataset") — **answered 2026-09-21**: publish materializes and freezes;
   see [`catalog-lifecycle-design.md`](./catalog-lifecycle-design.md) /

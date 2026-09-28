@@ -183,8 +183,11 @@ The lifecycle changes *what* gets built late, not *what* gets built first:
 ## 9. Open questions
 
 - Popup executor for *project* previews (index table vs. client key map) —
-  unchanged from the companion doc §11; published maps use the existing #52
-  path on materialized rows.
+  **answered 2026-09 (stage 3b / issue #97)**: client-side, on demand at
+  click time through the row-resolution seam; previews inherit the executor
+  as-is. See the addendum in
+  [`decisions/0005-derived-datasets-catalog-level.md`](./decisions/0005-derived-datasets-catalog-level.md).
+  Published maps use the existing #52 path on materialized rows.
 - Composite (multi-column) join keys — unchanged.
 - Sharing granularity (per-user vs. per-team projects) — decided when auth
   gating lands.
