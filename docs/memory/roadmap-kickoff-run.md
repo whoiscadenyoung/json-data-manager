@@ -16,11 +16,13 @@ The data-platform roadmap kickoff run (dynamic workflow `dwfrun-0199d0ad`,
   testable acceptance criteria; the train was reviewed by two independent
   reviewers (implementer lens, roadmap-grounding lens) before filing. #88
   holds the ordered index comment.
-- **Phase 0 implemented as 5 gate-green DRAFT PRs** on independent branches,
-  suggested merge order **#106 (0.5 CI) → #107 (0.4) → #108 (0.1) → #109
-  (0.3) → #110 (0.2)**. CI on #106 ran green on GitHub Actions (1m07s).
-  Nothing merged. Stages 1–9 are issues only — one per future session, in
-  train order.
+- **PROGRESS 2026-09-28: Phase 0 (#106–#110) AND stages 1–5b (#111 engine,
+  #112 registry/builder, #113/#114 surfacing, #115 rollup/composition/
+  geometrySource, #116 lifecycle flag, #117 materialized publish) ALL
+  MERGED** — issues #89–#100 closed, CI green on main. Stage 6 (#101
+  versioned consumption) was in flight (run dwfrun-4a39312f, stalled on
+  provider network errors, retrying). Remaining: 6, 7a/b (#102/#103),
+  8 (#104), 9 (#105) — each one session in train order.
 - Gates per PR (script-run): json-cms build + typecheck + tests, app vitest,
   root oxlint; `oxfmt --check` excluded (pre-existing failures).
 
