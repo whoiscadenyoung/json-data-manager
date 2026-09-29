@@ -43,6 +43,7 @@ import {
   entryDataRecord,
   lookupOperationsOfSpec,
 } from "#/lib/dataset-rows";
+import { versionRowOf, type VersionRow } from "#/lib/version-rows";
 import { api } from "#convex/_generated/api";
 
 type EntriesPage = FunctionReturnType<typeof api.entries.listPage>;
@@ -178,6 +179,43 @@ export function useDatasetGeometryRows(
   );
   return {
     geometryRows,
+    isComplete: status === "Exhausted",
+  };
+}
+
+/**
+ * One FROZEN VERSION's rows as light {key, data} diff units, fetched every
+ * page (stage 6, #101) — the versioned-consumption diff's row path. A version
+ * is an ordinary dataset to the seam: the same
+ * `entries.listPage` pagination as `useDatasetGeometryRows`, mapped through
+ * the shared `version-rows.ts` key rule so the rows line up with the server
+ * delta's ops. Subscriptions are plain convex/react (never persisted — a diff
+ * view's rows are momentary, not standing state), and `rows` is `undefined`
+ * until the first page exists; `isComplete` is the full-pass signal.
+ */
+export function useDatasetVersionRows(
+  schemaId: string,
+  enabled: boolean,
+): {
+  versionRows: VersionRow[] | undefined;
+  isComplete: boolean;
+} {
+  const { isLoading, results, status } = useAllPaginated(
+      api.entries.listPage,
+      enabled ? { schemaId } : "skip",
+    ),
+    versionRows = useMemo(
+      () =>
+        isLoading
+          ? undefined
+          : applyEntryRowSpecs(results).flatMap((entry) => {
+              const row = versionRowOf(entry._id, entry.data);
+              return row === undefined ? [] : [row];
+            }),
+      [isLoading, results],
+    );
+  return {
+    versionRows,
     isComplete: status === "Exhausted",
   };
 }
@@ -419,13 +457,7 @@ export function useEnrichedDatasetEntryRow(selected: FeatureSelection | undefine
     );
 
   return {
-    entry: enrichedEntryOf(
-      entry,
-      schemaId,
-      joinedPending,
-      specRead.specs,
-      lookupRowsByDataset,
-    ),
+    entry: enrichedEntryOf(entry, schemaId, joinedPending, specRead.specs, lookupRowsByDataset),
     joinedPending,
     loaders: lookup.loaders,
   };

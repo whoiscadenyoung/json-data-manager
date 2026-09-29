@@ -5,7 +5,12 @@ import type { FunctionReturnType } from "convex/server";
 import { Calendar, ChevronRight, FolderOpen, Layers, Plus, Search } from "lucide-react";
 import { useState } from "react";
 
-import { DerivedDatasetBadge, DatasetTypeTags, DerivedHealthBadges } from "#/components/dataset-type-tags";
+import {
+  DerivedDatasetBadge,
+  DatasetTypeTags,
+  DerivedHealthBadges,
+  SourceDriftBadges,
+} from "#/components/dataset-type-tags";
 import { RouterButton } from "#/components/router-button";
 import { Badge } from "#/components/ui/badge";
 import { Card } from "#/components/ui/card";
@@ -23,6 +28,11 @@ import { withDrafts } from "#/lib/dataset-drafts";
 import { cn } from "#/lib/utils";
 
 import { api } from "../../../convex/_generated/api";
+
+/** One per-source drift badge row, as `consumption.sourceBadges` returns it (stage 6, #101). */
+type SourceBadge = FunctionReturnType<
+  typeof api.consumption.sourceBadges
+>["bySchemaId"][string][number];
 
 export const Route = createFileRoute("/datasets/")({
   component: DatasetsPage,
@@ -205,7 +215,15 @@ function FiltersSidebar({
   );
 }
 
-function DatasetCard({ dataset, profile }: { dataset: DatasetSummary; profile?: UserProfile }) {
+function DatasetCard({
+  dataset,
+  profile,
+  badges,
+}: {
+  dataset: DatasetSummary;
+  profile?: UserProfile;
+  badges?: SourceBadge[];
+}) {
   return (
     <Card className="flex-row items-center gap-4 px-4 transition-shadow hover:shadow-md">
       <Link
@@ -215,6 +233,7 @@ function DatasetCard({ dataset, profile }: { dataset: DatasetSummary; profile?: 
       >
         <div className="flex flex-wrap items-center gap-2">
           <DatasetTypeTags dataset={dataset} />
+          <SourceDriftBadges badges={badges} />
           <span className="text-xs text-muted-foreground">
             {dataset.fieldCount} {dataset.fieldCount === 1 ? "field" : "fields"}
           </span>
@@ -252,12 +271,21 @@ function DatasetCard({ dataset, profile }: { dataset: DatasetSummary; profile?: 
  * place its spec is authored and edited; first-class derived pages are
  * stage 3.
  */
-function DerivedDatasetCard({ dataset, source }: { dataset: DerivedSummary; source: DerivedCardSource | undefined }) {
+function DerivedDatasetCard({
+  dataset,
+  source,
+  badges,
+}: {
+  dataset: DerivedSummary;
+  source: DerivedCardSource | undefined;
+  badges?: SourceBadge[];
+}) {
   const body = (
     <>
       <div className="flex flex-wrap items-center gap-2">
         <DerivedDatasetBadge />
         <DerivedHealthBadges health={dataset.health} reason={dataset.healthReason} />
+        <SourceDriftBadges badges={badges} />
       </div>
       <div>
         <h3 className="text-base font-semibold">{dataset.title}</h3>
@@ -310,10 +338,12 @@ function GroupCard({
   group,
   members,
   collectionName,
+  badgesBySchemaId,
 }: {
   group: GroupSummary;
   members: DatasetSummary[];
   collectionName?: string;
+  badgesBySchemaId?: Record<string, SourceBadge[]>;
 }) {
   return (
     <Card className="flex-col gap-0 px-0 py-0 overflow-hidden">
@@ -352,6 +382,11 @@ function GroupCard({
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <DatasetTypeTags dataset={dataset} />
+                  <SourceDriftBadges
+                    badges={
+                      badgesBySchemaId === undefined ? undefined : badgesBySchemaId[dataset._id]
+                    }
+                  />
                 </div>
                 <p className="truncate text-sm font-medium">{dataset.title}</p>
                 <p className="truncate text-xs text-muted-foreground">{dataset.description}</p>
@@ -471,7 +506,8 @@ function DatasetsPage() {
     [sort, setSort] = useState<SortOption>("newest"),
     [typeFilter, setTypeFilter] = useState<TypeFilter>("all"),
     [showDrafts, setShowDrafts] = useState(false),
-    { datasets, drafts, groups, collections, profiles, derived } = useBrowserLightQueries(showDrafts),
+    { datasets, drafts, groups, collections, profiles, derived } =
+      useBrowserLightQueries(showDrafts),
     collectionNames = new Map<string, string>();
   for (const collection of collections ?? []) {
     collectionNames.set(collection._id, collection.name);
@@ -489,6 +525,23 @@ function DatasetsPage() {
   for (const item of derived ?? []) {
     derivedById.set(item._id, item);
   }
+  // Stage 6 (#101): the source-drift badges for the visible consumer kinds —
+  // derived cards (via their head completed attempt) and published rows with
+  // recorded source versions. Keyed by the FULL lists, not the filtered
+  // view, so searching never re-subscribes the query. The badge rows resolve
+  // host-side; the component summaries projection stays untouched.
+  const versionRowIds = allDatasets
+    .filter(
+      (dataset) =>
+        dataset.lineage !== undefined && (dataset.lineage.sourceVersions ?? []).length > 0,
+    )
+    .map((dataset) => dataset._id);
+  const driftBadges = useQuery({
+    ...convexQuery(api.consumption.sourceBadges, {
+      registryIds: (derived ?? []).map((row) => row._id),
+      schemaIds: versionRowIds,
+    }),
+  }).data;
   const collectionName = (collectionId: string | undefined) =>
       collectionId === undefined ? undefined : collectionNames.get(collectionId),
     derivedSourceOf = (sourceDatasetId: string): DerivedCardSource | undefined => {
@@ -582,12 +635,20 @@ function DatasetsPage() {
                       group={item.group}
                       members={item.datasets}
                       collectionName={collectionName(item.group.collectionId)}
+                      badgesBySchemaId={
+                        driftBadges === undefined ? undefined : driftBadges.bySchemaId
+                      }
                     />
                   ) : item.kind === "derived" ? (
                     <DerivedDatasetCard
                       key={item.dataset._id}
                       dataset={item.dataset}
                       source={derivedSourceOf(item.dataset.sourceDatasetId)}
+                      badges={
+                        driftBadges === undefined
+                          ? undefined
+                          : driftBadges.byRegistryId[item.dataset._id]
+                      }
                     />
                   ) : (
                     <DatasetCard
@@ -597,6 +658,11 @@ function DatasetsPage() {
                         item.dataset.createdBy === undefined
                           ? undefined
                           : profilesByAuthId.get(item.dataset.createdBy)
+                      }
+                      badges={
+                        driftBadges === undefined
+                          ? undefined
+                          : driftBadges.bySchemaId[item.dataset._id]
                       }
                     />
                   ),

@@ -1,10 +1,17 @@
 import type { FunctionReturnType } from "convex/server";
 import { ConvexError, v } from "convex/values";
 
+import { naturalKeyOf, type VersionRow } from "../src/lib/version-rows";
 import { components } from "./_generated/api";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { internalMutation } from "./_generated/server";
 import type { CommitOp } from "./sources";
+
+// The pure key rule lives in src/lib/version-rows.ts (one definition shared
+// with the client's row-resolution seam — see that module's doc); re-exported
+// here so the server's existing callers and tests keep their import path.
+export { naturalKeyOf };
+export type { VersionRow };
 
 /**
  * Reusable frozen-version machinery (docs/data-platform-roadmap.md §3 0.3):
@@ -68,9 +75,6 @@ export type FrozenVersion = {
   };
 };
 
-/** One light {key, data} version row — the diff's unit. */
-export type VersionRow = { data: Record<string, unknown>; key: string };
-
 // ---------------------------------------------------------------------------
 // Pure selection cores (unit-tested in versioning.test.ts) — the retention
 // and previous-version decisions, separated from the component reads and
@@ -131,17 +135,6 @@ export function previousVersionOf(
     // oxlint-disable-next-line unicorn/no-array-sort -- freshly mapped throwaway array; `.toSorted()` isn't in the lib app/convex typechecks against.
     .sort((a, b) => b.frozenAt - a.frozenAt);
   return candidates[0];
-}
-
-/** The natural display key of a version entry (the diff's join key). */
-export function naturalKeyOf(data: Record<string, unknown>): string | undefined {
-  if (typeof data.label === "string") {
-    return data.label;
-  }
-  if (typeof data.name === "string") {
-    return data.name;
-  }
-  return undefined;
 }
 
 const VERSION_DIFF_LIMIT = 2000;

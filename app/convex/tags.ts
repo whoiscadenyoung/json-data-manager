@@ -5,6 +5,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { ActionCtx } from "./_generated/server";
 import { action, internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { auth } from "./auth";
+import { pinRefIntoPolicyStore } from "./consumption";
 import { chunkByJsonBytes, getSource, SOURCE_KEY } from "./sources";
 import {
   DEFAULT_KEEP_VERSIONS,
@@ -618,29 +619,14 @@ export const setVersionPinned = mutation({
     if (ref === undefined) {
       throw new ConvexError("This version has no snapshot ref to pin.");
     }
-    // 5b's derived publishes carry `sourceKey` (a host registry id) instead
-    // of a component source row — there is no binding policy store to pin
-    // them under until stage 6 builds the derived-side policy store.
-    const sourceSchemaId = schema.lineage.sourceSchemaId;
-    if (sourceSchemaId === undefined) {
-      throw new ConvexError(
-        "This published version has no live source dataset here — its lineage names a derived dataset, not a bound one.",
-      );
-    }
-    const binding = await ctx.db
-      .query("datasetBindings")
-      .withIndex("by_schema", (q) => q.eq("schemaId", sourceSchemaId))
-      .first();
-    if (binding === null) {
-      throw new ConvexError("The source binding no longer exists.");
-    }
-    const pinned = new Set(retentionPolicyOf(binding).pinnedRefs);
-    if (args.pinned) {
-      pinned.add(ref);
-    } else {
-      pinned.delete(ref);
-    }
-    await ctx.db.patch(binding._id, { pinnedRefs: [...pinned] });
+    // Stage 6 (#101) lifted the refusal below: 5b's derived publishes carry
+    // `sourceKey` (a host registry id) instead of a component source row, and
+    // the publish-chain policy store (`versionPolicies`, consumption.ts) now
+    // exists to pin them under. One helper resolves the store either way —
+    // the binding row when the chain anchor carries one, else the chain's
+    // own — so pins land in the same store retention reads.
+    const anchor = schema.lineage.sourceSchemaId ?? schema.lineage.sourceKey ?? args.schemaId;
+    await pinRefIntoPolicyStore(ctx, { anchorId: anchor, pinned: args.pinned, ref });
   },
   returns: v.null(),
 });

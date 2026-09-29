@@ -268,6 +268,62 @@ export default defineSchema({
     // trailing sourceDatasetId keeps every index field in the name.
     .index("by_status_and_source", ["status", "sourceDatasetId"]),
 
+  // One version reference a consuming artifact holds on another dataset's
+  // version chain (roadmap stage 6, #101; lifecycle doc §2/§7): pin (a
+  // specific frozen version) or float (the chain's head). The issue's
+  // recorded decision — stage-2 registry source references gain the pin/float
+  // mode app-side — generalized into a FIRST-CLASS host table so stage 7's
+  // fork-as-reference mints rows here too, never a component-table overload
+  // and never a registry-field overload (a derived spec's `dependsOn` can
+  // name several sources; each edge carries its own mode).
+  //
+  // Today's writers: the registry save path (one float row per saved spec
+  // dependency — live compute-on-read IS float semantics) and the
+  // sync/revert/pin mutations in consumption.ts. Maps and collections
+  // reference datasets but hold NO version reference — `consumerKind` is an
+  // open literal union so they join additively when a stage gives them one,
+  // and the consumed-by projection says which kinds it knows.
+  consumerReferences: defineTable({
+    // The consuming artifact's stable host id (a derivedDatasets registry row
+    // id today) — plain string: consumers may be component ids in later
+    // stages, and the host-boundary id rule keeps one shape.
+    consumerId: v.string(),
+    // Open union (the lifecycle-field precedent): "derived" today; stages
+    // 7–8 add kinds without a migration.
+    consumerKind: v.union(v.literal("derived")),
+    mode: v.union(v.literal("float"), v.literal("pin")),
+    // When pinned: the durable version identity — the frozen row's global
+    // `lineage.snapshotRef` ("a ref never freezes twice", versioning.ts) with
+    // that row's component id as the render target. Both absent on float.
+    pinnedRef: v.optional(v.string()),
+    pinnedSchemaId: v.optional(v.string()),
+    // The referenced dataset, exactly as the consumer's spec names it — a
+    // component dataset id, a frozen version row id, or a registry row id.
+    // Plain string (the datasetBindings precedent); chain resolution asks
+    // each table in turn at read time.
+    sourceDatasetId: v.string(),
+  })
+    .index("by_consumer", ["consumerId"])
+    .index("by_source", ["sourceDatasetId"]),
+
+  // The publish-side retention policy store (roadmap stage 6, #101): keep-N
+  // and pinned refs for PUBLISH chains — the derived-side store tags.ts said
+  // stage 6 must build ("no binding policy store to pin them under until
+  // stage 6 builds the derived-side policy store"). Keyed by the chain
+  // anchor: the draft's component id (a draft-published chain, the
+  // `lineage.sourceSchemaId` anchor) or the registry row id (a
+  // derived-published chain, the `lineage.sourceKey` anchor) — plain strings
+  // either way, the datasetBindings precedent. One row per anchor, created on
+  // first policy write; ABSENCE reads as the defaults (keep
+  // DEFAULT_KEEP_VERSIONS, nothing pinned), so no backfill is ever required.
+  // Bound live datasets keep their policy in `datasetBindings` (the tag
+  // path's store) — consumption.ts resolves both stores behind one read.
+  versionPolicies: defineTable({
+    datasetKey: v.string(),
+    keepVersions: v.optional(v.number()),
+    pinnedRefs: v.optional(v.array(v.string())),
+  }).index("by_dataset", ["datasetKey"]),
+
   locations: defineTable({
     address: v.string(),
     city: v.string(),
