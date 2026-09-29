@@ -1,4 +1,5 @@
 import { useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { GitCompareArrows } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -16,9 +17,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "#/components/ui/select";
+import type { VersionRow } from "#/lib/version-rows";
 import { api } from "#convex/_generated/api";
 
 type VersionOption = { label: string; schemaId: string; title: string };
+type VersionDelta = FunctionReturnType<typeof api.tags.getVersionDelta>;
+
+/**
+ * A precomputed delta: the caller hands in the stored sequential delta (or
+ * "pending" while its read is in flight) so the common pinned→head pair
+ * never pays the on-demand full scan; null/absent falls back to it.
+ */
+type PrecomputedDelta = VersionDelta | null | "pending";
 
 /**
  * The tag-compare view (docs/bound-datasets-design.md §6, issue #77): pick
@@ -26,9 +36,24 @@ type VersionOption = { label: string; schemaId: string; title: string };
  * add/remove/modify overlay on either base. The delta computes on demand
  * (tags.getVersionDelta) into the commits' ops shape; positions come from
  * whichever version still has the feature.
+ *
+ * `rows` (stage 6, #101) hands the overlay's positioning rows in from the
+ * row-resolution seam (`useDatasetVersionRows` — byte-budgeted pages through
+ * the one seam) instead of the server's bounded `tags.versionEntries` read;
+ * the ops themselves still come from the shipped delta path, so counts and
+ * positions key identically (`version-rows.ts` is the one key rule both
+ * sides share).
  */
 // oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
-export function VersionCompare({ versions }: { versions: Array<VersionOption> }) {
+export function VersionCompare({
+  versions,
+  rows,
+  delta: deltaProp,
+}: {
+  versions: Array<VersionOption>;
+  rows?: globalThis.Map<string, VersionRow[]>;
+  delta?: PrecomputedDelta;
+}) {
   const newest = versions.at(0),
     oldest = versions.at(1) ?? newest,
     [aSchemaId, setASchemaId] = useState<string | undefined>(
@@ -43,20 +68,35 @@ export function VersionCompare({ versions }: { versions: Array<VersionOption> })
       value: version.schemaId,
     }));
 
-  const delta = useQuery(
+  // The delta: the caller's precomputed one when handed in ("pending" shows
+  // the computing state without firing the fallback), else the shipped
+  // on-demand read. The query stays mounted either way ("skip" keeps it
+  // unsubscribed while the prop serves) — hooks can't be conditional.
+  const fallbackDelta = useQuery(
       api.tags.getVersionDelta,
-      aSchemaId !== undefined && bSchemaId !== undefined && aSchemaId !== bSchemaId
-        ? { aSchemaId, bSchemaId }
+      deltaProp === undefined || deltaProp === null
+        ? aSchemaId !== undefined && bSchemaId !== undefined && aSchemaId !== bSchemaId
+          ? { aSchemaId, bSchemaId }
+          : "skip"
         : "skip",
     ),
-    aEntries = useQuery(
+    delta =
+      deltaProp === "pending" || deltaProp === undefined || deltaProp === null
+        ? fallbackDelta
+        : deltaProp,
+    // Positioning rows: the seam-provided rows when handed in, else the
+    // shipped server read. The queries stay mounted either way ("skip" keeps
+    // them unsubscribed while `rows` serves) — hooks can't be conditional.
+    aServerEntries = useQuery(
       api.tags.versionEntries,
-      aSchemaId !== undefined ? { schemaId: aSchemaId } : "skip",
+      rows !== undefined || aSchemaId === undefined ? "skip" : { schemaId: aSchemaId },
     ),
-    bEntries = useQuery(
+    bServerEntries = useQuery(
       api.tags.versionEntries,
-      bSchemaId !== undefined ? { schemaId: bSchemaId } : "skip",
-    );
+      rows !== undefined || bSchemaId === undefined ? "skip" : { schemaId: bSchemaId },
+    ),
+    aEntries = rows === undefined ? aServerEntries : rows.get(aSchemaId ?? ""),
+    bEntries = rows === undefined ? bServerEntries : rows.get(bSchemaId ?? "");
 
   const points = useMemo<DiffPoint[]>(() => {
     if (delta === undefined || aEntries === undefined || bEntries === undefined) {

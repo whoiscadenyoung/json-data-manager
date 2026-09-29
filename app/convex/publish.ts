@@ -4,8 +4,15 @@ import { ConvexError, v } from "convex/values";
 import { components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import { internalAction, internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import {
+  internalAction,
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from "./_generated/server";
 import { auth } from "./auth";
+import { newestCompletedAttempt } from "./consumption";
 import { resolveDataset } from "./derivedDatasets";
 import { specDependencies, specStatus } from "./derivedSpec";
 import { alreadyFrozenByRef, createFrozenVersion, type SchemaGeometryType } from "./versioning";
@@ -314,9 +321,7 @@ async function uploadingAttempt(ctx: MutationCtx, attemptId: Id<"publishAttempts
     throw new ConvexError("This publish attempt no longer exists.");
   }
   if (attempt.status !== "uploading") {
-    throw new ConvexError(
-      `This publish attempt is ${attempt.status} — its chunk phase is closed.`,
-    );
+    throw new ConvexError(`This publish attempt is ${attempt.status} — its chunk phase is closed.`);
   }
   return attempt;
 }
@@ -510,8 +515,7 @@ export const freeze = mutation({
     const { importId, schemaId } = await createFrozenVersion(ctx, {
       boundWrite: "publish",
       chunkStorageIds: attempt.chunkStorageIds,
-      collectionsSourceSchemaId:
-        attempt.datasetKind === "draft" ? attempt.datasetKey : undefined,
+      collectionsSourceSchemaId: attempt.datasetKind === "draft" ? attempt.datasetKey : undefined,
       geometryType: built.geometryType,
       kind: built.kind,
       lineage: built.lineage,
@@ -690,13 +694,18 @@ async function sourceVersionsFor(
     }
     const registryId = ctx.db.normalizeId("derivedDatasets", id);
     if (registryId !== null) {
-      const headAttempt = (
+      // The NEWEST completed attempt is the source's head at this freeze —
+      // stage 6's badge compares this record against the same head, so the
+      // pre-stage-6 `.find(completed)` (which walked the ascending index and
+      // grabbed the OLDEST) had to go; newestCompletedAttempt is the shared
+      // decision (consumption.ts).
+      const headAttempt = newestCompletedAttempt(
         // oxlint-disable-next-line no-await-in-loop -- the walk stops at each source in order; each read decides the next hop.
         await ctx.db
           .query("publishAttempts")
           .withIndex("by_dataset", (q) => q.eq("datasetKey", id))
-          .collect()
-      ).find((candidate) => candidate.status === "completed");
+          .collect(),
+      );
       versions.push({
         datasetId: id,
         frozenAt: headAttempt === undefined ? undefined : headAttempt.finishedAt,
@@ -759,6 +768,14 @@ export const markAttemptCompleted = internalMutation({
       finishedAt: Date.now(),
       lastProgressAt: Date.now(),
       status: "completed",
+    });
+    // Stage 6 (#101): the completion hook the freeze never had — the chain's
+    // sequential delta and keep-N retention with pinning, recorded in their
+    // own transaction (the delta's versionRows reads the entries the import
+    // just finished landing). The tag path's after-ingest pattern
+    // (tags.ts), moved to the publish-side completion point.
+    await ctx.scheduler.runAfter(0, internal.consumption.afterPublishCompleted, {
+      attemptId: args.attemptId,
     });
   },
   returns: v.null(),

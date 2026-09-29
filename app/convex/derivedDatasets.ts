@@ -2,9 +2,9 @@ import { ConvexError, v } from "convex/values";
 
 import { components } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
-import { mutation, query, type QueryCtx } from "./_generated/server";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { auth } from "./auth";
-import schema from "./schema";
+import { syncRegistryReferenceEdges } from "./consumption";
 import {
   findCycleToOrigin,
   schemaProperties,
@@ -15,6 +15,7 @@ import {
   type DatasetResolver,
   type RegistryRowLike,
 } from "./derivedSpec";
+import schema from "./schema";
 
 /**
  * The derived-dataset registry's functions (roadmap stage 2, #95; ADR 0005
@@ -56,12 +57,10 @@ const summaryValidator = v.object({
  * fields can't silently break this returns validator; only the computed
  * health fields are appended here.
  */
-const docValidator = schema
-  .doc("derivedDatasets")
-  .extend({
-    health: healthValidator.fields.health,
-    healthReason: v.optional(v.string()),
-  });
+const docValidator = schema.doc("derivedDatasets").extend({
+  health: healthValidator.fields.health,
+  healthReason: v.optional(v.string()),
+});
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -110,7 +109,10 @@ async function healthOf(
   return specStatus(isRecord(spec) ? spec : {}, resolveDataset(ctx));
 }
 
-function toSummary(row: Doc<"derivedDatasets">, health: { health: DerivedHealth; reason?: string }) {
+function toSummary(
+  row: Doc<"derivedDatasets">,
+  health: { health: DerivedHealth; reason?: string },
+) {
   return {
     _creationTime: row._creationTime,
     _id: row._id,
@@ -201,10 +203,11 @@ export const save = mutation({
         status: args.status,
         title,
       });
+      await syncConsumerReferences(ctx, id, args.spec, args.status);
       return id;
     }
 
-    return ctx.db.insert("derivedDatasets", {
+    const inserted = await ctx.db.insert("derivedDatasets", {
       createdBy: authId,
       dependsOn: dependencies,
       description: args.description,
@@ -213,9 +216,32 @@ export const save = mutation({
       status: args.status,
       title,
     });
+    await syncConsumerReferences(ctx, inserted, args.spec, args.status);
+    return inserted;
   },
   returns: v.id("derivedDatasets"),
 });
+
+/**
+ * Stage 6 (#101): the saved spec's source references gain the pin/float mode
+ * app-side (the issue's recorded decision) — one `consumerReferences` row per
+ * dependency, written through consumption's edge-sync so surviving edges
+ * keep their mode, new edges land float, and removed edges' rows go. SAVED
+ * writes only: builder autosaves never surface as consumers (drafts are
+ * invisible to catalog consumers, lifecycle §3). In-transaction via the
+ * plain helper, so the save and its edges commit atomically.
+ */
+async function syncConsumerReferences(
+  ctx: MutationCtx,
+  registryId: string,
+  spec: unknown,
+  status: "draft" | "saved",
+): Promise<void> {
+  if (status !== "saved") {
+    return;
+  }
+  await syncRegistryReferenceEdges(ctx, { registryId, spec });
+}
 
 /**
  * Every registry row targeting one source dataset, newest first — the
@@ -292,6 +318,18 @@ export const remove = mutation({
     // answers with a raw "Delete on non-existent doc".
     if (id === null || (await ctx.db.get(id)) === null) {
       throw new ConvexError("This transform no longer exists — it may have been deleted.");
+    }
+    // Stage 6 (#101): the transform's reference edges go with it — a deleted
+    // row must not haunt its sources' consumed-by lists as a ghost consumer.
+    // (consumedBy also guards on read, which covers edges orphaned before
+    // this cleanup shipped.)
+    const edges = await ctx.db
+      .query("consumerReferences")
+      .withIndex("by_consumer", (q) => q.eq("consumerId", id))
+      .collect();
+    for (const edge of edges) {
+      // oxlint-disable-next-line no-await-in-loop -- one edge per hop, ordered with the row delete.
+      await ctx.db.delete(edge._id);
     }
     await ctx.db.delete(id);
   },

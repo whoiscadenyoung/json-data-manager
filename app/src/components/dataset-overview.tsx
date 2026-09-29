@@ -24,6 +24,11 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { ConfirmDeleteDialog } from "#/components/dashboard/confirm-delete-dialog";
+import {
+  ChainVersionsCard,
+  ConsumedByCard,
+  SourceDriftCard,
+} from "#/components/dataset-consumption";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
@@ -951,8 +956,7 @@ function VersionRow({ version }: { version: VersionDoc }) {
   // A 5b derived publish carries `sourceKey` instead of a component source
   // id — the tag-path retention UI doesn't apply to it (its chain anchor is
   // host-side), so the row skips the retention query.
-  const sourceSchemaId =
-    version.lineage === undefined ? undefined : version.lineage.sourceSchemaId;
+  const sourceSchemaId = version.lineage === undefined ? undefined : version.lineage.sourceSchemaId;
   const retire = useMutation(api.tags.retireVersion),
     setPinned = useMutation(api.tags.setVersionPinned),
     retention = useQuery(
@@ -1070,10 +1074,21 @@ export function DatasetOverview({
   schema: DatasetDoc;
   schemaId: string;
 }) {
+  // A PUBLISHED row's consumption surfaces (stage 6, #101): its sources
+  // (with the drift badge + diff + derived sync) and its chain's Versions
+  // card. Bound live datasets keep the tag-path VersionsCard below; the
+  // consumed-by list is per-dataset (lifecycle §7) — every page gets it.
+  const lineage = schema.lineage,
+    chainAnchor = lineage === undefined ? undefined : (lineage.sourceSchemaId ?? lineage.sourceKey);
   return (
     <div className="space-y-6">
       <DetailsCard binding={binding} schema={schema} />
       {binding !== undefined && <VersionsCard sourceSchemaId={schemaId} />}
+      {lineage !== undefined && <SourceDriftCard schema={schema} />}
+      <ConsumedByCard schemaId={schemaId} />
+      {lineage !== undefined && chainAnchor !== undefined && chainAnchor !== schemaId && (
+        <ChainVersionsCard anchorId={chainAnchor} />
+      )}
       <CollectionsSection schemaId={schemaId} />
       <GroupSection schemaId={schemaId} groupId={schema.groupId} />
     </div>

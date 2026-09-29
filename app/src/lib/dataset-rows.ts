@@ -46,8 +46,8 @@ import { ConvexClient } from "convex/browser";
 import type { FunctionReturnType } from "convex/server";
 
 import { env } from "#/env";
-import { api } from "#convex/_generated/api";
 import { fetchConvexToken } from "#/lib/convex-auth-token";
+import { api } from "#convex/_generated/api";
 
 /** One entry row, as `entries.listPage` pages it. */
 export type DatasetEntryRow = FunctionReturnType<typeof api.entries.listPage>["page"][number];
@@ -139,7 +139,10 @@ function requiredString(value: unknown): string | undefined {
 }
 
 /** `value` when it is one of `literals`, else nothing (the engine's default applies). */
-function literalOrUndefined<T extends string>(value: unknown, literals: readonly T[]): T | undefined {
+function literalOrUndefined<T extends string>(
+  value: unknown,
+  literals: readonly T[],
+): T | undefined {
   return literals.find((literal) => literal === value);
 }
 

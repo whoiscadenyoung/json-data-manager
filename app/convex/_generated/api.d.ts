@@ -11,6 +11,7 @@
 import type * as auth from "../auth.js";
 import type * as bindings from "../bindings.js";
 import type * as collections from "../collections.js";
+import type * as consumption from "../consumption.js";
 import type * as crons from "../crons.js";
 import type * as dashboard from "../dashboard.js";
 import type * as derivedDatasets from "../derivedDatasets.js";
@@ -41,6 +42,7 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   bindings: typeof bindings;
   collections: typeof collections;
+  consumption: typeof consumption;
   crons: typeof crons;
   dashboard: typeof dashboard;
   derivedDatasets: typeof derivedDatasets;
