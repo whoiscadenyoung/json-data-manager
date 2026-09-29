@@ -390,8 +390,11 @@ export default defineSchema({
     // NEVER overloaded onto a spec's dependsOn or any component field.
     artifactId: v.string(),
     // Open literal union on purpose (the derivedDatasets.status /
-    // consumerReferences.consumerKind precedent): stage 9's analysis
-    // artifacts join additively, no migration.
+    // consumerReferences.consumerKind precedent). Stage 9 (#105) ultimately
+    // did NOT need to exercise it: an analysis is a derivedDatasets registry
+    // row (a sql operation is just another spec kind), so analyses join
+    // projects as artifactKind "derived" — no new lifecycle concepts, no
+    // migration, and this union stayed open for whatever a later stage adds.
     artifactKind: v.union(v.literal("dataset"), v.literal("derived"), v.literal("map")),
     projectId: v.id("projects"),
   })

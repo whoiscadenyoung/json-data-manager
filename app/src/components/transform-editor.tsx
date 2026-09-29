@@ -871,6 +871,19 @@ function EditorFooter({
   );
 }
 
+function isRecordShaped(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The stored spec's operation count, read structurally (the derivedSpec tolerance rule) — what the builder's drop-nothing check compares against. */
+function storedOperationCount(spec: unknown): number {
+  if (!isRecordShaped(spec)) {
+    return 0;
+  }
+  const operations = spec.operations;
+  return Array.isArray(operations) ? operations.length : 0;
+}
+
 /** The Transform tab's editor: loads the opened registry row (or starts a new one) and hosts the form. */
 export function TransformEditor({
   columns,
@@ -911,6 +924,28 @@ export function TransformEditor({
       </Card>
     );
   }
+  // Stage 9 (#105): a stored spec this builder cannot fully render (a sql
+  // operation) must never reach the form — editing it here and saving would
+  // silently write a spec with the unrepresentable operation dropped. The
+  // row keeps its other editor: the Analyze tab.
+  const builderOperations = builderOperationsFromSpec(doc === undefined ? {} : doc.spec);
+  if (doc !== undefined && builderOperations.length < storedOperationCount(doc.spec)) {
+    return (
+      <Card className="text-center py-12">
+        <CardContent className="pt-6">
+          <CardTitle className="mb-2">This transform includes a SQL step</CardTitle>
+          <CardDescription className="mb-4">
+            The transform builder only edits lookup steps — &ldquo;{doc.title}&rdquo; was authored
+            (or extended) in the Analyze tab, and saving it here would drop its SQL. Edit it there
+            instead.
+          </CardDescription>
+          <Button type="button" onClick={onClose}>
+            Back to transforms
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
   return (
     <TransformEditorForm
       columns={columns}
@@ -921,7 +956,7 @@ export function TransformEditor({
           ? EMPTY_DRAFT
           : {
               description: doc.description ?? "",
-              operations: builderOperationsFromSpec(doc.spec),
+              operations: builderOperations,
               title: doc.title,
             }
       }

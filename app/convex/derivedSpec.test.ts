@@ -98,6 +98,35 @@ describe("specDependencies", () => {
     expect(specDependencies(spec("s1"))).toStrictEqual(["s1"]);
     expect(specDependencies({})).toStrictEqual([]);
   });
+
+  it("adds a sql operation's table refs as edges, distinct, first-seen (stage 9 #105 — the cycle walk, visibility gate, and press order read these)", () => {
+    const deps = specDependencies(
+      spec("s1", [
+        {
+          kind: "sql",
+          sql: "SELECT count(*) FROM source JOIN r1 ON source.id = r1.id",
+          sourceAs: "source",
+          tables: [
+            { as: "r1", datasetId: "reg1" },
+            { as: "r2", datasetId: "reg2" },
+            { as: "again", datasetId: "reg1" },
+          ],
+        },
+      ]),
+    );
+
+    expect(deps).toStrictEqual(["s1", "reg1", "reg2"]);
+  });
+
+  it("ignores shapeless sql table refs instead of breaking the walk", () => {
+    const deps = specDependencies(
+      spec("s1", [
+        { kind: "sql", sql: "SELECT 1", tables: [null, "text", { as: "r1" }, { as: "r2", datasetId: "reg2" }] },
+      ]),
+    );
+
+    expect(deps).toStrictEqual(["s1", "reg2"]);
+  });
 });
 
 describe("validateSpecShape", () => {
@@ -165,6 +194,37 @@ describe("validateSpecShape", () => {
     expect(validateSpecShape(spec("s1", [{ ...lookup("l1"), onDuplicateKey: "both" }])).ok).toBe(
       false,
     );
+  });
+
+  it("accepts a well-formed sql operation and rejects the shapes its persisted edges need (stage 9 #105)", () => {
+    const valid = {
+      kind: "sql",
+      sql: "SELECT count(*) FROM source",
+      sourceAs: "source",
+      tables: [{ as: "r1", datasetId: "reg1" }],
+    };
+    expect(validateSpecShape(spec("s1", [valid])).ok).toBe(true);
+    expect(
+      validateSpecShape(spec("s1", [{ kind: "sql", sql: "", tables: [] }])).ok,
+    ).toBe(false);
+    // REQUIRED since the reviewers' pass: the field carries the walk's
+    // edges — an omitted tables list would save edges-blind.
+    expect(validateSpecShape(spec("s1", [{ kind: "sql", sql: "SELECT 1" }])).ok).toBe(false);
+    expect(
+      validateSpecShape(spec("s1", [{ kind: "sql", sql: "SELECT 1", tables: "nope" }])).ok,
+    ).toBe(false);
+    expect(
+      validateSpecShape(spec("s1", [{ kind: "sql", sql: "SELECT 1", tables: [{ as: "r1" }] }])).ok,
+    ).toBe(false);
+    expect(
+      validateSpecShape(
+        spec("s1", [{ kind: "sql", sql: "SELECT 1", tables: [{ datasetId: "reg1" }] }]),
+      ).ok,
+    ).toBe(false);
+    const rejected = validateSpecShape(
+      spec("s1", [{ kind: "sql", sql: "SELECT 1", tables: [{ as: "r1" }] }]),
+    );
+    expect(!rejected.ok ? rejected.reason : "").toContain("datasetId");
   });
 });
 
@@ -235,6 +295,34 @@ describe("specStatus", () => {
 
     expect(sourceGone.health).toBe("orphaned");
     expect(lookupGone.health).toBe("orphaned");
+  });
+
+  it("checks a sql operation's table refs for existence — the query text is opaque, a vanished dataset is not (stage 9 #105)", async () => {
+    const goneTable = await specStatus(
+      spec("grants", [
+        {
+          kind: "sql",
+          sql: "SELECT count(*) FROM source JOIN r ON source.id = r.id",
+          sourceAs: "source",
+          tables: [{ as: "r", datasetId: "gone" }],
+        },
+      ]),
+      resolve,
+    );
+    const presentTable = await specStatus(
+      spec("grants", [
+        {
+          kind: "sql",
+          sql: "SELECT count(*) FROM source JOIN r ON source.id = r.id",
+          sourceAs: "source",
+          tables: [{ as: "r", datasetId: "lean" }],
+        },
+      ]),
+      resolve,
+    );
+
+    expect(goneTable.health).toBe("orphaned");
+    expect(presentTable.health).toBe("ready");
   });
 
   it("is stale when a key or picked field no longer exists on the referenced dataset", async () => {

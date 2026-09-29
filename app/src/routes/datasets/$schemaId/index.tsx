@@ -28,6 +28,7 @@ import { toast } from "sonner";
 import { z } from "zod";
 
 import { AddToMapSheet } from "@/components/add-to-map-sheet";
+import { AnalysisPanel } from "@/components/analysis-panel";
 import { DatasetHistoryPanel } from "@/components/dataset-history-panel";
 import { DatasetOverview } from "@/components/dataset-overview";
 import { EntriesMap } from "@/components/entries-map";
@@ -101,7 +102,8 @@ const entryPanelSearchSchema = z.object({
   entryId: z.string().optional(),
   panel: z.enum(["create", "edit"]).optional(),
   // Active tab ("overview" is the default and deliberately absent from the URL).
-  view: z.enum(["overview", "entries", "history", "structure", "transform"]).optional(),
+  // Stage 9 (#105) added "analyze" — the SQL escape hatch beside "transform".
+  view: z.enum(["overview", "entries", "history", "structure", "transform", "analyze"]).optional(),
 });
 
 export const Route = createFileRoute("/datasets/$schemaId/")({
@@ -428,13 +430,16 @@ function SchemaDetailBody() {
     // Tab switches write `?view=` so the active tab survives reloads and is
     // linkable; "overview" is the default and stays out of the URL. Panel
     // navigations above merge (not replace) so they never drop it.
-    setView = async (view: "entries" | "history" | "overview" | "structure" | "transform") => {
+    setView = async (
+      view: "analyze" | "entries" | "history" | "overview" | "structure" | "transform",
+    ) => {
       await navigate({
         search: (prev) => ({ ...prev, view: view === "overview" ? undefined : view }),
       });
     },
     handleTabChange = (value: unknown) => {
       if (
+        value === "analyze" ||
         value === "entries" ||
         value === "history" ||
         value === "overview" ||
@@ -827,6 +832,7 @@ function SchemaDetailBody() {
           )}
           <TabsTrigger value="structure">Structure</TabsTrigger>
           <TabsTrigger value="transform">Transform</TabsTrigger>
+          <TabsTrigger value="analyze">Analyze</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6">
@@ -926,6 +932,14 @@ function SchemaDetailBody() {
 
         <TabsContent value="transform" className="space-y-6">
           <TransformBuilder
+            columns={Object.keys(schema.schema.properties ?? {})}
+            datasetTitle={schema.title}
+            schemaId={schemaId}
+          />
+        </TabsContent>
+
+        <TabsContent value="analyze" className="space-y-6">
+          <AnalysisPanel
             columns={Object.keys(schema.schema.properties ?? {})}
             datasetTitle={schema.title}
             schemaId={schemaId}

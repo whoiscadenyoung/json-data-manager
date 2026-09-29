@@ -50,12 +50,14 @@ type EditingTarget = { id: string } | { isNew: true };
  */
 const dismissedDraftIds = new Set<string>();
 
-/** The signed-in user's newest draft for this source (rows arrive newest-first), or undefined. */
+/** The signed-in user's newest LOOKUP-kind draft for this source (rows arrive newest-first), or undefined. Stage 9 (#105): sql analyses carry `carriesSql` and stay the Analyze tab's business — this builder cannot render a sql step, and resuming one here would let Save write a spec with the sql operation dropped. */
 function newestOwnDraftId(rows: RegistryRow[] | undefined, myAuthId: string | undefined) {
   if (rows === undefined || myAuthId === undefined) {
     return undefined;
   }
-  const draft = rows.find((row) => row.createdBy === myAuthId && row.status === "draft");
+  const draft = rows.find(
+    (row) => row.createdBy === myAuthId && row.status === "draft" && !row.carriesSql,
+  );
   return draft === undefined ? undefined : draft._id;
 }
 
@@ -72,6 +74,11 @@ function TransformList({
   onNew: () => void;
   rows: RegistryRow[] | undefined;
 }) {
+  // Stage 9 (#105): sql analyses are registry rows too (carriesSql) but are
+  // the Analyze tab's rows — this builder cannot render a sql step, and
+  // saving a spec loaded here would drop it (draftToSpec writes only what
+  // the builder represents).
+  const transformRows = rows === undefined ? undefined : rows.filter((row) => !row.carriesSql);
   return (
     <Card>
       <CardHeader>
@@ -82,11 +89,11 @@ function TransformList({
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {rows === undefined ? (
+        {transformRows === undefined ? (
           <div className="flex justify-center items-center py-8">
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
           </div>
-        ) : rows.length === 0 ? (
+        ) : transformRows.length === 0 ? (
           <Empty className="min-h-40 border">
             <EmptyHeader>
               <EmptyTitle>No transforms yet</EmptyTitle>
@@ -107,7 +114,7 @@ function TransformList({
           </Empty>
         ) : (
           <ul className="flex flex-col gap-2">
-            {rows.map((row) => (
+            {transformRows.map((row) => (
               <li
                 key={row._id}
                 className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"
