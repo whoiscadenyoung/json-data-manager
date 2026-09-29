@@ -7,8 +7,10 @@
  *
  * React-free and Convex-free by the tile-worker rule: the only imports are
  * the pure engine through the `./transform` subpath. Execution is the
- * engine's chained pure calls (applyRollup → applyLookup — there is no
- * composition module), extended with exactly one piece of publish-specific
+ * engine's chained pure calls (applyRollup → applyLookup → applySql — there
+ * is no composition module; applySql's engine handle arrives through
+ * `PublishSqlExecution`, loaded lazily only when the fold reaches a sql
+ * operation), extended with exactly one piece of publish-specific
  * bookkeeping:
  *
  * **Geometry pairing at the geometry op's position.** `geometrySource`
@@ -40,11 +42,31 @@
  * neither injects nor strips, so real data named `geometryId` passes through
  * untouched unless a rule claims the column.
  */
-import { applyLookup, applyRollup, geometrySourceOperationOf } from "@caden/json-cms/transform";
-import type { GeometrySource, LookupOperation, RollupOperation } from "@caden/json-cms/transform";
+import { applyLookup, applyRollup, applySql, geometrySourceOperationOf } from "@caden/json-cms/transform";
+import type {
+  GeometrySource,
+  LookupOperation,
+  RollupOperation,
+  SqlColumnSpec,
+  SqlEngine,
+  SqlOperation,
+} from "@caden/json-cms/transform";
 
 /** The record key an entry's geometry pointer is injected under (see the module doc). */
 export const PUBLISH_GEOMETRY_COLUMN = "geometryId";
+
+/**
+ * The SQL execution a publish may need (stage 9, #105): a lazily provided
+ * engine handle plus the result cap. The provider form (`() => Promise`) is
+ * the point — a spec with no sql operation must never load the WASM engine,
+ * and even a sql-bearing spec loads it only when the fold REACHES the
+ * operation (publish/preview parity: the same `applySql` the analysis
+ * worker runs, in-page — there is no server-side path to diverge from).
+ */
+export interface PublishSqlExecution {
+  engine: SqlEngine | (() => Promise<SqlEngine>);
+  limit?: number;
+}
 
 /** The pre-loaded inputs of one publish execution, built by the orchestrator. */
 export interface PublishSourceTables {
@@ -62,6 +84,18 @@ export interface PublishSourceTables {
    * of the join.
    */
   geometryById: ReadonlyMap<string, unknown>;
+  /**
+   * Component dataset id → its DECLARED column types (stage 9, #105): the
+   * sql engine's registration types columns from the declared structure so
+   * a publish materializes under the SAME coercion the interactive preview
+   * ran (a declared-string column of "007" must never infer to number and
+   * fold into 7 on the publish leg). Optional only so the lookup/rollup
+   * paths and existing callers construct unchanged — a sql operation over
+   * absent typing infers from rows, which is exactly the divergence this
+   * map exists to prevent, so the orchestrator populates it for every
+   * component dataset it loads.
+   */
+  columnsByDatasetId?: ReadonlyMap<string, readonly SqlColumnSpec[]>;
 }
 
 /** One execution's output: final data rows plus their index-paired geometry payloads. */
@@ -165,14 +199,15 @@ function operationsOf(spec: Record<string, unknown>): Array<Record<string, unkno
  * the pre-loaded component rows. Unknown ids are a load error — the
  * orchestrator loads every dependency the health walk approved.
  */
-function rowsOfReference(
+async function rowsOfReference(
   id: string,
   tables: PublishSourceTables,
   visited: Set<string>,
-): Array<Record<string, unknown>> {
+  sql: PublishSqlExecution | undefined,
+): Promise<Array<Record<string, unknown>>> {
   const nestedSpec = tables.specByDatasetId.get(id);
   if (nestedSpec !== undefined) {
-    return executeInternal(nestedSpec, tables, visited).rows;
+    return (await executeInternal(nestedSpec, tables, visited, sql)).rows;
   }
   const loaded = tables.rowsByDatasetId.get(id);
   if (loaded === undefined) {
@@ -214,7 +249,9 @@ function pairingThroughInnerMatch(
  * returning the final rows and — when the spec carries a resolvable
  * geometrySource naming the injected column — the reference per final row.
  * `visited` is defensive (the save gate rejects cycles); a revisit is
- * rejected rather than looping.
+ * rejected rather than looping. Async since stage 9: a sql operation's
+ * engine call is inherently so, and the fold is honest about it for every
+ * kind rather than special-casing one operation mid-chain.
  */
 /** The running state of one spec's operation fold. */
 interface FoldState {
@@ -234,6 +271,85 @@ function applyRollupOperation(
   }
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- see asEngineLookup; rollup operations are structural too.
   state.rows = applyRollup(operation as unknown as RollupOperation, state.rows).rows;
+}
+
+/** The stored sql operation record as the engine's shape — the engine validates what it reads (the asEngineLookup rule). */
+function asEngineSql(operation: Record<string, unknown>): SqlOperation {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- stored operations are structurally the engine's shapes; the save gate checked what it could.
+  return operation as unknown as SqlOperation;
+}
+
+/**
+ * Applies one sql operation (stage 9, #105) through the SAME `applySql`
+ * engine the analysis worker runs — publish/preview parity is this shared
+ * call, never a second implementation. Like a rollup, a sql operation
+ * cannot preserve the geometry pairing (rows map to nothing) — one after
+ * the geometry op is refused; before it, fine. A missing engine provider is
+ * a load error (the orchestrator decides whether this publish loads the
+ * in-page WASM at all); a failed query is too — `applySql` reports errors
+ * in diagnostics, and materializing a publish over a failed query would
+ * fabricate an empty dataset. A TRUNCATED result is refused the same way:
+ * publishing the first N rows of a longer result as the complete dataset is
+ * exactly the fabrication the cap's reporting exists to prevent.
+ */
+/** One side table's declared columns + pre-loaded rows (the SqlSideTable the engine materializes from). */
+async function sideTableOf(
+  ref: { as: string; datasetId: string },
+  tables: PublishSourceTables,
+  visited: Set<string>,
+  sql: PublishSqlExecution | undefined,
+): Promise<{ columns: readonly SqlColumnSpec[] | undefined; rows: Array<Record<string, unknown>> }> {
+  const columns = tables.columnsByDatasetId;
+  return {
+    columns: columns === undefined ? undefined : columns.get(ref.datasetId),
+    rows: await rowsOfReference(ref.datasetId, tables, visited, sql),
+  };
+}
+
+async function applySqlOperation(
+  operation: Record<string, unknown>,
+  sql: PublishSqlExecution | undefined,
+  sourceDatasetId: string,
+  state: FoldState,
+  tables: PublishSourceTables,
+  visited: Set<string>,
+): Promise<void> {
+  if (state.pairs !== undefined) {
+    throw new PublishSpecError(
+      "This spec can't be materialized: a SQL operation follows the geometry operation, and query rows carry no per-source-row geometry.",
+    );
+  }
+  if (sql === undefined) {
+    throw new PublishSpecError(
+      "This spec carries a SQL operation, but this publish has no SQL engine to run it with.",
+    );
+  }
+  const engine = typeof sql.engine === "function" ? await sql.engine() : sql.engine,
+    storedOperation = asEngineSql(operation),
+    columns = tables.columnsByDatasetId,
+    sideTables = new globalThis.Map<
+      string,
+      { columns: readonly SqlColumnSpec[] | undefined; rows: Array<Record<string, unknown>> }
+    >();
+  for (const ref of storedOperation.tables ?? []) {
+    // oxlint-disable-next-line no-await-in-loop -- each reference resolves (possibly a nested spec execution); order follows the spec.
+    sideTables.set(ref.as, await sideTableOf(ref, tables, visited, sql));
+  }
+  const result = await applySql(storedOperation, state.rows, sideTables, engine, {
+    limit: sql.limit,
+    sourceColumns: columns === undefined ? undefined : columns.get(sourceDatasetId),
+  });
+  if (result.diagnostics.error !== undefined) {
+    throw new PublishSpecError(`The SQL operation failed: ${result.diagnostics.error}`);
+  }
+  if (result.diagnostics.truncated) {
+    throw new PublishSpecError(
+      `This analysis returned ${result.diagnostics.resultRows.toLocaleString()} rows — over the ${(
+        sql.limit ?? Number.POSITIVE_INFINITY
+      ).toLocaleString()}-row materialization cap. Add a LIMIT to the query (or aggregate it) before publishing.`,
+    );
+  }
+  state.rows = result.rows;
 }
 
 /** Applies one lookup operation, threading the pairing when it follows the geometry op. */
@@ -259,16 +375,18 @@ function applyLookupOperation(
 }
 
 /** The validated spec inputs the fold runs on — throws PublishSpecError on every shape it cannot run. */
-function specInputsOf(
+async function specInputsOf(
   spec: unknown,
   tables: PublishSourceTables,
   visited: Set<string>,
-): {
+  sql: PublishSqlExecution | undefined,
+): Promise<{
   geometryOpIndex: number;
   operations: Array<Record<string, unknown>>;
   rule: GeometrySource | undefined;
+  sourceDatasetId: string;
   sourceRows: Array<Record<string, unknown>>;
-} {
+}> {
   if (!isRecord(spec)) {
     throw new PublishSpecError("The transform spec must be an object.");
   }
@@ -287,16 +405,24 @@ function specInputsOf(
     geometryOpIndex: rule === undefined ? -1 : geometryOpIndexOf(operations, rule),
     operations,
     rule,
-    sourceRows: rowsOfReference(spec.sourceDatasetId, tables, visited),
+    sourceDatasetId: spec.sourceDatasetId,
+    sourceRows: await rowsOfReference(spec.sourceDatasetId, tables, visited, sql),
   };
 }
 
-function executeInternal(
+/** Async since stage 9: a sql operation's engine call is inherently so, and the fold is honest about it for every kind rather than special-casing one mid-chain. */
+async function executeInternal(
   spec: unknown,
   tables: PublishSourceTables,
   visited: Set<string>,
-): FoldState {
-  const { geometryOpIndex, operations, rule, sourceRows } = specInputsOf(spec, tables, visited);
+  sql: PublishSqlExecution | undefined,
+): Promise<FoldState> {
+  const { geometryOpIndex, operations, rule, sourceDatasetId, sourceRows } = await specInputsOf(
+    spec,
+    tables,
+    visited,
+    sql,
+  );
   const state: FoldState = { pairs: undefined, rows: sourceRows };
 
   for (const [index, operation] of operations.entries()) {
@@ -304,12 +430,23 @@ function executeInternal(
       applyRollupOperation(operation, state);
       continue;
     }
+    if (operation.kind === "sql") {
+      // oxlint-disable-next-line no-await-in-loop -- the fold is sequential by definition; each operation consumes the previous one's rows.
+      await applySqlOperation(operation, sql, sourceDatasetId, state, tables, visited);
+      continue;
+    }
     if (operation.kind !== "lookup") {
       throw new PublishSpecError(
         `Operation ${index} has kind "${String(operation.kind)}", which the publish executor cannot run.`,
       );
     }
-    const lookupRows = rowsOfReference(String(operation.lookupDatasetId), tables, visited);
+    // oxlint-disable-next-line no-await-in-loop -- the fold is sequential by definition; each operation consumes the previous one's rows.
+    const lookupRows = await rowsOfReference(
+      String(operation.lookupDatasetId),
+      tables,
+      visited,
+      sql,
+    );
     applyLookupOperation(
       operation,
       lookupRows,
@@ -350,12 +487,19 @@ function stripPlumbingColumn(row: Record<string, unknown>): Record<string, unkno
  * source). The published artifact's geometry rides these payloads into the
  * chunk rows; the component re-validates each against the frozen dataset's
  * type at import time.
+ *
+ * `sql` carries the SQL execution (stage 9, #105): absent, a spec with a
+ * sql operation is REJECTED (never silently skipped — materializing a
+ * publish without the query's rows would fabricate a dataset); present,
+ * the engine loads lazily, only if the fold actually reaches a sql
+ * operation (see `PublishSqlExecution`).
  */
-export function executeSpecForPublish(
+export async function executeSpecForPublish(
   spec: unknown,
   tables: PublishSourceTables,
-): PublishExecution {
-  const { pairs, rows } = executeInternal(spec, tables, new Set());
+  sql?: PublishSqlExecution,
+): Promise<PublishExecution> {
+  const { pairs, rows } = await executeInternal(spec, tables, new Set(), sql);
   const geometryPayloads =
     pairs === undefined
       ? rows.map(() => null)

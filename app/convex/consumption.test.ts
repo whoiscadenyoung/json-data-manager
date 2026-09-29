@@ -747,3 +747,95 @@ async function schemaExists(t: TestConvex, schemaId: string): Promise<boolean> {
     async (ctx) => (await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId })) !== null,
   );
 }
+
+// ---------------------------------------------------------------------------
+// analysisTargets (stage 9, #105) — the resolve-then-feed leg: identity for
+// frozen version rows and chain-less datasets, float at head for live chain
+// anchors, registry for visible registry rows, and "missing" for anything
+// the caller cannot see (a foreign draft's existence never leaking).
+// ---------------------------------------------------------------------------
+
+describe("analysisTargets", () => {
+  it("reads a frozen version row as itself (identity — the author named immutable rows)", async () => {
+    const t = signedIn(),
+      draft = await createDraftDataset(t, { title: "Frozen source" }),
+      { schemaId: frozenV1 } = await publishDraft(t, draft, [{ data: { label: "a" } }]);
+    expect(await t.query(api.consumption.analysisTargets, { datasetIds: [frozenV1] })).toStrictEqual([
+      { datasetId: frozenV1, resolvedSchemaId: frozenV1, status: "identity", title: "Frozen source" },
+    ]);
+  });
+
+  it("floats a live chain anchor to the head, and follows a republish to the new head", async () => {
+    const t = signedIn(),
+      draft = await createDraftDataset(t, { title: "Anchored source" }),
+      { schemaId: frozenV1 } = await publishDraft(t, draft, [{ data: { label: "a" } }]),
+      first = await t.query(api.consumption.analysisTargets, { datasetIds: [draft] });
+    expect(first).toStrictEqual([
+      { datasetId: draft, resolvedSchemaId: frozenV1, status: "float", title: "Anchored source" },
+    ]);
+    const { schemaId: frozenV2 } = await publishDraft(t, draft, [{ data: { label: "b" } }]),
+      second = await t.query(api.consumption.analysisTargets, { datasetIds: [draft] });
+    expect(second).toStrictEqual([
+      { datasetId: draft, resolvedSchemaId: frozenV2, status: "float", title: "Anchored source" },
+    ]);
+    expect(frozenV2).not.toBe(frozenV1);
+  });
+
+  it("reads a chain-less dataset (a draft, nothing published) as itself", async () => {
+    const t = signedIn(),
+      draft = await createDraftDataset(t, { title: "Plain draft" });
+    expect(await t.query(api.consumption.analysisTargets, { datasetIds: [draft] })).toStrictEqual([
+      { datasetId: draft, resolvedSchemaId: draft, status: "identity", title: "Plain draft" },
+    ]);
+  });
+
+  it("answers missing for unknown ids and for a foreign draft — a draft's existence never leaks (stage 8)", async () => {
+    const t = signedIn(),
+      foreignDraft = await t
+        .withIdentity({ subject: "user-2" })
+        .run(async (ctx) =>
+          ctx.runMutation(components.jsonCms.lib.createSchema, {
+            actorId: "user-2",
+            lifecycle: "draft",
+            schema: { properties: { label: { type: "string" } }, title: "Secret", type: "object" },
+          }),
+        );
+    expect(
+      await t.query(api.consumption.analysisTargets, {
+        datasetIds: ["nonexistent-id", foreignDraft],
+      }),
+    ).toStrictEqual([
+      { datasetId: "nonexistent-id", status: "missing" },
+      { datasetId: foreignDraft, status: "missing" },
+    ]);
+  });
+
+  it("answers registry for a visible registry row (own draft, or any saved row) and missing for a foreign draft row", async () => {
+    const t = signedIn(),
+      source = await createDraftDataset(t, { title: "Source" }),
+      spec = { operations: [], sourceDatasetId: source },
+      draftRow = await t.mutation(api.derivedDatasets.save, {
+        spec,
+        status: "draft",
+        title: "Own analysis draft",
+      });
+    expect(await t.query(api.consumption.analysisTargets, { datasetIds: [draftRow] })).toStrictEqual([
+      { datasetId: draftRow, status: "registry" },
+    ]);
+    const asUser2 = t.withIdentity({ subject: "user-2" });
+    expect(await asUser2.query(api.consumption.analysisTargets, { datasetIds: [draftRow] })).toStrictEqual([
+      { datasetId: draftRow, status: "missing" },
+    ]);
+    // The explicit Save flips the row to saved — catalog-visible, so the
+    // foreign caller now gets the distinct "registry" answer.
+    await t.mutation(api.derivedDatasets.save, {
+      id: draftRow,
+      spec,
+      status: "saved",
+      title: "Saved analysis",
+    });
+    expect(await asUser2.query(api.consumption.analysisTargets, { datasetIds: [draftRow] })).toStrictEqual([
+      { datasetId: draftRow, status: "registry" },
+    ]);
+  });
+});

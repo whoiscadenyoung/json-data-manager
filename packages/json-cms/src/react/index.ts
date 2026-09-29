@@ -127,18 +127,32 @@ export type { GeoJsonRow, GeoJsonParseResult, GeoJsonFeatureError } from "./lib/
 // over generic rows: namespaced fields in, base rows never mutated,
 // diagnostics out. Stage 4 (#98) added the rollup primitive, the
 // `geometrySource` spec field (per-row references, index-paired), and the
-// union-aware dependency helper.
+// union-aware dependency helper. Stage 9 (#105) added the SQL escape hatch
+// (applySql + its typed-table materialization) — the same engine interface,
+// its DuckDB handle injected (see ../shared/transform/sql.ts).
 export { applyLookup, LookupKeyConflictError } from "../shared/transform/lookup.js";
 export { applyRollup } from "../shared/transform/rollup.js";
+export { applySql, declaredColumnTypes, materializeSqlTable, sqlSourceName } from "../shared/transform/sql.js";
 export { transformSpecDependencies, geometrySourceOperationOf } from "../shared/transform/spec.js";
 export type { LookupDiagnostics, LookupResult } from "../shared/transform/lookup.js";
 export type { RollupDiagnostics, RollupResult } from "../shared/transform/rollup.js";
+export type {
+  SqlApplyOptions,
+  SqlColumnSpec,
+  SqlDiagnostics,
+  SqlEngine,
+  SqlResult,
+  SqlSideTable,
+  SqlTable,
+} from "../shared/transform/sql.js";
 export type {
   TransformSpec,
   TransformOperation,
   LookupOperation,
   RollupOperation,
   RollupMeasure,
+  SqlOperation,
+  SqlTableRef,
   GeometrySource,
 } from "../shared/transform/spec.js";
 

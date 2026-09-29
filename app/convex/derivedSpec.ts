@@ -84,10 +84,14 @@ export function schemaProperties(schemaJson: unknown): string[] {
 /**
  * The datasets a spec reads — `dependsOn`'s content: the source first, then
  * each operation's dataset in order, distinct, first-seen. Lookup
- * operations name their dataset in `lookupDatasetId`; a future operation
- * kind joins this walk additively when it lands (stage 4) — today it
- * simply contributes no edge, which is the additive tolerance the v.any()
- * storage demands.
+ * operations name their dataset in `lookupDatasetId`; stage 4's rollup
+ * names none (rows already in the pipeline); stage 9's (#105) sql kind
+ * names its joined datasets in a `tables` array of `{datasetId, as}` refs —
+ * read structurally here so a query's datasets contribute their edges. A
+ * sql edge missing from this walk would save unvisibility-checked
+ * (`assertSpecDependenciesVisible` walks these ids), cycle-blind
+ * (`findCycleToOrigin`), and pressed in the wrong bundle order — the reason
+ * the walk grew with the kind instead of tolerating it unknown.
  */
 export function specDependencies(spec: TransformSpecLike): string[] {
   const deps: string[] = [],
@@ -101,8 +105,16 @@ export function specDependencies(spec: TransformSpecLike): string[] {
   push(spec.sourceDatasetId);
   if (Array.isArray(spec.operations)) {
     for (const operation of spec.operations) {
-      if (isRecord(operation)) {
-        push(operation.lookupDatasetId);
+      if (!isRecord(operation)) {
+        continue;
+      }
+      push(operation.lookupDatasetId);
+      if (Array.isArray(operation.tables)) {
+        for (const table of operation.tables) {
+          if (isRecord(table)) {
+            push(table.datasetId);
+          }
+        }
       }
     }
   }
@@ -171,6 +183,33 @@ function duplicatePolicyError(onDuplicateKey: unknown): string | undefined {
   return undefined;
 }
 
+/** The sql op's required columns — reason, or undefined (stage 9, #105: narrow, like the lookup checks). */
+function sqlColumnsError(operation: Record<string, unknown>): string | undefined {
+  if (typeof operation.sql !== "string" || operation.sql.trim() === "") {
+    return "A SQL operation is missing its query.";
+  }
+  return undefined;
+}
+
+/** The sql op's table refs — reason, or undefined. REQUIRED (the dependency walk reads edges from it — an omitted field would save edges-blind), and each ref must carry its dataset id and SQL name. */
+function sqlTablesError(operation: Record<string, unknown>): string | undefined {
+  if (!Array.isArray(operation.tables)) {
+    return `A SQL operation needs its list of dataset references (one per joined table, empty for none).`;
+  }
+  for (const table of operation.tables) {
+    if (!isRecord(table)) {
+      return `A SQL operation's tables must be a list of dataset references.`;
+    }
+    for (const column of ["as", "datasetId"] as const) {
+      const cell = table[column];
+      if (typeof cell !== "string" || cell === "") {
+        return `A SQL operation's table references are missing their ${column}.`;
+      }
+    }
+  }
+  return undefined;
+}
+
 /** One operation record — reason, or undefined when it passes (unknown kinds pass untouched). */
 function operationError(operation: unknown): string | undefined {
   if (!isRecord(operation)) {
@@ -179,10 +218,13 @@ function operationError(operation: unknown): string | undefined {
   if (typeof operation.kind !== "string" || operation.kind === "") {
     return "Every transform operation must declare its kind.";
   }
-  if (operation.kind !== "lookup") {
-    return undefined;
+  if (operation.kind === "lookup") {
+    return lookupColumnsError(operation) ?? lookupOptionsError(operation);
   }
-  return lookupColumnsError(operation) ?? lookupOptionsError(operation);
+  if (operation.kind === "sql") {
+    return sqlColumnsError(operation) ?? sqlTablesError(operation);
+  }
+  return undefined;
 }
 
 export function validateSpecShape(value: unknown): SpecValidation {
@@ -260,28 +302,67 @@ export async function specStatus(
   return statusOfSpec(spec, resolve, new Set<string>());
 }
 
-/** The lookup reads a spec makes, collected for the health walk: the source's `baseKey`s plus each operation's lookup side. */
+/** One referenced read the health walk checks: the id plus what columns to compare (lookup reads) or nothing (existence-only). */
+interface CollectedRead {
+  fields: string[] | undefined;
+  id: string;
+  lookupKey: string[];
+}
+
+/** One lookup operation's read, keyed columns included. */
+function collectLookupRead(
+  operation: Record<string, unknown>,
+  baseKeys: string[],
+): CollectedRead {
+  if (typeof operation.baseKey === "string" && !baseKeys.includes(operation.baseKey)) {
+    baseKeys.push(operation.baseKey);
+  }
+  return {
+    fields: stringArrayOrUndefined(operation.fields),
+    id: typeof operation.lookupDatasetId === "string" ? operation.lookupDatasetId : "",
+    lookupKey: typeof operation.lookupKey === "string" ? [operation.lookupKey] : [],
+  };
+}
+
+/** One sql operation's table refs as existence-only reads (stage 9 #105): the query TEXT is opaque to a structural walk, a vanished dataset is not. */
+function collectSqlReads(operation: Record<string, unknown>): CollectedRead[] {
+  if (!Array.isArray(operation.tables)) {
+    return [];
+  }
+  const reads: CollectedRead[] = [];
+  for (const table of operation.tables) {
+    if (isRecord(table)) {
+      reads.push({
+        fields: undefined,
+        id: typeof table.datasetId === "string" ? table.datasetId : "",
+        lookupKey: [],
+      });
+    }
+  }
+  return reads;
+}
+
+/** The reads a spec makes, collected for the health walk: the source's `baseKey`s plus each operation's references. */
 function collectReads(spec: TransformSpecLike): {
   baseKeys: string[];
-  lookups: Array<{ fields: string[] | undefined; id: string; lookupKey: string[] }>;
+  lookups: CollectedRead[];
 } {
   const baseKeys: string[] = [],
-    lookups: Array<{ fields: string[] | undefined; id: string; lookupKey: string[] }> = [];
+    lookups: CollectedRead[] = [];
   if (!Array.isArray(spec.operations)) {
     return { baseKeys, lookups };
   }
   for (const operation of spec.operations) {
-    if (!isRecord(operation) || operation.kind !== "lookup") {
+    if (!isRecord(operation)) {
       continue;
     }
-    if (typeof operation.baseKey === "string" && !baseKeys.includes(operation.baseKey)) {
-      baseKeys.push(operation.baseKey);
+    if (operation.kind === "lookup") {
+      lookups.push(collectLookupRead(operation, baseKeys));
+      continue;
     }
-    lookups.push({
-      fields: stringArrayOrUndefined(operation.fields),
-      id: typeof operation.lookupDatasetId === "string" ? operation.lookupDatasetId : "",
-      lookupKey: typeof operation.lookupKey === "string" ? [operation.lookupKey] : [],
-    });
+    if (operation.kind === "sql") {
+      lookups.push(...collectSqlReads(operation));
+    }
   }
   return { baseKeys, lookups };
 }

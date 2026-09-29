@@ -1056,6 +1056,105 @@ function newestFirst<T extends { frozenAt: number }>(rows: T[]): T[] {
   return rows.sort((a, b) => b.frozenAt - a.frozenAt);
 }
 
+/**
+ * The analysis layer's resolve-then-feed leg (roadmap stage 9, #105; AC 1
+ * "published queries resolve the pinned/floating version per stage-6
+ * semantics"): for each dataset an analysis wants to register, the CONCRETE
+ * component row the row-resolution seam should page. Server-side first and
+ * through the same `resolveSourceHead` core the 7b layer resolutions use,
+ * so an analysis and a map layer can never disagree about what head is.
+ *
+ * The per-id rule (recorded — the stage-6 semantics applied to a query's
+ * table list):
+ * - "identity": read the NAMED row itself. A frozen version row carries
+ *   `lineage` — it IS an immutable dataset (stage 6's "a version is an
+ *   ordinary dataset to the seam"); floating away from rows the author can
+ *   see would be the stale-id leak in reverse. Also the answer when no
+ *   chain exists at all (a draft, a plain live dataset).
+ * - "float": a live chain anchor (the tag path's bound dataset) — read the
+ *   chain's head, exactly what a float reference means everywhere else.
+ * - "registry": the id is a derivedDatasets row — not a component dataset;
+ *   the v1 analysis surface authors over component datasets only and
+ *   reports this distinctly (the row has no entries to page).
+ * - "missing": not a component dataset, or not visible to the caller —
+ *   indistinguishable, the stage-8 rule.
+ */
+export const analysisTargets = query({
+  args: { datasetIds: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    const viewerId = await auth(ctx);
+    const targets: Array<{
+      datasetId: string;
+      resolvedSchemaId?: string;
+      status: "float" | "identity" | "missing" | "registry";
+      title?: string;
+    }> = [];
+    for (const datasetId of args.datasetIds.slice(0, MAX_CONSUMERS)) {
+      // One target per hop; each read decides the next (the badge shape).
+      // oxlint-disable-next-line no-await-in-loop -- see above.
+      const row = await tryGetSchema(ctx, datasetId);
+      if (row === null) {
+        const registryId = ctx.db.normalizeId("derivedDatasets", datasetId);
+        if (registryId === null) {
+          targets.push({ datasetId, status: "missing" });
+          continue;
+        }
+        // oxlint-disable-next-line no-await-in-loop -- see above.
+        const registryRow = await ctx.db.get(registryId);
+        // Stage 8: a registry row reads as "registry" only when the caller
+        // may see it — saved rows are catalog-visible, drafts are the
+        // creator's. A foreign draft answers "missing", its existence never
+        // leaking (the derivedDatasets.get rule).
+        targets.push({
+          datasetId,
+          status:
+            registryRow === null ||
+            registryRow.status === "saved" ||
+            registryRow.createdBy === viewerId
+              ? "registry"
+              : "missing",
+        });
+        continue;
+      }
+      // oxlint-disable-next-line no-await-in-loop -- see above.
+      if (!(await sourceVisibleToViewer(ctx, datasetId, viewerId))) {
+        targets.push({ datasetId, status: "missing" });
+        continue;
+      }
+      if (row.lineage !== undefined) {
+        targets.push({ datasetId, resolvedSchemaId: datasetId, status: "identity", title: row.title });
+        continue;
+      }
+      // oxlint-disable-next-line no-await-in-loop -- see above.
+      const head = await resolveSourceHead(ctx, datasetId);
+      targets.push(
+        head === undefined
+          ? { datasetId, resolvedSchemaId: datasetId, status: "identity", title: row.title }
+          : {
+              datasetId,
+              resolvedSchemaId: head.schemaId,
+              status: "float",
+              title: row.title,
+            },
+      );
+    }
+    return targets;
+  },
+  returns: v.array(
+    v.object({
+      datasetId: v.string(),
+      resolvedSchemaId: v.optional(v.string()),
+      status: v.union(
+        v.literal("float"),
+        v.literal("identity"),
+        v.literal("missing"),
+        v.literal("registry"),
+      ),
+      title: v.optional(v.string()),
+    }),
+  ),
+});
+
 /** The chain's resolved retention policy — which store answered rides along so the UI can say. */
 export const retentionPolicy = query({
   args: { anchorId: v.string() },

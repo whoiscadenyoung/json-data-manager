@@ -1,35 +1,54 @@
 ---
 name: analysis-layer-design
-description: Future SQL-analytics layer (DuckDB-WASM client-side) designed in docs/analysis-layer-design.md — invariants recorded now, nothing built, no ADR (covered by 0005/0008)
+description: SQL-analytics layer (DuckDB-WASM client-side) — designed 2026-09-21 in docs/analysis-layer-design.md, SHIPPED as roadmap stage 9 (#105): analyses are registry rows, applySql is the one engine, DuckDB engine + worker in app/src/lib/analysis*
 metadata:
   type: project
 ---
 
 2026-09-21: Design futures recorded in `docs/analysis-layer-design.md` —
 ad-hoc analytics (DuckDB-style SQL: counts per state, avg locations per
-brand) over catalog/project data. **Nothing to build now; the doc exists to
-protect five invariants** so the layer stays cheap to add:
+brand) over catalog/project data, guarding five invariants (client-side
+only; one row-resolution seam; typed structures + shared 0.4 coercion;
+declarative/serializable specs, rollup & SQL one system; published
+immutability keeps a Parquet sidecar viable).
 
-1. Analytics run **client-side** (DuckDB-WASM in a worker) — server-side
-   analytics is rejected (16 MiB caps, no vectorized engine; rows already
-   stream to the client). GeoLibre research already flagged DuckDB-WASM
-   Spatial as the local-engine pattern.
-2. **One row-resolution seam**: a single client-side resolver ("dataset
-   rows, draft or published, specs applied") feeds map preview, export, AND
-   the future SQL engine — lands with ADR 0005 §10 steps 1–2.
-3. **Typed structures stay accurate end-to-end**; mixed-type coercion
-   shared with join key normalization; Arrow registration is the bridge.
-4. **Specs stay declarative/serializable** so SQL-backed operations join as
-   another spec type; rollup primitive and freeform SQL are ONE system
-   (rollup = guided UI, SQL = escape hatch, same engine + same
-   "save result as derived dataset" path).
-5. **Published immutability** (ADR 0008) keeps the future Parquet/
-   GeoParquet sidecar correct (analytical sibling of the tile archive;
-   HTTP range requests per version).
+**2026-09-29: SHIPPED as roadmap stage 9 (issue #105, branch
+roadmap/9-analysis-layer).** The recorded decisions, in case they ever need
+revisiting:
 
-Analysis results/queries are project artifacts — the lifecycle absorbs
-them; no new concepts. Deliberately unconstrained: WASM loading strategy,
-duckdb-spatial timing, sidecar trigger threshold.
+- **Analyses are `derivedDatasets` registry rows** whose spec carries a
+  `sql` operation — projects membership `artifactKind: "derived"`, publish
+  via the existing 5b machine, autosave via `derivedDatasets.save` ("zero
+  new lifecycle concepts"). The `projectArtifacts.artifactKind` open union
+  anticipated a literal; it stayed unneeded (schema comment records this).
+- **One engine, no compilation**: `applySql(operation, rows, sideTables,
+  engine, options?)` in `packages/json-cms/src/shared/transform/sql.ts` —
+  the sibling of applyRollup; the DuckDB handle is the INJECTED fourth
+  argument (json-cms has zero duckdb deps, unit-tested with stand-ins).
+  Rollup does NOT compile to SQL (the open question §4:73-74 decided by
+  sharing only the interface).
+- **Registered tables carry canonical key form** (strings via `normalizeKey`
+  — "Aldine"/"aldine" and 42/"42" group together; numbers via
+  `coerceNumber`), columns typed from the declared structure — the AC-3
+  "mixed-type keys don't split groups" contract. Display casing is NOT
+  preserved inside GROUP BY results.
+- **Resolution is resolve-then-feed**: `consumption.analysisTargets` (new
+  query, same `resolveSourceHead` core as the 7b layer resolutions) resolves
+  each target server-side first — frozen version rows read as themselves
+  (identity), live chain anchors float to head, registry ids rejected by
+  the v1 editor. The worker receives concrete component ids only.
+- **DuckDB-WASM wiring** (`app/src/lib/analysis-duckdb.ts`): lazy dynamic
+  imports of `@duckdb/duckdb-wasm` + Vite `?url` assets (no CDN),
+  single-threaded (no COOP/COEP), `memory_limit='1GB'`, create-or-replace
+  registration via information_schema (DROP TABLE refuses views and vice
+  versa), arrow table registration via `tableFromArrays` (apache-arrow
+  PINNED to 17.x to match duckdb-wasm's own dep — v21 type-conflicts),
+  COUNT/sum arrive as BigInt and normalize to safe numbers. The engine
+  loads in the worker interactively AND in-page for publish parity
+  (`publish.ts` passes `analysisSqlEngine` as a provider — only invoked
+  when a spec actually carries a sql op).
+- **Parquet sidecar**: still deferred (conditional, doc §3) — the worker's
+  registration path is its future substitute point.
 
 Related: [[derived-datasets-brainstorm]] (engine + lifecycle this rides on),
-[[convex-platform-limits]] (why server-side analytics is a dead end).
+[[react-compiler-seam-memoization]] (the panel's hook rules).

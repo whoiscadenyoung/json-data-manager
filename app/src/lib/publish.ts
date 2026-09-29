@@ -21,14 +21,16 @@
  */
 import { chunkRowsForImport, inferSchemaFromData } from "@caden/json-cms/react";
 import type { ImportRow } from "@caden/json-cms/react";
-import { geometrySourceOperationOf, transformSpecDependencies } from "@caden/json-cms/transform";
-import type { GeometrySource, TransformSpec } from "@caden/json-cms/transform";
+import { declaredColumnTypes, geometrySourceOperationOf, transformSpecDependencies } from "@caden/json-cms/transform";
+import type { GeometrySource, SqlColumnSpec, TransformSpec } from "@caden/json-cms/transform";
 import { ConvexClient } from "convex/browser";
 
 import type { FunctionReturnType } from "convex/server";
 
 import { api } from "#convex/_generated/api";
 
+import { MAX_ANALYSIS_RESULT_ROWS } from "./analysis-caps";
+import { analysisSqlEngine } from "./analysis-duckdb";
 import {
   entryDataRecord,
   fetchDatasetEntryRows,
@@ -108,15 +110,21 @@ function chunkRowsOfExecution(execution: {
 /**
  * Loads every dataset one spec reads: component datasets' rows (adapted with
  * the geometry pointer when the spec's rule names it) and geometries, plus
- * nested registry specs for derived-of-derived. Cycles can't occur (the save
- * gate rejects them); the has() guards are the defensive stop.
+ * nested registry specs for derived-of-derived. Stage 9 (#105): each
+ * component dataset's DECLARED structure loads alongside its rows
+ * (`columnsByDatasetId`) so the sql engine's registration coerces exactly
+ * like the interactive preview did — the declared typing, not row
+ * inference, decides what a mixed-typed column folds into. Cycles can't
+ * occur (the save gate rejects them); the has() guards are the defensive
+ * stop.
  */
 async function loadPublishTables(
   convex: ConvexClient,
   spec: unknown,
 ): Promise<PublishSourceTables> {
-  const rowsByDatasetId = new Map<string, Record<string, unknown>[]>(),
+  const rowsByDatasetId = new Map<string, Record<string, unknown>[]>,
     specByDatasetId = new Map<string, unknown>(),
+    columnsByDatasetId = new Map<string, SqlColumnSpec[]>(),
     geometryById = new Map<string, unknown>(),
     injectGeometry = needsGeometryPlumbing(spec);
   const loadComponent = async (datasetId: string): Promise<void> => {
@@ -125,6 +133,19 @@ async function loadPublishTables(
       datasetId,
       entries.map((entry) => publishRecordOf(entry, injectGeometry)),
     );
+    // Metadata read for the declared structure (NOT a row path) — the same
+    // read the analysis worker does, so both executors register identical
+    // typed tables. A gone/non-component id simply carries no declared
+    // typing (the tryGetSchema tolerance).
+    let schema: FunctionReturnType<typeof api.schemas.get> = null;
+    try {
+      schema = await convex.query(api.schemas.get, { schemaId: datasetId });
+    } catch {
+      schema = null;
+    }
+    if (schema !== null) {
+      columnsByDatasetId.set(datasetId, declaredColumnTypes(schema.schema));
+    }
     for (const [id, payload] of await resolveGeometryRows(
       await fetchDatasetGeometryRows(datasetId, { convex }),
     )) {
@@ -155,7 +176,7 @@ async function loadPublishTables(
     }
   };
   await visit(spec);
-  return { geometryById, rowsByDatasetId, specByDatasetId };
+  return { columnsByDatasetId, geometryById, rowsByDatasetId, specByDatasetId };
 }
 
 /**
@@ -178,7 +199,14 @@ async function derivedPublish(
     );
   }
   const tables = await loadPublishTables(convex, row.spec),
-    execution = executeSpecForPublish(row.spec, tables),
+    // The SQL engine rides as a PROVIDER (stage 9, #105): a spec with no
+    // sql operation never loads the WASM (the provider is never called);
+    // a sql-bearing spec executes through the same `applySql` the analysis
+    // worker runs — publish/preview parity, one engine path.
+    execution = await executeSpecForPublish(row.spec, tables, {
+      engine: analysisSqlEngine,
+      limit: MAX_ANALYSIS_RESULT_ROWS,
+    }),
     rule = geometryRuleOf(row.spec);
   let geometryType: string | undefined;
   if (rule !== undefined && isRecordShaped(row.spec)) {

@@ -43,6 +43,10 @@ const healthValidator = v.object({
 const summaryValidator = v.object({
   _creationTime: v.number(),
   _id: v.id("derivedDatasets"),
+  // Stage 9 (#105): whether the stored spec carries a sql operation — the
+  // Analyze tab's list filter, computed HERE so the projection stays light
+  // (specs are `v.any()` storage; a list never ships them wholesale).
+  carriesSql: v.boolean(),
   createdBy: v.string(),
   description: v.optional(v.string()),
   health: healthValidator.fields.health,
@@ -110,6 +114,16 @@ async function healthOf(
   return specStatus(isRecord(spec) ? spec : {}, resolveDataset(ctx));
 }
 
+/** Structural read: does the stored spec carry a sql operation? (The summary projection's one spec peek — the derivedSpec tolerance rule, kept local and narrow.) */
+function specCarriesSql(spec: unknown): boolean {
+  if (!isRecord(spec) || !Array.isArray(spec.operations)) {
+    return false;
+  }
+  return spec.operations.some(
+    (operation) => isRecord(operation) && operation.kind === "sql",
+  );
+}
+
 function toSummary(
   row: Doc<"derivedDatasets">,
   health: { health: DerivedHealth; reason?: string },
@@ -117,6 +131,7 @@ function toSummary(
   return {
     _creationTime: row._creationTime,
     _id: row._id,
+    carriesSql: specCarriesSql(row.spec),
     createdBy: row.createdBy,
     description: row.description,
     health: health.health,
