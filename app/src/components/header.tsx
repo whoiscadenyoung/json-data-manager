@@ -77,6 +77,13 @@ export function Header() {
           </Link>
           <nav className="flex items-center gap-4 text-sm text-muted-foreground">
             <Link
+              to="/projects"
+              className="hover:text-foreground"
+              activeProps={{ className: "text-foreground" }}
+            >
+              Projects
+            </Link>
+            <Link
               to="/datasets"
               className="hover:text-foreground"
               activeProps={{ className: "text-foreground" }}

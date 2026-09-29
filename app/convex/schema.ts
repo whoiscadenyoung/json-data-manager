@@ -324,6 +324,73 @@ export default defineSchema({
     pinnedRefs: v.optional(v.array(v.string())),
   }).index("by_dataset", ["datasetKey"]),
 
+  // Projects (roadmap stage 7a, #102; lifecycle doc §3-§4, ADR 0008): one row
+  // per working container — the virtual working layer where imports,
+  // transform specs, and map arrangements are drafted before publish crosses
+  // them into the materialized catalog. Deliberately APP-SIDE: the component
+  // never learns projects exist (nothing published knows projects exist —
+  // lifecycle §4), so a project holds artifacts through `projectArtifacts`
+  // membership rows naming plain-string component/registry ids — references,
+  // never copies and never containment ("fork = add-to-project", §3).
+  //
+  // NO lifecycle field on purpose: a project is always draft-side. Publish is
+  // per-artifact (7b's bundle publish walks the membership rows through the
+  // existing 5b state machine), never a project state flip (lifecycle §3's
+  // state model runs over datasets, not containers).
+  //
+  // `createdBy` is attribution (ADR 0007) with the recorded publishAttempts
+  // stance: NOT an ownership check on writes — any signed-in editor may
+  // modify a project, exactly like a saved derived draft (per-creator
+  // isolation is stage 8). READS are creator-scoped — `projects.list` returns
+  // the caller's own rows and `projects.get` answers null to anyone else —
+  // which is what keeps the issue's "other users' and anonymous views never
+  // show the drafts" true for everything this stage introduces. Anonymous
+  // callers never get this far (rejected at the auth choke point, auth.ts).
+  projects: defineTable({
+    // The auth() hook's identity.subject — the Better Auth user id, the same
+    // string schemas.createdBy holds. Attribution, not a check (see above).
+    createdBy: v.string(),
+    description: v.optional(v.string()),
+    // Denormalized membership total so browser cards show a count without a
+    // per-project membership scan (guidelines: no `.collect().length`
+    // counts). Kept in lockstep by projects.ts's membership writes — every
+    // insert/delete of a membership row patches this in the SAME transaction,
+    // so the two can never drift.
+    artifactCount: v.number(),
+    // The only required field (the UI rule: title required, description
+    // optional, everywhere).
+    title: v.string(),
+  }).index("by_createdBy", ["createdBy"]),
+
+  // One project ↔ artifact membership row (roadmap 7a, #102) — the recorded
+  // answer to the issue's open "references vs membership rows" item: membership
+  // rows, because a component dataset cannot carry a projectId (the component
+  // stays project-blind, lifecycle §4) so the reference must live app-side.
+  // The membership row and a draft dataset created into the project are born
+  // in ONE transaction (projects.createDraftDataset), so a crash can never
+  // orphan either. NEVER an array field on the project doc instead: membership
+  // grows unbounded and every add would rewrite the project (guidelines).
+  projectArtifacts: defineTable({
+    // Attribution only, same stance as projects.createdBy.
+    addedBy: v.string(),
+    // The referenced artifact — ONE plain-string id space across kinds:
+    // artifactKind says which table answers (a component dataset id, a
+    // derivedDatasets registry row id, or a component map id). Component
+    // tables don't exist in this deployment's generated data model, so no
+    // v.id() of them is possible here (the datasetBindings precedent).
+    // NEVER overloaded onto a spec's dependsOn or any component field.
+    artifactId: v.string(),
+    // Open literal union on purpose (the derivedDatasets.status /
+    // consumerReferences.consumerKind precedent): stage 9's analysis
+    // artifacts join additively, no migration.
+    artifactKind: v.union(v.literal("dataset"), v.literal("derived"), v.literal("map")),
+    projectId: v.id("projects"),
+  })
+    // The workspace read: everything in one project.
+    .index("by_project", ["projectId"])
+    // The reverse lookup ("which projects hold this artifact") and cleanup.
+    .index("by_artifact", ["artifactKind", "artifactId"]),
+
   locations: defineTable({
     address: v.string(),
     city: v.string(),

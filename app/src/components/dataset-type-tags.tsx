@@ -136,8 +136,18 @@ export function DerivedDatasetBadge() {
  * frozen tag version (lineage). Rendered above/next to dataset titles across
  * the list views (browser cards, group rows, collection rows) so each list
  * reads at a glance.
+ *
+ * `draftTitle` overrides the Draft badge's tooltip where the viewing context
+ * differs from the drafts toggle (the project workspace shows the caller
+ * their own project's contents, not a toggle-on catalog view).
  */
-export function DatasetTypeTags({ dataset }: { dataset: DatasetSummary }) {
+export function DatasetTypeTags({
+  dataset,
+  draftTitle,
+}: {
+  dataset: DatasetSummary;
+  draftTitle?: string;
+}) {
   return (
     <>
       {dataset.kind === "geospatial" ? (
@@ -155,7 +165,10 @@ export function DatasetTypeTags({ dataset }: { dataset: DatasetSummary }) {
       {dataset.lifecycle === "draft" && (
         <Badge
           variant="outline"
-          title="Draft — hidden from the catalog for consumers; you're seeing it via the drafts toggle."
+          title={
+            draftTitle ??
+            "Draft — hidden from the catalog for consumers; you're seeing it via the drafts toggle."
+          }
         >
           <CircleDashed />
           Draft
