@@ -7,6 +7,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { auth } from "./auth";
 import { resolveSourceHead } from "./consumption";
+import { projectForWrite } from "./projects";
 
 /**
  * Bundle publish and fork (roadmap 7b, #103; lifecycle doc §2/§5-§6, ADR
@@ -81,14 +82,19 @@ import { resolveSourceHead } from "./consumption";
  *   fork's freeze records the source's FRESH head in lineage — provenance
  *   matches the rows the client actually computed over.
  *
- * Stage-8 readiness: every writer keys on membership rows and plain ids, not
- * creator identity (writes stay attribution-only, the 7a stance). Reads are
- * split deliberately: the project-scoped ones (`plan`, `run`,
- * `latestForProject`) are creator-scoped like `projects.get` — the plan
- * names drafts, and drafts must never leak (the 7a acceptance) — while
- * `layerResolutions` answers to any signed-in MAP viewer, because maps
- * themselves are signed-in-readable today and it exposes only the anchor ids
- * and modes the map's own layer rows already show. Stage 8 revisits both.
+ * Stage 8 (#104): the press is creator-private — `start` writes only through
+ * `projects.projectForWrite`'s ownership check (any leg mutation rides the
+ * same check via `runningRun`: a run's project answers to its creator, and a
+ * foreign runId reads as "no longer exists"), and the closure reads take the
+ * creator as the component reads' `viewerId` (the plan names drafts — a
+ * foreign draft can never enter a plan). Reads stay split deliberately: the
+ * project-scoped ones (`plan`, `run`, `latestForProject`) are creator-scoped
+ * like `projects.get`, while `layerResolutions` still answers to any
+ * signed-in MAP viewer — maps are shared catalog artifacts (the recorded D1
+ * boundary: the component's maps table carries no creator stamp; adding one
+ * is the recorded follow-up), and the read exposes only the anchor ids and
+ * modes the map's own layer rows already show. A draft target resolves to no
+ * chain either way, so it leaks nothing.
  */
 
 // ---------------------------------------------------------------------------
@@ -442,21 +448,26 @@ async function collectLayersByMap(
  * membership rows plus four light component reads (the same summaries pair
  * `projects.get` pays — merged so drafts and published rows answer alike —
  * plus the raw membership rows, which include the drafts the consumer
- * `listSchemasByCollection` filters out, and the groups list). The registry
- * reads also capture each saved row's `dependsOn` edges, so derived members
- * can be ordered sources-before-forks.
+ * `listSchemasByCollection` filters out, and the groups list). The
+ * `viewerId` is the project's creator (every caller has already checked
+ * ownership): the summaries pair is identity-scoped, so a foreign draft or
+ * author-only row never enters a plan — the walk answers "no longer exists"
+ * for it, the same answer the isolation rules give everywhere else. The
+ * registry reads also capture each saved row's `dependsOn` edges, so derived
+ * members can be ordered sources-before-forks.
  */
 async function collectClosureInput(
   ctx: QueryCtx,
   projectId: Id<"projects">,
+  viewerId: string,
 ): Promise<BundleClosureInput> {
   const memberships = await ctx.db
     .query("projectArtifacts")
     .withIndex("by_project", (q) => q.eq("projectId", projectId))
     .take(MAX_MAPS * 5);
   const [summaries, drafts, membershipsRows, groups] = await Promise.all([
-    ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, {}),
-    ctx.runQuery(components.jsonCms.lib.listDraftSchemaSummaries, {}),
+    ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, { viewerId }),
+    ctx.runQuery(components.jsonCms.lib.listDraftSchemaSummaries, { viewerId }),
     ctx.runQuery(components.jsonCms.lib.listSchemaCollections, {}),
     ctx.runQuery(components.jsonCms.lib.listGroups, {}),
   ]);
@@ -553,7 +564,7 @@ export const plan = query({
     if (project === null) {
       return null;
     }
-    const result = bundleClosure(await collectClosureInput(ctx, project._id));
+    const result = bundleClosure(await collectClosureInput(ctx, project._id, project.createdBy));
     return { dropped: result.dropped, members: result.members };
   },
   returns: v.union(
@@ -786,10 +797,18 @@ async function tryGetSchemaOrNull(
 // Mutations: the press's four legs (the client orchestrator drives them)
 // ---------------------------------------------------------------------------
 
-/** A run is only alive while its press is running — terminal runs never reopen (a re-press is a NEW run). */
-async function runningRun(ctx: MutationCtx, runId: Id<"bundleRuns">) {
+/**
+ * A run is only alive while its press is running — terminal runs never reopen
+ * (a re-press is a NEW run). Since stage 8 (#104) this is also the press-leg
+ * ownership guard: every leg mutation (recordMember/promoteCollection/
+ * linkMapLayers/completeRun) funnels through here, and only the run
+ * project's creator passes — a foreign or gone run reads as "no longer
+ * exists", never disclosing which.
+ */
+async function runningRun(ctx: MutationCtx, actorId: string, runId: Id<"bundleRuns">) {
   const runRow = await ctx.db.get(runId);
-  if (runRow === null) {
+  const project = runRow === null ? null : await ctx.db.get(runRow.projectId);
+  if (runRow === null || project === null || project.createdBy !== actorId) {
     throw new ConvexError("This bundle run no longer exists.");
   }
   if (runRow.status !== "running") {
@@ -809,7 +828,10 @@ function projectIdFor(ctx: { db: MutationCtx["db"] }, projectId: string): Id<"pr
  * member rows from the closure walk, in WRITE order. A run already running is
  * JOINED (the syncRuns/publish.start pattern — the client-driven revival is
  * just the progress touch); a completed or failed run is never reopened, a
- * re-press starts fresh (the recorded republish semantics).
+ * re-press starts fresh (the recorded republish semantics). Creator-only
+ * since stage 8 (#104): the press writes through `projectForWrite`'s
+ * ownership check, and a non-creator gets the same "no longer exists"
+ * answer a missing project gives.
  */
 export const start = mutation({
   args: { projectId: v.string() },
@@ -820,10 +842,9 @@ export const start = mutation({
     if (projectId === null) {
       throw new ConvexError("This project no longer exists — it may have been deleted.");
     }
-    const project = await ctx.db.get(projectId);
-    if (project === null) {
-      throw new ConvexError("This project no longer exists — it may have been deleted.");
-    }
+    // Stage 8: existence AND ownership in one guard — the press belongs to
+    // the project's creator (decision D1).
+    const project = await projectForWrite(ctx, createdBy, projectId);
     const latest = await ctx.db
       .query("bundleRuns")
       .withIndex("by_project", (q) => q.eq("projectId", projectId))
@@ -833,7 +854,7 @@ export const start = mutation({
       await ctx.db.patch(latest._id, { lastProgressAt: Date.now() });
       return { joined: true, runId: latest._id };
     }
-    const { members } = bundleClosure(await collectClosureInput(ctx, projectId));
+    const { members } = bundleClosure(await collectClosureInput(ctx, projectId, createdBy));
     if (members.length === 0) {
       // The server-side gate behind the workspace's disabled control: an
       // empty press would mint an empty promoted collection and nothing else.
@@ -906,8 +927,8 @@ export const recordMember = mutation({
     status: memberStatusValidator,
   },
   handler: async (ctx, args) => {
-    await auth(ctx);
-    await runningRun(ctx, args.runId);
+    const actorId = await auth(ctx);
+    await runningRun(ctx, actorId, args.runId);
     const member = await memberForWrite(ctx, args);
     await ctx.db.patch(member._id, {
       attemptId: args.attemptId,
@@ -960,8 +981,8 @@ async function fileMemberIntoCollection(
 export const promoteCollection = mutation({
   args: { runId: v.id("bundleRuns") },
   handler: async (ctx, args) => {
-    await auth(ctx);
-    const runRow = await runningRun(ctx, args.runId);
+    const actorId = await auth(ctx);
+    const runRow = await runningRun(ctx, actorId, args.runId);
     let collectionId = runRow.collectionId;
     if (collectionId !== undefined && (await tryGetCollection(ctx, collectionId)) === null) {
       // The collection was deleted out from under the project — re-create it.
@@ -1001,8 +1022,8 @@ export const promoteCollection = mutation({
 export const linkMapLayers = mutation({
   args: { runId: v.id("bundleRuns") },
   handler: async (ctx, args) => {
-    await auth(ctx);
-    const runRow = await runningRun(ctx, args.runId);
+    const actorId = await auth(ctx);
+    const runRow = await runningRun(ctx, actorId, args.runId);
     const members = await ctx.db
       .query("bundleRunMembers")
       .withIndex("by_run", (q) => q.eq("runId", args.runId))
@@ -1063,8 +1084,8 @@ export const linkMapLayers = mutation({
 export const completeRun = mutation({
   args: { runId: v.id("bundleRuns") },
   handler: async (ctx, args) => {
-    await auth(ctx);
-    const runRow = await runningRun(ctx, args.runId);
+    const actorId = await auth(ctx);
+    const runRow = await runningRun(ctx, actorId, args.runId);
     const members = await ctx.db
       .query("bundleRunMembers")
       .withIndex("by_run", (q) => q.eq("runId", args.runId))

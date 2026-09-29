@@ -36,6 +36,9 @@ export type ExposeApiOperation = {
   collectionId?: string;
   groupId?: string;
   mapId?: string;
+  /** The import id of `getImportStatus` (stage 8, #104) — resolved host-side to its dataset for scoping. */
+  importId?: string;
+  // The BATCH id lists (`listEntriesForIds`' entryIds, `listEntriesForSchemas`' schemaIds) deliberately carry NO operation field (stage 8, #104): the host policy must not deny a whole batch read on one invisible id — those reads FILTER component-side by the viewerId instead, so an invisible reference target renders as no candidates, never as a broken form or leaked rows.
   type: "read" | "create" | "update" | "delete";
 };
 
@@ -132,11 +135,14 @@ export function exposeApi(
   // Re-validate them as real ids internally.
   return {
     // Schema operations
+    // The catalog enumerations pass the auth hook's identity through as
+    // `viewerId` (stage 8, #104): the component scopes drafts to their
+    // creator and `publishedVisibility: "author"` rows to theirs, server-side.
     listSchemas: queryGeneric({
       args: {},
       handler: async (ctx) => {
-        await options.auth(ctx, { fn: "listSchemas", type: "read" });
-        return ctx.runQuery(component.lib.listSchemas, {});
+        const viewerId = await options.auth(ctx, { fn: "listSchemas", type: "read" });
+        return ctx.runQuery(component.lib.listSchemas, { viewerId });
       },
     }),
     // List-page projection — no `schema`/`uiSchema` payloads (issue #53).
@@ -145,19 +151,21 @@ export function exposeApi(
     listSchemaSummaries: queryGeneric({
       args: {},
       handler: async (ctx) => {
-        await options.auth(ctx, { fn: "listSchemaSummaries", type: "read" });
-        return ctx.runQuery(component.lib.listSchemaSummaries, {});
+        const viewerId = await options.auth(ctx, { fn: "listSchemaSummaries", type: "read" });
+        return ctx.runQuery(component.lib.listSchemaSummaries, { viewerId });
       },
     }),
     // The opt-in drafts view (roadmap 5a, #99): the same projection, drafts
     // only. The default reads (`listSchemas`/`listSchemaSummaries`) exclude
     // drafts server-side, so this wrapper is the only client-facing path that
     // returns them — the datasets browser's drafts toggle subscribes to it.
+    // Since stage 8 (#104) the drafts come back CREATOR-SCOPED: the identity
+    // from the auth hook decides whose drafts are listed.
     listDraftSchemaSummaries: queryGeneric({
       args: {},
       handler: async (ctx) => {
-        await options.auth(ctx, { fn: "listDraftSchemaSummaries", type: "read" });
-        return ctx.runQuery(component.lib.listDraftSchemaSummaries, {});
+        const viewerId = await options.auth(ctx, { fn: "listDraftSchemaSummaries", type: "read" });
+        return ctx.runQuery(component.lib.listDraftSchemaSummaries, { viewerId });
       },
     }),
     getSchema: queryGeneric({
@@ -329,9 +337,14 @@ export function exposeApi(
     listSchemasByCollection: queryGeneric({
       args: { collectionId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "listSchemasByCollection", collectionId: args.collectionId, type: "read" });
+        const viewerId = await options.auth(ctx, {
+          collectionId: args.collectionId,
+          fn: "listSchemasByCollection",
+          type: "read",
+        });
         return ctx.runQuery(component.lib.listSchemasByCollection, {
           collectionId: args.collectionId,
+          viewerId,
         });
       },
     }),
@@ -349,10 +362,18 @@ export function exposeApi(
     listEntriesByCollection: queryGeneric({
       args: { collectionId: v.string(), limit: v.optional(v.number()) },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "listEntriesByCollection", collectionId: args.collectionId, type: "read" });
+        // Viewer-scoped like its sibling `listSchemasByCollection` (stage 8,
+        // #104): a collection can contain a member's own draft or author-only
+        // row, and this read must never serve its entries to another viewer.
+        const viewerId = await options.auth(ctx, {
+          collectionId: args.collectionId,
+          fn: "listEntriesByCollection",
+          type: "read",
+        });
         return ctx.runQuery(component.lib.listEntriesByCollection, {
           collectionId: args.collectionId,
           limit: args.limit,
+          viewerId,
         });
       },
     }),
@@ -560,9 +581,14 @@ export function exposeApi(
     listEntriesForIds: queryGeneric({
       args: { entryIds: v.array(v.string()) },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "listEntriesForIds", type: "read" });
+        // The id-list reads FILTER rather than throw (stage 8, #104): rows
+        // whose dataset is invisible to the viewer are dropped component-side
+        // (the viewerId), so a stale reference label renders as its raw-id
+        // fallback instead of denying the whole lookup.
+        const viewerId = await options.auth(ctx, { fn: "listEntriesForIds", type: "read" });
         return ctx.runQuery(component.lib.listEntriesForIds, {
           entryIds: args.entryIds,
+          viewerId,
         });
       },
     }),
@@ -581,10 +607,15 @@ export function exposeApi(
     listEntriesForSchemas: queryGeneric({
       args: { limit: v.optional(v.number()), schemaIds: v.array(v.string()) },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "listEntriesForSchemas", type: "read" });
+        // The batch read FILTERS rather than throws (stage 8, #104): an
+        // invisible reference target contributes no candidates — a foreign
+        // draft in a referenced-datasets list must never crash the form
+        // that lists it, nor leak its rows.
+        const viewerId = await options.auth(ctx, { fn: "listEntriesForSchemas", type: "read" });
         return ctx.runQuery(component.lib.listEntriesForSchemas, {
           limit: args.limit,
           schemaIds: args.schemaIds,
+          viewerId,
         });
       },
     }),
@@ -593,9 +624,18 @@ export function exposeApi(
     listReferencingEntries: queryGeneric({
       args: { entryId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "listReferencingEntries", entryId: args.entryId, type: "read" });
+        // The TARGET entry keeps the single-id deny (the host policy scopes
+        // it via entryId); the SOURCE datasets are filtered component-side by
+        // the viewerId — a foreign draft referencing a visible entry shows
+        // nothing in the referencing panel, never its row payloads (stage 8).
+        const viewerId = await options.auth(ctx, {
+          fn: "listReferencingEntries",
+          entryId: args.entryId,
+          type: "read",
+        });
         return ctx.runQuery(component.lib.listReferencingEntries, {
           entryId: args.entryId,
+          viewerId,
         });
       },
     }),
@@ -731,7 +771,7 @@ export function exposeApi(
     getImportStatus: queryGeneric({
       args: { importId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "getImportStatus", type: "read" });
+        await options.auth(ctx, { fn: "getImportStatus", importId: args.importId, type: "read" });
         return ctx.runQuery(component.lib.getImportStatus, {
           importId: args.importId,
         });

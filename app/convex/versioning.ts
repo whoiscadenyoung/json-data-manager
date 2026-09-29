@@ -144,9 +144,16 @@ export async function versionRows(
   ctx: { runQuery: QueryCtx["runQuery"] },
   schemaId: string,
 ): Promise<VersionRow[]> {
-  const entries = await ctx.runQuery(components.jsonCms.lib.listEntriesForSchemas, {
+  // The internal bounded read (stage 8, #104): host diff/retention flows must
+  // see every row of the datasets they operate on — including author-
+  // restricted publish-frozen rows — so they bypass the viewer-scoped batch
+  // read (`listEntriesForSchemas` filters by the caller's identity); these
+  // callers are internal mutations/queries, unreachable by clients, and the
+  // client-facing tag queries (tags.versionEntries/getVersionDelta) apply the
+  // stage-8 visibility rule themselves before reading.
+  const entries = await ctx.runQuery(components.jsonCms.lib.listEntriesForSchemaBounded, {
     limit: VERSION_DIFF_LIMIT,
-    schemaIds: [schemaId],
+    schemaId,
   });
   return entries.flatMap((entry) => {
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- listEntriesForSchemas returns untyped rows; the guards right below enforce the shape at runtime.
@@ -251,6 +258,8 @@ export async function alreadyFrozenByRef(
 export async function createFrozenVersion(
   ctx: MutationCtx,
   args: {
+    /** The author to stamp onto the frozen row (stage 8, #104) — required whenever `publishedVisibility` is "author", so the restricted row stays readable by its author. The tag path omits it (bound datasets carry no visibility control). */
+    actorId?: string;
     boundWrite: string;
     chunkStorageIds: string[];
     /** File the new version into this dataset's collections (the tag path's shape). */
@@ -266,15 +275,19 @@ export async function createFrozenVersion(
       sourceVersions?: Array<{ datasetId: string; frozenAt?: number; ref?: string }>;
       versionLabel: string;
     };
+    /** The published-visibility control riding the freeze (stage 8, #104 — decision D2): absent leaves the row at the "everyone" default (the tag path never passes it). */
+    publishedVisibility?: "author" | "everyone";
     schema: Record<string, unknown>;
     source?: { name: string };
     total: number;
   },
 ): Promise<{ importId: string; schemaId: string }> {
   const schemaId = await ctx.runMutation(components.jsonCms.lib.createSchema, {
+    actorId: args.actorId,
     geometryType: args.geometryType,
     kind: args.kind,
     lineage: args.lineage,
+    publishedVisibility: args.publishedVisibility,
     schema: args.schema,
     source: args.source,
   });

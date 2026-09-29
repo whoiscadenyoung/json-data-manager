@@ -23,6 +23,7 @@ import { AlertTriangle, ArrowLeft, CheckCircle, FileJson, Upload, X, XCircle } f
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { QueryErrorBoundary } from "@/components/query-error-boundary";
 import { RouterButton } from "@/components/router-button";
 import {
   Breadcrumb,
@@ -556,7 +557,29 @@ function ValidationResults({
   );
 }
 
+/** The same card a null read gets — the denial fallback too (stage 8: a foreign/author-restricted id reads exactly as a missing one). */
+function BulkUploadNotFoundCard() {
+  return (
+    <Card className="text-center py-12">
+      <CardContent className="pt-6">
+        <p className="text-muted-foreground mb-4">Dataset not found.</p>
+        <RouterButton to="/datasets">Back to Datasets</RouterButton>
+      </CardContent>
+    </Card>
+  );
+}
+
 function BulkUploadPage() {
+  // Stage 8 (#104): a denied by-id read THROWS from the raw subscription —
+  // the boundary renders the same card a deleted dataset gets.
+  return (
+    <QueryErrorBoundary fallback={<BulkUploadNotFoundCard />}>
+      <BulkUploadBody />
+    </QueryErrorBoundary>
+  );
+}
+
+function BulkUploadBody() {
   const { schemaId } = Route.useParams(),
     navigate = useNavigate(),
     schema = useQuery(api.schemas.get, { schemaId }),
@@ -777,14 +800,7 @@ function BulkUploadPage() {
   }
 
   if (!schema) {
-    return (
-      <Card className="text-center py-12">
-        <CardContent className="pt-6">
-          <p className="text-muted-foreground mb-4">Dataset not found.</p>
-          <RouterButton to="/datasets">Back to Datasets</RouterButton>
-        </CardContent>
-      </Card>
-    );
+    return <BulkUploadNotFoundCard />;
   }
 
   const { validCount, invalidCount } = countResults(validationResults);

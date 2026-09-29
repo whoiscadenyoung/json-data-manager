@@ -386,6 +386,9 @@ describe("auto-publish and exposure (AC 2, AC 3)", () => {
     // project member, not a map layer, not in a collection.
     const sourceId = await t.run(async (ctx) =>
       ctx.runMutation(components.jsonCms.lib.createSchema, {
+        // Stage 8: drafts are creator-scoped — the fixture carries the
+        // suite's identity so the owner's reads (and the press) see it.
+        actorId: "user-1",
         lifecycle: "draft",
         schema: { properties: { label: { type: "string" } }, title: "RL raw", type: "object" },
       }),

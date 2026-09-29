@@ -32,6 +32,14 @@ async function createPlainDataset(t: TestCtx, title: string) {
   return t.mutation(api.lib.createSchema, { schema: { title, type: "object" } });
 }
 
+/**
+ * The viewer identity every catalog enumeration now requires (stage 8,
+ * #104): the host's wrappers pass their auth hook's return; the tests pass
+ * this one directly (and stamp it as `createdBy` when a fixture needs to OWN
+ * a draft).
+ */
+const VIEWER = "viewer-1";
+
 /** Schema for the geospatial-conversion tests: plain tabular rows with Latitude/Longitude columns. */
 async function createCoordinateSchema(t: TestCtx) {
   return t.mutation(api.lib.createSchema, {
@@ -205,7 +213,7 @@ describe("json-cms component", () => {
         });
       expect(schemaId).toBeDefined();
 
-      const schemas = await t.query(api.lib.listSchemas, {});
+      const schemas = await t.query(api.lib.listSchemas, { viewerId: VIEWER });
       expect(schemas).toHaveLength(1);
       expect(schemas[0].title).toBe("Test Schema");
       expect(schemas[0].description).toBe("A test schema");
@@ -451,7 +459,7 @@ describe("json-cms component", () => {
           },
           uiSchema: { name: { "ui:widget": "text" } },
         }),
-        summaries = await t.query(api.lib.listSchemaSummaries, {}),
+        summaries = await t.query(api.lib.listSchemaSummaries, { viewerId: VIEWER }),
         row = summaries.find((summary) => summary._id === schemaId);
       assertDefined(row);
       expect(row.title).toBe("Summary Schema");
@@ -477,7 +485,7 @@ describe("json-cms component", () => {
         schemaId = await t.mutation(api.lib.createSchema, {
           schema: { title: "No Properties", type: "string" },
         }),
-        summaries = await t.query(api.lib.listSchemaSummaries, {}),
+        summaries = await t.query(api.lib.listSchemaSummaries, { viewerId: VIEWER }),
         row = summaries.find((summary) => summary._id === schemaId);
       assertDefined(row);
       expect(row.fieldCount).toBe(0);
@@ -489,8 +497,8 @@ describe("json-cms component", () => {
     it("absent lifecycle reads as published — pre-field rows stay catalog-visible", async () => {
       const t = initConvexTest(),
         schemaId = await createPlainDataset(t, "Pre-field Dataset"),
-        listed = await t.query(api.lib.listSchemas, {}),
-        summaries = await t.query(api.lib.listSchemaSummaries, {});
+        listed = await t.query(api.lib.listSchemas, { viewerId: VIEWER }),
+        summaries = await t.query(api.lib.listSchemaSummaries, { viewerId: VIEWER });
       expect(listed.map((schema) => schema._id)).toContain(schemaId);
       const row = summaries.find((summary) => summary._id === schemaId);
       assertDefined(row);
@@ -504,16 +512,18 @@ describe("json-cms component", () => {
         publishedId = await createPlainDataset(t, "Published Dataset"),
         draftId = await createPlainDataset(t, "Draft Dataset");
       // Set the flag the way only host-side flows can: direct db access — no
-      // exposeApi wrapper carries the field (validators are exact).
+      // exposeApi wrapper carries the field (validators are exact). The
+      // creator rides along (stage 8: drafts are creator-scoped).
       await t.run(async (ctx) => {
-        await ctx.db.patch(draftId, { lifecycle: "draft" });
+        await ctx.db.patch(draftId, { createdBy: VIEWER, lifecycle: "draft" });
       });
-      const listed = await t.query(api.lib.listSchemas, {});
+      const listed = await t.query(api.lib.listSchemas, { viewerId: VIEWER });
       expect(listed.map((schema) => schema._id)).toContain(publishedId);
       expect(listed.map((schema) => schema._id)).not.toContain(draftId);
-      const summaries = await t.query(api.lib.listSchemaSummaries, {});
+      const summaries = await t.query(api.lib.listSchemaSummaries, { viewerId: VIEWER });
       expect(summaries.map((summary) => summary._id)).not.toContain(draftId);
-      // Per-id reads stay unfiltered — the toggle's draft cards must open.
+      // By-id reads are the HOST's scope (stage 8's auth policy) — the
+      // component's per-id surface stays unfiltered.
       const full = await t.query(api.lib.getSchema, { schemaId: draftId });
       assertDefined(full);
       expect(full.lifecycle).toBe("draft");
@@ -527,9 +537,12 @@ describe("json-cms component", () => {
       await t.mutation(api.lib.addSchemaToCollection, { collectionId, schemaId: publishedId });
       await t.mutation(api.lib.addSchemaToCollection, { collectionId, schemaId: draftId });
       await t.run(async (ctx) => {
-        await ctx.db.patch(draftId, { lifecycle: "draft" });
+        await ctx.db.patch(draftId, { createdBy: VIEWER, lifecycle: "draft" });
       });
-      const listed = await t.query(api.lib.listSchemasByCollection, { collectionId });
+      const listed = await t.query(api.lib.listSchemasByCollection, {
+        collectionId,
+        viewerId: VIEWER,
+      });
       expect(listed.map((schema) => schema._id)).toContain(publishedId);
       expect(listed.map((schema) => schema._id)).not.toContain(draftId);
     });
@@ -538,9 +551,9 @@ describe("json-cms component", () => {
       const t = initConvexTest(),
         draftId = await createPlainDataset(t, "Draft Only");
       await t.run(async (ctx) => {
-        await ctx.db.patch(draftId, { lifecycle: "draft" });
+        await ctx.db.patch(draftId, { createdBy: VIEWER, lifecycle: "draft" });
       });
-      const drafts = await t.query(api.lib.listDraftSchemaSummaries, {});
+      const drafts = await t.query(api.lib.listDraftSchemaSummaries, { viewerId: VIEWER });
       expect(drafts.map((summary) => summary._id)).toEqual([draftId]);
       const row = drafts[0];
       assertDefined(row);
@@ -556,11 +569,11 @@ describe("json-cms component", () => {
         draftId = await createPlainDataset(t, "Draft Projection"),
         publishedId = await createPlainDataset(t, "Published Projection");
       await t.run(async (ctx) => {
-        await ctx.db.patch(draftId, { lifecycle: "draft" });
+        await ctx.db.patch(draftId, { createdBy: VIEWER, lifecycle: "draft" });
         await ctx.db.patch(publishedId, { lifecycle: "published" });
       });
-      const drafts = await t.query(api.lib.listDraftSchemaSummaries, {}),
-        summaries = await t.query(api.lib.listSchemaSummaries, {});
+      const drafts = await t.query(api.lib.listDraftSchemaSummaries, { viewerId: VIEWER }),
+        summaries = await t.query(api.lib.listSchemaSummaries, { viewerId: VIEWER });
       const draftRow = drafts.find((summary) => summary._id === draftId);
       assertDefined(draftRow);
       expect(draftRow.lifecycle).toBe("draft");
@@ -579,9 +592,148 @@ describe("json-cms component", () => {
           lifecycle: "draft",
           schema: { title: "Created Draft", type: "object" },
         });
-      const summaries = await t.query(api.lib.listSchemaSummaries, {});
+      const summaries = await t.query(api.lib.listSchemaSummaries, { viewerId: VIEWER });
       expect(summaries.map((summary) => summary._id)).toContain(plainId);
       expect(summaries.map((summary) => summary._id)).not.toContain(flaggedId);
+    });
+  });
+
+  describe("catalog identity scoping (stage 8, #104)", () => {
+    it("listDraftSchemaSummaries answers only the viewer's own drafts", async () => {
+      const t = initConvexTest(),
+        mineId = await createPlainDataset(t, "My Draft"),
+        theirsId = await createPlainDataset(t, "Their Draft");
+      await t.run(async (ctx) => {
+        await ctx.db.patch(mineId, { createdBy: VIEWER, lifecycle: "draft" });
+        await ctx.db.patch(theirsId, { createdBy: "viewer-2", lifecycle: "draft" });
+      });
+      const mine = await t.query(api.lib.listDraftSchemaSummaries, { viewerId: VIEWER });
+      expect(mine.map((summary) => summary._id)).toEqual([mineId]);
+      const theirs = await t.query(api.lib.listDraftSchemaSummaries, { viewerId: "viewer-2" });
+      expect(theirs.map((summary) => summary._id)).toEqual([theirsId]);
+    });
+
+    it("a publishedVisibility author row is catalog-invisible to other viewers, visible to its author", async () => {
+      const t = initConvexTest(),
+        authorOnlyId = await t.mutation(api.lib.createSchema, {
+          actorId: VIEWER,
+          publishedVisibility: "author",
+          schema: { title: "Author-only Dataset", type: "object" },
+        }),
+        collectionId = await t.mutation(api.lib.createCollection, { name: "Shared Collection" });
+      await t.mutation(api.lib.addSchemaToCollection, {
+        collectionId,
+        schemaId: authorOnlyId,
+      });
+
+      // The author sees it everywhere the catalog reads…
+      const ownListed = await t.query(api.lib.listSchemas, { viewerId: VIEWER });
+      expect(ownListed.map((schema) => schema._id)).toContain(authorOnlyId);
+      const ownSummaries = await t.query(api.lib.listSchemaSummaries, { viewerId: VIEWER });
+      expect(ownSummaries.map((summary) => summary._id)).toContain(authorOnlyId);
+      const ownInCollection = await t.query(api.lib.listSchemasByCollection, {
+        collectionId,
+        viewerId: VIEWER,
+      });
+      expect(ownInCollection.map((schema) => schema._id)).toContain(authorOnlyId);
+      // …and the drafts view NEVER carries it (it is published-side).
+      expect(
+        (await t.query(api.lib.listDraftSchemaSummaries, { viewerId: VIEWER })).map(
+          (summary) => summary._id,
+        ),
+      ).not.toContain(authorOnlyId);
+
+      // Another signed-in viewer gets the same answer as for a missing row:
+      // absent from every enumeration — invisible, not merely UI-hidden.
+      const foreignListed = await t.query(api.lib.listSchemas, { viewerId: "viewer-2" });
+      expect(foreignListed.map((schema) => schema._id)).not.toContain(authorOnlyId);
+      const foreignSummaries = await t.query(api.lib.listSchemaSummaries, { viewerId: "viewer-2" });
+      expect(foreignSummaries.map((summary) => summary._id)).not.toContain(authorOnlyId);
+      const foreignInCollection = await t.query(api.lib.listSchemasByCollection, {
+        collectionId,
+        viewerId: "viewer-2",
+      });
+      expect(foreignInCollection.map((schema) => schema._id)).not.toContain(authorOnlyId);
+    });
+
+    it("batch entry reads filter invisible sources instead of denying or leaking (stage 8)", async () => {
+      const t = initConvexTest(),
+        visibleId = await createPlainDataset(t, "Visible Dataset"),
+        authorOnlyId = await t.mutation(api.lib.createSchema, {
+          actorId: "viewer-2",
+          publishedVisibility: "author",
+          schema: { title: "Hidden Dataset", type: "object" },
+        }),
+        foreignDraftId = await t.mutation(api.lib.createSchema, {
+          actorId: "viewer-2",
+          lifecycle: "draft",
+          schema: { title: "Their Draft", type: "object" },
+        });
+      await t.mutation(api.lib.createEntriesBulk, {
+        entries: [{ data: { name: "v" } }],
+        schemaId: visibleId,
+      });
+      await t.mutation(api.lib.createEntriesBulk, {
+        entries: [{ data: { name: "h" } }],
+        schemaId: authorOnlyId,
+      });
+      await t.mutation(api.lib.createEntriesBulk, {
+        entries: [{ data: { name: "d" } }],
+        schemaId: foreignDraftId,
+      });
+
+      // The batch read answers rows from the VISIBLE subset only — no
+      // denial, no leak: an invisible reference target renders as no
+      // candidates, never as a broken form.
+      const batch = await t.query(api.lib.listEntriesForSchemas, {
+        schemaIds: [visibleId, authorOnlyId, foreignDraftId],
+        viewerId: VIEWER,
+      });
+      expect(batch).toHaveLength(1);
+      expect(batch[0].data).toEqual({ name: "v" });
+
+      // The label lookup filters too: mixed visible/invisible ids answer
+      // only the visible rows (the raw-id fallback covers the rest).
+      const visibleEntries = await t.query(api.lib.listEntries, { schemaId: visibleId });
+      const hiddenEntries = await t.query(api.lib.listEntries, { schemaId: authorOnlyId });
+      const hiddenEntry = hiddenEntries[0];
+      const visibleEntry = visibleEntries[0];
+      assertDefined(visibleEntry);
+      const labels = await t.query(api.lib.listEntriesForIds, {
+        entryIds: hiddenEntry === undefined ? [visibleEntry._id] : [visibleEntry._id, hiddenEntry._id],
+        viewerId: VIEWER,
+      });
+      expect(labels).toHaveLength(1);
+      expect(labels[0]._id).toBe(visibleEntry._id);
+    });
+
+    it("absent publishedVisibility reads as everyone; setSchemaVisibility flips the control", async () => {
+      const t = initConvexTest(),
+        plainId = await createPlainDataset(t, "Public By Default");
+      // Absent: every viewer sees it.
+      expect(
+        (await t.query(api.lib.listSchemaSummaries, { viewerId: "viewer-2" })).map(
+          (summary) => summary._id,
+        ),
+      ).toContain(plainId);
+      await t.mutation(api.lib.setSchemaVisibility, {
+        publishedVisibility: "author",
+        schemaId: plainId,
+      });
+      expect(
+        (await t.query(api.lib.listSchemaSummaries, { viewerId: "viewer-2" })).map(
+          (summary) => summary._id,
+        ),
+      ).not.toContain(plainId);
+      await t.mutation(api.lib.setSchemaVisibility, {
+        publishedVisibility: "everyone",
+        schemaId: plainId,
+      });
+      expect(
+        (await t.query(api.lib.listSchemaSummaries, { viewerId: "viewer-2" })).map(
+          (summary) => summary._id,
+        ),
+      ).toContain(plainId);
     });
   });
 
@@ -777,6 +929,7 @@ describe("json-cms component", () => {
 
       const firstDatasets = await t.query(api.lib.listSchemasByCollection, {
         collectionId: firstId,
+        viewerId: VIEWER,
       });
       expect(firstDatasets.map((dataset) => dataset._id)).toEqual([schemaId]);
     });
@@ -860,7 +1013,9 @@ describe("json-cms component", () => {
       await t.mutation(api.lib.deleteSchema, { schemaId });
 
       expect(await t.query(api.lib.listSchemaCollections, {})).toEqual([]);
-      expect(await t.query(api.lib.listSchemasByCollection, { collectionId })).toEqual([]);
+      expect(
+        await t.query(api.lib.listSchemasByCollection, { collectionId, viewerId: VIEWER }),
+      ).toEqual([]);
     });
   });
 
@@ -1585,6 +1740,7 @@ describe("json-cms component", () => {
 
       const rows = await t.query(api.lib.listEntriesForIds, {
         entryIds: [kept, deleted, kept],
+        viewerId: VIEWER,
       });
       expect(rows).toHaveLength(1);
       expect(rows[0]._id).toBe(kept);
@@ -1597,6 +1753,7 @@ describe("json-cms component", () => {
       await expect(
         t.query(api.lib.listEntriesForIds, {
           entryIds: Array.from({ length: 201 }, () => entryId),
+          viewerId: VIEWER,
         }),
       ).rejects.toThrow("exceeds 200 items");
     });
@@ -1614,10 +1771,14 @@ describe("json-cms component", () => {
       const capped = await t.query(api.lib.listEntriesByCollection, {
         collectionId,
         limit: 2,
+        viewerId: VIEWER,
       });
       expect(capped).toHaveLength(2);
 
-      const all = await t.query(api.lib.listEntriesByCollection, { collectionId });
+      const all = await t.query(api.lib.listEntriesByCollection, {
+        collectionId,
+        viewerId: VIEWER,
+      });
       expect(all).toHaveLength(3);
     });
   });

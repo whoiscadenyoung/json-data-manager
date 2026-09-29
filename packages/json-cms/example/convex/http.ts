@@ -5,10 +5,14 @@ import { components } from "./_generated/api";
 const http = httpRouter();
 
 // Register HTTP routes for the JSON CMS component
-// Example: GET /schemas - list all schemas
+// Example: GET /schemas - list all schemas. The catalog enumerations require
+// the viewer identity (stage 8, #104): drafts and `publishedVisibility:
+// "author"` rows are scoped to their creator even on raw HTTP paths.
 http.route({
   handler: httpActionGeneric(async (ctx, _request) => {
-    const schemas = await ctx.runQuery(components.jsonCms.lib.listSchemas, {});
+    const schemas = await ctx.runQuery(components.jsonCms.lib.listSchemas, {
+      viewerId: "example-http-viewer",
+    });
     return new Response(JSON.stringify(schemas), {
       headers: { "Content-Type": "application/json" },
       status: 200,

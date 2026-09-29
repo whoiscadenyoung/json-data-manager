@@ -10,7 +10,10 @@ async function getAuthUserId(ctx: { auth: Auth }) {
   return identity ? identity.subject : "anonymous";
 }
 
-// Example: Using the component directly with manual auth
+// Example: Using the component directly with manual auth. The catalog
+// enumerations REQUIRE the viewer identity (stage 8, #104): drafts and
+// `publishedVisibility: "author"` rows are scoped to their creator — a host
+// that calls the component directly must say who is looking.
 export const createSchema = mutation({
   args: { schema: v.any() },
   handler: async (ctx, args) =>
@@ -21,7 +24,8 @@ export const createSchema = mutation({
 
 export const listSchemas = query({
   args: {},
-  handler: async (ctx) => ctx.runQuery(components.jsonCms.lib.listSchemas, {}),
+  handler: async (ctx) =>
+    ctx.runQuery(components.jsonCms.lib.listSchemas, { viewerId: "example-viewer" }),
 });
 
 export const getSchema = query({

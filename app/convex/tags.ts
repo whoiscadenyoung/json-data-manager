@@ -5,7 +5,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { ActionCtx } from "./_generated/server";
 import { action, internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { auth } from "./auth";
-import { pinRefIntoPolicyStore } from "./consumption";
+import { assertChainAnchorWritable, pinRefIntoPolicyStore, sourceVisibleToViewer } from "./consumption";
 import { chunkByJsonBytes, getSource, SOURCE_KEY } from "./sources";
 import {
   DEFAULT_KEEP_VERSIONS,
@@ -220,11 +220,19 @@ export const listSnapshots = query({
 export const retireVersion = mutation({
   args: { schemaId: v.string() },
   handler: async (ctx, args) => {
-    await auth(ctx);
+    const actorId = await auth(ctx);
     const schema = await ctx.runQuery(components.jsonCms.lib.getSchema, {
       schemaId: args.schemaId,
     });
     if (schema === null) {
+      throw new ConvexError("Version dataset not found.");
+    }
+    // Stage 8 (#104): retirement is permanent — a version row with a DEFINED
+    // creator answers only to them (publish-frozen rows carry the author
+    // since stage 8); legacy ingest-frozen rows carry no stamp and keep the
+    // recorded lenient rule (the same defined-creator-mismatch check
+    // consumption.assertChainAnchorWritable applies).
+    if (schema.createdBy !== undefined && schema.createdBy !== actorId) {
       throw new ConvexError("Version dataset not found.");
     }
     if (schema.lineage === undefined) {
@@ -608,7 +616,7 @@ export const enforceBindingRetention = internalMutation({
 export const setVersionPinned = mutation({
   args: { pinned: v.boolean(), schemaId: v.string() },
   handler: async (ctx, args) => {
-    await auth(ctx);
+    const actorId = await auth(ctx);
     const schema = await ctx.runQuery(components.jsonCms.lib.getSchema, {
       schemaId: args.schemaId,
     });
@@ -626,6 +634,10 @@ export const setVersionPinned = mutation({
     // the binding row when the chain anchor carries one, else the chain's
     // own — so pins land in the same store retention reads.
     const anchor = schema.lineage.sourceSchemaId ?? schema.lineage.sourceKey ?? args.schemaId;
+    // Stage 8 (#104): the pin writes the ANCHOR's policy store — only its
+    // owner may (the consumption.setChainVersionPinned rule, shared helper;
+    // createdBy-less legacy/binding rows stay signed-in-writable).
+    await assertChainAnchorWritable(ctx, actorId, anchor);
     await pinRefIntoPolicyStore(ctx, { anchorId: anchor, pinned: args.pinned, ref });
   },
   returns: v.null(),
@@ -635,10 +647,16 @@ export const setVersionPinned = mutation({
 export const setKeepVersions = mutation({
   args: { keep: v.number(), sourceSchemaId: v.string() },
   handler: async (ctx, args) => {
-    await auth(ctx);
+    const actorId = await auth(ctx);
     if (args.keep < 1) {
       throw new ConvexError("Keep at least one version.");
     }
+    // Stage 8 (#104): the binding store is the tag path's policy store — the
+    // anchor's owner writes it (the consumption.setChainKeep rule, shared
+    // helper; createdBy-less legacy/binding rows stay signed-in-writable).
+    // The check runs before the binding lookup so a foreign anchor reads
+    // exactly as a gone binding.
+    await assertChainAnchorWritable(ctx, actorId, args.sourceSchemaId);
     const binding = await ctx.db
       .query("datasetBindings")
       .withIndex("by_schema", (q) => q.eq("schemaId", args.sourceSchemaId))
@@ -658,7 +676,13 @@ export const setKeepVersions = mutation({
 export const retentionSettings = query({
   args: { sourceSchemaId: v.string() },
   handler: async (ctx, args) => {
-    await auth(ctx);
+    const viewerId = await auth(ctx);
+    // Stage 8 (#104): an invisible anchor (a foreign draft, an author-
+    // restricted row) answers the defaults — indistinguishable from a chain
+    // with no stored policy, mirroring consumption.retentionPolicy.
+    if (!(await sourceVisibleToViewer(ctx, args.sourceSchemaId, viewerId))) {
+      return { keepVersions: DEFAULT_KEEP_VERSIONS, pinnedRefs: [] };
+    }
     const binding = await ctx.db
       .query("datasetBindings")
       .withIndex("by_schema", (q) => q.eq("schemaId", args.sourceSchemaId))
@@ -673,7 +697,14 @@ export const retentionSettings = query({
 export const versionEntries = query({
   args: { schemaId: v.string() },
   handler: async (ctx, args) => {
-    await auth(ctx);
+    const viewerId = await auth(ctx);
+    // Stage 8 (#104): the tag path reads rows through the internal
+    // (unscoped) bounded read, so the visibility rule is applied HERE — an
+    // invisible dataset (a foreign draft, an author-restricted row) answers
+    // no rows, exactly as an empty version would.
+    if (!(await sourceVisibleToViewer(ctx, args.schemaId, viewerId))) {
+      return [];
+    }
     return versionRows(ctx, args.schemaId);
   },
   returns: v.array(v.object({ data: v.record(v.string(), v.any()), key: v.string() })),
@@ -688,7 +719,15 @@ export const versionEntries = query({
 export const getVersionDelta = query({
   args: { aSchemaId: v.string(), bSchemaId: v.string() },
   handler: async (ctx, args) => {
-    await auth(ctx);
+    const viewerId = await auth(ctx);
+    // Stage 8 (#104): either side invisible → no delta (row content is
+    // content, the same rule versionEntries applies).
+    if (
+      !(await sourceVisibleToViewer(ctx, args.aSchemaId, viewerId)) ||
+      !(await sourceVisibleToViewer(ctx, args.bSchemaId, viewerId))
+    ) {
+      return { added: 0, ops: [], removed: 0, updated: 0 };
+    }
     const [before, after] = await Promise.all([
       versionRows(ctx, args.aSchemaId),
       versionRows(ctx, args.bSchemaId),

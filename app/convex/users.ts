@@ -62,12 +62,18 @@ export const profileByAuthId = query({
 export const profile = query({
   args: { authId: v.string() },
   handler: async (ctx, args) => {
-    await auth(ctx);
+    const viewerId = await auth(ctx);
     const user = await ctx.db
       .query("users")
       .withIndex("by_authId", (q) => q.eq("authId", args.authId))
       .first();
-    const summaries = await ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, {});
+    // The viewer's identity scopes the component read (stage 8, #104): a
+    // profiled user's author-restricted published datasets appear only to
+    // that user; drafts never appear in any viewer's profile either way (the
+    // summaries projection excludes them).
+    const summaries = await ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, {
+      viewerId,
+    });
     return {
       datasets: summaries.filter((summary) => summary.createdBy === args.authId),
       user,

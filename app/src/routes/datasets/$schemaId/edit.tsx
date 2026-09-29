@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { z } from "zod";
 
 import { api } from "#convex/_generated/api";
+import { QueryErrorBoundary } from "@/components/query-error-boundary";
 import { RouterButton } from "@/components/router-button";
 import {
   Breadcrumb,
@@ -40,7 +41,30 @@ function firstFieldError(errors: readonly unknown[]): string {
   return JSON.stringify(first);
 }
 
+/** The same card a null read gets — the denial fallback too (stage 8: a foreign/author-restricted id reads exactly as a missing one). */
+function EditSchemaNotFoundCard() {
+  return (
+    <Card className="text-center py-12">
+      <CardContent className="pt-6">
+        <p className="text-muted-foreground mb-4">Dataset not found.</p>
+        <RouterButton to="/datasets">Back to Datasets</RouterButton>
+      </CardContent>
+    </Card>
+  );
+}
+
 function EditSchemaPage() {
+  // Stage 8 (#104): a denied by-id read (a foreign draft, an author-only
+  // dataset) THROWS from the raw subscription — the boundary renders the
+  // same card a deleted dataset gets, never the router's error screen.
+  return (
+    <QueryErrorBoundary fallback={<EditSchemaNotFoundCard />}>
+      <EditSchemaBody />
+    </QueryErrorBoundary>
+  );
+}
+
+function EditSchemaBody() {
   const { schemaId } = Route.useParams(),
     navigate = useNavigate(),
     schema = useQuery(api.schemas.get, { schemaId }),
@@ -55,14 +79,7 @@ function EditSchemaPage() {
   }
 
   if (!schema) {
-    return (
-      <Card className="text-center py-12">
-        <CardContent className="pt-6">
-          <p className="text-muted-foreground mb-4">Dataset not found.</p>
-          <RouterButton to="/datasets">Back to Datasets</RouterButton>
-        </CardContent>
-      </Card>
-    );
+    return <EditSchemaNotFoundCard />;
   }
 
   // The denormalized `entryCount` (issue #54) — this page used to fetch the

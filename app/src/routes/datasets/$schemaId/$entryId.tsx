@@ -6,6 +6,7 @@ import type { FunctionReturnType } from "convex/server";
 import { ArrowLeft, Calendar, ChevronDown, Code2, FileJson, MapPinned } from "lucide-react";
 import { useState } from "react";
 
+import { QueryErrorBoundary } from "@/components/query-error-boundary";
 import { RouterButton } from "@/components/router-button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -271,8 +272,35 @@ function GeometryCard({ row, geometry }: { row: GeometryRowDoc; geometry: Geomet
   );
 }
 
-// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
+/** The same card a null read gets — the denial fallback too (stage 8: a foreign draft/author-only id reads exactly as a missing one). */
+function EntryDetailNotFoundCard() {
+  return (
+    <Card className="text-center py-12">
+      <CardContent className="pt-6">
+        <CardTitle className="mb-2">Entry Not Found</CardTitle>
+        <CardDescription className="mb-4">
+          The entry you're looking for doesn't exist or has been deleted.
+        </CardDescription>
+        <RouterButton to="/datasets">Back to Datasets</RouterButton>
+      </CardContent>
+    </Card>
+  );
+}
+
 function EntryDetailPage() {
+  // Stage 8 (#104): a denied by-id read (a foreign entry, a draft dataset's
+  // row) THROWS from the raw subscription — the boundary renders the same
+  // card a deleted entry gets, never the router's error screen.
+  return (
+    <QueryErrorBoundary fallback={<EntryDetailNotFoundCard />}>
+      {/* oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup. */}
+      <EntryDetailBody />
+    </QueryErrorBoundary>
+  );
+}
+
+// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
+function EntryDetailBody() {
   const { schemaId, entryId } = Route.useParams(),
     // This entry's row and geometry row resolve through the seam's on-demand
     // point reads — the same path a map popup takes (#52); the schema,
@@ -308,17 +336,7 @@ function EntryDetailPage() {
   }
 
   if (!entry || !schema) {
-    return (
-      <Card className="text-center py-12">
-        <CardContent className="pt-6">
-          <CardTitle className="mb-2">Entry Not Found</CardTitle>
-          <CardDescription className="mb-4">
-            The entry you're looking for doesn't exist or has been deleted.
-          </CardDescription>
-          <RouterButton to="/datasets">Back to Datasets</RouterButton>
-        </CardContent>
-      </Card>
-    );
+    return <EntryDetailNotFoundCard />;
   }
 
   // The full stored size of this entry as one GeoJSON-shaped object — the

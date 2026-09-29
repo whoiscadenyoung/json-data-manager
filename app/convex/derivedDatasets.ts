@@ -1,3 +1,4 @@
+import type { FunctionReturnType } from "convex/server";
 import { ConvexError, v } from "convex/values";
 
 import { components } from "./_generated/api";
@@ -141,17 +142,65 @@ async function registryRowFor(ctx: QueryCtx, id: string): Promise<RegistryRowLik
  * "draft") and its explicit Save (status "saved") both land here. Returns
  * the row id, which the client keeps for subsequent autosaves.
  *
- * Deliberately gated on authentication only, like every other write in the
- * app: schemas carry `createdBy` for attribution but nothing enforces
- * ownership, and per-user isolation is stage 8 (roadmap). Drafts carry the
- * same semantics — any signed-in editor may continue one, and the list
- * labels whose it is.
+ * Ownership (stage 8, #104 — decision D1): UPDATES are creator-only — a
+ * builder autosave never lands on another user's row (the pre-stage-8
+ * "any signed-in editor may continue one" stance is retired). Inserts stay
+ * attribution-only (a new row is born the caller's). Draft rows are
+ * creator-private on every read (`get` answers null, `listBySource` hides
+ * them); SAVED rows are catalog-visible like published datasets — the
+ * draft/saved split is this registry's draft/published line.
  *
  * Cycle rejection lives here (§3 lines 87-90): an update whose dependencies
  * reach back to itself through other registry rows is rejected before any
  * write. Only an update can close a cycle — a brand-new id cannot already
  * be referenced — so inserts skip the walk.
  */
+/**
+ * Stage 8 (#104): every dataset a spec reads — its source and each
+ * operation's lookup dataset, exactly `specDependencies`' walk — must be
+ * VISIBLE to the author before a row (draft or saved) may reference it. A
+ * spec authored over an invisible id would mint catalog-visible registry
+ * rows (and, once saved, consumerReferences edges) naming data the author
+ * cannot read — the same authoring-boundary rule `assertArtifactExists` and
+ * `forkAsSpec` apply on the project side. The registry leg follows this
+ * module's draft/saved line (another user's autosave reads as missing, the
+ * `get` precedent); the component leg follows the catalog visibility rule
+ * (decision D2). Ids that resolve to NEITHER table stay the health system's
+ * domain — orphaned, never blocked — exactly as before this stage.
+ */
+async function assertSpecDependenciesVisible(
+  ctx: MutationCtx,
+  actorId: string,
+  datasetIds: string[],
+): Promise<void> {
+  await Promise.all(
+    [...new Set(datasetIds)].map(async (datasetId) => {
+      const registryId = ctx.db.normalizeId("derivedDatasets", datasetId);
+      const registryRow = registryId === null ? null : await ctx.db.get(registryId);
+      if (registryRow !== null) {
+        if (registryRow.status !== "saved" && registryRow.createdBy !== actorId) {
+          throw new ConvexError("That transform doesn't exist or you don't have access to it.");
+        }
+        return;
+      }
+      let doc: FunctionReturnType<typeof components.jsonCms.lib.getSchema> = null;
+      try {
+        doc = await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: datasetId });
+      } catch {
+        // Not a well-formed component id — the unknown-id tolerance above.
+        return;
+      }
+      if (
+        doc !== null &&
+        (doc.lifecycle === "draft" || doc.publishedVisibility === "author") &&
+        doc.createdBy !== actorId
+      ) {
+        throw new ConvexError("That dataset doesn't exist or you don't have access to it.");
+      }
+    }),
+  );
+}
+
 export const save = mutation({
   args: {
     description: v.optional(v.string()),
@@ -178,11 +227,23 @@ export const save = mutation({
       throw new ConvexError(validated.reason);
     }
     const dependencies = specDependencies(validated.spec);
+    await assertSpecDependenciesVisible(ctx, authId, dependencies);
 
     if (args.id !== undefined) {
       const id = ctx.db.normalizeId("derivedDatasets", args.id);
       if (id === null) {
         throw new ConvexError("This transform no longer exists — it may have been deleted.");
+      }
+      // Stage 8: only the row's creator may continue it — a foreign id reads
+      // exactly as a missing one.
+      const existing = await ctx.db.get(id);
+      if (existing === null) {
+        throw new ConvexError("This transform no longer exists — it may have been deleted.");
+      }
+      if (existing.createdBy !== authId) {
+        throw new ConvexError(
+          "That transform doesn't exist or you don't have access to it.",
+        );
       }
       const cycle = await findCycleToOrigin(id, dependencies, async (dep) =>
         registryRowFor(ctx, dep),
@@ -246,18 +307,25 @@ async function syncConsumerReferences(
 /**
  * Every registry row targeting one source dataset, newest first — the
  * Transform tab's list (specs authored over THIS dataset). Bounded; health
- * is computed per row at read time.
+ * is computed per row at read time. Draft rows are the caller's own since
+ * stage 8 (#104) — another user's autosaves are invisible; SAVED rows stay
+ * catalog-visible for every signed-in viewer (they are this registry's
+ * published side).
  */
 export const listBySource = query({
   args: { sourceDatasetId: v.string() },
   handler: async (ctx, args) => {
-    await auth(ctx);
+    const viewer = await auth(ctx);
     const rows = await ctx.db
       .query("derivedDatasets")
       .withIndex("by_source", (q) => q.eq("sourceDatasetId", args.sourceDatasetId))
       .order("desc")
       .take(200);
-    return Promise.all(rows.map(async (row) => toSummary(row, await healthOf(ctx, row.spec))));
+    return Promise.all(
+      rows
+        .filter((row) => row.status === "saved" || row.createdBy === viewer)
+        .map(async (row) => toSummary(row, await healthOf(ctx, row.spec))),
+    );
   },
   returns: v.array(summaryValidator),
 });
@@ -288,17 +356,21 @@ export const summaries = query({
  * One full registry row by id, health included; null when the id is not a
  * registry row (unknown, deleted, or a component dataset id — the same
  * string-typed id space). The builder loads the row it opens for editing.
+ * Creator-scoped for DRAFTS since stage 8 (#104) — another user's autosave
+ * reads exactly as a missing row; saved rows stay catalog-visible (the
+ * draft/saved split is the registry's draft/published line, so a saved
+ * spec's shape is readable like any published dataset's page).
  */
 export const get = query({
   args: { id: v.string() },
   handler: async (ctx, args) => {
-    await auth(ctx);
+    const viewer = await auth(ctx);
     const id = ctx.db.normalizeId("derivedDatasets", args.id);
     if (id === null) {
       return null;
     }
     const row = await ctx.db.get(id);
-    if (row === null) {
+    if (row === null || (row.status !== "saved" && row.createdBy !== viewer)) {
       return null;
     }
     const health = await healthOf(ctx, row.spec);
@@ -307,17 +379,28 @@ export const get = query({
   returns: v.union(v.null(), docValidator),
 });
 
-/** Deletes one registry row — a discarded draft or an obsolete spec. Dependents (if any) re-read as orphaned on their next read. */
+/**
+ * Deletes one registry row — a discarded draft or an obsolete spec. Dependents
+ * (if any) re-read as orphaned on their next read. Creator-only since stage 8
+ * (#104): a foreign row reads exactly as a missing one.
+ */
 export const remove = mutation({
   args: { id: v.string() },
   handler: async (ctx, args) => {
-    await auth(ctx);
+    const actorId = await auth(ctx);
     const id = ctx.db.normalizeId("derivedDatasets", args.id);
     // normalizeId still accepts the id of a deleted row (the format is
     // valid), so existence is checked before the delete — otherwise Convex
     // answers with a raw "Delete on non-existent doc".
-    if (id === null || (await ctx.db.get(id)) === null) {
+    if (id === null) {
       throw new ConvexError("This transform no longer exists — it may have been deleted.");
+    }
+    const row = await ctx.db.get(id);
+    if (row === null) {
+      throw new ConvexError("This transform no longer exists — it may have been deleted.");
+    }
+    if (row.createdBy !== actorId) {
+      throw new ConvexError("That transform doesn't exist or you don't have access to it.");
     }
     // Stage 6 (#101): the transform's reference edges go with it — a deleted
     // row must not haunt its sources' consumed-by lists as a ghost consumer.

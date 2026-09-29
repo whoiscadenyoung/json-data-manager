@@ -57,13 +57,16 @@ async function storeChunk(t: TestConvex, rows: Array<{ data: unknown; geometry?:
   return t.action(components.jsonCms.host_support.storeTestBlob, { bytes: bytes.buffer });
 }
 
-/** Creates a lifecycle-draft component dataset directly (the host-only path). */
+/** Creates a lifecycle-draft component dataset directly (the host-only path). The
+ * suite's identity is stamped as creator — since stage 8 (#104) a draft is
+ * invisible to every other identity, so the fixture must carry one. */
 async function createDraftDataset(
   t: TestConvex,
   options: { entries?: Array<{ data: Record<string, unknown> }>; title?: string },
 ): Promise<string> {
   return t.run(async (ctx) =>
     ctx.runMutation(components.jsonCms.lib.createSchema, {
+      actorId: "user-1",
       lifecycle: "draft",
       schema: {
         properties: { label: { type: "string" } },
