@@ -180,10 +180,9 @@ export default defineSchema({
     // — the same boundary rule `importId`/`publishedSchemaId` below follow,
     // and `versioning.freezeVersion`'s own `chunkStorageIds` argument.
     chunkStorageIds: v.array(v.string()),
-    // Attribution (ADR 0007), like every host-written row. Deliberately NOT
-    // enforced: per-creator isolation is stage 8 (roadmap) — until then the
-    // attempt is joinable by any signed-in editor, exactly like a saved
-    // derivedDatasets draft (the registry's recorded stance).
+    // Attribution (ADR 0007), like every host-written row — and, since stage
+    // 8 (#104), the OWNERSHIP key: every attempt read and client-driven step
+    // (plan/chunks/freeze) answers only to its creator.
     createdBy: v.string(),
     // The dataset being published: a component dataset id (a lifecycle
     // "draft" import) or a derivedDatasets registry row id — plain strings,
@@ -346,17 +345,18 @@ export default defineSchema({
   // existing 5b state machine), never a project state flip (lifecycle §3's
   // state model runs over datasets, not containers).
   //
-  // `createdBy` is attribution (ADR 0007) with the recorded publishAttempts
-  // stance: NOT an ownership check on writes — any signed-in editor may
-  // modify a project, exactly like a saved derived draft (per-creator
-  // isolation is stage 8). READS are creator-scoped — `projects.list` returns
-  // the caller's own rows and `projects.get` answers null to anyone else —
-  // which is what keeps the issue's "other users' and anonymous views never
-  // show the drafts" true for everything this stage introduces. Anonymous
-  // callers never get this far (rejected at the auth choke point, auth.ts).
+  // `createdBy` is attribution (ADR 0007) and, since stage 8 (#104, the
+  // recorded D1 decision: projects are per-creator private), the OWNERSHIP
+  // key: every write goes through projects.projectForWrite's creator check
+  // (bundles.ts's press rides the same guard), and every read is
+  // creator-scoped — `projects.list` returns the caller's own rows and
+  // `projects.get` answers null to anyone else — which is what keeps the
+  // issue's "other users' and anonymous views never show the drafts" true
+  // for everything this stage introduces. Anonymous callers never get this
+  // far (rejected at the auth choke point, auth.ts).
   projects: defineTable({
     // The auth() hook's identity.subject — the Better Auth user id, the same
-    // string schemas.createdBy holds. Attribution, not a check (see above).
+    // string schemas.createdBy holds.
     createdBy: v.string(),
     description: v.optional(v.string()),
     // Denormalized membership total so browser cards show a count without a
@@ -379,7 +379,8 @@ export default defineSchema({
   // orphan either. NEVER an array field on the project doc instead: membership
   // grows unbounded and every add would rewrite the project (guidelines).
   projectArtifacts: defineTable({
-    // Attribution only, same stance as projects.createdBy.
+    // Attribution, same stance as projects.createdBy (ownership rides the
+    // membership's project's creator check — stage 8).
     addedBy: v.string(),
     // The referenced artifact — ONE plain-string id space across kinds:
     // artifactKind says which table answers (a component dataset id, a
@@ -430,8 +431,9 @@ export default defineSchema({
   bundleRuns: defineTable({
     // The component collection row this press promoted the project into.
     collectionId: v.optional(v.string()),
-    // Attribution only (the publishAttempts stance): any signed-in editor may
-    // press; per-creator isolation is stage 8.
+    // Attribution (the publishAttempts stance) — since stage 8 (#104) the
+    // press is creator-private anyway: start and every leg mutation check
+    // the RUN'S PROJECT's creator, and this stamp names them.
     createdBy: v.string(),
     error: v.optional(v.string()),
     finishedAt: v.optional(v.number()),

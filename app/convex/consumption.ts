@@ -81,6 +81,19 @@ export type ChainVersion = {
  * dataset layers (the bundle press mints them; the workspace's layer reads
  * resolve through them) and project forks hold float references per
  * membership — the projection names every kind it knows.
+ *
+ * Stage 8 (#104, decisions D1/D2): the reference and chain-policy MUTATIONS
+ * are ownership-checked — a reference is writable by its consumer's owner (a
+ * derived registry row's creator, or the project of a fork membership), a
+ * chain's policy by the chain anchor's owner. The recorded exceptions: MAP
+ * edges stay signed-in-writable (maps are shared catalog artifacts — the
+ * component's maps table carries no creator stamp) and binding-store anchors
+ * keep the tag path's signed-in-wide semantics (legacy rows may predate
+ * creator stamping entirely). On the read side, `consumedBy` stops leaking
+ * fork consumers' PROJECT TITLES across users (a fork edge surfaces only to
+ * its own project's creator) and `sourceBadges` stops disclosing invisible
+ * rows — a foreign draft or author-visibility source contributes no title,
+ * and a badge read for a row the viewer can't see answers empty.
  */
 
 /** A resolved chain head — what a consumer's recorded ref compares against. */
@@ -493,6 +506,75 @@ async function recordChainDelta(
 }
 
 // ---------------------------------------------------------------------------
+// Stage-8 ownership guards (shared by the reference and chain-policy mutations)
+// ---------------------------------------------------------------------------
+
+/** The friendly denial every guard here shares — indistinguishable from a gone row, so an id's existence never leaks. */
+function referenceDenied(): ConvexError<string> {
+  return new ConvexError("This reference no longer exists.");
+}
+
+/**
+ * Whether the caller may mutate one consumer reference (stage 8, #104): the
+ * derived consumer's registry row must be theirs, a fork's edge belongs to
+ * the membership's project's creator, and a MAP edge is the recorded
+ * exception — maps are shared catalog artifacts (no creator stamp exists on
+ * the component's maps table), so any signed-in viewer may adjust its layer
+ * pins. `auth(ctx)` has already guaranteed the caller is signed in.
+ */
+async function assertConsumerWritable(
+  ctx: { db: ReadDb },
+  actorId: string,
+  ref: Doc<"consumerReferences">,
+): Promise<void> {
+  if (ref.consumerKind === "derived") {
+    const row = await registryRowFor(ctx, ref.consumerId);
+    if (row === null || row.createdBy !== actorId) {
+      throw referenceDenied();
+    }
+    return;
+  }
+  if (ref.consumerKind === "fork") {
+    const membershipId = ctx.db.normalizeId("projectArtifacts", ref.consumerId);
+    const membership = membershipId === null ? null : await ctx.db.get(membershipId);
+    const project = membership === null ? null : await ctx.db.get(membership.projectId);
+    if (project === null || project.createdBy !== actorId) {
+      throw referenceDenied();
+    }
+    return;
+  }
+}
+
+/**
+ * Whether the caller may write one chain's policy store (stage 8, #104): the
+ * anchor's owner — a registry row's creator, or a component row's creator.
+ * Legacy component rows with NO creator stamp (pre-ADR-0007 ingest, system
+ * actors) stay signed-in-writable (the recorded lenient rule: deny only a
+ * DEFINED creator mismatch), and binding-store anchors keep the tag path's
+ * semantics. Denied anchors read as a gone reference.
+ */
+export async function assertChainAnchorWritable(
+  ctx: { db: ReadDb; runQuery: RunQuery },
+  actorId: string,
+  anchorId: string,
+): Promise<void> {
+  const registryId = ctx.db.normalizeId("derivedDatasets", anchorId);
+  if (registryId !== null) {
+    const row = await ctx.db.get(registryId);
+    if (row !== null) {
+      if (row.createdBy !== actorId) {
+        throw referenceDenied();
+      }
+      return;
+    }
+  }
+  const doc = await tryGetSchema(ctx, anchorId);
+  if (doc !== null && doc.createdBy !== undefined && doc.createdBy !== actorId) {
+    throw referenceDenied();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------------------
 
@@ -515,14 +597,66 @@ const sourceBadgeValidator = v.object({
  * a publishKey is the frozen row's snapshotRef for both chain kinds, so the
  * recorded schema id (the diff's "pinned" side) comes back for either.
  */
+/**
+ * The visibility rule the badge reads apply (stage 8, #104 — mirrors the
+ * component's `isVisibleToViewer`): a foreign DRAFT or a foreign
+ * `publishedVisibility: "author"` row contributes nothing to a badge read —
+ * neither its titles nor its source graph.
+ */
+function rowVisibleToViewer(
+  doc: {
+    createdBy?: string;
+    lifecycle?: "draft" | "published";
+    publishedVisibility?: "author" | "everyone";
+  },
+  viewerId: string,
+): boolean {
+  if (doc.lifecycle === "draft" || doc.publishedVisibility === "author") {
+    return doc.createdBy === viewerId;
+  }
+  return true;
+}
+
+/**
+ * Whether the viewer may read a dataset-keyed projection at all (stage 8,
+ * #104): the chain/consumer reads (chainVersions, storedDelta,
+ * retentionPolicy, consumedBy) are keyed by a dataset id like the catalog's
+ * by-id reads, so an invisible row answers there the same as everywhere
+ * else — a foreign DRAFT or a foreign `publishedVisibility: "author"` row
+ * contributes nothing, its existence never leaking. The id duality applies:
+ * a registry row resolves through the registry's own draft/saved line
+ * (drafts private, saved catalog-visible). An id that resolves to neither
+ * table answers visible — the projection then comes back empty anyway, the
+ * same answer an unknown id always gave.
+ */
+export async function sourceVisibleToViewer(
+  ctx: { db: ReadDb; runQuery: RunQuery },
+  datasetId: string,
+  viewerId: string,
+): Promise<boolean> {
+  const row = await tryGetSchema(ctx, datasetId);
+  if (row !== null) {
+    return rowVisibleToViewer(row, viewerId);
+  }
+  const registryId = ctx.db.normalizeId("derivedDatasets", datasetId);
+  const registry = registryId === null ? null : await ctx.db.get(registryId);
+  if (registry !== null) {
+    return registry.status === "saved" || registry.createdBy === viewerId;
+  }
+  return true;
+}
+
 // oxlint-disable-next-line eslint/complexity -- the per-field badge assembly is flat on purpose; splitting it would scatter the recorded/head pairing the drift decision reads together.
 async function badgesForDatasetRow(
   ctx: { db: ReadDb; runQuery: RunQuery },
   schemaId: string,
+  viewerId: string,
 ): Promise<SourceBadge[]> {
   const row = await tryGetSchema(ctx, schemaId),
     recorded = row === null || row.lineage === undefined ? undefined : row.lineage.sourceVersions;
-  if (recorded === undefined) {
+  // An invisible row (a foreign draft, an author-restricted row) badges as
+  // nothing — its source graph is content too (stage 8).
+  if (recorded === undefined || (row !== null && !rowVisibleToViewer(row, viewerId))) {
     return [];
   }
   const badges: SourceBadge[] = [];
@@ -560,11 +694,16 @@ async function badgesForDatasetRow(
       }
     }
     // The source's display name, resolved host-side across the id duality
-    // (component dataset or registry row — the consumedBy precedent).
+    // (component dataset or registry row — the consumedBy precedent). A
+    // source the viewer cannot see (a foreign draft, an author-visibility
+    // row) contributes no title — the badge stays, the name doesn't leak
+    // (stage 8, #104).
     // oxlint-disable-next-line no-await-in-loop -- see above.
     const sourceDoc = await tryGetSchema(ctx, source.datasetId);
     if (sourceDoc !== null) {
-      badge.sourceTitle = sourceDoc.title;
+      if (rowVisibleToViewer(sourceDoc, viewerId)) {
+        badge.sourceTitle = sourceDoc.title;
+      }
     } else {
       // oxlint-disable-next-line no-await-in-loop -- see above.
       badge.sourceTitle = await registryTitleFor(ctx, source.datasetId);
@@ -578,12 +717,13 @@ async function badgesForDatasetRow(
 async function badgesForRegistryConsumer(
   ctx: { db: ReadDb; runQuery: RunQuery },
   registryId: string,
+  viewerId: string,
 ): Promise<SourceBadge[]> {
   const head = headOfAttemptChain(await completedAttemptsFor(ctx, registryId));
   if (head === undefined) {
     return [];
   }
-  return badgesForDatasetRow(ctx, head.schemaId);
+  return badgesForDatasetRow(ctx, head.schemaId, viewerId);
 }
 
 /**
@@ -596,16 +736,16 @@ async function badgesForRegistryConsumer(
 export const sourceBadges = query({
   args: { registryIds: v.array(v.string()), schemaIds: v.array(v.string()) },
   handler: async (ctx, args) => {
-    await auth(ctx);
+    const viewerId = await auth(ctx);
     const byRegistryId: Record<string, SourceBadge[]> = {};
     for (const registryId of args.registryIds.slice(0, MAX_CONSUMERS)) {
       // oxlint-disable-next-line no-await-in-loop -- one consumer per hop; each read decides the next.
-      byRegistryId[registryId] = await badgesForRegistryConsumer(ctx, registryId);
+      byRegistryId[registryId] = await badgesForRegistryConsumer(ctx, registryId, viewerId);
     }
     const bySchemaId: Record<string, SourceBadge[]> = {};
     for (const schemaId of args.schemaIds.slice(0, MAX_CONSUMERS)) {
       // oxlint-disable-next-line no-await-in-loop -- see above.
-      bySchemaId[schemaId] = await badgesForDatasetRow(ctx, schemaId);
+      bySchemaId[schemaId] = await badgesForDatasetRow(ctx, schemaId, viewerId);
     }
     return { byRegistryId, bySchemaId };
   },
@@ -652,7 +792,13 @@ const consumedByValidator = v.object({
 export const consumedBy = query({
   args: { datasetId: v.string() },
   handler: async (ctx, args) => {
-    await auth(ctx);
+    const viewerId = await auth(ctx);
+    // The source's own visibility gates the whole projection (stage 8): a
+    // foreign draft or author-restricted row names no consumers to a caller
+    // who cannot see the row — the same empty answer an unknown id gives.
+    if (!(await sourceVisibleToViewer(ctx, args.datasetId, viewerId))) {
+      return { consumers: [], knownConsumerKinds: ["derived", "fork", "map"] };
+    }
     const refs = await ctx.db
       .query("consumerReferences")
       .withIndex("by_source", (q) => q.eq("sourceDatasetId", args.datasetId))
@@ -680,9 +826,12 @@ export const consumedBy = query({
       // its edges now, but rows deleted before that shipped leave orphans), a
       // saved row the builder demoted to draft by re-autosaving, a removed
       // project membership, and a deleted map all resolve to nothing here —
-      // drafts are invisible to catalog consumers (lifecycle §3).
+      // drafts are invisible to catalog consumers (lifecycle §3). Since
+      // stage 8 (#104) the viewer rides along too: a FORK consumer surfaces
+      // only to its own project's creator — one user's consumed-by read
+      // never discloses another user's project title.
       // oxlint-disable-next-line no-await-in-loop -- one consumer per hop; each read decides the next.
-      const title = await consumerTitleFor(ctx, ref);
+      const title = await consumerTitleFor(ctx, ref, viewerId);
       if (title === null) {
         continue;
       }
@@ -724,13 +873,17 @@ export const consumedBy = query({
 /**
  * The consumer's display title per kind (7b): registry rows answer their own
  * title (and must still be saved — the visibility rule above), fork consumers
- * answer their membership's project's, map consumers the map's name. A gone
+ * answer their membership's project's — SINCE STAGE 8 (#104) only to that
+ * project's creator (a foreign fork drops out of the projection entirely, so
+ * a consumed-by read never discloses another user's project titles) — map
+ * consumers the map's name (maps are shared catalog artifacts). A gone
  * consumer (deleted row, removed membership, deleted map) answers null and
  * drops out of the projection — the defensive read every kind shares.
  */
 async function consumerTitleFor(
   ctx: { db: ReadDb; runQuery: RunQuery },
   ref: Doc<"consumerReferences">,
+  viewerId: string,
 ): Promise<string | null> {
   if (ref.consumerKind === "derived") {
     const row = await registryRowFor(ctx, ref.consumerId);
@@ -740,13 +893,7 @@ async function consumerTitleFor(
     return row.title;
   }
   if (ref.consumerKind === "fork") {
-    const membershipId = ctx.db.normalizeId("projectArtifacts", ref.consumerId);
-    const membership = membershipId === null ? null : await ctx.db.get(membershipId);
-    if (membership === null) {
-      return null;
-    }
-    const project = await ctx.db.get(membership.projectId);
-    return project === null ? null : project.title;
+    return forkConsumerTitle(ctx, ref.consumerId, viewerId);
   }
   try {
     const map = await ctx.runQuery(components.jsonCms.lib.getMap, { mapId: ref.consumerId });
@@ -756,6 +903,28 @@ async function consumerTitleFor(
     // id-duality rule's "not a map" answer.
     return null;
   }
+}
+
+/**
+ * A fork consumer's project title, only for that project's creator (stage 8,
+ * #104): one user's consumed-by read never discloses another user's project
+ * titles — a foreign fork drops out of the projection like a gone consumer.
+ */
+async function forkConsumerTitle(
+  ctx: { db: ReadDb },
+  consumerId: string,
+  viewerId: string,
+): Promise<string | null> {
+  const membershipId = ctx.db.normalizeId("projectArtifacts", consumerId);
+  const membership = membershipId === null ? null : await ctx.db.get(membershipId);
+  if (membership === null) {
+    return null;
+  }
+  const project = await ctx.db.get(membership.projectId);
+  if (project === null || project.createdBy !== viewerId) {
+    return null;
+  }
+  return project.title;
 }
 
 /**
@@ -845,7 +1014,12 @@ const chainVersionValidator = v.object({
 export const chainVersions = query({
   args: { anchorId: v.string() },
   handler: async (ctx, args) => {
-    await auth(ctx);
+    const viewerId = await auth(ctx);
+    // An invisible anchor (a foreign draft, an author-restricted row) reads
+    // as a chain with no versions — titles and refs never leak (stage 8).
+    if (!(await sourceVisibleToViewer(ctx, args.anchorId, viewerId))) {
+      return [];
+    }
     const componentVersions = await componentChainVersions(ctx, args.anchorId);
     if (componentVersions.length > 0) {
       const rows = componentVersions.map((version) => {
@@ -886,8 +1060,12 @@ function newestFirst<T extends { frozenAt: number }>(rows: T[]): T[] {
 export const retentionPolicy = query({
   args: { anchorId: v.string() },
   handler: async (ctx, args) => {
-    await auth(ctx);
-    const policy = await resolvePolicyForAnchor(ctx, args.anchorId);
+    const viewerId = await auth(ctx);
+    // An invisible anchor's policy answers the defaults — indistinguishable
+    // from a chain with no stored policy (stage 8, same rule as above).
+    const policy = (await sourceVisibleToViewer(ctx, args.anchorId, viewerId))
+      ? await resolvePolicyForAnchor(ctx, args.anchorId)
+      : { keep: DEFAULT_KEEP_VERSIONS, pinnedRefs: [], store: "defaults" as const };
     return { keepVersions: policy.keep, pinnedRefs: policy.pinnedRefs, store: policy.store };
   },
   returns: v.object({
@@ -907,7 +1085,12 @@ export const retentionPolicy = query({
 export const storedDelta = query({
   args: { anchorId: v.string(), fromRef: v.string(), toRef: v.string() },
   handler: async (ctx, args) => {
-    await auth(ctx);
+    const viewerId = await auth(ctx);
+    // An invisible anchor's diff is content — it answers null like a missing
+    // delta pair (stage 8, same rule as chainVersions).
+    if (!(await sourceVisibleToViewer(ctx, args.anchorId, viewerId))) {
+      return null;
+    }
     const deltas = await ctx.db
       .query("tagDeltas")
       .withIndex("by_source", (q) => q.eq("sourceSchemaId", args.anchorId))
@@ -944,10 +1127,11 @@ export const storedDelta = query({
 export const setChainKeep = mutation({
   args: { anchorId: v.string(), keep: v.number() },
   handler: async (ctx, args) => {
-    await auth(ctx);
+    const actorId = await auth(ctx);
     if (args.keep < 1) {
       throw new ConvexError("Keep at least one version.");
     }
+    await assertChainAnchorWritable(ctx, actorId, args.anchorId);
     const binding = await ctx.db
       .query("datasetBindings")
       .withIndex("by_schema", (q) => q.eq("schemaId", args.anchorId))
@@ -973,11 +1157,11 @@ export const setChainKeep = mutation({
   returns: v.null(),
 });
 
-/** Pins (or unpins) one frozen version against its chain's policy store — both chain kinds. */
+/** Pins (or unpins) one frozen version against its chain's policy store — both chain kinds. Creator-checked via the chain anchor (stage 8). */
 export const setChainVersionPinned = mutation({
   args: { pinned: v.boolean(), schemaId: v.string() },
   handler: async (ctx, args) => {
-    await auth(ctx);
+    const actorId = await auth(ctx);
     const schema = await ctx.runQuery(components.jsonCms.lib.getSchema, {
       schemaId: args.schemaId,
     });
@@ -992,6 +1176,7 @@ export const setChainVersionPinned = mutation({
     if (anchor === args.schemaId) {
       throw new ConvexError("This version's lineage names no chain anchor to pin it under.");
     }
+    await assertChainAnchorWritable(ctx, actorId, anchor);
     await pinRefIntoPolicyStore(ctx, { anchorId: anchor, pinned: args.pinned, ref });
   },
   returns: v.null(),
@@ -1001,15 +1186,16 @@ export const setChainVersionPinned = mutation({
 export const setReferenceMode = mutation({
   args: { mode: v.union(v.literal("float"), v.literal("pin")), referenceId: v.string() },
   handler: async (ctx, args) => {
-    await auth(ctx);
+    const actorId = await auth(ctx);
     const referenceId = ctx.db.normalizeId("consumerReferences", args.referenceId);
     if (referenceId === null) {
-      throw new ConvexError("This reference no longer exists.");
+      throw referenceDenied();
     }
     const ref = await ctx.db.get(referenceId);
     if (ref === null) {
-      throw new ConvexError("This reference no longer exists.");
+      throw referenceDenied();
     }
+    await assertConsumerWritable(ctx, actorId, ref);
     if (args.mode === "float") {
       await ctx.db.patch(referenceId, {
         mode: "float",
@@ -1042,15 +1228,16 @@ export const setReferenceMode = mutation({
 export const syncReference = mutation({
   args: { referenceId: v.string() },
   handler: async (ctx, args) => {
-    await auth(ctx);
+    const actorId = await auth(ctx);
     const referenceId = ctx.db.normalizeId("consumerReferences", args.referenceId);
     if (referenceId === null) {
-      throw new ConvexError("This reference no longer exists.");
+      throw referenceDenied();
     }
     const ref = await ctx.db.get(referenceId);
     if (ref === null) {
-      throw new ConvexError("This reference no longer exists.");
+      throw referenceDenied();
     }
+    await assertConsumerWritable(ctx, actorId, ref);
     if (ref.mode !== "pin") {
       return { mode: "float" as const, pinnedRef: undefined };
     }
@@ -1082,15 +1269,16 @@ export const revertReference = mutation({
   args: { referenceId: v.string() },
   // oxlint-disable-next-line eslint/complexity -- each guard is one honest error message; splitting the revert would separate the checks from what they protect.
   handler: async (ctx, args) => {
-    await auth(ctx);
+    const actorId = await auth(ctx);
     const referenceId = ctx.db.normalizeId("consumerReferences", args.referenceId);
     if (referenceId === null) {
-      throw new ConvexError("This reference no longer exists.");
+      throw referenceDenied();
     }
     const ref = await ctx.db.get(referenceId);
     if (ref === null) {
-      throw new ConvexError("This reference no longer exists.");
+      throw referenceDenied();
     }
+    await assertConsumerWritable(ctx, actorId, ref);
     if (ref.mode !== "pin" || ref.pinnedRef === undefined) {
       throw new ConvexError("Only a pinned reference can revert — a float one is at head.");
     }

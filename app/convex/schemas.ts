@@ -1,8 +1,9 @@
 import { exposeApi } from "@caden/json-cms";
-import { v } from "convex/values";
+import type { FunctionReturnType } from "convex/server";
+import { ConvexError, v } from "convex/values";
 
 import { components } from "./_generated/api";
-import { internalMutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 import { auth } from "./auth";
 
 export const {
@@ -10,7 +11,9 @@ export const {
   listSchemaSummaries: listSummaries,
   // The opt-in drafts view (roadmap 5a, #99): `listSummaries` filters drafts
   // server-side, so this is the only host read that returns them — the
-  // datasets browser's drafts toggle subscribes to it.
+  // datasets browser's drafts toggle subscribes to it. Since stage 8 (#104)
+  // the drafts come back creator-scoped (the choke point's identity rides
+  // the wrapper as `viewerId`): user B's toggle never lists user A's drafts.
   listDraftSchemaSummaries: listDraftSummaries,
   getSchema: get,
   getSourceFileUrl,
@@ -41,8 +44,8 @@ export const {
 export const maxTileCacheVersion = query({
   args: {},
   handler: async (ctx) => {
-    await auth(ctx);
-    const schemas = await ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, {});
+    const viewerId = await auth(ctx);
+    const schemas = await ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, { viewerId });
     let max = 0;
     for (const schema of schemas) {
       max = Math.max(max, schema.mapTileCacheVersion ?? 0);
@@ -50,6 +53,42 @@ export const maxTileCacheVersion = query({
     return max;
   },
   returns: v.number(),
+});
+
+/**
+ * The creator's published-visibility control (stage 8, #104 — decision D2 on
+ * the issue): "author" narrows every catalog read of this dataset to its
+ * creator, "everyone" restores the default. Creator-only, enforced HERE —
+ * the component's `setSchemaVisibility` is deliberately unexposed, so this
+ * host mutation is the only writer (the `lifecycle`/`boundWrite` pattern:
+ * host flows resolve identity at the choke point, component flows stay
+ * identity-less). Denials read as "not found" so an id's existence never
+ * leaks.
+ */
+export const setVisibility = mutation({
+  args: {
+    schemaId: v.string(),
+    visibility: v.union(v.literal("author"), v.literal("everyone")),
+  },
+  handler: async (ctx, args) => {
+    const actorId = await auth(ctx);
+    let doc: FunctionReturnType<typeof components.jsonCms.lib.getSchema>;
+    try {
+      doc = await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: args.schemaId });
+    } catch {
+      // A string that isn't a well-formed component id — the same "not
+      // found" as an unknown id (the projects.ts tryGetSchema precedent).
+      doc = null;
+    }
+    if (doc === null || doc.createdBy !== actorId) {
+      throw new ConvexError("That dataset doesn't exist or you don't have access to it.");
+    }
+    await ctx.runMutation(components.jsonCms.lib.setSchemaVisibility, {
+      publishedVisibility: args.visibility,
+      schemaId: args.schemaId,
+    });
+  },
+  returns: v.null(),
 });
 
 /**

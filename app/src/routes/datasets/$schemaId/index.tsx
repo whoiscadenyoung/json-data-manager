@@ -4,7 +4,7 @@ import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import type { FunctionReturnType } from "convex/server";
-import { useConvex } from "convex/react";
+import { useConvex, useMutation, useQuery as useConvexQuery } from "convex/react";
 import {
   CheckCircle,
   ChevronDown,
@@ -13,6 +13,8 @@ import {
   Ellipsis,
   FileDown,
   FilePlus,
+  Globe,
+  Lock,
   MapIcon,
   MapPinned,
   Pencil,
@@ -34,6 +36,7 @@ import { EntryFormPanel } from "@/components/entry-form-panel";
 import { ExportDialog } from "@/components/export-dialog";
 import type { ExportFormat, ExportFormatOption } from "@/components/export-dialog";
 import { GeospatialConversionPanel } from "@/components/geospatial-conversion-panel";
+import { QueryErrorBoundary } from "@/components/query-error-boundary";
 import { RouterButton } from "@/components/router-button";
 import { SchemaVisualizer } from "@/components/schema-visualizer";
 import { SimplifyGeometryPanel } from "@/components/simplify-geometry-panel";
@@ -314,15 +317,62 @@ function MakeGeospatialButton({
   );
 }
 
-// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
+/** ConvexError data when it's a string, the fallback otherwise (the panels' pattern). */
+function errorMessage(error: unknown, fallback: string): string {
+  if (typeof error === "object" && error !== null && "data" in error) {
+    const { data } = error;
+    if (typeof data === "string") {
+      return data;
+    }
+  }
+  return fallback;
+}
+
+/** The same card a null read gets — the denial fallback too (stage 8: a foreign/author-restricted id reads exactly as a missing one). */
+function DatasetNotFoundCard() {
+  return (
+    <Card className="text-center py-12">
+      <CardContent className="pt-6">
+        <CardTitle className="mb-2">Dataset Not Found</CardTitle>
+        <CardDescription className="mb-4">
+          The dataset you're looking for doesn't exist or has been deleted.
+        </CardDescription>
+        <RouterButton to="/datasets">Back to Datasets</RouterButton>
+      </CardContent>
+    </Card>
+  );
+}
+
 function SchemaDetailPage() {
+  // Stage 8 (#104): a denied by-id read (a foreign draft, an author-only
+  // dataset) throws from the raw seam subscriptions and errors the bridge
+  // query — the boundary renders the same card a deleted dataset gets,
+  // never the router's error screen or an infinite spinner.
+  return (
+    <QueryErrorBoundary fallback={<DatasetNotFoundCard />}>
+      {/* oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup. */}
+      <SchemaDetailBody />
+    </QueryErrorBoundary>
+  );
+}
+
+// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
+function SchemaDetailBody() {
   const { schemaId } = Route.useParams(),
     search = Route.useSearch(),
     navigate = Route.useNavigate(),
     // Light queries through the TanStack bridge (issue #58 part 5): the
     // dataset's schema and entries pages render from the persisted cache on a
     // cold start; the live WebSocket subscriptions update the same entries.
-    schema = useQuery({ ...convexQuery(api.schemas.get, { schemaId }) }).data,
+    // `isError` is read below: a stage-8 denial errors this query and must
+    // land on the not-found card, not the spinner.
+    schemaQuery = useQuery({ ...convexQuery(api.schemas.get, { schemaId }) }),
+    schema = schemaQuery.data,
+    // The signed-in caller's profile — the creator gate for the
+    // published-visibility control (stage 8, decision D2). null signed out
+    // (the auth gate up the tree handles that); never throws.
+    me = useConvexQuery(api.users.me),
+    setVisibility = useMutation(api.schemas.setVisibility),
     // Entries stream in through the row-resolution seam as server-side pages
     // (issue #54) — one `entries.listPage` query per cursor instead of one
     // unbounded collect of every row, so a 20k-row import can't hit the
@@ -560,6 +610,12 @@ function SchemaDetailPage() {
       });
     };
 
+  // A stage-8 denial errors the bridge query (the choke point's
+  // indistinguishable "not found") — the same card, never a spinner.
+  if (schemaQuery.isError) {
+    return <DatasetNotFoundCard />;
+  }
+
   if (schema === undefined || entriesPages.isLoading) {
     return (
       <div className="flex justify-center items-center min-h-100">
@@ -569,18 +625,25 @@ function SchemaDetailPage() {
   }
 
   if (!schema) {
-    return (
-      <Card className="text-center py-12">
-        <CardContent className="pt-6">
-          <CardTitle className="mb-2">Dataset Not Found</CardTitle>
-          <CardDescription className="mb-4">
-            The dataset you're looking for doesn't exist or has been deleted.
-          </CardDescription>
-          <RouterButton to="/datasets">Back to Datasets</RouterButton>
-        </CardContent>
-      </Card>
-    );
+    return <DatasetNotFoundCard />;
   }
+
+  // The visibility control is the CREATOR'S (decision D2) — hidden, not
+  // disabled, for everyone else.
+  const isCreator = me !== undefined && me !== null && me.authId === schema.createdBy;
+  const flipVisibility = async () => {
+    const next = schema.publishedVisibility === "author" ? "everyone" : "author";
+    try {
+      await setVisibility({ schemaId, visibility: next });
+      toast.success(
+        next === "author"
+          ? "Only you can see this dataset now."
+          : "This dataset is visible to everyone signed in.",
+      );
+    } catch (error) {
+      toast.error(errorMessage(error, "Couldn't update who can see this dataset."));
+    }
+  };
 
   return (
     <div className="max-w-4xl mx-auto py-8 px-4 sm:px-0">
@@ -664,7 +727,7 @@ function SchemaDetailPage() {
               Create Entry
             </Button>
           )}
-          {(isGeospatialDataset || schema.sourceFileStorageId !== undefined) && (
+          {(isGeospatialDataset || schema.sourceFileStorageId !== undefined || isCreator) && (
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={<Button variant="outline" size="icon" aria-label="More actions" />}
@@ -672,6 +735,25 @@ function SchemaDetailPage() {
                 <Ellipsis className="h-4 w-4" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                {isCreator && (
+                  <DropdownMenuItem
+                    onClick={() => {
+                      void flipVisibility();
+                    }}
+                    title={
+                      schema.publishedVisibility === "author"
+                        ? "Currently only you can see this dataset — click to share it with everyone signed in."
+                        : "Currently every signed-in user can see this dataset — click to restrict it to you."
+                    }
+                  >
+                    {schema.publishedVisibility === "author" ? (
+                      <Globe className="h-4 w-4 mr-2" />
+                    ) : (
+                      <Lock className="h-4 w-4 mr-2" />
+                    )}
+                    {schema.publishedVisibility === "author" ? "Visible to everyone" : "Only me"}
+                  </DropdownMenuItem>
+                )}
                 {isGeospatialDataset && (
                   <DropdownMenuItem
                     onClick={() => {

@@ -87,6 +87,9 @@ async function createDraftDataset(
 ): Promise<string> {
   return t.run(async (ctx) =>
     ctx.runMutation(components.jsonCms.lib.createSchema, {
+      // The suite's identity is stamped as creator — since stage 8 (#104) a
+      // draft is invisible to every other identity, so the fixture carries one.
+      actorId: "user-1",
       geometryType: options.geometryType === undefined ? undefined : "Point",
       kind: options.geometryType === undefined ? undefined : "geospatial",
       lifecycle: "draft",
@@ -551,6 +554,7 @@ describe("publishing a saved transform (AC 5: lineage + geometrySource)", () => 
     // The join side: a standard dataset joined on label → locations.label.
     const rlId = await t.run(async (ctx) =>
       ctx.runMutation(components.jsonCms.lib.createSchema, {
+        actorId: "user-1",
         lifecycle: "draft",
         schema: {
           properties: { label: { type: "string" }, locationId: { type: "string" } },

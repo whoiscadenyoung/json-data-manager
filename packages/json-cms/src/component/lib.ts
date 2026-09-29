@@ -153,11 +153,41 @@ function isCatalogVisible(doc: Pick<Doc<"schemas">, "lifecycle">): boolean {
   return doc.lifecycle !== "draft";
 }
 
+/**
+ * Identity scoping for the catalog reads (roadmap stage 8, #104; the D1/D2
+ * decisions recorded on the issue): a DRAFT is readable only by its creator,
+ * and a catalog-visible row flagged `publishedVisibility: "author"` likewise
+ * — every other row is readable by any signed-in viewer (the default,
+ * unchanged). The viewer is the HOST's `auth` hook return value, passed as
+ * the required `viewerId` argument of every catalog enumeration: the
+ * component stays auth-less (it cannot see the host's sessions), and the
+ * required argument is the invariant that no caller enumerates the catalog
+ * without declaring who is looking — the client-facing wrappers fill it from
+ * the choke point, so no client path can forget it.
+ */
+function isVisibleToViewer(
+  doc: Pick<Doc<"schemas">, "createdBy" | "lifecycle" | "publishedVisibility">,
+  viewerId: string,
+): boolean {
+  if (doc.lifecycle === "draft" || doc.publishedVisibility === "author") {
+    return doc.createdBy === viewerId;
+  }
+  return true;
+}
+
+/** Both catalog-read filters, applied together (the enumerations' shared predicate). */
+function isCatalogVisibleToViewer(
+  doc: Pick<Doc<"schemas">, "createdBy" | "lifecycle" | "publishedVisibility">,
+  viewerId: string,
+): boolean {
+  return isCatalogVisible(doc) && isVisibleToViewer(doc, viewerId);
+}
+
 export const listSchemas = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { viewerId: v.string() },
+  handler: async (ctx, args) => {
     const docs = await ctx.db.query("schemas").order("desc").collect();
-    return docs.filter(isCatalogVisible);
+    return docs.filter((doc) => isCatalogVisibleToViewer(doc, args.viewerId));
   },
   returns: v.array(schemaValidator),
 });
@@ -219,6 +249,10 @@ function toSchemaSummary(doc: Doc<"schemas">) {
     mapTileArchiveMaxZoom: doc.mapTileArchiveMaxZoom,
     mapTileArchiveStorageId: doc.mapTileArchiveStorageId,
     mapTileCacheVersion: doc.mapTileCacheVersion,
+    // The published-visibility control rides the projection (stage 8, #104)
+    // for the same reason: host list surfaces re-filtering or attributing
+    // rows never need the heavy payloads to apply the identity rule.
+    publishedVisibility: doc.publishedVisibility,
     source: doc.source,
     title: doc.title,
   };
@@ -243,16 +277,17 @@ const schemaSummaryValidator = schemaValidator
     "mapTileArchiveMaxZoom",
     "mapTileArchiveStorageId",
     "mapTileCacheVersion",
+    "publishedVisibility",
     "source",
     "title",
   )
   .extend({ fieldCount: v.number() });
 
 export const listSchemaSummaries = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { viewerId: v.string() },
+  handler: async (ctx, args) => {
     const docs = await ctx.db.query("schemas").order("desc").collect();
-    return docs.filter(isCatalogVisible).map(toSchemaSummary);
+    return docs.filter((doc) => isCatalogVisibleToViewer(doc, args.viewerId)).map(toSchemaSummary);
   },
   returns: v.array(schemaSummaryValidator),
 });
@@ -265,13 +300,18 @@ export const listSchemaSummaries = query({
  * them — the datasets browser's drafts toggle subscribes to it through its
  * exposeApi wrapper. Absent lifecycle reads as published (see
  * `isCatalogVisible`), so pre-field rows never appear here either.
+ *
+ * Since stage 8 (#104) it is also CREATOR-SCOPED: the caller's identity
+ * (required `viewerId`, the host auth hook's return) decides whose drafts
+ * come back — the pre-stage-8 all-users drafts enumeration was the widest
+ * draft leak in the catalog surface.
  */
 export const listDraftSchemaSummaries = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { viewerId: v.string() },
+  handler: async (ctx, args) => {
     const docs = await ctx.db.query("schemas").order("desc").collect();
     return docs
-      .filter((doc) => doc.lifecycle === "draft")
+      .filter((doc) => doc.lifecycle === "draft" && isVisibleToViewer(doc, args.viewerId))
       .map(toSchemaSummary);
   },
   returns: v.array(schemaSummaryValidator),
@@ -281,6 +321,44 @@ export const getSchema = query({
   args: { schemaId: v.id("schemas") },
   handler: async (ctx, args) => ctx.db.get(args.schemaId),
   returns: v.union(v.null(), schemaValidator),
+});
+
+/**
+ * One dataset's entries, bounded — the HOST version-diff read (`versionRows`
+ * in the app's versioning.ts): internal host flows (tag ingest, freeze diffs,
+ * retention enforcement) must see every row of the datasets they operate on,
+ * including author-restricted publish-frozen rows, so the read is
+ * deliberately UNscoped. Public-in-component but UNEXPOSED (never in
+ * exposeApi — the `setMapTileArchive`/`getImportSchemaId` pattern:
+ * host-flow-only, unreachable by clients); the client-facing batch read
+ * (`listEntriesForSchemas`) is the viewer-scoped one (stage 8, #104).
+ */
+export const listEntriesForSchemaBounded = query({
+  args: { limit: v.number(), schemaId: v.id("schemas") },
+  handler: async (ctx, args) =>
+    ctx.db
+      .query("entries")
+      .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
+      .take(args.limit),
+  returns: v.array(entryValidator),
+});
+
+/**
+ * One import status doc's schema id (stage 8, #104) — lets the host auth
+ * policy scope `getImportStatus` (whose importId names no dataset directly)
+ * with one read. Deliberately UNEXPOSED: host-flow-only.
+ */
+export const getImportSchemaId = query({
+  args: { importId: v.string() },
+  handler: async (ctx, args) => {
+    const id = ctx.db.normalizeId("imports", args.importId);
+    if (id === null) {
+      return null;
+    }
+    const doc = await ctx.db.get(id);
+    return doc === null ? null : doc.schemaId;
+  },
+  returns: v.union(v.null(), v.id("schemas")),
 });
 
 /**
@@ -518,6 +596,11 @@ export const createSchema = mutation({
     // version datasets) reads as published, so this arg changes nothing until
     // a future host flow (5b's publish) sets it.
     lifecycle: v.optional(v.union(v.literal("draft"), v.literal("published"))),
+    // Published-visibility control (stage 8, #104) — see the field's doc on
+    // the `schemas` table. Host-flow-only like `lifecycle` (the wrapper
+    // omits it): the publish freeze passes the draft's value through so the
+    // frozen row inherits the authoring-time choice.
+    publishedVisibility: v.optional(v.union(v.literal("author"), v.literal("everyone"))),
     // Normalize every geometry coordinate to GEOMETRY_SIMPLIFY_DECIMAL_PLACES
     // on write — see `simplifyGeometryPayload` below. Geospatial-only.
     simplifyGeometry: v.optional(v.boolean()),
@@ -553,6 +636,7 @@ export const createSchema = mutation({
       kind: args.kind,
       lifecycle: args.lifecycle,
       lineage: args.lineage,
+      publishedVisibility: args.publishedVisibility,
       schema: args.schema,
       simplifyGeometry: args.simplifyGeometry,
       source: args.source,
@@ -563,6 +647,34 @@ export const createSchema = mutation({
     return schemaId;
   },
   returns: v.id("schemas"),
+});
+
+/**
+ * Sets (or resets) one dataset's published-visibility control (stage 8,
+ * #104): `"author"` narrows catalog reads to the row's creator, `"everyone"`
+ * restores the default. Public-in-component but deliberately UNEXPOSED — no
+ * exposeApi wrapper carries it, so the only caller is the host's
+ * `schemas.setVisibility` mutation, which resolves the caller's identity at
+ * the choke point and enforces the ownership check (only the row's creator
+ * may flip its visibility). Deliberately NOT part of `updateSchema`: the
+ * control is a sharing decision, not a metadata edit, and it must never be
+ * settable through the generic wrapper path.
+ */
+export const setSchemaVisibility = mutation({
+  args: {
+    // The host's ownership check rides on this being reachable only through
+    // its own gated mutation; the component-side existence check stays.
+    publishedVisibility: v.union(v.literal("author"), v.literal("everyone")),
+    schemaId: v.id("schemas"),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.get(args.schemaId);
+    if (!existing) {
+      throw new ConvexError("Schema not found");
+    }
+    await ctx.db.patch(args.schemaId, { publishedVisibility: args.publishedVisibility });
+  },
+  returns: v.null(),
 });
 
 export const updateSchema = mutation({
@@ -902,15 +1014,16 @@ export const deleteGroup = mutation({
  * `listSchemas` (roadmap 5a, #99): a lifecycle draft never reaches a consumer
  * enumeration payload — it appears only via `listDraftSchemaSummaries`, the
  * drafts-toggle read. This is an enumeration like `listSchemas`, not a
- * per-id read, so the per-id exemption (getSchema stays unfiltered so a
- * draft card stays openable) does not apply here. The internal full-table
- * scans (delete cascade, `backfillDatasetSummaries`) also stay unfiltered —
- * they must see every doc; a future host flow that legitimately needs a
- * collection's drafts (5b/7b publish enumeration) should get its own
- * internal component read, not widen this consumer one.
+ * per-id read, so it carries the same viewer scoping (`viewerId`, stage 8).
+ * By-id reads are scoped at the host's auth policy instead (the `getSchema`
+ * per-id surface must stay openable by the creator's own client). The
+ * internal full-table scans (delete cascade, `backfillDatasetSummaries`)
+ * also stay unfiltered — they must see every doc; a future host flow that
+ * legitimately needs a collection's drafts (5b/7b publish enumeration)
+ * should get its own internal component read, not widen this consumer one.
  */
 export const listSchemasByCollection = query({
-  args: { collectionId: v.id("collections") },
+  args: { collectionId: v.id("collections"), viewerId: v.string() },
   handler: async (ctx, args) => {
     const memberships = await ctx.db
       .query("schemaCollections")
@@ -919,7 +1032,7 @@ export const listSchemasByCollection = query({
     const datasets = await Promise.all(memberships.map(async (row) => ctx.db.get(row.schemaId)));
     return datasets.filter(
       (dataset): dataset is NonNullable<typeof dataset> =>
-        dataset !== null && isCatalogVisible(dataset),
+        dataset !== null && isCatalogVisibleToViewer(dataset, args.viewerId),
     );
   },
   returns: v.array(schemaValidator),
@@ -1827,6 +1940,32 @@ async function listGeospatialSchemaIdsByCollection(ctx: QueryCtx, collectionId: 
   return ids.filter((id): id is Id<"schemas"> => id !== null);
 }
 
+/**
+ * The subset of `schemaIds` visible to `viewerId` (stage 8, #104) — the
+ * batch/cross-dataset entry reads' shared filter: a foreign draft or
+ * `publishedVisibility: "author"` row contributes nothing, so a batch read
+ * answers the VISIBLE subset instead of leaking another user's rows or
+ * crashing the caller's whole query on one invisible id (the reference
+ * pickers' invariant: an invisible target renders as no candidates, never
+ * as a broken form).
+ */
+async function visibleSchemaIds(
+  ctx: QueryCtx,
+  schemaIds: Array<Id<"schemas">>,
+  viewerId: string,
+): Promise<Set<Id<"schemas">>> {
+  const visible = new Set<Id<"schemas">>();
+  await Promise.all(
+    schemaIds.map(async (schemaId) => {
+      const doc = await ctx.db.get(schemaId);
+      if (doc !== null && isVisibleToViewer(doc, viewerId)) {
+        visible.add(schemaId);
+      }
+    }),
+  );
+  return visible;
+}
+
 // NOTE on the collection-level map view: there is deliberately no
 // `listGeometriesByCollection` aggregate query. Convex allows at most ONE
 // `.paginate()` call per query execution ("Only a single paginated query is
@@ -1855,9 +1994,14 @@ async function listGeospatialSchemaIdsByCollection(ctx: QueryCtx, collectionId: 
  * omits the cap.
  */
 export const listEntriesByCollection = query({
-  args: { collectionId: v.id("collections"), limit: v.optional(v.number()) },
+  args: { collectionId: v.id("collections"), limit: v.optional(v.number()), viewerId: v.string() },
   handler: async (ctx, args) => {
-    const schemaIds = await listGeospatialSchemaIdsByCollection(ctx, args.collectionId),
+    // Viewer-scoped like its dataset-listing sibling `listSchemasByCollection`
+    // (stage 8, #104): a creator may add their own draft or author-only row to
+    // a shared collection, and this read then serves that dataset's rows —
+    // the invisible ids are filtered out, never returned to another viewer.
+    const geospatialIds = await listGeospatialSchemaIdsByCollection(ctx, args.collectionId),
+      schemaIds = [...(await visibleSchemaIds(ctx, geospatialIds, args.viewerId))],
       rows = await Promise.all(
         schemaIds.map(async (schemaId) =>
           ctx.db
@@ -1889,11 +2033,14 @@ export const getEntry = query({
  * callers that genuinely need every row omit it.
  */
 export const listEntriesForSchemas = query({
-  args: { limit: v.optional(v.number()), schemaIds: v.array(v.id("schemas")) },
+  args: { limit: v.optional(v.number()), schemaIds: v.array(v.id("schemas")), viewerId: v.string() },
   handler: async (ctx, args) => {
-    const unique = [...new Set(args.schemaIds)],
+    // Viewer-scoped (stage 8, #104): the batch read answers rows from the
+    // VISIBLE subset only — an invisible reference target contributes no
+    // candidates instead of its rows (or a whole-query denial).
+    const visible = await visibleSchemaIds(ctx, [...new Set(args.schemaIds)], args.viewerId),
       rows = await Promise.all(
-        unique.map(async (schemaId) =>
+        [...visible].map(async (schemaId) =>
           ctx.db
             .query("entries")
             .withIndex("by_schema", (q) => q.eq("schemaId", schemaId))
@@ -1952,15 +2099,24 @@ export const listEntriesPage = query({
  * from the result; callers render the raw id as a fallback.
  */
 export const listEntriesForIds = query({
-  args: { entryIds: v.array(v.id("entries")) },
+  args: { entryIds: v.array(v.id("entries")), viewerId: v.string() },
   handler: async (ctx, args) => {
     if (args.entryIds.length > LIST_ENTRIES_FOR_IDS_MAX) {
       throw new ConvexError(`entryIds exceeds ${LIST_ENTRIES_FOR_IDS_MAX} items`);
     }
-    const seen = new Set(args.entryIds);
-    return (await Promise.all([...seen].map(async (entryId) => await ctx.db.get(entryId)))).filter(
-      (entry): entry is NonNullable<typeof entry> => entry !== null,
+    const seen = new Set(args.entryIds),
+      docs = (
+        await Promise.all([...seen].map(async (entryId) => await ctx.db.get(entryId)))
+      ).filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+    // Label lookups filter, never throw (stage 8, #104): an entry whose
+    // dataset is invisible to the viewer is simply unlabeled — the caller
+    // renders the raw id as the documented fallback.
+    const visible = await visibleSchemaIds(
+      ctx,
+      docs.map((entry) => entry.schemaId),
+      args.viewerId,
     );
+    return docs.filter((entry) => visible.has(entry.schemaId));
   },
   returns: v.array(entryValidator),
 });
@@ -1971,7 +2127,7 @@ export const listEntriesForIds = query({
  * lookup rather than a scan of every other dataset's entries.
  */
 export const listReferencingEntries = query({
-  args: { entryId: v.id("entries") },
+  args: { entryId: v.id("entries"), viewerId: v.string() },
   handler: async (ctx, args) => {
     const refs = await ctx.db
         .query("references")
@@ -1985,7 +2141,18 @@ export const listReferencingEntries = query({
             : null;
         }),
       );
-    return results.filter((r): r is NonNullable<typeof r> => r !== null);
+    // Stage 8 (#104): the referencing panel names OTHER datasets' rows — a
+    // source the viewer cannot see (a foreign draft, an author-visibility
+    // row) contributes nothing; drafts-over-published-sources are the
+    // designed authoring pattern, so this read filters rather than denies.
+    const visible = await visibleSchemaIds(
+      ctx,
+      results.filter((r): r is NonNullable<typeof r> => r !== null).map((r) => r.sourceSchemaId),
+      args.viewerId,
+    );
+    return results.filter(
+      (r): r is NonNullable<typeof r> => r !== null && visible.has(r.sourceSchemaId),
+    );
   },
   returns: v.array(entryReferenceValidator),
 });

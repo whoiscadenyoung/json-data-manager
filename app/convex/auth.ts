@@ -2,7 +2,7 @@ import { createClient, type AuthFunctions, type GenericCtx } from "@convex-dev/b
 import { convex } from "@convex-dev/better-auth/plugins";
 import { betterAuth } from "better-auth/minimal";
 import type { ExposeApiOperation } from "@caden/json-cms";
-import type { Auth } from "convex/server";
+import type { Auth, FunctionReturnType } from "convex/server";
 import { ConvexError } from "convex/values";
 
 import { components, internal } from "./_generated/api";
@@ -111,19 +111,40 @@ async function appUserForAuthId(ctx: MutationCtx, authId: string) {
 
 /**
  * The app's identity gate (the one choke point every exposeApi-wrapped
- * call flows through) plus the app-side half of the bound-datasets
- * read-only gate: writes targeting a read-only dataset are rejected here.
- * Two kinds of dataset are read-only: a live projection with a
- * `datasetBindings` row (a synced external source) and a frozen tag version
- * (`lineage` on the component's schema doc). The sync and tag ingest call the
- * component directly (not through exposeApi), so both are unaffected.
+ * call flows through), the sharing/isolation policy (roadmap stage 8,
+ * #104), and the app-side half of the bound-datasets read-only gate: writes
+ * targeting a read-only dataset are rejected here.
+ *
+ * Identity (roadmap 0.1): callers receive the signed-in Better Auth user id
+ * as the identity string, and unauthenticated callers are rejected here —
+ * this one throw gates every exposeApi wrapper (read and write) plus every
+ * host function that calls `await auth(ctx)`, with no parallel authz
+ * mechanism.
+ *
+ * Isolation (stage 8, the recorded D1/D2 decisions on #104): a dataset that
+ * is a DRAFT, or a catalog-visible row flagged `publishedVisibility:
+ * "author"`, is readable and writable only by its creator (`createdBy` —
+ * the same identity string). Every operation that names a dataset — by
+ * schemaId, by entryId, or by an import id — is resolved here and
+ * refused for anyone else, so the enumeration-level filters in the
+ * component's catalog reads are matched by the by-id surfaces (the pre-
+ * stage-8 by-id leak). The denial is deliberately indistinguishable from
+ * "not found" so an id's existence never leaks; enumeration reads never
+ * reach this check (they carry no ids) and are scoped inside the component
+ * via the `viewerId` the wrappers pass.
+ *
+ * The bound-datasets read-only gate: two kinds of dataset are read-only — a
+ * live projection with a `datasetBindings` row (a synced external source)
+ * and a frozen tag version (`lineage` on the component's schema doc). The
+ * sync and tag ingest call the component directly (not through exposeApi),
+ * so both are unaffected.
  *
  * Allowed on read-only datasets: schema metadata edits (`updateSchema`) and
- * organization (collection/group membership) — the data is read-only, not the
- * filing. Deletion is blocked too: removing a bound dataset goes through the
- * explicit unbind flow (`bindings.unbind`), and version datasets retire via
- * `tags.retireVersion` — both call the component directly with the host-only
- * `boundWrite` attestation.
+ * organization (collection/group membership) — the data is read-only, not
+ * the filing. Deletion is blocked too: removing a bound dataset goes through
+ * the explicit unbind flow (`bindings.unbind`), and version datasets retire
+ * via `tags.retireVersion` — both call the component directly with the
+ * host-only `boundWrite` attestation.
  *
  * Since #75, enforcement no longer depends on this choke point: the
  * component itself rejects data mutations on `source`/`lineage`-marked
@@ -132,15 +153,9 @@ async function appUserForAuthId(ctx: MutationCtx, authId: string) {
  * carry — that closes `startSimplification`/`startGeospatialConversion` too,
  * whose `{schemaId, "update"}` shape was indistinguishable from organization
  * ops here. This gate stays as the user-facing first line (friendlier error,
- * one fewer round trip) and for the paths only it can see.
- *
- * Authentication rides on Better Auth (above) and is REQUIRED (roadmap
- * 0.1): callers receive the signed-in Better Auth user id as the identity
- * string, and unauthenticated callers are rejected here — this one throw
- * gates every exposeApi wrapper (read and write) plus every host function
- * that calls `await auth(ctx)`, with no parallel authz mechanism. The
- * check runs first so a signed-out caller learns nothing (not even whether
- * a dataset exists) from the read-only-dataset lookups below.
+ * one fewer round trip) and for the paths only it can see. The isolation
+ * check above runs FIRST so a caller learns nothing — not even a dataset's
+ * read-only-ness — about rows they cannot see.
  */
 export async function auth(
   ctx: { auth: Auth },
@@ -152,28 +167,109 @@ export async function auth(
   if (identity === null) {
     throw new ConvexError("You're signed out — sign in to continue.");
   }
-  if (operation !== undefined && operation.type !== "read") {
+  if (operation !== undefined) {
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- every caller passes a full MutationCtx; the narrow `{ auth }` param keeps the read path callable from http actions.
     const mutationCtx = ctx as MutationCtx;
-    let schemaId = operation.schemaId;
-    if (schemaId === undefined && operation.entryId !== undefined) {
-      schemaId = await entrySchemaId(mutationCtx, operation.entryId);
-    }
-    // Entry-targeted writes always touch data. Schema-targeted creates are
-    // data operations (entries, imports); schema-targeted deletes are data
-    // operations or dataset deletion (both gated); schema-targeted updates
-    // are metadata/organization and stay allowed.
-    if (
-      schemaId !== undefined &&
-      (operation.entryId !== undefined || operation.type !== "update") &&
-      (await isReadOnlyDataset(mutationCtx, schemaId))
-    ) {
-      throw new ConvexError(
-        "This dataset is synced from a connected source and is read-only here — edit the source data and re-sync instead.",
-      );
+    await assertDatasetsVisible(mutationCtx, identity.subject, operation);
+    if (operation.type !== "read") {
+      let schemaId = operation.schemaId;
+      if (schemaId === undefined && operation.entryId !== undefined) {
+        schemaId = await entrySchemaId(mutationCtx, operation.entryId);
+      }
+      // Entry-targeted writes always touch data. Schema-targeted creates are
+      // data operations (entries, imports); schema-targeted deletes are data
+      // operations or dataset deletion (both gated); schema-targeted updates
+      // are metadata/organization and stay allowed.
+      if (
+        schemaId !== undefined &&
+        (operation.entryId !== undefined || operation.type !== "update") &&
+        (await isReadOnlyDataset(mutationCtx, schemaId))
+      ) {
+        throw new ConvexError(
+          "This dataset is synced from a connected source and is read-only here — edit the source data and re-sync instead.",
+        );
+      }
     }
   }
   return identity.subject;
+}
+
+/**
+ * One component schema read that tolerates an id that isn't well-formed
+ * (the publish.ts precedent — the isolation check must never be the thing
+ * that crashes a call; the underlying component read answers "not found"
+ * for junk ids anyway).
+ */
+async function tryGetSchemaForPolicy(
+  ctx: MutationCtx,
+  schemaId: string,
+): Promise<FunctionReturnType<typeof components.jsonCms.lib.getSchema>> {
+  try {
+    return await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Every dataset id one operation names — by schemaId, through an entryId, or
+ * an import id (the component's one-read resolver). The BATCH id lists
+ * (`listEntriesForIds`' entryIds, `listEntriesForSchemas`' schemaIds) are
+ * deliberately NOT resolved here: denying a whole batch read on one invisible
+ * id would crash the caller's form/reference panel for a stale reference —
+ * those reads filter component-side by the wrapper's `viewerId` instead, so
+ * an invisible target contributes no rows and no denial (stage 8, #104).
+ * Split from the visibility check below so each helper reads as one concern.
+ */
+async function datasetIdsForOperation(
+  ctx: MutationCtx,
+  operation: ExposeApiOperation,
+): Promise<Set<string>> {
+  const schemaIds = new Set<string>();
+  if (operation.schemaId !== undefined) {
+    schemaIds.add(operation.schemaId);
+  }
+  if (operation.entryId !== undefined) {
+    const schemaId = await entrySchemaId(ctx, operation.entryId);
+    if (schemaId !== undefined) {
+      schemaIds.add(schemaId);
+    }
+  }
+  if (operation.importId !== undefined) {
+    const schemaId = await ctx.runQuery(components.jsonCms.lib.getImportSchemaId, {
+      importId: operation.importId,
+    });
+    if (schemaId !== null) {
+      schemaIds.add(schemaId);
+    }
+  }
+  return schemaIds;
+}
+
+/**
+ * The stage-8 isolation policy itself: every dataset the operation names
+ * must be visible to the caller — a draft or `publishedVisibility: "author"`
+ * row only to its creator. Denials are indistinguishable from a missing
+ * dataset (the same friendly message `getSchema`'s callers see for unknown
+ * ids), so probing ids discloses nothing.
+ */
+async function assertDatasetsVisible(
+  ctx: MutationCtx,
+  actorId: string,
+  operation: ExposeApiOperation,
+): Promise<void> {
+  await Promise.all(
+    [...(await datasetIdsForOperation(ctx, operation))].map(async (schemaId) => {
+      const doc = await tryGetSchemaForPolicy(ctx, schemaId);
+      if (
+        doc !== null &&
+        (doc.lifecycle === "draft" || doc.publishedVisibility === "author") &&
+        doc.createdBy !== actorId
+      ) {
+        throw new ConvexError("That dataset doesn't exist or you don't have access to it.");
+      }
+    }),
+  );
 }
 
 async function isReadOnlyDataset(ctx: MutationCtx, schemaId: string): Promise<boolean> {
@@ -195,10 +291,20 @@ async function isReadOnlyDataset(ctx: MutationCtx, schemaId: string): Promise<bo
   return schema !== null && schema.lineage !== undefined;
 }
 
+/**
+ * The dataset an entry id names, or undefined when the entry is gone or the
+ * id isn't well-formed (tolerant on purpose: the isolation check must never
+ * be what crashes a call — the component's own read answers "not found" for
+ * junk ids).
+ */
 async function entrySchemaId(ctx: MutationCtx, entryId: string): Promise<string | undefined> {
-  const entry = await ctx.runQuery(components.jsonCms.lib.getEntry, { entryId });
-  if (entry === null) {
+  try {
+    const entry = await ctx.runQuery(components.jsonCms.lib.getEntry, { entryId });
+    if (entry === null) {
+      return undefined;
+    }
+    return entry.schemaId;
+  } catch {
     return undefined;
   }
-  return entry.schemaId;
 }

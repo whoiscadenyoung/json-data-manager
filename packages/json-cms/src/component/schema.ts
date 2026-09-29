@@ -193,6 +193,20 @@ export default defineSchema({
     // publish action writes it the same way); until then no user flow
     // produces drafts.
     lifecycle: v.optional(v.union(v.literal("draft"), v.literal("published"))),
+    // Published-visibility control (roadmap stage 8, #104; lifecycle doc §4's
+    // consumer row, revisited for multi-user): who may read this dataset once
+    // it is catalog-visible. "everyone" — and ABSENT, so every pre-field row —
+    // is readable by any signed-in user (today's behavior, unchanged);
+    // "author" restricts catalog reads to the row's own creator (`createdBy`).
+    // Host-flow-only like `lifecycle`: written by the host's
+    // setSchemaVisibility flow (creators flipping their own rows) and
+    // inherited from the draft at publish (the freeze passthrough), never
+    // through an exposeApi wrapper. Enforced server-side in the catalog
+    // enumerations (isVisibleToViewer in lib.ts) and in the host's by-id auth
+    // policy — never in the UI. Deliberately carried on the dataset row
+    // itself, never on project-shaped data: nothing published knows projects
+    // exist (lifecycle §4).
+    publishedVisibility: v.optional(v.union(v.literal("author"), v.literal("everyone"))),
     // Denormalized dataset-level summary, maintained incrementally by the
     // entry/geometry mutations in component/lib.ts (never recomputed from a
     // full scan). `featureCount` is kept exactly accurate — cheap to keep

@@ -32,13 +32,12 @@ import { syncRegistryReferenceEdges } from "./consumption";
  * (`isCatalogVisible`), which projects never touch.
  *
  * Reads are creator-scoped (`list` by the by_createdBy index, `get` answers
- * null to anyone but the creator) — that is the recorded answer to the
- * issue's per-creator acceptance line for everything this stage introduces.
- * Writes stay attribution-only (the publishAttempts/derivedDatasets stance):
- * `createdBy`/`addedBy` are stamps, never checks — per-creator isolation is
- * stage 8. The component-side global drafts toggle is a pre-existing 5a
- * surface and keeps its all-users semantics (stage-8 scope); nothing 7a
- * widens it.
+ * null to anyone but the creator) and — since stage 8 (#104) — WRITES are
+ * too: `projectForWrite` verifies the caller IS the creator (the recorded
+ * D1 decision: projects are per-creator private, no share grants), turning
+ * the stamps into checks. The component-side global drafts toggle is
+ * creator-scoped at the component read (`viewerId`) since stage 8; the
+ * workspace's own reads pass the creator through.
  *
  * 7b (#103) grows this module by the two fork legs and nothing else: the
  * fork-as-reference edge (`addArtifact` mints one float consumerReferences
@@ -97,26 +96,64 @@ async function tryGetMap(
 }
 
 /**
- * Throws unless `artifactId` names a real artifact of `kind`. A reference
- * may point at ANY lifecycle state (a draft is exactly what lands in a
- * project; published datasets and frozen versions are what "fork =
- * add-to-project" references) — existence is the only gate.
+ * The catalog visibility rule (decision D2), as a predicate: a draft or
+ * author-only row is readable only by its creator. Shared by the artifact
+ * and fork authoring checks.
+ */
+function datasetVisibleTo(
+  doc: {
+    createdBy?: string;
+    lifecycle?: "draft" | "published";
+    publishedVisibility?: "author" | "everyone";
+  },
+  actorId: string,
+): boolean {
+  if (doc.lifecycle === "draft" || doc.publishedVisibility === "author") {
+    return doc.createdBy === actorId;
+  }
+  return true;
+}
+
+/**
+ * The registry's draft/saved line as a predicate (the derivedDatasets.get
+ * precedent): another user's builder autosave is invisible; saved rows are
+ * the registry's catalog-visible side.
+ */
+function registryRowVisibleTo(
+  row: { createdBy: string; status: "draft" | "saved" },
+  actorId: string,
+): boolean {
+  return row.status === "saved" || row.createdBy === actorId;
+}
+
+/**
+ * Throws unless `artifactId` names a real artifact of `kind` — and, since
+ * stage 8 (#104), one VISIBLE to the caller (the project's creator): a
+ * foreign builder autosave (a draft registry row) and a foreign draft or
+ * author-visibility dataset read exactly as missing, so an invisible id can
+ * never be written into a membership row (its existence would leak through
+ * every later read of the project). A reference may still point at ANY
+ * lifecycle state the caller can see (their own draft is exactly what lands
+ * in a project; published datasets and frozen versions are what "fork =
+ * add-to-project" references).
  */
 async function assertArtifactExists(
   ctx: MutationCtx,
+  actorId: string,
   kind: "dataset" | "derived" | "map",
   artifactId: string,
 ): Promise<void> {
   if (kind === "derived") {
     const id = ctx.db.normalizeId("derivedDatasets", artifactId);
-    if (id !== null && (await ctx.db.get(id)) !== null) {
+    const row = id === null ? null : await ctx.db.get(id);
+    if (row !== null && registryRowVisibleTo(row, actorId)) {
       return;
     }
     throw new ConvexError("No derived dataset was found at that id — it may have been deleted.");
   }
   if (kind === "dataset") {
     const dataset = await tryGetSchema(ctx, artifactId);
-    if (dataset !== null) {
+    if (dataset !== null && datasetVisibleTo(dataset, actorId)) {
       return;
     }
     throw new ConvexError("No dataset was found at that id — it may have been deleted.");
@@ -126,6 +163,32 @@ async function assertArtifactExists(
     return;
   }
   throw new ConvexError("No map was found at that id — it may have been deleted.");
+}
+
+/**
+ * The fork's source check (stage 8, #104): the id must resolve on one side
+ * of the duality AND be visible to the forker — the registry rule for a
+ * registry row (saved, or the forker's own), the catalog rule for a
+ * component dataset. Invisible sources read exactly as missing ids.
+ */
+async function assertForkSourceVisible(
+  ctx: MutationCtx,
+  actorId: string,
+  sourceDatasetId: string,
+): Promise<void> {
+  const registryId = ctx.db.normalizeId("derivedDatasets", sourceDatasetId);
+  const registryRow = registryId === null ? null : await ctx.db.get(registryId);
+  if (registryRow !== null) {
+    if (registryRowVisibleTo(registryRow, actorId)) {
+      return;
+    }
+    throw new ConvexError("No dataset was found at that id — it may have been deleted.");
+  }
+  const dataset = await tryGetSchema(ctx, sourceDatasetId);
+  if (dataset !== null && datasetVisibleTo(dataset, actorId)) {
+    return;
+  }
+  throw new ConvexError("No dataset was found at that id — it may have been deleted.");
 }
 
 /**
@@ -150,18 +213,27 @@ async function insertMembership(
 
 /**
  * The project row a membership mutation writes into, or the friendly
- * gone-error. Callers pass the client-sent id through `projectIdArg` first —
- * public functions take project ids as PLAIN STRINGS (the derivedDatasets
- * get/remove and maps.addDerivedLayer pattern: router params are strings on
- * the client, and `normalizeId` + the existence check below validate), while
- * the typed Id travels in-transaction from here on.
+ * gone-error. Since stage 8 (#104, decision D1) this is the OWNERSHIP check:
+ * only the project's creator may write into it — membership rows, drafts,
+ * forks, presses all ride this one guard (the choke-point principle, one
+ * code path for read-null vs write-throw: reads answer null via
+ * `projects.get`, writes throw here). Shared with bundles.ts (whose press
+ * writes into the same rows). Callers pass the client-sent id through
+ * `projectIdArg` first — public functions take project ids as PLAIN
+ * STRINGS (the derivedDatasets get/remove and maps.addDerivedLayer pattern:
+ * router params are strings on the client, and `normalizeId` + the
+ * existence check below validate), while the typed Id travels
+ * in-transaction from here on.
  */
-async function projectForWrite(
+export async function projectForWrite(
   ctx: MutationCtx,
+  actorId: string,
   projectId: Id<"projects">,
 ): Promise<Doc<"projects">> {
   const project = await ctx.db.get(projectId);
-  if (project === null) {
+  // The foreign and missing cases share one answer — an id's existence
+  // never leaks to a non-creator.
+  if (project === null || project.createdBy !== actorId) {
     throw new ConvexError("This project no longer exists — it may have been deleted.");
   }
   return project;
@@ -231,7 +303,7 @@ export const createDraftDataset = mutation({
     if (projectId === null) {
       throw new ConvexError("This project no longer exists — it may have been deleted.");
     }
-    const project = await projectForWrite(ctx, projectId);
+    const project = await projectForWrite(ctx, actorId, projectId);
     assertSchemaTitle(args.schema);
     const schemaId = await ctx.runMutation(components.jsonCms.lib.createSchema, {
       actorId,
@@ -275,8 +347,8 @@ export const addArtifact = mutation({
     if (projectId === null) {
       throw new ConvexError("This project no longer exists — it may have been deleted.");
     }
-    const project = await projectForWrite(ctx, projectId);
-    await assertArtifactExists(ctx, args.artifactKind, args.artifactId);
+    const project = await projectForWrite(ctx, addedBy, projectId);
+    await assertArtifactExists(ctx, addedBy, args.artifactKind, args.artifactId);
     // Uniqueness is an in-transaction by-ref re-check, not an index — Convex
     // has none (the publishKey precedent): a double-add lands once. The
     // by_artifact lookup answers EXACTLY at any membership size (its width is
@@ -327,12 +399,12 @@ export const removeArtifact = mutation({
     projectId: v.string(),
   },
   handler: async (ctx, args) => {
-    await auth(ctx);
+    const actorId = await auth(ctx);
     const projectId = projectIdArg(ctx, args.projectId);
     if (projectId === null) {
       throw new ConvexError("This project no longer exists — it may have been deleted.");
     }
-    const project = await projectForWrite(ctx, projectId);
+    const project = await projectForWrite(ctx, actorId, projectId);
     // Exact by_artifact lookup (the index carries both fields) — removal must
     // see the full membership set, never a display-bounded prefix (an
     // un-removable row past a .take cap would be the bug class the
@@ -382,25 +454,19 @@ export const forkAsSpec = mutation({
     if (projectId === null) {
       throw new ConvexError("This project no longer exists — it may have been deleted.");
     }
-    const project = await projectForWrite(ctx, projectId);
+    const project = await projectForWrite(ctx, addedBy, projectId);
     const title = args.title.trim();
     if (title === "") {
       throw new ConvexError("Give the fork a title.");
     }
     // The source must exist on one side of the id duality (component dataset
     // or registry row — the same resolution `assertArtifactExists` uses for
-    // "derived" memberships).
-    const registryId = ctx.db.normalizeId("derivedDatasets", args.sourceDatasetId);
-    const registryRow =
-      registryId === null ? null : await ctx.db.get(registryId);
-    if (registryRow === null) {
-      const dataset = await tryGetSchema(ctx, args.sourceDatasetId);
-      if (dataset === null) {
-        throw new ConvexError(
-          "No dataset was found at that id — it may have been deleted.",
-        );
-      }
-    }
+    // "derived" memberships) — and, since stage 8 (#104), be visible to the
+    // forker: a fork over a foreign draft or author-visibility row would mint
+    // a SAVED (catalog-visible) registry row naming an invisible id, seeding
+    // a ghost spec over data the forker cannot read. The fork design says
+    // "over the published source"; invisible sources read as missing.
+    await assertForkSourceVisible(ctx, addedBy, args.sourceDatasetId);
     const registryRowId = await ctx.db.insert("derivedDatasets", {
       createdBy: addedBy,
       // The persisted edges, exactly as the save path denormalizes them (the
@@ -506,6 +572,7 @@ async function resolveArtifact(
   membership: Membership,
   datasetById: Map<string, DatasetSummary>,
   mapById: Map<string, ComponentMap>,
+  viewerId: string,
 ): Promise<ResolvedArtifact> {
   const base = {
     _id: membership._id,
@@ -529,7 +596,11 @@ async function resolveArtifact(
   }
   const registryId = ctx.db.normalizeId("derivedDatasets", membership.artifactId);
   const row = registryId === null ? null : await ctx.db.get(registryId);
-  if (row === null) {
+  // Stage 8 (#104): the registry's draft/saved line is its visibility rule
+  // (the derivedDatasets.get precedent) — a foreign builder autosave resolved
+  // here would leak its title/description/source through this projection, so
+  // it reads exactly as a deleted artifact (readers answer `missing`).
+  if (row === null || (row.status !== "saved" && row.createdBy !== viewerId)) {
     return { ...base, state: { kind: "missing" } };
   }
   // The Transform-tab link target, browser-parity (the datasets browser's
@@ -586,10 +657,13 @@ export const get = query({
       .take(MAX_ARTIFACTS);
     // Three catalog reads total (the same light reads list surfaces already
     // pay on every load), joined in-memory by id — never one component hop
-    // per artifact.
+    // per artifact. The creator's identity scopes them: a draft or
+    // author-visibility row resolved here is the creator's own (stage 8 —
+    // the workspace never sees another user's drafts, even by a stale
+    // membership row pointing at one).
     const [summaries, draftSummaries, maps] = await Promise.all([
-      ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, {}),
-      ctx.runQuery(components.jsonCms.lib.listDraftSchemaSummaries, {}),
+      ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, { viewerId: viewer }),
+      ctx.runQuery(components.jsonCms.lib.listDraftSchemaSummaries, { viewerId: viewer }),
       ctx.runQuery(components.jsonCms.lib.listMaps, {}),
     ]);
     const datasetById = new Map<string, DatasetSummary>();
@@ -604,7 +678,9 @@ export const get = query({
       mapById.set(row._id, row);
     }
     const artifacts = await Promise.all(
-      memberships.map(async (membership) => resolveArtifact(ctx, membership, datasetById, mapById)),
+      memberships.map(async (membership) =>
+        resolveArtifact(ctx, membership, datasetById, mapById, viewer),
+      ),
     );
     return {
       artifacts,

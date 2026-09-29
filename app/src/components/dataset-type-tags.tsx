@@ -4,6 +4,7 @@ import {
   CircleDashed,
   Database,
   GitFork,
+  Lock,
   MapPin,
   RefreshCw,
   Tag,
@@ -162,6 +163,15 @@ export function DatasetTypeTags({
         </Badge>
       )}
       {dataset.geometryType && <Badge variant="outline">{dataset.geometryType}</Badge>}
+      {dataset.publishedVisibility === "author" && (
+        <Badge
+          variant="outline"
+          title="Only you can see this dataset — other signed-in users can't (the catalog, collections, and profiles all hide it from them)."
+        >
+          <Lock />
+          Only me
+        </Badge>
+      )}
       {dataset.lifecycle === "draft" && (
         <Badge
           variant="outline"

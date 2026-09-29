@@ -131,6 +131,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             }>;
             versionLabel: string;
           };
+          publishedVisibility?: "author" | "everyone";
           schema: any;
           simplifyGeometry?: boolean;
           source?: { name: string };
@@ -255,6 +256,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         },
         Name
       >;
+      getImportSchemaId: FunctionReference<
+        "query",
+        "internal",
+        { importId: string },
+        null | string,
+        Name
+      >;
       getImportStatus: FunctionReference<
         "query",
         "internal",
@@ -338,6 +346,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveMaxZoom?: number;
           mapTileArchiveStorageId?: string;
           mapTileCacheVersion?: number;
+          publishedVisibility?: "author" | "everyone";
           schema: any;
           simplifyGeometry?: boolean;
           source?: { name: string };
@@ -389,6 +398,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveMaxZoom?: number;
           mapTileArchiveStorageId?: string;
           mapTileCacheVersion?: number;
+          publishedVisibility?: "author" | "everyone";
           schema: any;
           simplifyGeometry?: boolean;
           source?: { name: string };
@@ -434,7 +444,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       listDraftSchemaSummaries: FunctionReference<
         "query",
         "internal",
-        {},
+        { viewerId: string },
         Array<{
           _creationTime: number;
           _id: string;
@@ -472,6 +482,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveMaxZoom?: number;
           mapTileArchiveStorageId?: string;
           mapTileCacheVersion?: number;
+          publishedVisibility?: "author" | "everyone";
           source?: { name: string };
           title: string;
         }>,
@@ -500,7 +511,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       listEntriesByCollection: FunctionReference<
         "query",
         "internal",
-        { collectionId: string; limit?: number },
+        { collectionId: string; limit?: number; viewerId: string },
         Array<{
           _creationTime: number;
           _id: string;
@@ -520,7 +531,27 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       listEntriesForIds: FunctionReference<
         "query",
         "internal",
-        { entryIds: Array<string> },
+        { entryIds: Array<string>; viewerId: string },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          data: any;
+          geometryId?: string;
+          geometryType?:
+            | "Point"
+            | "MultiPoint"
+            | "LineString"
+            | "MultiLineString"
+            | "Polygon"
+            | "MultiPolygon";
+          schemaId: string;
+        }>,
+        Name
+      >;
+      listEntriesForSchemaBounded: FunctionReference<
+        "query",
+        "internal",
+        { limit: number; schemaId: string },
         Array<{
           _creationTime: number;
           _id: string;
@@ -540,7 +571,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       listEntriesForSchemas: FunctionReference<
         "query",
         "internal",
-        { limit?: number; schemaIds: Array<string> },
+        { limit?: number; schemaIds: Array<string>; viewerId: string },
         Array<{
           _creationTime: number;
           _id: string;
@@ -701,7 +732,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       listReferencingEntries: FunctionReference<
         "query",
         "internal",
-        { entryId: string },
+        { entryId: string; viewerId: string },
         Array<{
           fieldName: string;
           sourceEntry: {
@@ -738,7 +769,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       listSchemas: FunctionReference<
         "query",
         "internal",
-        {},
+        { viewerId: string },
         Array<{
           _creationTime: number;
           _id: string;
@@ -775,6 +806,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveMaxZoom?: number;
           mapTileArchiveStorageId?: string;
           mapTileCacheVersion?: number;
+          publishedVisibility?: "author" | "everyone";
           schema: any;
           simplifyGeometry?: boolean;
           source?: { name: string };
@@ -789,7 +821,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       listSchemasByCollection: FunctionReference<
         "query",
         "internal",
-        { collectionId: string },
+        { collectionId: string; viewerId: string },
         Array<{
           _creationTime: number;
           _id: string;
@@ -826,6 +858,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveMaxZoom?: number;
           mapTileArchiveStorageId?: string;
           mapTileCacheVersion?: number;
+          publishedVisibility?: "author" | "everyone";
           schema: any;
           simplifyGeometry?: boolean;
           source?: { name: string };
@@ -840,7 +873,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       listSchemaSummaries: FunctionReference<
         "query",
         "internal",
-        {},
+        { viewerId: string },
         Array<{
           _creationTime: number;
           _id: string;
@@ -878,6 +911,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveMaxZoom?: number;
           mapTileArchiveStorageId?: string;
           mapTileCacheVersion?: number;
+          publishedVisibility?: "author" | "everyone";
           source?: { name: string };
           title: string;
         }>,
@@ -923,6 +957,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveMaxZoom?: number;
           mapTileArchiveStorageId?: string;
           mapTileCacheVersion?: number;
+          publishedVisibility?: "author" | "everyone";
           schema: any;
           simplifyGeometry?: boolean;
           source?: { name: string };
@@ -994,6 +1029,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "internal",
         { groupId: string | null; schemaId: string },
         any,
+        Name
+      >;
+      setSchemaVisibility: FunctionReference<
+        "mutation",
+        "internal",
+        { publishedVisibility: "author" | "everyone"; schemaId: string },
+        null,
         Name
       >;
       startGeospatialConversion: FunctionReference<

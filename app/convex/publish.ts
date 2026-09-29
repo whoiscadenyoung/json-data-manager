@@ -51,6 +51,17 @@ import { alreadyFrozenByRef, createFrozenVersion, type SchemaGeometryType } from
  * `lineage`, so the component's `assertDataWritable` rejects every write that
  * no host flow attests.
  *
+ * Stage 8 (#104, decision D1): publish is creator-private. `start` refuses a
+ * target the caller doesn't own (a draft or saved transform by another user
+ * reads exactly as "nothing to publish was found at that id"), and every
+ * client-driven step (plan/chunks/reset/freeze/attempt read) rides the
+ * attempt's `createdBy` — a foreign attemptId reads as "no longer exists".
+ * The auth choke point's per-id policy already bars foreign DRAFTS from every
+ * wrapper; this module's checks close the host functions themselves (which
+ * resolve ids directly, past any wrapper). The frozen row inherits the
+ * draft's `publishedVisibility` (decision D2: the authoring-time choice
+ * crosses the lifecycle line with the data).
+ *
  * Recorded decisions this module pins:
  * - **Publish key scheme (the issue's open item):** the key is minted once
  *   per attempt (`pub_<time36><rand>`), stored on the attempt, and reused by
@@ -171,15 +182,19 @@ async function tryGetSchema(
 // Start: resolve the target, join-or-revive the active attempt, mint the key
 // ---------------------------------------------------------------------------
 
-/** Resolves what `datasetKey` publishes: a saved registry row or a lifecycle-draft component dataset. */
+/** Resolves what `datasetKey` publishes: a saved registry row or a lifecycle-draft component dataset — the CALLER'S own (stage 8: ownership is part of resolution; a foreign row reads as absent). */
 async function resolvePublishTarget(
   ctx: MutationCtx,
+  actorId: string,
   datasetKey: string,
 ): Promise<{ description?: string; kind: "derived" | "draft"; spec?: unknown; title: string }> {
   const registryId = ctx.db.normalizeId("derivedDatasets", datasetKey);
   if (registryId !== null) {
     const row = await ctx.db.get(registryId);
     if (row !== null) {
+      if (row.createdBy !== actorId) {
+        throw new ConvexError("Nothing to publish was found at that id.");
+      }
       if (row.status !== "saved") {
         throw new ConvexError(
           "Save this transform before publishing it — a builder autosave can't publish.",
@@ -190,11 +205,16 @@ async function resolvePublishTarget(
   }
   const draft = await tryGetSchema(ctx, datasetKey);
   if (draft !== null) {
+    if (draft.createdBy !== actorId) {
+      throw new ConvexError("Nothing to publish was found at that id.");
+    }
     if (draft.lifecycle !== "draft") {
       throw new ConvexError(
         "Only a draft dataset can be published here — already-published datasets go through their own version flows.",
       );
     }
+    // The draft's publishedVisibility is re-resolved at freeze (the draft may
+    // still be flipped while the attempt uploads) — it never rides the attempt.
     return { description: draft.description, kind: "draft", title: draft.title };
   }
   throw new ConvexError("Nothing to publish was found at that id.");
@@ -233,7 +253,7 @@ export const start = mutation({
     status: "completed" | "failed" | "importing" | "uploading";
   }> => {
     const createdBy = await auth(ctx);
-    const target = await resolvePublishTarget(ctx, args.datasetKey);
+    const target = await resolvePublishTarget(ctx, createdBy, args.datasetKey);
 
     // Join-or-revive (the syncRuns pattern): one live attempt per dataset.
     const latest = await ctx.db
@@ -314,10 +334,14 @@ export const start = mutation({
 // The client-driven steps: plan, per-chunk registration, mismatch reset
 // ---------------------------------------------------------------------------
 
-/** Guards the client-driven steps: only a live uploading attempt accepts them. */
-async function uploadingAttempt(ctx: MutationCtx, attemptId: Id<"publishAttempts">) {
+/**
+ * Guards the client-driven steps: only a live uploading attempt accepts
+ * them — and only its OWNER (stage 8, #104): a foreign attemptId reads as
+ * "no longer exists", never disclosing the attempt's state.
+ */
+async function uploadingAttempt(ctx: MutationCtx, actorId: string, attemptId: Id<"publishAttempts">) {
   const attempt = await ctx.db.get(attemptId);
-  if (attempt === null) {
+  if (attempt === null || attempt.createdBy !== actorId) {
     throw new ConvexError("This publish attempt no longer exists.");
   }
   if (attempt.status !== "uploading") {
@@ -344,8 +368,8 @@ export const plan = mutation({
     totalRows: v.number(),
   },
   handler: async (ctx, args) => {
-    await auth(ctx);
-    await uploadingAttempt(ctx, args.attemptId);
+    const actorId = await auth(ctx);
+    await uploadingAttempt(ctx, actorId, args.attemptId);
     await ctx.db.patch(args.attemptId, {
       lastProgressAt: Date.now(),
       plannedChunkCount: args.chunkCount,
@@ -366,8 +390,8 @@ export const plan = mutation({
 export const registerChunk = mutation({
   args: { attemptId: v.id("publishAttempts"), storageId: v.string() },
   handler: async (ctx, args) => {
-    await auth(ctx);
-    const attempt = await uploadingAttempt(ctx, args.attemptId);
+    const actorId = await auth(ctx);
+    const attempt = await uploadingAttempt(ctx, actorId, args.attemptId);
     if (attempt.chunkStorageIds.includes(args.storageId)) {
       // Idempotent: a client replay of an unacked registration (flaky
       // network, Convex's own mutation replay) must not inflate the count
@@ -394,8 +418,8 @@ export const registerChunk = mutation({
 export const resetUpload = mutation({
   args: { attemptId: v.id("publishAttempts") },
   handler: async (ctx, args) => {
-    await auth(ctx);
-    const attempt = await uploadingAttempt(ctx, args.attemptId);
+    const actorId = await auth(ctx);
+    const attempt = await uploadingAttempt(ctx, actorId, args.attemptId);
     // The blobs live in the COMPONENT's storage (the client uploaded them
     // through the component's upload URL) — host `ctx.storage.delete` cannot
     // reach them, so the delete goes through the component's host-only
@@ -444,13 +468,14 @@ type FreezeCheck =
   | { attempt: FreezeableAttempt; kind: "ready" }
   | { importId?: string; kind: "frozen"; schemaId: string };
 
-/** Reads the attempt and throws unless it is already frozen or ready to freeze. */
+/** Reads the attempt and throws unless it is already frozen or ready to freeze — and the caller owns it (stage 8: a foreign attemptId reads as gone). */
 async function freezeCheck(
   ctx: MutationCtx,
+  actorId: string,
   attemptId: Id<"publishAttempts">,
 ): Promise<FreezeCheck> {
   const attempt = await ctx.db.get(attemptId);
-  if (attempt === null) {
+  if (attempt === null || attempt.createdBy !== actorId) {
     throw new ConvexError("This publish attempt no longer exists.");
   }
   if (attempt.status === "importing" || attempt.status === "completed") {
@@ -493,8 +518,8 @@ async function freezeCheck(
 export const freeze = mutation({
   args: { attemptId: v.id("publishAttempts") },
   handler: async (ctx, args) => {
-    await auth(ctx);
-    const check = await freezeCheck(ctx, args.attemptId);
+    const actorId = await auth(ctx);
+    const check = await freezeCheck(ctx, actorId, args.attemptId);
     if (check.kind === "frozen") {
       return { alreadyFrozen: true, importId: check.importId, schemaId: check.schemaId };
     }
@@ -513,12 +538,18 @@ export const freeze = mutation({
         ? await draftFreezeInputs(ctx, attempt, frozenAt)
         : await derivedFreezeInputs(ctx, attempt, frozenAt);
     const { importId, schemaId } = await createFrozenVersion(ctx, {
+      // The author rides with the visibility choice (stage 8): an
+      // author-restricted frozen row must carry the author's identity or it
+      // would be invisible to everyone, its author included. The freeze
+      // checked ownership above, so the caller IS the attempt's creator.
+      actorId,
       boundWrite: "publish",
       chunkStorageIds: attempt.chunkStorageIds,
       collectionsSourceSchemaId: attempt.datasetKind === "draft" ? attempt.datasetKey : undefined,
       geometryType: built.geometryType,
       kind: built.kind,
       lineage: built.lineage,
+      publishedVisibility: built.publishedVisibility,
       schema: built.schema,
       source: built.source,
       total: attempt.plannedTotalRows ?? 0,
@@ -562,6 +593,8 @@ type FreezeInputs = {
     sourceVersions?: Array<{ datasetId: string; frozenAt?: number; ref?: string }>;
     versionLabel: string;
   };
+  /** The published-visibility control crossing the lifecycle line with the data (stage 8, decision D2): the draft's choice inherits onto the frozen row. */
+  publishedVisibility?: "author" | "everyone";
   schema: Record<string, unknown>;
   source?: { name: string };
 };
@@ -595,6 +628,10 @@ async function draftFreezeInputs(
       sourceSchemaId: attempt.datasetKey,
       versionLabel: attempt.versionLabel,
     },
+    // Decision D2 (stage 8): the authoring-time visibility choice crosses the
+    // lifecycle line with the data — an author-restricted draft publishes
+    // into an author-restricted v1.
+    publishedVisibility: draft.publishedVisibility,
     schema: {
       ...draft.schema,
       description: `Published ${attempt.versionLabel} of ${draft.title} — a materialized copy, read-only here.`,
@@ -883,9 +920,14 @@ export const pollImport = internalAction({
 export const attempt = query({
   args: { attemptId: v.id("publishAttempts") },
   handler: async (ctx, args) => {
-    await auth(ctx);
+    const viewer = await auth(ctx);
     const row = await ctx.db.get(args.attemptId);
-    return row === null ? null : attemptView(row);
+    // Creator-scoped since stage 8 (#104): an attempt names its dataset's
+    // drafts/rows — a foreign attemptId reads as null, same as a missing one.
+    if (row === null || row.createdBy !== viewer) {
+      return null;
+    }
+    return attemptView(row);
   },
   returns: v.union(v.null(), attemptViewValidator),
 });
