@@ -5,6 +5,7 @@ import { components } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { auth } from "./auth";
+import { syncRegistryReferenceEdges } from "./consumption";
 
 /**
  * Projects — the working container (roadmap stage 7a, #102; lifecycle doc
@@ -38,6 +39,13 @@ import { auth } from "./auth";
  * stage 8. The component-side global drafts toggle is a pre-existing 5a
  * surface and keeps its all-users semantics (stage-8 scope); nothing 7a
  * widens it.
+ *
+ * 7b (#103) grows this module by the two fork legs and nothing else: the
+ * fork-as-reference edge (`addArtifact` mints one float consumerReferences
+ * row per dataset membership; `removeArtifact` deletes it with the row) and
+ * fork-as-spec (`forkAsSpec` — a saved identity transform over the published
+ * source, born a project member). The bundle press itself lives in
+ * bundles.ts; it only READS membership rows.
  */
 
 /** Upper bounds per read — a project/workspace read stays bounded no matter the catalog. */
@@ -246,11 +254,14 @@ export const createDraftDataset = mutation({
 
 /**
  * Adds one existing artifact to a project — the reference insertion ("fork =
- * add-to-project", lifecycle §3). Creates ONLY the membership row: no
- * component row, no catalog row, no copy of anything (the issue's
- * "forking-as-reference creates no catalog row"). Any lifecycle state may be
- * referenced — a draft (pulled into the project), a published dataset or
- * frozen version, a saved derived spec, a map.
+ * add-to-project", lifecycle §3). No component row, no catalog row, no copy
+ * of anything (the issue's "forking-as-reference creates no catalog row").
+ * Since 7b (#103), a dataset membership also mints ONE float
+ * `consumerReferences` edge (consumerKind "fork", consumerId = the membership
+ * row) — the version-reference leg: the fork floats the source's chain, and
+ * stage 6's pin/sync/revert mutations operate on it like any consumer. Any
+ * lifecycle state may be referenced — a draft (pulled into the project), a
+ * published dataset or frozen version, a saved derived spec, a map.
  */
 export const addArtifact = mutation({
   args: {
@@ -280,20 +291,34 @@ export const addArtifact = mutation({
     if (holders.some((row) => row.projectId === projectId)) {
       throw new ConvexError("That artifact is already in this project.");
     }
-    return insertMembership(ctx, project, {
+    const membership = await insertMembership(ctx, project, {
       addedBy,
       artifactId: args.artifactId,
       artifactKind: args.artifactKind,
     });
+    if (args.artifactKind === "dataset") {
+      // The fork's version-reference edge, born with the membership in the
+      // same transaction — float by default (the registry save path's
+      // precedent; pin later through consumption.setReferenceMode).
+      await ctx.db.insert("consumerReferences", {
+        consumerId: membership,
+        consumerKind: "fork",
+        mode: "float",
+        sourceDatasetId: args.artifactId,
+      });
+    }
+    return membership;
   },
   returns: v.id("projectArtifacts"),
 });
 
 /**
- * Removes one membership row. Deliberately touches ONLY the row: the
- * referenced artifact stays exactly as it was (references, not containment —
- * removing a dataset from a project never deletes the dataset, and a draft
- * stays draft-side until its own publish flow crosses it).
+ * Removes one membership row — and, in the same transaction, the fork's
+ * consumer edges minted with it (a reference's version leg lives and dies
+ * with the membership). Deliberately touches NOTHING else: the referenced
+ * artifact stays exactly as it was (references, not containment — removing a
+ * dataset from a project never deletes the dataset, and a draft stays
+ * draft-side until its own publish flow crosses it).
  */
 export const removeArtifact = mutation({
   args: {
@@ -322,11 +347,82 @@ export const removeArtifact = mutation({
     if (membership === undefined) {
       throw new ConvexError("That artifact isn't in this project.");
     }
+    const edges = await ctx.db
+      .query("consumerReferences")
+      .withIndex("by_consumer", (q) => q.eq("consumerId", membership._id))
+      .collect();
+    for (const edge of edges) {
+      // oxlint-disable-next-line no-await-in-loop -- one edge per membership, ordered and small.
+      await ctx.db.delete(edge._id);
+    }
     await ctx.db.delete(membership._id);
     await ctx.db.patch(project._id, { artifactCount: Math.max(0, project.artifactCount - 1) });
     return null;
   },
   returns: v.null(),
+});
+
+/**
+ * Fork-as-spec (roadmap 7b, #103; lifecycle §3's "reuse-with-transforms
+ * creates a derived spec over the published source"): creates a SAVED
+ * derivedDatasets registry row whose spec is the identity over
+ * `sourceDatasetId` — which may name a component dataset, a frozen version
+ * row (both are component ids), or another registry row (derived-of-derived;
+ * the id-duality rule) — plus the project membership, in ONE transaction,
+ * with the save path's float reference edges. Saved, not a builder autosave,
+ * so the fork is publishable day one (publish.start refuses autosaves); the
+ * builder edits the spec from here. Never merges back: the fork's versions
+ * hang from its own chain anchor (the registry row id).
+ */
+export const forkAsSpec = mutation({
+  args: { projectId: v.string(), sourceDatasetId: v.string(), title: v.string() },
+  handler: async (ctx, args) => {
+    const addedBy = await auth(ctx),
+      projectId = projectIdArg(ctx, args.projectId);
+    if (projectId === null) {
+      throw new ConvexError("This project no longer exists — it may have been deleted.");
+    }
+    const project = await projectForWrite(ctx, projectId);
+    const title = args.title.trim();
+    if (title === "") {
+      throw new ConvexError("Give the fork a title.");
+    }
+    // The source must exist on one side of the id duality (component dataset
+    // or registry row — the same resolution `assertArtifactExists` uses for
+    // "derived" memberships).
+    const registryId = ctx.db.normalizeId("derivedDatasets", args.sourceDatasetId);
+    const registryRow =
+      registryId === null ? null : await ctx.db.get(registryId);
+    if (registryRow === null) {
+      const dataset = await tryGetSchema(ctx, args.sourceDatasetId);
+      if (dataset === null) {
+        throw new ConvexError(
+          "No dataset was found at that id — it may have been deleted.",
+        );
+      }
+    }
+    const registryRowId = await ctx.db.insert("derivedDatasets", {
+      createdBy: addedBy,
+      // The persisted edges, exactly as the save path denormalizes them (the
+      // identity spec has exactly one dependency).
+      dependsOn: [args.sourceDatasetId],
+      sourceDatasetId: args.sourceDatasetId,
+      // Identity transform over the source — the fork starts as reuse, and
+      // the builder adds transforms from here (the spec shape
+      // validateSpecShape accepts).
+      spec: { operations: [], sourceDatasetId: args.sourceDatasetId },
+      status: "saved",
+      title,
+    });
+    await syncRegistryReferenceEdges(ctx, { registryId: registryRowId, spec: { operations: [], sourceDatasetId: args.sourceDatasetId } });
+    await insertMembership(ctx, project, {
+      addedBy,
+      artifactId: registryRowId,
+      artifactKind: "derived",
+    });
+    return registryRowId;
+  },
+  returns: v.id("derivedDatasets"),
 });
 
 /**

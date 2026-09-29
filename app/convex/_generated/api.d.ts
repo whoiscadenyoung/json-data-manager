@@ -10,6 +10,7 @@
 
 import type * as auth from "../auth.js";
 import type * as bindings from "../bindings.js";
+import type * as bundles from "../bundles.js";
 import type * as collections from "../collections.js";
 import type * as consumption from "../consumption.js";
 import type * as crons from "../crons.js";
@@ -42,6 +43,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   bindings: typeof bindings;
+  bundles: typeof bundles;
   collections: typeof collections;
   consumption: typeof consumption;
   crons: typeof crons;

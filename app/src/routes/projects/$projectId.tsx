@@ -8,9 +8,12 @@ import {
   Calendar,
   Database,
   FolderKanban,
+  GitFork,
   ListPlus,
+  Loader2,
   Map as MapIcon,
   Plus,
+  Rocket,
   Trash2,
 } from "lucide-react";
 import { useState } from "react";
@@ -36,6 +39,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "#/components/ui/empty";
+import { publishProjectBundle } from "#/lib/bundle-publish";
 
 import { api } from "../../../convex/_generated/api";
 
@@ -44,9 +48,13 @@ import { api } from "../../../convex/_generated/api";
  * the project listed by kind, with the create/import entry points (which
  * land IN the project — the create page's `?projectId=` variant) and the
  * add-reference action ("fork = add-to-project": reuse adds a reference,
- * never a copy). Per-artifact publish affordances stay on the artifact's own
- * page — the rows link there (the dataset page owns the 5b publish flow), so
- * the workspace never implies a bundle publish exists (that's 7b).
+ * never a copy; 7b mints the fork's float version-reference edge with it).
+ * 7b (#103) adds the stage's own seam: the one-press BUNDLE PUBLISH —
+ * collection + maps + referenced datasets through the 5b machinery — with
+ * the press's progress and the promoted collection link from
+ * `api.bundles.latestForProject`, plus "fork as transform" in the add
+ * dialog (a saved identity spec over the published source — reuse with
+ * transforms, no copy).
  *
  * The read is `projects.get` — creator-scoped server-side; null renders the
  * not-found card, so another user's project (and the drafts it carries) is
@@ -348,7 +356,9 @@ function buildCandidates(
  * The add-reference dialog: one candidate list per kind, opt-in subscriptions
  * (enabled only while open — the light-query convention). A click adds the
  * membership row and nothing else — no catalog row, no copy ("fork =
- * add-to-project").
+ * add-to-project"). Dataset candidates also offer "fork as transform" (7b):
+ * a SAVED identity spec over the source, born a project member — reuse with
+ * transforms, publishable day one.
  */
 function AddReferenceDialog({
   projectId,
@@ -364,6 +374,7 @@ function AddReferenceDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const add = useMutation(api.projects.addArtifact),
+    fork = useMutation(api.projects.forkAsSpec),
     [kind, setKind] = useState<"dataset" | "derived" | "map">("dataset"),
     [pendingId, setPendingId] = useState<string | undefined>(),
     datasets = useQuery({ ...convexQuery(api.schemas.listSummaries), enabled: open }).data,
@@ -382,6 +393,23 @@ function AddReferenceDialog({
     try {
       await add({ artifactId, artifactKind, projectId });
       toast.success("Added to project.");
+      onOpenChange(false);
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setPendingId(undefined);
+    }
+  };
+
+  const forkAsTransform = async (sourceDatasetId: string, sourceTitle: string) => {
+    setPendingId(sourceDatasetId);
+    try {
+      await fork({
+        projectId,
+        sourceDatasetId,
+        title: `Fork of ${sourceTitle}`,
+      });
+      toast.success("Forked as a transform — edit its spec, publish it with the project.");
       onOpenChange(false);
     } catch (error) {
       toast.error(errorMessage(error));
@@ -427,27 +455,161 @@ function AddReferenceDialog({
         ) : (
           <div className="flex flex-col gap-1">
             {available.map((candidate) => (
-              <button
-                key={candidate.id}
-                type="button"
-                disabled={pendingId !== undefined}
-                onClick={() => {
-                  void addArtifact(candidate.id, kind);
-                }}
-                className="flex flex-col items-start gap-0.5 rounded-md border px-3 py-2 text-left transition-colors hover:bg-muted/50 disabled:opacity-50"
-              >
-                <span className="text-sm font-medium">{candidate.label}</span>
-                {candidate.hint !== undefined && (
-                  <span className="line-clamp-1 text-xs text-muted-foreground">
-                    {candidate.hint}
-                  </span>
+              <div key={candidate.id} className="flex items-stretch gap-1">
+                <button
+                  type="button"
+                  disabled={pendingId !== undefined}
+                  onClick={() => {
+                    void addArtifact(candidate.id, kind);
+                  }}
+                  className="flex min-w-0 flex-1 flex-col items-start gap-0.5 rounded-md border px-3 py-2 text-left transition-colors hover:bg-muted/50 disabled:opacity-50"
+                >
+                  <span className="text-sm font-medium">{candidate.label}</span>
+                  {candidate.hint !== undefined && (
+                    <span className="line-clamp-1 text-xs text-muted-foreground">
+                      {candidate.hint}
+                    </span>
+                  )}
+                </button>
+                {kind === "dataset" && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 self-center"
+                    disabled={pendingId !== undefined}
+                    aria-label={`Fork ${candidate.label} as a transform`}
+                    title="Fork as transform: a new derived spec over this dataset — a reference, never a copy"
+                    onClick={() => {
+                      void forkAsTransform(candidate.id, candidate.label);
+                    }}
+                  >
+                    {pendingId === candidate.id ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Forking…
+                      </>
+                    ) : (
+                      <>
+                        <GitFork className="h-4 w-4" />
+                        Fork
+                      </>
+                    )}
+                  </Button>
                 )}
-              </button>
+              </div>
             ))}
           </div>
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** The stale-run threshold, the syncRuns/publishAttempts value: a press whose checkpoint hasn't moved for this long was abandoned by its browser, and pressing again RESUMES it (start joins running runs). */
+const STALE_PRESS_MS = 2 * 60 * 1000;
+
+type LatestBundle = NonNullable<FunctionReturnType<typeof api.bundles.latestForProject>>;
+
+/** True when the newest run says "running" but its checkpoint has been idle past the stale window — a killed browser's press, safe to re-press into (start joins it). */
+function pressLooksStale(bundle: LatestBundle, now: number): boolean {
+  return bundle.status === "running" && now - bundle.lastProgressAt > STALE_PRESS_MS;
+}
+
+/** The press handler: drives the client orchestrator, toasts the outcome. */
+function usePressBundle(projectId: string) {
+  const [pressing, setPressing] = useState(false);
+  const press = async () => {
+    setPressing(true);
+    try {
+      const outcome = await publishProjectBundle({ projectId });
+      if (outcome.status === "completed") {
+        toast.success(
+          "Project published — the collection, its maps, and every referenced dataset are in the catalog.",
+        );
+      } else {
+        toast.error(
+          `The press finished with ${outcome.failedKeys.length} failed member${
+            outcome.failedKeys.length === 1 ? "" : "s"
+          }: ${outcome.failedKeys.join(", ")} — completed members keep their published versions. Press again to retry.`,
+        );
+      }
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setPressing(false);
+    }
+  };
+  return { press, pressing };
+}
+
+/** The failed members, named — the checkpoint design's contract ("the UI can say exactly what to retry"). */
+function FailedMemberList({
+  bundle,
+}: {
+  bundle: LatestBundle;
+}) {
+  if (bundle.failedMembers.length === 0) {
+    return null;
+  }
+  return (
+    <span className="mt-1 flex flex-col gap-0.5 text-xs text-destructive">
+      {bundle.failedMembers.map((member) => (
+        <span key={member.datasetKey} className="truncate">
+          Failed: {member.datasetKey}
+          {member.error !== undefined ? ` — ${member.error}` : ""}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** The workspace's bundle status under the header (7b): the live press (with progress), an interrupted one, the failures, or the promoted collection link. Staleness reads the mount-time clock (react/purity) — the page remounts on return, which is exactly when an abandoned press should announce itself; the press action never gates on it. */
+function BundleStatusLine({ bundle }: { bundle: LatestBundle }) {
+  const [now] = useState(() => Date.now()),
+    stale = pressLooksStale(bundle, now);
+  if (bundle.status === "running" && !stale) {
+    return (
+      <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
+        <Rocket className="h-3.5 w-3.5 animate-pulse text-primary" />
+        Publishing bundle… {bundle.publishedCount} of {bundle.memberCount} members done
+      </p>
+    );
+  }
+  if (bundle.status === "running" && stale) {
+    return (
+      <p className="mt-1 text-sm text-muted-foreground">
+        The last press looks interrupted — press publish to resume it where it stopped.
+      </p>
+    );
+  }
+  if (bundle.status === "failed") {
+    return (
+      <div className="mt-1 flex flex-col">
+        <p className="text-sm text-destructive">
+          Last press failed ({bundle.failedCount} of {bundle.memberCount} members) — press publish
+          again to retry.
+        </p>
+        <FailedMemberList bundle={bundle} />
+      </div>
+    );
+  }
+  return (
+    <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
+      Published {new Date(bundle.finishedAt ?? bundle.startedAt).toLocaleDateString()}
+      {bundle.collectionId !== undefined && (
+        <>
+          {" — "}
+          <Link
+            to="/collections/$collectionId"
+            params={{ collectionId: bundle.collectionId }}
+            className="text-primary underline-offset-2 hover:underline"
+          >
+            view the published collection
+          </Link>
+        </>
+      )}
+    </p>
   );
 }
 
@@ -458,7 +620,12 @@ function ProjectWorkspacePage() {
     // throws, and without this branch that shows as an infinite spinner.
     { isAuthenticated, isLoading: authLoading } = useConvexAuth(),
     workspace = useQuery({ ...convexQuery(api.projects.get, { projectId }) }).data,
-    [addOpen, setAddOpen] = useState(false);
+    // This project's newest press (7b): drives the publish button's state
+    // and the status line. undefined until it loads; null before any press.
+    latestBundle = useQuery({ ...convexQuery(api.bundles.latestForProject, { projectId }) })
+      .data,
+    [addOpen, setAddOpen] = useState(false),
+    { press, pressing } = usePressBundle(projectId);
 
   if (authLoading) {
     return (
@@ -533,8 +700,32 @@ function ProjectWorkspacePage() {
             {project.description !== undefined && (
               <p className="mt-1 text-muted-foreground">{project.description}</p>
             )}
+            {latestBundle !== undefined && latestBundle !== null && (
+              <BundleStatusLine bundle={latestBundle} />
+            )}
           </div>
           <div className="flex gap-2">
+            {/* The 7b seam: one press publishes the bundle — collection +
+                maps + referenced datasets — through the existing 5b publish
+                machinery (bundle-publish.ts drives it client-side). Disabled
+                on the LOCAL press only: a run left "running" by a killed
+                browser is re-pressed INTO (start joins it, that IS the
+                resume), and an empty project is refused server-side too. */}
+            <Button
+              type="button"
+              onClick={() => {
+                void press();
+              }}
+              disabled={pressing || empty}
+              title={
+                empty
+                  ? "Nothing to publish yet — add a dataset or a map with layers first."
+                  : undefined
+              }
+            >
+              <Rocket className="h-4 w-4 mr-2" />
+              {pressing ? "Publishing…" : "Publish bundle"}
+            </Button>
             {/* The in-project create/import entry point: the create page's
                 ?projectId= variant lands the draft + membership atomically. */}
             <RouterButton to="/datasets/create" search={{ projectId }}>

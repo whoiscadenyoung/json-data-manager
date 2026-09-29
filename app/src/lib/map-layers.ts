@@ -49,25 +49,116 @@ export type KeyedGeometryEntry = DatasetGeometryRow & { sourceSchemaId?: string 
  * plus once per derived layer whose bottom source it belongs to — each copy
  * under the derived id with `sourceSchemaId` preserved for the click
  * payload. Built in a loop, not a map callback (the map-spread rule).
+ *
+ * The third parameter is 7b's chain leg (#103): a published map's dataset
+ * layer resolves its (draft) target through the target's version chain and
+ * renders the RESOLVED row's data under the anchor's own render id — the
+ * anchor's live rows never draw (the layer draws its published head, not the
+ * draft's edits), while copies of the resolved rows draw under the anchor id
+ * with `sourceSchemaId` pointing at the frozen row so the click payload
+ * lands on the published dataset's page. Copies are never re-keyed again
+ * (one pass over the fetched rows); a resolved anchor that is ALSO a derived
+ * bottom source still feeds its derived copies.
  */
 export function keyedGeometryRows(
   geometries: readonly DatasetGeometryRow[],
   derivedIdsBySource: ReadonlyMap<string, string[]>,
+  chainSourceByRenderId: ReadonlyMap<string, string> = new globalThis.Map(),
 ): KeyedGeometryEntry[] {
+  const chainRendersBySource = new globalThis.Map<string, string[]>();
+  for (const [renderId, sourceId] of chainSourceByRenderId) {
+    const existing = chainRendersBySource.get(sourceId);
+    if (existing === undefined) {
+      chainRendersBySource.set(sourceId, [renderId]);
+    } else {
+      existing.push(renderId);
+    }
+  }
   const keyed: KeyedGeometryEntry[] = [];
   for (const row of geometries) {
-    keyed.push(row);
     const derivedIds = derivedIdsBySource.get(row.schemaId);
-    if (derivedIds === undefined) {
-      continue;
+    if (derivedIds !== undefined) {
+      for (const derivedId of derivedIds) {
+        const copy: KeyedGeometryEntry = { ...row, schemaId: derivedId };
+        copy.sourceSchemaId = row.schemaId;
+        keyed.push(copy);
+      }
     }
-    for (const derivedId of derivedIds) {
-      const copy: KeyedGeometryEntry = { ...row, schemaId: derivedId };
-      copy.sourceSchemaId = row.schemaId;
-      keyed.push(copy);
+    const chainRenderIds = chainRendersBySource.get(row.schemaId);
+    if (chainRenderIds !== undefined) {
+      for (const renderId of chainRenderIds) {
+        const copy: KeyedGeometryEntry = { ...row, schemaId: renderId };
+        copy.sourceSchemaId = row.schemaId;
+        keyed.push(copy);
+      }
+    }
+    // A chain-resolved anchor's own live rows draw nothing — the layer
+    // renders its published head through the copies above.
+    if (!chainSourceByRenderId.has(row.schemaId)) {
+      keyed.push(row);
     }
   }
   return keyed;
+}
+
+/** One layer-dataset chain resolution, as `api.bundles.layerResolutions` returns it (7b). */
+export type LayerChainResolution = FunctionReturnType<typeof api.bundles.layerResolutions>[number];
+
+/**
+ * The chain view a published map's workspace renders through (7b, the
+ * stale-id decision): for every resolution that resolves, the frozen row its
+ * geometry subscription rides (`sourceByRenderId`), and ALIAS summaries —
+ * the resolved row's summary re-stamped under the anchor id for every anchor
+ * the catalog-filtered summaries lack (a draft). Aliases strip the archive
+ * fields: an alias always takes the row path, since the archive metadata
+ * subscription keys real rows only. Everything downstream (expansion,
+ * children, colors, visibility, extents) keeps keying the ANCHOR id, so
+ * stored layer rows and override child keys stay valid.
+ *
+ * `suppressedAnchors` is the retired-pin case: a PIN whose pinned row is
+ * gone resolves to nothing, and the layer must render NOTHING — never a
+ * fallback to the anchor's live rows, which would show newer data than the
+ * pin (the stale-id leak in the other direction). Sync/revert on the
+ * reference is the repair path.
+ */
+export function chainViewOf(
+  resolutions: readonly LayerChainResolution[],
+  summaries: readonly DatasetSummary[],
+): {
+  aliases: DatasetSummary[];
+  sourceByRenderId: globalThis.Map<string, string>;
+  suppressedAnchors: globalThis.Set<string>;
+} {
+  const summaryById = new globalThis.Map(summaries.map((summary) => [summary._id, summary])),
+    sourceByRenderId = new globalThis.Map<string, string>(),
+    suppressedAnchors = new globalThis.Set<string>();
+  for (const resolution of resolutions) {
+    if (resolution.resolvedSchemaId !== undefined) {
+      sourceByRenderId.set(resolution.anchorId, resolution.resolvedSchemaId);
+    } else if (resolution.mode === "pin") {
+      suppressedAnchors.add(resolution.anchorId);
+    }
+  }
+  const aliases: DatasetSummary[] = [];
+  for (const [anchorId, resolvedId] of sourceByRenderId) {
+    if (summaryById.has(anchorId)) {
+      continue;
+    }
+    const resolved = summaryById.get(resolvedId);
+    if (resolved === undefined) {
+      continue;
+    }
+    aliases.push({
+      ...resolved,
+      _id: anchorId,
+      mapTileArchiveBuiltVersion: undefined,
+      mapTileArchiveBytes: undefined,
+      mapTileArchiveMaxZoom: undefined,
+      mapTileArchiveStorageId: undefined,
+      mapTileCacheVersion: undefined,
+    });
+  }
+  return { aliases, sourceByRenderId, suppressedAnchors };
 }
 
 /**

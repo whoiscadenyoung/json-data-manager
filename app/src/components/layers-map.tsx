@@ -146,6 +146,9 @@ function getDatasetTitle(
 /** The stable empty list behind LayersMap's `derivedLayers` default (the default-prop rule). */
 const NO_DERIVED_LAYERS: Array<{ derivedId: string; sourceSchemaId: string }> = [];
 
+/** The stable empty list behind LayersMap's `chainLayers` default (the default-prop rule). */
+const NO_CHAIN_LAYERS: Array<{ renderId: string; sourceSchemaId: string }> = [];
+
 /** A derived layer's source id → the derived ids drawing it (multi-layer sharing of one source). */
 function derivedIdsBySourceOf(
   derivedLayers: Array<{ derivedId: string; sourceSchemaId: string }>,
@@ -160,6 +163,17 @@ function derivedIdsBySourceOf(
     }
   }
   return bySource;
+}
+
+/** The 7b chain map: resolved row id → the render ids drawing it (render id → source, inverted once). */
+function chainSourceByRenderIdOf(
+  chainLayers: Array<{ renderId: string; sourceSchemaId: string }>,
+): globalThis.Map<string, string> {
+  const byRender = new globalThis.Map<string, string>();
+  for (const layer of chainLayers) {
+    byRender.set(layer.renderId, layer.sourceSchemaId);
+  }
+  return byRender;
 }
 
 /** Groups the visible, resolved rows by their render id (a derived id for re-keyed copies) — the per-dataset layering order. */
@@ -227,6 +241,7 @@ function geometryRowsBySchema(
 export function LayersMap({
   datasets,
   derivedLayers = NO_DERIVED_LAYERS,
+  chainLayers = NO_CHAIN_LAYERS,
   geometries,
   titlesById,
   visibleSchemaIds,
@@ -238,6 +253,14 @@ export function LayersMap({
   datasets: DatasetSummary[];
   /** Derived layers on this map: render id → the bottom source dataset its geometry rides. */
   derivedLayers?: Array<{ derivedId: string; sourceSchemaId: string }>;
+  /**
+   * 7b chain layers (#103): a dataset layer whose target resolves through a
+   * version chain — render id (the layer's own target id, never rewritten) →
+   * the resolved frozen row its geometry actually rides. The target's live
+   * rows draw nothing; the resolved rows draw under the render id with
+   * `sourceSchemaId` landing click payloads on the published dataset.
+   */
+  chainLayers?: Array<{ renderId: string; sourceSchemaId: string }>;
   geometries: GeometryEntry[];
   /** Titles for ids that aren't component datasets (derived registry rows), for legends and popup headers. */
   titlesById?: globalThis.Map<string, string>;
@@ -256,7 +279,11 @@ export function LayersMap({
     // the plain rows stay so a source that is ALSO a layer keeps drawing as
     // itself; each showing derived layer gets its own copy of the row under
     // its id (shared objects re-wrapped, not re-fetched).
-    keyedGeometries = keyedGeometryRows(geometries, derivedIdsBySourceOf(derivedLayers)),
+    keyedGeometries = keyedGeometryRows(
+      geometries,
+      derivedIdsBySourceOf(derivedLayers),
+      chainSourceByRenderIdOf(chainLayers),
+    ),
     // Most rows resolve synchronously (inline `geometryJson`); a row backed
     // by external storage is simply absent until its `fetch` completes.
     visibleGeometries = keyedGeometries.flatMap((g) => {
