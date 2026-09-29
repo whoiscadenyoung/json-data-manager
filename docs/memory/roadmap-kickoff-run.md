@@ -16,13 +16,20 @@ The data-platform roadmap kickoff run (dynamic workflow `dwfrun-0199d0ad`,
   testable acceptance criteria; the train was reviewed by two independent
   reviewers (implementer lens, roadmap-grounding lens) before filing. #88
   holds the ordered index comment.
-- **PROGRESS 2026-09-28: Phase 0 (#106–#110) AND stages 1–5b (#111 engine,
-  #112 registry/builder, #113/#114 surfacing, #115 rollup/composition/
-  geometrySource, #116 lifecycle flag, #117 materialized publish) ALL
-  MERGED** — issues #89–#100 closed, CI green on main. Stage 6 (#101
-  versioned consumption) was in flight (run dwfrun-4a39312f, stalled on
-  provider network errors, retrying). Remaining: 6, 7a/b (#102/#103),
-  8 (#104), 9 (#105) — each one session in train order.
+- **PROGRESS 2026-09-29: 🏁 ROADMAP COMPLETE.** Phase 0 (#106–#110) AND all
+  nine stages (#111 engine, #112 registry/builder, #113/#114 surfacing,
+  #115 rollup/composition/geometrySource, #116 lifecycle flag, #117
+  materialized publish, #118 versioned consumption, #119 projects,
+  #120 bundle publish + fork, #121 sharing/isolation, #122 analysis layer)
+  ALL MERGED — issues #89–#105 closed and umbrella #88 closed with the
+  full delivery record (stage→PR table + manual-verification list:
+  https://github.com/whoiscadenyoung/json-data-manager/issues/88#issuecomment-5897082532).
+  **Still worth doing manually:** two-account live check of auth gating +
+  isolation; first real materialized publish; first browser SQL query;
+  a convex-test for freezeVersion idempotency. Parquet sidecar deferred
+  by design. Each stage ran the same pipeline: contract from design docs →
+  gates (json-cms build/typecheck/test, app tests, oxlint) → independent
+  lens review(s) with re-gating → draft PR → merge with CI green.
 - Gates per PR (script-run): json-cms build + typecheck + tests, app vitest,
   root oxlint; `oxfmt --check` excluded (pre-existing failures).
 
