@@ -18,6 +18,8 @@ import { Route as DatasetsCreateRouteImport } from './routes/datasets/create'
 import { Route as GroupsGroupIdRouteImport } from './routes/groups/$groupId'
 import { Route as MapsIndexRouteImport } from './routes/maps/index'
 import { Route as MapsMapIdRouteImport } from './routes/maps/$mapId'
+import { Route as ProjectsIndexRouteImport } from './routes/projects/index'
+import { Route as ProjectsProjectIdRouteImport } from './routes/projects/$projectId'
 import { Route as UsersUserIdRouteImport } from './routes/users/$userId'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as CollectionsCollectionIdIndexRouteImport } from './routes/collections/$collectionId/index'
@@ -71,6 +73,16 @@ const MapsMapIdRoute = MapsMapIdRouteImport.update({
   path: '/maps/$mapId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ProjectsIndexRoute = ProjectsIndexRouteImport.update({
+  id: '/projects/',
+  path: '/projects/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProjectsProjectIdRoute = ProjectsProjectIdRouteImport.update({
+  id: '/projects/$projectId',
+  path: '/projects/$projectId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const UsersUserIdRoute = UsersUserIdRouteImport.update({
   id: '/users/$userId',
   path: '/users/$userId',
@@ -116,10 +128,12 @@ export interface FileRoutesByFullPath {
   '/datasets/create': typeof DatasetsCreateRoute
   '/groups/$groupId': typeof GroupsGroupIdRoute
   '/maps/$mapId': typeof MapsMapIdRoute
+  '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/users/$userId': typeof UsersUserIdRoute
   '/collections/': typeof CollectionsIndexRoute
   '/datasets/': typeof DatasetsIndexRoute
   '/maps/': typeof MapsIndexRoute
+  '/projects/': typeof ProjectsIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
   '/datasets/$schemaId/bulk-upload': typeof DatasetsSchemaIdBulkUploadRoute
@@ -134,10 +148,12 @@ export interface FileRoutesByTo {
   '/datasets/create': typeof DatasetsCreateRoute
   '/groups/$groupId': typeof GroupsGroupIdRoute
   '/maps/$mapId': typeof MapsMapIdRoute
+  '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/users/$userId': typeof UsersUserIdRoute
   '/collections': typeof CollectionsIndexRoute
   '/datasets': typeof DatasetsIndexRoute
   '/maps': typeof MapsIndexRoute
+  '/projects': typeof ProjectsIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
   '/datasets/$schemaId/bulk-upload': typeof DatasetsSchemaIdBulkUploadRoute
@@ -153,10 +169,12 @@ export interface FileRoutesById {
   '/datasets/create': typeof DatasetsCreateRoute
   '/groups/$groupId': typeof GroupsGroupIdRoute
   '/maps/$mapId': typeof MapsMapIdRoute
+  '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/users/$userId': typeof UsersUserIdRoute
   '/collections/': typeof CollectionsIndexRoute
   '/datasets/': typeof DatasetsIndexRoute
   '/maps/': typeof MapsIndexRoute
+  '/projects/': typeof ProjectsIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
   '/datasets/$schemaId/bulk-upload': typeof DatasetsSchemaIdBulkUploadRoute
@@ -173,10 +191,12 @@ export interface FileRouteTypes {
     | '/datasets/create'
     | '/groups/$groupId'
     | '/maps/$mapId'
+    | '/projects/$projectId'
     | '/users/$userId'
     | '/collections/'
     | '/datasets/'
     | '/maps/'
+    | '/projects/'
     | '/api/auth/$'
     | '/datasets/$schemaId/$entryId'
     | '/datasets/$schemaId/bulk-upload'
@@ -191,10 +211,12 @@ export interface FileRouteTypes {
     | '/datasets/create'
     | '/groups/$groupId'
     | '/maps/$mapId'
+    | '/projects/$projectId'
     | '/users/$userId'
     | '/collections'
     | '/datasets'
     | '/maps'
+    | '/projects'
     | '/api/auth/$'
     | '/datasets/$schemaId/$entryId'
     | '/datasets/$schemaId/bulk-upload'
@@ -209,10 +231,12 @@ export interface FileRouteTypes {
     | '/datasets/create'
     | '/groups/$groupId'
     | '/maps/$mapId'
+    | '/projects/$projectId'
     | '/users/$userId'
     | '/collections/'
     | '/datasets/'
     | '/maps/'
+    | '/projects/'
     | '/api/auth/$'
     | '/datasets/$schemaId/$entryId'
     | '/datasets/$schemaId/bulk-upload'
@@ -228,10 +252,12 @@ export interface RootRouteChildren {
   DatasetsCreateRoute: typeof DatasetsCreateRoute
   GroupsGroupIdRoute: typeof GroupsGroupIdRoute
   MapsMapIdRoute: typeof MapsMapIdRoute
+  ProjectsProjectIdRoute: typeof ProjectsProjectIdRoute
   UsersUserIdRoute: typeof UsersUserIdRoute
   CollectionsIndexRoute: typeof CollectionsIndexRoute
   DatasetsIndexRoute: typeof DatasetsIndexRoute
   MapsIndexRoute: typeof MapsIndexRoute
+  ProjectsIndexRoute: typeof ProjectsIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   DatasetsSchemaIdEntryIdRoute: typeof DatasetsSchemaIdEntryIdRoute
   DatasetsSchemaIdBulkUploadRoute: typeof DatasetsSchemaIdBulkUploadRoute
@@ -305,6 +331,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MapsMapIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/projects/': {
+      id: '/projects/'
+      path: '/projects'
+      fullPath: '/projects/'
+      preLoaderRoute: typeof ProjectsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/projects/$projectId': {
+      id: '/projects/$projectId'
+      path: '/projects/$projectId'
+      fullPath: '/projects/$projectId'
+      preLoaderRoute: typeof ProjectsProjectIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/users/$userId': {
       id: '/users/$userId'
       path: '/users/$userId'
@@ -364,10 +404,12 @@ const rootRouteChildren: RootRouteChildren = {
   DatasetsCreateRoute: DatasetsCreateRoute,
   GroupsGroupIdRoute: GroupsGroupIdRoute,
   MapsMapIdRoute: MapsMapIdRoute,
+  ProjectsProjectIdRoute: ProjectsProjectIdRoute,
   UsersUserIdRoute: UsersUserIdRoute,
   CollectionsIndexRoute: CollectionsIndexRoute,
   DatasetsIndexRoute: DatasetsIndexRoute,
   MapsIndexRoute: MapsIndexRoute,
+  ProjectsIndexRoute: ProjectsIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   DatasetsSchemaIdEntryIdRoute: DatasetsSchemaIdEntryIdRoute,
   DatasetsSchemaIdBulkUploadRoute: DatasetsSchemaIdBulkUploadRoute,
