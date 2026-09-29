@@ -37,6 +37,7 @@ import {
 import {
   assignDatasetColors,
   buildLayerChildren,
+  chainViewOf,
   expandLayerDatasets,
   overridesByLayerId,
   renderTargetsForDerivedLayers,
@@ -168,6 +169,11 @@ function MapDetailPage() {
     // projection is stage 3's single merge point. Feeds the picker's
     // candidates, the layer expansion, and the popup-title lookups.
     derivedSummaries = useQuery(api.derivedDatasets.summaries),
+    // 7b (#103) chain resolutions for THIS map's dataset layers: a target
+    // that holds a version chain (its project published) renders the chain —
+    // head for float, the pinned row for pin. Targets without a chain
+    // resolve to nothing and render themselves, exactly as before.
+    resolutions = useQuery(api.bundles.layerResolutions, { mapId }),
     // Child-visibility overrides for THIS map's layers only (issue #53) —
     // the wrapper reads through the map's `by_map` layers rather than
     // collecting every map's override rows.
@@ -190,9 +196,21 @@ function MapDetailPage() {
   // dataset. Everything downstream treats these as first-class render ids in
   // the layer pipeline (colors, visibility, expansion); only the geometry
   // subscription re-keys to the bottom source id.
-  const renderableDerived =
-      derivedSummaries !== undefined && datasets !== undefined
-        ? renderTargetsForDerivedLayers(derivedSummaries, datasets)
+  //
+  // The 7b chain view rides the same datasets feed: resolved anchors get
+  // ALIAS summaries (the frozen row's summary re-stamped under the draft's
+  // id, archive fields stripped) so every pure helper below — expansion,
+  // children, colors, visibility, extents — keeps keying the anchor id the
+  // stored layer rows and override child keys use.
+  const chain =
+      resolutions !== undefined && datasets !== undefined
+        ? chainViewOf(resolutions, datasets)
+        : undefined,
+    aliasedDatasets =
+      datasets !== undefined && chain !== undefined ? [...datasets, ...chain.aliases] : undefined,
+    renderableDerived =
+      derivedSummaries !== undefined && aliasedDatasets !== undefined
+        ? renderTargetsForDerivedLayers(derivedSummaries, aliasedDatasets)
         : undefined,
     // Layer → dataset expansion, dataset colors, and the unique render-id set
     // to load geometry for — ALL layers' datasets (visible or not), so showing
@@ -204,17 +222,28 @@ function MapDetailPage() {
     // today; these derivations are cheap).
     expanded =
       layers !== undefined &&
-      datasets !== undefined &&
+      aliasedDatasets !== undefined &&
       memberships !== undefined &&
       groups !== undefined &&
       renderableDerived !== undefined
-        ? expandLayerDatasets(layers, datasets, memberships, groups, renderableDerived)
+        ? expandLayerDatasets(layers, aliasedDatasets, memberships, groups, renderableDerived)
         : undefined,
     colorBySchema =
       layers !== undefined && expanded !== undefined
         ? assignDatasetColors(layers, expanded)
         : undefined,
-    schemaIds = expanded === undefined ? [] : [...new Set([...expanded.values()].flat())];
+    // Retired pins (7b) render NOTHING: a pin whose version row was retired
+    // resolves to nothing, and letting the layer fall back to its anchor's
+    // live rows would show newer data than the pin — the stale-id leak in
+    // reverse. Suppressed anchors drop out of the render id set entirely
+    // (the layer panel keeps the row, marked by `layerName` below).
+    suppressedAnchors = chain === undefined ? new Set<string>() : chain.suppressedAnchors,
+    schemaIds =
+      expanded === undefined
+        ? []
+        : [...new Set([...expanded.values()].flat())].filter(
+            (schemaId) => !suppressedAnchors.has(schemaId),
+          );
   // Layer-source decisions (issue #58 part 4): a dataset with a fresh tile
   // archive renders via `pmtiles://` range requests (no geometry-row traffic
   // for it at all); everything else stays on the row path. Derived render
@@ -227,22 +256,32 @@ function MapDetailPage() {
   // `undefined` renderableDerived means the page is still loading; `schemaIds`
   // is empty then too, so the fallback branch streams nothing.
   const derivedRowIds: string[] = [],
+    chainRowIds: string[] = [],
     datasetSubscriptionIds: string[] = [];
-  if (renderableDerived === undefined) {
+  if (renderableDerived === undefined || chain === undefined) {
     datasetSubscriptionIds.push(...schemaIds);
   } else {
     for (const schemaId of schemaIds) {
       const sourceId = renderableDerived.get(schemaId);
-      if (sourceId === undefined) {
-        datasetSubscriptionIds.push(schemaId);
+      if (sourceId !== undefined) {
+        derivedRowIds.push(schemaId);
+        datasetSubscriptionIds.push(sourceId);
         continue;
       }
-      derivedRowIds.push(schemaId);
-      datasetSubscriptionIds.push(sourceId);
+      // 7b: a chain-resolved anchor subscribes its RESOLVED row's geometries
+      // — the frozen data the layer renders — while the render id stays the
+      // anchor (the re-key happens in LayersMap via `chainLayers`).
+      const chainSource = chain.sourceByRenderId.get(schemaId);
+      if (chainSource !== undefined) {
+        chainRowIds.push(schemaId);
+        datasetSubscriptionIds.push(chainSource);
+        continue;
+      }
+      datasetSubscriptionIds.push(schemaId);
     }
   }
   const geometrySubscriptionIds = [...new Set(datasetSubscriptionIds)],
-    sourceBySchema = useTileArchiveSources(geospatialDatasetsFor(schemaIds, datasets)),
+    sourceBySchema = useTileArchiveSources(geospatialDatasetsFor(schemaIds, aliasedDatasets)),
     split = splitSchemaIdsByDecision(schemaIds, sourceBySchema, derivedRowIds),
     tileSources = split.tileSources,
     sourcesPending = split.sourcesPending,
@@ -268,6 +307,9 @@ function MapDetailPage() {
     map === undefined ||
     layers === undefined ||
     datasets === undefined ||
+    resolutions === undefined ||
+    chain === undefined ||
+    aliasedDatasets === undefined ||
     collections === undefined ||
     groups === undefined ||
     memberships === undefined ||
@@ -302,7 +344,9 @@ function MapDetailPage() {
 
   const collectionById = new Map(collections.map((collection) => [collection._id, collection])),
     groupById = new Map(groups.map((group) => [group._id, group])),
-    datasetById = new Map(datasets.map((dataset) => [dataset._id, dataset])),
+    // Alias-included: a chain-resolved anchor resolves its name/counts from
+    // its frozen row (the real summaries list lacks drafts).
+    datasetById = new Map(aliasedDatasets.map((dataset) => [dataset._id, dataset])),
     // Keyed by plain string: registry ids arrive branded from the validator,
     // but every layer/dataset id comparison here is string-typed.
     derivedById = new globalThis.Map<string, DerivedDatasetSummary>(
@@ -314,7 +358,7 @@ function MapDetailPage() {
     // virtual (no stored extent), and a derived-only map opens on the
     // default view rather than deriving bounds from streaming rows (see
     // LayersMap's doc comment).
-    mapDatasets = datasets.filter((dataset) => schemaIds.includes(dataset._id)),
+    mapDatasets = aliasedDatasets.filter((dataset) => schemaIds.includes(dataset._id)),
     // Cascading deletes keep layers from dangling at component targets, but
     // read the label defensively anyway — a stale label never beats a crash.
     // A "derived" target dangles whenever its registry row is deleted (the
@@ -336,14 +380,24 @@ function MapDetailPage() {
         }
         default: {
           const dataset = datasetById.get(layer.targetId);
-          return dataset ? dataset.title : "Deleted dataset";
+          // A suppressed anchor is a pin whose version row was retired — the
+          // stage-6 badge pattern's note, pointing at the repair path.
+          const retired = suppressedAnchors.has(layer.targetId);
+          const base = dataset ? dataset.title : "Deleted dataset";
+          return retired ? `${base} — pinned version retired; sync to repair` : base;
         }
       }
     },
     addedTargets = new Set(layers.map((layer) => `${layer.targetType}:${layer.targetId}`)),
     overridesByLayer = overridesByLayerId(overrides),
-    childrenByLayer = buildLayerChildren(layers, datasets, memberships, groups, colorBySchema),
-    visibleSchemaIds = resolveVisibleSchemaIds(layers, datasets, expanded, overridesByLayer),
+    childrenByLayer = buildLayerChildren(
+      layers,
+      aliasedDatasets,
+      memberships,
+      groups,
+      colorBySchema,
+    ),
+    visibleSchemaIds = resolveVisibleSchemaIds(layers, aliasedDatasets, expanded, overridesByLayer),
     datasetColorsByLayer = (layer: MapLayerDoc) =>
       (expanded.get(layer._id) ?? []).map((schemaId) => colorBySchema.get(schemaId) ?? "#3b82f6"),
     // Titles for the render ids that aren't component datasets (3a): the
@@ -450,6 +504,12 @@ function MapDetailPage() {
                   return source === undefined
                     ? []
                     : [{ derivedId, sourceSchemaId: source }];
+                })}
+                chainLayers={chainRowIds.flatMap((renderId) => {
+                  const source = chain.sourceByRenderId.get(renderId);
+                  return source === undefined
+                    ? []
+                    : [{ renderId, sourceSchemaId: source }];
                 })}
                 geometries={withEmptyRows(servedGeometries)}
                 titlesById={derivedTitlesById}

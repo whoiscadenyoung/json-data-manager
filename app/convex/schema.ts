@@ -278,19 +278,27 @@ export default defineSchema({
   // name several sources; each edge carries its own mode).
   //
   // Today's writers: the registry save path (one float row per saved spec
-  // dependency — live compute-on-read IS float semantics) and the
-  // sync/revert/pin mutations in consumption.ts. Maps and collections
-  // reference datasets but hold NO version reference — `consumerKind` is an
-  // open literal union so they join additively when a stage gives them one,
-  // and the consumed-by projection says which kinds it knows.
+  // dependency — live compute-on-read IS float semantics), the sync/revert/pin
+  // mutations in consumption.ts, and since 7b (#103) the bundle press's map
+  // leg (one float row per direct dataset layer target, the layer reads' chain
+  // resolution) plus projects.addArtifact's fork leg (one float row per
+  // dataset membership, consumerId = the membership row). Collections still
+  // hold no version reference — their bundle role is behavioral and their
+  // membership live.
   consumerReferences: defineTable({
     // The consuming artifact's stable host id (a derivedDatasets registry row
     // id today) — plain string: consumers may be component ids in later
     // stages, and the host-boundary id rule keeps one shape.
     consumerId: v.string(),
-    // Open union (the lifecycle-field precedent): "derived" today; stages
-    // 7–8 add kinds without a migration.
-    consumerKind: v.union(v.literal("derived")),
+    // Open union (the lifecycle-field precedent): stage 6 shipped "derived";
+    // stage 7b (#103) adds "map" (a bundle press mints one float row per
+    // dataset layer target — the layer's chain resolution leg, mapLayers
+    // themselves untouched) and "fork" (fork-as-reference: one float row per
+    // project membership on a dataset — consumerId is the projectArtifacts
+    // row id, so removing the membership removes the edge with it). Modes
+    // mean the same thing for every kind: float = at head, pin = the
+    // pinnedRef row.
+    consumerKind: v.union(v.literal("derived"), v.literal("map"), v.literal("fork")),
     mode: v.union(v.literal("float"), v.literal("pin")),
     // When pinned: the durable version identity — the frozen row's global
     // `lineage.snapshotRef` ("a ref never freezes twice", versioning.ts) with
@@ -390,6 +398,100 @@ export default defineSchema({
     .index("by_project", ["projectId"])
     // The reverse lookup ("which projects hold this artifact") and cleanup.
     .index("by_artifact", ["artifactKind", "artifactId"]),
+
+  // One bundle press (roadmap 7b, #103; lifecycle doc §2/§5-§6, ADR 0008):
+  // the syncRuns/publishAttempts-pattern durability row at the BUNDLE level —
+  // one row per press, so a killed browser rejoins its press and resumes only
+  // the members that never finished (per-member durability is already each
+  // publishAttempt's; this row is what makes resume EXACT — which members are
+  // done lives here, not in a client re-walk). Deliberately APP-SIDE: the
+  // component never learns projects exist (lifecycle §4).
+  //
+  // Recorded decisions this table pins:
+  // - **The collection is created once and REUSED** across presses (the
+  //   promoted bundle role is behavioral — component schema.ts collections
+  //   gain nothing): `collectionId` is that component row, a plain string per
+  //   the host-boundary id rule, absent until the press's collection leg
+  //   runs. Nothing else links a project to a collection — this row is the
+  //   link (the project→collection leg the 7a schema had no place for).
+  // - **Bundle-level version identity: declined.** The bundle itself does not
+  //   version; history is the sequence of these rows plus each member's own
+  //   version chain. The collection is a live component row (name/description
+  //   only), so the published form floats by construction — the lifecycle
+  //   doc's §9 lean, made concrete.
+  // - **Republish semantics (the issue's open item, picked): a re-press
+  //   re-promotes every member** — each draft/derived member publishes a NEW
+  //   attempt (vN+1, append-only; the acceptance's "republishing creates new
+  //   version rows, never mutating prior ones") — because no per-dataset
+  //   change signal exists (a draft carries no updated-at stamp), so
+  //   changed-inputs-only would be a guess. Keep-N retention bounds the
+  //   chains; members whose last attempt is still in flight JOIN it
+  //   (publish.start's join-or-revive), never fork.
+  bundleRuns: defineTable({
+    // The component collection row this press promoted the project into.
+    collectionId: v.optional(v.string()),
+    // Attribution only (the publishAttempts stance): any signed-in editor may
+    // press; per-creator isolation is stage 8.
+    createdBy: v.string(),
+    error: v.optional(v.string()),
+    finishedAt: v.optional(v.number()),
+    lastProgressAt: v.number(),
+    // The project's description at press time — the promoted collection's.
+    projectDescription: v.optional(v.string()),
+    projectId: v.id("projects"),
+    startedAt: v.number(),
+    status: v.union(v.literal("running"), v.literal("completed"), v.literal("failed")),
+    // The project's title at press time — the promoted collection's name.
+    title: v.string(),
+  }).index("by_project", ["projectId"]),
+
+  // One member of one bundle press — the per-member checkpoint the client
+  // orchestrator records against (guidelines: child items get their own
+  // table, never an unbounded array on the run row). Rows are born in the
+  // press's canonical WRITE order (datasets, then derived, then maps — the
+  // order the publish legs must run in), so the by_run scan IS the order.
+  bundleRunMembers: defineTable({
+    // The per-member publish attempt, once the client started one (plain
+    // string across the host boundary — it IS a host id, but member rows are
+    // written before the attempt exists).
+    attemptId: v.optional(v.string()),
+    // What this member is: a component dataset id, a derivedDatasets registry
+    // row id, or a component map id — plain strings (the projectArtifacts
+    // precedent). `kind` says which table answers.
+    datasetKey: v.string(),
+    error: v.optional(v.string()),
+    // Dataset members: the draft's group, so the frozen row joins it at the
+    // collection leg (group layers would otherwise render nothing post-publish
+    // — frozen rows are born ungrouped). Component group id, plain string.
+    groupId: v.optional(v.string()),
+    kind: v.union(v.literal("dataset"), v.literal("derived"), v.literal("map")),
+    // Map members: the DATASET-layer target ids the press mints map
+    // references for (the chain-resolution leg). Collection/group layers
+    // expand live and need none.
+    layerTargets: v.optional(v.array(v.string())),
+    // The frozen row this member produced (draft/derived publishes), absent
+    // until the client records the outcome.
+    publishedSchemaId: v.optional(v.string()),
+    // False for members with nothing to freeze (an already-published dataset
+    // referenced into the project joins the bundle as a MEMBER only — it
+    // gains collection membership, never a new version).
+    publish: v.boolean(),
+    runId: v.id("bundleRuns"),
+    // "pending" (not started) → "publishing" (client started the attempt) →
+    // "published" (frozen) for publishable members; already-published dataset
+    // members are born "referenced"; map members go "pending" → "linked".
+    // "failed" leaves the run partial — completed members keep their frozen
+    // rows (append-only; the only teardown is publish.ts's half-built-row
+    // sweep). Open union: future stages grow it additively.
+    status: v.union(
+      v.literal("pending"),
+      v.literal("publishing"),
+      v.literal("published"),
+      v.literal("referenced"),
+      v.literal("linked"),
+      v.literal("failed"),
+    ),
+  }).index("by_run", ["runId"]),
 
   locations: defineTable({
     address: v.string(),

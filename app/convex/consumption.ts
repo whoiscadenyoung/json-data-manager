@@ -77,8 +77,10 @@ export type ChainVersion = {
  * DERIVED consumer re-runs the spec through `publishDataset` (the client
  * orchestrator — this module never re-executes anything); revert repins to
  * the prior version (the catalog is append-only — nothing tears a published
- * version down). Maps and collections reference datasets but hold no version
- * reference; the consumed-by projection names the kinds it knows.
+ * version down). Since 7b (#103), maps hold float references on their
+ * dataset layers (the bundle press mints them; the workspace's layer reads
+ * resolve through them) and project forks hold float references per
+ * membership — the projection names every kind it knows.
  */
 
 /** A resolved chain head — what a consumer's recorded ref compares against. */
@@ -330,8 +332,14 @@ async function chainVersionsFor(
   }));
 }
 
-/** Resolves one source dataset's current chain head, across both anchors. */
-async function resolveSourceHead(
+/**
+ * Resolves one source dataset's current chain head, across both anchors.
+ * Shared beyond this module from 7b (#103): the bundle press's layer
+ * resolutions (`bundles.layerResolutions`) resolve a map's dataset-layer
+ * targets through the same heads, so a float layer and a drift badge can
+ * never disagree about what "head" is.
+ */
+export async function resolveSourceHead(
   ctx: { db: ReadDb; runQuery: RunQuery },
   sourceDatasetId: string,
 ): Promise<ChainHead | undefined> {
@@ -634,10 +642,10 @@ const consumedByValidator = v.object({
  * The consumed-by projection for one dataset (lifecycle §7): every consumer
  * that holds a reference on this dataset, with its pin/float state and
  * whether a new head awaits it. Union of the `consumerReferences` edges (the
- * authoritative leg — the save path and the one-off backfill below keep one
- * edge per saved spec dependency) and the bounded saved-registry scan, which
- * exists only for rows saved before stage 6 wrote edges; its take(500) is
- * the summaries projection's documented bound, not a correctness cap, and
+ * authoritative leg — the save path, the 7b fork/map legs, and the one-off
+ * backfill below) and the bounded saved-registry scan, which exists only for
+ * rows saved before stage 6 wrote edges; its take(500) is the summaries
+ * projection's documented bound, not a correctness cap, and
  * `backfillConsumerReferences` retires the need for it entirely. Deduped by
  * consumer id.
  */
@@ -667,14 +675,15 @@ export const consumedBy = query({
       }
     >();
     for (const ref of refs) {
-      // The consumer must still exist AND be catalog-visible: a deleted
-      // transform's stale edge (removed deletes its edges now, but rows
-      // deleted before that shipped leave orphans) and a saved row the
-      // builder demoted to draft by re-autosaving both resolve to nothing
-      // here — drafts are invisible to catalog consumers (lifecycle §3).
+      // The consumer must still exist (and, for a registry consumer, be
+      // catalog-visible): a deleted transform's stale edge (removed deletes
+      // its edges now, but rows deleted before that shipped leave orphans), a
+      // saved row the builder demoted to draft by re-autosaving, a removed
+      // project membership, and a deleted map all resolve to nothing here —
+      // drafts are invisible to catalog consumers (lifecycle §3).
       // oxlint-disable-next-line no-await-in-loop -- one consumer per hop; each read decides the next.
-      const consumer = await registryRowFor(ctx, ref.consumerId);
-      if (consumer === null || consumer.status !== "saved") {
+      const title = await consumerTitleFor(ctx, ref);
+      if (title === null) {
         continue;
       }
       // oxlint-disable-next-line no-await-in-loop -- see above.
@@ -687,7 +696,7 @@ export const consumedBy = query({
         pinnedRef: ref.pinnedRef,
         pinnedSchemaId: ref.pinnedSchemaId,
         referenceId: ref._id,
-        title: consumer.title,
+        title,
       });
     }
     for (const row of savedRows) {
@@ -706,11 +715,48 @@ export const consumedBy = query({
     }
     return {
       consumers: [...consumers.values()],
-      knownConsumerKinds: ["derived"],
+      knownConsumerKinds: ["derived", "fork", "map"],
     };
   },
   returns: consumedByValidator,
 });
+
+/**
+ * The consumer's display title per kind (7b): registry rows answer their own
+ * title (and must still be saved — the visibility rule above), fork consumers
+ * answer their membership's project's, map consumers the map's name. A gone
+ * consumer (deleted row, removed membership, deleted map) answers null and
+ * drops out of the projection — the defensive read every kind shares.
+ */
+async function consumerTitleFor(
+  ctx: { db: ReadDb; runQuery: RunQuery },
+  ref: Doc<"consumerReferences">,
+): Promise<string | null> {
+  if (ref.consumerKind === "derived") {
+    const row = await registryRowFor(ctx, ref.consumerId);
+    if (row === null || row.status !== "saved") {
+      return null;
+    }
+    return row.title;
+  }
+  if (ref.consumerKind === "fork") {
+    const membershipId = ctx.db.normalizeId("projectArtifacts", ref.consumerId);
+    const membership = membershipId === null ? null : await ctx.db.get(membershipId);
+    if (membership === null) {
+      return null;
+    }
+    const project = await ctx.db.get(membership.projectId);
+    return project === null ? null : project.title;
+  }
+  try {
+    const map = await ctx.runQuery(components.jsonCms.lib.getMap, { mapId: ref.consumerId });
+    return map === null ? null : map.name;
+  } catch {
+    // A consumerId that isn't a well-formed component map id — the
+    // id-duality rule's "not a map" answer.
+    return null;
+  }
+}
 
 /**
  * The consumer's registry row, when the id is one — deleted transforms and
