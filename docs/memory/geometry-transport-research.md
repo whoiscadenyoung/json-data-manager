@@ -8,7 +8,7 @@ metadata:
   originSessionId: sess_6658d494-1077-4e60-a900-a0d0d69a74b2
 ---
 
-Research done 2026-09-16 (main agent — subagent spawning unavailable on this plan: "no reasoning level selected" error on any Agent launch) for [[map-performance-audit-2026-09]] issue #51. Cloned shallow to /tmp/placemark-research + /tmp/geolens-research.
+Research done 2026-09-16 for [[map-performance-audit-2026-09]] issue #51. Cloned shallow to /tmp/placemark-research + /tmp/geolens-research.
 
 **Placemark (MIT, github.com/placemark/placemark)** — local-first GIS editor, MapLibre + jotai, no tiles:
 
