@@ -16,6 +16,7 @@ import {
   commitOpValidator,
   diffVersionRows,
   versionRows,
+  versionRowsBounded,
 } from "./versioning";
 
 /**
@@ -220,6 +221,19 @@ export const listSnapshots = query({
  * (delete the snapshot itself for that to stop being possible). Versions are
  * independent datasets, so unbinding/deleting the live dataset never touches
  * them; each retires on its own here (or later, through a retention policy).
+ *
+ * Pinned consumers (the #126 decision — REFUSE, not repin): while any
+ * `consumerReferences` row still pins this row (`pinnedSchemaId`), the retire
+ * is refused. A pin is the consumer's explicit choice of one exact immutable
+ * version — silently repinning it to head would change what another dataset
+ * renders without its owner's consent, and a dangling pin would leave the
+ * consumer's sync/revert reading a row that no longer exists. The owner sees
+ * the honest error and can float (or unpin) the consumer first. Policy-store
+ * pins (`versionPolicies`/`datasetBindings.pinnedRefs`) deliberately do NOT
+ * block a manual retire: they are retention exemptions, not render targets,
+ * and a manual retirement is the owner's explicit act — the stale ref left in
+ * a policy store is inert (it exempts a ref nothing matches) and
+ * revert/sync answer its absence honestly.
  */
 export const retireVersion = mutation({
   args: { schemaId: v.string() },
@@ -241,6 +255,15 @@ export const retireVersion = mutation({
     }
     if (schema.lineage === undefined) {
       throw new ConvexError("Only a frozen version dataset can be retired here.");
+    }
+    const pinnedConsumer = await ctx.db
+      .query("consumerReferences")
+      .withIndex("by_pinnedSchemaId", (q) => q.eq("pinnedSchemaId", args.schemaId))
+      .first();
+    if (pinnedConsumer !== null) {
+      throw new ConvexError(
+        "This version is pinned by a consumer — float or unpin that reference before retiring it.",
+      );
     }
     await ctx.runMutation(components.jsonCms.lib.deleteSchema, {
       boundWrite: "retire",
@@ -718,7 +741,9 @@ export const versionEntries = query({
  * The delta between any two frozen versions, computed on demand into the
  * commits' ops shape — the compare view's add/remove/modify overlay. The
  * ingest's stored sequential deltas (tagDeltas) are the historical record;
- * this is the always-correct arbitrary-pair path.
+ * this is the always-correct arbitrary-pair path. Either side at the read
+ * budget answers `truncated: true` (#126) — the counts cover the first
+ * VERSION_DIFF_LIMIT rows per side, and the UI says so.
  */
 export const getVersionDelta = query({
   args: { aSchemaId: v.string(), bSchemaId: v.string() },
@@ -730,17 +755,18 @@ export const getVersionDelta = query({
       !(await sourceVisibleToViewer(ctx, args.aSchemaId, viewerId)) ||
       !(await sourceVisibleToViewer(ctx, args.bSchemaId, viewerId))
     ) {
-      return { added: 0, ops: [], removed: 0, updated: 0 };
+      return { added: 0, ops: [], removed: 0, truncated: false, updated: 0 };
     }
     const [before, after] = await Promise.all([
-      versionRows(ctx, args.aSchemaId),
-      versionRows(ctx, args.bSchemaId),
+      versionRowsBounded(ctx, args.aSchemaId),
+      versionRowsBounded(ctx, args.bSchemaId),
     ]);
-    const ops = diffVersionRows(before, after);
+    const ops = diffVersionRows(before.rows, after.rows);
     return {
       added: ops.filter((op) => op.op === "add").length,
       ops,
       removed: ops.filter((op) => op.op === "delete").length,
+      truncated: before.truncated || after.truncated,
       updated: ops.filter((op) => op.op === "update").length,
     };
   },
@@ -748,6 +774,7 @@ export const getVersionDelta = query({
     added: v.number(),
     ops: v.array(commitOpValidator),
     removed: v.number(),
+    truncated: v.boolean(),
     updated: v.number(),
   }),
 });

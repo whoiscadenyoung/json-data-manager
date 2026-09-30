@@ -137,13 +137,24 @@ export function previousVersionOf(
   return candidates[0];
 }
 
-const VERSION_DIFF_LIMIT = 2000;
+/**
+ * The row budget one side of a diff reads (#126): at or above it the diff is
+ * a bound, not the truth — the stored delta records that with `truncated`
+ * instead of silently serving a truncated diff as the real one.
+ */
+export const VERSION_DIFF_LIMIT = 2000;
 
-/** Reads one version's entries as light {key, data} rows, bounded. */
-export async function versionRows(
+/**
+ * Reads one version's entries as light {key, data} rows, bounded, WITH the
+ * truncation answer: one row past the limit is read so `truncated` is exact
+ * (a version with exactly VERSION_DIFF_LIMIT rows is not truncated). The
+ * delta recorders store the flag; `versionRows` is the rows-only shape the
+ * row-projection callers keep.
+ */
+export async function versionRowsBounded(
   ctx: { runQuery: QueryCtx["runQuery"] },
   schemaId: string,
-): Promise<VersionRow[]> {
+): Promise<{ rows: VersionRow[]; truncated: boolean }> {
   // The internal bounded read (stage 8, #104): host diff/retention flows must
   // see every row of the datasets they operate on — including author-
   // restricted publish-frozen rows — so they bypass the viewer-scoped batch
@@ -152,10 +163,11 @@ export async function versionRows(
   // client-facing tag queries (tags.versionEntries/getVersionDelta) apply the
   // stage-8 visibility rule themselves before reading.
   const entries = await ctx.runQuery(components.jsonCms.lib.listEntriesForSchemaBounded, {
-    limit: VERSION_DIFF_LIMIT,
+    limit: VERSION_DIFF_LIMIT + 1,
     schemaId,
   });
-  return entries.flatMap((entry) => {
+  const truncated = entries.length > VERSION_DIFF_LIMIT;
+  const rows = entries.slice(0, VERSION_DIFF_LIMIT).flatMap((entry) => {
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- listEntriesForSchemas returns untyped rows; the guards right below enforce the shape at runtime.
     const data = entry.data as Record<string, unknown> | null;
     if (data === null || typeof data !== "object") {
@@ -164,6 +176,15 @@ export async function versionRows(
     const key = naturalKeyOf(data) ?? entry._id;
     return [{ data, key }];
   });
+  return { rows, truncated };
+}
+
+/** Reads one version's light rows, bounded at VERSION_DIFF_LIMIT. */
+export async function versionRows(
+  ctx: { runQuery: QueryCtx["runQuery"] },
+  schemaId: string,
+): Promise<VersionRow[]> {
+  return (await versionRowsBounded(ctx, schemaId)).rows;
 }
 
 /**
@@ -411,7 +432,8 @@ export const enforceRetention = internalMutation({
  * the host's `tagDeltas` table — the name is the tag path's, which
  * introduced the table; it is the app's sequential version-delta record.
  * No previous version → no delta (the first version has nothing to diff
- * against).
+ * against). A side at the diff limit marks the row `truncated` (#126) —
+ * the stored record never silently passes a bounded diff off as the truth.
  */
 export const recordVersionDelta = internalMutation({
   args: {
@@ -434,15 +456,17 @@ export const recordVersionDelta = internalMutation({
       return;
     }
     const [before, after] = await Promise.all([
-      versionRows(ctx, previous.id),
-      versionRows(ctx, args.toSchemaId),
+      versionRowsBounded(ctx, previous.id),
+      versionRowsBounded(ctx, args.toSchemaId),
     ]);
+    const truncated = before.truncated || after.truncated;
     await ctx.db.insert("tagDeltas", {
       at: Date.now(),
       fromRef: previous.ref,
-      ops: diffVersionRows(before, after),
+      ops: diffVersionRows(before.rows, after.rows),
       sourceSchemaId: args.sourceSchemaId,
       toRef: args.toRef,
+      ...(truncated ? { truncated: true } : {}),
     });
   },
   returns: v.null(),

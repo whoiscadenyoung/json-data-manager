@@ -12,7 +12,7 @@ import {
   DEFAULT_KEEP_VERSIONS,
   diffVersionRows,
   previousVersionOf,
-  versionRows,
+  versionRowsBounded,
   versionsToRetire,
 } from "./versioning";
 
@@ -305,7 +305,12 @@ async function componentChainVersions(
   }
 }
 
-/** A derived chain's completed attempts — [] when the anchor isn't a registry row. */
+/**
+ * A derived chain's COMPLETED attempts — [] when the anchor isn't a registry
+ * row. The status filter is the name's promise (#126): a failed or in-flight
+ * attempt is not a version, and letting one into the feed made retention
+ * under-count keeps and could steal a delta's `previous` slot.
+ */
 async function completedAttemptsFor(
   ctx: { db: ReadDb },
   anchorId: string,
@@ -317,15 +322,46 @@ async function completedAttemptsFor(
   return ctx.db
     .query("publishAttempts")
     .withIndex("by_dataset", (q) => q.eq("datasetKey", anchorId))
+    .filter((q) => q.eq(q.field("status"), "completed"))
     .collect();
 }
 
 /**
+ * The completed attempts whose frozen row STILL EXISTS (#126): retiring a
+ * version deletes the component row but leaves its attempt — an unfiltered
+ * feed handed the dead id back to `versionsToRetire` on every later publish,
+ * where `deleteSchema` threw "Schema not found" and rolled back the whole
+ * completion hook. Existence (not a `retiredAt` marker) is the filter on
+ * purpose: it self-heals every attempt a retirement path has already orphaned
+ * (retention, manual retire, the publish sweep) with no marker to backfill.
+ * Attempt counts per anchor are retention-bounded in practice; this feed runs
+ * once per publish/revert, not inside the per-consumer badge loops.
+ */
+async function survivingAttemptsFor(
+  ctx: { db: ReadDb; runQuery: RunQuery },
+  anchorId: string,
+): Promise<Doc<"publishAttempts">[]> {
+  const attempts = await completedAttemptsFor(ctx, anchorId),
+    surviving: Doc<"publishAttempts">[] = [];
+  for (const attempt of attempts) {
+    if (attempt.publishedSchemaId === undefined) {
+      continue;
+    }
+    // oxlint-disable-next-line no-await-in-loop -- one existence read per attempt, ordered like the chain.
+    if ((await tryGetSchema(ctx, attempt.publishedSchemaId)) === null) {
+      continue;
+    }
+    surviving.push(attempt);
+  }
+  return surviving;
+}
+
+/**
  * One chain's versions in the shared `FrozenVersion` shape: the component
- * rows when the anchor is a component id, else the completed attempts'
- * published rows (the attempt IS the version record for a derived chain —
- * publishKey = snapshotRef, publishedSchemaId = the frozen row id). Both
- * feeds drop straight into the versioning cores.
+ * rows when the anchor is a component id, else the SURVIVING completed
+ * attempts' published rows (the attempt IS the version record for a derived
+ * chain — publishKey = snapshotRef, publishedSchemaId = the frozen row id).
+ * Both feeds drop straight into the versioning cores.
  */
 async function chainVersionsFor(
   ctx: { db: ReadDb; runQuery: RunQuery },
@@ -335,7 +371,7 @@ async function chainVersionsFor(
   if (versions.length > 0) {
     return versions;
   }
-  const attempts = await completedAttemptsFor(ctx, anchorId);
+  const attempts = await survivingAttemptsFor(ctx, anchorId);
   return attempts.map((attempt) => ({
     _id: attempt.publishedSchemaId ?? "",
     lineage: {
@@ -441,11 +477,29 @@ export async function pinRefIntoPolicyStore(
 }
 
 /**
+ * The component's delete-on-missing answer (`deleteSchema`, json-cms lib):
+ * the one error a retirement may honestly hit — the row is already gone, so
+ * the retirement already happened and the loop must move on (#126) instead of
+ * aborting the whole completion hook.
+ */
+function isSchemaGone(error: unknown): boolean {
+  const text =
+    error instanceof ConvexError
+      ? String(error.data)
+      : error instanceof Error
+        ? error.message
+        : String(error);
+  return text.includes("Schema not found");
+}
+
+/**
  * Enforces the chain's keep-N-with-pinning policy through the shared cores:
  * resolve policy (unified store read) → versionsToRetire → retire through the
  * component's read-only gate. Runs after every publish completion (the tag
  * path's after-ingest pattern) so publish chains stay bounded exactly like
- * bound-dataset versions.
+ * bound-dataset versions. A stale id in the feed never aborts the hook — the
+ * delete's not-found answer is skipped (defense in depth over the surviving
+ * feed; #126's silent-stop failure mode was exactly this throw).
  */
 async function enforceRetentionForAnchor(
   ctx: { db: ReadDb; runMutation: RunMutation; runQuery: RunQuery },
@@ -454,17 +508,26 @@ async function enforceRetentionForAnchor(
   const policy = await resolvePolicyForAnchor(ctx, anchorId),
     versions = await chainVersionsFor(ctx, anchorId),
     retired = versionsToRetire(versions, policy.keep, policy.pinnedRefs);
+  let retiredCount = 0;
   for (const version of retired) {
     if (version.id === "") {
       continue;
     }
-    // oxlint-disable-next-line no-await-in-loop -- ordered retirements under the write budget (the versioning.enforceRetention pattern).
-    await ctx.runMutation(components.jsonCms.lib.deleteSchema, {
-      boundWrite: "retire",
-      schemaId: version.id,
-    });
+    try {
+      // oxlint-disable-next-line no-await-in-loop -- ordered retirements under the write budget (the versioning.enforceRetention pattern).
+      await ctx.runMutation(components.jsonCms.lib.deleteSchema, {
+        boundWrite: "retire",
+        schemaId: version.id,
+      });
+      retiredCount += 1;
+    } catch (error) {
+      if (isSchemaGone(error)) {
+        continue;
+      }
+      throw error;
+    }
   }
-  return retired.length;
+  return retiredCount;
 }
 
 /**
@@ -473,7 +536,9 @@ async function enforceRetentionForAnchor(
  * freeze recorded neither delta nor retention. Same cores and table as the
  * tag path's recordVersionDelta — only the chain resolution is stage 6's
  * (both anchors). A retired previous version records nothing (diffing
- * against rows that no longer exist would fabricate a mass add).
+ * against rows that no longer exist would fabricate a mass add). A side at
+ * the diff limit marks the stored delta `truncated` (#126) — never a
+ * silently-truncated record served as truth.
  */
 async function recordChainDelta(
   ctx: { db: WriteDb; runQuery: RunQuery },
@@ -493,15 +558,17 @@ async function recordChainDelta(
     return;
   }
   const [before, after] = await Promise.all([
-    versionRows(ctx, previous.id),
-    versionRows(ctx, args.toSchemaId),
+    versionRowsBounded(ctx, previous.id),
+    versionRowsBounded(ctx, args.toSchemaId),
   ]);
+  const truncated = before.truncated || after.truncated;
   await ctx.db.insert("tagDeltas", {
     at: Date.now(),
     fromRef: previous.ref,
-    ops: diffVersionRows(before, after),
+    ops: diffVersionRows(before.rows, after.rows),
     sourceSchemaId: args.anchor,
     toRef: args.toRef,
+    ...(truncated ? { truncated: true } : {}),
   });
 }
 
@@ -1035,16 +1102,17 @@ export const chainVersions = query({
       });
       return newestFirst(rows).slice(0, MAX_CONSUMERS);
     }
-    const rows = (await completedAttemptsFor(ctx, args.anchorId))
-      .filter((attempt) => attempt.publishedSchemaId !== undefined)
-      .map((attempt) => ({
-        entryCount: undefined,
-        frozenAt: attempt.finishedAt ?? attempt._creationTime,
-        schemaId: attempt.publishedSchemaId ?? "",
-        snapshotRef: attempt.publishKey,
-        title: attempt.title,
-        versionLabel: attempt.versionLabel,
-      }));
+    // The SURVIVING attempts only (#126): a retired version's attempt row
+    // lingers, but it is not a version — listing it offered a Retire button
+    // on a row that was already gone.
+    const rows = (await survivingAttemptsFor(ctx, args.anchorId)).map((attempt) => ({
+      entryCount: undefined,
+      frozenAt: attempt.finishedAt ?? attempt._creationTime,
+      schemaId: attempt.publishedSchemaId ?? "",
+      snapshotRef: attempt.publishKey,
+      title: attempt.title,
+      versionLabel: attempt.versionLabel,
+    }));
     return newestFirst(rows).slice(0, MAX_CONSUMERS);
   },
   returns: v.array(chainVersionValidator),
@@ -1209,6 +1277,9 @@ export const storedDelta = query({
       added: match.ops.filter((op) => op.op === "add").length,
       ops: match.ops,
       removed: match.ops.filter((op) => op.op === "delete").length,
+      // The honesty flag (#126): true when a side sat at the diff limit, so
+      // the UI can say the counts cover the first VERSION_DIFF_LIMIT rows.
+      truncated: match.truncated === true,
       updated: match.ops.filter((op) => op.op === "update").length,
     };
   },
@@ -1218,6 +1289,7 @@ export const storedDelta = query({
       added: v.number(),
       ops: v.array(commitOpValidator),
       removed: v.number(),
+      truncated: v.boolean(),
       updated: v.number(),
     }),
   ),

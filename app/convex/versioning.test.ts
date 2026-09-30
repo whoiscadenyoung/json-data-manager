@@ -9,10 +9,12 @@ import { api, components, internal } from "./_generated/api";
 import schema from "./schema";
 import {
   DEFAULT_KEEP_VERSIONS,
+  VERSION_DIFF_LIMIT,
   diffVersionRows,
   naturalKeyOf,
   previousVersionOf,
   versionRows,
+  versionRowsBounded,
   versionsToRetire,
 } from "./versioning";
 import type { FrozenVersion, VersionRow } from "./versioning";
@@ -33,6 +35,14 @@ function ctxServing(entries: Array<{ _id: string; data: unknown }>): {
   runQuery: () => Promise<Array<{ _id: string; data: unknown }>>;
 } {
   return { runQuery: async () => entries };
+}
+
+/** `count` labeled rows for the bounded-read fixture. */
+function rowsOf(count: number): Array<{ _id: string; data: { label: string } }> {
+  return Array.from({ length: count }, (_, index) => ({
+    _id: `e${index}`,
+    data: { label: `L${index}` },
+  }));
 }
 
 describe("DEFAULT_KEEP_VERSIONS", () => {
@@ -267,6 +277,25 @@ describe("versionRows", () => {
     const rows = await versionRows(ctxServing(entries), "s1");
 
     expect(rows).toStrictEqual([{ data: { label: 7, name: "N" }, key: "N" }]);
+  });
+});
+
+describe("versionRowsBounded", () => {
+  it("flags truncated only past the diff limit, and caps the rows at the limit (#126)", async () => {
+    // Exactly at the limit is NOT truncated — the extra read makes the flag exact.
+    const atLimit = await versionRowsBounded(ctxServing(rowsOf(VERSION_DIFF_LIMIT)), "s1");
+    expect(atLimit.truncated).toBe(false);
+    expect(atLimit.rows).toHaveLength(VERSION_DIFF_LIMIT);
+
+    // One row past it is.
+    const overLimit = await versionRowsBounded(ctxServing(rowsOf(VERSION_DIFF_LIMIT + 1)), "s1");
+    expect(overLimit.truncated).toBe(true);
+    expect(overLimit.rows).toHaveLength(VERSION_DIFF_LIMIT);
+
+    // Well under, the plain shape the projections know.
+    const small = await versionRowsBounded(ctxServing(rowsOf(3)), "s1");
+    expect(small.truncated).toBe(false);
+    expect(small.rows.map((entry) => entry.key)).toStrictEqual(["L0", "L1", "L2"]);
   });
 });
 

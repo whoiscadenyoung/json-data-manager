@@ -24,6 +24,24 @@ type VersionOption = { label: string; schemaId: string; title: string };
 type VersionDelta = FunctionReturnType<typeof api.tags.getVersionDelta>;
 
 /**
+ * The truncation notice (#126): a delta whose sides sat at the server's
+ * read budget covers only the first VERSION_DIFF_LIMIT rows per version —
+ * the UI says so instead of presenting the bounded counts as the whole
+ * truth. Module-level so the compare body stays a flat render.
+ */
+export function DeltaTruncationNotice({ truncated }: { truncated: boolean }) {
+  if (!truncated) {
+    return null;
+  }
+  return (
+    <p className="text-xs text-amber-600 dark:text-amber-400">
+      These versions exceed the 2,000-row diff budget — the counts and overlay cover the first 2,000
+      rows of each side.
+    </p>
+  );
+}
+
+/**
  * A precomputed delta: the caller hands in the stored sequential delta (or
  * "pending" while its read is in flight) so the common pinned→head pair
  * never pays the on-demand full scan; null/absent falls back to it.
@@ -176,6 +194,7 @@ export function VersionCompare({
           </div>
         )}
       </div>
+      <DeltaTruncationNotice truncated={delta !== undefined && delta.truncated} />
       {aSchemaId === bSchemaId ? (
         <p className="text-sm text-muted-foreground">Pick two different versions to compare.</p>
       ) : delta === undefined || aEntries === undefined || bEntries === undefined ? (
