@@ -118,25 +118,33 @@ const snapshotValidator = v.object({
   rowCount: v.number(),
 });
 
-/** The shared projection join, callable from an action. */
+/** The shared projection join, callable from an action — one page per call. */
 export const collectProjectionRowsQuery = internalQuery({
-  args: {},
-  handler: async (ctx) => {
-    const rows = await getSource(SOURCE_KEY).listRows(ctx);
+  // One page per call (sources.ts's #127 contract): the snapshot action
+  // drains pages across transactions until the null cursor.
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, args) => {
+    const page = await getSource(SOURCE_KEY).listRows(ctx, args.cursor);
     // Snapshot files keep the {data, geometry} transport shape (no key) —
     // the file is the point-in-time state the import pipeline consumes.
-    return rows.flatMap(({ data, geometry }) =>
-      geometry === null || geometry === undefined
-        ? []
-        : [{ data, geometry: { coordinates: geometry.coordinates, type: geometry.type } }],
-    );
+    return {
+      cursor: page.cursor,
+      rows: page.rows.flatMap(({ data, geometry }) =>
+        geometry === null || geometry === undefined
+          ? []
+          : [{ data, geometry: { coordinates: geometry.coordinates, type: geometry.type } }],
+      ),
+    };
   },
-  returns: v.array(
-    v.object({
-      data: v.record(v.string(), v.any()),
-      geometry: v.object({ coordinates: v.array(v.number()), type: v.string() }),
-    }),
-  ),
+  returns: v.object({
+    cursor: v.union(v.string(), v.null()),
+    rows: v.array(
+      v.object({
+        data: v.record(v.string(), v.any()),
+        geometry: v.object({ coordinates: v.array(v.number()), type: v.string() }),
+      }),
+    ),
+  }),
 });
 
 /** Inserts the tag row for a snapshot whose file the action already stored. */
@@ -185,10 +193,25 @@ export const createRestaurantSnapshot = action({
     }
     // Explicit row type — the guidelines' workaround for the same-file
     // runQuery circularity (the query's type lands here via generated api).
+    // The projection drains page by page across transactions until the null
+    // cursor — a truncated snapshot must never register (#127 defect 1).
     const rows: Array<{
       data: Record<string, unknown>;
       geometry: { coordinates: number[]; type: string };
-    }> = await ctx.runQuery(internal.tags.collectProjectionRowsQuery, {});
+    }> = [];
+    let cursor: string | null = null;
+    for (;;) {
+      // oxlint-disable-next-line no-await-in-loop -- paging the projection; the null cursor ends the drain.
+      const page: { cursor: string | null; rows: typeof rows } = await ctx.runQuery(
+        internal.tags.collectProjectionRowsQuery,
+        { cursor },
+      );
+      rows.push(...page.rows);
+      if (page.cursor === null) {
+        break;
+      }
+      cursor = page.cursor;
+    }
     const jsonl = rows.map((row) => JSON.stringify(row)).join("\n"),
       fileStorageId = await ctx.storage.store(new Blob([jsonl], { type: "application/jsonl" }));
     return await ctx.runMutation(internal.tags.registerSnapshot, {

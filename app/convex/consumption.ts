@@ -849,12 +849,10 @@ const consumedByValidator = v.object({
  * The consumed-by projection for one dataset (lifecycle §7): every consumer
  * that holds a reference on this dataset, with its pin/float state and
  * whether a new head awaits it. Union of the `consumerReferences` edges (the
- * authoritative leg — the save path, the 7b fork/map legs, and the one-off
- * backfill below) and the bounded saved-registry scan, which exists only for
- * rows saved before stage 6 wrote edges; its take(500) is the summaries
- * projection's documented bound, not a correctness cap, and
- * `backfillConsumerReferences` retires the need for it entirely. Deduped by
- * consumer id.
+ * authoritative leg — the save path and the 7b fork/map legs) and the bounded
+ * saved-registry scan, which exists only for rows saved before stage 6 wrote
+ * edges; its take(500) is the summaries projection's documented bound, not a
+ * correctness cap. Deduped by consumer id.
  */
 export const consumedBy = query({
   args: { datasetId: v.string() },
@@ -1533,38 +1531,6 @@ export async function syncRegistryReferenceEdges(
 }
 
 /** The internal wrapper over the edge-sync (see the helper above). */
-export const syncRegistryReferences = internalMutation({
-  args: { registryId: v.id("derivedDatasets"), spec: v.any() },
-  handler: async (ctx, args) =>
-    syncRegistryReferenceEdges(ctx, { registryId: args.registryId, spec: args.spec }),
-  returns: v.null(),
-});
-
-/**
- * One-off migration for rows saved BEFORE stage 6 shipped edges (the
- * `schemas.backfillSummaries` precedent): syncs every registry row's
- * reference edges so the indexed `by_source` leg of `consumedBy` is
- * authoritative and the bounded back-compat scan stops finding anything.
- * Idempotent — rerun any time drift is suspected. Internal on purpose: no
- * app surface drives it.
- *
- * Run with: `bunx convex run consumption:backfillConsumerReferences` (from app/)
- */
-export const backfillConsumerReferences = internalMutation({
-  args: {},
-  handler: async (ctx) => {
-    const rows = await ctx.db.query("derivedDatasets").take(1000);
-    let backfilled = 0;
-    for (const row of rows) {
-      // oxlint-disable-next-line no-await-in-loop -- one row's edges per hop, ordered; idempotent per row.
-      await syncRegistryReferenceEdges(ctx, { registryId: row._id, spec: row.spec });
-      backfilled += 1;
-    }
-    return backfilled;
-  },
-  returns: v.number(),
-});
-
 /**
  * The publish-completion hook (the tag path's after-ingest pattern, at the
  * publish side): the delta against the chain's previous version + keep-N

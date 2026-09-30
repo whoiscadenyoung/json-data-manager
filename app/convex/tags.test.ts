@@ -85,14 +85,41 @@ async function bindSource(t: TestConvex, count: number): Promise<string> {
   return status.binding.schemaId;
 }
 
+type ProjectionPage = {
+  cursor: string | null;
+  rows: Array<{
+    data: Record<string, unknown>;
+    geometry: { coordinates: number[]; type: string };
+  }>;
+};
+
+/** One page of the projection, through the paging internal query (#127). */
+async function projectionPage(t: TestConvex, pageCursor: string | null): Promise<ProjectionPage> {
+  return t.run(async (ctx) =>
+    ctx.runQuery(internal.tags.collectProjectionRowsQuery, { cursor: pageCursor }),
+  );
+}
+
 /** The tag path's snapshot leg minus the HTTP transport: serialize the projection (the same internal query createRestaurantSnapshot stores), plant it in the component's storage, freeze it as one ref. */
 async function freezeSnapshot(
   t: TestConvex,
   options: { label: string; ref: string; sourceSchemaId: string },
 ): Promise<{ alreadyFrozen: boolean; importId?: string; schemaId: string }> {
-  const rows = await t.run(async (ctx) =>
-    ctx.runQuery(internal.tags.collectProjectionRowsQuery, {}),
-  );
+  // The projection query pages; the fixture drains to the null cursor.
+  const rows: Array<{
+    data: Record<string, unknown>;
+    geometry: { coordinates: number[]; type: string };
+  }> = [];
+  let cursor: string | null = null;
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- fixture drain; the null cursor ends it.
+    const page: ProjectionPage = await projectionPage(t, cursor);
+    rows.push(...page.rows);
+    if (page.cursor === null) {
+      break;
+    }
+    cursor = page.cursor;
+  }
   const bytes = new TextEncoder().encode(JSON.stringify(rows));
   const storageId = await t.action(components.jsonCms.host_support.storeTestBlob, {
     bytes: bytes.buffer,

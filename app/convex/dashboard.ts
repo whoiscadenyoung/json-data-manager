@@ -23,15 +23,27 @@ import { SOURCE_KEY } from "./sources";
 
 const LIST_LIMIT = 500;
 
-/** Stamps the binding row so the dashboard can show staleness. No-op before the first sync creates it. */
-async function touchBindingSource(ctx: Pick<MutationCtx, "db">) {
-  const binding = await ctx.db
-    .query("datasetBindings")
-    .withIndex("by_source", (q) => q.eq("source", SOURCE_KEY))
-    .first();
-  if (binding) {
-    await ctx.db.patch(binding._id, { sourceUpdatedAt: Date.now() });
-  }
+// Which bindings a write makes stale: a restaurant edit changes both the
+// restaurants projection and every joined location's row (cuisine/name ride
+// in the location projection); a location or link edit only moves the
+// location projection. Stamping per source (not just SOURCE_KEY) is what
+// lets the "restaurants" binding show "Source changed" too (#127 defect 11).
+const RESTAURANT_TOUCH_SOURCES = ["restaurants", SOURCE_KEY],
+  LOCATION_TOUCH_SOURCES = [SOURCE_KEY];
+
+/** Stamps each named source's binding so the dashboard can show staleness. No-op before the first sync creates it. */
+async function touchBindingSource(ctx: Pick<MutationCtx, "db">, sources: string[]) {
+  await Promise.all(
+    sources.map(async (source) => {
+      const binding = await ctx.db
+        .query("datasetBindings")
+        .withIndex("by_source", (q) => q.eq("source", source))
+        .first();
+      if (binding) {
+        await ctx.db.patch(binding._id, { sourceUpdatedAt: Date.now() });
+      }
+    }),
+  );
 }
 
 function assertValidRestaurant(name: string, cuisine: string): { cuisine: string; name: string } {
@@ -155,26 +167,32 @@ async function snapshotKeys(
   return snapshot;
 }
 
+// Every link row for a parent, drained fully — a .take(LIST_LIMIT) here used
+// to silently cap the delete/update cascade at 500 links (#127 defect 11).
 async function linkKeysForRestaurant(
   ctx: Pick<MutationCtx, "db">,
   restaurantId: Id<"restaurants">,
 ): Promise<Array<Id<"restaurantLocations">>> {
-  const links = await ctx.db
+  const linkIds: Array<Id<"restaurantLocations">> = [];
+  for await (const link of ctx.db
     .query("restaurantLocations")
-    .withIndex("by_restaurantId_and_locationId", (q) => q.eq("restaurantId", restaurantId))
-    .take(LIST_LIMIT);
-  return links.map((link) => link._id);
+    .withIndex("by_restaurantId_and_locationId", (q) => q.eq("restaurantId", restaurantId))) {
+    linkIds.push(link._id);
+  }
+  return linkIds;
 }
 
 async function linkKeysForLocation(
   ctx: Pick<MutationCtx, "db">,
   locationId: Id<"locations">,
 ): Promise<Array<Id<"restaurantLocations">>> {
-  const links = await ctx.db
+  const linkIds: Array<Id<"restaurantLocations">> = [];
+  for await (const link of ctx.db
     .query("restaurantLocations")
-    .withIndex("by_locationId", (q) => q.eq("locationId", locationId))
-    .take(LIST_LIMIT);
-  return links.map((link) => link._id);
+    .withIndex("by_locationId", (q) => q.eq("locationId", locationId))) {
+    linkIds.push(link._id);
+  }
+  return linkIds;
 }
 
 const COMMIT_FIELDS = [
@@ -313,7 +331,7 @@ export const createRestaurant = mutation({
       throw new ConvexError(`A restaurant named "${fields.name}" already exists.`);
     }
     const id = await ctx.db.insert("restaurants", fields);
-    await touchBindingSource(ctx);
+    await touchBindingSource(ctx, RESTAURANT_TOUCH_SOURCES);
     return id;
   },
   returns: v.id("restaurants"),
@@ -338,7 +356,7 @@ export const updateRestaurant = mutation({
     const keys = await linkKeysForRestaurant(ctx, args.id),
       before = await snapshotKeys(ctx, keys);
     await ctx.db.patch(args.id, fields);
-    await touchBindingSource(ctx);
+    await touchBindingSource(ctx, RESTAURANT_TOUCH_SOURCES);
     await recordProjectionCommit(ctx, `Updated restaurant ${fields.name}`, keys, before);
   },
   returns: v.null(),
@@ -349,16 +367,18 @@ export const deleteRestaurant = mutation({
   handler: async (ctx, args) => {
     await auth(ctx);
     const existing = await ctx.db.get(args.id);
-    // Prefix query on the compound index — restaurantId is its first column.
-    const links = await ctx.db
+    // Full drain — never a capped prefix of the cascade (#127 defect 11).
+    const links: Array<{ _id: Id<"restaurantLocations"> }> = [];
+    for await (const link of ctx.db
       .query("restaurantLocations")
-      .withIndex("by_restaurantId_and_locationId", (q) => q.eq("restaurantId", args.id))
-      .take(LIST_LIMIT);
+      .withIndex("by_restaurantId_and_locationId", (q) => q.eq("restaurantId", args.id))) {
+      links.push(link);
+    }
     const keys = links.map((link) => link._id),
       before = await snapshotKeys(ctx, keys);
     const cascaded = await deleteCascadingLinks(ctx, links);
     await ctx.db.delete(args.id);
-    await touchBindingSource(ctx);
+    await touchBindingSource(ctx, RESTAURANT_TOUCH_SOURCES);
     const deletedName = existing !== null && existing !== undefined ? existing.name : args.id;
     await recordProjectionCommit(ctx, `Deleted restaurant ${deletedName}`, keys, before);
     return cascaded;
@@ -408,7 +428,7 @@ export const createLocation = mutation({
       throw new ConvexError(`A location labeled "${fields.label}" already exists.`);
     }
     const id = await ctx.db.insert("locations", fields);
-    await touchBindingSource(ctx);
+    await touchBindingSource(ctx, LOCATION_TOUCH_SOURCES);
     return id;
   },
   returns: v.id("locations"),
@@ -442,7 +462,7 @@ export const updateLocation = mutation({
     const keys = await linkKeysForLocation(ctx, args.id),
       before = await snapshotKeys(ctx, keys);
     await ctx.db.patch(args.id, validated);
-    await touchBindingSource(ctx);
+    await touchBindingSource(ctx, LOCATION_TOUCH_SOURCES);
     await recordProjectionCommit(ctx, `Updated location ${validated.label}`, keys, before);
   },
   returns: v.null(),
@@ -453,15 +473,17 @@ export const deleteLocation = mutation({
   handler: async (ctx, args) => {
     await auth(ctx);
     const existing = await ctx.db.get(args.id);
-    const links = await ctx.db
+    const links: Array<{ _id: Id<"restaurantLocations"> }> = [];
+    for await (const link of ctx.db
       .query("restaurantLocations")
-      .withIndex("by_locationId", (q) => q.eq("locationId", args.id))
-      .take(LIST_LIMIT);
+      .withIndex("by_locationId", (q) => q.eq("locationId", args.id))) {
+      links.push(link);
+    }
     const keys = links.map((link) => link._id),
       before = await snapshotKeys(ctx, keys);
     const cascaded = await deleteCascadingLinks(ctx, links);
     await ctx.db.delete(args.id);
-    await touchBindingSource(ctx);
+    await touchBindingSource(ctx, LOCATION_TOUCH_SOURCES);
     const deletedLabel = existing !== null && existing !== undefined ? existing.label : args.id;
     await recordProjectionCommit(ctx, `Deleted location ${deletedLabel}`, keys, before);
     return cascaded;
@@ -530,7 +552,7 @@ export const createLink = mutation({
       openedYear: args.openedYear,
       restaurantId: args.restaurantId,
     });
-    await touchBindingSource(ctx);
+    await touchBindingSource(ctx, LOCATION_TOUCH_SOURCES);
     // The link's key didn't exist before, so an empty before-snapshot yields
     // the add op.
     await recordProjectionCommit(
@@ -556,7 +578,7 @@ export const updateLink = mutation({
     await ctx.db.patch(args.id, {
       openedYear: args.openedYear === null ? undefined : args.openedYear,
     });
-    await touchBindingSource(ctx);
+    await touchBindingSource(ctx, LOCATION_TOUCH_SOURCES);
   },
   returns: v.null(),
 });
@@ -572,7 +594,7 @@ export const deleteLink = mutation({
           ? firstRow.data.label
           : args.id;
     await ctx.db.delete(args.id);
-    await touchBindingSource(ctx);
+    await touchBindingSource(ctx, LOCATION_TOUCH_SOURCES);
     await recordProjectionCommit(ctx, `Unlinked ${label}`, [args.id], before);
   },
   returns: v.null(),

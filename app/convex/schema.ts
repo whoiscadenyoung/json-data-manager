@@ -41,6 +41,10 @@ export default defineSchema({
     // "sync" (the regular pull, also the pre-field default) or "reconcile"
     // (the periodic/manual full diff-and-repair pass).
     kind: v.optional(v.union(v.literal("sync"), v.literal("reconcile"))),
+    // Set when the run hit a commit op it could not apply (an `update` whose
+    // foreign key had no projection mapping) and scheduled a reconcile to
+    // repair it — #127 defect 6.
+    needsReconcile: v.optional(v.boolean()),
     ops: v.array(
       v.object({
         detail: v.optional(v.string()),
@@ -124,12 +128,26 @@ export default defineSchema({
     // "sync" prefers the source's commit tail (the design's primary path);
     // it falls back to a full pass when the source has no commit feed or the
     // binding has no baseline yet. "reconcile" always diffs full state.
+    // "sweeping" is finalize's batched delete phase for full modes (#127
+    // defect 9) — the scheduler drives it, one bounded batch per hop.
     mode: v.union(v.literal("commit-tail"), v.literal("reconcile"), v.literal("sync")),
     // The newest source seq observed at collect time — the baseline a full
     // run stamps onto the binding, or the tail's last seq a tail run applies.
     // `lastCommitId` is that commit's stable foreignCommitId (the cursor).
     lastCommitId: v.optional(v.string()),
     lastSeq: v.optional(v.number()),
+    // How many times this run's collect has been scheduled (initial + revives).
+    // A run past MAX_COLLECT_ATTEMPTS is failed instead of revived again —
+    // a poison collect must not be rescheduled forever (#127 defect 3).
+    collectAttempts: v.optional(v.number()),
+    // The current worker's lease token (#127 defect 7): minted at every
+    // schedule/revive, checked by markCollected and every apply/finalize
+    // mutation, so a superseded action can neither double-apply nor finalize.
+    claim: v.optional(v.string()),
+    // Set when a commit op could not be applied from the tail alone (an
+    // `update` whose foreign key had no projection mapping); completion
+    // schedules a full reconcile to repair it (#127 defect 6).
+    needsReconcile: v.optional(v.boolean()),
     ops: v.array(
       v.object({
         detail: v.optional(v.string()),
@@ -144,6 +162,7 @@ export default defineSchema({
     status: v.union(
       v.literal("collecting"),
       v.literal("applying"),
+      v.literal("sweeping"),
       v.literal("completed"),
       v.literal("failed"),
     ),

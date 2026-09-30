@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values";
 
-import { components } from "./_generated/api";
-import { mutation, query } from "./_generated/server";
+import { components, internal } from "./_generated/api";
+import { internalMutation, mutation, query } from "./_generated/server";
 import { auth } from "./auth";
 import { SOURCE_KEY } from "./sources";
 
@@ -72,13 +72,84 @@ export const list = query({
   ),
 });
 
+// Rows deleted per table per unbind-cleanup hop — the cleanup resumes until
+// every related row is gone, so nothing is orphaned past one transaction's
+// limits (#127 defect 10; the old cleanup stopped at .take(1000)).
+const UNBIND_CLEANUP_BATCH = 100;
+
+/**
+ * The durable half of `unbind`: drains every row that references the binding
+ * — the activity log, the projection's key map, the applied-commit mirrors,
+ * the run history (with its chunk blobs) — UNBIND_CLEANUP_BATCH rows per
+ * table per hop, rescheduling itself until all four are clean. Runs after
+ * the binding row is already gone, keyed by the bindingId the rows carry.
+ */
+export const unbindCleanup = internalMutation({
+  args: { bindingId: v.id("datasetBindings") },
+  handler: async (ctx, args) => {
+    const [activity, mappings, mirrors, runs] = await Promise.all([
+      ctx.db
+        .query("datasetActivity")
+        .withIndex("by_bindingId", (q) => q.eq("bindingId", args.bindingId))
+        .take(UNBIND_CLEANUP_BATCH),
+      ctx.db
+        .query("bindingEntries")
+        .withIndex("by_binding", (q) => q.eq("bindingId", args.bindingId))
+        .take(UNBIND_CLEANUP_BATCH),
+      ctx.db
+        .query("commits")
+        .withIndex("by_binding_seq", (q) => q.eq("bindingId", args.bindingId))
+        .take(UNBIND_CLEANUP_BATCH),
+      ctx.db
+        .query("syncRuns")
+        .withIndex("by_binding", (q) => q.eq("bindingId", args.bindingId))
+        .take(UNBIND_CLEANUP_BATCH),
+    ]);
+    await Promise.all([
+      ...activity.map(async (row) => {
+        await ctx.db.delete(row._id);
+      }),
+      ...mappings.map(async (row) => {
+        await ctx.db.delete(row._id);
+      }),
+      ...mirrors.map(async (row) => {
+        await ctx.db.delete(row._id);
+      }),
+      ...runs.map(async (run) => {
+        // The runs' collected chunk blobs are app storage — they go with the
+        // rows that reference them (best-effort; the row delete stands).
+        await Promise.all(
+          run.chunkStorageIds.map(async (storageId) => {
+            try {
+              await ctx.storage.delete(storageId);
+            } catch {
+              // Best-effort cleanup.
+            }
+          }),
+        );
+        await ctx.db.delete(run._id);
+      }),
+    ]);
+    const drainedAll = [activity, mappings, mirrors, runs].every(
+      (batch) => batch.length < UNBIND_CLEANUP_BATCH,
+    );
+    if (!drainedAll) {
+      await ctx.scheduler.runAfter(0, internal.bindings.unbindCleanup, {
+        bindingId: args.bindingId,
+      });
+    }
+  },
+});
+
 /**
  * Detaches a bound live dataset: deletes the projected dataset (allowed by
  * the component's read-only gate because this flow attests
- * `boundWrite: "unbind"`), then removes the binding row, its activity
- * history, and the projection's key map. The source tables are untouched —
- * a later sync simply re-creates the projection. Deleting a bound dataset
- * any other way stays blocked.
+ * `boundWrite: "unbind"`), removes the binding row, and schedules the
+ * durable cleanup that drains every related row — activity history, the
+ * projection's key map, the commit mirrors, and the run history with its
+ * chunk blobs. The source tables are untouched — a later sync simply
+ * re-creates the projection. Deleting a bound dataset any other way stays
+ * blocked. (The UI confirms before calling this.)
  */
 export const unbind = mutation({
   args: { schemaId: v.string() },
@@ -95,27 +166,12 @@ export const unbind = mutation({
       boundWrite: "unbind",
       schemaId: binding.schemaId,
     });
-    // The activity log describes the projection it synced, and the key map
-    // points into it — both go with it.
-    const [activity, mappings] = await Promise.all([
-      ctx.db
-        .query("datasetActivity")
-        .withIndex("by_bindingId", (q) => q.eq("bindingId", binding._id))
-        .take(1000),
-      ctx.db
-        .query("bindingEntries")
-        .withIndex("by_binding", (q) => q.eq("bindingId", binding._id))
-        .take(1000),
-    ]);
-    await Promise.all([
-      ...activity.map(async (row) => {
-        await ctx.db.delete(row._id);
-      }),
-      ...mappings.map(async (row) => {
-        await ctx.db.delete(row._id);
-      }),
-      ctx.db.delete(binding._id),
-    ]);
+    // The binding row goes now (the dataset is already gone); everything
+    // that references it drains through the rescheduled cleanup.
+    await ctx.db.delete(binding._id);
+    await ctx.scheduler.runAfter(0, internal.bindings.unbindCleanup, {
+      bindingId: binding._id,
+    });
   },
 });
 
@@ -172,6 +228,9 @@ const activityValidator = v.object({
   bindingId: v.id("datasetBindings"),
   entryCount: v.number(),
   kind: v.optional(v.union(v.literal("sync"), v.literal("reconcile"))),
+  // Set when the run scheduled a reconcile to repair a key its commit tail
+  // could not apply (#127 defect 6).
+  needsReconcile: v.optional(v.boolean()),
   ops: v.array(
     v.object({
       detail: v.optional(v.string()),

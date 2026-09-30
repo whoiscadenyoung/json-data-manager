@@ -27,6 +27,13 @@ export type ProjectionRow = {
   geometry?: { coordinates: number[]; type: string } | null;
 };
 
+/** One page of a source's state: the rows plus the read's continuation. */
+export type ProjectionRowPage = {
+  // Null once the whole state has been read — the signal callers drain to.
+  cursor: string | null;
+  rows: ProjectionRow[];
+};
+
 /**
  * The declared projection mapping — where a row's key and fields come from.
  * Stored on the binding row for observability; the row builder below
@@ -77,8 +84,8 @@ export interface BoundSource {
   dataset: SourceDataset;
   key: string;
   mapping: SourceMapping;
-  /** The design's §8.1 state reader, co-deployed form: read every row. */
-  listRows(ctx: Pick<QueryCtx, "db">): Promise<ProjectionRow[]>;
+  /** The design's §8.1 state reader, co-deployed form: one page of rows. */
+  listRows(ctx: Pick<QueryCtx, "db">, cursor: string | null): Promise<ProjectionRowPage>;
   /**
    * The design's §8.2 ordered commit feed — everything after `sinceSeq`,
    * ascending. Absent means the source has no commit log; sync for such a
@@ -97,6 +104,23 @@ export interface BoundSource {
 
 /** The primary demo source's stable key (the running example from the PoC). */
 export const SOURCE_KEY = "restaurantLocations";
+
+// #127 invariant: the state reader serves ONE PAGE per call and reports its
+// continuation — never a truncated prefix dressed up as the whole state.
+// finalize's sweep deletes every mapping the run did not see, so callers
+// (the sync collect action, the snapshot collector) must drain pages across
+// transactions until the null cursor; a collect that fails mid-drain fails
+// the run loudly and never reaches the sweep. (Convex allows a single
+// paginated query per function execution, so the paging lives across the
+// callers' runQuery hops, not inside one transaction.)
+const SOURCE_READ_PAGE = 500;
+
+/**
+ * How many commits one `commitsSince` page carries. The sync engine's
+ * collect drains the tail page by page until a short page — the page size
+ * is the drain signal, so it lives here next to the reader (#127 defect 2).
+ */
+export const COMMIT_TAIL_PAGE = 500;
 
 const restaurantLocationsSource: BoundSource = {
   dataset: {
@@ -123,10 +147,16 @@ const restaurantLocationsSource: BoundSource = {
     title: "Restaurant locations",
   },
   key: SOURCE_KEY,
-  listRows: async (ctx) => {
-    const links = await ctx.db.query("restaurantLocations").take(1000);
+  // One page of the join, with the continuation cursor. Rows past the old
+  // .take(1000) cap used to vanish from the projection when finalize swept
+  // them as unseen (#127 defect 1) — callers now drain every page.
+  listRows: async (ctx, cursor) => {
+    const page = await ctx.db.query("restaurantLocations").paginate({
+      cursor,
+      numItems: SOURCE_READ_PAGE,
+    });
     const joined = await Promise.all(
-      links.map(async (link) => {
+      page.page.map(async (link) => {
         const location = await ctx.db.get(link.locationId);
         const restaurant = await ctx.db.get(link.restaurantId);
         if (!location || !restaurant) {
@@ -151,13 +181,16 @@ const restaurantLocationsSource: BoundSource = {
         };
       }),
     );
-    return joined.filter((row) => row !== null);
+    return {
+      cursor: page.isDone ? null : page.continueCursor,
+      rows: joined.filter((row) => row !== null),
+    };
   },
   commitsSince: async (ctx, sinceSeq) => {
     const feed = await ctx.db
       .query("sourceCommits")
       .withIndex("by_source_seq", (q) => q.eq("source", SOURCE_KEY).gt("seq", sinceSeq))
-      .take(500);
+      .take(COMMIT_TAIL_PAGE);
     return feed.map((commit) => ({
       at: commit.at,
       foreignCommitId: commit.foreignCommitId,
@@ -224,12 +257,19 @@ const restaurantsSource: BoundSource = {
     title: "Restaurants",
   },
   key: "restaurants",
-  listRows: async (ctx) => {
-    const restaurants = await ctx.db.query("restaurants").take(1000);
-    return restaurants.map((restaurant) => ({
-      data: { cuisine: restaurant.cuisine, name: restaurant.name },
-      key: restaurant._id,
-    }));
+  // One page per call, like the locations reader (#127 defect 1).
+  listRows: async (ctx, cursor) => {
+    const page = await ctx.db.query("restaurants").paginate({
+      cursor,
+      numItems: SOURCE_READ_PAGE,
+    });
+    return {
+      cursor: page.isDone ? null : page.continueCursor,
+      rows: page.page.map((restaurant) => ({
+        data: { cuisine: restaurant.cuisine, name: restaurant.name },
+        key: restaurant._id,
+      })),
+    };
   },
   mapping: {
     entryKey: "restaurants._id",

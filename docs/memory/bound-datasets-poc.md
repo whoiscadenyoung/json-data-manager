@@ -74,9 +74,83 @@ legacy-clear check silently never fired until fixed); Convex returns
 validators are exact — raw docs returned from queries must be projected when
 the doc gains new fields (bindings:status broke this way); convex codegen's
 typecheck uses an older lib target — no `Array.prototype.at` in convex/
-files; oxlint bans `?.` (use explicit ternaries) and `delete obj[key]`;
+files; oxlint bans `?.` (use explicit ternary) and `delete obj[key]`;
 finalizeRun must not stomp tail-run counters it doesn't compute (removed
 was reset to 0 by the sweep-local variable).
+
+**#127 hardening (2026-09-30, capped reads / stuck runs / zero counters) —
+the engine's new invariants:**
+
+- **Reads never truncate.** `sources.ts` `listRows` serves ONE PAGE per call
+  (`{cursor, rows}`; `cursor === null` when exhausted) — Convex allows a
+  single paginated query per function execution, so the callers page ACROSS
+  transactions: the collect action drains `readSourceRows` until the null
+  cursor, the snapshot collector drains `tags.collectProjectionRowsQuery`
+  the same way. A capped read used to feed finalize's sweep, which deleted
+  every mapping the run didn't see — rows past the old `.take(1000)` vanished
+  on every full pass. The tail (`commitsSince`, page = `COMMIT_TAIL_PAGE`)
+  drains the same way in the collect action; a run whose collect throws
+  fails loudly and NEVER reaches the sweep.
+- **The cursor rides the payload.** A tail run's `lastSeq`/`lastCommitId`
+  are the drained payload's LAST commit (the last one applied), never
+  `newestCommit()` — the old stamping skipped past commits the capped read
+  never carried until the weekly reconcile repaired it. Full runs read
+  `newestCommit` BEFORE the rows: a commit landing between the reads is
+  re-applied idempotently by the tail instead of being stamped as applied
+  while missing from the rows.
+- **One consumer per run (the lease).** Every run carries `claim`
+  (minted at insert and at every revive; checked by `markCollected`, both
+  batch mutations, `applyChunks` and `finalizeRun`). A stale run is revived
+  by ROTATING the claim, so the superseded action can neither win the
+  collect (its blobs are deleted by the losing `markCollected`, which now
+  returns whether it won — only the winner schedules `applyChunks`), apply a
+  batch, nor finalize. Batch checkpoints move only forward
+  (`checkpointFields`).
+- **Collects fail cleanly and have a budget.** `collectRows` wraps its reads
+  in try/catch → `markRunFailed`; `collectAttempts` (initial = 1) caps
+  revives at `MAX_COLLECT_ATTEMPTS` (3) — past it the run is failed with a
+  "giving up" error and the next kickoff starts a fresh run.
+- **Counters are real.** `tally.added`/`updated`/`removed` increment where
+  the ops are recorded (keyed applies, commit ops, sweep deletes); a no-op
+  delete (key already unmapped) counts and records nothing.
+- **Update-without-mapping never materializes.** A commit `update` whose
+  foreign key has no `bindingEntries` row is SKIPPED (delta-only ops would
+  create partial entries), the run/activity row is flagged
+  `needsReconcile`, and completion schedules `reconcileOne` — the full pass
+  rebuilds the key from source state.
+- **Mirrors are idempotent.** `applyCommitsBatch` checks `by_binding_seq`
+  before inserting, so a tail replayed after a partially failed run
+  re-applies ops but never duplicates History rows.
+- **Finalize sweeps in batches.** Full modes end in a `sweeping` phase:
+  `sweepStaleBatch` retires SWEEP_BATCH (100) stale mappings per
+  transaction and reschedules itself until clean, then `completeRun` stamps
+  the binding/activity/mirror-prune/blob-cleanup. The old single-transaction
+  sweep died at a few thousand removals. (`completeRun` must re-READ the run
+  doc after the batch patch — the activity row needs the batch's own ops.)
+- **Unbind drains everything.** `bindings.unbind` deletes the dataset +
+  binding row synchronously and schedules `unbindCleanup`
+  (internal, rescheduling): activity rows, key-map rows, commit mirrors, and
+  run docs WITH their chunk blobs, UNBIND_CLEANUP_BATCH (100) rows per table
+  per hop. Test note: anything asserting post-unbind state must
+  `drainScheduled` first. A UI confirm dialog for unbind already existed
+  (`dataset-overview.tsx` ConfirmDeleteDialog).
+- **Minors:** `startRun` joins/revives BEFORE any binding write (the old
+  order OCC-raced a finalizing run); `commitFeatureMap` reads entries via
+  batched `listEntriesForIds` (200/batch, pass `viewerId` from `auth(ctx)` —
+  direct component calls need it, unlike the exposeApi wrappers) instead of
+  2,000 `getEntry`s; dashboard cascades drain ALL link rows (async
+  iteration, no `.take(500)` cap); `touchBindingSource(ctx, sources)`
+  stamps per source — restaurant edits touch BOTH bindings (the location
+  projection carries restaurant fields), location/link edits only
+  `restaurantLocations`; dead code removed (`syncRestaurantLocations`,
+  `consumption.syncRegistryReferences`, `backfillConsumerReferences` — the
+  edge-sync helper `syncRegistryReferenceEdges` stays, it is used).
+- **Tests:** sync.test.ts is behavioral (19 tests; the #138 `it.fails`
+  defect pins flipped green), seeding >1,000 rows / >505 commits via
+  one-transaction bulk seeders to bite the caps; sources.test.ts pins the
+  page contract past both caps. convex-test storage inspection:
+  `ctx.db.system.query("_storage")` works in `t.run` (used for the
+  no-leaked-blobs assertions).
 
 **Working PoC shipped** (verified end-to-end on local dev): `app/convex/schema.ts`
 adds foreign-domain host tables (`restaurants`, `locations` lat/lng,

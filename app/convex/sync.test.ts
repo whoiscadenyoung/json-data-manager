@@ -2,35 +2,30 @@
 /// <reference types="vite/client" />
 
 /**
- * The durable sync engine (sync.ts) — characterization tests (issue #138):
- * full runs, keyed idempotent applies, delete sweeps, the commit-tail
- * primary path, run joining/revival, the mirror bound, and the public
- * queries — driven end to end through `api.sync.*` on a real (test)
- * backend, with the source tables (restaurants/locations/restaurantLocations)
- * and the stand-in commit feed (`sourceCommits`) seeded directly.
+ * The durable sync engine (sync.ts) — behavioral tests (characterized by
+ * #138, defects fixed by #127): full runs, keyed idempotent applies, the
+ * batched delete sweep, the commit-tail primary path (paged and drained to
+ * the last applied seq), the collect lease (one consumer per run), run
+ * joining/revival with its attempt budget, mirror idempotency, counters,
+ * the reconcile flag, the mirror bound, the public queries, and unbind's
+ * full cleanup — driven end to end through `api.sync.*` on a real (test)
+ * backend, with the source tables
+ * (restaurants/locations/restaurantLocations) and the stand-in commit feed
+ * (`sourceCommits`) seeded directly.
  *
- * Five suites are `it.fails` on purpose: they pin the INTENDED behavior of
- * code-confirmed defects tracked in #127, and flip green when that fix
- * lands — never `.skip`:
- * - counters (`added`/`updated`) never move (#127 defect 4);
- * - a full pass over more than the 1,000-row read cap loses the excess
- *   (#127 defect 1);
- * - a tail over the 500-commit read cap applies only the first 500 while
- *   the cursor jumps past them (#127 defect 2);
- * - a collect failure leaves the run stuck in `collecting` instead of
- *   marking it failed (#127 defect 3);
- * - an `update` naming a key with no map row creates a partial entry
- *   holding only the op's after-values (#127 defect 6, reproduced while
- *   writing this suite).
+ * The caps only bite above their sizes, so the large-fixture tests seed
+ * past them: >1,000 source rows for the full-pass test, >500 commits for
+ * the tail-drain test (#127's scale note).
  */
 import { register as registerJsonCms } from "@caden/json-cms/test";
 import { convexTest } from "convex-test";
 import type { FunctionReturnType } from "convex/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { api, internal } from "./_generated/api";
+import { api, components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { SOURCE_KEY } from "./sources";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -96,15 +91,35 @@ async function seedCommit(
     seq: number;
   },
 ): Promise<void> {
+  await seedCommits(t, [commit]);
+}
+
+/** Lands many commits in one transaction (bulk-seeding past the caps must not take one transaction per commit). */
+async function seedCommits(
+  t: TestConvex,
+  commits: Array<{
+    foreignCommitId: string;
+    ops: Array<{
+      entryKey: string;
+      fields: Array<{ after?: unknown; before?: unknown; name: string }>;
+      geometryChanged: boolean;
+      op: "add" | "delete" | "update";
+    }>;
+    seq: number;
+  }>,
+): Promise<void> {
   await t.run(async (ctx) => {
-    await ctx.db.insert("sourceCommits", {
-      at: 1000,
-      foreignCommitId: commit.foreignCommitId,
-      message: `commit ${commit.seq}`,
-      ops: commit.ops,
-      seq: commit.seq,
-      source: "restaurantLocations",
-    });
+    for (const commit of commits) {
+      // oxlint-disable-next-line no-await-in-loop -- fixture seeding, ordered by seq.
+      await ctx.db.insert("sourceCommits", {
+        at: 1000,
+        foreignCommitId: commit.foreignCommitId,
+        message: `commit ${commit.seq}`,
+        ops: commit.ops,
+        seq: commit.seq,
+        source: SOURCE_KEY,
+      });
+    }
   });
 }
 
@@ -286,11 +301,10 @@ describe("a full sync run", () => {
     expect(binding.lastSyncedAt).toBeDefined();
   });
 
-  // #127 defect 4 (✅ code-confirmed): recordActivity pushes ops but never
-  // increments tally.added / tally.updated, so runs, activity rows and the
-  // dashboard's "last result" always show 0. Intended: the counters reflect
-  // what the run did.
-  it.fails("counters reflect what a run added and updated (#127)", async () => {
+  // #127 defect 4 (fixed): recordActivity now increments tally.added /
+  // tally.updated where the ops are recorded, so runs, activity rows and
+  // the dashboard's "last result" reflect what the run did.
+  it("counters reflect what a run added and updated (#127)", async () => {
     const t = signedIn();
     const linkIds = await seedLinks(t, 3);
     await syncNow(t);
@@ -329,10 +343,10 @@ describe("a full sync run", () => {
     expect(run.added).toBe(1);
   });
 
-  // #127 defect 1 (✅ code-confirmed): listRows stops at .take(1000) and the
-  // finalize sweep deletes nothing the run never saw — rows past the cap are
-  // simply never projected. Intended: a full run keeps every row.
-  it.fails("a full run over more than the 1,000-row read cap keeps every row (#127)", async () => {
+  // #127 defect 1 (fixed): listRows serves pages (no .take(1000) cap), and
+  // the sweep only ever runs behind a fully drained read — every row lands
+  // in the projection and none is swept as unseen.
+  it("a full run over more than the old 1,000-row read cap keeps every row (#127)", async () => {
     const t = signedIn();
     const linkIds = await seedLinks(t, 1004);
     await syncNow(t);
@@ -437,40 +451,40 @@ describe("the commit-tail primary path", () => {
     expect(Math.max(...seqs)).toBe(206);
   });
 
-  // #127 defect 2 (✅ code-confirmed): commitsSince stops at .take(500) but
-  // the cursor is stamped from newestCommit(), so pending commits past 500
-  // are skipped until the weekly reconcile. Intended: the tail applies all
-  // of them and the cursor equals the last applied seq.
-  it.fails("a tail over the 500-commit read cap applies them all (#127)", async () => {
+  // #127 defect 2 (fixed): the collect drains the tail page by page and the
+  // cursor is stamped from the payload's last commit — a tail past the
+  // 500-commit page applies in full and lands exactly on the last applied
+  // seq.
+  it("a tail over the 500-commit page applies them all, cursor on the last applied seq (#127)", async () => {
     const t = signedIn();
     const linkIds = await seedLinks(t, 1);
     await seedCommit(t, { foreignCommitId: "restaurantLocations:1", ops: [], seq: 1 });
     await syncNow(t);
-    for (let seq = 2; seq <= 506; seq += 1) {
-      // oxlint-disable-next-line no-await-in-loop -- fixture seeding, ordered.
-      await seedCommit(t, {
-        foreignCommitId: `restaurantLocations:${seq}`,
-        ops: [labelUpdate(linkIds[0] ?? "", `label-${seq}`)],
-        seq,
-      });
-    }
+    await seedCommits(
+      t,
+      Array.from({ length: 505 }, (_, index) => ({
+        foreignCommitId: `restaurantLocations:${index + 2}`,
+        ops: [labelUpdate(linkIds[0] ?? "", `label-${index + 2}`)],
+        seq: index + 2,
+      })),
+    );
     await syncNow(t);
 
     const run = await latestRun(t);
     expect(run.status).toBe("completed");
-    // All 505 pending commits applied, not just the first 500.
+    // All 505 pending commits applied, not just the first page of 500.
     expect(run.applied).toBe(505);
-    // The last applied op's value is on the entry — and the cursor does not
-    // skip past unapplied commits.
+    // The last applied op's value is on the entry — and the cursor equals
+    // the last applied seq, not the feed's newest-plus-one.
     expect(at(await projectedEntries(t), 0).label).toBe("label-506");
     expect((await bindingOf(t)).lastAppliedCommitSeq).toBe(506);
   });
 
-  // #127 defect 6 (reproduced live while writing this suite): an `update`
-  // naming a key with no map row degrades into an `add` of the op's
-  // after-values — an entry without the projection's other fields. Intended:
-  // no partial entry (full-state fallback for the key, or a reconcile flag).
-  it.fails("an update whose key lost its mapping does not create a partial entry (#127)", async () => {
+  // #127 defect 6 (fixed): an `update` whose key has no map row is no longer
+  // materialized as a partial entry — the run flags needsReconcile and
+  // completion schedules a full pass, which repairs (or correctly omits) the
+  // key from full state.
+  it("an update whose key lost its mapping does not create a partial entry and schedules a reconcile (#127)", async () => {
     const t = signedIn();
     await seedLinks(t, 1);
     await seedCommit(t, { foreignCommitId: "restaurantLocations:1", ops: [], seq: 1 });
@@ -488,11 +502,21 @@ describe("the commit-tail primary path", () => {
       ],
       seq: 2,
     });
-    await syncNow(t);
+    const flaggedRunId = (await syncNow(t)).runId;
 
     // The bound dataset still holds exactly the mapped row — no bare entry.
     expect(await projectedEntries(t)).toHaveLength(1);
     expect((await bindingOf(t)).syncedEntryCount).toBe(1);
+
+    // The tail run was flagged (the auto-reconcile it scheduled drained too,
+    // so it is no longer the latest run — read its doc).
+    const run = await t.run(async (ctx) => ctx.db.get(flaggedRunId));
+    expect(run === null ? undefined : run.needsReconcile).toBe(true);
+    const binding = await bindingOf(t);
+    const history = await t.query(api.bindings.history, { bindingId: binding._id });
+    expect(at(history, 0).kind).toBe("reconcile");
+    expect(at(history, 1).needsReconcile).toBe(true);
+    expect(await projectedEntries(t)).toHaveLength(1);
   });
 });
 
@@ -538,11 +562,14 @@ describe("run lifecycle", () => {
     expect((await bindingOf(t)).syncedEntryCount).toBe(2);
   });
 
-  it("reconcileAll kicks one reconcile per binding; the wrapper starts the primary source's sync", async () => {
+  it("reconcileAll kicks one reconcile per binding", async () => {
     const t = signedIn();
     await seedLinks(t, 1);
-    const viaWrapper = await t.mutation(api.sync.syncRestaurantLocations, {});
-    expect(viaWrapper.alreadyRunning).toBe(false);
+    const started = await t.mutation(api.sync.startRun, {
+      mode: "sync",
+      source: "restaurantLocations",
+    });
+    expect(started.alreadyRunning).toBe(false);
     await drainScheduled(t);
     expect((await latestRun(t)).mode).toBe("sync");
 
@@ -556,12 +583,11 @@ describe("run lifecycle", () => {
     expect(at(history, 0).kind).toBe("reconcile");
   });
 
-  // #127 defect 3 (✅ code-confirmed): collectRows has no try/catch — only
-  // the apply leg calls markRunFailed — so a collect failure leaves the run
-  // in `collecting` forever (revives keep rescheduling it). Intended: the
-  // run is marked failed. Forced here by unbinding while a tail run's
-  // collect is pending: the collect then finds its binding gone.
-  it.fails("a collect failure marks the run failed (#127)", async () => {
+  // #127 defect 3 (fixed): collectRows wraps its reads in try/catch →
+  // markRunFailed, so a collect that throws mid-read fails the run instead
+  // of sticking in `collecting` while revives reschedule it forever. Forced
+  // by deleting the binding row before the scheduled tail collect runs.
+  it("a collect failure marks the run failed (#127)", async () => {
     const t = signedIn();
     await seedLinks(t, 1);
     await seedCommit(t, { foreignCommitId: "restaurantLocations:1", ops: [], seq: 1 });
@@ -576,11 +602,274 @@ describe("run lifecycle", () => {
       mode: "sync",
       source: "restaurantLocations",
     });
-    // The binding (and dataset) vanish before the scheduled collect runs.
-    await t.mutation(api.bindings.unbind, { schemaId: (await bindingOf(t)).schemaId });
+    // The binding row vanishes before the scheduled collect runs — the
+    // tail read fails. (Deleting the row directly, not via unbind: unbind's
+    // cleanup would remove the run doc too, and this test pins the run's
+    // own failure transition.)
+    await t.run(async (ctx) => {
+      const binding = await ctx.db
+        .query("datasetBindings")
+        .withIndex("by_source", (q) => q.eq("source", SOURCE_KEY))
+        .first();
+      if (binding === null) {
+        throw new Error("fixture binding vanished");
+      }
+      await ctx.db.delete(binding._id);
+    });
     await drainScheduled(t);
 
     const run = await t.run(async (ctx) => ctx.db.get(started.runId));
     expect(run === null ? undefined : run.status).toBe("failed");
+    expect(run === null ? undefined : run.error).toContain("binding vanished");
+  });
+
+  // #127 defect 3 (fixed): a collecting run has a revive budget — past it,
+  // the run is failed (with a fresh kickoff starting clean) instead of being
+  // rescheduled forever.
+  it("a collecting run past the revive budget is failed; the next kickoff starts fresh (#127)", async () => {
+    const t = signedIn();
+    await seedLinks(t, 1);
+    const started = await t.mutation(api.sync.startRun, {
+      mode: "sync",
+      source: "restaurantLocations",
+    });
+    const agePastStaleness = async () => {
+      await t.run(async (ctx) => {
+        await ctx.db.patch(started.runId, { lastProgressAt: Date.now() - 3 * 60 * 1000 });
+      });
+    };
+    // Two revives are inside the budget (initial + 2 = MAX_COLLECT_ATTEMPTS).
+    // oxlint-disable-next-line no-await-in-loop -- fixture loop, two ordered revives.
+    for (const revive of [0, 1]) {
+      // oxlint-disable-next-line no-await-in-loop -- fixture step, ordered revives.
+      await agePastStaleness();
+      // oxlint-disable-next-line no-await-in-loop -- fixture step, ordered revives.
+      const rejoined = await t.mutation(api.sync.startRun, {
+        mode: "sync",
+        source: "restaurantLocations",
+      });
+      expect(rejoined.alreadyRunning).toBe(true);
+      expect(`${revive}: ${rejoined.runId}`).toBe(`${revive}: ${started.runId}`);
+    }
+    // The third stale join gives up on the run: failed, and a NEW run starts.
+    await agePastStaleness();
+    const fresh = await t.mutation(api.sync.startRun, {
+      mode: "sync",
+      source: "restaurantLocations",
+    });
+    expect(fresh.alreadyRunning).toBe(false);
+    expect(fresh.runId).not.toBe(started.runId);
+    await drainScheduled(t);
+
+    const old = await t.run(async (ctx) => ctx.db.get(started.runId));
+    expect(old === null ? undefined : old.status).toBe("failed");
+    expect(old === null ? undefined : old.error).toContain("giving up");
+    expect((await latestRun(t)).status).toBe("completed");
+    expect((await bindingOf(t)).syncedEntryCount).toBe(1);
+  });
+
+  // #127 defect 7 (fixed): a stale-joined collect is superseded by the
+  // revived one's lease — the old attempt must not apply, and no attempt's
+  // chunk blobs may leak.
+  it("a revived collect supersedes the old attempt: one apply pass, no leaked blobs (#127)", async () => {
+    const t = signedIn();
+    await seedLinks(t, 2);
+    const started = await t.mutation(api.sync.startRun, {
+      mode: "sync",
+      source: "restaurantLocations",
+    });
+    // Age the checkpoint past the staleness window and re-join: the revive
+    // rotates the run's claim, so the already-scheduled (old-claim) collect
+    // must become a no-op instead of a second consumer.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(started.runId, { lastProgressAt: Date.now() - 3 * 60 * 1000 });
+    });
+    const rejoined = await t.mutation(api.sync.startRun, {
+      mode: "sync",
+      source: "restaurantLocations",
+    });
+    expect(rejoined.alreadyRunning).toBe(true);
+    expect(rejoined.runId).toBe(started.runId);
+    await drainScheduled(t);
+
+    const run = await latestRun(t);
+    expect(run.status).toBe("completed");
+    // Applied exactly once (the old attempt applied nothing).
+    expect(run.applied).toBe(2);
+    expect((await bindingOf(t)).syncedEntryCount).toBe(2);
+    // No chunk blobs leaked — the winner's finalize cleaned its own, and the
+    // loser never stored any.
+    const blobs = await t.run(async (ctx) => ctx.db.system.query("_storage").collect());
+    expect(blobs).toHaveLength(0);
+  });
+});
+
+describe("mirror idempotency (#127 defect 8)", () => {
+  it("replaying a partially failed tail re-applies ops but inserts no duplicate mirrors", async () => {
+    const t = signedIn();
+    const linkIds = await seedLinks(t, 1);
+    await seedCommit(t, { foreignCommitId: "restaurantLocations:1", ops: [], seq: 1 });
+    await syncNow(t);
+
+    // 55 pending commits (seqs 2..56) in 25-commit apply batches, with a
+    // poison delete at seq 30: its projected entry is deleted out from
+    // under its mapping, so the component's deleteEntry throws and batch 2
+    // fails — AFTER batch 1's mirrors (seqs 2..26) have committed.
+    await seedCommits(
+      t,
+      Array.from({ length: 55 }, (_, index) => {
+        const seq = index + 2;
+        return seq === 30
+          ? {
+              foreignCommitId: `restaurantLocations:${seq}`,
+              ops: [
+                {
+                  entryKey: linkIds[0] ?? "",
+                  fields: [],
+                  geometryChanged: false,
+                  op: "delete" as const,
+                },
+              ],
+              seq,
+            }
+          : {
+              foreignCommitId: `restaurantLocations:${seq}`,
+              ops: [labelUpdate(linkIds[0] ?? "", `label-${seq}`)],
+              seq,
+            };
+      }),
+    );
+    await t.run(async (ctx) => {
+      const binding = await ctx.db
+        .query("datasetBindings")
+        .withIndex("by_source", (q) => q.eq("source", SOURCE_KEY))
+        .first();
+      if (binding === null) {
+        throw new Error("fixture binding vanished");
+      }
+      const mapping = await ctx.db
+        .query("bindingEntries")
+        .withIndex("by_binding", (q) =>
+          q.eq("bindingId", binding._id).eq("entryKey", linkIds[0] ?? ""),
+        )
+        .first();
+      if (mapping === null) {
+        throw new Error("fixture mapping vanished");
+      }
+      // The entry goes; the map row dangles — the poison.
+      await ctx.runMutation(components.jsonCms.lib.deleteEntry, {
+        boundWrite: "unbind",
+        entryId: mapping.entryId,
+      });
+    });
+    await syncNow(t);
+    const failed = await latestRun(t);
+    expect(failed.status).toBe("failed");
+
+    // Repair the dangling mapping and replay the whole tail from the old
+    // cursor (the failed run never stamped it).
+    await t.run(async (ctx) => {
+      const binding = await ctx.db
+        .query("datasetBindings")
+        .withIndex("by_source", (q) => q.eq("source", SOURCE_KEY))
+        .first();
+      if (binding === null) {
+        throw new Error("fixture binding vanished");
+      }
+      const mapping = await ctx.db
+        .query("bindingEntries")
+        .withIndex("by_binding", (q) =>
+          q.eq("bindingId", binding._id).eq("entryKey", linkIds[0] ?? ""),
+        )
+        .first();
+      if (mapping === null) {
+        throw new Error("fixture mapping vanished");
+      }
+      await ctx.db.delete(mapping._id);
+    });
+    const replayRunId = (await syncNow(t)).runId;
+
+    const run = await t.run(async (ctx) => ctx.db.get(replayRunId));
+    expect(run === null ? undefined : run.status).toBe("completed");
+    // All 55 commits applied. The repaired key has no mapping, so the
+    // replay's updates skip-and-flag (needsReconcile) and the scheduled
+    // reconcile rebuilds the entry from full state — the projection ends
+    // correct either way; THIS test pins the mirrors.
+    expect(run === null ? undefined : run.needsReconcile).toBe(true);
+    expect(run === null ? undefined : run.applied).toBe(55);
+    expect((await bindingOf(t)).lastAppliedCommitSeq).toBe(56);
+
+    // The mirrors: every seq exactly once, seqs 2..26 from the failed run
+    // and 27..56 from the replay.
+    const mirrors = await t.run(async (ctx) => {
+      const binding = await ctx.db
+        .query("datasetBindings")
+        .withIndex("by_source", (q) => q.eq("source", SOURCE_KEY))
+        .first();
+      if (binding === null) {
+        throw new Error("fixture binding vanished");
+      }
+      return ctx.db
+        .query("commits")
+        .withIndex("by_binding_seq", (q) => q.eq("bindingId", binding._id))
+        .collect();
+    });
+    expect(mirrors).toHaveLength(55);
+    const seqs = mirrors.map((mirror) => mirror.seq);
+    expect(new Set(seqs).size).toBe(55);
+    expect(Math.min(...seqs)).toBe(2);
+    expect(Math.max(...seqs)).toBe(56);
+  });
+});
+
+describe("unbind cleanup (#127 defect 10)", () => {
+  it("removes every related row and blob — activity, key map, mirrors, runs, storage", async () => {
+    const t = signedIn();
+    await seedLinks(t, 2);
+    await syncNow(t);
+    // A commit-tail run leaves applied-commit mirrors behind — all of it
+    // must go with the binding.
+    await seedCommit(t, { foreignCommitId: "restaurantLocations:1", ops: [], seq: 1 });
+    await seedCommit(t, {
+      foreignCommitId: "restaurantLocations:2",
+      ops: [labelUpdate(at(await projectedEntries(t), 0).entryKey, "B2")],
+      seq: 2,
+    });
+    await syncNow(t);
+    const binding = await bindingOf(t);
+
+    await t.mutation(api.bindings.unbind, { schemaId: binding.schemaId });
+    await drainScheduled(t);
+
+    // Every row referencing the binding is gone, and no chunk blob leaked.
+    const leftovers = await t.run(async (ctx) => ({
+      activity: await ctx.db.query("datasetActivity").collect(),
+      bindings: await ctx.db.query("datasetBindings").collect(),
+      entries: await ctx.db.query("bindingEntries").collect(),
+      mirrors: await ctx.db.query("commits").collect(),
+      runs: await ctx.db.query("syncRuns").collect(),
+      blobs: await ctx.db.system.query("_storage").collect(),
+    }));
+    expect(leftovers.activity).toHaveLength(0);
+    expect(leftovers.bindings).toHaveLength(0);
+    expect(leftovers.entries).toHaveLength(0);
+    expect(leftovers.mirrors).toHaveLength(0);
+    expect(leftovers.runs).toHaveLength(0);
+    expect(leftovers.blobs).toHaveLength(0);
+
+    // The projected dataset is gone; the source tables are untouched; a
+    // later sync re-creates the projection.
+    expect(await t.query(api.schemas.get, { schemaId: binding.schemaId })).toBeNull();
+    const sourceRows = await t.run(async (ctx) => ({
+      restaurants: await ctx.db.query("restaurants").collect(),
+      locations: await ctx.db.query("locations").collect(),
+      links: await ctx.db.query("restaurantLocations").collect(),
+    }));
+    expect(sourceRows.restaurants).toHaveLength(1);
+    expect(sourceRows.locations).toHaveLength(2);
+    expect(sourceRows.links).toHaveLength(2);
+    await t.mutation(api.sync.startRun, { mode: "sync", source: SOURCE_KEY });
+    await drainScheduled(t);
+    expect((await bindingOf(t)).syncedEntryCount).toBe(2);
   });
 });
