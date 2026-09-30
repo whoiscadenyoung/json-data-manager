@@ -54,7 +54,11 @@ function SourceRow({ binding }: { binding: BindingRow }) {
     // `undefined` (still loading) reads the same as "no run yet".
     lastRun = run ?? null,
     isActive =
-      lastRun !== null && (lastRun.status === "applying" || lastRun.status === "collecting"),
+      lastRun !== null &&
+      (lastRun.status === "applying" ||
+        lastRun.status === "collecting" ||
+        // Finalize's batched delete phase (#127) — still working.
+        lastRun.status === "sweeping"),
     isStale = isSyncStale(binding);
 
   return (
@@ -86,7 +90,9 @@ function SourceRow({ binding }: { binding: BindingRow }) {
           <RefreshCw className="h-3 w-3 animate-spin" />
           {lastRun.status === "collecting"
             ? "Reading source state…"
-            : `Applying changes — ${lastRun.applied}/${lastRun.total} rows`}
+            : lastRun.status === "sweeping"
+              ? "Finishing the sync…"
+              : `Applying changes — ${lastRun.applied}/${lastRun.total} rows`}
         </p>
       )}
       {lastRun !== null && lastRun.status === "failed" && (

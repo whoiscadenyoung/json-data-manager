@@ -2,17 +2,15 @@
 /// <reference types="vite/client" />
 
 /**
- * The bound-source descriptor layer (sources.ts) — characterization tests
- * (issue #138): pin the CURRENT behavior the sync engine (sync.ts) and the
- * tag ingest (tags.ts) both drive, so #127's fixes can prove they preserve
- * it. Covers the registry lookups, both shipped descriptors' state readers
- * and commit feeds over seeded host tables, the geometry builder, and the
- * chunk splitter the snapshot/sync transports share.
+ * The bound-source descriptor layer (sources.ts) — behavioral tests
+ * (characterized by #138, reader paging fixed by #127): the registry
+ * lookups, both shipped descriptors' state readers (one page per call,
+ * drained across transactions by their callers) and commit feeds over
+ * seeded host tables, the geometry builder, and the chunk splitter the
+ * snapshot/sync transports share.
  *
- * The 1,000-row read cap in `listRows` is a known defect (#127 defect 1 —
- * a full pass then sweeps rows the capped read never saw); it is exercised
- * end-to-end in sync.test.ts as an `it.fails` against the intended
- * "keeps every row" behavior. Here only sub-cap behavior is pinned.
+ * The caps only bite above their sizes: the paging tests seed past the old
+ * 1,000-row cap and past the 500-commit tail page (#127's scale note).
  */
 import { register as registerJsonCms } from "@caden/json-cms/test";
 import { convexTest } from "convex-test";
@@ -21,7 +19,13 @@ import { describe, expect, it } from "vitest";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
-import { chunkByJsonBytes, getSource, SOURCES, type CommitFeedEntry } from "./sources";
+import {
+  chunkByJsonBytes,
+  type CommitFeedEntry,
+  COMMIT_TAIL_PAGE,
+  getSource,
+  SOURCES,
+} from "./sources";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -148,7 +152,9 @@ describe("restaurantLocations.listRows (the §8.1 state reader)", () => {
   it("joins the three tables into labeled Point rows keyed by the link id", async () => {
     const t = signedIn();
     const linkIds = await seedLinks(t, 2);
-    const rows = await t.run(async (ctx) => getSource("restaurantLocations").listRows(ctx));
+    const page = await t.run(async (ctx) => getSource("restaurantLocations").listRows(ctx, null));
+    expect(page.cursor).toBeNull();
+    const rows = page.rows;
     expect(rows).toStrictEqual([
       {
         data: {
@@ -191,9 +197,10 @@ describe("restaurantLocations.listRows (the §8.1 state reader)", () => {
       }
       await ctx.db.delete(link.locationId);
     });
-    const rows = await t.run(async (ctx) => getSource("restaurantLocations").listRows(ctx));
-    expect(rows).toHaveLength(1);
-    expect(at(rows, 0).key).toBe(linkIds[0]);
+    const page = await t.run(async (ctx) => getSource("restaurantLocations").listRows(ctx, null));
+    expect(page.cursor).toBeNull();
+    expect(page.rows).toHaveLength(1);
+    expect(at(page.rows, 0).key).toBe(linkIds[0]);
   });
 });
 
@@ -300,13 +307,91 @@ describe("chunkByJsonBytes (the shared transport splitter)", () => {
 });
 
 describe("readSourceRows (the sync engine's bridge over the descriptor)", () => {
-  it("serves the projection rows through the internal query", async () => {
+  it("serves one projection page through the internal query", async () => {
     const t = signedIn();
     const linkIds = await seedLinks(t, 1);
-    const rows = await t.run(async (ctx) =>
-      ctx.runQuery(internal.sync.readSourceRows, { source: "restaurantLocations" }),
+    const page = await t.run(async (ctx) =>
+      ctx.runQuery(internal.sync.readSourceRows, { cursor: null, source: "restaurantLocations" }),
     );
-    expect(rows).toHaveLength(1);
-    expect(at(rows, 0).key).toBe(linkIds[0]);
+    expect(page.cursor).toBeNull();
+    expect(page.rows).toHaveLength(1);
+    expect(at(page.rows, 0).key).toBe(linkIds[0]);
+  });
+});
+
+describe("reading past the caps (#127 defect 1/2)", () => {
+  it("listRows pages the locations join past the old 1,000-row cap", async () => {
+    const t = signedIn();
+    const linkIds = await seedLinks(t, 1004);
+    // Page 1 is bounded; the continuation reaches the rest.
+    const first = await t.run(async (ctx) => getSource("restaurantLocations").listRows(ctx, null));
+    expect(first.rows.length).toBeLessThan(1004);
+    expect(first.cursor).not.toBeNull();
+    let cursor = first.cursor,
+      lastKey = at(first.rows, first.rows.length - 1).key,
+      seen = first.rows.length,
+      hops = 1;
+    while (cursor !== null) {
+      // oxlint-disable-next-line no-await-in-loop -- the drain under test.
+      const page = await t.run(async (ctx) =>
+        getSource("restaurantLocations").listRows(ctx, cursor),
+      );
+      seen += page.rows.length;
+      if (page.rows.length > 0) {
+        lastKey = at(page.rows, page.rows.length - 1).key;
+      }
+      cursor = page.cursor;
+      hops += 1;
+    }
+    expect(seen).toBe(1004);
+    expect(hops).toBeGreaterThan(1);
+    expect(lastKey).toBe(linkIds[linkIds.length - 1]);
+  });
+
+  it("listRows pages the restaurants table past the old cap too", async () => {
+    const t = signedIn();
+    await t.run(async (ctx) => {
+      for (let index = 0; index < 1004; index += 1) {
+        // oxlint-disable-next-line no-await-in-loop -- fixture seeding, ordered.
+        await ctx.db.insert("restaurants", { cuisine: "Cafe", name: `Probe ${index}` });
+      }
+    });
+    let cursor: string | null = null,
+      seen = 0;
+    do {
+      // oxlint-disable-next-line no-await-in-loop -- the drain under test.
+      const page = await t.run(async (ctx) => getSource("restaurants").listRows(ctx, cursor));
+      seen += page.rows.length;
+      cursor = page.cursor;
+    } while (cursor !== null);
+    expect(seen).toBe(1004);
+  });
+
+  it("commitsSince pages at COMMIT_TAIL_PAGE so callers can drain a long tail", async () => {
+    const t = signedIn();
+    const total = COMMIT_TAIL_PAGE + 3;
+    await t.run(async (ctx) => {
+      for (let seq = 1; seq <= total; seq += 1) {
+        // oxlint-disable-next-line no-await-in-loop -- fixture seeding, ordered.
+        await ctx.db.insert("sourceCommits", {
+          at: 1000,
+          foreignCommitId: `restaurantLocations:${seq}`,
+          message: `commit ${seq}`,
+          ops: [],
+          seq,
+          source: "restaurantLocations",
+        });
+      }
+    });
+    const first = await t.run(async (ctx) => {
+      const source = getSource("restaurantLocations");
+      return source.commitsSince === undefined ? [] : source.commitsSince(ctx, 0);
+    });
+    expect(first).toHaveLength(COMMIT_TAIL_PAGE);
+    const rest = await t.run(async (ctx) => {
+      const source = getSource("restaurantLocations");
+      return source.commitsSince === undefined ? [] : source.commitsSince(ctx, COMMIT_TAIL_PAGE);
+    });
+    expect(rest).toHaveLength(3);
   });
 });

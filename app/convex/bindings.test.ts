@@ -5,13 +5,11 @@
  * The binding registry's read side and the unbind flow (bindings.ts) —
  * behavioral coverage beyond the sign-in gate (issue #138). Unbind is the
  * ONE sanctioned way to remove a bound dataset: the projected dataset, its
- * activity history, and the projection's key map all go with it while the
- * source tables are untouched, so a later sync re-creates the projection.
- *
- * Known gap, deliberately pinned around: #127 item 10 notes the unbind
- * cleanup is incomplete (activity/mapping reads cap at 1,000, and
- * `commits`/`syncRuns` rows are never deleted) — the fixes belong to that
- * issue; these tests pin what IS removed today so the fix cannot regress it.
+ * activity history, the projection's key map, the commit mirrors, the run
+ * history (with its chunk blobs) all go with it while the source tables are
+ * untouched, so a later sync re-creates the projection. The full-removal
+ * sweep lives in sync.test.ts (#127 defect 10); here the user-facing
+ * contract is pinned.
  */
 import { register as registerJsonCms } from "@caden/json-cms/test";
 import { convexTest } from "convex-test";
@@ -165,6 +163,9 @@ describe("unbind", () => {
     const schemaId = await bindSource(t, 2);
     const binding = await requireBinding(t);
     await t.mutation(api.bindings.unbind, { schemaId });
+    // The durable cleanup drains the related rows after the mutation
+    // returns (#127 defect 10).
+    await drainScheduled(t);
 
     expect(await t.query(api.bindings.list, {})).toStrictEqual([]);
     expect(await t.query(api.bindings.status, {})).toBeNull();
