@@ -438,8 +438,9 @@ describe("reference pin/float, sync, and revert (AC)", () => {
     // Stage 6 shipped the projection knowing "derived" only; 7b (#103) adds
     // the fork and map kinds (projects.addArtifact's edge, the bundle press's
     // layer edges).
-    expect(consumedByKnownKinds(await t.query(api.consumption.consumedBy, { datasetId: v1.schemaId })))
-      .toStrictEqual(["derived", "fork", "map"]);
+    expect(
+      consumedByKnownKinds(await t.query(api.consumption.consumedBy, { datasetId: v1.schemaId })),
+    ).toStrictEqual(["derived", "fork", "map"]);
   });
 
   it("pins to head, drifts when the source republishes, and sync repins to the new head", async () => {
@@ -760,8 +761,15 @@ describe("analysisTargets", () => {
     const t = signedIn(),
       draft = await createDraftDataset(t, { title: "Frozen source" }),
       { schemaId: frozenV1 } = await publishDraft(t, draft, [{ data: { label: "a" } }]);
-    expect(await t.query(api.consumption.analysisTargets, { datasetIds: [frozenV1] })).toStrictEqual([
-      { datasetId: frozenV1, resolvedSchemaId: frozenV1, status: "identity", title: "Frozen source" },
+    expect(
+      await t.query(api.consumption.analysisTargets, { datasetIds: [frozenV1] }),
+    ).toStrictEqual([
+      {
+        datasetId: frozenV1,
+        resolvedSchemaId: frozenV1,
+        status: "identity",
+        title: "Frozen source",
+      },
     ]);
   });
 
@@ -791,15 +799,13 @@ describe("analysisTargets", () => {
 
   it("answers missing for unknown ids and for a foreign draft — a draft's existence never leaks (stage 8)", async () => {
     const t = signedIn(),
-      foreignDraft = await t
-        .withIdentity({ subject: "user-2" })
-        .run(async (ctx) =>
-          ctx.runMutation(components.jsonCms.lib.createSchema, {
-            actorId: "user-2",
-            lifecycle: "draft",
-            schema: { properties: { label: { type: "string" } }, title: "Secret", type: "object" },
-          }),
-        );
+      foreignDraft = await t.withIdentity({ subject: "user-2" }).run(async (ctx) =>
+        ctx.runMutation(components.jsonCms.lib.createSchema, {
+          actorId: "user-2",
+          lifecycle: "draft",
+          schema: { properties: { label: { type: "string" } }, title: "Secret", type: "object" },
+        }),
+      );
     expect(
       await t.query(api.consumption.analysisTargets, {
         datasetIds: ["nonexistent-id", foreignDraft],
@@ -819,13 +825,13 @@ describe("analysisTargets", () => {
         status: "draft",
         title: "Own analysis draft",
       });
-    expect(await t.query(api.consumption.analysisTargets, { datasetIds: [draftRow] })).toStrictEqual([
-      { datasetId: draftRow, status: "registry" },
-    ]);
+    expect(
+      await t.query(api.consumption.analysisTargets, { datasetIds: [draftRow] }),
+    ).toStrictEqual([{ datasetId: draftRow, status: "registry" }]);
     const asUser2 = t.withIdentity({ subject: "user-2" });
-    expect(await asUser2.query(api.consumption.analysisTargets, { datasetIds: [draftRow] })).toStrictEqual([
-      { datasetId: draftRow, status: "missing" },
-    ]);
+    expect(
+      await asUser2.query(api.consumption.analysisTargets, { datasetIds: [draftRow] }),
+    ).toStrictEqual([{ datasetId: draftRow, status: "missing" }]);
     // The explicit Save flips the row to saved — catalog-visible, so the
     // foreign caller now gets the distinct "registry" answer.
     await t.mutation(api.derivedDatasets.save, {
@@ -834,8 +840,8 @@ describe("analysisTargets", () => {
       status: "saved",
       title: "Saved analysis",
     });
-    expect(await asUser2.query(api.consumption.analysisTargets, { datasetIds: [draftRow] })).toStrictEqual([
-      { datasetId: draftRow, status: "registry" },
-    ]);
+    expect(
+      await asUser2.query(api.consumption.analysisTargets, { datasetIds: [draftRow] }),
+    ).toStrictEqual([{ datasetId: draftRow, status: "registry" }]);
   });
 });

@@ -103,7 +103,13 @@ async function createProjectDraft(
     geometryType:
       geometryType === undefined
         ? undefined
-        : (geometryType as "Point" | "MultiPoint" | "LineString" | "MultiLineString" | "Polygon" | "MultiPolygon"),
+        : (geometryType as
+            | "Point"
+            | "MultiPoint"
+            | "LineString"
+            | "MultiLineString"
+            | "Polygon"
+            | "MultiPolygon"),
     kind: geometryType === undefined ? undefined : "geospatial",
     projectId,
     schema: {
@@ -255,7 +261,12 @@ describe("one press, one bundle (AC 1)", () => {
       "IG points",
       "Point",
     );
-    const draftB = await createProjectDraft(t, projectId, [{ data: { label: "Zone 1" } }], "IG zones");
+    const draftB = await createProjectDraft(
+      t,
+      projectId,
+      [{ data: { label: "Zone 1" } }],
+      "IG zones",
+    );
     // A referenced THREE ways: membership, a collection layer, and its own
     // dataset layer — the bundle freezes it once.
     const workingSet = await t.mutation(api.collections.create, { name: "Working set" });
@@ -361,9 +372,7 @@ describe("one press, one bundle (AC 1)", () => {
 
     const press = await driveBundlePress(t, projectId, {
       [draftA]: {
-        chunks: [
-          { data: { label: "P" }, geometry: { coordinates: [-89.6, 39.8], type: "Point" } },
-        ],
+        chunks: [{ data: { label: "P" }, geometry: { coordinates: [-89.6, 39.8], type: "Point" } }],
         geometryType: "Point",
         kind: "geospatial",
       },
@@ -552,7 +561,12 @@ describe("partial bundles and resume", () => {
     const draftA = await createProjectDraft(t, projectId, [{ data: { label: "A" } }], "Fine");
     // The draft itself is fine — the BAD geometry rides the CHUNK (the import
     // rejects it, the exact publish.test.ts failure shape).
-    const draftB = await createProjectDraft(t, projectId, [{ data: { label: "B" } }], "Broken geometry");
+    const draftB = await createProjectDraft(
+      t,
+      projectId,
+      [{ data: { label: "B" } }],
+      "Broken geometry",
+    );
 
     // Start the press by hand so B publishes a chunk the import will reject.
     const started = await t.mutation(api.bundles.start, { projectId });
@@ -580,7 +594,11 @@ describe("partial bundles and resume", () => {
       // oxlint-disable-next-line no-await-in-loop -- press order.
       const storageId = await t.action(components.jsonCms.host_support.storeTestBlob, {
         bytes: new TextEncoder().encode(
-          JSON.stringify(isBroken ? [{ data: { label: "B" }, geometry: { coordinates: "nope", type: "Point" } }] : [{ data: { label: "A" } }]),
+          JSON.stringify(
+            isBroken
+              ? [{ data: { label: "B" }, geometry: { coordinates: "nope", type: "Point" } }]
+              : [{ data: { label: "A" } }],
+          ),
         ).buffer,
       });
       // oxlint-disable-next-line no-await-in-loop -- press order.
@@ -701,7 +719,11 @@ describe("fork-as-reference", () => {
     const consumedBy = await t.query(api.consumption.consumedBy, { datasetId: publishedId });
     expect(consumedBy.knownConsumerKinds).toContain("fork");
     const forkConsumer = consumedBy.consumers.find((row) => row.consumerId === membershipId);
-    expect(forkConsumer).toMatchObject({ consumerKind: "fork", mode: "float", title: "SMART 2024" });
+    expect(forkConsumer).toMatchObject({
+      consumerKind: "fork",
+      mode: "float",
+      title: "SMART 2024",
+    });
 
     // Removing the membership takes the edge with it.
     await t.mutation(api.projects.removeArtifact, {
@@ -745,7 +767,9 @@ describe("fork-as-spec", () => {
 
     // The membership landed with it, and the save path's float edge exists.
     const workspace = await t.query(api.projects.get, { projectId });
-    expect(workspace !== null && workspace.artifacts.some((artifact) => artifact.artifactId === forkId)).toBe(true);
+    expect(
+      workspace !== null && workspace.artifacts.some((artifact) => artifact.artifactId === forkId),
+    ).toBe(true);
     const consumedBy = await t.query(api.consumption.consumedBy, { datasetId: publishedId });
     expect(consumedBy.consumers.some((row) => row.consumerId === forkId)).toBe(true);
 
@@ -756,7 +780,11 @@ describe("fork-as-spec", () => {
       [forkId]: {
         chunks: [{ data: { label: "R1" } }],
         kind: "standard",
-        schema: { properties: { label: { type: "string" } }, title: "Fork of Restaurants", type: "object" },
+        schema: {
+          properties: { label: { type: "string" } },
+          title: "Fork of Restaurants",
+          type: "object",
+        },
         spec: { operations: [], sourceDatasetId: publishedId },
       },
     });
@@ -818,15 +846,16 @@ describe("layer resolutions", () => {
 
     const press = await driveBundlePress(t, projectId, {
       [draftA]: {
-        chunks: [
-          { data: { label: "A" }, geometry: { coordinates: [-89.6, 39.8], type: "Point" } },
-        ],
+        chunks: [{ data: { label: "A" }, geometry: { coordinates: [-89.6, 39.8], type: "Point" } }],
         geometryType: "Point",
         kind: "geospatial",
       },
     });
     const run = await runOf(t, press.runId);
-    const frozenV1 = prop(run.members.find((member) => member.datasetKey === draftA), "publishedSchemaId");
+    const frozenV1 = prop(
+      run.members.find((member) => member.datasetKey === draftA),
+      "publishedSchemaId",
+    );
 
     let resolutions = await t.query(api.bundles.layerResolutions, { mapId });
     expect(resolutions).toStrictEqual([
@@ -845,7 +874,9 @@ describe("layer resolutions", () => {
     });
     const storageId = await t.action(components.jsonCms.host_support.storeTestBlob, {
       bytes: new TextEncoder().encode(
-        JSON.stringify([{ data: { label: "A2" }, geometry: { coordinates: [-89.4, 39.7], type: "Point" } }]),
+        JSON.stringify([
+          { data: { label: "A2" }, geometry: { coordinates: [-89.4, 39.7], type: "Point" } },
+        ]),
       ).buffer,
     });
     await t.mutation(api.publish.registerChunk, { attemptId: attempt.attemptId, storageId });
@@ -871,7 +902,6 @@ describe("layer resolutions", () => {
     expect(prop(at(pinned, 0), "resolvedSchemaId")).toBe(headAtPin);
   });
 });
-
 
 describe("review fixes", () => {
   it("refuses to press an empty project", async () => {

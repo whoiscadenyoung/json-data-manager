@@ -124,10 +124,7 @@ export type ExposeApiOptions = {
  * });
  * ```
  */
-export function exposeApi(
-  component: ComponentApi,
-  options: ExposeApiOptions,
-) {
+export function exposeApi(component: ComponentApi, options: ExposeApiOptions) {
   // Note: id arguments are validated as `v.string()`, not `v.id(...)`.
   // These ids reference the component's own tables, which do not exist in
   // The host app's schema, so `v.id("schemas")`/`v.id("entries")` would be
@@ -247,7 +244,11 @@ export function exposeApi(
     getCollection: queryGeneric({
       args: { collectionId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "getCollection", collectionId: args.collectionId, type: "read" });
+        await options.auth(ctx, {
+          fn: "getCollection",
+          collectionId: args.collectionId,
+          type: "read",
+        });
         return ctx.runQuery(component.lib.getCollection, {
           collectionId: args.collectionId,
         });
@@ -267,14 +268,22 @@ export function exposeApi(
         name: v.optional(v.string()),
       },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "updateCollection", collectionId: args.collectionId, type: "update" });
+        await options.auth(ctx, {
+          fn: "updateCollection",
+          collectionId: args.collectionId,
+          type: "update",
+        });
         return ctx.runMutation(component.lib.updateCollection, args);
       },
     }),
     deleteCollection: mutationGeneric({
       args: { collectionId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "deleteCollection", collectionId: args.collectionId, type: "delete" });
+        await options.auth(ctx, {
+          fn: "deleteCollection",
+          collectionId: args.collectionId,
+          type: "delete",
+        });
         return ctx.runMutation(component.lib.deleteCollection, args);
       },
     }),
@@ -307,7 +316,11 @@ export function exposeApi(
         name: v.string(),
       },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "createGroup", collectionId: args.collectionId, type: "create" });
+        await options.auth(ctx, {
+          fn: "createGroup",
+          collectionId: args.collectionId,
+          type: "create",
+        });
         return ctx.runMutation(component.lib.createGroup, args);
       },
     }),
@@ -390,7 +403,11 @@ export function exposeApi(
     listCollectionsBySchema: queryGeneric({
       args: { schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "listCollectionsBySchema", schemaId: args.schemaId, type: "read" });
+        await options.auth(ctx, {
+          fn: "listCollectionsBySchema",
+          schemaId: args.schemaId,
+          type: "read",
+        });
         return ctx.runQuery(component.lib.listCollectionsBySchema, {
           schemaId: args.schemaId,
         });
@@ -400,7 +417,11 @@ export function exposeApi(
     addSchemaToCollection: mutationGeneric({
       args: { collectionId: v.string(), schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "addSchemaToCollection", schemaId: args.schemaId, type: "update" });
+        await options.auth(ctx, {
+          fn: "addSchemaToCollection",
+          schemaId: args.schemaId,
+          type: "update",
+        });
         return ctx.runMutation(component.lib.addSchemaToCollection, args);
       },
     }),
@@ -409,7 +430,11 @@ export function exposeApi(
     removeSchemaFromCollection: mutationGeneric({
       args: { collectionId: v.string(), schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "removeSchemaFromCollection", schemaId: args.schemaId, type: "update" });
+        await options.auth(ctx, {
+          fn: "removeSchemaFromCollection",
+          schemaId: args.schemaId,
+          type: "update",
+        });
         return ctx.runMutation(component.lib.removeSchemaFromCollection, args);
       },
     }),
@@ -426,7 +451,11 @@ export function exposeApi(
     setGroupCollection: mutationGeneric({
       args: { collectionId: v.union(v.string(), v.null()), groupId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "setGroupCollection", groupId: args.groupId, type: "update" });
+        await options.auth(ctx, {
+          fn: "setGroupCollection",
+          groupId: args.groupId,
+          type: "update",
+        });
         return ctx.runMutation(component.lib.setGroupCollection, args);
       },
     }),
@@ -675,7 +704,11 @@ export function exposeApi(
     getMapTileArchiveMeta: queryGeneric({
       args: { schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "getMapTileArchiveMeta", schemaId: args.schemaId, type: "read" });
+        await options.auth(ctx, {
+          fn: "getMapTileArchiveMeta",
+          schemaId: args.schemaId,
+          type: "read",
+        });
         return ctx.runQuery(component.lib.getMapTileArchiveMeta, {
           schemaId: args.schemaId,
         });
@@ -704,7 +737,11 @@ export function exposeApi(
         schemaId: v.string(),
       },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "createEntriesBulk", schemaId: args.schemaId, type: "create" });
+        await options.auth(ctx, {
+          fn: "createEntriesBulk",
+          schemaId: args.schemaId,
+          type: "create",
+        });
         return ctx.runMutation(component.lib.createEntriesBulk, args);
       },
     }),
@@ -729,7 +766,11 @@ export function exposeApi(
     deleteEntriesBySchema: mutationGeneric({
       args: { schemaId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "deleteEntriesBySchema", schemaId: args.schemaId, type: "delete" });
+        await options.auth(ctx, {
+          fn: "deleteEntriesBySchema",
+          schemaId: args.schemaId,
+          type: "delete",
+        });
         return ctx.runMutation(component.lib.deleteEntriesBySchema, args);
       },
     }),
@@ -796,7 +837,11 @@ export function exposeApi(
     startSimplification: mutationGeneric({
       args: { schemaId: v.string(), total: v.number() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "startSimplification", schemaId: args.schemaId, type: "update" });
+        await options.auth(ctx, {
+          fn: "startSimplification",
+          schemaId: args.schemaId,
+          type: "update",
+        });
         return ctx.runMutation(component.lib.startSimplification, {
           schemaId: args.schemaId,
           total: args.total,
@@ -816,7 +861,11 @@ export function exposeApi(
         total: v.number(),
       },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "startGeospatialConversion", schemaId: args.schemaId, type: "update" });
+        await options.auth(ctx, {
+          fn: "startGeospatialConversion",
+          schemaId: args.schemaId,
+          type: "update",
+        });
         return ctx.runMutation(component.lib.startGeospatialConversion, {
           latField: args.latField,
           lonField: args.lonField,

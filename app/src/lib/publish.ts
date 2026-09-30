@@ -21,10 +21,13 @@
  */
 import { chunkRowsForImport, inferSchemaFromData } from "@caden/json-cms/react";
 import type { ImportRow } from "@caden/json-cms/react";
-import { declaredColumnTypes, geometrySourceOperationOf, transformSpecDependencies } from "@caden/json-cms/transform";
+import {
+  declaredColumnTypes,
+  geometrySourceOperationOf,
+  transformSpecDependencies,
+} from "@caden/json-cms/transform";
 import type { GeometrySource, SqlColumnSpec, TransformSpec } from "@caden/json-cms/transform";
 import { ConvexClient } from "convex/browser";
-
 import type { FunctionReturnType } from "convex/server";
 
 import { api } from "#convex/_generated/api";
@@ -122,7 +125,7 @@ async function loadPublishTables(
   convex: ConvexClient,
   spec: unknown,
 ): Promise<PublishSourceTables> {
-  const rowsByDatasetId = new Map<string, Record<string, unknown>[]>,
+  const rowsByDatasetId = new Map<string, Record<string, unknown>[]>(),
     specByDatasetId = new Map<string, unknown>(),
     columnsByDatasetId = new Map<string, SqlColumnSpec[]>(),
     geometryById = new Map<string, unknown>(),

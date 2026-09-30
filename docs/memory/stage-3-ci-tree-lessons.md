@@ -15,7 +15,7 @@ merged 2026-09-28):
    with "Invalid environment variables". **Why:** the module validates on
    load, not on use. **How to apply:** new app test files that transitively
    import the seam/export/etc. must `vi.mock("#/env", () => ({ env:
-   { VITE_CONVEX_URL: "http://127.0.0.1:3212" } }))` — the established
+{ VITE_CONVEX_URL: "http://127.0.0.1:3212" } }))` — the established
    pattern in `dataset-rows.test.ts`, `export.test.ts`,
    `dataset-rows-react.test.tsx`. CI caught this twice (#113, #114) after
    locally-green gates.

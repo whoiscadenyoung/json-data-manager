@@ -22,7 +22,6 @@ import {
   SelectValue,
 } from "#/components/ui/select";
 import { Textarea } from "#/components/ui/textarea";
-import { api } from "#convex/_generated/api";
 import {
   NO_COLUMN,
   PREVIEW_ROW_COUNT,
@@ -33,6 +32,7 @@ import {
   isLookupComplete,
   type BuilderOperation,
 } from "#/lib/transform-model";
+import { api } from "#convex/_generated/api";
 
 /**
  * The Transform tab's editor (roadmap stage 2, #95; docs/derived-datasets-design.md
@@ -86,8 +86,7 @@ function ColumnSelect({
   placeholder: string;
   value: string;
 }) {
-  const options =
-    value === NO_COLUMN || columns.includes(value) ? columns : [value, ...columns];
+  const options = value === NO_COLUMN || columns.includes(value) ? columns : [value, ...columns];
   return (
     <div className="flex flex-col gap-2">
       <Label htmlFor={id}>{label}</Label>
@@ -202,7 +201,11 @@ function LookupStep({
           loadingColumns={lookupSchema === undefined}
           pickableFields={pickableFields}
           onModeChange={(fieldsMode) => {
-            onChange(fieldsMode === "all" ? { fieldsMode } : { fields: operation.fields ?? [], fieldsMode });
+            onChange(
+              fieldsMode === "all"
+                ? { fieldsMode }
+                : { fields: operation.fields ?? [], fieldsMode },
+            );
           }}
           onToggleField={(field, checked) => {
             const current = operation.fields ?? [];
@@ -327,7 +330,9 @@ function KeyColumnsRow({
         columns={sourceColumns}
         id={`transform-base-key-${index}`}
         label="Key column on this dataset"
-        placeholder={pickedComponentDataset ? "Select a column" : "Choose the related dataset first"}
+        placeholder={
+          pickedComponentDataset ? "Select a column" : "Choose the related dataset first"
+        }
         value={sourceKey}
         onChange={(next) => {
           onChange({ baseKey: next });
@@ -381,10 +386,15 @@ function DatasetSourceRow({
       <div className="flex items-center gap-2">
         <Button size="sm" type="button" variant="outline" onClick={onOpenPicker}>
           <Database className="h-3.5 w-3.5" />
-          {chosenTitle === undefined && !picked ? "Choose a dataset…" : chosenTitle ?? lookupDatasetId}
+          {chosenTitle === undefined && !picked
+            ? "Choose a dataset…"
+            : (chosenTitle ?? lookupDatasetId)}
         </Button>
         {!picked || chosenTitle !== undefined || loading ? null : (
-          <Badge variant="outline" title="Not an imported dataset — likely another derived dataset.">
+          <Badge
+            variant="outline"
+            title="Not an imported dataset — likely another derived dataset."
+          >
             Derived source
           </Badge>
         )}
@@ -550,7 +560,6 @@ function PolicySelects({
   );
 }
 
-
 function TransformEditorForm({
   columns,
   datasetTitle,
@@ -582,7 +591,9 @@ function TransformEditorForm({
     // for the same logical transform.
     pendingSaveRef = useRef<Promise<string | undefined> | null>(null),
     previewOperations = operations
-      .filter((operation) => isLookupComplete(operation) && componentIds.has(operation.lookupDatasetId))
+      .filter(
+        (operation) => isLookupComplete(operation) && componentIds.has(operation.lookupDatasetId),
+      )
       .map(fromBuilderOperation),
     completedCount = operations.filter(isLookupComplete).length,
     saveReason = firstIncompleteReason(operations),
@@ -693,9 +704,7 @@ function TransformEditorForm({
   };
 
   const requirement =
-    title.trim() === ""
-      ? "Give it a title to start autosaving."
-      : (saveReason ?? "Ready to save.");
+    title.trim() === "" ? "Give it a title to start autosaving." : (saveReason ?? "Ready to save.");
 
   return (
     <div className="flex flex-col gap-6">
@@ -703,9 +712,8 @@ function TransformEditorForm({
         <CardHeader>
           <CardTitle>{docId === undefined ? "New transform" : "Edit transform"}</CardTitle>
           <CardDescription>
-            Enrich {datasetTitle}&apos;s rows with fields from a related dataset. Nothing here
-            ever changes {datasetTitle}&apos;s own data — the result is a virtual, derived
-            dataset.
+            Enrich {datasetTitle}&apos;s rows with fields from a related dataset. Nothing here ever
+            changes {datasetTitle}&apos;s own data — the result is a virtual, derived dataset.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-6">
@@ -751,9 +759,7 @@ function TransformEditorForm({
                 patchOperation(index, patch);
               }}
               onRemove={() => {
-                editOperations(
-                  operations.filter((_, operationIndex) => operationIndex !== index),
-                );
+                editOperations(operations.filter((_, operationIndex) => operationIndex !== index));
               }}
             />
           ))}
@@ -844,15 +850,16 @@ function EditorFooter({
   onClose: () => void;
   onSave: () => void;
 }) {
-  const status = autosave === "saving"
-    ? "Saving draft…"
-    : autosave === "error"
-      ? "The draft could not be saved — edit anything to retry."
-      : autosave === "saved"
-        ? "Draft saved — reload any time and resume from the transforms list."
-        : dirty && !canAutosave
-          ? requirement
-          : "";
+  const status =
+    autosave === "saving"
+      ? "Saving draft…"
+      : autosave === "error"
+        ? "The draft could not be saved — edit anything to retry."
+        : autosave === "saved"
+          ? "Draft saved — reload any time and resume from the transforms list."
+          : dirty && !canAutosave
+            ? requirement
+            : "";
   return (
     <div className="flex flex-wrap items-center gap-3">
       <Button type="button" variant="ghost" onClick={onClose}>

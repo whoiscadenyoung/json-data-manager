@@ -1,3 +1,5 @@
+import type { SqlEngine, SqlTable } from "@caden/json-cms/transform";
+import type { AsyncDuckDB, AsyncDuckDBConnection } from "@duckdb/duckdb-wasm";
 /**
  * The analysis layer's SQL engine handle (roadmap stage 9, #105) — a lazily
  * created DuckDB-WASM `SqlEngine` (the injected fourth argument of
@@ -25,8 +27,6 @@
  */
 import { tableFromArrays } from "apache-arrow";
 import type { Table as ArrowTable } from "apache-arrow";
-import type { AsyncDuckDB, AsyncDuckDBConnection } from "@duckdb/duckdb-wasm";
-import type { SqlEngine, SqlTable } from "@caden/json-cms/transform";
 
 /** The DuckDB memory cap per engine instance (the build-time cap the issue names). */
 const MEMORY_LIMIT = "1GB";

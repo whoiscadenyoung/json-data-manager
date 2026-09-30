@@ -544,11 +544,7 @@ function usePressBundle(projectId: string) {
 }
 
 /** The failed members, named — the checkpoint design's contract ("the UI can say exactly what to retry"). */
-function FailedMemberList({
-  bundle,
-}: {
-  bundle: LatestBundle;
-}) {
+function FailedMemberList({ bundle }: { bundle: LatestBundle }) {
   if (bundle.failedMembers.length === 0) {
     return null;
   }
@@ -622,8 +618,7 @@ function ProjectWorkspacePage() {
     workspace = useQuery({ ...convexQuery(api.projects.get, { projectId }) }).data,
     // This project's newest press (7b): drives the publish button's state
     // and the status line. undefined until it loads; null before any press.
-    latestBundle = useQuery({ ...convexQuery(api.bundles.latestForProject, { projectId }) })
-      .data,
+    latestBundle = useQuery({ ...convexQuery(api.bundles.latestForProject, { projectId }) }).data,
     [addOpen, setAddOpen] = useState(false),
     { press, pressing } = usePressBundle(projectId);
 

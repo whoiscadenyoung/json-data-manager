@@ -145,7 +145,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** The declared type of one property, read through the array (`["string","null"]`) or plain (`"string"`) form — null when neither maps to a supported scalar. */
-function declaredBaseType(declared: unknown): "boolean" | "integer" | "number" | SqlColumnType | undefined {
+function declaredBaseType(
+  declared: unknown,
+): "boolean" | "integer" | "number" | SqlColumnType | undefined {
   const base: unknown = Array.isArray(declared)
     ? declared.find((entry) => typeof entry === "string" && entry !== "null")
     : declared;
@@ -228,7 +230,9 @@ export function materializeSqlTable(
   rows: readonly Record<string, unknown>[],
   declaredColumns?: readonly SqlColumnSpec[],
 ): SqlTable {
-  const declaredByName = new Map((declaredColumns ?? []).map((column) => [column.name, column.type])),
+  const declaredByName = new Map(
+      (declaredColumns ?? []).map((column) => [column.name, column.type]),
+    ),
     extraNames: string[] = [];
   for (const row of rows) {
     for (const key of Object.keys(row)) {
@@ -257,7 +261,10 @@ export function sqlSourceName(operation: SqlOperation): string {
 }
 
 /** One side table materialized under its SQL name — an absent side (not yet streamed) registers empty rather than fabricating an error. */
-function materializeSideTable(name: string, sideTables: ReadonlyMap<string, SqlSideTable>): SqlTable {
+function materializeSideTable(
+  name: string,
+  sideTables: ReadonlyMap<string, SqlSideTable>,
+): SqlTable {
   const side = sideTables.get(name),
     sideRows = side === undefined ? [] : side.rows,
     sideColumns = side === undefined ? undefined : side.columns;

@@ -490,7 +490,6 @@ describe("json-cms component", () => {
       assertDefined(row);
       expect(row.fieldCount).toBe(0);
     });
-
   });
 
   describe("catalog lifecycle (roadmap 5a, #99)", () => {
@@ -700,7 +699,8 @@ describe("json-cms component", () => {
       const visibleEntry = visibleEntries[0];
       assertDefined(visibleEntry);
       const labels = await t.query(api.lib.listEntriesForIds, {
-        entryIds: hiddenEntry === undefined ? [visibleEntry._id] : [visibleEntry._id, hiddenEntry._id],
+        entryIds:
+          hiddenEntry === undefined ? [visibleEntry._id] : [visibleEntry._id, hiddenEntry._id],
         viewerId: VIEWER,
       });
       expect(labels).toHaveLength(1);

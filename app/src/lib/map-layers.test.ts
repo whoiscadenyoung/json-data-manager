@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { Geometry } from "@caden/json-cms/react";
+import { describe, expect, it } from "vitest";
 
 import type { DatasetGeometryRow } from "./dataset-rows";
 import {
@@ -160,10 +160,7 @@ describe("expandLayerDatasets with derived layers", () => {
 
 describe("derived geometry re-keying (the 3b click-payload contract)", () => {
   it("keeps every plain row and adds one copy per derived layer over its source", () => {
-    const rows = [
-        geometryRow("g1", "s1", "e1"),
-        geometryRow("g2", "s2", "e2"),
-      ],
+    const rows = [geometryRow("g1", "s1", "e1"), geometryRow("g2", "s2", "e2")],
       keyed = keyedGeometryRows(rows, new Map([["s1", ["d1", "d2"]]]));
 
     // The plain rows stay (a source that is ALSO a layer keeps drawing as
@@ -206,7 +203,11 @@ describe("chain resolution (7b, #103): a published map's layer renders its publi
       { anchorId: "live1", mode: "float", resolvedSchemaId: undefined },
       { anchorId: "draft2", mode: "pin", resolvedSchemaId: "pinnedRow" },
     ],
-    [dataset("v1row", "geospatial"), dataset("live1", "geospatial"), dataset("draft2", "geospatial")],
+    [
+      dataset("v1row", "geospatial"),
+      dataset("live1", "geospatial"),
+      dataset("draft2", "geospatial"),
+    ],
   );
 
   it("maps render anchors to their resolved rows and skips targets with no chain", () => {
@@ -251,7 +252,9 @@ describe("chain resolution (7b, #103): a published map's layer renders its publi
       keyed = keyedGeometryRows(rows, new Map(), chainView.sourceByRenderId);
     // The draft's live row draws NOTHING through the anchor; the frozen row
     // draws once as itself (if layered directly) and once as the anchor.
-    expect(keyed.filter((row) => row.schemaId === "draft1" && row.sourceSchemaId === undefined)).toHaveLength(0);
+    expect(
+      keyed.filter((row) => row.schemaId === "draft1" && row.sourceSchemaId === undefined),
+    ).toHaveLength(0);
     const anchorCopy = keyed.find((row) => row.schemaId === "draft1");
     if (anchorCopy === undefined) {
       throw new Error("no anchor copy was keyed");
@@ -261,7 +264,10 @@ describe("chain resolution (7b, #103): a published map's layer renders its publi
   });
 
   it("still feeds derived copies when a resolved anchor is also a derived bottom source", () => {
-    const rows = [geometryRow("gLive", "draft1", "eDraft"), geometryRow("gFrozen", "v1row", "eFrozen")],
+    const rows = [
+        geometryRow("gLive", "draft1", "eDraft"),
+        geometryRow("gFrozen", "v1row", "eFrozen"),
+      ],
       keyed = keyedGeometryRows(
         rows,
         new Map([["draft1", ["d1"]]]),
@@ -271,7 +277,11 @@ describe("chain resolution (7b, #103): a published map's layer renders its publi
     // layer draws the frozen rows under draft1, and the draft's plain rows
     // draw nothing.
     expect(keyed.filter((row) => row.schemaId === "d1")).toHaveLength(1);
-    expect(keyed.filter((row) => row.schemaId === "draft1" && row.sourceSchemaId === undefined)).toHaveLength(0);
-    expect(keyed.filter((row) => row.schemaId === "draft1" && row.sourceSchemaId === "v1row")).toHaveLength(1);
+    expect(
+      keyed.filter((row) => row.schemaId === "draft1" && row.sourceSchemaId === undefined),
+    ).toHaveLength(0);
+    expect(
+      keyed.filter((row) => row.schemaId === "draft1" && row.sourceSchemaId === "v1row"),
+    ).toHaveLength(1);
   });
 });

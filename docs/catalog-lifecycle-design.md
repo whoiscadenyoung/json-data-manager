@@ -18,7 +18,7 @@ Two concrete scenarios drive the model:
 - **SMART grants.** Import a year's SMART grant data into a project, put all
   of that year's datasets on one map with layer groups (IG points group, IG
   polygons group, an Action Plan group with its own polygons and point
-  layer), and publish — the map *and* its underlying datasets. One project
+  layer), and publish — the map _and_ its underlying datasets. One project
   per year (SMART 2024, SMART 2025, …), each publishing as a bundle.
 - **Restaurant join.** Pull the published restaurants, locations, and
   restaurantLocations datasets into a project, join them, and produce one
@@ -40,14 +40,14 @@ never mutated; working state must survive a crashed machine or browser.
   ordinary datasets into the catalog.
 - **Publish materializes and freezes.** An imported dataset publishes as a
   version dataset (a frozen state — it already is rows). A derived dataset
-  publishes by *executing its spec once* into a version dataset carrying
+  publishes by _executing its spec once_ into a version dataset carrying
   lineage (recipe + source versions). This supersedes the earlier
   "publish registers the virtual spec" lean: virtual artifacts would have to
   be pushed through the entire materialized perf stack (archives, extents,
   pagination), and materialization is what decouples source exposure (§5.2).
 - **The catalog is append-only.** Republish creates a new immutable version;
   forks never merge back into their sources. The catalog holds frozen states;
-  the project holds the live recipe (*tags materialize; commits don't* — the
+  the project holds the live recipe (_tags materialize; commits don't_ — the
   bound-datasets principle, applied to ourselves).
 - **Consumption is pin/float with diff, sync, revert.** Consumers reference a
   version (pin) or head (float). New versions notify in-app (badge on every
@@ -57,7 +57,7 @@ never mutated; working state must survive a crashed machine or browser.
   frozen-version machinery already shipped for bound datasets (lineage
   fields, pinning, keep-N retention) — no new versioning system.
 - **Auto-publish dependencies.** Publishing an artifact promotes what it
-  references *live*: a published map forces its layer datasets to publish; a
+  references _live_: a published map forces its layer datasets to publish; a
   materialized derived dataset references nothing live and therefore forces
   nothing.
 - **Exposure is decoupled from function.** Because published derived
@@ -78,7 +78,7 @@ never mutated; working state must survive a crashed machine or browser.
   projects, sharing, and the fork loop wait on data access being gated on
   sign-in.
 - **Drafts are durable by construction.** Everything in a project is a
-  Convex document; the durability rule is *save early* (§6).
+  Convex document; the durability rule is _save early_ (§6).
 
 ## 3. State model
 
@@ -97,12 +97,12 @@ never mutated; working state must survive a crashed machine or browser.
 
 ## 4. The virtual/materialized line
 
-| | In a project (draft) | Published (catalog) |
-| --- | --- | --- |
-| Rows | Real (imports write entries) or spec-computed client-side | Materialized entries/geometries, frozen per version |
-| Maps | Preview from client-side compute | Existing row/tile path, #52 on-demand popups |
-| Perf machinery | None committed — no `boundingBox`, no archives | All of it, unchanged |
-| Consumers | The author only | Everyone; pin/float + sync/revert |
+|                | In a project (draft)                                      | Published (catalog)                                 |
+| -------------- | --------------------------------------------------------- | --------------------------------------------------- |
+| Rows           | Real (imports write entries) or spec-computed client-side | Materialized entries/geometries, frozen per version |
+| Maps           | Preview from client-side compute                          | Existing row/tile path, #52 on-demand popups        |
+| Perf machinery | None committed — no `boundingBox`, no archives            | All of it, unchanged                                |
+| Consumers      | The author only                                           | Everyone; pin/float + sync/revert                   |
 
 Nothing in the published layer knows projects exist. A published map,
 collection, or dataset is shaped exactly like today's artifacts, so every
@@ -132,7 +132,7 @@ republishes, the project shows "sources changed" → re-run the spec → new
 frozen version → consumers get the notify/diff/sync/revert flow.
 
 **New spec wrinkle: `geometrySource`.** The join table has no coordinates —
-the point geometry comes from the *locations* side of the join. A transform
+the point geometry comes from the _locations_ side of the join. A transform
 spec therefore needs a geometry rule ("geometry from the locations lookup
 side"); at materialization the derived version's entries get geometryIds
 from the joined rows. Small spec addition, named here because it is the one
@@ -149,7 +149,7 @@ this for free because **drafts are server-side documents**:
   only at publish. Same for map/layer arrangement (saved map views already
   persist live).
 - The only volatile state is unsaved builder UI; the design rule is
-  *autosave early and often* so a reload reconstructs the project.
+  _autosave early and often_ so a reload reconstructs the project.
 - Long-running publishes must **checkpoint and resume** like the durable
   sync engine (`syncRuns`: chunked collect/apply, keyed idempotency, resume
   exactly). Materialization reuses the existing ingest machinery for its
@@ -169,7 +169,7 @@ this for free because **drafts are server-side documents**:
 
 ## 8. Prerequisites and staging
 
-The lifecycle changes *what* gets built late, not *what* gets built first:
+The lifecycle changes _what_ gets built late, not _what_ gets built first:
 
 1. Transform engine + registry/preview + surfacing — ADR 0005 §10, unchanged.
 2. **Materialized publish** — execute spec → write via the existing ingest
@@ -182,7 +182,7 @@ The lifecycle changes *what* gets built late, not *what* gets built first:
 
 ## 9. Open questions
 
-- Popup executor for *project* previews (index table vs. client key map) —
+- Popup executor for _project_ previews (index table vs. client key map) —
   **answered 2026-09 (stage 3b / issue #97)**: client-side, on demand at
   click time through the row-resolution seam; previews inherit the executor
   as-is. See the addendum in

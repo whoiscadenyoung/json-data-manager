@@ -50,7 +50,14 @@ describe("builder operations", () => {
     ).toContain("key column on the related dataset");
     expect(
       firstIncompleteReason([
-        { ...empty, baseKey: "GrantId", fieldsMode: "pick", fields: [], lookupDatasetId: "grants", lookupKey: "GrantId" },
+        {
+          ...empty,
+          baseKey: "GrantId",
+          fieldsMode: "pick",
+          fields: [],
+          lookupDatasetId: "grants",
+          lookupKey: "GrantId",
+        },
       ]),
     ).toContain("pick at least one field");
     expect(firstIncompleteReason([toBuilderOperation(completeOperation())])).toBeUndefined();
@@ -59,7 +66,10 @@ describe("builder operations", () => {
   });
 
   it("draftToSpec keeps only complete operations, in order, and records the dependencies", () => {
-    const spec = draftToSpec("items", [emptyBuilderOperation(), toBuilderOperation(completeOperation())]);
+    const spec = draftToSpec("items", [
+      emptyBuilderOperation(),
+      toBuilderOperation(completeOperation()),
+    ]);
 
     expect(spec.sourceDatasetId).toBe("items");
     expect(spec.operations).toStrictEqual([completeOperation()]);
@@ -95,10 +105,12 @@ describe("matchStatLine", () => {
         "Id",
       ),
     ).toBe("67% matched; 1 orphan Id");
-    expect(matchStatLine(
-      { droppedRows: 0, matchedRows: 0, totalSourceRows: 0, unmatchedKeys: [], unmatchedRows: 0 },
-      "Id",
-    )).toBe("No rows to match yet.");
+    expect(
+      matchStatLine(
+        { droppedRows: 0, matchedRows: 0, totalSourceRows: 0, unmatchedKeys: [], unmatchedRows: 0 },
+        "Id",
+      ),
+    ).toBe("No rows to match yet.");
   });
 });
 

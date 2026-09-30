@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  bundleClosure,
-  type BundleClosureInput,
-} from "./bundles";
+import { bundleClosure, type BundleClosureInput } from "./bundles";
 
 /**
  * The bundle closure's pure decisions (roadmap 7b, #103) — unit-tested with
@@ -32,8 +29,15 @@ function input(overrides: Partial<BundleClosureInput> = {}): BundleClosureInput 
 }
 
 /** The plan's members, keyed for assertion ergonomics. */
-function byKey(result: ReturnType<typeof bundleClosure>): Map<string, { publish: boolean; kind: string }> {
-  return new Map(result.members.map((member) => [member.datasetKey, { kind: member.kind, publish: member.publish }]));
+function byKey(
+  result: ReturnType<typeof bundleClosure>,
+): Map<string, { publish: boolean; kind: string }> {
+  return new Map(
+    result.members.map((member) => [
+      member.datasetKey,
+      { kind: member.kind, publish: member.publish },
+    ]),
+  );
 }
 
 describe("bundleClosure: contents and dedup (the bundle rule)", () => {
@@ -259,9 +263,7 @@ describe("bundleClosure: order and cycle safety", () => {
       }),
     );
     const mapMember = result.members.find((member) => member.kind === "map");
-    expect(mapMember === undefined ? undefined : mapMember.layerTargets).toStrictEqual([
-      PUBLISHED,
-    ]);
+    expect(mapMember === undefined ? undefined : mapMember.layerTargets).toStrictEqual([PUBLISHED]);
   });
 
   it("drops a foreign draft discovered only through live expansion — never frozen by someone else's press", () => {

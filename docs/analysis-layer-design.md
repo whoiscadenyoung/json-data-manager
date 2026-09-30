@@ -56,7 +56,7 @@ waiting, promoted through the lifecycle's materialized publish.
   surface opens; single- vs multi-threaded build (COOP/COEP headers) chosen
   then; set `memory_limit` and rendered-result caps.
 - **Columnar sidecar at publish** — the analytical sibling of the tile
-  archive: a Parquet/GeoParquet artifact per published *version*, queried by
+  archive: a Parquet/GeoParquet artifact per published _version_, queried by
   DuckDB-WASM over HTTP range requests without full download. Only becomes
   relevant when published datasets outgrow client-side streaming; it is
   viable precisely because published datasets are immutable versions, so
@@ -70,7 +70,7 @@ waiting, promoted through the lifecycle's materialized publish.
 
 - UX surface first: a SQL editor, or canned-query builders that compile to
   the same engine?
-- Whether the rollup UI compiles *to SQL* under the hood, or shares only the
+- Whether the rollup UI compiles _to SQL_ under the hood, or shares only the
   engine interface with it.
 - Sidecar trigger threshold (dataset size / query patterns that justify
   Parquet materialization at publish).

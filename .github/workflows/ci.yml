@@ -1,12 +1,11 @@
-# Root CI gate — docs/data-platform-roadmap.md §3 item 0.5: lint + typecheck +
-# test on every PR, one job so the PR carries a single green/red signal.
+# Root CI gate — docs/data-platform-roadmap.md §3 item 0.5: fmt + lint +
+# typecheck + test + build on every PR, one job so the PR carries a single
+# green/red signal.
 #
-# Deliberately out of scope here: deploys, publishing (the
-# packages/data-export workflow inherited from its standalone-repo days stays
-# inert), formatting enforcement, coverage thresholds.
-#
-# `oxfmt --check` is intentionally NOT a gate: it currently fails on pre-existing
-# files unrelated to any given PR (including docs); formatting is separate work.
+# Deliberately out of scope here: deploys, publishing, coverage thresholds.
+# (The nested packages/data-export workflow inherited from its
+# standalone-repo days was removed 2026-09-30 — GitHub never runs workflows
+# in subdirectories; data-export's typecheck and test now run here.)
 name: CI
 
 on:
@@ -16,8 +15,7 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Same cancellation pattern as packages/data-export/.github/workflows/test.yml:
-# superseded PR runs cancel; pushes to main and manual runs never do.
+# Superseded PR runs cancel; pushes to main and manual runs never do.
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
@@ -27,7 +25,7 @@ permissions:
 
 jobs:
   ci:
-    name: Lint, typecheck, test
+    name: Format, lint, typecheck, test, build
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -56,12 +54,19 @@ jobs:
       # their built dist (each package's exports point at ./dist/...), and every
       # dist is gitignored (root .gitignore: `dist`) — so CI must rebuild both
       # before anything resolves those imports (type-aware lint, app typecheck).
-      # No codegen step: app/convex/_generated and the json-cms _generated dirs
+      # data-export's example typecheck does the same through its own exports
+      # map, and `bun install` does not run workspace `prepare` scripts, so its
+      # dist is rebuilt here too (plain tsc; its _generated dir is committed).
+      # No codegen step: app/convex/_generated and the packages' _generated dirs
       # are committed, so typecheck does not depend on regenerating.
       - name: Build workspace dists
         run: |
           bun --filter=@caden/json-cms run build
           bun --filter=@caden/geometry-archive run build
+          bun --filter=@caden/data-export run build
+
+      - name: Format check
+        run: bun run fmt:check
 
       - name: Lint
         run: bun run lint
@@ -71,6 +76,9 @@ jobs:
 
       - name: Typecheck (@caden/geometry-archive)
         run: bun --filter=@caden/geometry-archive run typecheck
+
+      - name: Typecheck (@caden/data-export)
+        run: bun --filter=@caden/data-export run typecheck
 
       # app has no typecheck script — bunx tsc --noEmit is the verified command
       # (docs/memory/local-dev-verification.md).
@@ -86,3 +94,12 @@ jobs:
 
       - name: Test (app)
         run: bun --filter=app run test
+
+      - name: Test (@caden/data-export)
+        run: bun --filter=@caden/data-export run test
+
+      # Build gate (vite build needs no env files — env validation is a
+      # runtime, not build-time, concern — verified 2026-09-30 with .env*
+      # moved aside).
+      - name: Build (app)
+        run: bun --filter=app run build

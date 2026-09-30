@@ -1,11 +1,10 @@
 import { applyLookup } from "@caden/json-cms/react";
 import type { LookupOperation } from "@caden/json-cms/react";
+import type { Geometry } from "@caden/json-cms/react";
 import type { ConvexReactClient } from "convex/react";
 
-import { api } from "#convex/_generated/api";
 import { fetchDatasetEntryRows, type DatasetEntryRow } from "#/lib/dataset-rows";
-
-import type { Geometry } from "@caden/json-cms/react";
+import { api } from "#convex/_generated/api";
 
 /**
  * Client-side export helpers shared by the dataset and group export
@@ -277,7 +276,9 @@ export async function loadSpecsBySource(
   readySummaries: readonly { _id: string }[],
 ): Promise<globalThis.Map<string, ExportTransformSpec[]>> {
   const docs = await Promise.all(
-    readySummaries.map(async (summary) => convex.query(api.derivedDatasets.get, { id: summary._id })),
+    readySummaries.map(async (summary) =>
+      convex.query(api.derivedDatasets.get, { id: summary._id }),
+    ),
   );
   const specsBySource = new globalThis.Map<string, ExportTransformSpec[]>();
   for (const doc of docs) {
@@ -511,11 +512,7 @@ function applySpec<T extends ExportableEntry>(
     // Rest-destructure the tags out of a fresh copy — object spread carries
     // the symbol keys through the engine's own row copies, so stripping them
     // once, here, is all the output needs.
-    const {
-      [ENTRY_HAD_OBJECT_DATA]: _hadObjectData,
-      [ENTRY_IDENTITY]: _tag,
-      ...enriched
-    } = row;
+    const { [ENTRY_HAD_OBJECT_DATA]: _hadObjectData, [ENTRY_IDENTITY]: _tag, ...enriched } = row;
     out.push({ ...entry, data: enriched });
   }
   return out;
@@ -541,4 +538,3 @@ export function enrichExportEntries<T extends ExportableEntry>(
   }
   return [...current];
 }
-

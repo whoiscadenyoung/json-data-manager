@@ -13,11 +13,7 @@ import {
 } from "#/components/ui/table";
 import type { DatasetEntryRow } from "#/lib/dataset-rows";
 import { fetchDatasetEntryRows } from "#/lib/dataset-rows";
-import {
-  PREVIEW_ROW_COUNT,
-  matchStatLine,
-  truncateOrphanKeys,
-} from "#/lib/transform-model";
+import { PREVIEW_ROW_COUNT, matchStatLine, truncateOrphanKeys } from "#/lib/transform-model";
 
 /**
  * The Transform tab's preview (stage 2, #95; docs/derived-datasets-design.md
@@ -173,8 +169,8 @@ function TransformPreviewRun({
       <PreviewTable columns={columns} rows={result.rows.slice(0, PREVIEW_ROW_COUNT)} />
       {result.rows.length > PREVIEW_ROW_COUNT && (
         <p className="text-xs text-muted-foreground">
-          Showing the first {PREVIEW_ROW_COUNT} of {result.rows.length} rows — the stats above
-          cover the whole dataset.
+          Showing the first {PREVIEW_ROW_COUNT} of {result.rows.length} rows — the stats above cover
+          the whole dataset.
         </p>
       )}
     </div>
@@ -242,7 +238,13 @@ function MatchStatLine({
 }
 
 /** The preview's first rows, rendered into the full output's column set. */
-function PreviewTable({ columns, rows }: { columns: string[]; rows: Array<Record<string, unknown>> }) {
+function PreviewTable({
+  columns,
+  rows,
+}: {
+  columns: string[];
+  rows: Array<Record<string, unknown>>;
+}) {
   if (rows.length === 0) {
     return <p className="text-sm text-muted-foreground">This transform produces no rows.</p>;
   }

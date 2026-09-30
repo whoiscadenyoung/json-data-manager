@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { applySql, declaredColumnTypes, materializeSqlTable, sqlSourceName } from "./sql.js";
-import type { SqlColumnSpec, SqlEngine, SqlTable } from "./sql.js";
 import { transformSpecDependencies } from "./spec.js";
 import type { SqlOperation } from "./spec.js";
+import { applySql, declaredColumnTypes, materializeSqlTable, sqlSourceName } from "./sql.js";
+import type { SqlColumnSpec, SqlEngine, SqlTable } from "./sql.js";
 
 // The PoC join domain (app/convex/schema.ts locations/restaurants) — the
 // analysis layer's "how many restaurants in each state" example.
@@ -20,7 +20,7 @@ const DECLARED: SqlColumnSpec[] = [
 ];
 
 describe("declaredColumnTypes — the declared structure's read", () => {
-  it("maps the import-time inference shapes (string and [T, \"null\"] array forms)", () => {
+  it('maps the import-time inference shapes (string and [T, "null"] array forms)', () => {
     expect(
       declaredColumnTypes({
         properties: {
@@ -59,13 +59,13 @@ describe("materializeSqlTable — 0.4 coercion policies at registration", () => 
     ]);
   });
 
-  it("groups mixed-typed string-column cells: 42 and \"42\" and \"  42  \" collapse to one key", () => {
+  it('groups mixed-typed string-column cells: 42 and "42" and "  42  " collapse to one key', () => {
     const table = materializeSqlTable("source", locations, DECLARED);
     const states = table.rows.map((row) => row.state);
     expect(states).toStrictEqual(["ca", "ca", "42", "42"]);
   });
 
-  it("case-folds a grouping key so \"Aldine\" and \"aldine\" are one group — never numeric-normalizes \"007\"", () => {
+  it('case-folds a grouping key so "Aldine" and "aldine" are one group — never numeric-normalizes "007"', () => {
     const table = materializeSqlTable(
       "source",
       [{ org: "Aldine" }, { org: "  aldine " }, { org: "007" }, { org: 7 }],
@@ -74,7 +74,7 @@ describe("materializeSqlTable — 0.4 coercion policies at registration", () => 
     expect(table.rows.map((row) => row.org)).toStrictEqual(["aldine", "aldine", "007", "7"]);
   });
 
-  it("reads number columns through coerceNumber: \"42\" is 42, non-numeric is null — never 0", () => {
+  it('reads number columns through coerceNumber: "42" is 42, non-numeric is null — never 0', () => {
     const table = materializeSqlTable(
       "source",
       [{ amount: "42" }, { amount: " n/a " }, { amount: null }, {}],
@@ -83,7 +83,7 @@ describe("materializeSqlTable — 0.4 coercion policies at registration", () => 
     expect(table.rows.map((row) => row.amount)).toStrictEqual([42, null, null, null]);
   });
 
-  it("keeps booleans only in boolean columns; keyless cells are null, never \"null\"", () => {
+  it('keeps booleans only in boolean columns; keyless cells are null, never "null"', () => {
     const table = materializeSqlTable(
       "source",
       [{ active: true }, { active: "yes" }, { active: 1 }],
@@ -122,11 +122,16 @@ function fakeEngine(result: Array<Record<string, unknown>> | Error): SqlEngine &
 }
 
 function sqlOp(overrides?: Partial<SqlOperation>): SqlOperation {
-  return { kind: "sql", sql: "SELECT state, count(*) AS n FROM source GROUP BY state", tables: [], ...overrides };
+  return {
+    kind: "sql",
+    sql: "SELECT state, count(*) AS n FROM source GROUP BY state",
+    tables: [],
+    ...overrides,
+  };
 }
 
 describe("applySql — the one engine interface, fourth argument the handle", () => {
-  it("registers the source first (default name \"source\"), then side tables in spec order, and runs the query", async () => {
+  it('registers the source first (default name "source"), then side tables in spec order, and runs the query', async () => {
     const engine = fakeEngine([{ state: "ca", n: 2 }]),
       result = await applySql(
         sqlOp({ tables: [{ as: "restaurants", datasetId: "rest-1" }] }),
@@ -186,7 +191,12 @@ describe("applySql — the one engine interface, fourth argument the handle", ()
 
   it("registers a ref whose side table has not streamed as an empty table (no fabricated error)", async () => {
     const engine = fakeEngine([]);
-    await applySql(sqlOp({ tables: [{ as: "restaurants", datasetId: "rest-1" }] }), locations, new Map(), engine);
+    await applySql(
+      sqlOp({ tables: [{ as: "restaurants", datasetId: "rest-1" }] }),
+      locations,
+      new Map(),
+      engine,
+    );
     expect(engine.registered[1]).toStrictEqual({ columns: [], name: "restaurants", rows: [] });
   });
 

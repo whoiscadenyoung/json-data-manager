@@ -22,7 +22,7 @@ revisiting:
   new lifecycle concepts"). The `projectArtifacts.artifactKind` open union
   anticipated a literal; it stayed unneeded (schema comment records this).
 - **One engine, no compilation**: `applySql(operation, rows, sideTables,
-  engine, options?)` in `packages/json-cms/src/shared/transform/sql.ts` —
+engine, options?)` in `packages/json-cms/src/shared/transform/sql.ts` —
   the sibling of applyRollup; the DuckDB handle is the INJECTED fourth
   argument (json-cms has zero duckdb deps, unit-tested with stand-ins).
   Rollup does NOT compile to SQL (the open question §4:73-74 decided by

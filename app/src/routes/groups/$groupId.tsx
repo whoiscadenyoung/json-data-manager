@@ -110,10 +110,7 @@ async function fetchRowsByDataset(
   const pairs = await Promise.all(
     datasets.map(
       async (dataset) =>
-        [
-          dataset._id,
-          await fetchDatasetEntryRows(dataset._id, { entryOrder: "asc" }),
-        ] as const,
+        [dataset._id, await fetchDatasetEntryRows(dataset._id, { entryOrder: "asc" })] as const,
     ),
   );
   return new globalThis.Map(pairs);

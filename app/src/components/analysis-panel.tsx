@@ -1,13 +1,13 @@
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
+import { useMutation } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { Database, Play, Plus, Rocket, Table2, Trash2 } from "lucide-react";
-import { useMutation } from "convex/react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { DerivedHealthBadges } from "#/components/dataset-type-tags";
 import { DatasetPickerSheet } from "#/components/dataset-picker-sheet";
+import { DerivedHealthBadges } from "#/components/dataset-type-tags";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
@@ -30,9 +30,9 @@ import {
   TableRow,
 } from "#/components/ui/table";
 import { Textarea } from "#/components/ui/textarea";
-import { ANALYSIS_PREVIEW_ROWS, MAX_ANALYSIS_RESULT_ROWS } from "#/lib/analysis-caps";
 import { runAnalysis } from "#/lib/analysis";
 import type { AnalysisRunPhase } from "#/lib/analysis";
+import { ANALYSIS_PREVIEW_ROWS, MAX_ANALYSIS_RESULT_ROWS } from "#/lib/analysis-caps";
 import { sharedClient } from "#/lib/dataset-rows";
 import { publishDataset } from "#/lib/publish";
 import { api } from "#convex/_generated/api";
@@ -148,9 +148,7 @@ function draftFromDoc(docId: string | undefined, doc: RegistryRowGet | undefined
   }
   const tables: SideTable[] = Array.isArray(operation.tables)
     ? operation.tables.flatMap((table: unknown) =>
-        isRecord(table) &&
-        typeof table.as === "string" &&
-        typeof table.datasetId === "string"
+        isRecord(table) && typeof table.as === "string" && typeof table.datasetId === "string"
           ? [{ alias: table.as, datasetId: table.datasetId }]
           : [],
       )
@@ -541,9 +539,9 @@ function AnalysisEditorForm({
         <CardHeader>
           <CardTitle>{docId === undefined ? "New analysis" : "Edit analysis"}</CardTitle>
           <CardDescription>
-            Read-only SQL over {datasetTitle} (registered as <code>source</code>). Nothing here
-            ever changes {datasetTitle}&apos;s data — the result saves as a derived dataset and
-            publishes like any transform.
+            Read-only SQL over {datasetTitle} (registered as <code>source</code>). Nothing here ever
+            changes {datasetTitle}&apos;s data — the result saves as a derived dataset and publishes
+            like any transform.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-6">
@@ -588,8 +586,8 @@ function AnalysisEditorForm({
             />
             <p className="text-xs text-muted-foreground">
               Read-only. String keys group by their canonical form — &quot;Aldine&quot; and
-              &quot;aldine&quot; are one group, and 42 groups with &quot;42&quot; (the same
-              policies the rollup uses).
+              &quot;aldine&quot; are one group, and 42 groups with &quot;42&quot; (the same policies
+              the rollup uses).
             </p>
           </div>
 
@@ -617,7 +615,8 @@ function AnalysisEditorForm({
             ) : (
               draft.tables.map((table, index) => (
                 // oxlint-disable-next-line react/no-array-index-key -- side tables are positional in a small ordered list; removal remounts the tail harmlessly.
-                <SideTableRow key={index}
+                <SideTableRow
+                  key={index}
                   index={index}
                   summaries={candidates}
                   table={table}
@@ -666,15 +665,16 @@ function AnalysisEditorForm({
               <p className="text-xs text-muted-foreground">{phaseLabel(runPhase)}</p>
             )}
             {runOutcome !== undefined && runOutcome.truncated && (
-              <Badge variant="outline" title="Raised the cap — the run returned more rows than the limit.">
+              <Badge
+                variant="outline"
+                title="Raised the cap — the run returned more rows than the limit."
+              >
                 Result truncated at {MAX_ANALYSIS_RESULT_ROWS.toLocaleString()} rows
               </Badge>
             )}
           </div>
           {runOutcome === undefined ? (
-            <p className="text-sm text-muted-foreground">
-              Run the query to see its result here.
-            </p>
+            <p className="text-sm text-muted-foreground">Run the query to see its result here.</p>
           ) : runOutcome.diagnosticsMessage !== undefined ? (
             <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
               {runOutcome.diagnosticsMessage}
@@ -831,8 +831,7 @@ function AnalysisList({
   onNew: () => void;
   rows: RegistryRow[] | undefined;
 }) {
-  const analyses =
-    rows === undefined ? undefined : rows.filter((row) => row.carriesSql);
+  const analyses = rows === undefined ? undefined : rows.filter((row) => row.carriesSql);
   return (
     <Card>
       <CardHeader>
@@ -937,12 +936,7 @@ export function AnalysisPanel({
       resumedDraftId !== undefined && !dismissedAnalysisDraftIds.has(resumedDraftId)
         ? resumedDraftId
         : undefined,
-    activeId =
-      editing === undefined
-        ? autoResumeId
-        : "isNew" in editing
-          ? "new"
-          : editing.id;
+    activeId = editing === undefined ? autoResumeId : "isNew" in editing ? "new" : editing.id;
 
   return activeId === undefined ? (
     <AnalysisList

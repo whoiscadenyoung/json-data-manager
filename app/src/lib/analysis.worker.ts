@@ -32,10 +32,10 @@ import { ConvexClient } from "convex/browser";
 import { env } from "#/env";
 import { api } from "#convex/_generated/api";
 
+import type { AnalysisWorkerInbound, AnalysisWorkerOutbound } from "./analysis";
 import { MAX_ANALYSIS_RESULT_ROWS } from "./analysis-caps";
 import { analysisSqlEngine } from "./analysis-duckdb";
 import { entryDataRecord, fetchDatasetEntryRows } from "./dataset-rows";
-import type { AnalysisWorkerInbound, AnalysisWorkerOutbound } from "./analysis";
 
 /** Worker scope (`DedicatedWorkerGlobalScope`) isn't available to name under the app's DOM-lib tsconfig, but `self.postMessage` / `self.addEventListener` used here are the same calls on the narrow worker surface this module uses — at runtime `self` IS the worker scope. */
 function post(message: AnalysisWorkerOutbound): void {
@@ -94,9 +94,7 @@ self.addEventListener("message", (event: MessageEvent<AnalysisWorkerInbound>) =>
   // authenticates as soon as a session exists (sign-out reloads the page,
   // but sign-in does not).
   convexClient().setAuth(fetchTokenFromMain);
-  runQueue = runQueue
-    .then(async () => runAnalysis(requestId, message))
-    .catch(() => undefined); // runAnalysis reports its own error message; the queue keeps draining.
+  runQueue = runQueue.then(async () => runAnalysis(requestId, message)).catch(() => undefined); // runAnalysis reports its own error message; the queue keeps draining.
 });
 
 /** One table target's declared columns + seam-materialized engine records. */

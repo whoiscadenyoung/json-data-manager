@@ -2033,7 +2033,11 @@ export const getEntry = query({
  * callers that genuinely need every row omit it.
  */
 export const listEntriesForSchemas = query({
-  args: { limit: v.optional(v.number()), schemaIds: v.array(v.id("schemas")), viewerId: v.string() },
+  args: {
+    limit: v.optional(v.number()),
+    schemaIds: v.array(v.id("schemas")),
+    viewerId: v.string(),
+  },
   handler: async (ctx, args) => {
     // Viewer-scoped (stage 8, #104): the batch read answers rows from the
     // VISIBLE subset only — an invisible reference target contributes no

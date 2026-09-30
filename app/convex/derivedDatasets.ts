@@ -119,9 +119,7 @@ function specCarriesSql(spec: unknown): boolean {
   if (!isRecord(spec) || !Array.isArray(spec.operations)) {
     return false;
   }
-  return spec.operations.some(
-    (operation) => isRecord(operation) && operation.kind === "sql",
-  );
+  return spec.operations.some((operation) => isRecord(operation) && operation.kind === "sql");
 }
 
 function toSummary(
@@ -256,9 +254,7 @@ export const save = mutation({
         throw new ConvexError("This transform no longer exists — it may have been deleted.");
       }
       if (existing.createdBy !== authId) {
-        throw new ConvexError(
-          "That transform doesn't exist or you don't have access to it.",
-        );
+        throw new ConvexError("That transform doesn't exist or you don't have access to it.");
       }
       const cycle = await findCycleToOrigin(id, dependencies, async (dep) =>
         registryRowFor(ctx, dep),

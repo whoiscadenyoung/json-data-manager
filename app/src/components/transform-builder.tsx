@@ -98,15 +98,11 @@ function TransformList({
             <EmptyHeader>
               <EmptyTitle>No transforms yet</EmptyTitle>
               <EmptyDescription>
-                Derive a view of this dataset — e.g. join a parent table&apos;s names onto its
-                rows.
+                Derive a view of this dataset — e.g. join a parent table&apos;s names onto its rows.
               </EmptyDescription>
             </EmptyHeader>
             <EmptyContent>
-              <Button
-                type="button"
-                onClick={onNew}
-              >
+              <Button type="button" onClick={onNew}>
                 <Plus className="h-4 w-4 mr-2" />
                 New transform
               </Button>
@@ -181,12 +177,7 @@ export function TransformBuilder({
       resumedDraftId !== undefined && !dismissedDraftIds.has(resumedDraftId)
         ? resumedDraftId
         : undefined,
-    activeId =
-      editing === undefined
-        ? autoResumeId
-        : "isNew" in editing
-          ? "new"
-          : editing.id;
+    activeId = editing === undefined ? autoResumeId : "isNew" in editing ? "new" : editing.id;
 
   return activeId === undefined ? (
     <TransformList

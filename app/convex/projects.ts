@@ -480,7 +480,10 @@ export const forkAsSpec = mutation({
       status: "saved",
       title,
     });
-    await syncRegistryReferenceEdges(ctx, { registryId: registryRowId, spec: { operations: [], sourceDatasetId: args.sourceDatasetId } });
+    await syncRegistryReferenceEdges(ctx, {
+      registryId: registryRowId,
+      spec: { operations: [], sourceDatasetId: args.sourceDatasetId },
+    });
     await insertMembership(ctx, project, {
       addedBy,
       artifactId: registryRowId,

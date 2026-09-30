@@ -501,15 +501,11 @@ function MapDetailPage() {
                 datasets={mapDatasets}
                 derivedLayers={derivedRowIds.flatMap((derivedId) => {
                   const source = renderableDerived.get(derivedId);
-                  return source === undefined
-                    ? []
-                    : [{ derivedId, sourceSchemaId: source }];
+                  return source === undefined ? [] : [{ derivedId, sourceSchemaId: source }];
                 })}
                 chainLayers={chainRowIds.flatMap((renderId) => {
                   const source = chain.sourceByRenderId.get(renderId);
-                  return source === undefined
-                    ? []
-                    : [{ renderId, sourceSchemaId: source }];
+                  return source === undefined ? [] : [{ renderId, sourceSchemaId: source }];
                 })}
                 geometries={withEmptyRows(servedGeometries)}
                 titlesById={derivedTitlesById}

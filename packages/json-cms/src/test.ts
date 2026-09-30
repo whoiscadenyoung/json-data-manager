@@ -2,9 +2,8 @@
 import type { TestConvex } from "convex-test";
 import type { GenericSchema, SchemaDefinition } from "convex/server";
 
-import { registerWorkflowComponent } from "./test-support/workflow-register.js";
-
 import schema from "./component/schema.js";
+import { registerWorkflowComponent } from "./test-support/workflow-register.js";
 
 const modules = import.meta.glob("./component/**/*.ts");
 

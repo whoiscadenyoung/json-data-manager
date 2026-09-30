@@ -106,8 +106,7 @@ export const setVisibility = mutation({
  */
 export const backfillSummaries = internalMutation({
   args: {},
-  handler: async (ctx) =>
-    ctx.runMutation(components.jsonCms.lib.backfillDatasetSummaries, {}),
+  handler: async (ctx) => ctx.runMutation(components.jsonCms.lib.backfillDatasetSummaries, {}),
   returns: v.object({
     membershipsPatched: v.number(),
     schemasPatched: v.number(),

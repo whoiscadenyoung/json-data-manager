@@ -70,12 +70,20 @@ const lookupLocations = (match?: "inner") => ({
 describe("needsGeometryPlumbing / publishRecordOf", () => {
   it("injects only when the rule resolves to an operation naming the plumbing column", async () => {
     const withRule = {
-        geometrySource: { column: PUBLISH_GEOMETRY_COLUMN, lookupDatasetId: "locations", side: "lookup" },
+        geometrySource: {
+          column: PUBLISH_GEOMETRY_COLUMN,
+          lookupDatasetId: "locations",
+          side: "lookup",
+        },
         operations: [lookupLocations()],
         sourceDatasetId: "rl",
       },
       typoRule = {
-        geometrySource: { column: PUBLISH_GEOMETRY_COLUMN, lookupDatasetId: "locationz", side: "lookup" },
+        geometrySource: {
+          column: PUBLISH_GEOMETRY_COLUMN,
+          lookupDatasetId: "locationz",
+          side: "lookup",
+        },
         operations: [lookupLocations()],
         sourceDatasetId: "rl",
       },
@@ -106,7 +114,11 @@ describe("needsGeometryPlumbing / publishRecordOf", () => {
 describe("executeSpecForPublish — pairing at the geometry op's position (AC 5)", () => {
   it("pairs references with the geometry call's rows and resolves payloads by id", async () => {
     const spec = {
-      geometrySource: { column: PUBLISH_GEOMETRY_COLUMN, lookupDatasetId: "locations", side: "lookup" },
+      geometrySource: {
+        column: PUBLISH_GEOMETRY_COLUMN,
+        lookupDatasetId: "locations",
+        side: "lookup",
+      },
       operations: [lookupLocations()],
       sourceDatasetId: "rl",
     };
@@ -135,7 +147,11 @@ describe("executeSpecForPublish — pairing at the geometry op's position (AC 5)
       { cuisine: "veg", name: "Leaf & Ladle", rlLabel: "RL-2" },
     ];
     const spec = {
-      geometrySource: { column: PUBLISH_GEOMETRY_COLUMN, lookupDatasetId: "locations", side: "lookup" },
+      geometrySource: {
+        column: PUBLISH_GEOMETRY_COLUMN,
+        lookupDatasetId: "locations",
+        side: "lookup",
+      },
       operations: [
         lookupLocations(),
         {
@@ -148,7 +164,10 @@ describe("executeSpecForPublish — pairing at the geometry op's position (AC 5)
       ],
       sourceDatasetId: "rl",
     };
-    const execution = await executeSpecForPublish(spec, joinedTablesOf([["restaurants", restaurants]]));
+    const execution = await executeSpecForPublish(
+      spec,
+      joinedTablesOf([["restaurants", restaurants]]),
+    );
     // The orphan (no restaurant match) is dropped — and its geometry slot
     // with it. The two survivors keep THEIR geometry payloads.
     expect(execution.rows).toHaveLength(2);
@@ -156,7 +175,9 @@ describe("executeSpecForPublish — pairing at the geometry op's position (AC 5)
       { coordinates: [1, 2], type: "Point" },
       { coordinates: [3, 4], type: "Point" },
     ]);
-    expect(execution.rows[0] === undefined ? undefined : execution.rows[0]["restaurants.cuisine"]).toBe("thai");
+    expect(
+      execution.rows[0] === undefined ? undefined : execution.rows[0]["restaurants.cuisine"],
+    ).toBe("thai");
   });
 
   it("reads BASE-side references from the source rows themselves", async () => {
@@ -165,18 +186,30 @@ describe("executeSpecForPublish — pairing at the geometry op's position (AC 5)
       operations: [lookupLocations()],
       sourceDatasetId: "rl",
     };
-    const execution = await executeSpecForPublish(spec, joinedTablesOf([], {
-      geometryById: new globalThis.Map([["Downtown", { coordinates: [9, 9], type: "Point" }]]),
-      rowsByDatasetId: new globalThis.Map([["rl", rlRows.slice(0, 1)], ["locations", locationsRows]]),
-    }));
+    const execution = await executeSpecForPublish(
+      spec,
+      joinedTablesOf([], {
+        geometryById: new globalThis.Map([["Downtown", { coordinates: [9, 9], type: "Point" }]]),
+        rowsByDatasetId: new globalThis.Map([
+          ["rl", rlRows.slice(0, 1)],
+          ["locations", locationsRows],
+        ]),
+      }),
+    );
     // Base-side reads are raw data (no injection happened): "RL-1" names no
     // geometry here, so the row carries null.
     expect(execution.geometryPayloads).toStrictEqual([null]);
     // With the value present in the geometry map it resolves.
-    const resolved = await executeSpecForPublish(spec, joinedTablesOf([], {
-      geometryById: new globalThis.Map([["RL-1", { coordinates: [7, 7], type: "Point" }]]),
-      rowsByDatasetId: new globalThis.Map([["rl", rlRows.slice(0, 1)], ["locations", locationsRows]]),
-    }));
+    const resolved = await executeSpecForPublish(
+      spec,
+      joinedTablesOf([], {
+        geometryById: new globalThis.Map([["RL-1", { coordinates: [7, 7], type: "Point" }]]),
+        rowsByDatasetId: new globalThis.Map([
+          ["rl", rlRows.slice(0, 1)],
+          ["locations", locationsRows],
+        ]),
+      }),
+    );
     expect(resolved.geometryPayloads).toStrictEqual([{ coordinates: [7, 7], type: "Point" }]);
     // No injection → no stripping of a same-named data column.
     expect(Object.hasOwn(resolved.rows[0], "label")).toBe(true);
@@ -215,28 +248,29 @@ describe("executeSpecForPublish — pairing at the geometry op's position (AC 5)
       sourceDatasetId: "locations",
     };
     // The locations rows carry the join-back key the rolled groups answer.
-    const keyedReaderLocations: Array<Record<string, unknown>> = locationsRows.map(
-      (row, index) => {
-        const keyed: Record<string, unknown> = { locationId: `L-${index + 1}` };
-        for (const [key, value] of Object.entries(row)) {
-          keyed[key] = value;
-        }
-        return keyed;
-      },
-    );
+    const keyedReaderLocations: Array<Record<string, unknown>> = locationsRows.map((row, index) => {
+      const keyed: Record<string, unknown> = { locationId: `L-${index + 1}` };
+      for (const [key, value] of Object.entries(row)) {
+        keyed[key] = value;
+      }
+      return keyed;
+    });
     const keyedRlRows = [
       { label: "RL-1a", locationId: "L-1" },
       { label: "RL-1b", locationId: "L-1" },
       { label: "RL-2", locationId: "L-2" },
       { label: "RL-3", locationId: "L-3" },
     ];
-    const execution = await executeSpecForPublish(spec, joinedTablesOf([], {
-      rowsByDatasetId: new globalThis.Map([
-        ["rl", keyedRlRows],
-        ["locations", keyedReaderLocations],
-      ]),
-      specByDatasetId: new globalThis.Map([["counts", nestedSpec]]),
-    }));
+    const execution = await executeSpecForPublish(
+      spec,
+      joinedTablesOf([], {
+        rowsByDatasetId: new globalThis.Map([
+          ["rl", keyedRlRows],
+          ["locations", keyedReaderLocations],
+        ]),
+        specByDatasetId: new globalThis.Map([["counts", nestedSpec]]),
+      }),
+    );
     expect(execution.rows).toStrictEqual([
       {
         "counts.rollup.n": 2,
@@ -261,7 +295,11 @@ describe("executeSpecForPublish — pairing at the geometry op's position (AC 5)
 
   it("rejects a rollup after the geometry operation instead of dropping the geometry silently", async () => {
     const spec = {
-      geometrySource: { column: PUBLISH_GEOMETRY_COLUMN, lookupDatasetId: "locations", side: "lookup" },
+      geometrySource: {
+        column: PUBLISH_GEOMETRY_COLUMN,
+        lookupDatasetId: "locations",
+        side: "lookup",
+      },
       operations: [lookupLocations(), { groupBy: ["locationId"], kind: "rollup", measures: [] }],
       sourceDatasetId: "rl",
     };
@@ -270,10 +308,7 @@ describe("executeSpecForPublish — pairing at the geometry op's position (AC 5)
 
   it("rejects an unloaded dataset reference and a sql operation without an engine", async () => {
     await expect(
-      executeSpecForPublish(
-        { operations: [], sourceDatasetId: "unknown" },
-        tablesOf({}),
-      ),
+      executeSpecForPublish({ operations: [], sourceDatasetId: "unknown" }, tablesOf({})),
     ).rejects.toThrow(PublishSpecError);
     // A sql op with no PublishSqlExecution is a load error, never a silent
     // skip — materializing without the query's rows would fabricate a dataset.
@@ -337,11 +372,9 @@ describe("executeSpecForPublish — sql operations (stage 9, #105)", () => {
         }
       },
     };
-    await executeSpecForPublish(
-      { operations: [sqlOp], sourceDatasetId: "rl" },
-      joinedTablesOf(),
-      { engine },
-    );
+    await executeSpecForPublish({ operations: [sqlOp], sourceDatasetId: "rl" }, joinedTablesOf(), {
+      engine,
+    });
     if (seen === undefined) {
       throw new Error("The locations side table was never registered.");
     }
@@ -353,7 +386,11 @@ describe("executeSpecForPublish — sql operations (stage 9, #105)", () => {
 
   it("refuses a sql operation after the geometry operation (rows carry no per-source-row geometry)", async () => {
     const spec = {
-      geometrySource: { column: PUBLISH_GEOMETRY_COLUMN, lookupDatasetId: "locations", side: "lookup" },
+      geometrySource: {
+        column: PUBLISH_GEOMETRY_COLUMN,
+        lookupDatasetId: "locations",
+        side: "lookup",
+      },
       operations: [lookupLocations(), sqlOp],
       sourceDatasetId: "rl",
     };
@@ -372,11 +409,9 @@ describe("executeSpecForPublish — sql operations (stage 9, #105)", () => {
       },
     };
     await expect(
-      executeSpecForPublish(
-        { operations: [sqlOp], sourceDatasetId: "rl" },
-        joinedTablesOf(),
-        { engine },
-      ),
+      executeSpecForPublish({ operations: [sqlOp], sourceDatasetId: "rl" }, joinedTablesOf(), {
+        engine,
+      }),
     ).rejects.toThrow("The SQL operation failed");
   });
 
@@ -384,11 +419,10 @@ describe("executeSpecForPublish — sql operations (stage 9, #105)", () => {
     // 3 rows returned against a limit of 2 — the interactive preview badges
     // this; the publish leg must refuse it outright.
     await expect(
-      executeSpecForPublish(
-        { operations: [sqlOp], sourceDatasetId: "rl" },
-        joinedTablesOf(),
-        { engine: fakeEngine([{ n: 1 }, { n: 2 }, { n: 3 }]), limit: 2 },
-      ),
+      executeSpecForPublish({ operations: [sqlOp], sourceDatasetId: "rl" }, joinedTablesOf(), {
+        engine: fakeEngine([{ n: 1 }, { n: 2 }, { n: 3 }]),
+        limit: 2,
+      }),
     ).rejects.toThrow("materialization cap");
     // At-or-under the cap materializes normally.
     const execution = await executeSpecForPublish(

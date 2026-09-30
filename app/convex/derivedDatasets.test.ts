@@ -64,7 +64,12 @@ function specOf(source: string) {
   return { operations: [], sourceDatasetId: source };
 }
 
-function lookupSpec(source: string, lookupDataset: string, baseKey = "GrantId", lookupKey = "GrantId") {
+function lookupSpec(
+  source: string,
+  lookupDataset: string,
+  baseKey = "GrantId",
+  lookupKey = "GrantId",
+) {
   return {
     operations: [
       { baseKey, kind: "lookup", lookupDatasetId: lookupDataset, lookupKey, namespace: "Grants" },
@@ -76,9 +81,9 @@ function lookupSpec(source: string, lookupDataset: string, baseKey = "GrantId", 
 describe("gate", () => {
   it("rejects every registry function signed out", async () => {
     const t = initTest();
-    await expect(t.mutation(api.derivedDatasets.save, saveArgs(lookupSpec("s", "s")))).rejects.toThrow(
-      GATE_MESSAGE,
-    );
+    await expect(
+      t.mutation(api.derivedDatasets.save, saveArgs(lookupSpec("s", "s"))),
+    ).rejects.toThrow(GATE_MESSAGE);
     await expect(
       t.query(api.derivedDatasets.listBySource, { sourceDatasetId: "s" }),
     ).rejects.toThrow(GATE_MESSAGE);
@@ -124,7 +129,9 @@ describe("save + read back", () => {
         saveArgs(lookupSpec(schemaId, schemaId), { status: "draft", title: "Untitled transform" }),
       );
 
-    const draftRows = await t.query(api.derivedDatasets.listBySource, { sourceDatasetId: schemaId });
+    const draftRows = await t.query(api.derivedDatasets.listBySource, {
+      sourceDatasetId: schemaId,
+    });
     expect(draftRows[0] === undefined ? undefined : draftRows[0].status).toBe("draft");
     // Drafts are invisible to the catalog projection (lifecycle doc §3) —
     // an autosave must never surface in the browser as a derived dataset.
@@ -160,9 +167,9 @@ describe("save + read back", () => {
     );
 
     // The row files under the NEW source only, and its edges lead with it.
-    expect(await t.query(api.derivedDatasets.listBySource, { sourceDatasetId: first })).toStrictEqual(
-      [],
-    );
+    expect(
+      await t.query(api.derivedDatasets.listBySource, { sourceDatasetId: first }),
+    ).toStrictEqual([]);
     const rows = await t.query(api.derivedDatasets.listBySource, { sourceDatasetId: second });
     expect(rows.map((row) => row._id)).toStrictEqual([id]);
     const doc = await t.query(api.derivedDatasets.get, { id });
@@ -175,7 +182,10 @@ describe("save + read back", () => {
       schemaId = await createComponentDataset(t, { GrantId: { type: "string" } });
 
     await expect(
-      t.mutation(api.derivedDatasets.save, saveArgs(lookupSpec(schemaId, schemaId), { title: "   " })),
+      t.mutation(
+        api.derivedDatasets.save,
+        saveArgs(lookupSpec(schemaId, schemaId), { title: "   " }),
+      ),
     ).rejects.toThrow(/title/i);
     await expect(
       t.mutation(
@@ -203,7 +213,10 @@ describe("cycle rejection at save time (the acceptance criterion)", () => {
   it("rejects A→B→C→A with a clear error, and accepts the chain before the closing edge", async () => {
     const t = signedIn(),
       schemaId = await createComponentDataset(t, { GrantId: { type: "string" } }),
-      a = await t.mutation(api.derivedDatasets.save, saveArgs(lookupSpec(schemaId, schemaId), { title: "A" })),
+      a = await t.mutation(
+        api.derivedDatasets.save,
+        saveArgs(lookupSpec(schemaId, schemaId), { title: "A" }),
+      ),
       // B reads A (derived-of-derived source) — fine.
       b = await t.mutation(api.derivedDatasets.save, saveArgs(lookupSpec(a, a), { title: "B" })),
       // C reads B — the chain A←B←C is a healthy DAG so far.
@@ -230,7 +243,10 @@ describe("cycle rejection at save time (the acceptance criterion)", () => {
   it("rejects retargeting a source onto its own dependent", async () => {
     const t = signedIn(),
       schemaId = await createComponentDataset(t, { GrantId: { type: "string" } }),
-      a = await t.mutation(api.derivedDatasets.save, saveArgs(lookupSpec(schemaId, schemaId), { title: "A" })),
+      a = await t.mutation(
+        api.derivedDatasets.save,
+        saveArgs(lookupSpec(schemaId, schemaId), { title: "A" }),
+      ),
       // B's SOURCE is A.
       b = await t.mutation(api.derivedDatasets.save, saveArgs(specOf(a), { title: "B" }));
 
@@ -278,10 +294,7 @@ describe("read-time health", () => {
   it("marks a ready dependent stale when a re-import changes the source's columns", async () => {
     const t = signedIn(),
       schemaId = await createComponentDataset(t, { GrantId: { type: "string" } }),
-      id = await t.mutation(
-        api.derivedDatasets.save,
-        saveArgs(lookupSpec(schemaId, schemaId)),
-      );
+      id = await t.mutation(api.derivedDatasets.save, saveArgs(lookupSpec(schemaId, schemaId)));
 
     // The spec reads a structure that still carries the key: ready.
     const before = await t.query(api.derivedDatasets.get, { id });

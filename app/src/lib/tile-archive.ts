@@ -15,8 +15,8 @@ import { useQuery } from "convex/react";
 import { useEffect, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
-import { api } from "#convex/_generated/api";
 import { fetchConvexToken } from "#/lib/convex-auth-token";
+import { api } from "#convex/_generated/api";
 
 /** Transient phases the worker posts while a build runs. */
 export type TileArchiveBuildPhase = "fetching" | "building" | "uploading" | "installing";
