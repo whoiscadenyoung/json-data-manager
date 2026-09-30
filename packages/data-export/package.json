@@ -52,14 +52,14 @@
     "dev": "convex dev --typecheck-components",
     "dev:local": "CONVEX_AGENT_MODE=anonymous convex dev --configure --dev-deployment local --typecheck-components",
     "build": "tsc --project ./tsconfig.build.json",
-    "build:codegen": "convex codegen --component-dir ./src/component && npm run build",
-    "build:clean": "rm -rf dist *.tsbuildinfo && npm run build:codegen",
+    "build:codegen": "convex codegen --component-dir ./src/component && bun run build",
+    "build:clean": "rm -rf dist *.tsbuildinfo && bun run build:codegen",
     "typecheck": "tsc --noEmit && tsc -p example && tsc -p example/convex",
     "test": "vitest run --typecheck",
     "test:watch": "vitest --typecheck --clearScreen false",
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
     "test:coverage": "vitest run --coverage --coverage.reporter=text",
-    "prepare": "npm run build"
+    "prepare": "bun run build"
   },
   "dependencies": {
     "@convex-dev/workflow": "0.4.6",
