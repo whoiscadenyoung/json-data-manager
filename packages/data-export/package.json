@@ -62,7 +62,7 @@
     "prepare": "npm run build"
   },
   "dependencies": {
-    "@convex-dev/workflow": "^0.4.6",
+    "@convex-dev/workflow": "0.4.6",
     "@convex-dev/workpool": "^0.4.10",
     "convex-helpers": "^0.1.104"
   },
@@ -73,7 +73,7 @@
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.0.5",
     "convex": "^1.45.0",
-    "convex-test": "0.0.55",
+    "convex-test": "0.0.59",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "typescript": "5.9.3",
