@@ -59,7 +59,11 @@ async function createProject(t: TestConvex, title = "SMART 2024"): Promise<strin
 }
 
 /** A lifecycle-draft dataset born INTO a project — the creator is stamped by the mutation. */
-async function createProjectDraft(t: TestConvex, projectId: string, title = "Draft locations"): Promise<string> {
+async function createProjectDraft(
+  t: TestConvex,
+  projectId: string,
+  title = "Draft locations",
+): Promise<string> {
   return t.mutation(api.projects.createDraftDataset, {
     projectId,
     schema: { properties: { label: { type: "string" } }, title, type: "object" },
@@ -153,9 +157,7 @@ describe("isolation: user B never sees user A's drafts (stage 8 AC)", () => {
         schemaId: draftId,
       }),
     ).rejects.toThrow(NO_ACCESS);
-    await expect(
-      other.query(api.entries.list, { schemaId: draftId }),
-    ).rejects.toThrow(NO_ACCESS);
+    await expect(other.query(api.entries.list, { schemaId: draftId })).rejects.toThrow(NO_ACCESS);
     await expect(
       other.query(api.geometries.list, {
         paginationOpts: { cursor: null, numItems: 10 },
@@ -221,9 +223,9 @@ describe("published-visibility control (stage 8 AC, decision D2)", () => {
     const other = mine.withIdentity({ subject: "user-2" });
 
     // Positive sharing case: another signed-in user reads the published row…
-    expect(
-      (await other.query(api.schemas.listSummaries, {})).map((row) => row._id),
-    ).toContain(publishedId);
+    expect((await other.query(api.schemas.listSummaries, {})).map((row) => row._id)).toContain(
+      publishedId,
+    );
     await other.query(api.schemas.get, { schemaId: publishedId });
 
     // …but only its CREATOR may narrow it (the control is creator-only, and
@@ -238,9 +240,9 @@ describe("published-visibility control (stage 8 AC, decision D2)", () => {
     });
 
     // Enforced server-side on EVERY catalog path — enumeration and by-id.
-    expect(
-      (await other.query(api.schemas.listSummaries, {})).map((row) => row._id),
-    ).not.toContain(publishedId);
+    expect((await other.query(api.schemas.listSummaries, {})).map((row) => row._id)).not.toContain(
+      publishedId,
+    );
     expect((await other.query(api.schemas.list, {})).map((row) => row._id)).not.toContain(
       publishedId,
     );
@@ -252,9 +254,9 @@ describe("published-visibility control (stage 8 AC, decision D2)", () => {
       other.mutation(api.entries.create, { data: { label: "x" }, schemaId: publishedId }),
     ).rejects.toThrow(NO_ACCESS);
     // …while the author keeps full access.
-    expect(
-      (await mine.query(api.schemas.listSummaries, {})).map((row) => row._id),
-    ).toContain(publishedId);
+    expect((await mine.query(api.schemas.listSummaries, {})).map((row) => row._id)).toContain(
+      publishedId,
+    );
     await mine.query(api.schemas.get, { schemaId: publishedId });
 
     // Flipping back restores the shared default for everyone.
@@ -262,9 +264,9 @@ describe("published-visibility control (stage 8 AC, decision D2)", () => {
       schemaId: publishedId,
       visibility: "everyone",
     });
-    expect(
-      (await other.query(api.schemas.listSummaries, {})).map((row) => row._id),
-    ).toContain(publishedId);
+    expect((await other.query(api.schemas.listSummaries, {})).map((row) => row._id)).toContain(
+      publishedId,
+    );
   });
 
   it("the author's visibility choice inherits onto the frozen row at publish", async () => {
@@ -309,15 +311,15 @@ describe("published-visibility control (stage 8 AC, decision D2)", () => {
     // …so user B can neither enumerate nor open the published version, while
     // the author (and only the author) can.
     const other = mine.withIdentity({ subject: "user-2" });
-    expect(
-      (await other.query(api.schemas.listSummaries, {})).map((row) => row._id),
-    ).not.toContain(frozen.schemaId);
+    expect((await other.query(api.schemas.listSummaries, {})).map((row) => row._id)).not.toContain(
+      frozen.schemaId,
+    );
     await expect(other.query(api.schemas.get, { schemaId: frozen.schemaId })).rejects.toThrow(
       NO_ACCESS,
     );
-    expect(
-      (await mine.query(api.schemas.listSummaries, {})).map((row) => row._id),
-    ).toContain(frozen.schemaId);
+    expect((await mine.query(api.schemas.listSummaries, {})).map((row) => row._id)).toContain(
+      frozen.schemaId,
+    );
   });
 
   it("an author-narrowed dataset's chain and consumer reads answer empty to others, real to the author", async () => {
@@ -483,7 +485,11 @@ describe("project writes are creator-only (stage 8 AC, decision D1)", () => {
     );
     // …and a foreign attemptId reads as gone on every client-driven step.
     await expect(
-      other.mutation(api.publish.plan, { attemptId: started.attemptId, chunkCount: 1, totalRows: 1 }),
+      other.mutation(api.publish.plan, {
+        attemptId: started.attemptId,
+        chunkCount: 1,
+        totalRows: 1,
+      }),
     ).rejects.toThrow(GONE_ATTEMPT);
     await expect(
       other.mutation(api.publish.registerChunk, { attemptId: started.attemptId, storageId: "s1" }),
@@ -579,9 +585,9 @@ describe("project writes are creator-only (stage 8 AC, decision D1)", () => {
     ).not.toContain(draftRowId);
     // …a saved row is catalog-visible (the registry's published side)…
     expect(await other.query(api.derivedDatasets.get, { id: savedRowId })).not.toBeNull();
-    expect(
-      (await other.query(api.derivedDatasets.summaries, {})).map((row) => row._id),
-    ).toContain(savedRowId);
+    expect((await other.query(api.derivedDatasets.summaries, {})).map((row) => row._id)).toContain(
+      savedRowId,
+    );
     // …and the writes are creator-only.
     await expect(
       other.mutation(api.derivedDatasets.save, {
@@ -690,9 +696,7 @@ describe("stage-8 batch and cross-dataset reads (review round 2)", () => {
     const other = mine.withIdentity({ subject: "user-2" });
     // The importId resolves to the creator's draft — a foreign read denies
     // exactly like the by-id surfaces (indistinguishable from gone).
-    await expect(other.query(api.imports.getImportStatus, { importId })).rejects.toThrow(
-      NO_ACCESS,
-    );
+    await expect(other.query(api.imports.getImportStatus, { importId })).rejects.toThrow(NO_ACCESS);
     const own = await mine.query(api.imports.getImportStatus, { importId });
     expect(own === null ? undefined : own.total).toBe(1);
   });
@@ -729,7 +733,11 @@ describe("stage-8 batch and cross-dataset reads (review round 2)", () => {
       title: "Spec over source",
     });
     const derivedId = await publishNow(mine, registryId, {
-      schema: { properties: { label: { type: "string" } }, title: "Spec over source", type: "object" },
+      schema: {
+        properties: { label: { type: "string" } },
+        title: "Spec over source",
+        type: "object",
+      },
       spec: { operations: [], sourceDatasetId: sourceId },
     });
     // The creator narrows the DERIVED row after the fact.
@@ -870,7 +878,9 @@ describe("stage-8 tag path (review round 2)", () => {
 
     // The tag path's row reads answer nothing for an invisible id…
     expect(await other.query(api.tags.versionEntries, { schemaId: frozenId })).toEqual([]);
-    expect(await other.query(api.tags.getVersionDelta, { aSchemaId: frozenId, bSchemaId: frozenId })).toEqual({
+    expect(
+      await other.query(api.tags.getVersionDelta, { aSchemaId: frozenId, bSchemaId: frozenId }),
+    ).toEqual({
       added: 0,
       ops: [],
       removed: 0,

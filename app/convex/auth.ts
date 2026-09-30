@@ -1,14 +1,13 @@
+import type { ExposeApiOperation } from "@caden/json-cms";
 import { createClient, type AuthFunctions, type GenericCtx } from "@convex-dev/better-auth";
 import { convex } from "@convex-dev/better-auth/plugins";
 import { betterAuth } from "better-auth/minimal";
-import type { ExposeApiOperation } from "@caden/json-cms";
 import type { Auth, FunctionReturnType } from "convex/server";
 import { ConvexError } from "convex/values";
 
 import { components, internal } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
-
 import authConfig from "./auth.config";
 
 /**
@@ -157,10 +156,7 @@ async function appUserForAuthId(ctx: MutationCtx, authId: string) {
  * check above runs FIRST so a caller learns nothing — not even a dataset's
  * read-only-ness — about rows they cannot see.
  */
-export async function auth(
-  ctx: { auth: Auth },
-  operation?: ExposeApiOperation,
-): Promise<string> {
+export async function auth(ctx: { auth: Auth }, operation?: ExposeApiOperation): Promise<string> {
   // The Better Auth session token's subject is the Better Auth user id —
   // the same value `users.authId` holds.
   const identity = await ctx.auth.getUserIdentity();

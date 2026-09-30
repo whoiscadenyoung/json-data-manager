@@ -95,9 +95,7 @@ async function createDraftDataset(
       lifecycle: "draft",
       schema: {
         properties:
-          options.properties === undefined
-            ? { label: { type: "string" } }
-            : options.properties,
+          options.properties === undefined ? { label: { type: "string" } } : options.properties,
         title: options.title ?? "Draft locations",
         type: "object",
       },
@@ -336,9 +334,7 @@ describe("read-only enforcement (AC 3: vN rejects data writes)", () => {
     ).rejects.toThrow(/read-only/i);
     // The auth gate's friendlier message fires first on the wrapper path; the
     // component's own gate is the one that holds regardless of entry point.
-    await expect(t.mutation(api.schemas.remove, { schemaId })).rejects.toThrow(
-      /read-only here/i,
-    );
+    await expect(t.mutation(api.schemas.remove, { schemaId })).rejects.toThrow(/read-only here/i);
   });
 });
 
@@ -390,9 +386,9 @@ describe("freeze idempotency by publish key (AC 4's keyed half)", () => {
     });
     const storageId = await storeChunk(t, [{ data: { label: "A" } }]);
     await t.mutation(api.publish.registerChunk, { attemptId: started.attemptId, storageId });
-    await expect(
-      t.mutation(api.publish.freeze, { attemptId: started.attemptId }),
-    ).rejects.toThrow(/finish uploading/i);
+    await expect(t.mutation(api.publish.freeze, { attemptId: started.attemptId })).rejects.toThrow(
+      /finish uploading/i,
+    );
   });
 });
 
@@ -441,9 +437,9 @@ describe("chunk registration (the freeze's checkpoint contract)", () => {
       // oxlint-disable-next-line no-await-in-loop -- see above.
       await t.mutation(api.publish.registerChunk, { attemptId: started.attemptId, storageId });
     }
-    await expect(
-      t.mutation(api.publish.freeze, { attemptId: started.attemptId }),
-    ).rejects.toThrow(/finish uploading/i);
+    await expect(t.mutation(api.publish.freeze, { attemptId: started.attemptId })).rejects.toThrow(
+      /finish uploading/i,
+    );
     // The unwedge is the CLIENT's reset-on-registered>planned decision —
     // unit-tested over `resumePlan` in src/lib/publish.test.ts.
   });
@@ -453,10 +449,7 @@ describe("interruption resume (AC 4: no duplicate or lost rows)", () => {
   it("resumes the same attempt after a dead browser and completes exactly once", async () => {
     const t = signedIn();
     const draftId = await createDraftDataset(t, {
-      entries: [
-        { data: { label: "A" } },
-        { data: { label: "B" } },
-      ],
+      entries: [{ data: { label: "A" } }, { data: { label: "B" } }],
     });
     await addEntries(t, draftId, [{ data: { label: "A" } }, { data: { label: "B" } }]);
 
@@ -468,7 +461,10 @@ describe("interruption resume (AC 4: no duplicate or lost rows)", () => {
       totalRows: 2,
     });
     const firstChunk = await storeChunk(t, [{ data: { label: "A" } }]);
-    await t.mutation(api.publish.registerChunk, { attemptId: started.attemptId, storageId: firstChunk });
+    await t.mutation(api.publish.registerChunk, {
+      attemptId: started.attemptId,
+      storageId: firstChunk,
+    });
     const progress = await attemptById(t, started.attemptId);
     expect(progress.chunkCount).toBe(1);
     expect(progress.plannedChunkCount).toBe(2);
@@ -549,7 +545,10 @@ describe("publishing a saved transform (AC 5: lineage + geometrySource)", () => 
       title: "Locations",
     });
     await addEntries(t, locationsId, [
-      { data: { geometryId: "geo-1", label: "Downtown" }, geometry: { coordinates: [-89.6, 39.8], type: "Point" } },
+      {
+        data: { geometryId: "geo-1", label: "Downtown" },
+        geometry: { coordinates: [-89.6, 39.8], type: "Point" },
+      },
     ]);
     // The join side: a standard dataset joined on label → locations.label.
     const rlId = await t.run(async (ctx) =>
@@ -589,10 +588,7 @@ describe("publishing a saved transform (AC 5: lineage + geometrySource)", () => 
   it("materializes the spec with recipe + source versions in lineage, geometry from the join side", async () => {
     const t = signedIn();
     const { locationsId, registryId, rlId } = await createSources(t);
-    const countsBefore = await Promise.all([
-      entryCountOf(t, locationsId),
-      entryCountOf(t, rlId),
-    ]);
+    const countsBefore = await Promise.all([entryCountOf(t, locationsId), entryCountOf(t, rlId)]);
 
     const started = await t.mutation(api.publish.start, { datasetKey: registryId });
     expect(started.datasetKind).toBe("derived");
@@ -687,9 +683,9 @@ describe("publishing a saved transform (AC 5: lineage + geometrySource)", () => 
       schema: { properties: {}, title: "RL enriched", type: "object" },
       totalRows: 0,
     });
-    await expect(
-      t.mutation(api.publish.freeze, { attemptId: started.attemptId }),
-    ).rejects.toThrow(/can't publish/i);
+    await expect(t.mutation(api.publish.freeze, { attemptId: started.attemptId })).rejects.toThrow(
+      /can't publish/i,
+    );
   });
 
   it("refuses to publish a builder autosave (a draft registry row)", async () => {

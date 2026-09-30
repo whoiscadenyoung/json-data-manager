@@ -243,7 +243,10 @@ export function validateSpecShape(value: unknown): SpecValidation {
       return { ok: false, reason: error };
     }
   }
-  return { ok: true, spec: { operations: value.operations, sourceDatasetId: value.sourceDatasetId } };
+  return {
+    ok: true,
+    spec: { operations: value.operations, sourceDatasetId: value.sourceDatasetId },
+  };
 }
 
 /**
@@ -310,10 +313,7 @@ interface CollectedRead {
 }
 
 /** One lookup operation's read, keyed columns included. */
-function collectLookupRead(
-  operation: Record<string, unknown>,
-  baseKeys: string[],
-): CollectedRead {
+function collectLookupRead(operation: Record<string, unknown>, baseKeys: string[]): CollectedRead {
   if (typeof operation.baseKey === "string" && !baseKeys.includes(operation.baseKey)) {
     baseKeys.push(operation.baseKey);
   }

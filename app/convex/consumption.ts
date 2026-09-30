@@ -1122,7 +1122,12 @@ export const analysisTargets = query({
         continue;
       }
       if (row.lineage !== undefined) {
-        targets.push({ datasetId, resolvedSchemaId: datasetId, status: "identity", title: row.title });
+        targets.push({
+          datasetId,
+          resolvedSchemaId: datasetId,
+          status: "identity",
+          title: row.title,
+        });
         continue;
       }
       // oxlint-disable-next-line no-await-in-loop -- see above.

@@ -49,10 +49,7 @@ function publishableMembers(
   }>,
 ): Array<{ datasetKey: string; kind: "dataset" | "derived" | "map" }> {
   return members
-    .filter(
-      (member) =>
-        member.publish && member.kind !== "map" && member.status !== "published",
-    )
+    .filter((member) => member.publish && member.kind !== "map" && member.status !== "published")
     .map((member) => ({ datasetKey: member.datasetKey, kind: member.kind }));
 }
 

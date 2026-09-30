@@ -5,7 +5,11 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { ActionCtx } from "./_generated/server";
 import { action, internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { auth } from "./auth";
-import { assertChainAnchorWritable, pinRefIntoPolicyStore, sourceVisibleToViewer } from "./consumption";
+import {
+  assertChainAnchorWritable,
+  pinRefIntoPolicyStore,
+  sourceVisibleToViewer,
+} from "./consumption";
 import { chunkByJsonBytes, getSource, SOURCE_KEY } from "./sources";
 import {
   DEFAULT_KEEP_VERSIONS,

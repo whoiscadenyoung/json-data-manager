@@ -10,7 +10,7 @@ metadata:
 in `docs/decisions/0005-derived-datasets-catalog-level.md`. **Design only —
 nothing implemented, sequencing not yet scheduled.**
 
-Core direction (ADR 0005): declarative transform specs produce *virtual*
+Core direction (ADR 0005): declarative transform specs produce _virtual_
 derived datasets; imports are never mutated. Transforms live at the catalog
 (dataset) level, never as map-level config — maps/tables/exports/popups all
 consume the derived dataset. One pure TS engine in `@caden/json-cms` (next

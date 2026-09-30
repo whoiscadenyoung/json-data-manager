@@ -46,9 +46,7 @@ function fakeCtx(subject: string | null): Parameters<typeof auth>[0] {
   return {
     auth: {
       getUserIdentity: async () =>
-        subject === null
-          ? null
-          : { issuer: "test", subject, tokenIdentifier: `test:${subject}` },
+        subject === null ? null : { issuer: "test", subject, tokenIdentifier: `test:${subject}` },
     },
   };
 }
@@ -116,9 +114,7 @@ describe("gate: host functions already riding the hook (bucket 2)", () => {
 
   it("rejects tile archive metas signed out; returns [] signed in", async () => {
     const t = initTest();
-    await expect(t.query(api.tile_archives.metas, { schemaIds: [] })).rejects.toThrow(
-      GATE_MESSAGE,
-    );
+    await expect(t.query(api.tile_archives.metas, { schemaIds: [] })).rejects.toThrow(GATE_MESSAGE);
     const signedIn = initTest().withIdentity({ subject: "user-1" });
     expect(await signedIn.query(api.tile_archives.metas, { schemaIds: [] })).toStrictEqual([]);
   });
@@ -128,34 +124,32 @@ describe("gate: host functions with an explicit gate (bucket 3)", () => {
   it("bindings: list rejects signed out, returns [] signed in; unbind rejects signed out", async () => {
     const t = initTest();
     await expect(t.query(api.bindings.list, {})).rejects.toThrow(GATE_MESSAGE);
-    await expect(t.mutation(api.bindings.unbind, { schemaId: "x" })).rejects.toThrow(
-      GATE_MESSAGE,
-    );
+    await expect(t.mutation(api.bindings.unbind, { schemaId: "x" })).rejects.toThrow(GATE_MESSAGE);
     const signedIn = initTest().withIdentity({ subject: "user-1" });
     expect(await signedIn.query(api.bindings.list, {})).toStrictEqual([]);
   });
 
   it("tags: retentionSettings rejects signed out, defaults signed in; setKeepVersions and the ingest action reject signed out", async () => {
     const t = initTest();
-    await expect(
-      t.query(api.tags.retentionSettings, { sourceSchemaId: "x" }),
-    ).rejects.toThrow(GATE_MESSAGE);
+    await expect(t.query(api.tags.retentionSettings, { sourceSchemaId: "x" })).rejects.toThrow(
+      GATE_MESSAGE,
+    );
     await expect(
       t.mutation(api.tags.setKeepVersions, { keep: 3, sourceSchemaId: "x" }),
     ).rejects.toThrow(GATE_MESSAGE);
     await expect(t.action(api.tags.ingestSnapshots, {})).rejects.toThrow(GATE_MESSAGE);
     const signedIn = initTest().withIdentity({ subject: "user-1" });
-    expect(
-      await signedIn.query(api.tags.retentionSettings, { sourceSchemaId: "x" }),
-    ).toStrictEqual({ keepVersions: 10, pinnedRefs: [] });
+    expect(await signedIn.query(api.tags.retentionSettings, { sourceSchemaId: "x" })).toStrictEqual(
+      { keepVersions: 10, pinnedRefs: [] },
+    );
   });
 
   it("sync: latestRun rejects signed out, returns null signed in; startRun rejects signed out", async () => {
     const t = initTest();
     await expect(t.query(api.sync.latestRun, { source: "x" })).rejects.toThrow(GATE_MESSAGE);
-    await expect(
-      t.mutation(api.sync.startRun, { mode: "sync", source: "x" }),
-    ).rejects.toThrow(GATE_MESSAGE);
+    await expect(t.mutation(api.sync.startRun, { mode: "sync", source: "x" })).rejects.toThrow(
+      GATE_MESSAGE,
+    );
     const signedIn = initTest().withIdentity({ subject: "user-1" });
     expect(await signedIn.query(api.sync.latestRun, { source: "x" })).toBeNull();
   });

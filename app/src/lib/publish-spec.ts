@@ -42,7 +42,12 @@
  * neither injects nor strips, so real data named `geometryId` passes through
  * untouched unless a rule claims the column.
  */
-import { applyLookup, applyRollup, applySql, geometrySourceOperationOf } from "@caden/json-cms/transform";
+import {
+  applyLookup,
+  applyRollup,
+  applySql,
+  geometrySourceOperationOf,
+} from "@caden/json-cms/transform";
 import type {
   GeometrySource,
   LookupOperation,
@@ -260,10 +265,7 @@ interface FoldState {
 }
 
 /** Applies one rollup operation, refusing one that follows the geometry op. */
-function applyRollupOperation(
-  operation: Record<string, unknown>,
-  state: FoldState,
-): void {
+function applyRollupOperation(operation: Record<string, unknown>, state: FoldState): void {
   if (state.pairs !== undefined) {
     throw new PublishSpecError(
       "This spec can't be materialized: a rollup follows the geometry operation, and a group spans many rows' geometries.",
@@ -298,7 +300,10 @@ async function sideTableOf(
   tables: PublishSourceTables,
   visited: Set<string>,
   sql: PublishSqlExecution | undefined,
-): Promise<{ columns: readonly SqlColumnSpec[] | undefined; rows: Array<Record<string, unknown>> }> {
+): Promise<{
+  columns: readonly SqlColumnSpec[] | undefined;
+  rows: Array<Record<string, unknown>>;
+}> {
   const columns = tables.columnsByDatasetId;
   return {
     columns: columns === undefined ? undefined : columns.get(ref.datasetId),
@@ -362,12 +367,7 @@ function applyLookupOperation(
   if (state.pairs !== undefined && operation.match === "inner") {
     state.pairs = pairingThroughInnerMatch(operation, state.rows, lookupRows, state.pairs);
   }
-  const result = applyLookup(
-    asEngineLookup(operation),
-    state.rows,
-    lookupRows,
-    geometryRule,
-  );
+  const result = applyLookup(asEngineLookup(operation), state.rows, lookupRows, geometryRule);
   state.rows = result.rows;
   if (geometryRule !== undefined) {
     state.pairs = [...(result.geometryReferences ?? [])];

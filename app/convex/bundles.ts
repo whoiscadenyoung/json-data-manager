@@ -110,7 +110,10 @@ export interface BundleMembershipLike {
 
 /** One map's layers, as `listMapLayers` returns them (structural slice). */
 export interface BundleMapLayersLike {
-  layers: ReadonlyArray<{ targetId: string; targetType: "collection" | "dataset" | "derived" | "group" }>;
+  layers: ReadonlyArray<{
+    targetId: string;
+    targetType: "collection" | "dataset" | "derived" | "group";
+  }>;
   mapId: string;
 }
 
@@ -263,7 +266,8 @@ export function bundleClosure(input: BundleClosureInput): BundleClosureResult {
         // keeps it out of this press.
         dropped.push({
           id,
-          reason: "A draft this project doesn't hold — it stays with its own project until published.",
+          reason:
+            "A draft this project doesn't hold — it stays with its own project until published.",
         });
         return;
       }
@@ -354,15 +358,14 @@ export function bundleClosure(input: BundleClosureInput): BundleClosureResult {
     dropped,
     members: [
       ...datasetMembers.values(),
-      ...topologicalDerivedOrder(
-        derivedMembers,
-        input.dependsOnByRegistry ?? new Map(),
-      ).map((id) => ({
-        datasetKey: id,
-        kind: "derived" as const,
-        layerTargets: [],
-        publish: true,
-      })),
+      ...topologicalDerivedOrder(derivedMembers, input.dependsOnByRegistry ?? new Map()).map(
+        (id) => ({
+          datasetKey: id,
+          kind: "derived" as const,
+          layerTargets: [],
+          publish: true,
+        }),
+      ),
       ...mapMembers,
     ],
   };
@@ -711,9 +714,7 @@ export const latestForProject = query({
       collectionId: v.optional(v.string()),
       error: v.optional(v.string()),
       failedCount: v.number(),
-      failedMembers: v.array(
-        v.object({ datasetKey: v.string(), error: v.optional(v.string()) }),
-      ),
+      failedMembers: v.array(v.object({ datasetKey: v.string(), error: v.optional(v.string()) })),
       finishedAt: v.optional(v.number()),
       lastProgressAt: v.number(),
       memberCount: v.number(),
@@ -760,7 +761,10 @@ export const layerResolutions = query({
         // The pinned row, if it still exists. One edge resolution per hop,
         // each read deciding the next (the consumption.ts badge shape).
         // oxlint-disable-next-line no-await-in-loop -- see above.
-        const pinnedRow = edge.pinnedSchemaId === undefined ? null : await tryGetSchemaOrNull(ctx, edge.pinnedSchemaId);
+        const pinnedRow =
+          edge.pinnedSchemaId === undefined
+            ? null
+            : await tryGetSchemaOrNull(ctx, edge.pinnedSchemaId);
         resolvedSchemaId =
           edge.pinnedSchemaId !== undefined && pinnedRow !== null ? edge.pinnedSchemaId : undefined;
       } else {
@@ -945,7 +949,16 @@ export const recordMember = mutation({
 /** Files one member's row into the promoted collection: the frozen row it produced, or — for a referenced member — itself. A member that never froze files nothing. */
 async function fileMemberIntoCollection(
   ctx: MutationCtx,
-  args: { collectionId: string; member: { datasetKey: string; groupId?: string; kind: "dataset" | "derived" | "map"; publishedSchemaId?: string; status: string } },
+  args: {
+    collectionId: string;
+    member: {
+      datasetKey: string;
+      groupId?: string;
+      kind: "dataset" | "derived" | "map";
+      publishedSchemaId?: string;
+      status: string;
+    };
+  },
 ): Promise<void> {
   if (args.member.kind === "map") {
     return;
@@ -1044,9 +1057,7 @@ export const linkMapLayers = mutation({
           .collect(),
       ]);
       const currentTargets = new Set(
-        layers
-          .filter((layer) => layer.targetType === "dataset")
-          .map((layer) => layer.targetId),
+        layers.filter((layer) => layer.targetType === "dataset").map((layer) => layer.targetId),
       );
       for (const edge of existing) {
         if (edge.consumerKind === "map" && !currentTargets.has(edge.sourceDatasetId)) {
@@ -1055,7 +1066,9 @@ export const linkMapLayers = mutation({
         }
       }
       for (const target of currentTargets) {
-        if (existing.some((edge) => edge.consumerKind === "map" && edge.sourceDatasetId === target)) {
+        if (
+          existing.some((edge) => edge.consumerKind === "map" && edge.sourceDatasetId === target)
+        ) {
           continue;
         }
         // oxlint-disable-next-line no-await-in-loop -- one edge per target, in layer order.

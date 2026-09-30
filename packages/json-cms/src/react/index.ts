@@ -132,7 +132,12 @@ export type { GeoJsonRow, GeoJsonParseResult, GeoJsonFeatureError } from "./lib/
 // its DuckDB handle injected (see ../shared/transform/sql.ts).
 export { applyLookup, LookupKeyConflictError } from "../shared/transform/lookup.js";
 export { applyRollup } from "../shared/transform/rollup.js";
-export { applySql, declaredColumnTypes, materializeSqlTable, sqlSourceName } from "../shared/transform/sql.js";
+export {
+  applySql,
+  declaredColumnTypes,
+  materializeSqlTable,
+  sqlSourceName,
+} from "../shared/transform/sql.js";
 export { transformSpecDependencies, geometrySourceOperationOf } from "../shared/transform/spec.js";
 export type { LookupDiagnostics, LookupResult } from "../shared/transform/lookup.js";
 export type { RollupDiagnostics, RollupResult } from "../shared/transform/rollup.js";

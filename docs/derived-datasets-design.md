@@ -82,8 +82,8 @@ What the codebase already gives us to build on:
   output column naming, and the datasets it depends on.
 - A **derived dataset** is the virtual result: it appears in the datasets
   browser (badged as derived), can be added to a map as a layer, exports
-  through the existing dialogs, and can serve as the *source of another
-  spec* — derived-of-derived.
+  through the existing dialogs, and can serve as the _source of another
+  spec_ — derived-of-derived.
 - Composition therefore forms a **DAG**: e.g. `restaurantLocations` → rollup
   (locations per restaurant) → joined back into `restaurants` to attach
   names and cuisine. Cycles are rejected at spec-save time; deleting a
@@ -113,12 +113,12 @@ the engine.
 client-side just for tooltips would undo #52's on-demand popup work. Two
 candidates:
 
-- *(a)* On-demand server lookup when a popup opens: read the clicked entry,
+- _(a)_ On-demand server lookup when a popup opens: read the clicked entry,
   extract its key, fetch the related row, merge. Wrinkle: entry data is
   schemaless, so field-value lookups aren't indexed — this needs a small
   maintained key→entryId index table (the `bindingEntries` precedent) or a
   scan.
-- *(b)* Keep the popup dumb and let it read from the same client-side joined
+- _(b)_ Keep the popup dumb and let it read from the same client-side joined
   view — simple, but only works when both datasets are small enough to be
   fully loaded client-side.
 
@@ -173,7 +173,7 @@ Derived specs over bound data follow `docs/bound-datasets-design.md`:
 > [`catalog-lifecycle-design.md`](./catalog-lifecycle-design.md) / ADR 0008:
 > Projects are now designed (the virtual working layer; publish
 > materializes into the catalog). The references-not-containment rule below
-> survives inside the working layer, and the *implementation* deferral still
+> survives inside the working layer, and the _implementation_ deferral still
 > holds — projects land last, behind auth gating (lifecycle §8). The
 > original assessment is kept for the record.
 
@@ -201,7 +201,7 @@ Two problems were untangled:
   gap). Its final shape depends on which multi-user future arrives
   (colleagues sharing one deployment vs. isolated audiences needing
   permissions), and that can't be known until it's real.
-- For *datasets*, a container already exists (groups/collections). The only
+- For _datasets_, a container already exists (groups/collections). The only
   flat thing is the maps list; if clutter bites first, lightweight map
   grouping (folders/tags on the existing pattern) is a UI-level fix, not an
   architectural layer.

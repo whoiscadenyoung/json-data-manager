@@ -55,9 +55,9 @@ function registryServing(edges: Record<string, string[]>) {
 
 describe("schemaProperties", () => {
   it("reads the declared top-level properties", () => {
-    expect(schemaProperties({ properties: { GrantId: { type: "string" }, Name: {} } })).toStrictEqual(
-      ["GrantId", "Name"],
-    );
+    expect(
+      schemaProperties({ properties: { GrantId: { type: "string" }, Name: {} } }),
+    ).toStrictEqual(["GrantId", "Name"]);
   });
 
   it("tolerates everything that is not an object with a properties map", () => {
@@ -121,7 +121,11 @@ describe("specDependencies", () => {
   it("ignores shapeless sql table refs instead of breaking the walk", () => {
     const deps = specDependencies(
       spec("s1", [
-        { kind: "sql", sql: "SELECT 1", tables: [null, "text", { as: "r1" }, { as: "r2", datasetId: "reg2" }] },
+        {
+          kind: "sql",
+          sql: "SELECT 1",
+          tables: [null, "text", { as: "r1" }, { as: "r2", datasetId: "reg2" }],
+        },
       ]),
     );
 
@@ -138,7 +142,9 @@ describe("validateSpecShape", () => {
     expect(validated).toStrictEqual({
       ok: true,
       spec: {
-        operations: [{ ...lookup("l1"), fields: ["Status"], match: "inner", onDuplicateKey: "last" }],
+        operations: [
+          { ...lookup("l1"), fields: ["Status"], match: "inner", onDuplicateKey: "last" },
+        ],
         sourceDatasetId: "s1",
       },
     });
@@ -187,9 +193,7 @@ describe("validateSpecShape", () => {
       "A lookup operation is missing its lookupDatasetId.",
       "A lookup operation is missing its lookupKey.",
     ]);
-    expect(
-      validateSpecShape(spec("s1", [{ ...lookup("l1"), fields: ["ok", 7] }])).ok,
-    ).toBe(false);
+    expect(validateSpecShape(spec("s1", [{ ...lookup("l1"), fields: ["ok", 7] }])).ok).toBe(false);
     expect(validateSpecShape(spec("s1", [{ ...lookup("l1"), match: "outer" }])).ok).toBe(false);
     expect(validateSpecShape(spec("s1", [{ ...lookup("l1"), onDuplicateKey: "both" }])).ok).toBe(
       false,
@@ -204,9 +208,7 @@ describe("validateSpecShape", () => {
       tables: [{ as: "r1", datasetId: "reg1" }],
     };
     expect(validateSpecShape(spec("s1", [valid])).ok).toBe(true);
-    expect(
-      validateSpecShape(spec("s1", [{ kind: "sql", sql: "", tables: [] }])).ok,
-    ).toBe(false);
+    expect(validateSpecShape(spec("s1", [{ kind: "sql", sql: "", tables: [] }])).ok).toBe(false);
     // REQUIRED since the reviewers' pass: the field carries the walk's
     // edges — an omitted tables list would save edges-blind.
     expect(validateSpecShape(spec("s1", [{ kind: "sql", sql: "SELECT 1" }])).ok).toBe(false);
@@ -249,9 +251,13 @@ describe("findCycleToOrigin", () => {
   });
 
   it("walks nothing when the dependencies are component datasets (ids that cannot point back)", async () => {
-    const cycle = await findCycleToOrigin("A", ["component-1", "component-2"], registryServing({
-      A: ["component-1"],
-    }));
+    const cycle = await findCycleToOrigin(
+      "A",
+      ["component-1", "component-2"],
+      registryServing({
+        A: ["component-1"],
+      }),
+    );
 
     expect(cycle).toBeUndefined();
   });
@@ -382,10 +388,7 @@ describe("specStatus", () => {
   });
 
   it("reports the first problem across operations", async () => {
-    const report = await specStatus(
-      spec("grants", [lookup("grants"), lookup("gone")]),
-      resolve,
-    );
+    const report = await specStatus(spec("grants", [lookup("grants"), lookup("gone")]), resolve);
 
     expect(report.health).toBe("orphaned");
   });

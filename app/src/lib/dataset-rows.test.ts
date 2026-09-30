@@ -300,8 +300,12 @@ describe("applyEntryRowSpec — the popup executor", () => {
   it("folds ALL matching specs in order and later enrichment wins same-named keys", () => {
     const row = entryWithData("e1", { grantId: "G1" }),
       specs = [
-        storedSpec([lookupOp({ lookupDatasetId: "grantsA", namespace: "grant", fields: ["status"] })]),
-        storedSpec([lookupOp({ lookupDatasetId: "grantsB", namespace: "grant", fields: ["status"] })]),
+        storedSpec([
+          lookupOp({ lookupDatasetId: "grantsA", namespace: "grant", fields: ["status"] }),
+        ]),
+        storedSpec([
+          lookupOp({ lookupDatasetId: "grantsB", namespace: "grant", fields: ["status"] }),
+        ]),
       ],
       sides = new Map([
         ["grantsA", [{ id: "G1", status: "first" }]],
@@ -318,7 +322,13 @@ describe("applyEntryRowSpec — the popup executor", () => {
       specs = [
         storedSpec([lookupOp({ lookupDatasetId: "grants", fields: ["status"] })]),
         storedSpec([
-          lookupOp({ baseKey: "grants.status", lookupDatasetId: "statuses", lookupKey: "code", namespace: "label", fields: ["text"] }),
+          lookupOp({
+            baseKey: "grants.status",
+            lookupDatasetId: "statuses",
+            lookupKey: "code",
+            namespace: "label",
+            fields: ["text"],
+          }),
         ]),
       ],
       sides = new Map([
@@ -420,13 +430,15 @@ describe("lookupOperationsOfSpec", () => {
     expect(lookupOperationsOfSpec(undefined)).toStrictEqual([]);
     expect(lookupOperationsOfSpec("nope")).toStrictEqual([]);
     expect(lookupOperationsOfSpec({ operations: "not-an-array" })).toStrictEqual([]);
-    expect(lookupOperationsOfSpec(storedSpec([{ kind: "lookup", baseKey: "a" }]))).toStrictEqual([]);
+    expect(lookupOperationsOfSpec(storedSpec([{ kind: "lookup", baseKey: "a" }]))).toStrictEqual(
+      [],
+    );
     // Every optional cell is strict when present: malformed fields, match,
     // namespace or onDuplicateKey skips the operation instead of quietly
     // falling back to the engine default.
-    expect(
-      lookupOperationsOfSpec(storedSpec([lookupOp({ fields: ["ok", 42] })])),
-    ).toStrictEqual([]);
+    expect(lookupOperationsOfSpec(storedSpec([lookupOp({ fields: ["ok", 42] })]))).toStrictEqual(
+      [],
+    );
     expect(lookupOperationsOfSpec(storedSpec([lookupOp({ match: "outer" })]))).toStrictEqual([]);
     expect(lookupOperationsOfSpec(storedSpec([lookupOp({ namespace: "" })]))).toStrictEqual([]);
     expect(

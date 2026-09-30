@@ -101,9 +101,7 @@ function handleWorkerTokenRequest(event: MessageEvent<unknown>): void {
 
 /** Runtime shape check for a done message's payload — the one narrowing the protocol's `unknown` transport needs (structured clone delivers exactly what the worker posts; the guard keeps the assumption in one audited place). */
 function isRunResult(value: unknown): value is AnalysisRunResult {
-  return (
-    isRecord(value) && isRecord(value.diagnostics) && Array.isArray(value.rows)
-  );
+  return isRecord(value) && isRecord(value.diagnostics) && Array.isArray(value.rows);
 }
 
 function settlePending(requestId: number, data: Record<string, unknown>): boolean {

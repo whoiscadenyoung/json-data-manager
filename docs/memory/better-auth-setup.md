@@ -28,11 +28,11 @@ cost time:
   disabled cloud deployment, and `CONVEX_DEPLOYMENT=local` fails to parse.
   Working recipe: start the binary directly
   (`~/.cache/convex/binaries/<latest>/convex-local-backend --port 3212
-  --site-proxy-port 3213 --instance-secret <from .convex/local/default/config.json>
-  --instance-name <deploymentName> convex_local_backend.sqlite3`) with cwd =
+--site-proxy-port 3213 --instance-secret <from .convex/local/default/config.json>
+--instance-name <deploymentName> convex_local_backend.sqlite3`) with cwd =
   `app/.convex/local/default/` (storage paths are cwd-relative — wrong cwd
   = blob errors), then `bunx convex dev --once --url http://127.0.0.1:3212
-  --admin-key <adminKey>` and `bunx convex env set ... --url/--admin-key`.
+--admin-key <adminKey>` and `bunx convex env set ... --url/--admin-key`.
   Vite needs `VITE_CONVEX_URL=http://127.0.0.1:3212`,
   `VITE_CONVEX_SITE_URL=http://127.0.0.1:3213` in `.env.local` BEFORE vite
   starts (a running vite never re-reads env). See

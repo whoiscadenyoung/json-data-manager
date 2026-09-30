@@ -52,9 +52,7 @@ export function fromBuilderOperation(operation: BuilderOperation): LookupOperati
 
 /** An operation is previewable/savable once the builder knows what it joins on. */
 export function isLookupComplete(operation: BuilderOperation): boolean {
-  return (
-    firstIncompleteReason([operation]) === undefined
-  );
+  return firstIncompleteReason([operation]) === undefined;
 }
 
 /**
@@ -148,7 +146,10 @@ export function builderOperationsFromSpec(spec: unknown): BuilderOperation[] {
 }
 
 /** The registry-ready spec for the builder's state: complete operations only, in order. */
-export function draftToSpec(sourceDatasetId: string, operations: BuilderOperation[]): TransformSpec {
+export function draftToSpec(
+  sourceDatasetId: string,
+  operations: BuilderOperation[],
+): TransformSpec {
   return {
     operations: operations.filter(isLookupComplete).map(fromBuilderOperation),
     sourceDatasetId,

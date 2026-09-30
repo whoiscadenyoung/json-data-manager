@@ -3,10 +3,7 @@ import { cleanup, render, waitFor } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  SchemaEntriesLoader,
-  useEnrichedDatasetEntryRow,
-} from "./dataset-rows-react";
+import { SchemaEntriesLoader, useEnrichedDatasetEntryRow } from "./dataset-rows-react";
 import type { FeatureSelection } from "./dataset-rows-react";
 
 // The reactive seam's data layer, mocked at module boundaries: the point
@@ -250,16 +247,14 @@ describe("useEnrichedDatasetEntryRow", () => {
       queriesCalls = mocks.useQueries.mock.calls.length;
     rerender(undefined);
 
-    expect(
-      mocks.useQuery.mock.calls.slice(queryCalls).every((call) => call[1] === "skip"),
-    ).toBe(true);
+    expect(mocks.useQuery.mock.calls.slice(queryCalls).every((call) => call[1] === "skip")).toBe(
+      true,
+    );
     expect(
       mocks.useAllPaginated.mock.calls.slice(paginatedCalls).every((call) => call[1] === "skip"),
     ).toBe(true);
     expect(
-      mocks.useQueries.mock.calls
-        .slice(queriesCalls)
-        .every((call) => call[0].queries.length === 0),
+      mocks.useQueries.mock.calls.slice(queriesCalls).every((call) => call[0].queries.length === 0),
     ).toBe(true);
   });
 
@@ -311,9 +306,7 @@ describe("SchemaEntriesLoader", () => {
       args === "skip" ? SKIP_STATE : paginated,
     );
 
-    const { rerender } = render(
-      <SchemaEntriesLoader schemaId="s1" enabled onLoaded={onLoaded} />,
-    );
+    const { rerender } = render(<SchemaEntriesLoader schemaId="s1" enabled onLoaded={onLoaded} />);
     expect(onLoaded).toHaveBeenCalledWith("s1", { complete: true, rows: firstRows });
 
     // Disabled: the report drops to undefined AND the completion latch

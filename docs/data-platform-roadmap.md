@@ -49,7 +49,7 @@ invariant so later stages land on prepared ground.
   Auth is in; `schemas.createdBy` attribution is in; the gate is the
   follow-up). Everything multi-user — drafts, ownership, sharing, the fork
   loop — hangs on this, and it is valuable standalone.
-  *Done when:* unauthenticated access cannot read or write data; identity
+  _Done when:_ unauthenticated access cannot read or write data; identity
   flows through existing mutations.
 - **0.2 The row-resolution seam.** Introduce one client-side interface —
   "resolve this dataset's rows (draft or published, specs applied)" — and
@@ -57,36 +57,36 @@ invariant so later stages land on prepared ground.
   (byte-budget pagination lives inside, with a spec-application stub that is
   identity for now). This is the seam the transform engine, surfacing, and
   the SQL layer all plug into.
-  *Done when:* no surface paginates datasets on its own; exports and tables
+  _Done when:_ no surface paginates datasets on its own; exports and tables
   behave identically through the seam.
 - **0.3 Generalize version-freezing.** Extract the frozen-version machinery
   from the bound-dataset tag path (freeze a dataset state, lineage fields,
   keep-N with pinning) into reusable component utilities with no behavior
-  change. Stages 5–6 then *call* it instead of inventing it.
-  *Done when:* tag ingest and a generic helper share one implementation.
+  change. Stages 5–6 then _call_ it instead of inventing it.
+  _Done when:_ tag ingest and a generic helper share one implementation.
 - **0.4 Key-normalization & coercion utilities.** Pure, unit-tested helpers
   in `@caden/json-cms` (trim/case/number-vs-string coercion, shared by
   future join keys and column typing for analysis).
-  *Done when:* utilities exist with tests; nothing else changes.
+  _Done when:_ utilities exist with tests; nothing else changes.
 - **0.5 CI (recommended, from the 2026-09 architecture review).** Typecheck
-  + lint + test on PRs. A staged initiative implemented by agents in order
-  needs a mechanical green/red signal at every step.
+  - lint + test on PRs. A staged initiative implemented by agents in order
+    needs a mechanical green/red signal at every step.
 
 ## 4. Implementation stages
 
 Ordered; each stage is 1–3 issues. "Value checkpoint" = what a user gains.
 
-| # | Stage | Implements | Depends on |
-| --- | --- | --- | --- |
-| 1 | Transform engine: spec types + pure lookup engine in `json-cms`, unit-tested | ADR 0005 §10.1 | 0.4 |
-| 2 | Derived-dataset registry (app-side table, `datasetBindings` precedent) + builder/preview UI with match-rate stats | ADR 0005 §10.2 | 1, 0.2 |
-| 3 | Surfacing: "include joined fields" in exports, derived datasets as map layers, popup enrichment (popup executor decision: index table vs. client key map) | ADR 0005 §10.3 | 2 |
-| 4 | Rollup primitive + join-back composition + `geometrySource` spec field | ADR 0005 §10.4 | 1 |
-| 5 | Lifecycle entry: minimal draft/published flag (catalog filters published by default), then **materialized publish** — spec execution written through the existing ingest path, checkpointed | ADR 0008; lifecycle §8.2, §6 | 0.3, 2, 4 |
-| 6 | Versioned consumption: pin/float, "source published vN" badges, version-delta diff, sync (re-run + re-freeze) / revert (repin), consumed-by list | ADR 0008; lifecycle §7 | 5 |
-| 7 | Projects (auth-gated): the working container, import/create lands in projects, bundle publish (collection + maps + datasets), fork-as-reference/spec, groups/collections take their mapped roles | ADR 0008; lifecycle §3, §5 | 0.1, 5 |
-| 8 | Sharing & multi-user isolation: per-user/team projects, permission checks, published-visibility controls | lifecycle §9 open questions | 0.1, 7 |
-| 9 | Analysis layer: DuckDB-WASM worker over the seam, saved analyses as project artifacts, SQL escape hatch unifying with rollup; Parquet sidecar only if size demands | analysis-layer-design | 0.2, 6 (catalog side), 7 (draft side) |
+| #   | Stage                                                                                                                                                                                            | Implements                   | Depends on                            |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------- | ------------------------------------- |
+| 1   | Transform engine: spec types + pure lookup engine in `json-cms`, unit-tested                                                                                                                     | ADR 0005 §10.1               | 0.4                                   |
+| 2   | Derived-dataset registry (app-side table, `datasetBindings` precedent) + builder/preview UI with match-rate stats                                                                                | ADR 0005 §10.2               | 1, 0.2                                |
+| 3   | Surfacing: "include joined fields" in exports, derived datasets as map layers, popup enrichment (popup executor decision: index table vs. client key map)                                        | ADR 0005 §10.3               | 2                                     |
+| 4   | Rollup primitive + join-back composition + `geometrySource` spec field                                                                                                                           | ADR 0005 §10.4               | 1                                     |
+| 5   | Lifecycle entry: minimal draft/published flag (catalog filters published by default), then **materialized publish** — spec execution written through the existing ingest path, checkpointed      | ADR 0008; lifecycle §8.2, §6 | 0.3, 2, 4                             |
+| 6   | Versioned consumption: pin/float, "source published vN" badges, version-delta diff, sync (re-run + re-freeze) / revert (repin), consumed-by list                                                 | ADR 0008; lifecycle §7       | 5                                     |
+| 7   | Projects (auth-gated): the working container, import/create lands in projects, bundle publish (collection + maps + datasets), fork-as-reference/spec, groups/collections take their mapped roles | ADR 0008; lifecycle §3, §5   | 0.1, 5                                |
+| 8   | Sharing & multi-user isolation: per-user/team projects, permission checks, published-visibility controls                                                                                         | lifecycle §9 open questions  | 0.1, 7                                |
+| 9   | Analysis layer: DuckDB-WASM worker over the seam, saved analyses as project artifacts, SQL escape hatch unifying with rollup; Parquet sidecar only if size demands                               | analysis-layer-design        | 0.2, 6 (catalog side), 7 (draft side) |
 
 **Value checkpoints.** After stage 3 the app is already useful (enriched
 tooltips and exports on real data — the SMART and restaurant scenarios

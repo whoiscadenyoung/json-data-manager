@@ -339,7 +339,11 @@ export const start = mutation({
  * them — and only its OWNER (stage 8, #104): a foreign attemptId reads as
  * "no longer exists", never disclosing the attempt's state.
  */
-async function uploadingAttempt(ctx: MutationCtx, actorId: string, attemptId: Id<"publishAttempts">) {
+async function uploadingAttempt(
+  ctx: MutationCtx,
+  actorId: string,
+  attemptId: Id<"publishAttempts">,
+) {
   const attempt = await ctx.db.get(attemptId);
   if (attempt === null || attempt.createdBy !== actorId) {
     throw new ConvexError("This publish attempt no longer exists.");

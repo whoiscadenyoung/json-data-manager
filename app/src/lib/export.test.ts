@@ -47,7 +47,11 @@ describe("enrichExportEntries", () => {
   it("lands namespaced fields on matched rows and nulls on unmatched ones (left join)", () => {
     const entries = [entry("a", { GrantId: "g1", name: "A" }), entry("b", { GrantId: "nope" })],
       grants = [{ GrantId: "g1", status: "active" }],
-      out = enrichExportEntries(entries, [spec([lookupOperation()])], new Map([["grants", grants]]));
+      out = enrichExportEntries(
+        entries,
+        [spec([lookupOperation()])],
+        new Map([["grants", grants]]),
+      );
 
     expect(out).toHaveLength(2);
     expect(out[0].data).toStrictEqual({ GrantId: "g1", "Grants.status": "active", name: "A" });
@@ -91,7 +95,11 @@ describe("enrichExportEntries", () => {
   it("lets enrichment win over a pre-existing namespaced key", () => {
     const entries = [entry("a", { GrantId: "g1", "Grants.status": "stale-copy" })],
       grants = [{ GrantId: "g1", status: "fresh" }],
-      out = enrichExportEntries(entries, [spec([lookupOperation()])], new Map([["grants", grants]]));
+      out = enrichExportEntries(
+        entries,
+        [spec([lookupOperation()])],
+        new Map([["grants", grants]]),
+      );
 
     expect(out[0].data).toStrictEqual({ GrantId: "g1", "Grants.status": "fresh" });
   });
@@ -189,7 +197,13 @@ describe("enrichExportEntries", () => {
           spec([
             { kind: "rollup" },
             { baseKey: "", kind: "lookup", lookupDatasetId: "grants", lookupKey: "GrantId" },
-            { baseKey: "GrantId", kind: "lookup", lookupDatasetId: "grants", lookupKey: "k", match: "bogus" },
+            {
+              baseKey: "GrantId",
+              kind: "lookup",
+              lookupDatasetId: "grants",
+              lookupKey: "k",
+              match: "bogus",
+            },
             lookupOperation(),
           ]),
         ],
