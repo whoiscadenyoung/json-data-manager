@@ -532,6 +532,33 @@ describe("json-cms component", () => {
       assertDefined(row);
       expect(row.fieldCount).toBe(0);
     });
+
+    it("projects the archive-format gate as mapTileArchiveFormatCurrent (issue #125)", async () => {
+      const t = initConvexTest(),
+        schemaId = await createGeospatialSchema(t, "Point");
+      const flagOf = async () => {
+        const row = (await t.query(api.lib.listSchemaSummaries, { viewerId: VIEWER })).find(
+          (summary) => summary._id === schemaId,
+        );
+        assertDefined(row);
+        return row.mapTileArchiveFormatCurrent;
+      };
+      // No archive yet: the format field is absent, so the derived flag is
+      // false.
+      expect(await flagOf()).toBe(false);
+      await installArchive(t, schemaId, 0, "format-gate-summary");
+      // A fresh install stamps the current format — the flag must read true,
+      // or the manager would treat every freshly built archive as stale.
+      expect(await flagOf()).toBe(true);
+      // Simulate a pre-#125 row (format field absent = format 1): the flag
+      // mirrors getMapTileArchiveMeta's gate, so the manager's staleness
+      // check sees the row as stale even though its built-version matches
+      // — the rebuild happens without waiting for an edit.
+      await t.run(async (ctx) => {
+        await ctx.db.patch(schemaId, { mapTileArchiveFormat: undefined });
+      });
+      expect(await flagOf()).toBe(false);
+    });
   });
 
   describe("catalog lifecycle (roadmap 5a, #99)", () => {
@@ -2676,8 +2703,9 @@ describe("json-cms component", () => {
         // exactly what every pre-#125 install looks like) must read as no
         // archive: its builder's run-length dedupe merged across tile-id
         // gaps, so the blob may have holes. Null meta flips the dataset to
-        // the row path, fires the manager's first-build rebuild, and makes
-        // the OPFS pin prune its stale copy.
+        // the row path, the projection's derived
+        // `mapTileArchiveFormatCurrent` flag makes the manager's staleness
+        // trigger rebuild it, and the OPFS pin prunes its stale copy.
         await t.run(async (ctx) => {
           await ctx.db.patch(schemaId, { mapTileArchiveFormat: undefined });
         });

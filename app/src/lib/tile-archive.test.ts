@@ -253,3 +253,87 @@ describe("below-threshold skip memo", () => {
     expect(isTileArchiveStale(memoRow("memo-s3", 2), 3)).toBe(true);
   });
 });
+
+describe("isTileArchiveStale", () => {
+  const geospatial = {
+    _id: "s1",
+    geometryType: "Point",
+    kind: "geospatial" as const,
+  };
+
+  it("a format-gated archive is stale even though its built-at version matches (issue #125)", () => {
+    // The exact pre-fix hole: a pre-#125 row's archive fields all look
+    // current, but its blob was written by the gap-merging format-1 builder
+    // and getMapTileArchiveMeta refuses to serve it — the manager must
+    // rebuild it rather than wait for an edit that may never come.
+    expect(
+      isTileArchiveStale(
+        {
+          ...geospatial,
+          mapTileArchiveBuiltVersion: 3,
+          // Derived server-side by the summary projection: false = the row's
+          // stored format field is absent/behind MAP_TILE_ARCHIVE_FORMAT.
+          mapTileArchiveFormatCurrent: false,
+          mapTileCacheVersion: 3,
+        },
+        3,
+      ),
+    ).toBe(true);
+  });
+
+  it("an archive at the current version and current format is not stale", () => {
+    expect(
+      isTileArchiveStale(
+        {
+          ...geospatial,
+          mapTileArchiveBuiltVersion: 3,
+          mapTileArchiveFormatCurrent: true,
+          mapTileCacheVersion: 3,
+        },
+        3,
+      ),
+    ).toBe(false);
+  });
+
+  it("an absent format flag (pre-flag summary shape) falls through to the built-version check", () => {
+    // Version-skew safety: a backend older than the flag has no format gate
+    // either, so treating the missing flag as stale would loop rebuilds.
+    expect(
+      isTileArchiveStale(
+        {
+          ...geospatial,
+          mapTileArchiveBuiltVersion: 3,
+          mapTileCacheVersion: 3,
+        },
+        3,
+      ),
+    ).toBe(false);
+  });
+
+  it("still fires the first-build and stale-on-view triggers", () => {
+    expect(isTileArchiveStale({ ...geospatial, mapTileCacheVersion: 1 }, 1)).toBe(true);
+    expect(
+      isTileArchiveStale(
+        {
+          ...geospatial,
+          mapTileArchiveBuiltVersion: 1,
+          mapTileArchiveFormatCurrent: true,
+          mapTileCacheVersion: 2,
+        },
+        2,
+      ),
+    ).toBe(true);
+  });
+
+  it("ignores never-written, non-geospatial, and geometry-less rows", () => {
+    expect(
+      isTileArchiveStale({ ...geospatial, mapTileArchiveFormatCurrent: false }, 0),
+    ).toBe(false);
+    expect(isTileArchiveStale({ ...geospatial, kind: "standard", mapTileCacheVersion: 1 }, 1)).toBe(
+      false,
+    );
+    expect(isTileArchiveStale({ _id: "s2", kind: "geospatial", mapTileCacheVersion: 1 }, 1)).toBe(
+      false,
+    );
+  });
+});

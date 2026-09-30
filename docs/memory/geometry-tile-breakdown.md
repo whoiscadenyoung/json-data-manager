@@ -129,10 +129,21 @@ generation: `MAP_TILE_ARCHIVE_FORMAT = 2` (lib.ts), stamped by
 `setMapTileArchive` into the new optional schema field
 `mapTileArchiveFormat`, and `getMapTileArchiveMeta` returns null unless the
 installed archive's format equals the constant (absent = format 1 = the
-gap-bug era). This reuses the exact self-healing shape of the
+gap-bug era). This reuses the self-healing shape of the
 `mapTileArchiveBuiltVersion` legacy precedent: null meta ⇒ consumers read
-"row path only", the TileArchiveManager's first-build trigger (version > 0,
-no archive) rebuilds, and the OPFS pin prunes its stale copy. Bump the
+"row path only", and the OPFS pin prunes its stale copy. **Rebuild wiring
+(2026-09-30 review fix): the original text wrongly credited the manager's
+first-build trigger — a pre-#125 row has an archive whose built-version
+matches, so nothing fired. The gate is mirrored into the list projection as
+a DERIVED `mapTileArchiveFormatCurrent` boolean, computed in
+`toSchemaSummary` against the constant itself (deliberately NOT a raw
+format field + an app-mirrored constant: app code can't import component
+code, and a mirrored constant drifting low would loop rebuilds forever) —
+so `isTileArchiveStale` (app/src/lib/tile-archive.ts) treats a
+format-gated row as stale and the manager rebuilds it without waiting for
+an edit; an ABSENT flag (older backend, pre-flag projection shape) falls
+through to the built-version check, since that backend has no format gate
+either.** Bump the
 constant whenever a builder change would make old installed archives wrong.
 `deleteEntriesBySchema`'s reset now clears it with the other cache fields.
 

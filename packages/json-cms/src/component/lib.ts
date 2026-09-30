@@ -306,6 +306,14 @@ function toSchemaSummary(doc: Doc<"schemas">) {
     lineage: doc.lineage,
     mapTileArchiveBuiltVersion: doc.mapTileArchiveBuiltVersion,
     mapTileArchiveBytes: doc.mapTileArchiveBytes,
+    // Issue #125's format gate, mirrored into the projection as a DERIVED
+    // boolean rather than the raw format field: the TileArchiveManager is
+    // app-level code that can't import this component, and a mirrored copy
+    // of `MAP_TILE_ARCHIVE_FORMAT` that drifted low would schedule rebuilds
+    // forever (every fresh install stamps a format the stale copy rejects).
+    // Computing it here — against the same constant `getMapTileArchiveMeta`
+    // gates on — keeps one authoritative comparison.
+    mapTileArchiveFormatCurrent: doc.mapTileArchiveFormat === MAP_TILE_ARCHIVE_FORMAT,
     mapTileArchiveMaxZoom: doc.mapTileArchiveMaxZoom,
     // Deliberately NO `mapTileArchiveStorageId` (issue #131): the summary is
     // a public result, and a `_storage` id in it invites cross-dataset blob
@@ -347,7 +355,13 @@ const schemaSummaryValidator = schemaValidator
     "source",
     "title",
   )
-  .extend({ fieldCount: v.number() });
+  .extend({
+    // `fieldCount` is computed from the heavy payload (never stored);
+    // `mapTileArchiveFormatCurrent` is the derived issue #125 gate flag the
+    // projection computes from the stored `mapTileArchiveFormat`.
+    fieldCount: v.number(),
+    mapTileArchiveFormatCurrent: v.boolean(),
+  });
 
 export const listSchemaSummaries = query({
   // Required limit (issue #128) — same bound as `listSchemas`; the summary
@@ -552,8 +566,11 @@ export const getMapTileArchiveMeta = query({
       // Issue #125's format gate: an archive whose format field is absent
       // (format 1) or behind the current constant was built by an older
       // builder and must not be served — the same self-healing shape as
-      // the built-version check above (meta null ⇒ the manager's
-      // first-build trigger rebuilds, and the OPFS pin prunes its copy).
+      // the built-version check above. Null meta flips the dataset to the
+      // row path and the OPFS pin prunes its copy; the rebuild fires
+      // because this gate is mirrored into the summary projection
+      // (`mapTileArchiveFormatCurrent`), which `isTileArchiveStale` reads
+      // as stale — a format-gated row never waits for an edit.
       schemaDoc.mapTileArchiveFormat !== MAP_TILE_ARCHIVE_FORMAT
     ) {
       return null;
@@ -596,7 +613,7 @@ export const getMapTileArchiveMeta = query({
  * self-discards, and the client's next staleness check will trigger a
  * rebuild against the newer version). On match, the superseded archive blob
  * is deleted (blobs are immutable; a new generation is a new blob) and all
- * five fields are patched atomically.
+ * six fields are patched atomically.
  *
  * Deliberately a PUBLIC component mutation, NOT exposed through `exposeApi`:
  * a component-internal function is invisible to the host app entirely (the
@@ -2347,10 +2364,12 @@ export const MAP_TILE_ARCHIVE_MIN_BYTES = 262_144; // 256 KB
  * entries across tile-id gaps, leaving tiles unreachable and maps with
  * holes. `setMapTileArchive` stamps the current format on every install,
  * and `getMapTileArchiveMeta` treats anything else as no archive — which
- * reads as "row path only" to consumers, so the TileArchiveManager's
- * first-build trigger rebuilds and the OPFS pin prunes the stale local
- * copy. Bump this constant whenever a builder change would make old
- * installed archives wrong.
+ * reads as "row path only" to consumers. The gate is mirrored into the
+ * summary projection (`toSchemaSummary`'s derived
+ * `mapTileArchiveFormatCurrent`, computed against this same constant), so
+ * the TileArchiveManager's staleness trigger rebuilds a format-gated row
+ * and the OPFS pin prunes its stale local copy. Bump this constant
+ * whenever a builder change would make old installed archives wrong.
  */
 export const MAP_TILE_ARCHIVE_FORMAT = 2;
 

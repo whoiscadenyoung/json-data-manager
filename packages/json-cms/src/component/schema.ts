@@ -245,9 +245,9 @@ export default defineSchema({
     // Rendering-cache bookkeeping for the tile-archive path (#58): every
     // geometry-affecting write bumps `mapTileCacheVersion` (see
     // `bumpMapTileCacheVersion` in lib.ts) so a stale rebuild can detect
-    // itself, and the remaining four fields point at the current archive —
+    // itself, and the remaining five fields point at the current archive —
     // set atomically by `setMapTileArchive` only when its `expectedVersion`
-    // still matches. All five are absent on datasets that never had an
+    // still matches. All six are absent on datasets that never had an
     // archive; an absent version reads as 0.
     //
     // The version is MONOTONIC for the dataset's lifetime (issue #129,
