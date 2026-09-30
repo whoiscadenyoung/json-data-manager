@@ -526,8 +526,12 @@ export const getSourceFileUrl = query({
  * A fetchable URL for the dataset's current tile archive, plus the metadata
  * a client needs to decide between the tile path and the row path
  * (`version` currency check, byte size, max zoom). All fields absent/null
- * when the dataset has no installed archive (or its blob is gone) — read
- * that as "row path only".
+ * when the dataset has no installed archive (or its blob is gone, or the
+ * installed archive predates the current `MAP_TILE_ARCHIVE_FORMAT` —
+ * issue #125's invalidation: such archives were built by a builder whose
+ * run-length dedupe could merge across tile-id gaps, so they read as
+ * "row path only" until a rebuild replaces them) — read that as
+ * "row path only".
  */
 export const getMapTileArchiveMeta = query({
   args: { schemaId: v.id("schemas") },
@@ -544,7 +548,13 @@ export const getMapTileArchiveMeta = query({
       // missing the built-version field can only predate this field (dev
       // installs from before the amendment); treat it as no archive rather
       // than serve an unanchored staleness check.
-      schemaDoc.mapTileArchiveBuiltVersion === undefined
+      schemaDoc.mapTileArchiveBuiltVersion === undefined ||
+      // Issue #125's format gate: an archive whose format field is absent
+      // (format 1) or behind the current constant was built by an older
+      // builder and must not be served — the same self-healing shape as
+      // the built-version check above (meta null ⇒ the manager's
+      // first-build trigger rebuilds, and the OPFS pin prunes its copy).
+      schemaDoc.mapTileArchiveFormat !== MAP_TILE_ARCHIVE_FORMAT
     ) {
       return null;
     }
@@ -629,16 +639,18 @@ export const setMapTileArchive = mutation({
     if (superseded !== undefined && superseded !== args.storageId) {
       await ctx.storage.delete(superseded);
     }
-    // Patch all five fields: the three archive pointers plus
+    // Patch all six fields: the three archive pointers plus
     // `mapTileArchiveBuiltVersion` (the snapshot this archive was built
     // from — equal to the current version here, which is what makes
     // `getMapTileArchiveMeta`'s `version` the staleness comparison
-    // anchor), and `mapTileCacheVersion` explicitly so "an installed
-    // archive always carries a version" holds even for a legacy
-    // absent-field row.
+    // anchor), `mapTileArchiveFormat` (the layout generation this install
+    // was written by — the issue #125 invalidation gate) and
+    // `mapTileCacheVersion` explicitly so "an installed archive always
+    // carries a version" holds even for a legacy absent-field row.
     await ctx.db.patch(args.schemaId, {
       mapTileArchiveBuiltVersion: args.expectedVersion,
       mapTileArchiveBytes: args.bytes,
+      mapTileArchiveFormat: MAP_TILE_ARCHIVE_FORMAT,
       mapTileArchiveMaxZoom: args.maxZoom,
       mapTileArchiveStorageId: args.storageId,
       mapTileCacheVersion: args.expectedVersion,
@@ -1162,7 +1174,7 @@ async function drainGeometriesPhase(
 }
 
 /**
- * The clear's finisher: counters to zero, the four tile-archive fields
+ * The clear's finisher: counters to zero, the five tile-archive fields
  * cleared (the archive blob itself was deleted with the data) — and
  * `mapTileCacheVersion` bumped MONOTONICALLY past every version a pre-clear
  * rebuild or OPFS pin could have snapshotted (issue #129, revising the
@@ -1181,6 +1193,7 @@ async function finishClear(ctx: MutationCtx, schemaId: Id<"schemas">): Promise<v
     featureCount: doc.kind === "geospatial" ? 0 : undefined,
     mapTileArchiveBuiltVersion: undefined,
     mapTileArchiveBytes: undefined,
+    mapTileArchiveFormat: undefined,
     mapTileArchiveMaxZoom: undefined,
     mapTileArchiveStorageId: undefined,
     // Monotonic bump, never a reset: the version is now "how many
@@ -2323,6 +2336,23 @@ export const GEOMETRY_PAGE_BYTE_BUDGET = 5_000_000; // ~5 MB of payload per page
 
 /** Minimum geometry-payload size a dataset must reach before a tile archive is worth building for it (exported for tests). Below this the existing row-based read path is already cheap enough — SMART's ~13 KB of points would gain nothing from a 256 KB archive. Consumed by the rebuild worker (issue #58 part 3), not by this component. */
 export const MAP_TILE_ARCHIVE_MIN_BYTES = 262_144; // 256 KB
+
+/**
+ * The tile-archive layout generation this component installs (issue #125's
+ * invalidation mechanism — an archive-FORMAT bump, deliberately not a
+ * `mapTileCacheVersion` bump: the version counter is per-row data that no
+ * code change can retroactively move, while this gate re-reads every
+ * install against the current constant). Format 1 is the implicit field-
+ * absent era: its builder merged byte-identical tiles into run-length
+ * entries across tile-id gaps, leaving tiles unreachable and maps with
+ * holes. `setMapTileArchive` stamps the current format on every install,
+ * and `getMapTileArchiveMeta` treats anything else as no archive — which
+ * reads as "row path only" to consumers, so the TileArchiveManager's
+ * first-build trigger rebuilds and the OPFS pin prunes the stale local
+ * copy. Bump this constant whenever a builder change would make old
+ * installed archives wrong.
+ */
+export const MAP_TILE_ARCHIVE_FORMAT = 2;
 
 /** High safety ceiling on rows per page; the byte budget is what actually bounds a real page long before this unless every row is tiny. */
 const MAX_GEOMETRY_PAGE_ROWS = 500;

@@ -268,6 +268,13 @@ export default defineSchema({
     // `getMapTileArchiveMeta`) behind `mapTileCacheVersion` means edits
     // landed after the archive was built.
     mapTileArchiveBuiltVersion: v.optional(v.number()),
+    // The archive-layout generation the CURRENT installed blob was written
+    // by (`MAP_TILE_ARCHIVE_FORMAT` in lib.ts). Absent = installed before
+    // format tracking (format 1) — those archives were built by a builder
+    // whose run-length dedupe could merge tiles across tile-id gaps
+    // (issue #125), so `getMapTileArchiveMeta` treats them as no archive
+    // and the rebuild machinery replaces them.
+    mapTileArchiveFormat: v.optional(v.number()),
     // True when this dataset normalizes geometry coordinates to
     // GEOMETRY_SIMPLIFY_DECIMAL_PLACES (6dp, ~0.11 m) on every write — set at
     // creation via the importer's "Simplify geometry" checkbox, or by

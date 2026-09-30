@@ -5,7 +5,11 @@ import type { GeometryArgs, GeometryTypeArg } from "../shared/geojson/validators
 import { api, internal } from "./_generated/api.js";
 import type { Id } from "./_generated/dataModel.js";
 import { INLINE_GEOMETRY_BYTE_LIMIT } from "./geometry_storage.js";
-import { GEOMETRY_PAGE_BYTE_BUDGET, MAP_TILE_ARCHIVE_MIN_BYTES } from "./lib.js";
+import {
+  GEOMETRY_PAGE_BYTE_BUDGET,
+  MAP_TILE_ARCHIVE_FORMAT,
+  MAP_TILE_ARCHIVE_MIN_BYTES,
+} from "./lib.js";
 import { initConvexTest } from "./setup.test.js";
 
 /** `|| 0` normalizes a `-0` result (e.g. right at an angle where sin/cos rounds to negative zero) to plain `0` — `JSON.stringify(-0) === "0"`, so without this a fixture value could "round-trip" through JSON as `0` instead of `-0` and fail a strict-equality assertion for a reason that has nothing to do with the code under test. */
@@ -2573,6 +2577,7 @@ describe("json-cms component", () => {
       expect(schemaDoc.mapTileArchiveBytes).toBeUndefined();
       expect(schemaDoc.mapTileArchiveMaxZoom).toBeUndefined();
       expect(schemaDoc.mapTileArchiveBuiltVersion).toBeUndefined();
+      expect(schemaDoc.mapTileArchiveFormat).toBeUndefined();
       expect(schemaDoc.mapTileCacheVersion).toBe(2);
       expect(await t.query(api.lib.getMapTileArchiveMeta, { schemaId })).toBeNull();
       const stillThere = await t.run(async (ctx) => ctx.storage.get(archiveStorageId));
@@ -2654,6 +2659,40 @@ describe("json-cms component", () => {
         const stored = await t.run(async (ctx) => ctx.db.get(schemaId));
         assertDefined(stored);
         expect(stored.mapTileArchiveStorageId).toBe(storageId);
+      });
+
+      it("a pre-format-tracking (format-1) archive reads as null meta until a rebuild reinstalls", async () => {
+        const t = initConvexTest(),
+          schemaId = await createGeospatialSchema(t, "Point"),
+          storageId = await installArchive(t, schemaId, 0, "format-1-archive");
+
+        // Fresh installs always stamp the current format, so a current
+        // archive serves normally...
+        const fresh = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
+        assertDefined(fresh);
+        expect(fresh.storageId).toBe(storageId);
+
+        // ...while a row written before format tracking (field absent —
+        // exactly what every pre-#125 install looks like) must read as no
+        // archive: its builder's run-length dedupe merged across tile-id
+        // gaps, so the blob may have holes. Null meta flips the dataset to
+        // the row path, fires the manager's first-build rebuild, and makes
+        // the OPFS pin prune its stale copy.
+        await t.run(async (ctx) => {
+          await ctx.db.patch(schemaId, { mapTileArchiveFormat: undefined });
+        });
+        expect(await t.query(api.lib.getMapTileArchiveMeta, { schemaId })).toBeNull();
+
+        // The rebuild converges: a new install stamps the current format
+        // and the archive serves again (superseding blob deleted).
+        const rebuiltId = await installArchive(t, schemaId, 0, "format-2-archive");
+        expect(rebuiltId).not.toBe(storageId);
+        const replaced = await t.run(async (ctx) => ctx.storage.get(storageId));
+        expect(replaced).toBeNull();
+        const meta = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
+        assertDefined(meta);
+        expect(meta.storageId).toBe(rebuiltId);
+        expect(MAP_TILE_ARCHIVE_FORMAT).toBeGreaterThan(1);
       });
 
       it("re-installing at the same version deletes the superseded blob and repoints the meta", async () => {

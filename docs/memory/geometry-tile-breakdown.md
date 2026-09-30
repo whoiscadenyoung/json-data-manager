@@ -104,6 +104,38 @@ guard's liveness guarantee now.
   the tile-path chip legitimately holds forever while an external basemap hangs
   (`idle` can't fire; pre-existing, reload recovers).
 
+## #125 review-fix (2026-09-30): PMTiles run-length gap bug + invalidation via archive-FORMAT bump
+
+The PMTiles directory builder's ADJACENT-entry merge in
+`packages/geometry-archive/src/assemble.ts` (`deduplicateTiles`) extended
+`runLength` on byte-equality alone — but a PMTiles run covers the id range
+`[tileId, runLength)`, so identical tiles separated by an id gap (common:
+`tileFor` skips empty tiles and fully-covered polygon interiors are
+byte-identical) made the gap ids resolve to the wrong tile and the tile
+after the gap unreachable (maps rendered holes). Fixed with the contiguity
+check `tile.tileId === previous.tileId + previous.runLength` on the
+adjacent merge only; the non-adjacent digest-map path was already correct
+(new entry reusing `blobIndex`), so byte dedupe is preserved — the
+`archive-size.test.ts` ratio measured 10.01% before AND after. Tests:
+`assemble.test.ts` (gap regression + every-tile-resolves round-trip over a
+concave U polygon + disjoint MultiPolygon through the reference `pmtiles`
+reader; both confirmed FAILING pre-fix).
+
+**Invalidation choice: archive-FORMAT bump, not a tile-cache-version bump.**
+`mapTileCacheVersion` is per-row stored data — no code change can
+retroactively move every row's counter, so "bump the tile cache version"
+would have needed a migration. Instead the component now tracks the layout
+generation: `MAP_TILE_ARCHIVE_FORMAT = 2` (lib.ts), stamped by
+`setMapTileArchive` into the new optional schema field
+`mapTileArchiveFormat`, and `getMapTileArchiveMeta` returns null unless the
+installed archive's format equals the constant (absent = format 1 = the
+gap-bug era). This reuses the exact self-healing shape of the
+`mapTileArchiveBuiltVersion` legacy precedent: null meta ⇒ consumers read
+"row path only", the TileArchiveManager's first-build trigger (version > 0,
+no archive) rebuilds, and the OPFS pin prunes its stale copy. Bump the
+constant whenever a builder change would make old installed archives wrong.
+`deleteEntriesBySchema`'s reset now clears it with the other cache fields.
+
 ## #63 part-5 status (2026-09-18, PR #68 merged to `main`) — ALL FIVE PARTS DONE
 
 #58 architecture complete: rows authoritative, tile archives as rendering
