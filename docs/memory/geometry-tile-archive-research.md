@@ -7,7 +7,7 @@ metadata:
   type: reference
 ---
 
-Research done 2026-09-17 (main thread — subagent spawning still unavailable) for
+Research done 2026-09-17 for
 issue #58 (`perf(geometry): render maps from per-dataset vector-tile archives +
 layered client caching`), which supersedes #51's GeoJSON blob as the _rendering
 cache format_ while keeping #51's version/invalidate/rebuild/threshold design

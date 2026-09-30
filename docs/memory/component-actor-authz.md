@@ -25,6 +25,7 @@ component-INITIATED flows — don't reach for it here unless one appears.
 - Display is host-side: app resolves `createdBy` via `users:profileByAuthId`
   (the users mirror from [[better-auth-setup]]) → "Created by" in the
   dataset overview Details card.
+- **Trust model (2026-09-30, ADR 0009):** the hook's write policy is deliberately permissive — published datasets/maps/collections/groups are co-editable by any signed-in user; only drafts and `publishedVisibility: "author"` rows are creator-only. Per-dataset locking is #124 (will add an `editPolicy` and likely `mapId` on `ExposeApiOperation`). See [[code-review-2026-09-30]].
 - App consumes `@caden/json-cms` from dist — after editing the package run
   `bun run build:codegen` there (tsc + component codegen) or the app
   typechecks against stale component arg types.
