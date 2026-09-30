@@ -1530,7 +1530,6 @@ export async function syncRegistryReferenceEdges(
   }
 }
 
-/** The internal wrapper over the edge-sync (see the helper above). */
 /**
  * The publish-completion hook (the tag path's after-ingest pattern, at the
  * publish side): the delta against the chain's previous version + keep-N

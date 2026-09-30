@@ -521,7 +521,12 @@ export const readCommitTail = internalQuery({
   ),
 });
 
-/** What a collect leg produced: the chunk blobs, the row/commit total, and the cursor it ends on. */
+/**
+ * What a collect leg produced: the chunk blobs, the row/commit total, and
+ * the cursor it ends on. The legs fill in the caller's payload rather than
+ * returning their own — the caller's catch has to reach the blob ids to
+ * clean them up when a mid-drain page read throws.
+ */
 interface CollectedPayload {
   chunkStorageIds: Array<Id<"_storage">>;
   cursorCommitId?: string;
@@ -545,17 +550,19 @@ async function storeChunk(
  * The commit-tail leg: drains the feed page by page since the binding's
  * cursor — a tail past the page size drains fully (#127 defect 2) — and
  * ends on the payload's last commit, never `newestCommit()`, which used to
- * skip past commits the capped read never carried.
+ * skip past commits the capped read never carried. Fills the caller's
+ * payload chunk by chunk, so blobs stored before a throw stay reachable
+ * for cleanup.
  */
 async function collectCommitTail(
   ctx: ActionCtx,
   args: { bindingId: Id<"datasetBindings">; source: string },
-): Promise<CollectedPayload> {
+  payload: CollectedPayload,
+): Promise<void> {
   const binding = await ctx.runQuery(internal.sync.getBindingDoc, { bindingId: args.bindingId });
   if (binding === null) {
     throw new Error("The binding vanished before the tail was read.");
   }
-  const payload: CollectedPayload = { chunkStorageIds: [], total: 0 };
   let sinceSeq = binding.lastAppliedCommitSeq ?? 0;
   for (;;) {
     // oxlint-disable-next-line no-await-in-loop -- paging the tail; a short page ends the drain.
@@ -578,7 +585,6 @@ async function collectCommitTail(
     }
     sinceSeq = payload.cursorSeq ?? sinceSeq;
   }
-  return payload;
 }
 
 /**
@@ -587,11 +593,15 @@ async function collectCommitTail(
  * cursor (harmless, idempotent), never stamped as applied while missing
  * from them (#127 defect 5) — and drains the state page by page across
  * transactions until the null cursor, so a truncated read can never reach
- * finalize's sweep (#127 defect 1).
+ * finalize's sweep (#127 defect 1). Fills the caller's payload chunk by
+ * chunk, so blobs stored before a throw stay reachable for cleanup.
  */
-async function collectFullState(ctx: ActionCtx, source: string): Promise<CollectedPayload> {
+async function collectFullState(
+  ctx: ActionCtx,
+  source: string,
+  payload: CollectedPayload,
+): Promise<void> {
   const newest = await ctx.runQuery(internal.sync.readNewestCommit, { source });
-  const payload: CollectedPayload = { chunkStorageIds: [], total: 0 };
   let rowsCursor: string | null = null;
   for (;;) {
     // oxlint-disable-next-line no-await-in-loop -- paging across transactions; the null cursor ends the drain.
@@ -611,7 +621,6 @@ async function collectFullState(ctx: ActionCtx, source: string): Promise<Collect
   }
   payload.cursorCommitId = newest !== null ? newest.foreignCommitId : undefined;
   payload.cursorSeq = newest !== null ? newest.seq : undefined;
-  return payload;
 }
 
 export const collectRows = internalAction({
@@ -624,14 +633,26 @@ export const collectRows = internalAction({
       return null;
     }
 
+    // Declared outside the try so the catch can reach it: the collect legs
+    // interleave page reads with storeChunk writes, so a later page read
+    // throwing leaves the attempt's stored blobs referenced only from this
+    // local array — the run doc's chunkStorageIds stay [] until markCollected
+    // wins, so markRunFailed's sweep alone would leak them (#127's Preserve
+    // invariant: blob cleanup on the failure path, not just success).
+    const payload: CollectedPayload = { chunkStorageIds: [], total: 0 };
+    // Flips once markCollected wins and the run doc takes over the blob ids:
+    // past that point the catch must NOT delete them (they are the run's to
+    // apply; markRunFailed's own sweep covers them).
+    let runOwnsBlobs = false;
     try {
       // App storage (not the component's — the apply action reads these
       // back with its own ctx.storage, and component blobs only resolve
       // inside the component).
-      const payload =
-        run.mode === "commit-tail"
-          ? await collectCommitTail(ctx, { bindingId: run.bindingId, source: args.source })
-          : await collectFullState(ctx, args.source);
+      if (run.mode === "commit-tail") {
+        await collectCommitTail(ctx, { bindingId: run.bindingId, source: args.source }, payload);
+      } else {
+        await collectFullState(ctx, args.source, payload);
+      }
 
       const won = await ctx.runMutation(internal.sync.markCollected, {
         claim: args.claim,
@@ -647,12 +668,26 @@ export const collectRows = internalAction({
         // schedule nothing (#127 defect 7).
         return null;
       }
+      runOwnsBlobs = true;
       await ctx.scheduler.runAfter(0, internal.sync.applyChunks, {
         claim: args.claim,
         runId: args.runId,
       });
       return null;
     } catch (error) {
+      if (!runOwnsBlobs) {
+        // The attempt's stored blobs are reachable only from payload —
+        // delete them before failing, best-effort like markRunFailed's sweep.
+        await Promise.all(
+          payload.chunkStorageIds.map(async (storageId) => {
+            try {
+              await ctx.storage.delete(storageId);
+            } catch {
+              // Best-effort cleanup.
+            }
+          }),
+        );
+      }
       // A failed collect used to strand the run in `collecting` forever
       // (revives kept rescheduling the same failing collect) — fail it
       // cleanly instead (#127 defect 3).
