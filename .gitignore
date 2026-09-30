@@ -21,3 +21,10 @@ todos.json
 
 .input
 exports
+
+# ZCode session tooling — transient workflow drafts/runs and the tool's
+# machine-generated .zcodeignore. The tracked skill symlinks under
+# .zcode/skills/ and the existing plans file stay tracked (#139 item 9).
+.zcode/workflow-drafts/
+.zcode/workflow-runs/
+.zcodeignore
