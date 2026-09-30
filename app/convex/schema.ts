@@ -311,7 +311,13 @@ export default defineSchema({
     sourceDatasetId: v.string(),
   })
     .index("by_consumer", ["consumerId"])
-    .index("by_source", ["sourceDatasetId"]),
+    .index("by_source", ["sourceDatasetId"])
+    // The retire gate (#126): which references still pin one frozen row —
+    // tags.retireVersion refuses while any row answers, so a manual retire
+    // can never leave a pinned consumer dangling. Every pin path
+    // (setReferenceMode/sync/revert) writes pinnedSchemaId alongside
+    // pinnedRef, so the id is the complete pin identity.
+    .index("by_pinnedSchemaId", ["pinnedSchemaId"]),
 
   // The publish-side retention policy store (roadmap stage 6, #101): keep-N
   // and pinned refs for PUBLISH chains — the derived-side store tags.ts said
@@ -552,7 +558,10 @@ export default defineSchema({
   // into the commits' ops shape (docs/bound-datasets-design.md §6) — the
   // historical record of "what changed between tag N-1 and tag N". The
   // compare view computes arbitrary pairs on demand instead (see
-  // tags.getVersionDelta), so only sequential pairs are stored.
+  // tags.getVersionDelta), so only sequential pairs are stored. `truncated`
+  // (#126) marks a delta whose sides sat at the VERSION_DIFF_LIMIT read
+  // budget — the counts cover the first 2,000 rows per side, and the UI says
+  // so instead of serving the bounded diff as the whole truth.
   tagDeltas: defineTable({
     at: v.number(),
     fromRef: v.optional(v.string()),
@@ -572,6 +581,7 @@ export default defineSchema({
     ),
     sourceSchemaId: v.string(),
     toRef: v.optional(v.string()),
+    truncated: v.optional(v.boolean()),
   }).index("by_source", ["sourceSchemaId"]),
 
   // The foreign app's own commit log — the stand-in for its git-like

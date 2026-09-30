@@ -884,6 +884,7 @@ describe("stage-8 tag path (review round 2)", () => {
       added: 0,
       ops: [],
       removed: 0,
+      truncated: false,
       updated: 0,
     });
     // …and retirement is creator-only (a publish-frozen row carries its

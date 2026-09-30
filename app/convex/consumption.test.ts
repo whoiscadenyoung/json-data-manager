@@ -24,6 +24,7 @@ import {
 } from "./consumption";
 import type { AttemptVersionLike, ChainVersion } from "./consumption";
 import schema from "./schema";
+import { VERSION_DIFF_LIMIT } from "./versioning";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -560,6 +561,31 @@ describe("reference pin/float, sync, and revert (AC)", () => {
       t.mutation(api.consumption.revertReference, { referenceId: consumer.referenceId ?? "" }),
     ).rejects.toThrow(/first version/i);
   });
+
+  it("retireVersion refuses a version a consumer still pins, and allows it once the reference floats (#126 AC)", async () => {
+    const t = signedIn();
+    const { consumer, v1 } = await chainWithReference(t);
+
+    // Pin the consumer to the source chain's head (v1) — the recorded
+    // decision is REFUSE, not repin: a pin is the consumer's explicit choice
+    // of one exact immutable version.
+    await t.mutation(api.consumption.setReferenceMode, {
+      mode: "pin",
+      referenceId: consumer.referenceId ?? "",
+    });
+    await expect(t.mutation(api.tags.retireVersion, { schemaId: v1.schemaId })).rejects.toThrow(
+      /pinned by a consumer/,
+    );
+    expect(await schemaExists(t, v1.schemaId)).toBe(true);
+
+    // Floating the reference releases the pin — the retire goes through.
+    await t.mutation(api.consumption.setReferenceMode, {
+      mode: "float",
+      referenceId: consumer.referenceId ?? "",
+    });
+    await t.mutation(api.tags.retireVersion, { schemaId: v1.schemaId });
+    expect(await schemaExists(t, v1.schemaId)).toBe(false);
+  });
 });
 
 /** The consumedBy result's known-consumer kinds (test-local narrow). */
@@ -634,6 +660,8 @@ describe("publish-completion delta vs fixture rows (AC)", () => {
     expect(counts.added).toBe(1);
     expect(counts.removed).toBe(1);
     expect(counts.updated).toBe(1);
+    // Both sides sat far under the diff budget — the record is exact (#126).
+    expect(counts.truncated).toBe(false);
     // The ops carry before/after values in the commits' shape.
     const updateOp = counts.ops.find((op) => op.op === "update");
     expect(defined(updateOp).entryKey).toBe("B");
@@ -679,6 +707,34 @@ describe("publish-completion delta vs fixture rows (AC)", () => {
         toRef: "nope",
       }),
     ).toBeNull();
+  });
+
+  it("flags a stored delta truncated when a side exceeds the diff budget, and the on-demand path answers the same (#126 AC)", async () => {
+    const t = signedIn();
+    const draftId = await createDraftDataset(t, { title: "Big" });
+    const v1 = await publishDraft(t, draftId, rowsOf("a"));
+    const v2 = await publishDraft(t, draftId, rowsOf("b"));
+    const fromRef = await rowRefOf(t, v1.schemaId),
+      toRef = await rowRefOf(t, v2.schemaId);
+
+    const stored = defined(
+      await t.query(api.consumption.storedDelta, { anchorId: draftId, fromRef, toRef }),
+    );
+    // The bounded diff is flagged, never served silently as the whole truth.
+    expect(stored.truncated).toBe(true);
+    // The counts cover the first VERSION_DIFF_LIMIT rows per side.
+    expect(stored.added).toBe(VERSION_DIFF_LIMIT);
+    expect(stored.removed).toBe(VERSION_DIFF_LIMIT);
+    expect(stored.updated).toBe(0);
+
+    // The on-demand diff answers the same flag for the same pair.
+    const onDemand = await t.query(api.tags.getVersionDelta, {
+      aSchemaId: v1.schemaId,
+      bSchemaId: v2.schemaId,
+    });
+    expect(onDemand.truncated).toBe(true);
+    expect(onDemand.added).toBe(stored.added);
+    expect(onDemand.removed).toBe(stored.removed);
   });
 });
 
@@ -748,6 +804,181 @@ async function schemaExists(t: TestConvex, schemaId: string): Promise<boolean> {
     async (ctx) => (await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId })) !== null,
   );
 }
+
+/** One frozen row's snapshot ref while the row still exists (empty once retired). */
+async function rowRefOf(t: TestConvex, schemaId: string): Promise<string> {
+  const row = await t.run(async (ctx) =>
+    ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId }),
+  );
+  return refOf(row) ?? "";
+}
+
+/** The chain anchor's stored deltas, oldest insert first (raw table read — no projection lists them). */
+async function chainDeltas(t: TestConvex, anchorId: string) {
+  return t.run(async (ctx) =>
+    ctx.db
+      .query("tagDeltas")
+      .withIndex("by_source", (q) => q.eq("sourceSchemaId", anchorId))
+      .collect(),
+  );
+}
+
+/** `count` distinctly-labeled rows under one tag prefix (the truncation fixture). */
+function rowsOf(tag: string): Array<{ data: Record<string, unknown> }> {
+  return Array.from({ length: VERSION_DIFF_LIMIT + 1 }, (_, index) => ({
+    data: { label: `${tag}-${index}` },
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Retention over a derived chain across keep+2 publishes, with poisoned
+// attempt feeds (#126's acceptance criteria): the hook must retire exactly
+// the oldest, never abort, and record a delta for every publish — a failed
+// attempt and an already-retired attempt are not versions.
+// ---------------------------------------------------------------------------
+
+describe("retention across keep+2 derived publishes, poisoned feeds (AC #126)", () => {
+  it("retires exactly the oldest each publish, never aborts the hook, and records a delta for every publish", async () => {
+    const t = signedIn();
+    const draftId = await createDraftDataset(t, { title: "Source" });
+    await addEntries(t, draftId, [{ data: { label: "A" } }]);
+    const v1 = await publishDerived(t, {
+      chunks: [[{ data: { label: "A" } }]],
+      sourceDatasetId: draftId,
+      title: "T",
+    });
+    await t.mutation(api.consumption.setChainKeep, { anchorId: v1.registryId, keep: 2 });
+
+    // Refs captured eagerly — a version's row is gone after a later hook.
+    const refs = [await rowRefOf(t, v1.schemaId)];
+    const v2 = await publishDerived(t, {
+      chunks: [[{ data: { label: "row 2" } }]],
+      registryId: v1.registryId,
+      sourceDatasetId: draftId,
+      title: "T",
+    });
+    refs.push(await rowRefOf(t, v2.schemaId));
+    // Two versions, keep 2 — nothing retires yet.
+    expect(await schemaExists(t, v1.schemaId)).toBe(true);
+
+    const v3 = await publishDerived(t, {
+      chunks: [[{ data: { label: "row 3" } }]],
+      registryId: v1.registryId,
+      sourceDatasetId: draftId,
+      title: "T",
+    });
+    refs.push(await rowRefOf(t, v3.schemaId));
+    // Exactly the oldest retired at v3's hook — and nothing else.
+    expect(await schemaExists(t, v1.schemaId)).toBe(false);
+    expect(await schemaExists(t, v2.schemaId)).toBe(true);
+
+    const v4 = await publishDerived(t, {
+      chunks: [[{ data: { label: "row 4" } }]],
+      registryId: v1.registryId,
+      sourceDatasetId: draftId,
+      title: "T",
+    });
+    refs.push(await rowRefOf(t, v4.schemaId));
+    // Exactly the next-oldest retired at v4's hook.
+    expect(await schemaExists(t, v2.schemaId)).toBe(false);
+    expect(await schemaExists(t, v3.schemaId)).toBe(true);
+    expect(await schemaExists(t, v4.schemaId)).toBe(true);
+
+    // The chain listing shows only the survivors — a retired version's
+    // attempt row is not a version.
+    const listed = await t.query(api.consumption.chainVersions, { anchorId: v1.registryId });
+    expect(listed).toHaveLength(2);
+    expect(listed.map((entry) => entry.schemaId)).toContain(v3.schemaId);
+    expect(listed.map((entry) => entry.schemaId)).toContain(v4.schemaId);
+    expect(listed.map((entry) => entry.schemaId)).not.toContain(v1.schemaId);
+
+    // A delta for every publish past the first, chained ref-to-ref — the
+    // hook never aborted (a throw would roll its delta back with it).
+    const deltas = await chainDeltas(t, v1.registryId);
+    expect(deltas).toHaveLength(3);
+    expect(deltas.map((delta) => `${delta.fromRef}->${delta.toRef}`)).toStrictEqual([
+      `${refs[0]}->${refs[1]}`,
+      `${refs[1]}->${refs[2]}`,
+      `${refs[2]}->${refs[3]}`,
+    ]);
+  });
+
+  it("ignores a failed attempt and an already-retired attempt", async () => {
+    const t = signedIn();
+    const draftId = await createDraftDataset(t, { title: "Source" });
+    await addEntries(t, draftId, [{ data: { label: "A" } }]);
+    const v1 = await publishDerived(t, {
+      chunks: [[{ data: { label: "A" } }]],
+      sourceDatasetId: draftId,
+      title: "T",
+    });
+    await t.mutation(api.consumption.setChainKeep, { anchorId: v1.registryId, keep: 1 });
+
+    // A FAILED attempt for the anchor (planted — its failure paths are the
+    // client's): not a version, so it must not occupy the keep slot.
+    await t.run(async (ctx) => {
+      await ctx.db.insert("publishAttempts", {
+        chunkStorageIds: [],
+        createdBy: "user-1",
+        datasetKey: v1.registryId,
+        datasetKind: "derived",
+        lastProgressAt: Date.now(),
+        publishKey: "pub-failed",
+        startedAt: Date.now(),
+        status: "failed",
+        title: "T",
+        versionLabel: "vX",
+      });
+    });
+
+    const v2 = await publishDerived(t, {
+      chunks: [[{ data: { label: "B" } }]],
+      registryId: v1.registryId,
+      sourceDatasetId: draftId,
+      title: "T",
+    });
+    const v2Ref = await rowRefOf(t, v2.schemaId);
+    // The failed attempt did not take the keep slot: v1 retired on schedule,
+    // and its delta landed.
+    expect(await schemaExists(t, v1.schemaId)).toBe(false);
+    expect(await schemaExists(t, v2.schemaId)).toBe(true);
+
+    // v1's attempt now points at a deleted row — the already-retired kind.
+    // The next hook must skip it: pre-fix it re-ran deleteSchema on the dead
+    // id, threw "Schema not found", and rolled the whole hook (delta
+    // included) back.
+    const v3 = await publishDerived(t, {
+      chunks: [[{ data: { label: "C" } }]],
+      registryId: v1.registryId,
+      sourceDatasetId: draftId,
+      title: "T",
+    });
+    expect(await schemaExists(t, v2.schemaId)).toBe(false);
+    expect(await schemaExists(t, v3.schemaId)).toBe(true);
+
+    // Both deltas landed — the v2→v3 one is the proof the v3 hook survived
+    // the dead attempt in its feed.
+    const deltas = await chainDeltas(t, v1.registryId);
+    expect(deltas).toHaveLength(2);
+    const second = deltas[1];
+    expect(defined(second).fromRef).toBe(v2Ref);
+    expect(defined(second).toRef).toBe(await rowRefOf(t, v3.schemaId));
+
+    // The failed attempt is still just a failed attempt (untouched), and the
+    // listing shows only the live version.
+    const failed = await t.run(async (ctx) =>
+      ctx.db
+        .query("publishAttempts")
+        .withIndex("by_dataset", (q) => q.eq("datasetKey", v1.registryId))
+        .filter((q) => q.eq(q.field("status"), "failed"))
+        .first(),
+    );
+    expect(failed === undefined || failed === null ? "" : failed.publishKey).toBe("pub-failed");
+    const listed = await t.query(api.consumption.chainVersions, { anchorId: v1.registryId });
+    expect(listed).toHaveLength(1);
+    expect(listed[0] === undefined ? "" : listed[0].schemaId).toBe(v3.schemaId);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // analysisTargets (stage 9, #105) — the resolve-then-feed leg: identity for

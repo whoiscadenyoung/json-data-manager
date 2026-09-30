@@ -293,7 +293,7 @@ describe("version projections over the tag flow", () => {
       aSchemaId: foreignDraft,
       bSchemaId: v1.schemaId,
     });
-    expect(hidden).toStrictEqual({ added: 0, ops: [], removed: 0, updated: 0 });
+    expect(hidden).toStrictEqual({ added: 0, ops: [], removed: 0, truncated: false, updated: 0 });
   });
 });
 
