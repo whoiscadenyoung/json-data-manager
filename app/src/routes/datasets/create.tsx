@@ -198,7 +198,7 @@ function SchemaFirst({ projectId }: { projectId?: string }) {
   const navigate = useNavigate(),
     createSchema = useMutation(api.schemas.create),
     createDraft = useMutation(api.projects.createDraftDataset),
-    schemas = useQuery({ ...convexQuery(api.schemas.list, {}) }).data,
+    schemas = useQuery({ ...convexQuery(api.schemas.list, { limit: 1000 }) }).data,
     availableDatasets = (schemas ?? []).map((s) => ({
       id: s._id,
       schema: s.schema,

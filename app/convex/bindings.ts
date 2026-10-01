@@ -3,6 +3,7 @@ import { ConvexError, v } from "convex/values";
 import { components, internal } from "./_generated/api";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { auth } from "./auth";
+import { deleteDatasetCascading } from "./schemas";
 import { SOURCE_KEY } from "./sources";
 
 /**
@@ -162,7 +163,11 @@ export const unbind = mutation({
     if (binding === null) {
       throw new ConvexError("This dataset has no source binding to remove.");
     }
-    await ctx.runMutation(components.jsonCms.lib.deleteSchema, {
+    await deleteDatasetCascading(ctx, {
+      // The cascade's activity phase is a no-op for the binding's rows once
+      // the delete below lands (the binding row goes, then unbindCleanup
+      // drains what references it) — running the host cascade here covers
+      // the OTHER host tables keyed by this dataset id (issue #128).
       boundWrite: "unbind",
       schemaId: binding.schemaId,
     });

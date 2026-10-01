@@ -23,9 +23,12 @@ export const createSchema = mutation({
 });
 
 export const listSchemas = query({
-  args: {},
-  handler: async (ctx) =>
-    ctx.runQuery(components.jsonCms.lib.listSchemas, { viewerId: "example-viewer" }),
+  args: { limit: v.number() },
+  handler: async (ctx, args) =>
+    ctx.runQuery(components.jsonCms.lib.listSchemas, {
+      limit: args.limit,
+      viewerId: "example-viewer",
+    }),
 });
 
 export const getSchema = query({
@@ -42,7 +45,7 @@ export const createEntry = mutation({
 });
 
 export const listEntries = query({
-  args: { schemaId: v.id("schemas") },
+  args: { limit: v.number(), schemaId: v.id("schemas") },
   handler: async (ctx, args) => ctx.runQuery(components.jsonCms.lib.listEntries, args),
 });
 

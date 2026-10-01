@@ -294,7 +294,7 @@ describe("public results carry no storage ids", () => {
     }
     expect(plainDoc.hasSourceFile).toBe(false);
 
-    const listed = await t.query(api.lib.listSchemas, { viewerId: "someone" });
+    const listed = await t.query(api.lib.listSchemas, { limit: 500, viewerId: "someone" });
     expect(listed.map((row) => row._id).toSorted()).toStrictEqual(
       [schemaId, otherSchemaId].toSorted(),
     );
@@ -328,13 +328,19 @@ describe("public results carry no storage ids", () => {
     expectNoLeak("getMapTileArchiveMeta", meta);
 
     // The summaries: no archive storage id either (issue #131).
-    const summaries = await t.query(api.lib.listSchemaSummaries, { viewerId: "someone" });
+    const summaries = await t.query(api.lib.listSchemaSummaries, {
+      limit: 500,
+      viewerId: "someone",
+    });
     const row = summaries.find((summary) => summary._id === schemaId);
     expect(row).toBeDefined();
     expect("mapTileArchiveStorageId" in (row ?? {})).toBe(false);
     expectNoLeak("listSchemaSummaries", summaries);
 
-    const drafts = await t.query(api.lib.listDraftSchemaSummaries, { viewerId: "someone" });
+    const drafts = await t.query(api.lib.listDraftSchemaSummaries, {
+      limit: 500,
+      viewerId: "someone",
+    });
     expectNoLeak("listDraftSchemaSummaries", drafts);
   });
 });

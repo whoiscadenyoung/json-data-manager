@@ -2,8 +2,9 @@ import { exposeApi } from "@caden/json-cms";
 import type { FunctionReturnType } from "convex/server";
 import { ConvexError, v } from "convex/values";
 
-import { components } from "./_generated/api";
-import { internalMutation, mutation, query } from "./_generated/server";
+import { components, internal } from "./_generated/api";
+import type { Doc } from "./_generated/dataModel";
+import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
 import { auth } from "./auth";
 
 export const {
@@ -19,8 +20,293 @@ export const {
   getSourceFileUrl,
   createSchema: create,
   updateSchema: update,
-  deleteSchema: remove,
 } = exposeApi(components.jsonCms, { auth });
+
+/**
+ * The widest list bound a host-side fold may pass (issue #128): the
+ * component's enumerations require a `limit` and cap it at this — the
+ * component's own `LIST_LIMIT_MAX`. Host folds that must see a whole catalog
+ * (the closure walk, the tile-cache buster, profiles) pass this ceiling; a
+ * catalog past it was already unreachable before #128 (the old unbounded
+ * collect blew the per-execution read cap long before a thousand datasets).
+ */
+export const CATALOG_READ_LIMIT = 1000;
+
+// ---------------------------------------------------------------------------
+// Dataset deletion with the host-side cascade (issue #128)
+//
+// The component's delete covers only its own tables; every HOST row keyed by
+// the deleted dataset id used to be orphaned by any delete path. Every host
+// caller now goes through `deleteDatasetCascading`, which runs the
+// component's (batched) delete and then drains — bounded batches per hop,
+// self-rescheduling until done (the unbindCleanup precedent, #127 defect
+// 10) — the tables the review named:
+//
+// - `consumerReferences` naming the id as source (a dataset's float/pin
+//   edges; pinned edges on a deleted dataset dangle by definition),
+// - `projectArtifacts` memberships naming it as a dataset artifact (each
+//   membership's fork edge goes with it — the removeArtifact precedent —
+//   and the project's denormalized `artifactCount` is kept honest),
+// - `derivedDatasets.dependsOn` arrays naming it (the row itself survives
+//   and re-reads as orphaned through its spec — the documented dependent
+//   behavior),
+// - `versionPolicies` keyed by the id (a live dataset's own policy store),
+// - `tagDeltas` keyed by the id as chain anchor,
+// - `publishAttempts` keyed by the id as datasetKey (a draft's attempts),
+// - `datasetActivity` rows under a binding that still names the id (the
+//   unbind flow's own cleanup owns the rest of a binding's children).
+//
+// Chain data of PUBLISHED rows is deliberately untouched: a frozen
+// version's retirement cascades only rows keyed by the version's own id —
+// its chain's policy/deltas/attempts hang from the ANCHOR (the draft's or
+// registry row's id) and must survive the version.
+// ---------------------------------------------------------------------------
+
+/** Rows deleted per table per cascade hop — bounded, rescheduled until drained (the unbindCleanup precedent). */
+const CASCADE_BATCH = 200;
+
+const cascadePhaseValidator = v.union(
+  v.literal("consumerRefs"),
+  v.literal("artifacts"),
+  v.literal("dependsOn"),
+  v.literal("policies"),
+  v.literal("tagDeltas"),
+  v.literal("attempts"),
+  v.literal("activity"),
+);
+type CascadePhase =
+  | "activity"
+  | "artifacts"
+  | "attempts"
+  | "consumerRefs"
+  | "dependsOn"
+  | "policies"
+  | "tagDeltas";
+
+/**
+ * The one entry point for deleting a dataset (component rows AND the host
+ * rows keyed by it). `boundWrite` carries the host-only attestation for the
+ * flows the component's read-only gate knows (unbind/retire/sync) — client
+ * callers never pass it.
+ */
+export async function deleteDatasetCascading(
+  ctx: {
+    runMutation: MutationCtx["runMutation"];
+    scheduler: MutationCtx["scheduler"];
+  },
+  opts: { boundWrite?: string; schemaId: string },
+): Promise<void> {
+  await ctx.runMutation(
+    components.jsonCms.lib.deleteSchema,
+    opts.boundWrite === undefined
+      ? { schemaId: opts.schemaId }
+      : { boundWrite: opts.boundWrite, schemaId: opts.schemaId },
+  );
+  // The cascade runs in its own transaction chain — the component delete
+  // may itself still be draining across its own scheduled hops; host rows
+  // don't depend on it being finished, only on the id.
+  await ctx.scheduler.runAfter(0, internal.schemas.deleteCascadeStep, {
+    cursor: undefined,
+    phase: "consumerRefs" as const,
+    schemaId: opts.schemaId,
+  });
+}
+
+/** The cascade's drain order — one bounded table per phase. */
+const CASCADE_PHASE_ORDER: CascadePhase[] = [
+  "consumerRefs",
+  "artifacts",
+  "dependsOn",
+  "policies",
+  "tagDeltas",
+  "attempts",
+  "activity",
+];
+
+type CascadeDrain =
+  /** The table hit its batch cap — resume this phase (with its cursor). */
+  | { status: "more"; cursor?: string }
+  /** The table is drained past this phase's batch — advance. */
+  | { status: "next" };
+
+/** The shared batch-cap verdict: a full batch means the table may have more rows. */
+function fullBatch(count: number): CascadeDrain {
+  return count === CASCADE_BATCH ? { status: "more" } : { status: "next" };
+}
+
+/** Deletes one artifact membership with everything minted alongside it: the fork's version-reference edge (born WITH the membership — projects.addArtifact) and the project's denormalized `artifactCount` decrement. */
+async function deleteArtifactMembership(ctx: MutationCtx, membership: Doc<"projectArtifacts">) {
+  const edges = await ctx.db
+    .query("consumerReferences")
+    .withIndex("by_consumer", (q) => q.eq("consumerId", membership._id))
+    .take(CASCADE_BATCH);
+  await Promise.all(edges.map(async (edge) => ctx.db.delete(edge._id)));
+  await ctx.db.delete(membership._id);
+  const project = await ctx.db.get(membership.projectId);
+  if (project !== null) {
+    await ctx.db.patch(project._id, {
+      artifactCount: Math.max(0, project.artifactCount - 1),
+    });
+  }
+}
+
+/** Drains one phase's table (bounded). Deleting is monotone — a hit cap always leaves fewer rows behind — so the rescheduling loop converges (the unbindCleanup argument). */
+// oxlint-disable-next-line eslint/complexity -- one honest branch per table; splitting the drain would scatter the per-table caps away from their scans.
+async function drainCascadeTable(
+  ctx: MutationCtx,
+  schemaId: string,
+  phase: CascadePhase,
+  cursor?: string,
+): Promise<CascadeDrain> {
+  switch (phase) {
+    case "consumerRefs": {
+      const rows = await ctx.db
+        .query("consumerReferences")
+        .withIndex("by_source", (q) => q.eq("sourceDatasetId", schemaId))
+        .take(CASCADE_BATCH);
+      await Promise.all(rows.map(async (row) => ctx.db.delete(row._id)));
+      return fullBatch(rows.length);
+    }
+    case "artifacts": {
+      const memberships = await ctx.db
+        .query("projectArtifacts")
+        .withIndex("by_artifact", (q) => q.eq("artifactKind", "dataset").eq("artifactId", schemaId))
+        .take(CASCADE_BATCH);
+      await Promise.all(
+        memberships.map(async (membership) => deleteArtifactMembership(ctx, membership)),
+      );
+      return fullBatch(memberships.length);
+    }
+    case "dependsOn": {
+      // Registry rows whose persisted edges name the deleted id: remove the
+      // dead edge, keep the row (its spec still names the id and re-reads as
+      // orphaned — the documented dependent behavior). Paged with a cursor
+      // so a big registry never re-scans its prefix.
+      const page = await ctx.db
+        .query("derivedDatasets")
+        .paginate({ cursor: cursor ?? null, numItems: CASCADE_BATCH });
+      await Promise.all(
+        page.page
+          .filter((row) => row.dependsOn.includes(schemaId))
+          .map(async (row) =>
+            ctx.db.patch(row._id, {
+              dependsOn: row.dependsOn.filter((dependency) => dependency !== schemaId),
+            }),
+          ),
+      );
+      return page.isDone ? { status: "next" } : { status: "more", cursor: page.continueCursor };
+    }
+    case "policies": {
+      const rows = await ctx.db
+        .query("versionPolicies")
+        .withIndex("by_dataset", (q) => q.eq("datasetKey", schemaId))
+        .take(CASCADE_BATCH);
+      await Promise.all(rows.map(async (row) => ctx.db.delete(row._id)));
+      return fullBatch(rows.length);
+    }
+    case "tagDeltas": {
+      const rows = await ctx.db
+        .query("tagDeltas")
+        .withIndex("by_source", (q) => q.eq("sourceSchemaId", schemaId))
+        .take(CASCADE_BATCH);
+      await Promise.all(rows.map(async (row) => ctx.db.delete(row._id)));
+      return fullBatch(rows.length);
+    }
+    case "attempts": {
+      const rows = await ctx.db
+        .query("publishAttempts")
+        .withIndex("by_dataset", (q) => q.eq("datasetKey", schemaId))
+        .take(CASCADE_BATCH);
+      await Promise.all(rows.map(async (row) => ctx.db.delete(row._id)));
+      return fullBatch(rows.length);
+    }
+    case "activity": {
+      // Activity history is keyed by BINDING (no by-schema index), so the
+      // drain goes through each binding that still names the deleted id.
+      const bindings = await ctx.db
+        .query("datasetBindings")
+        .withIndex("by_schema", (q) => q.eq("schemaId", schemaId))
+        .take(CASCADE_BATCH);
+      let full = false;
+      await Promise.all(
+        bindings.map(async (binding) => {
+          const activity = await ctx.db
+            .query("datasetActivity")
+            .withIndex("by_bindingId", (q) => q.eq("bindingId", binding._id))
+            .take(CASCADE_BATCH);
+          if (activity.length === CASCADE_BATCH) {
+            full = true;
+          }
+          await Promise.all(activity.map(async (row) => ctx.db.delete(row._id)));
+        }),
+      );
+      return full || bindings.length === CASCADE_BATCH ? { status: "more" } : { status: "next" };
+    }
+  }
+  // The union above is exhaustive; this tail only tells the type system (and
+  // the consistent-return rule) that every path answers.
+  return { status: "next" };
+}
+
+/** One cascade hop: drains tables in order until one hits its batch cap (resume there) or every table is clean (null — done). */
+async function runCascadePhase(
+  ctx: MutationCtx,
+  args: { cursor?: string; phase: CascadePhase; schemaId: string },
+): Promise<{ cursor?: string; phase: CascadePhase } | null> {
+  let index = CASCADE_PHASE_ORDER.indexOf(args.phase),
+    cursor: string | undefined = args.cursor;
+  while (index >= 0 && index < CASCADE_PHASE_ORDER.length) {
+    const phase = CASCADE_PHASE_ORDER[index];
+    // oxlint-disable-next-line no-await-in-loop -- one bounded table per hop; each drain decides the next.
+    const drained = await drainCascadeTable(ctx, args.schemaId, phase, cursor);
+    if (drained.status === "more") {
+      return { cursor: drained.cursor, phase };
+    }
+    cursor = undefined;
+    index += 1;
+  }
+  return null;
+}
+
+/** The cascade's self-rescheduling continuation (issue #128). */
+export const deleteCascadeStep = internalMutation({
+  args: {
+    cursor: v.optional(v.string()),
+    phase: cascadePhaseValidator,
+    schemaId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const next = await runCascadePhase(ctx, args);
+    if (next !== null) {
+      await ctx.scheduler.runAfter(0, internal.schemas.deleteCascadeStep, {
+        ...next,
+        schemaId: args.schemaId,
+      });
+    }
+  },
+  returns: v.null(),
+});
+
+/**
+ * Deletes a dataset: the component's rows (the component's own batched
+ * cascade — entries, geometries, references, blobs, memberships, layers)
+ * plus every host row keyed by the id (see `deleteDatasetCascading`).
+ * Signed-in-wide, like the exposeApi wrapper it replaces (trusted
+ * collaborators; #124 owns any per-user restriction).
+ */
+export const remove = mutation({
+  args: { schemaId: v.string() },
+  handler: async (ctx, args) => {
+    // The same operation gate the exposeApi wrapper ran (auth.ts's
+    // isolation check + read-only denial — bound datasets delete only
+    // through the attested unbind/retire flows): the wrapper became this
+    // hand-written mutation so the host cascade runs with it (issue #128),
+    // and the policy had to come along.
+    await auth(ctx, { fn: "deleteSchema", schemaId: args.schemaId, type: "delete" });
+    await deleteDatasetCascading(ctx, { schemaId: args.schemaId });
+  },
+  returns: v.null(),
+});
 
 /**
  * The largest `mapTileCacheVersion` across all datasets — the cache-buster for
@@ -45,7 +331,10 @@ export const maxTileCacheVersion = query({
   args: {},
   handler: async (ctx) => {
     const viewerId = await auth(ctx);
-    const schemas = await ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, { viewerId });
+    const schemas = await ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, {
+      limit: CATALOG_READ_LIMIT,
+      viewerId,
+    });
     let max = 0;
     for (const schema of schemas) {
       max = Math.max(max, schema.mapTileCacheVersion ?? 0);

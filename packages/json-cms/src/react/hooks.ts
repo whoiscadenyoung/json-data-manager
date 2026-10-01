@@ -18,10 +18,15 @@ import type {
 
 // --- Schema queries ---
 
-/** List all schemas, newest first. `undefined` while loading. */
-export function useSchemas(): SchemaDoc[] | undefined {
+/** The hooks' default list bound — every enumeration is required to carry a
+ * concrete `limit` since issue #128 (the query itself rejects unbounded
+ * reads); a hook caller can widen it, never remove it. */
+const HOOK_LIST_LIMIT = 200;
+
+/** List all schemas, newest first, up to `limit` (default 200). `undefined` while loading. */
+export function useSchemas(limit: number = HOOK_LIST_LIMIT): SchemaDoc[] | undefined {
   const api = useJsonCmsApi();
-  return useQuery(api.listSchemas, {});
+  return useQuery(api.listSchemas, { limit });
 }
 
 /**
@@ -35,10 +40,13 @@ export function useSchema(schemaId: SchemaId | undefined): SchemaDoc | null | un
 
 // --- Entry queries ---
 
-/** List entries for a schema, newest first. Pass `undefined` to skip. */
-export function useEntries(schemaId: SchemaId | undefined): EntryDoc[] | undefined {
+/** List entries for a schema, newest first, up to `limit` (default 200). Pass `undefined` to skip. */
+export function useEntries(
+  schemaId: SchemaId | undefined,
+  limit: number = HOOK_LIST_LIMIT,
+): EntryDoc[] | undefined {
   const api = useJsonCmsApi();
-  return useQuery(api.listEntries, schemaId ? { schemaId } : "skip");
+  return useQuery(api.listEntries, schemaId ? { limit, schemaId } : "skip");
 }
 
 /** Get a single entry by id. Pass `undefined` to skip. */
@@ -50,13 +58,17 @@ export function useEntry(entryId: EntryId | undefined): EntryDoc | null | undefi
 /**
  * Entries from several datasets at once, flattened into one list. Useful for
  * building a foreign-reference field's candidate picker without one query
- * per referenced dataset. Pass `undefined`/`[]` to skip.
+ * per referenced dataset. `limit` caps rows PER DATASET (default 100). Pass
+ * `undefined`/`[]` to skip.
  */
-export function useEntriesForSchemas(schemaIds: SchemaId[] | undefined): EntryDoc[] | undefined {
+export function useEntriesForSchemas(
+  schemaIds: SchemaId[] | undefined,
+  limit: number = 100,
+): EntryDoc[] | undefined {
   const api = useJsonCmsApi();
   return useQuery(
     api.listEntriesForSchemas,
-    schemaIds && schemaIds.length > 0 ? { schemaIds } : "skip",
+    schemaIds && schemaIds.length > 0 ? { limit, schemaIds } : "skip",
   );
 }
 

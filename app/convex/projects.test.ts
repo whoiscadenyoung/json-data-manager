@@ -166,13 +166,15 @@ describe("projects: the working container (roadmap 7a, #102)", () => {
 
     // ...while EVERY catalog read excludes it server-side (the 5a filter,
     // pinned here against regressions — the acceptance case):
-    expect((await t.query(api.schemas.list, {})).map((row) => row._id)).not.toContain(draftId);
-    expect((await t.query(api.schemas.listSummaries, {})).map((row) => row._id)).not.toContain(
+    expect((await t.query(api.schemas.list, { limit: 1000 })).map((row) => row._id)).not.toContain(
       draftId,
     );
-    expect((await t.query(api.schemas.listDraftSummaries, {})).map((row) => row._id)).toContain(
-      draftId,
-    );
+    expect(
+      (await t.query(api.schemas.listSummaries, { limit: 1000 })).map((row) => row._id),
+    ).not.toContain(draftId);
+    expect(
+      (await t.query(api.schemas.listDraftSummaries, { limit: 1000 })).map((row) => row._id),
+    ).toContain(draftId);
 
     // Draft rows are REAL rows: entries land through the ordinary wrapper
     // and resolve through the seam's entry-pages query, unchanged.
@@ -209,8 +211,8 @@ describe("projects: the working container (roadmap 7a, #102)", () => {
     const t = signedIn();
     const publishedId = await createPublishedDataset(t);
     const projectId = await createProject(t);
-    const beforePublished = (await t.query(api.schemas.list, {})).length;
-    const beforeDrafts = (await t.query(api.schemas.listDraftSummaries, {})).length;
+    const beforePublished = (await t.query(api.schemas.list, { limit: 1000 })).length;
+    const beforeDrafts = (await t.query(api.schemas.listDraftSummaries, { limit: 1000 })).length;
 
     const membershipId = await t.mutation(api.projects.addArtifact, {
       artifactId: publishedId,
@@ -226,8 +228,10 @@ describe("projects: the working container (roadmap 7a, #102)", () => {
     expect(firstArtifact(workspace)._id).toBe(membershipId);
     expect(firstArtifact(workspace).state.kind).toBe("dataset");
     expect(workspace.project.artifactCount).toBe(1);
-    expect((await t.query(api.schemas.list, {})).length).toBe(beforePublished);
-    expect((await t.query(api.schemas.listDraftSummaries, {})).length).toBe(beforeDrafts);
+    expect((await t.query(api.schemas.list, { limit: 1000 })).length).toBe(beforePublished);
+    expect((await t.query(api.schemas.listDraftSummaries, { limit: 1000 })).length).toBe(
+      beforeDrafts,
+    );
 
     // A derived spec references by registry id; a map by component id —
     // both resolve through the same workspace read.
@@ -301,9 +305,9 @@ describe("projects: the working container (roadmap 7a, #102)", () => {
     expect(workspace.artifacts).toHaveLength(0);
     expect(workspace.project.artifactCount).toBe(0);
     // References, not containment: the dataset was never touched.
-    expect((await t.query(api.schemas.listSummaries, {})).map((row) => row._id)).toContain(
-      publishedId,
-    );
+    expect(
+      (await t.query(api.schemas.listSummaries, { limit: 1000 })).map((row) => row._id),
+    ).toContain(publishedId);
   });
 
   it("answers a deleted artifact defensively in the workspace read", async () => {

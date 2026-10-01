@@ -76,7 +76,7 @@ function useReferenceUiSchema(schema: Schema): Record<string, unknown> {
     targetSchemaIds = [...new Set(referenceFields.map((f) => f.meta.datasetId))],
     candidateEntries = useQuery(
       api.entries.listEntriesForSchemas,
-      targetSchemaIds.length > 0 ? { schemaIds: targetSchemaIds } : "skip",
+      targetSchemaIds.length > 0 ? { limit: 200, schemaIds: targetSchemaIds } : "skip",
     );
 
   if (referenceFields.length === 0) {

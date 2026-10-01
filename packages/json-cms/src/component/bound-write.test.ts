@@ -91,7 +91,7 @@ describe("bound dataset read-only enforcement", () => {
     });
     await t.mutation(api.lib.deleteEntry, { boundWrite: "sync", entryId });
     await t.mutation(api.lib.deleteEntriesBySchema, { boundWrite: "sync", schemaId });
-    expect(await t.query(api.lib.listEntries, { schemaId })).toHaveLength(0);
+    expect(await t.query(api.lib.listEntries, { limit: 500, schemaId })).toHaveLength(0);
   });
 
   it("rejects schema deletion and the import/simplify/conversion workflows on bound datasets", async () => {
@@ -152,7 +152,7 @@ describe("bound dataset read-only enforcement", () => {
     });
     await t.mutation(api.lib.updateEntry, { data: { label: "B" }, entryId });
     await t.mutation(api.lib.deleteEntry, { entryId });
-    expect(await t.query(api.lib.listEntries, { schemaId })).toHaveLength(0);
+    expect(await t.query(api.lib.listEntries, { limit: 500, schemaId })).toHaveLength(0);
   });
 
   it("keeps metadata edits allowed on bound datasets", async () => {

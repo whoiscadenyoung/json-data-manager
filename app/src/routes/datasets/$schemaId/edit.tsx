@@ -280,7 +280,7 @@ function FullSchemaEditForm({
   updateSchema: ReturnType<typeof useMutation<typeof api.schemas.update>>;
   navigate: ReturnType<typeof useNavigate>;
 }) {
-  const schemas = useQuery(api.schemas.list),
+  const schemas = useQuery(api.schemas.list, { limit: 1000 }),
     availableDatasets = (schemas ?? []).map((s) => ({
       id: s._id,
       schema: s.schema,

@@ -577,7 +577,7 @@ function TransformEditorForm({
 }) {
   const save = useMutation(api.derivedDatasets.save),
     remove = useMutation(api.derivedDatasets.remove),
-    candidates = useQuery({ ...convexQuery(api.schemas.listSummaries, {}) }).data,
+    candidates = useQuery({ ...convexQuery(api.schemas.listSummaries, { limit: 500 }) }).data,
     componentIds = new Set((candidates ?? []).map((entry) => entry._id)),
     [title, setTitle] = useState(initial.title),
     [description, setDescription] = useState(initial.description),

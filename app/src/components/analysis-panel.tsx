@@ -305,7 +305,7 @@ function AnalysisEditorForm({
 }) {
   const save = useMutation(api.derivedDatasets.save),
     remove = useMutation(api.derivedDatasets.remove),
-    candidates = useQuery({ ...convexQuery(api.schemas.listSummaries, {}) }).data,
+    candidates = useQuery({ ...convexQuery(api.schemas.listSummaries, { limit: 500 }) }).data,
     [draft, setDraft] = useState(initial),
     [dirty, setDirty] = useState(false),
     [autosave, setAutosave] = useState<"error" | "idle" | "saved" | "saving">("idle"),

@@ -143,8 +143,6 @@ export interface MapTileArchiveMeta {
   url: string;
 }
 
-type Empty = Record<string, never>;
-
 /**
  * The set of function references a host app exposes for the JSON CMS
  * component (via `exposeApi`). Map your app's exposed functions to this
@@ -156,7 +154,9 @@ type Empty = Record<string, never>;
  * `SchemaId` / `EntryId` on the way out.
  */
 export interface JsonCmsApi {
-  listSchemas: FunctionReference<"query", "public", Empty, SchemaDoc[]>;
+  // `limit` is required (issue #128): the component bounds every enumeration
+  // with it — no list read scans a whole table.
+  listSchemas: FunctionReference<"query", "public", { limit: number }, SchemaDoc[]>;
   getSchema: FunctionReference<"query", "public", { schemaId: string }, SchemaDoc | null>;
   createSchema: FunctionReference<
     "mutation",
@@ -183,9 +183,19 @@ export interface JsonCmsApi {
     null
   >;
   deleteSchema: FunctionReference<"mutation", "public", { schemaId: string }, null>;
-  listEntries: FunctionReference<"query", "public", { schemaId: string }, EntryDoc[]>;
+  listEntries: FunctionReference<
+    "query",
+    "public",
+    { limit: number; schemaId: string },
+    EntryDoc[]
+  >;
   getEntry: FunctionReference<"query", "public", { entryId: string }, EntryDoc | null>;
-  listEntriesForSchemas: FunctionReference<"query", "public", { schemaIds: string[] }, EntryDoc[]>;
+  listEntriesForSchemas: FunctionReference<
+    "query",
+    "public",
+    { limit: number; schemaIds: string[] },
+    EntryDoc[]
+  >;
   listReferencingEntries: FunctionReference<
     "query",
     "public",

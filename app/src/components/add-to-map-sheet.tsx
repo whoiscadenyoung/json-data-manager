@@ -153,8 +153,8 @@ export function AddToMapSheet({
   onOpenChange: (open: boolean) => void;
   target: AddToMapTarget;
 }) {
-  const maps = useQuery(api.maps.list),
-    layers = useQuery(api.maps.listLayers, {}),
+  const maps = useQuery(api.maps.list, { limit: 500 }),
+    layers = useQuery(api.maps.listLayers, { limit: 500 }),
     createMap = useMutation(api.maps.create),
     addLayer = useMutation(api.maps.addLayer),
     [search, setSearch] = useState(""),

@@ -225,7 +225,7 @@ describe("json-cms component", () => {
         });
       expect(schemaId).toBeDefined();
 
-      const schemas = await t.query(api.lib.listSchemas, { viewerId: VIEWER });
+      const schemas = await t.query(api.lib.listSchemas, { limit: 500, viewerId: VIEWER });
       expect(schemas).toHaveLength(1);
       expect(schemas[0].title).toBe("Test Schema");
       expect(schemas[0].description).toBe("A test schema");
@@ -471,7 +471,7 @@ describe("json-cms component", () => {
           },
           uiSchema: { name: { "ui:widget": "text" } },
         }),
-        summaries = await t.query(api.lib.listSchemaSummaries, { viewerId: VIEWER }),
+        summaries = await t.query(api.lib.listSchemaSummaries, { limit: 500, viewerId: VIEWER }),
         row = summaries.find((summary) => summary._id === schemaId);
       assertDefined(row);
       expect(row.title).toBe("Summary Schema");
@@ -497,7 +497,7 @@ describe("json-cms component", () => {
         schemaId = await t.mutation(api.lib.createSchema, {
           schema: { title: "No Properties", type: "string" },
         }),
-        summaries = await t.query(api.lib.listSchemaSummaries, { viewerId: VIEWER }),
+        summaries = await t.query(api.lib.listSchemaSummaries, { limit: 500, viewerId: VIEWER }),
         row = summaries.find((summary) => summary._id === schemaId);
       assertDefined(row);
       expect(row.fieldCount).toBe(0);
@@ -508,8 +508,8 @@ describe("json-cms component", () => {
     it("absent lifecycle reads as published — pre-field rows stay catalog-visible", async () => {
       const t = initConvexTest(),
         schemaId = await createPlainDataset(t, "Pre-field Dataset"),
-        listed = await t.query(api.lib.listSchemas, { viewerId: VIEWER }),
-        summaries = await t.query(api.lib.listSchemaSummaries, { viewerId: VIEWER });
+        listed = await t.query(api.lib.listSchemas, { limit: 500, viewerId: VIEWER }),
+        summaries = await t.query(api.lib.listSchemaSummaries, { limit: 500, viewerId: VIEWER });
       expect(listed.map((schema) => schema._id)).toContain(schemaId);
       const row = summaries.find((summary) => summary._id === schemaId);
       assertDefined(row);
@@ -528,10 +528,13 @@ describe("json-cms component", () => {
       await t.run(async (ctx) => {
         await ctx.db.patch(draftId, { createdBy: VIEWER, lifecycle: "draft" });
       });
-      const listed = await t.query(api.lib.listSchemas, { viewerId: VIEWER });
+      const listed = await t.query(api.lib.listSchemas, { limit: 500, viewerId: VIEWER });
       expect(listed.map((schema) => schema._id)).toContain(publishedId);
       expect(listed.map((schema) => schema._id)).not.toContain(draftId);
-      const summaries = await t.query(api.lib.listSchemaSummaries, { viewerId: VIEWER });
+      const summaries = await t.query(api.lib.listSchemaSummaries, {
+        limit: 500,
+        viewerId: VIEWER,
+      });
       expect(summaries.map((summary) => summary._id)).not.toContain(draftId);
       // By-id reads are the HOST's scope (stage 8's auth policy) — the
       // component's per-id surface stays unfiltered.
@@ -564,7 +567,10 @@ describe("json-cms component", () => {
       await t.run(async (ctx) => {
         await ctx.db.patch(draftId, { createdBy: VIEWER, lifecycle: "draft" });
       });
-      const drafts = await t.query(api.lib.listDraftSchemaSummaries, { viewerId: VIEWER });
+      const drafts = await t.query(api.lib.listDraftSchemaSummaries, {
+        limit: 500,
+        viewerId: VIEWER,
+      });
       expect(drafts.map((summary) => summary._id)).toEqual([draftId]);
       const row = drafts[0];
       assertDefined(row);
@@ -583,8 +589,11 @@ describe("json-cms component", () => {
         await ctx.db.patch(draftId, { createdBy: VIEWER, lifecycle: "draft" });
         await ctx.db.patch(publishedId, { lifecycle: "published" });
       });
-      const drafts = await t.query(api.lib.listDraftSchemaSummaries, { viewerId: VIEWER }),
-        summaries = await t.query(api.lib.listSchemaSummaries, { viewerId: VIEWER });
+      const drafts = await t.query(api.lib.listDraftSchemaSummaries, {
+          limit: 500,
+          viewerId: VIEWER,
+        }),
+        summaries = await t.query(api.lib.listSchemaSummaries, { limit: 500, viewerId: VIEWER });
       const draftRow = drafts.find((summary) => summary._id === draftId);
       assertDefined(draftRow);
       expect(draftRow.lifecycle).toBe("draft");
@@ -603,7 +612,10 @@ describe("json-cms component", () => {
           lifecycle: "draft",
           schema: { title: "Created Draft", type: "object" },
         });
-      const summaries = await t.query(api.lib.listSchemaSummaries, { viewerId: VIEWER });
+      const summaries = await t.query(api.lib.listSchemaSummaries, {
+        limit: 500,
+        viewerId: VIEWER,
+      });
       expect(summaries.map((summary) => summary._id)).toContain(plainId);
       expect(summaries.map((summary) => summary._id)).not.toContain(flaggedId);
     });
@@ -618,9 +630,15 @@ describe("json-cms component", () => {
         await ctx.db.patch(mineId, { createdBy: VIEWER, lifecycle: "draft" });
         await ctx.db.patch(theirsId, { createdBy: "viewer-2", lifecycle: "draft" });
       });
-      const mine = await t.query(api.lib.listDraftSchemaSummaries, { viewerId: VIEWER });
+      const mine = await t.query(api.lib.listDraftSchemaSummaries, {
+        limit: 500,
+        viewerId: VIEWER,
+      });
       expect(mine.map((summary) => summary._id)).toEqual([mineId]);
-      const theirs = await t.query(api.lib.listDraftSchemaSummaries, { viewerId: "viewer-2" });
+      const theirs = await t.query(api.lib.listDraftSchemaSummaries, {
+        limit: 500,
+        viewerId: "viewer-2",
+      });
       expect(theirs.map((summary) => summary._id)).toEqual([theirsId]);
     });
 
@@ -638,9 +656,12 @@ describe("json-cms component", () => {
       });
 
       // The author sees it everywhere the catalog reads…
-      const ownListed = await t.query(api.lib.listSchemas, { viewerId: VIEWER });
+      const ownListed = await t.query(api.lib.listSchemas, { limit: 500, viewerId: VIEWER });
       expect(ownListed.map((schema) => schema._id)).toContain(authorOnlyId);
-      const ownSummaries = await t.query(api.lib.listSchemaSummaries, { viewerId: VIEWER });
+      const ownSummaries = await t.query(api.lib.listSchemaSummaries, {
+        limit: 500,
+        viewerId: VIEWER,
+      });
       expect(ownSummaries.map((summary) => summary._id)).toContain(authorOnlyId);
       const ownInCollection = await t.query(api.lib.listSchemasByCollection, {
         collectionId,
@@ -649,16 +670,22 @@ describe("json-cms component", () => {
       expect(ownInCollection.map((schema) => schema._id)).toContain(authorOnlyId);
       // …and the drafts view NEVER carries it (it is published-side).
       expect(
-        (await t.query(api.lib.listDraftSchemaSummaries, { viewerId: VIEWER })).map(
+        (await t.query(api.lib.listDraftSchemaSummaries, { limit: 500, viewerId: VIEWER })).map(
           (summary) => summary._id,
         ),
       ).not.toContain(authorOnlyId);
 
       // Another signed-in viewer gets the same answer as for a missing row:
       // absent from every enumeration — invisible, not merely UI-hidden.
-      const foreignListed = await t.query(api.lib.listSchemas, { viewerId: "viewer-2" });
+      const foreignListed = await t.query(api.lib.listSchemas, {
+        limit: 500,
+        viewerId: "viewer-2",
+      });
       expect(foreignListed.map((schema) => schema._id)).not.toContain(authorOnlyId);
-      const foreignSummaries = await t.query(api.lib.listSchemaSummaries, { viewerId: "viewer-2" });
+      const foreignSummaries = await t.query(api.lib.listSchemaSummaries, {
+        limit: 500,
+        viewerId: "viewer-2",
+      });
       expect(foreignSummaries.map((summary) => summary._id)).not.toContain(authorOnlyId);
       const foreignInCollection = await t.query(api.lib.listSchemasByCollection, {
         collectionId,
@@ -697,6 +724,7 @@ describe("json-cms component", () => {
       // denial, no leak: an invisible reference target renders as no
       // candidates, never as a broken form.
       const batch = await t.query(api.lib.listEntriesForSchemas, {
+        limit: 500,
         schemaIds: [visibleId, authorOnlyId, foreignDraftId],
         viewerId: VIEWER,
       });
@@ -705,8 +733,14 @@ describe("json-cms component", () => {
 
       // The label lookup filters too: mixed visible/invisible ids answer
       // only the visible rows (the raw-id fallback covers the rest).
-      const visibleEntries = await t.query(api.lib.listEntries, { schemaId: visibleId });
-      const hiddenEntries = await t.query(api.lib.listEntries, { schemaId: authorOnlyId });
+      const visibleEntries = await t.query(api.lib.listEntries, {
+        limit: 500,
+        schemaId: visibleId,
+      });
+      const hiddenEntries = await t.query(api.lib.listEntries, {
+        limit: 500,
+        schemaId: authorOnlyId,
+      });
       const hiddenEntry = hiddenEntries[0];
       const visibleEntry = visibleEntries[0];
       assertDefined(visibleEntry);
@@ -724,7 +758,7 @@ describe("json-cms component", () => {
         plainId = await createPlainDataset(t, "Public By Default");
       // Absent: every viewer sees it.
       expect(
-        (await t.query(api.lib.listSchemaSummaries, { viewerId: "viewer-2" })).map(
+        (await t.query(api.lib.listSchemaSummaries, { limit: 500, viewerId: "viewer-2" })).map(
           (summary) => summary._id,
         ),
       ).toContain(plainId);
@@ -733,7 +767,7 @@ describe("json-cms component", () => {
         schemaId: plainId,
       });
       expect(
-        (await t.query(api.lib.listSchemaSummaries, { viewerId: "viewer-2" })).map(
+        (await t.query(api.lib.listSchemaSummaries, { limit: 500, viewerId: "viewer-2" })).map(
           (summary) => summary._id,
         ),
       ).not.toContain(plainId);
@@ -742,7 +776,7 @@ describe("json-cms component", () => {
         schemaId: plainId,
       });
       expect(
-        (await t.query(api.lib.listSchemaSummaries, { viewerId: "viewer-2" })).map(
+        (await t.query(api.lib.listSchemaSummaries, { limit: 500, viewerId: "viewer-2" })).map(
           (summary) => summary._id,
         ),
       ).toContain(plainId);
@@ -915,10 +949,10 @@ describe("json-cms component", () => {
         nestedId = await t.mutation(api.lib.createGroup, { collectionId, name: "Nested" }),
         standaloneId = await t.mutation(api.lib.createGroup, { name: "Standalone" });
 
-      const all = await t.query(api.lib.listGroups, {});
+      const all = await t.query(api.lib.listGroups, { limit: 500 });
       expect(all.map((group) => group._id).toSorted()).toEqual([nestedId, standaloneId].toSorted());
 
-      const nested = await t.query(api.lib.listGroups, { collectionId });
+      const nested = await t.query(api.lib.listGroups, { collectionId, limit: 500 });
       expect(nested.map((group) => group._id)).toEqual([nestedId]);
     });
 
@@ -937,7 +971,7 @@ describe("json-cms component", () => {
       expect(collections.map((collection) => collection._id).toSorted()).toEqual(
         [firstId, secondId].toSorted(),
       );
-      expect(await t.query(api.lib.listSchemaCollections, {})).toHaveLength(2);
+      expect(await t.query(api.lib.listSchemaCollections, { limit: 500 })).toHaveLength(2);
 
       const firstDatasets = await t.query(api.lib.listSchemasByCollection, {
         collectionId: firstId,
@@ -1024,7 +1058,7 @@ describe("json-cms component", () => {
       await t.mutation(api.lib.addSchemaToCollection, { collectionId, schemaId });
       await t.mutation(api.lib.deleteSchema, { schemaId });
 
-      expect(await t.query(api.lib.listSchemaCollections, {})).toEqual([]);
+      expect(await t.query(api.lib.listSchemaCollections, { limit: 500 })).toEqual([]);
       expect(
         await t.query(api.lib.listSchemasByCollection, { collectionId, viewerId: VIEWER }),
       ).toEqual([]);
@@ -1517,7 +1551,7 @@ describe("json-cms component", () => {
         });
       expect(entryId).toBeDefined();
 
-      const entries = await t.query(api.lib.listEntries, { schemaId });
+      const entries = await t.query(api.lib.listEntries, { limit: 500, schemaId });
       expect(entries).toHaveLength(1);
       expect(entries[0].data).toStrictEqual({ age: 30, name: "John" });
       expect(entries[0].schemaId).toStrictEqual(schemaId);
@@ -1563,7 +1597,7 @@ describe("json-cms component", () => {
         });
       expect(ids).toHaveLength(3);
 
-      const entries = await t.query(api.lib.listEntries, { schemaId });
+      const entries = await t.query(api.lib.listEntries, { limit: 500, schemaId });
       expect(entries).toHaveLength(3);
     });
 
@@ -1617,7 +1651,7 @@ describe("json-cms component", () => {
       });
       expect(count).toBe(2);
 
-      const entries = await t.query(api.lib.listEntries, { schemaId });
+      const entries = await t.query(api.lib.listEntries, { limit: 500, schemaId });
       expect(entries).toHaveLength(0);
     });
   });
@@ -1789,6 +1823,7 @@ describe("json-cms component", () => {
 
       const all = await t.query(api.lib.listEntriesByCollection, {
         collectionId,
+        limit: 500,
         viewerId: VIEWER,
       });
       expect(all).toHaveLength(3);
@@ -1881,9 +1916,11 @@ describe("json-cms component", () => {
       });
 
       const entries1 = await t.query(api.lib.listEntries, {
+          limit: 500,
           schemaId: schemaId1,
         }),
         entries2 = await t.query(api.lib.listEntries, {
+          limit: 500,
           schemaId: schemaId2,
         });
 
@@ -1923,7 +1960,7 @@ describe("json-cms component", () => {
         schemaId,
       });
 
-      const entries = await t.query(api.lib.listEntries, { schemaId });
+      const entries = await t.query(api.lib.listEntries, { limit: 500, schemaId });
 
       // Should be in reverse order (newest first)
       expect(entries[0].data.order).toBe(3);
@@ -1957,7 +1994,7 @@ describe("json-cms component", () => {
         schemaId,
       });
 
-      const entries = await t.query(api.lib.listEntries, { schemaId });
+      const entries = await t.query(api.lib.listEntries, { limit: 500, schemaId });
       expect(entries).toHaveLength(chunk.length);
     });
 
@@ -1969,7 +2006,7 @@ describe("json-cms component", () => {
         inserted = await t.action(internal.lib.insertChunkFromStorage, { schemaId, storageId });
       expect(inserted).toBe(500);
 
-      const entries = await t.query(api.lib.listEntries, { schemaId });
+      const entries = await t.query(api.lib.listEntries, { limit: 500, schemaId });
       expect(entries).toHaveLength(500);
 
       // The chunk blob is deleted once its rows are inserted (import-litter cleanup).
@@ -2068,8 +2105,13 @@ describe("json-cms component", () => {
       }
       expect(totalInserted).toBe(1200);
 
-      const entries = await t.query(api.lib.listEntries, { schemaId });
-      expect(entries).toHaveLength(1200);
+      // `listEntries` is a bounded read since #128 (required limit), so the
+      // full total comes from the schema doc's own counter — kept exact by
+      // the import path.
+      const doc = await t.run(async (ctx) => ctx.db.get(schemaId));
+      assertDefined(doc);
+      expect(doc.entryCount).toBe(1200);
+      expect(await t.query(api.lib.listEntries, { limit: 500, schemaId })).toHaveLength(500);
     });
 
     it("rejects a chunk atomically when one of its rows has an invalid geometry, before writing any of that chunk's rows", async () => {
@@ -2084,7 +2126,7 @@ describe("json-cms component", () => {
         t.action(internal.lib.insertChunkFromStorage, { schemaId, storageId }),
       ).rejects.toThrow(/Row 1/);
 
-      const entries = await t.query(api.lib.listEntries, { schemaId });
+      const entries = await t.query(api.lib.listEntries, { limit: 500, schemaId });
       expect(entries).toHaveLength(0);
     });
 
@@ -2103,7 +2145,7 @@ describe("json-cms component", () => {
         t.action(internal.lib.insertChunkFromStorage, { schemaId, storageId: badStorageId }),
       ).rejects.toThrow(/Row 0/);
 
-      const entries = await t.query(api.lib.listEntries, { schemaId });
+      const entries = await t.query(api.lib.listEntries, { limit: 500, schemaId });
       expect(entries).toHaveLength(1);
     });
   });
@@ -2159,7 +2201,7 @@ describe("json-cms component", () => {
       const geocoded = await runConversion(t, schemaId);
       expect(geocoded).toBe(2);
 
-      const entries = await t.query(api.lib.listEntries, { schemaId });
+      const entries = await t.query(api.lib.listEntries, { limit: 500, schemaId });
       expect(entries).toHaveLength(rows.length);
       for (const [i, id] of createdIds.entries()) {
         const entry = entries.find((e) => e._id === id);

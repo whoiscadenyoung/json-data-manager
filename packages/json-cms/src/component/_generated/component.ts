@@ -460,7 +460,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       listDraftSchemaSummaries: FunctionReference<
         "query",
         "internal",
-        { viewerId: string },
+        { limit: number; viewerId: string },
         Array<{
           _creationTime: number;
           _id: string;
@@ -506,7 +506,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       listEntries: FunctionReference<
         "query",
         "internal",
-        { schemaId: string },
+        { limit: number; schemaId: string },
         Array<{
           _creationTime: number;
           _id: string;
@@ -526,7 +526,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       listEntriesByCollection: FunctionReference<
         "query",
         "internal",
-        { collectionId: string; limit?: number; viewerId: string },
+        { collectionId: string; limit: number; viewerId: string },
         Array<{
           _creationTime: number;
           _id: string;
@@ -586,7 +586,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       listEntriesForSchemas: FunctionReference<
         "query",
         "internal",
-        { limit?: number; schemaIds: Array<string>; viewerId: string },
+        { limit: number; schemaIds: Array<string>; viewerId: string },
         Array<{
           _creationTime: number;
           _id: string;
@@ -681,7 +681,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       listGroups: FunctionReference<
         "query",
         "internal",
-        { collectionId?: string },
+        { collectionId?: string; limit: number },
         Array<{
           _creationTime: number;
           _id: string;
@@ -720,7 +720,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       listMapLayers: FunctionReference<
         "query",
         "internal",
-        { mapId?: string },
+        { limit: number; mapId?: string },
         Array<{
           _creationTime: number;
           _id: string;
@@ -735,7 +735,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       listMaps: FunctionReference<
         "query",
         "internal",
-        {},
+        { limit: number },
         Array<{
           _creationTime: number;
           _id: string;
@@ -771,7 +771,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       listSchemaCollections: FunctionReference<
         "query",
         "internal",
-        {},
+        { limit: number },
         Array<{
           _creationTime: number;
           _id: string;
@@ -784,7 +784,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       listSchemas: FunctionReference<
         "query",
         "internal",
-        { viewerId: string },
+        { limit: number; viewerId: string },
         Array<{
           _creationTime: number;
           _id: string;
@@ -886,7 +886,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       listSchemaSummaries: FunctionReference<
         "query",
         "internal",
-        { viewerId: string },
+        { limit: number; viewerId: string },
         Array<{
           _creationTime: number;
           _id: string;

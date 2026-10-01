@@ -65,7 +65,7 @@ describe("auth (the gate itself)", () => {
 describe("gate: exposeApi wrappers (bucket 1)", () => {
   it("rejects a signed-out read (schemas.list)", async () => {
     const t = initTest();
-    await expect(t.query(api.schemas.list, {})).rejects.toThrow(GATE_MESSAGE);
+    await expect(t.query(api.schemas.list, { limit: 500 })).rejects.toThrow(GATE_MESSAGE);
   });
 
   it("rejects a signed-out read (entries.listPage)", async () => {

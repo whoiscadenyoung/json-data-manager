@@ -485,16 +485,16 @@ function filterBrowserItems(
 function useBrowserLightQueries(showDrafts: boolean) {
   return {
     collections: useQuery({ ...convexQuery(api.collections.list) }).data,
-    datasets: useQuery({ ...convexQuery(api.schemas.listSummaries) }).data,
+    datasets: useQuery({ ...convexQuery(api.schemas.listSummaries, { limit: 1000 }) }).data,
     // The opt-in drafts read (roadmap 5a, #99): the server-side default
     // (`listSummaries`) never returns drafts, so the drafts toggle is what
     // subscribes — disabled means no payload and no subscription.
     drafts: useQuery({
-      ...convexQuery(api.schemas.listDraftSummaries),
+      ...convexQuery(api.schemas.listDraftSummaries, { limit: 1000 }),
       enabled: showDrafts,
     }).data,
     derived: useQuery({ ...convexQuery(api.derivedDatasets.summaries, {}) }).data,
-    groups: useQuery({ ...convexQuery(api.groups.list, {}) }).data,
+    groups: useQuery({ ...convexQuery(api.groups.list, { limit: 500 }) }).data,
     // authId → display profile, for the cards' creator chips.
     profiles: useQuery({ ...convexQuery(api.users.listProfiles) }).data,
   };

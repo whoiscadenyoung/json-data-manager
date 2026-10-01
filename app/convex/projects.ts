@@ -6,6 +6,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { auth } from "./auth";
 import { syncRegistryReferenceEdges } from "./consumption";
+import { CATALOG_READ_LIMIT } from "./schemas";
 
 /**
  * Projects — the working container (roadmap stage 7a, #102; lifecycle doc
@@ -665,9 +666,15 @@ export const get = query({
     // the workspace never sees another user's drafts, even by a stale
     // membership row pointing at one).
     const [summaries, draftSummaries, maps] = await Promise.all([
-      ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, { viewerId: viewer }),
-      ctx.runQuery(components.jsonCms.lib.listDraftSchemaSummaries, { viewerId: viewer }),
-      ctx.runQuery(components.jsonCms.lib.listMaps, {}),
+      ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, {
+        limit: CATALOG_READ_LIMIT,
+        viewerId: viewer,
+      }),
+      ctx.runQuery(components.jsonCms.lib.listDraftSchemaSummaries, {
+        limit: CATALOG_READ_LIMIT,
+        viewerId: viewer,
+      }),
+      ctx.runQuery(components.jsonCms.lib.listMaps, { limit: CATALOG_READ_LIMIT }),
     ]);
     const datasetById = new Map<string, DatasetSummary>();
     for (const row of summaries) {

@@ -112,9 +112,9 @@ function countByCollection(
 
 function CollectionsPage() {
   const collections = useQuery(api.collections.list),
-    memberships = useQuery(api.collections.listSchemaCollections),
-    datasets = useQuery(api.schemas.listSummaries),
-    groups = useQuery(api.groups.list, {}),
+    memberships = useQuery(api.collections.listSchemaCollections, { limit: 1000 }),
+    datasets = useQuery(api.schemas.listSummaries, { limit: 1000 }),
+    groups = useQuery(api.groups.list, { limit: 500 }),
     deleteCollection = useMutation(api.collections.remove),
     [formOpen, setFormOpen] = useState(false),
     [editing, setEditing] = useState<Collection | undefined>(),

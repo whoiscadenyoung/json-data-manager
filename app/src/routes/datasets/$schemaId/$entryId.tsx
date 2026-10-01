@@ -309,7 +309,7 @@ function EntryDetailBody() {
     entry = useDatasetEntryRow(entryId),
     geometryRow = useDatasetEntryGeometryRow(entryId),
     schema = useQuery(api.schemas.get, { schemaId }),
-    allSchemas = useQuery(api.schemas.listSummaries),
+    allSchemas = useQuery(api.schemas.listSummaries, { limit: 1000 }),
     referencingEntries = useQuery(api.entries.listReferencingEntries, { entryId }),
     // Resolves the row's payload — inline `geometryJson` synchronously, a
     // storage-backed `geometryUrl` via fetch (see the hook's doc).
@@ -322,7 +322,7 @@ function EntryDetailBody() {
     targetSchemaIds = [...new Set(referenceFields.map((f) => f.meta.datasetId))],
     referenceCandidates = useQuery(
       api.entries.listEntriesForSchemas,
-      targetSchemaIds.length > 0 ? { schemaIds: targetSchemaIds } : "skip",
+      targetSchemaIds.length > 0 ? { limit: 200, schemaIds: targetSchemaIds } : "skip",
     ),
     labelsByField = buildLabelsByField(referenceFields, referenceCandidates ?? []),
     titleBySchemaId = new globalThis.Map((allSchemas ?? []).map((s) => [s._id, s.title]));

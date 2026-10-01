@@ -245,7 +245,7 @@ describe("publishing an imported draft (AC 1: a real frozen row; sources unchang
     expect(lineage === undefined ? undefined : lineage.versionLabel).toBe("v1");
     const ref = lineage === undefined ? undefined : lineage.snapshotRef;
     expect(ref === undefined ? "" : ref.startsWith("pub_")).toBe(true);
-    const summaries = await t.query(api.schemas.listSummaries, {});
+    const summaries = await t.query(api.schemas.listSummaries, { limit: 1000 });
     expect(summaries.some((summary) => summary._id === schemaId)).toBe(true);
 
     // Sources unchanged: the draft keeps its rows, its flag, and its counts.
