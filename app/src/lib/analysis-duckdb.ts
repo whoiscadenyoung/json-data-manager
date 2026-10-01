@@ -301,7 +301,7 @@ export function decimal128TextOf(view: ArrayLike<number>, scale: number): string
   return (negative ? "-" : "") + text;
 }
 
-/** The materialized `SqlTable` as an Arrow table — the doc-named fast registration path (analysis-layer-design.md §2:46). `tableFromArrays` infers each column's type from the cells, which materializeSqlTable already made homogeneous under the 0.4 policies (sql.ts): number columns are numeric-or-null, string columns are normalized-key text, boolean columns booleans. */
+/** The materialized `SqlTable` as an Arrow table — the doc-named fast registration path (analysis-layer-design.md §2:46). `tableFromArrays` infers each column's type from the cells, which materializeSqlTable already made homogeneous under the 0.4 policies (sql.ts): number columns are numeric-or-null, string columns keep their original text (their canonical form rides the hidden `<col>__key` twin columns, #133 item 9), boolean columns booleans. */
 function arrowTableOf(table: SqlTable): ArrowTable {
   const arrays: Record<string, unknown[]> = {};
   for (const column of table.columns) {

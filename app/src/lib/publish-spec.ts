@@ -107,7 +107,10 @@ export interface PublishSourceTables {
   /**
    * Component dataset id → its entries adapted as engine records. When
    * `needsGeometryPlumbing(spec)` is true, each record carries its entry's
-   * geometry id under `PUBLISH_GEOMETRY_COLUMN`.
+   * geometry id under the spec rule's plumbing column — whichever spelling
+   * the stored rule names: `PUBLISH_GEOMETRY_COLUMN` or
+   * `PUBLISH_GEOMETRY_PLUMBING_COLUMN` (`plumbingColumnOf` decides; see the
+   * module doc for why both exist).
    */
   rowsByDatasetId: ReadonlyMap<string, readonly Record<string, unknown>[]>;
   /** Registry row id → its stored spec (derived-of-derived sources). */

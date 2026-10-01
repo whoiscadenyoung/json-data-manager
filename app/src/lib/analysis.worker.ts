@@ -17,8 +17,10 @@
  * - **The auth choke point is inherited, not re-implemented.** The worker's
  *   standalone ConvexClient authenticates through the main thread (its setAuth
  *   fetcher round-trips a token request over the message channel — the worker
- *   has no Better Auth session), re-asserted per inbound message so a client
- *   created signed-out authenticates once a session exists. Every seam call
+ *   has no Better Auth session). The fetcher attaches ONCE
+ *   (`setAuthReasserting`, #133 item 6) and re-arms itself only after a null
+ *   token, so a client created signed-out still authenticates once a session
+ *   exists — and no run pauses the socket re-asserting auth. Every seam call
  *   rides `entries.listPage` behind the app's auth wrapper, which rejects the
  *   unauthenticated and denies invisible datasets — a foreign draft's rows
  *   are unreachable from here by construction.

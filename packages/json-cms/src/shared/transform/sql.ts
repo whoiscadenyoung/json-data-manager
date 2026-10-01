@@ -46,8 +46,10 @@
  *     `GROUP BY col` did when the column itself held canonical keys. The
  *     twin's name extends with `_` if the data already carries
  *     `<col>__key`. Number cells in a string column render their decimal
- *     form; booleans, objects, nulls and whitespace-only strings have no
- *     text form and land null;
+ *     form; every string cell lands AS TYPED — whitespace-only text
+ *     included ("   " stays text; only its canonical key reads null) —
+ *     while booleans, objects, arrays and null have no text form and land
+ *     null;
  *   - a BOOLEAN column keeps booleans, now ALSO reading "true"/"false"
  *     text case-insensitively (#133 item 12 — a textual boolean used to
  *     become null silently); everything else is null.
