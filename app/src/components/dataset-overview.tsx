@@ -127,16 +127,16 @@ function LineageRow({ lineage }: { lineage: NonNullable<DatasetDoc["lineage"]> }
 
 /**
  * The dataset's creator — the component stamps `createdBy` with the host
- * auth hook's identity string; this resolves it to the person's name (or
- * email) via the users mirror, falling back to the raw id when the actor
- * has no profile (e.g. a system actor).
+ * auth hook's identity string; this resolves it to the person's name via
+ * the users mirror, falling back to the raw id when the actor has no
+ * profile (e.g. a system actor). The mirror read carries no email (issue
+ * #136: profiles resolve it only to the user themself), so a nameless
+ * creator shows their id.
  */
 function CreatedByRow({ authId }: { authId: string }) {
   const profile = useQuery(api.users.profileByAuthId, { authId });
   const label =
-    profile === undefined
-      ? "…"
-      : ((profile !== null ? (profile.name ?? profile.email) : undefined) ?? authId);
+    profile === undefined ? "…" : ((profile !== null ? profile.name : undefined) ?? authId);
   // A real mirror row links to the person's profile; system actors (no row)
   // fall back to the raw id, unlinked.
   const hasProfile = profile !== undefined && profile !== null;
