@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { Button } from "#/components/ui/button";
 import { Checkbox } from "#/components/ui/checkbox";
@@ -81,6 +82,14 @@ export function ExportDialog({
       // hidden control must never still change the output.
       await onConfirm(format, includeSchema, joinedFieldsHint !== undefined && includeJoinedFields);
       onOpenChange(false);
+    } catch (error) {
+      // The export callers surface the failure themselves (download helpers
+      // toast a fallback too); the dialog must not close over a failed
+      // export — the busy state resets and the user can retry or cancel
+      // (issue #135, defect 5: try/finally with no catch left the rejection
+      // unhandled AND dropped the user back on a closed dialog).
+      console.error(error);
+      toast.error("The export failed — try again, or pick another format.");
     } finally {
       setIsExporting(false);
     }

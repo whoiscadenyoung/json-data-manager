@@ -1,6 +1,7 @@
 import type { RJSFValidationError } from "@rjsf/utils";
 import validator from "@rjsf/validator-ajv8";
 import {
+  AlertTriangle,
   CheckCircle,
   ChevronDown,
   ChevronRight,
@@ -67,8 +68,21 @@ function firstFile(list: FileList | null): File | undefined {
   return list && list.length > 0 ? list[0] : undefined;
 }
 
-/** Map an RJSF validation error to a JSON-pointer-ish path, or null. */
-function errorToPath(err: RJSFValidationError): string | null {
+/** Keystrokes pause this long before the (row-capped) validation pass runs — re-validating synchronously per keystroke froze the tab on a ~20k-row file (issue #135, defect 8). */
+const VALIDATION_DEBOUNCE_MS = 300;
+
+/**
+ * The per-pass row cap (issue #135, defect 8): validating a 20k-row file on
+ * every schema keystroke froze the tab, so the pre-flight pass validates the
+ * first `VALIDATION_ROW_CAP` rows and the pane says so. The authoritative
+ * gate is unaffected — the import workflow's `import_prep` re-validates every
+ * row it actually ingests, capped pass or not.
+ */
+const VALIDATION_ROW_CAP = 2000;
+
+/** Map an RJSF validation error to a JSON-pointer-ish path, or null. */ function errorToPath(
+  err: RJSFValidationError,
+): string | null {
   if (
     err.name === "required" &&
     isRecord(err.params) &&
@@ -208,6 +222,59 @@ function EmptyDataState({
   );
 }
 
+/** Validates one data row against the parsed schema — module-level so the `validate` callback stays under the complexity cap (the react-compiler-seam rule: push branching into module helpers). */
+function validateRow(item: unknown, index: number, parsedSchema: object): ValidationResult {
+  const { errors } = validator.validateFormData(item, parsedSchema),
+    failingPaths = new Set<string>(),
+    errorMessages = new Map<string, string>();
+  for (const err of errors) {
+    const path = errorToPath(err);
+    if (path) {
+      failingPaths.add(path);
+      if (!errorMessages.has(path)) {
+        errorMessages.set(path, err.message ?? "Validation error");
+      }
+    }
+  }
+  return {
+    data: item,
+    errors: errorMessages,
+    failingPaths,
+    index,
+    unknownPaths: computeUnknownPaths(item, parsedSchema),
+    valid: errors.length === 0,
+  };
+}
+
+/** Aggregates per-row results into the pane's summary state — module-level so the `validate` callback stays under the complexity cap (the react-compiler-seam rule: push branching into module helpers). */
+function aggregateResults(newResults: ValidationResult[]): ValidationState {
+  const aggregated = new Map<string, number>();
+  let invalidItemCount = 0;
+  for (const r of newResults) {
+    if (!r.valid) {
+      invalidItemCount += 1;
+    }
+    for (const path of r.failingPaths) {
+      aggregated.set(path, (aggregated.get(path) ?? 0) + 1);
+    }
+  }
+  return { failingPaths: aggregated, invalidItemCount, total: newResults.length };
+}
+
+/** The row-cap notice, as its own component so ValidationPane's complexity stays at the cap — the conditional lives here. */
+function CappedNotice({ show }: { show: boolean }) {
+  if (!show) {
+    return null;
+  }
+  return (
+    <div className="flex items-start gap-1.5 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+      <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+      Pre-flight validation checks the first {VALIDATION_ROW_CAP.toLocaleString()} rows to stay
+      responsive — the import itself validates every row.
+    </div>
+  );
+}
+
 export function ValidationPane({
   schemaJson,
   externalDataText,
@@ -218,6 +285,7 @@ export function ValidationPane({
     [fileName, setFileName] = useState<string | null>(null),
     [results, setResults] = useState<ValidationResult[] | null>(null),
     [parseError, setParseError] = useState<string | null>(null),
+    [capped, setCapped] = useState(false),
     [expandedItems, setExpandedItems] = useState<Set<number>>(new Set()),
     [isInferConfirmOpen, setIsInferConfirmOpen] = useState(false),
     fileInputRef = useRef<HTMLInputElement>(null),
@@ -248,6 +316,7 @@ export function ValidationPane({
       if (!text.trim()) {
         setResults(null);
         setParseError(null);
+        setCapped(false);
         onStateChange({ failingPaths: new Map(), invalidItemCount: 0, total: 0 });
         return;
       }
@@ -258,6 +327,7 @@ export function ValidationPane({
       } catch {
         setParseError("Invalid JSON — please check your input.");
         setResults(null);
+        setCapped(false);
         onStateChange({ failingPaths: new Map(), invalidItemCount: 0, total: 0 });
         return;
       }
@@ -265,6 +335,7 @@ export function ValidationPane({
       if (!Array.isArray(parsedData)) {
         setParseError("Data must be a JSON array of objects.");
         setResults(null);
+        setCapped(false);
         onStateChange({ failingPaths: new Map(), invalidItemCount: 0, total: 0 });
         return;
       }
@@ -275,7 +346,7 @@ export function ValidationPane({
       } catch {
         // Schema is invalid — show data without validation
         setResults(
-          parsedData.map((item, index) => ({
+          parsedData.slice(0, VALIDATION_ROW_CAP).map((item, index) => ({
             data: item,
             errors: new Map<string, string>(),
             failingPaths: new Set<string>(),
@@ -285,60 +356,40 @@ export function ValidationPane({
           })),
         );
         setParseError(null);
+        setCapped(parsedData.length > VALIDATION_ROW_CAP);
         onStateChange({
           failingPaths: new Map(),
-          invalidItemCount: parsedData.length,
-          total: parsedData.length,
+          invalidItemCount: Math.min(parsedData.length, VALIDATION_ROW_CAP),
+          total: Math.min(parsedData.length, VALIDATION_ROW_CAP),
         });
         return;
       }
 
-      const newResults: ValidationResult[] = parsedData.map((item, index) => {
-        const { errors } = validator.validateFormData(item, parsedSchema),
-          failingPaths = new Set<string>(),
-          errorMessages = new Map<string, string>();
-        for (const err of errors) {
-          const path = errorToPath(err);
-          if (path) {
-            failingPaths.add(path);
-            if (!errorMessages.has(path)) {
-              errorMessages.set(path, err.message ?? "Validation error");
-            }
-          }
-        }
-        const unknownPaths = computeUnknownPaths(item, parsedSchema);
-        return {
-          data: item,
-          errors: errorMessages,
-          failingPaths,
-          index,
-          unknownPaths,
-          valid: errors.length === 0,
-        };
-      });
+      const rows = parsedData.slice(0, VALIDATION_ROW_CAP),
+        isCapped = parsedData.length > rows.length,
+        newResults: ValidationResult[] = rows.map((item, index) =>
+          validateRow(item, index, parsedSchema),
+        );
 
       setResults(newResults);
       setParseError(null);
-
-      // Aggregate failing paths across all items
-      const aggregated = new Map<string, number>();
-      let invalidItemCount = 0;
-      for (const r of newResults) {
-        if (!r.valid) {
-          invalidItemCount += 1;
-        }
-        for (const path of r.failingPaths) {
-          aggregated.set(path, (aggregated.get(path) ?? 0) + 1);
-        }
-      }
-      onStateChange({ failingPaths: aggregated, invalidItemCount, total: parsedData.length });
+      setCapped(isCapped);
+      onStateChange(aggregateResults(newResults));
     },
     [onStateChange],
   );
 
   useEffect(() => {
+    // Debounced (issue #135, defect 8): this pane re-validates the whole
+    // dataset on every schema keystroke, which froze the tab on a ~20k-row
+    // file. Wait out the typing, then run the (row-capped) pass.
     // eslint-disable-next-line react-hooks/set-state-in-effect -- re-validates against the schema/data pair, including an async-looking dependency (validate) that itself calls setState; not expressible as a render-time derivation.
-    validate(dataText, schemaJson);
+    const timer = setTimeout(() => {
+      validate(dataText, schemaJson);
+    }, VALIDATION_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(timer);
+    };
   }, [schemaJson, dataText, validate]);
 
   const loadFile = async (file: File) => {
@@ -463,6 +514,8 @@ export function ValidationPane({
                 {parseError}
               </div>
             )}
+
+            <CappedNotice show={capped} />
 
             {/* Results list */}
             {results && results.length > 0 && (

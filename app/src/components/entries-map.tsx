@@ -56,7 +56,13 @@ function FeatureDetailsPanel({ entry, onClose }: { entry: EntryDoc; onClose: () 
     <div className="absolute top-3 right-3 bottom-3 z-10 flex w-64 flex-col overflow-hidden rounded-lg border border-border bg-card/95 shadow-lg backdrop-blur-sm">
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
         <h3 className="text-sm font-semibold">Feature details</h3>
-        <Button variant="ghost" size="icon" className="size-6" onClick={onClose}>
+        <Button
+          aria-label="Close feature details"
+          variant="ghost"
+          size="icon"
+          className="size-6"
+          onClick={onClose}
+        >
           <X className="size-3.5" />
         </Button>
       </div>

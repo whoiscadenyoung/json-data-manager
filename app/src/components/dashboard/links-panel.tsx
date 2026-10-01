@@ -2,6 +2,7 @@ import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { ConfirmDeleteDialog } from "#/components/dashboard/confirm-delete-dialog";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
@@ -28,6 +29,7 @@ import {
   TableHeader,
   TableRow,
 } from "#/components/ui/table";
+import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 import type { Doc } from "#convex/_generated/dataModel";
 
@@ -36,16 +38,6 @@ type LinkRow = Doc<"restaurantLocations"> & {
   label: string;
   restaurantName: string;
 };
-
-function errorMessage(error: unknown, fallback: string): string {
-  if (typeof error === "object" && error !== null && "data" in error) {
-    const { data } = error;
-    if (typeof data === "string") {
-      return data;
-    }
-  }
-  return error instanceof Error ? error.message : fallback;
-}
 
 type SelectItemOption = { label: string; value: string };
 
@@ -96,6 +88,37 @@ function EntitySelect({
  * (restaurant, location) pair is immutable after creation — edit only the
  * opened year — matching the compound index that enforces pair uniqueness.
  */
+/**
+ * The row delete's confirm (issue #135, defect 7), kept as its own component
+ * so LinksPanel stays under the complexity cap — the name ternary and the
+ * guard live here.
+ */
+function LinkDeleteConfirm({
+  deleting,
+  onCancel,
+  onDeleted,
+}: {
+  deleting: LinkRow | undefined;
+  onCancel: () => void;
+  onDeleted: (link: LinkRow) => void;
+}) {
+  return (
+    <ConfirmDeleteDialog
+      description="The link row is deleted. The restaurant and location it points at stay."
+      entityLabel="link"
+      isPending={false}
+      name={deleting === undefined ? undefined : `${deleting.restaurantName} → ${deleting.label}`}
+      onCancel={onCancel}
+      onConfirm={() => {
+        if (deleting !== undefined) {
+          onDeleted(deleting);
+        }
+        onCancel();
+      }}
+    />
+  );
+}
+
 export function LinksPanel() {
   const links = useQuery(api.dashboard.listLinks),
     restaurants = useQuery(api.dashboard.listRestaurants),
@@ -110,6 +133,10 @@ export function LinksPanel() {
     [locationId, setLocationId] = useState(""),
     [openedYearInput, setOpenedYearInput] = useState(""),
     [isSubmitting, setIsSubmitting] = useState(false),
+    // Issue #135, defect 7: the row's Delete button used to fire the
+    // mutation immediately — deleting a link is irreversible, so it opens
+    // the confirm instead.
+    [deleting, setDeleting] = useState<LinkRow | undefined>(undefined),
     openCreate = () => {
       setEditing(undefined);
       setRestaurantId("");
@@ -247,7 +274,7 @@ export function LinksPanel() {
                         variant="destructive"
                         size="sm"
                         onClick={() => {
-                          void handleDelete(link);
+                          setDeleting(link);
                         }}
                       >
                         Delete
@@ -317,6 +344,16 @@ export function LinksPanel() {
           </form>
         </SheetContent>
       </Sheet>
+
+      <LinkDeleteConfirm
+        deleting={deleting}
+        onCancel={() => {
+          setDeleting(undefined);
+        }}
+        onDeleted={(link) => {
+          void handleDelete(link);
+        }}
+      />
     </div>
   );
 }

@@ -29,6 +29,7 @@ import {
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { Textarea } from "#/components/ui/textarea";
+import { errorMessage } from "#/lib/errors";
 
 import { api } from "../../../convex/_generated/api";
 
@@ -45,17 +46,6 @@ export const Route = createFileRoute("/projects/")({
 });
 
 type ProjectSummary = FunctionReturnType<typeof api.projects.list>[number];
-
-/** ConvexError / Error → user-facing message (the create.tsx extractor). */
-function errorMessage(error: unknown): string {
-  if (typeof error === "object" && error !== null && "data" in error) {
-    const data = (error as { data?: unknown }).data;
-    if (typeof data === "string") {
-      return data;
-    }
-  }
-  return error instanceof Error ? error.message : "Something went wrong.";
-}
 
 function NewProjectDialog({
   open,
@@ -85,7 +75,7 @@ function NewProjectDialog({
       onOpenChange(false);
       await navigate({ params: { projectId }, to: "/projects/$projectId" });
     } catch (error) {
-      toast.error(errorMessage(error));
+      toast.error(errorMessage(error, "Something went wrong."));
     } finally {
       setSubmitting(false);
     }

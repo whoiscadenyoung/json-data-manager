@@ -13,7 +13,9 @@ import { z } from "zod";
 
 import { RouterButton } from "#/components/router-button";
 import { Card, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
+import { errorMessage } from "#/lib/errors";
 import { ensureMapTileArchive } from "#/lib/tile-archive";
+import { uploadChunkBlob, uploadSourceFileBlob } from "#/lib/upload";
 
 import { api } from "../../../convex/_generated/api";
 
@@ -37,17 +39,6 @@ export const Route = createFileRoute("/datasets/create")({
 });
 
 type Mode = "choose" | "schema" | "import";
-
-/** ConvexError / Error → user-facing message, for the failure toast. */
-function errorMessage(error: unknown): string {
-  if (typeof error === "object" && error !== null && "data" in error) {
-    const data = (error as { data?: unknown }).data;
-    if (typeof data === "string") {
-      return data;
-    }
-  }
-  return error instanceof Error ? error.message : "Failed to create schema.";
-}
 
 /**
  * The create args both paths send — the in-project variant spreads this and
@@ -239,7 +230,7 @@ function SchemaFirst({ projectId }: { projectId?: string }) {
               : { params: { projectId }, to: "/projects/$projectId" },
           );
         } catch (error) {
-          toast.error(errorMessage(error));
+          toast.error(errorMessage(error, "Failed to create schema."));
           throw error;
         }
       }}
@@ -252,50 +243,6 @@ function SchemaFirst({ projectId }: { projectId?: string }) {
 interface UploadedBlob {
   storageId: string;
   uploadId: string;
-}
-
-/** Narrows the upload endpoint's JSON response to its storage id. */
-function storageIdFromUploadResponse(body: unknown, failure: string): string {
-  if (
-    typeof body !== "object" ||
-    body === null ||
-    !("storageId" in body) ||
-    typeof body.storageId !== "string"
-  ) {
-    throw new Error(failure);
-  }
-  return body.storageId;
-}
-
-/** POSTs one serialized row chunk to its upload URL and returns the blob's id. */
-async function uploadChunkBlob(storageUrl: string, chunk: DatasetImportRow[]): Promise<string> {
-  const res = await fetch(storageUrl, {
-    body: JSON.stringify(chunk),
-    headers: { "Content-Type": "application/json" },
-    method: "POST",
-  });
-  if (!res.ok) {
-    throw new Error("Failed to upload import data.");
-  }
-  return storageIdFromUploadResponse(await res.json(), "Import upload did not return a storageId.");
-}
-
-/** POSTs the retained original file to its upload URL and returns the blob's id. */
-async function uploadSourceFileBlob(storageUrl: string, file: File): Promise<string> {
-  const res = await fetch(storageUrl, {
-    body: file,
-    headers: {
-      "Content-Type": file.type || "application/octet-stream",
-    },
-    method: "POST",
-  });
-  if (!res.ok) {
-    throw new Error("Failed to upload the original file.");
-  }
-  return storageIdFromUploadResponse(
-    await res.json(),
-    "Original-file upload did not return a storageId.",
-  );
 }
 
 function ImportFirst({ projectId }: { projectId?: string }) {

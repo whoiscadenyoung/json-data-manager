@@ -92,13 +92,19 @@ export function useReferencingEntries(
  * Fetches every page automatically (see `useAllPaginated`) — `listGeometries`
  * is paginated server-side because a dataset's cumulative geometry payload
  * can exceed Convex's per-execution read-byte budget even though each row is
- * safely under its own document-size limit — and returns `undefined` while
- * any page is still loading, matching every other hook in this file.
+ * safely under its own document-size limit — and returns `undefined` until a
+ * pass has fully completed, then keeps the last complete set (latched, the
+ * ui-polish completeness rule: pagination status, not `isLoading`, which
+ * drops after the first page — issue #135, defect 9), matching every other
+ * hook in this file.
  */
 export function useGeometries(schemaId: SchemaId | undefined): GeometryDoc[] | undefined {
   const api = useJsonCmsApi(),
-    { isLoading, results } = useAllPaginated(api.listGeometries, schemaId ? { schemaId } : "skip");
-  return isLoading ? undefined : results;
+    { hasCompletedPass, results } = useAllPaginated(
+      api.listGeometries,
+      schemaId ? { schemaId } : "skip",
+    );
+  return hasCompletedPass ? results : undefined;
 }
 
 /**

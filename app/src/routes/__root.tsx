@@ -3,6 +3,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { HeadContent, Scripts, createRootRouteWithContext } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 
+import { AuthGate } from "#/components/auth-gate";
 import { Header } from "#/components/header";
 import { Toaster } from "#/components/ui/sonner";
 import { AppConvexProvider } from "#/integrations/convex/provider";
@@ -36,7 +37,7 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
         name: "viewport",
       },
       {
-        title: "TanStack Start Starter",
+        title: "JSON Data Manager",
       },
     ],
   }),
@@ -56,20 +57,26 @@ function RootDocument({ children }: { children: React.ReactNode }) {
             <TileArchiveManager />
             <TileArchiveCacheManager />
             <Header />
-            {children}
+            {/* The app-wide sign-in gate (issue #135): nothing routed renders
+                — or queries — until the session resolves as signed in. */}
+            <AuthGate>{children}</AuthGate>
             <Toaster />
-            <TanStackDevtools
-              config={{
-                position: "bottom-right",
-              }}
-              plugins={[
-                {
-                  name: "Tanstack Router",
-                  render: <TanStackRouterDevtoolsPanel />,
-                },
-                tanStackQueryDevtools,
-              ]}
-            />
+            {/* Devtools stay a dev-only render — they shipped into production
+                builds until #135's review caught it. */}
+            {import.meta.env.PROD ? null : (
+              <TanStackDevtools
+                config={{
+                  position: "bottom-right",
+                }}
+                plugins={[
+                  {
+                    name: "Tanstack Router",
+                    render: <TanStackRouterDevtoolsPanel />,
+                  },
+                  tanStackQueryDevtools,
+                ]}
+              />
+            )}
           </TanStackQueryProvider>
         </AppConvexProvider>
         <Scripts />

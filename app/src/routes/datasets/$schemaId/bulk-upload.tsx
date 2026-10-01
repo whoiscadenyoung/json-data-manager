@@ -23,6 +23,8 @@ import { AlertTriangle, ArrowLeft, CheckCircle, FileJson, Upload, X, XCircle } f
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { errorMessage } from "#/lib/errors";
+import { uploadChunkBlob } from "#/lib/upload";
 import { QueryErrorBoundary } from "@/components/query-error-boundary";
 import { RouterButton } from "@/components/router-button";
 import {
@@ -260,7 +262,7 @@ async function loadImportedFile(file: File, isGeospatial: boolean): Promise<Load
   } catch (error) {
     return {
       kind: "error",
-      message: error instanceof Error ? error.message : "Could not read that file.",
+      message: errorMessage(error, "Could not read that file."),
     };
   }
 }
@@ -571,9 +573,11 @@ function BulkUploadNotFoundCard() {
 
 function BulkUploadPage() {
   // Stage 8 (#104): a denied by-id read THROWS from the raw subscription —
-  // the boundary renders the same card a deleted dataset gets.
+  // the boundary renders the same card a deleted dataset gets. `resetKey`
+  // clears it when the route param changes (issue #135, defect 6).
+  const { schemaId } = Route.useParams();
   return (
-    <QueryErrorBoundary fallback={<BulkUploadNotFoundCard />}>
+    <QueryErrorBoundary fallback={<BulkUploadNotFoundCard />} resetKey={schemaId}>
       <BulkUploadBody />
     </QueryErrorBoundary>
   );
@@ -760,26 +764,9 @@ function BulkUploadBody() {
         for (const chunk of chunks) {
           // oxlint-disable-next-line no-await-in-loop
           const { storageUrl, uploadId } = await generateUploadUrl({ scope: schemaId }),
-            // oxlint-disable-next-line no-await-in-loop
-            res = await fetch(storageUrl, {
-              body: JSON.stringify(chunk),
-              headers: { "Content-Type": "application/json" },
-              method: "POST",
-            });
-          if (!res.ok) {
-            throw new Error("Failed to upload entries.");
-          }
-          // oxlint-disable-next-line no-await-in-loop
-          const body: unknown = await res.json();
-          if (
-            typeof body !== "object" ||
-            body === null ||
-            !("storageId" in body) ||
-            typeof body.storageId !== "string"
-          ) {
-            throw new Error("Upload did not return a storageId.");
-          }
-          uploaded.push({ storageId: body.storageId, uploadId });
+            // oxlint-disable-next-line no-await-in-loop -- chunks upload sequentially so a failed upload aborts before later chunks are sent.
+            storageId = await uploadChunkBlob(storageUrl, chunk);
+          uploaded.push({ storageId, uploadId });
         }
         const newImportId = await startImport({
           schemaId,
@@ -789,7 +776,7 @@ function BulkUploadBody() {
         setImportId(newImportId);
         // Navigation happens in the effect watching importStatus.
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to upload entries.");
+        toast.error(errorMessage(error, "Failed to upload entries."));
         setIsSubmitting(false);
       }
     };

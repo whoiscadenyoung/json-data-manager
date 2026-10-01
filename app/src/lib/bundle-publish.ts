@@ -26,6 +26,7 @@
  */
 import type { ConvexClient } from "convex/browser";
 
+import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 
 import { sharedClient } from "./dataset-rows";
@@ -98,8 +99,7 @@ export async function publishProjectBundle(options: {
         status: "published",
       });
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "The publish failed for an unknown reason.";
+      const message = errorMessage(error, "The publish failed for an unknown reason.");
       failedKeys.push(member.datasetKey);
       // oxlint-disable-next-line no-await-in-loop -- see above.
       await convex.mutation(api.bundles.recordMember, {

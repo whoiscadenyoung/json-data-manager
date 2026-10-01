@@ -7,6 +7,7 @@ import { Download, Layers, MapIcon, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 import { AddToMapSheet } from "@/components/add-to-map-sheet";
 import { DatasetList } from "@/components/dataset-list";
@@ -210,7 +211,7 @@ function GroupDetailPage() {
       try {
         await setSchemaGroup({ groupId: targetGroupId, schemaId: dataset._id });
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to move dataset.");
+        toast.error(errorMessage(error, "Failed to move dataset."));
       }
     },
     handleRemoveDataset = async (dataset: Dataset) => {
@@ -218,7 +219,7 @@ function GroupDetailPage() {
         await setSchemaGroup({ groupId: null, schemaId: dataset._id });
         toast.success(`Removed "${dataset.title}" from the group.`);
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to remove dataset.");
+        toast.error(errorMessage(error, "Failed to remove dataset."));
       }
     },
     handleDeleteGroup = async () => {
@@ -227,7 +228,7 @@ function GroupDetailPage() {
         toast.success("Group deleted.");
         await navigate({ to: "/datasets" });
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to delete group.");
+        toast.error(errorMessage(error, "Failed to delete group."));
       }
     },
     [exportOpen, setExportOpen] = useState(false),
@@ -293,9 +294,7 @@ function GroupDetailPage() {
         try {
           skippedTransforms = await applyJoinedFields(convex, memberSummaries, rowsByDataset);
         } catch (error) {
-          toast.error(
-            error instanceof Error ? error.message : "Could not apply the saved transforms.",
-          );
+          toast.error(errorMessage(error, "Could not apply the saved transforms."));
           return;
         }
       }

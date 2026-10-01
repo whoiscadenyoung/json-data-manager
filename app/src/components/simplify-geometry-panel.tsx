@@ -11,17 +11,8 @@ import {
   SheetHeader,
   SheetTitle,
 } from "#/components/ui/sheet";
+import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
-
-function errorMessage(error: unknown, fallback: string): string {
-  if (typeof error === "object" && error !== null && "data" in error) {
-    const { data } = error;
-    if (typeof data === "string") {
-      return data;
-    }
-  }
-  return error instanceof Error ? error.message : fallback;
-}
 
 /** Progress line shown once simplification has started — mirrors the conversion panel's progress bar. */
 function SimplifyProgress({

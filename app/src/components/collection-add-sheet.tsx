@@ -17,21 +17,12 @@ import {
   SheetHeader,
   SheetTitle,
 } from "#/components/ui/sheet";
+import { errorMessage } from "#/lib/errors";
 import type { MembershipRow } from "#/lib/map-layers";
 import { api } from "#convex/_generated/api";
 
 type CollectionDoc = FunctionReturnType<typeof api.collections.list>[number];
 type GroupDoc = FunctionReturnType<typeof api.groups.list>[number];
-
-function errorMessage(error: unknown, fallback: string): string {
-  if (typeof error === "object" && error !== null && "data" in error) {
-    const { data } = error;
-    if (typeof data === "string") {
-      return data;
-    }
-  }
-  return error instanceof Error ? error.message : fallback;
-}
 
 /** True when `text`/`description` contains the (already normalized) search. */
 function matchesSearch(normalized: string, text: string, description?: string): boolean {

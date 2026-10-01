@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { GEOMETRY_TYPES } from "../../shared/geojson/types.js";
 import type { GeometryType } from "../../shared/geojson/types.js";
 import { inferSchemaFromData } from "../lib/infer-schema.js";
+import { errorMessage } from "./lib/errors.js";
 import { cn } from "./lib/utils.js";
 import { Button } from "./primitives/button.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./primitives/card.js";
@@ -870,6 +871,13 @@ export function SchemaEditor({
       setIsSaving(true);
       try {
         await onSave(schemaJson, parsedSchema, uiSchemaJson, parsedUiSchema);
+      } catch (saveError) {
+        // The save itself failed — a ConvexError's text rides `error.data`
+        // (the generic `.message` reads "Server Error"). Surface it and keep
+        // the editor open so the user can fix or cancel: rethrowing here was
+        // an unhandled rejection and a silently stuck busy state (issue #135,
+        // defect 5).
+        toast.error(errorMessage(saveError, "Could not save the dataset."));
       } finally {
         setIsSaving(false);
       }

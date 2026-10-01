@@ -8,20 +8,11 @@ import { toast } from "sonner";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
+import { errorMessage } from "#/lib/errors";
 import { isSyncStale } from "#/lib/sync-staleness";
 import { api } from "#convex/_generated/api";
 
 type BindingRow = FunctionReturnType<typeof api.bindings.list>[number];
-
-function errorMessage(error: unknown, fallback: string): string {
-  if (typeof error === "object" && error !== null && "data" in error) {
-    const { data } = error;
-    if (typeof data === "string") {
-      return data;
-    }
-  }
-  return error instanceof Error ? error.message : fallback;
-}
 
 /**
  * One bound source: its projection's sync state, a live progress row for the

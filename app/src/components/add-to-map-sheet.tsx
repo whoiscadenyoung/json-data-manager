@@ -15,6 +15,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "#/components/ui/sheet";
+import { errorMessage } from "#/lib/errors";
 import type { LayerTargetType, MapLayerDoc } from "#/lib/map-layers";
 import { api } from "#convex/_generated/api";
 
@@ -29,16 +30,6 @@ type AddToMapTargetType = Exclude<LayerTargetType, "derived">;
 type AddToMapTarget = { targetId: string; targetType: AddToMapTargetType; targetName: string };
 
 type MapSummary = { _id: string; name: string };
-
-function errorMessage(error: unknown, fallback: string): string {
-  if (typeof error === "object" && error !== null && "data" in error) {
-    const { data } = error;
-    if (typeof data === "string") {
-      return data;
-    }
-  }
-  return error instanceof Error ? error.message : fallback;
-}
 
 /** The searchable list of existing maps, with per-map add buttons ("Added" badge when the target is already a layer). */
 function ExistingMapsSection({

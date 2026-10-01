@@ -23,6 +23,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "#/components/ui/empty";
+import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 
 type Collection = FunctionReturnType<typeof api.collections.list>[number];
@@ -127,7 +128,7 @@ function CollectionsPage() {
         await deleteCollection({ collectionId: pendingDelete._id });
         toast.success("Collection deleted.");
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to delete collection.");
+        toast.error(errorMessage(error, "Failed to delete collection."));
       }
     };
 

@@ -40,6 +40,7 @@ import {
   EmptyTitle,
 } from "#/components/ui/empty";
 import { publishProjectBundle } from "#/lib/bundle-publish";
+import { errorMessage } from "#/lib/errors";
 
 import { api } from "../../../convex/_generated/api";
 
@@ -67,17 +68,6 @@ export const Route = createFileRoute("/projects/$projectId")({
 type Workspace = FunctionReturnType<typeof api.projects.get>;
 type WorkspaceData = NonNullable<Workspace>;
 type Artifact = WorkspaceData["artifacts"][number];
-
-/** ConvexError / Error → user-facing message (the create.tsx extractor). */
-function errorMessage(error: unknown): string {
-  if (typeof error === "object" && error !== null && "data" in error) {
-    const data = (error as { data?: unknown }).data;
-    if (typeof data === "string") {
-      return data;
-    }
-  }
-  return error instanceof Error ? error.message : "Something went wrong.";
-}
 
 /** Splits the membership rows by their declared kind — the workspace's section order. */
 function groupByKind(artifacts: Artifact[]): {
@@ -166,7 +156,7 @@ function RemoveButton({
             await remove({ artifactId, artifactKind, projectId });
             toast.success("Removed from project.");
           } catch (error) {
-            toast.error(errorMessage(error));
+            toast.error(errorMessage(error, "Something went wrong."));
           }
         };
         void run();
@@ -401,7 +391,7 @@ function AddReferenceDialog({
       toast.success("Added to project.");
       onOpenChange(false);
     } catch (error) {
-      toast.error(errorMessage(error));
+      toast.error(errorMessage(error, "Something went wrong."));
     } finally {
       setPendingId(undefined);
     }
@@ -418,7 +408,7 @@ function AddReferenceDialog({
       toast.success("Forked as a transform — edit its spec, publish it with the project.");
       onOpenChange(false);
     } catch (error) {
-      toast.error(errorMessage(error));
+      toast.error(errorMessage(error, "Something went wrong."));
     } finally {
       setPendingId(undefined);
     }
@@ -541,7 +531,7 @@ function usePressBundle(projectId: string) {
         );
       }
     } catch (error) {
-      toast.error(errorMessage(error));
+      toast.error(errorMessage(error, "Something went wrong."));
     } finally {
       setPressing(false);
     }

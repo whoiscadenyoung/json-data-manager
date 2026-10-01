@@ -30,6 +30,7 @@ import {
   DropdownMenuTrigger,
 } from "#/components/ui/dropdown-menu";
 import { Empty, EmptyDescription, EmptyTitle } from "#/components/ui/empty";
+import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 
 export const Route = createFileRoute("/collections/$collectionId/")({
@@ -217,7 +218,7 @@ function CollectionDetailPage() {
       try {
         await setSchemaGroup({ groupId, schemaId: dataset._id });
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to move dataset.");
+        toast.error(errorMessage(error, "Failed to move dataset."));
       }
     },
     handleRemoveFromCollection = async (dataset: Dataset) => {
@@ -225,7 +226,7 @@ function CollectionDetailPage() {
         await removeSchemaFromCollection({ collectionId, schemaId: dataset._id });
         toast.success(`Removed "${dataset.title}" from the collection.`);
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to remove dataset.");
+        toast.error(errorMessage(error, "Failed to remove dataset."));
       }
     },
     handleDeleteCollection = async () => {
@@ -234,7 +235,7 @@ function CollectionDetailPage() {
         toast.success("Collection deleted.");
         await navigate({ to: "/collections" });
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to delete collection.");
+        toast.error(errorMessage(error, "Failed to delete collection."));
       }
     },
     handleDeleteGroup = async () => {
@@ -245,7 +246,7 @@ function CollectionDetailPage() {
         await deleteGroupMutation({ groupId: pendingDeleteGroup._id });
         toast.success("Group deleted.");
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to delete group.");
+        toast.error(errorMessage(error, "Failed to delete group."));
       }
     };
 

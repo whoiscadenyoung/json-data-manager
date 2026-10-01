@@ -24,6 +24,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/com
 import { Input } from "#/components/ui/input";
 import { VersionCompare } from "#/components/version-compare";
 import { useDatasetVersionRows } from "#/lib/dataset-rows-react";
+import { errorMessage } from "#/lib/errors";
 import { publishDataset } from "#/lib/publish";
 import type { VersionRow } from "#/lib/version-rows";
 import { api } from "#convex/_generated/api";
@@ -39,16 +40,6 @@ import { api } from "#convex/_generated/api";
 
 type ChainVersionRow = FunctionReturnType<typeof api.consumption.chainVersions>[number];
 type DatasetDoc = FunctionReturnType<typeof api.schemas.list>[number];
-
-function errorMessage(error: unknown, fallback: string): string {
-  if (typeof error === "object" && error !== null && "data" in error) {
-    const { data } = error;
-    if (typeof data === "string") {
-      return data;
-    }
-  }
-  return error instanceof Error ? error.message : fallback;
-}
 
 /**
  * The diff view for one drifted source: pinned (the recorded freeze) vs the
