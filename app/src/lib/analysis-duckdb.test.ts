@@ -1,7 +1,8 @@
 import { createRequire } from "node:module";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Worker } from "node:worker_threads";
+
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   applyEngineLockdown,
@@ -67,9 +68,9 @@ describe("ENGINE_LOCKDOWN_STATEMENTS — the post-init lockdown (#132)", () => {
   });
 
   it("leaves memory_limit out — it must precede the lock, and createEngine sets it just before the applier runs", () => {
-    expect(
-      ENGINE_LOCKDOWN_STATEMENTS.some((statement) => statement.includes("memory_limit")),
-    ).toBe(false);
+    expect(ENGINE_LOCKDOWN_STATEMENTS.some((statement) => statement.includes("memory_limit"))).toBe(
+      false,
+    );
   });
 });
 
@@ -163,8 +164,7 @@ interface ProbeConnection {
 }
 
 describe("the locked-down engine (real pinned wasm, Node target)", () => {
-  let bridge: NodeWorkerBridge | undefined,
-    connection: ProbeConnection | undefined;
+  let bridge: NodeWorkerBridge | undefined, connection: ProbeConnection | undefined;
 
   const engine = (): ProbeConnection => {
     if (connection === undefined) {
@@ -201,10 +201,14 @@ describe("the locked-down engine (real pinned wasm, Node target)", () => {
 
   it("refuses read_parquet / parquet_scan — the extension is no longer autoloaded (Catalog Error)", async () => {
     await expect(
-      engine().query("SELECT count(*) AS n FROM read_parquet('https://example.invalid/data.parquet')"),
+      engine().query(
+        "SELECT count(*) AS n FROM read_parquet('https://example.invalid/data.parquet')",
+      ),
     ).rejects.toThrow(/Catalog Error/);
     await expect(
-      engine().query("SELECT count(*) AS n FROM parquet_scan('https://example.invalid/data.parquet')"),
+      engine().query(
+        "SELECT count(*) AS n FROM parquet_scan('https://example.invalid/data.parquet')",
+      ),
     ).rejects.toThrow(/Catalog Error/);
   }, 30_000);
 

@@ -424,15 +424,16 @@ function sqlTokens(sql: string): SqlToken[] {
 function singleQuoteEscapes(tokens: readonly SqlToken[], character: string): boolean {
   const previous = tokens[tokens.length - 1];
   return (
-    character === "'" &&
-    previous !== undefined &&
-    previous.kind === "word" &&
-    previous.text === "E"
+    character === "'" && previous !== undefined && previous.kind === "word" && previous.text === "E"
   );
 }
 
 /** The index just past the comment or quoted region opening at `start`, or undefined when ordinary characters sit there. */
-function pastCommentOrQuote(sql: string, start: number, tokens: readonly SqlToken[]): number | undefined {
+function pastCommentOrQuote(
+  sql: string,
+  start: number,
+  tokens: readonly SqlToken[],
+): number | undefined {
   const character = sql[start];
   if (character === "-" && sql[start + 1] === "-") {
     return pastLineComment(sql, start);
