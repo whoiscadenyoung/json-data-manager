@@ -537,9 +537,9 @@ describe("json-cms component", () => {
       const t = initConvexTest(),
         schemaId = await createGeospatialSchema(t, "Point");
       const flagOf = async () => {
-        const row = (await t.query(api.lib.listSchemaSummaries, { limit: 500, viewerId: VIEWER })).find(
-          (summary) => summary._id === schemaId,
-        );
+        const row = (
+          await t.query(api.lib.listSchemaSummaries, { limit: 500, viewerId: VIEWER })
+        ).find((summary) => summary._id === schemaId);
         assertDefined(row);
         return row.mapTileArchiveFormatCurrent;
       };
