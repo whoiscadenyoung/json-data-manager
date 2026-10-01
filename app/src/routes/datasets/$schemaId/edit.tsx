@@ -6,6 +6,7 @@ import { AlertCircle, ArrowLeft, Save } from "lucide-react";
 import { toast } from "sonner";
 import { z } from "zod";
 
+import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 import { QueryErrorBoundary } from "@/components/query-error-boundary";
 import { RouterButton } from "@/components/router-button";
@@ -57,8 +58,10 @@ function EditSchemaPage() {
   // Stage 8 (#104): a denied by-id read (a foreign draft, an author-only
   // dataset) THROWS from the raw subscription — the boundary renders the
   // same card a deleted dataset gets, never the router's error screen.
+  // `resetKey` clears it when the route param changes (issue #135, defect 6).
+  const { schemaId } = Route.useParams();
   return (
-    <QueryErrorBoundary fallback={<EditSchemaNotFoundCard />}>
+    <QueryErrorBoundary fallback={<EditSchemaNotFoundCard />} resetKey={schemaId}>
       <EditSchemaBody />
     </QueryErrorBoundary>
   );
@@ -172,7 +175,7 @@ function MetadataEditForm({
         toast.success("Dataset updated!");
         void navigate({ params: { schemaId }, to: "/datasets/$schemaId" });
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to update dataset.");
+        toast.error(errorMessage(error, "Failed to update dataset."));
       }
     },
   });
@@ -225,16 +228,10 @@ function MetadataEditForm({
             )}
           </form.Field>
 
-          <form.Field
-            name="description"
-            validators={{
-              onBlur: z.string().min(1, "Description is required."),
-              onChange: z.string().min(1, "Description is required."),
-            }}
-          >
+          <form.Field name="description">
             {(field) => (
               <div className="space-y-2">
-                <Label htmlFor="description">Description</Label>
+                <Label htmlFor="description">Description (optional)</Label>
                 <Textarea
                   id="description"
                   value={field.state.value}
@@ -244,11 +241,6 @@ function MetadataEditForm({
                   onBlur={field.handleBlur}
                   rows={3}
                 />
-                {field.state.meta.isTouched && field.state.meta.errors.length > 0 && (
-                  <p className="text-sm text-destructive">
-                    {firstFieldError(field.state.meta.errors)}
-                  </p>
-                )}
               </div>
             )}
           </form.Field>
@@ -297,7 +289,10 @@ function FullSchemaEditForm({
           await updateSchema({
             schema: parsed,
             schemaId,
-            uiSchema: Object.keys(uiSchemaParsed).length > 0 ? uiSchemaParsed : undefined,
+            // `null` explicitly clears a stored uiSchema (the component
+            // patches it away); `undefined` would mean "leave it untouched"
+            // and silently drop the clear (issue #135, defect 4).
+            uiSchema: Object.keys(uiSchemaParsed).length > 0 ? uiSchemaParsed : null,
           });
           toast.success("Dataset updated!");
           void navigate({ params: { schemaId }, to: "/datasets/$schemaId" });

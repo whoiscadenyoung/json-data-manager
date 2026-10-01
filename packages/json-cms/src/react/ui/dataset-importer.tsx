@@ -20,6 +20,7 @@ import {
 } from "../lib/import-parsers/registry.js";
 import type { ImportParseResult, ParsedSheet } from "../lib/import-parsers/types.js";
 import { inferSchemaFromData } from "../lib/infer-schema.js";
+import { errorMessage } from "./lib/errors.js";
 import { cn } from "./lib/utils.js";
 import { Button } from "./primitives/button.js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./primitives/card.js";
@@ -826,7 +827,7 @@ export function DatasetImporter({
       try {
         result = await parser.parse(file);
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not read that file.");
+        toast.error(errorMessage(error, "Could not read that file."));
         return;
       }
       applyParseResult(result, file.name, keepSchema);
@@ -864,7 +865,7 @@ export function DatasetImporter({
       try {
         await action();
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "That didn't work — try again.");
+        toast.error(errorMessage(error, "That didn't work — try again."));
       } finally {
         setRecovering(false);
       }
@@ -926,7 +927,7 @@ export function DatasetImporter({
         );
       } catch (error) {
         setSubmitting(false);
-        toast.error(error instanceof Error ? error.message : "Failed to start import.");
+        toast.error(errorMessage(error, "Failed to start import."));
         throw error;
       }
     },

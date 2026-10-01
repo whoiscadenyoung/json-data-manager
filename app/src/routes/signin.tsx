@@ -31,16 +31,21 @@ function SignInPage() {
       return typeof value === "string" ? value : "";
     };
     setBusy(true);
-    const result = await authClient.signIn.email({
-      email: field("email"),
-      password: field("password"),
-    });
-    setBusy(false);
-    if (result.error !== null) {
-      toast.error(result.error.message ?? "That didn't work — try again.");
-      return;
+    try {
+      const result = await authClient.signIn.email({
+        email: field("email"),
+        password: field("password"),
+      });
+      if (result.error !== null) {
+        toast.error(result.error.message ?? "That didn't work — try again.");
+        return;
+      }
+      await navigate({ to: "/" });
+    } finally {
+      // A thrown call (offline, server down) must not leave the button stuck
+      // in its busy state (issue #135, defect 5).
+      setBusy(false);
     }
-    await navigate({ to: "/" });
   };
 
   return (

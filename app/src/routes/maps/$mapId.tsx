@@ -28,6 +28,7 @@ import {
   EmptyTitle,
 } from "#/components/ui/empty";
 import { useGeometriesBySchemas } from "#/lib/dataset-rows-react";
+import { errorMessage } from "#/lib/errors";
 import type { LayerSourceSplit } from "#/lib/layer-source";
 import {
   geospatialDatasetsFor,
@@ -87,7 +88,7 @@ export const Route = createFileRoute("/maps/$mapId")({
  * each dataset keeps a stable color across visibility toggles.
  */
 function toastError(error: unknown, fallback: string) {
-  toast.error(error instanceof Error ? error.message : fallback);
+  toast.error(errorMessage(error, fallback));
 }
 
 /**
@@ -183,6 +184,9 @@ function MapDetailPage() {
     [editingMap, setEditingMap] = useState(false),
     [addLayerOpen, setAddLayerOpen] = useState(false),
     [pendingDeleteMap, setPendingDeleteMap] = useState(false),
+    // Issue #135, defect 7: removing a layer used to fire immediately — the
+    // panel's × opens this confirm instead.
+    [pendingRemoveLayer, setPendingRemoveLayer] = useState<MapLayerDoc | undefined>(undefined),
     {
       handleDeleteMap,
       handleMoveLayer,
@@ -542,7 +546,7 @@ function MapDetailPage() {
               void handleToggleVisibility(layer);
             }}
             onRemove={(layer) => {
-              void handleRemoveLayer(layer);
+              setPendingRemoveLayer(layer);
             }}
             onToggleChild={(layerId, childKey, currentlyVisible) => {
               void handleToggleChild(layerId, childKey, currentlyVisible);
@@ -591,7 +595,7 @@ function MapDetailPage() {
             }
             toast.success("Layer added.");
           } catch (error) {
-            toast.error(error instanceof Error ? error.message : "Failed to add layer.");
+            toast.error(errorMessage(error, "Failed to add layer."));
           }
         }}
       />
@@ -605,6 +609,25 @@ function MapDetailPage() {
         destructive
         onConfirm={() => {
           void handleDeleteMap();
+        }}
+      />
+
+      <ConfirmDialog
+        open={pendingRemoveLayer !== undefined}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingRemoveLayer(undefined);
+          }
+        }}
+        title={`Remove "${pendingRemoveLayer === undefined ? "" : layerName(pendingRemoveLayer)}" from this map?`}
+        description="The layer leaves the map. The dataset or collection behind it stays put — add it back any time."
+        confirmLabel="Remove layer"
+        destructive
+        onConfirm={() => {
+          if (pendingRemoveLayer !== undefined) {
+            void handleRemoveLayer(pendingRemoveLayer);
+          }
+          setPendingRemoveLayer(undefined);
         }}
       />
     </div>

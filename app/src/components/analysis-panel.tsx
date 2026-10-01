@@ -1,3 +1,4 @@
+import { ConfirmDialog } from "@caden/json-cms/react/ui";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
 import { useMutation } from "convex/react";
@@ -34,6 +35,7 @@ import { runAnalysis } from "#/lib/analysis";
 import type { AnalysisRunPhase } from "#/lib/analysis";
 import { ANALYSIS_PREVIEW_ROWS, MAX_ANALYSIS_RESULT_ROWS } from "#/lib/analysis-caps";
 import { sharedClient } from "#/lib/dataset-rows";
+import { errorMessage } from "#/lib/errors";
 import { publishDataset } from "#/lib/publish";
 import { api } from "#convex/_generated/api";
 
@@ -88,16 +90,6 @@ const EMPTY_DRAFT: EditorDraft = { description: "", sql: "", tables: [], title: 
 
 /** What the user explicitly opened: an existing row, or a brand-new analysis. */
 type EditingTarget = { id: string } | { isNew: true };
-
-function errorMessage(error: unknown, fallback: string): string {
-  if (typeof error === "object" && error !== null && "data" in error) {
-    const { data } = error;
-    if (typeof data === "string") {
-      return data;
-    }
-  }
-  return error instanceof Error ? error.message : fallback;
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -310,6 +302,9 @@ function AnalysisEditorForm({
     [dirty, setDirty] = useState(false),
     [autosave, setAutosave] = useState<"error" | "idle" | "saved" | "saving">("idle"),
     [savedId, setSavedId] = useState<string | undefined>(docId),
+    // Issue #135, defect 7: deleting a saved analysis is irreversible — the
+    // destructive button opens this confirm instead of firing.
+    [pendingDelete, setPendingDelete] = useState(false),
     [savedStatus, setSavedStatus] = useState<"draft" | "saved">(
       docId === undefined ? "draft" : "saved",
     ),
@@ -320,7 +315,16 @@ function AnalysisEditorForm({
     // The in-flight autosave's promise (the TransformEditor rule): explicit
     // Save and Publish await it so both share one minted row id.
     pendingSaveRef = useRef<Promise<string | undefined> | null>(null),
+    // Counts every edit since mount (the TransformEditor rule, issue #135):
+    // a save that finishes clears `dirty` only when nothing was typed while
+    // it ran — a moved revision means the mid-save edit re-armed the debounce
+    // and must survive to its own save.
+    revisionRef = useRef(0),
+    // The debounce-armed save closure (the TransformEditor rule): the unmount
+    // flush fires it when the editor closes inside the 800 ms window.
+    flushSaveRef = useRef<(() => void) | undefined>(undefined),
     edit = (patch: Partial<EditorDraft>) => {
+      revisionRef.current += 1;
       setDraft({ ...draft, ...patch });
       setDirty(true);
     },
@@ -337,37 +341,54 @@ function AnalysisEditorForm({
   // Debounced draft autosave — the lifecycle doc's "autosave early and
   // often"; a reload reconstructs the analysis from the registry. State
   // changes land in async callbacks only — never synchronously in the
-  // effect body (the TransformEditor's rule, its deps list included).
+  // effect body (the TransformEditor's rule, its deps list included). The
+  // refs it reads/writes (flushSaveRef, revisionRef) are stable by design
+  // and deliberately absent from the deps list — re-arming on their mutation
+  // would restart the debounce mid-typing.
+  // oxlint-disable-next-line react/exhaustive-effect-dependencies -- see above.
   useEffect(() => {
     if (!dirty || !canAutosave) {
+      flushSaveRef.current = undefined;
       return undefined;
     }
-    const timer = setTimeout(() => {
-      const run = (async () => {
-        setAutosave("saving");
-        try {
-          const id = await save({
-            description: draft.description.trim() === "" ? undefined : draft.description.trim(),
-            id: savedId,
-            spec: draftToSpec(schemaId, draft),
-            status: "draft",
-            title: draft.title.trim(),
-          });
-          setSavedId(id);
-          setSavedStatus("draft");
-          setDirty(false);
-          setAutosave("saved");
-          return id;
-        } catch {
-          setAutosave("error");
-          return undefined;
-        }
-      })();
-      pendingSaveRef.current = run;
-    }, AUTOSAVE_DELAY_MS);
+    const run = () => {
+      flushSaveRef.current = undefined;
+      const revisionAtSave = revisionRef.current,
+        runPromise = (async () => {
+          setAutosave("saving");
+          try {
+            // Serialize behind any in-flight save so two debounced saves never
+            // race to mint the row id — a duplicate draft row (the
+            // TransformEditor rule, issue #135).
+            const pending = pendingSaveRef.current,
+              baseId = pending === null ? savedId : ((await pending) ?? savedId),
+              id = await save({
+                description: draft.description.trim() === "" ? undefined : draft.description.trim(),
+                id: baseId,
+                spec: draftToSpec(schemaId, draft),
+                status: "draft",
+                title: draft.title.trim(),
+              });
+            setSavedId(id);
+            setSavedStatus("draft");
+            if (revisionRef.current === revisionAtSave) {
+              setDirty(false);
+            }
+            setAutosave("saved");
+            return id;
+          } catch {
+            setAutosave("error");
+            return undefined;
+          }
+        })();
+      pendingSaveRef.current = runPromise;
+    };
+    const timer = setTimeout(run, AUTOSAVE_DELAY_MS);
+    flushSaveRef.current = run;
     return () => {
       clearTimeout(timer);
     };
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- the refs this effect reads/writes (flushSaveRef, revisionRef) are stable by design; listing them would re-arm the debounce mid-typing without changing behavior.
   }, [
     canAutosave,
     dirty,
@@ -381,9 +402,22 @@ function AnalysisEditorForm({
     setSavedStatus,
   ]);
 
+  // Closing inside the debounce window must not lose the edit (issue #135,
+  // defect 2): fire the armed save. A no-op once it already fired, was
+  // replaced, or nothing was ever dirty.
+  useEffect(() => {
+    return () => {
+      const flush = flushSaveRef.current;
+      if (flush !== undefined) {
+        flush();
+      }
+    };
+  }, []);
+
   /** Persists with `status`, awaiting any in-flight autosave (one row id, always). */
   const persist = async (status: "draft" | "saved"): Promise<string | undefined> => {
-    const pending = pendingSaveRef.current,
+    const revisionAtSave = revisionRef.current,
+      pending = pendingSaveRef.current,
       settledId = pending === null ? savedId : ((await pending) ?? savedId);
     const id = await save({
       description: draft.description.trim() === "" ? undefined : draft.description.trim(),
@@ -394,7 +428,12 @@ function AnalysisEditorForm({
     });
     setSavedId(id);
     setSavedStatus(status);
-    setDirty(false);
+    // An edit made while this save ran keeps `dirty` armed so it autosaves,
+    // instead of being cleared away (the TransformEditor rule).
+    if (revisionRef.current === revisionAtSave) {
+      setDirty(false);
+    }
+    flushSaveRef.current = undefined;
     setAutosave("saved");
     return id;
   };
@@ -514,6 +553,9 @@ function AnalysisEditorForm({
       return;
     }
     try {
+      // Disarm the unmount flush first: the row is about to be deleted, and
+      // a debounced edit still armed must not re-insert it as a draft.
+      flushSaveRef.current = undefined;
       await remove({ id });
       toast.success("Analysis deleted.");
       onClose();
@@ -697,7 +739,7 @@ function AnalysisEditorForm({
             type="button"
             variant="destructive"
             onClick={() => {
-              void handleDelete();
+              setPendingDelete(true);
             }}
           >
             Delete
@@ -728,6 +770,19 @@ function AnalysisEditorForm({
           Save analysis
         </Button>
       </div>
+
+      <ConfirmDialog
+        destructive
+        open={pendingDelete}
+        onOpenChange={setPendingDelete}
+        title={`Delete "${draft.title.trim() || "this analysis"}"?`}
+        description="The saved analysis and its registry row are deleted. Published datasets created from it stay."
+        confirmLabel="Delete"
+        onConfirm={() => {
+          setPendingDelete(false);
+          void handleDelete();
+        }}
+      />
     </div>
   );
 }

@@ -9,20 +9,11 @@ import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
+import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 
 type Snapshot = FunctionReturnType<typeof api.tags.listSnapshots>[number];
 type Version = FunctionReturnType<typeof api.tags.listVersions>[number];
-
-function errorMessage(error: unknown, fallback: string): string {
-  if (typeof error === "object" && error !== null && "data" in error) {
-    const { data } = error;
-    if (typeof data === "string") {
-      return data;
-    }
-  }
-  return error instanceof Error ? error.message : fallback;
-}
 
 /**
  * The foreign app's snapshot timeline and the ingest that mirrors it into

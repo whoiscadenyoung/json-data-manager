@@ -84,10 +84,12 @@ import {
   useDatasetEntryRow,
   useDatasetGeometryRows,
 } from "@/lib/dataset-rows-react";
+import { errorMessage } from "@/lib/errors";
 import {
   applyJoinedFields,
   buildGeoJsonCollection,
   buildJsonPayload,
+  downloadBlob,
   downloadText,
   entryRows,
   exportExcelWorkbook,
@@ -319,17 +321,6 @@ function MakeGeospatialButton({
   );
 }
 
-/** ConvexError data when it's a string, the fallback otherwise (the panels' pattern). */
-function errorMessage(error: unknown, fallback: string): string {
-  if (typeof error === "object" && error !== null && "data" in error) {
-    const { data } = error;
-    if (typeof data === "string") {
-      return data;
-    }
-  }
-  return fallback;
-}
-
 /** The same card a null read gets — the denial fallback too (stage 8: a foreign/author-restricted id reads exactly as a missing one). */
 function DatasetNotFoundCard() {
   return (
@@ -350,8 +341,11 @@ function SchemaDetailPage() {
   // dataset) throws from the raw seam subscriptions and errors the bridge
   // query — the boundary renders the same card a deleted dataset gets,
   // never the router's error screen or an infinite spinner.
+  // `resetKey` (issue #135, defect 6): a new dataset id in the same route
+  // instance clears a previous id's error instead of pinning "Not Found".
+  const { schemaId } = Route.useParams();
   return (
-    <QueryErrorBoundary fallback={<DatasetNotFoundCard />}>
+    <QueryErrorBoundary fallback={<DatasetNotFoundCard />} resetKey={schemaId}>
       {/* oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup. */}
       <SchemaDetailBody />
     </QueryErrorBoundary>
@@ -372,7 +366,8 @@ function SchemaDetailBody() {
     schema = schemaQuery.data,
     // The signed-in caller's profile — the creator gate for the
     // published-visibility control (stage 8, decision D2). null signed out
-    // (the auth gate up the tree handles that); never throws.
+    // (the root document's AuthGate redirects that case before this page
+    // mounts — issue #135); never throws.
     me = useConvexQuery(api.users.me),
     setVisibility = useMutation(api.schemas.setVisibility),
     // Entries stream in through the row-resolution seam as server-side pages
@@ -482,13 +477,11 @@ function SchemaDetailBody() {
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`);
         }
-        const blob = await res.blob(),
-          url = URL.createObjectURL(blob),
-          anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download = schema.sourceFileName ?? `${slugify(schema.title)}-original`;
-        anchor.click();
-        URL.revokeObjectURL(url);
+        // The shared helper appends the anchor before clicking it — this
+        // page's old inline version never attached the anchor (#135, defect
+        // 10), which not every engine activates.
+        const blob = await res.blob();
+        downloadBlob(blob, schema.sourceFileName ?? `${slugify(schema.title)}-original`);
       } catch {
         toast.error("Could not download the original file.");
       }
@@ -565,9 +558,7 @@ function SchemaDetailBody() {
           skippedTransforms = await applyJoinedFields(convex, savedTransforms, rowsBySource);
           exportEntries = rowsBySource.get(schemaId) ?? exportEntries;
         } catch (error) {
-          toast.error(
-            error instanceof Error ? error.message : "Could not apply the saved transforms.",
-          );
+          toast.error(errorMessage(error, "Could not apply the saved transforms."));
           return;
         }
       }

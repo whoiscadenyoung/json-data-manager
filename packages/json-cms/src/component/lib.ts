@@ -782,6 +782,12 @@ function assertValidSchemaPayload(
  * metadata-only edits, which stay allowed on read-only datasets — the
  * recorded behavior `bound-write.test.ts` pins). Extracted from the handler
  * so its branch count stays manageable.
+ *
+ * `uiSchema: null` EXPLICITLY clears the stored uiSchema (the
+ * `updateEntry` geometry-null precedent): patching `undefined` removes the
+ * field, while omitting the arg leaves it untouched — the distinction the
+ * edit form needs so clearing the editor actually saves (issue #135,
+ * defect 4: `undefined` meant "leave it", so the clear was silently dropped).
  */
 function buildSchemaUpdatePatch(args: {
   description?: string;
@@ -813,12 +819,17 @@ function buildSchemaUpdatePatch(args: {
   }
 
   if (args.uiSchema !== undefined) {
-    const uiSchemaStr = JSON.stringify(args.uiSchema);
-    if (uiSchemaStr.length > SCHEMA_SIZE_LIMIT) {
-      throw new ConvexError("UI Schema exceeds the 100 KB size limit.");
+    if (args.uiSchema === null) {
+      patch.uiSchema = undefined;
+      structureChanged = true;
+    } else {
+      const uiSchemaStr = JSON.stringify(args.uiSchema);
+      if (uiSchemaStr.length > SCHEMA_SIZE_LIMIT) {
+        throw new ConvexError("UI Schema exceeds the 100 KB size limit.");
+      }
+      patch.uiSchema = args.uiSchema;
+      structureChanged = true;
     }
-    patch.uiSchema = args.uiSchema;
-    structureChanged = true;
   }
 
   return { patch, structureChanged };

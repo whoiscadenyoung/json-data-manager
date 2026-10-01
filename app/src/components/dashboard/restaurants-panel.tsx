@@ -22,20 +22,11 @@ import {
   TableHeader,
   TableRow,
 } from "#/components/ui/table";
+import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 import type { Doc } from "#convex/_generated/dataModel";
 
 type Restaurant = Doc<"restaurants">;
-
-function errorMessage(error: unknown, fallback: string): string {
-  if (typeof error === "object" && error !== null && "data" in error) {
-    const { data } = error;
-    if (typeof data === "string") {
-      return data;
-    }
-  }
-  return error instanceof Error ? error.message : fallback;
-}
 
 /** Restaurants tab — CRUD over the `restaurants` table. Deleting cascades to the restaurant's links. */
 export function RestaurantsPanel() {

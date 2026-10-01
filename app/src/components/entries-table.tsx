@@ -130,8 +130,17 @@ function RowActions({
   onEdit: (entry: Entry) => void;
 }) {
   const copyAsJson = () => {
-    void navigator.clipboard.writeText(JSON.stringify(entry.data, null, 2));
-    toast.success("Copied entry as JSON.");
+    // The success toast waits for the clipboard write to actually resolve —
+    // firing it first claimed success before (or while) the write could fail
+    // (issue #135, defect 10).
+    void (async () => {
+      try {
+        await navigator.clipboard.writeText(JSON.stringify(entry.data, null, 2));
+        toast.success("Copied entry as JSON.");
+      } catch {
+        toast.error("Could not copy — the browser refused the clipboard write.");
+      }
+    })();
   };
 
   return (

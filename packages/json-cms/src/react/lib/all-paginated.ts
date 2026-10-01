@@ -123,6 +123,17 @@ export function useAllPaginated<Query extends PaginatedQueryReference>(
   }
 
   return {
+    /**
+     * The latch the completeness rule asks consumers for (issue #135, defect
+     * 9): true once any pass has reached `"Exhausted"` for THIS args key —
+     * and it stays true through a later pass's mid-flight cursor resets,
+     * because `nextAllPaginatedState` keeps serving the last complete
+     * snapshot in that window. A consumer gating a render on completeness
+     * should use this instead of re-deriving `status === "Exhausted"` (which
+     * flaps back to `"CanLoadMore"` on every live-update re-read) or
+     * `isLoading` (which drops after the first page).
+     */
+    hasCompletedPass: nextState.hasCompletedPass,
     isLoading: !nextState.hasCompletedPass && nextState.results.length === 0,
     results: nextState.results,
     /**

@@ -357,6 +357,32 @@ describe("json-cms component", () => {
       expect(schema.title).toBe("Test Schema");
     });
 
+    it("uiSchema: null clears the stored uiSchema; omitting the arg leaves it (issue #135)", async () => {
+      const t = initConvexTest(),
+        uiSchema = { "ui:order": ["name", "age"] },
+        schemaId = await t.mutation(api.lib.createSchema, {
+          schema: {
+            description: "A test schema",
+            title: "Test Schema",
+            type: "object",
+          },
+          uiSchema,
+        });
+
+      // Omitted arg: untouched.
+      await t.mutation(api.lib.updateSchema, { schemaId, title: "Renamed" });
+      const stillThere = await t.query(api.lib.getSchema, { schemaId });
+      assertDefined(stillThere);
+      expect(stillThere.uiSchema).toStrictEqual(uiSchema);
+
+      // Explicit null: the field is patched away.
+      await t.mutation(api.lib.updateSchema, { schemaId, uiSchema: null });
+      const cleared = await t.query(api.lib.getSchema, { schemaId });
+      assertDefined(cleared);
+      expect(cleared.uiSchema).toBeUndefined();
+      expect(cleared.title).toBe("Renamed");
+    });
+
     it("create schema without title throws error", async () => {
       const t = initConvexTest(),
         badSchema = {

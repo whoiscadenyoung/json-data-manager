@@ -84,7 +84,13 @@ function FeatureDetailsPanel({
           <h3 className="truncate text-sm font-semibold">Feature details</h3>
           <p className="truncate text-xs text-muted-foreground">{datasetTitle}</p>
         </div>
-        <Button variant="ghost" size="icon" className="size-6 shrink-0" onClick={onClose}>
+        <Button
+          aria-label="Close feature details"
+          variant="ghost"
+          size="icon"
+          className="size-6 shrink-0"
+          onClick={onClose}
+        >
           <X className="size-3.5" />
         </Button>
       </div>

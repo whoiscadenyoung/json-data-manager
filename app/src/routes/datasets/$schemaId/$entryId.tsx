@@ -290,9 +290,11 @@ function EntryDetailNotFoundCard() {
 function EntryDetailPage() {
   // Stage 8 (#104): a denied by-id read (a foreign entry, a draft dataset's
   // row) THROWS from the raw subscription — the boundary renders the same
-  // card a deleted entry gets, never the router's error screen.
+  // card a deleted entry gets, never the router's error screen. `resetKey`
+  // clears it when either route param changes (issue #135, defect 6).
+  const { entryId, schemaId } = Route.useParams();
   return (
-    <QueryErrorBoundary fallback={<EntryDetailNotFoundCard />}>
+    <QueryErrorBoundary fallback={<EntryDetailNotFoundCard />} resetKey={`${schemaId}:${entryId}`}>
       {/* oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup. */}
       <EntryDetailBody />
     </QueryErrorBoundary>

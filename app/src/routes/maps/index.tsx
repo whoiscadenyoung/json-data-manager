@@ -23,6 +23,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "#/components/ui/empty";
+import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 
 type MapDoc = FunctionReturnType<typeof api.maps.list>[number];
@@ -111,7 +112,7 @@ function MapsPage() {
         await deleteMap({ mapId: pendingDelete._id });
         toast.success("Map deleted.");
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to delete map.");
+        toast.error(errorMessage(error, "Failed to delete map."));
       }
     };
 
