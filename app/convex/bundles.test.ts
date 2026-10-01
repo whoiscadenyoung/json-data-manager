@@ -14,6 +14,7 @@
  */
 import { register as registerJsonCms } from "@caden/json-cms/test";
 import { convexTest } from "convex-test";
+import type { FunctionArgs } from "convex/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { api, components } from "./_generated/api";
@@ -70,7 +71,7 @@ async function uploadToken(t: TestConvex, scope: string): Promise<string> {
 type ChunkRow = { data: unknown; geometry?: unknown };
 type PlanOverrides = {
   chunks: ChunkRow[];
-  geometryType?: string;
+  geometryType?: FunctionArgs<typeof api.publish.plan>["geometryType"];
   kind?: "geospatial" | "standard";
   schema?: Record<string, unknown>;
   spec?: unknown;
@@ -193,6 +194,7 @@ async function driveBundlePress(
       // oxlint-disable-next-line no-await-in-loop -- see above.
       await t.mutation(api.publish.registerChunk, {
         attemptId: attempt.attemptId,
+        rowCount: plan.chunks.length,
         storageId,
         uploadId,
       });
@@ -621,6 +623,7 @@ describe("partial bundles and resume", () => {
       // oxlint-disable-next-line no-await-in-loop -- press order.
       await t.mutation(api.publish.registerChunk, {
         attemptId: attempt.attemptId,
+        rowCount: 1,
         storageId,
         uploadId,
       });
@@ -686,6 +689,7 @@ describe("partial bundles and resume", () => {
     // oxlint-disable-next-line no-await-in-loop -- the registration rides its token.
     await t.mutation(api.publish.registerChunk, {
       attemptId: attempt.attemptId,
+      rowCount: 1,
       storageId,
       uploadId,
     });
@@ -910,6 +914,7 @@ describe("layer resolutions", () => {
     // oxlint-disable-next-line no-await-in-loop -- the registration rides its token.
     await t.mutation(api.publish.registerChunk, {
       attemptId: attempt.attemptId,
+      rowCount: 1,
       storageId,
       uploadId,
     });

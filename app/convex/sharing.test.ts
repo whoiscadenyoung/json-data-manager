@@ -117,6 +117,7 @@ async function publishNow(
   });
   await t.mutation(api.publish.registerChunk, {
     attemptId: started.attemptId,
+    rowCount: 1,
     storageId,
     uploadId: await uploadToken(t, started.attemptId),
   });
@@ -310,6 +311,7 @@ describe("published-visibility control (stage 8 AC, decision D2)", () => {
     });
     await mine.mutation(api.publish.registerChunk, {
       attemptId: started.attemptId,
+      rowCount: 1,
       storageId,
       uploadId: await uploadToken(mine, started.attemptId),
     });
@@ -357,6 +359,7 @@ describe("published-visibility control (stage 8 AC, decision D2)", () => {
     });
     await mine.mutation(api.publish.registerChunk, {
       attemptId: started.attemptId,
+      rowCount: 1,
       storageId,
       uploadId: await uploadToken(mine, started.attemptId),
     });
@@ -516,6 +519,7 @@ describe("project writes are creator-only (stage 8 AC, decision D1)", () => {
     await expect(
       other.mutation(api.publish.registerChunk, {
         attemptId: started.attemptId,
+        rowCount: 1,
         storageId: "s1",
         uploadId: "s1",
       }),
@@ -529,6 +533,7 @@ describe("project writes are creator-only (stage 8 AC, decision D1)", () => {
     // the attempt, as the real client flow mints them.
     await mine.mutation(api.publish.registerChunk, {
       attemptId: started.attemptId,
+      rowCount: 1,
       storageId: "s1",
       uploadId: await uploadToken(mine, started.attemptId),
     });

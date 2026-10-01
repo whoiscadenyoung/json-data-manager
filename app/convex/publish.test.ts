@@ -14,7 +14,7 @@
  */
 import { register as registerJsonCms } from "@caden/json-cms/test";
 import { convexTest } from "convex-test";
-import type { FunctionReturnType } from "convex/server";
+import type { FunctionArgs, FunctionReturnType } from "convex/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { api, components, internal } from "./_generated/api";
@@ -149,7 +149,7 @@ async function drivePublish(
   options: {
     attemptId: AttemptId;
     chunks: Array<Array<{ data: unknown; geometry?: unknown }>>;
-    geometryType?: string;
+    geometryType?: FunctionArgs<typeof api.publish.plan>["geometryType"];
     kind?: "geospatial" | "standard";
     schema?: Record<string, unknown>;
     spec?: unknown;
@@ -171,6 +171,7 @@ async function drivePublish(
     // oxlint-disable-next-line no-await-in-loop -- order is the resume index.
     await t.mutation(api.publish.registerChunk, {
       attemptId: options.attemptId,
+      rowCount: chunk.length,
       storageId,
       uploadId,
     });
@@ -371,6 +372,7 @@ describe("freeze idempotency by publish key (AC 4's keyed half)", () => {
     ]);
     await t.mutation(api.publish.registerChunk, {
       attemptId: started.attemptId,
+      rowCount: 1,
       storageId,
       uploadId,
     });
@@ -411,6 +413,7 @@ describe("freeze idempotency by publish key (AC 4's keyed half)", () => {
     ]);
     await t.mutation(api.publish.registerChunk, {
       attemptId: started.attemptId,
+      rowCount: 1,
       storageId,
       uploadId,
     });
@@ -436,12 +439,14 @@ describe("chunk registration (the freeze's checkpoint contract)", () => {
     ]);
     await t.mutation(api.publish.registerChunk, {
       attemptId: started.attemptId,
+      rowCount: 1,
       storageId,
       uploadId,
     });
     // The replay (flaky network, Convex mutation retry) — must not append twice.
     await t.mutation(api.publish.registerChunk, {
       attemptId: started.attemptId,
+      rowCount: 1,
       storageId,
       uploadId,
     });
@@ -479,6 +484,7 @@ describe("chunk registration (the freeze's checkpoint contract)", () => {
     await expect(
       t.mutation(api.publish.registerChunk, {
         attemptId: started.attemptId,
+        rowCount: 1,
         storageId: chunk.storageId,
         uploadId: chunk.uploadId,
       }),
@@ -500,6 +506,7 @@ describe("chunk registration (the freeze's checkpoint contract)", () => {
     await expect(
       t.mutation(api.publish.registerChunk, {
         attemptId: started.attemptId,
+        rowCount: 1,
         storageId: chunk.storageId,
         uploadId: "fabricated000",
       }),
@@ -523,6 +530,7 @@ describe("chunk registration (the freeze's checkpoint contract)", () => {
       // oxlint-disable-next-line no-await-in-loop -- see above.
       await t.mutation(api.publish.registerChunk, {
         attemptId: started.attemptId,
+        rowCount: 1,
         storageId,
         uploadId,
       });
@@ -553,6 +561,7 @@ describe("interruption resume (AC 4: no duplicate or lost rows)", () => {
     const firstChunk = await storeChunk(t, started.attemptId, [{ data: { label: "A" } }]);
     await t.mutation(api.publish.registerChunk, {
       attemptId: started.attemptId,
+      rowCount: 1,
       storageId: firstChunk.storageId,
       uploadId: firstChunk.uploadId,
     });
@@ -568,6 +577,7 @@ describe("interruption resume (AC 4: no duplicate or lost rows)", () => {
     const secondChunk = await storeChunk(t, started.attemptId, [{ data: { label: "B" } }]);
     await t.mutation(api.publish.registerChunk, {
       attemptId: started.attemptId,
+      rowCount: 1,
       storageId: secondChunk.storageId,
       uploadId: secondChunk.uploadId,
     });
@@ -604,6 +614,7 @@ describe("interruption resume (AC 4: no duplicate or lost rows)", () => {
     const stale = await storeChunk(t, started.attemptId, [{ data: { label: "stale" } }]);
     await t.mutation(api.publish.registerChunk, {
       attemptId: started.attemptId,
+      rowCount: 1,
       storageId: stale.storageId,
       uploadId: stale.uploadId,
     });
@@ -623,6 +634,126 @@ describe("interruption resume (AC 4: no duplicate or lost rows)", () => {
       ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId }),
     );
     expect(published === null ? undefined : published.entryCount).toBe(1);
+  });
+});
+
+describe("plan content hash + registered row total (issue #130)", () => {
+  it("rejects a freeze whose registered rows don't match the planned total", async () => {
+    const t = signedIn();
+    const draftId = await createDraftDataset(t, { entries: [{ data: { label: "A" } }] });
+    await addEntries(t, draftId, [{ data: { label: "A" } }]);
+    const started = await t.mutation(api.publish.start, { datasetKey: draftId });
+    await t.mutation(api.publish.plan, {
+      attemptId: started.attemptId,
+      chunkCount: 1,
+      totalRows: 2,
+    });
+    const { storageId, uploadId } = await storeChunk(t, started.attemptId, [
+      { data: { label: "A" } },
+    ]);
+    await t.mutation(api.publish.registerChunk, {
+      attemptId: started.attemptId,
+      rowCount: 1,
+      storageId,
+      uploadId,
+    });
+    await expect(t.mutation(api.publish.freeze, { attemptId: started.attemptId })).rejects.toThrow(
+      /recorded 2 rows/,
+    );
+  });
+
+  it("freezes when the registered rows match the plan, on the attempt doc", async () => {
+    const t = signedIn();
+    const draftId = await createDraftDataset(t, {
+      entries: [{ data: { label: "A" } }, { data: { label: "B" } }],
+    });
+    await addEntries(t, draftId, [{ data: { label: "A" } }, { data: { label: "B" } }]);
+    const started = await t.mutation(api.publish.start, { datasetKey: draftId });
+    const { schemaId } = await drivePublish(t, {
+      attemptId: started.attemptId,
+      chunks: [[{ data: { label: "A" } }, { data: { label: "B" } }]],
+      totalRows: 2,
+    });
+    const doc = await t.run(async (ctx) => ctx.db.get(started.attemptId));
+    expect(doc === null ? undefined : doc.registeredRowCount).toBe(2);
+    const published = await t.run(async (ctx) =>
+      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId }),
+    );
+    expect(published === null ? undefined : published.entryCount).toBe(2);
+  });
+
+  it("resumes a changed draft into a FRESH upload: the frozen row carries only the new snapshot", async () => {
+    // The #130 scenario, driven as the orchestrator would: chunks of the OLD
+    // content land under plan hash "old-snapshot"; the draft then changes
+    // keeping the same chunk count (invisible to the old count-only check);
+    // the resuming client's fresh execution fingerprints differently, so it
+    // resets, re-plans, and re-uploads. The reset decision itself is pinned
+    // over `resumePlan` in src/lib/publish.test.ts; here the host-side flow
+    // must land exactly the new snapshot's rows — never a mixture.
+    const t = signedIn();
+    const draftId = await createDraftDataset(t, {
+      entries: [{ data: { label: "A" } }, { data: { label: "B" } }],
+    });
+    await addEntries(t, draftId, [{ data: { label: "A" } }, { data: { label: "B" } }]);
+    const started = await t.mutation(api.publish.start, { datasetKey: draftId });
+    await t.mutation(api.publish.plan, {
+      attemptId: started.attemptId,
+      chunkCount: 2,
+      contentHash: "old-snapshot",
+      totalRows: 2,
+    });
+    const staleChunk = await storeChunk(t, started.attemptId, [{ data: { label: "A" } }]);
+    await t.mutation(api.publish.registerChunk, {
+      attemptId: started.attemptId,
+      rowCount: 1,
+      storageId: staleChunk.storageId,
+      uploadId: staleChunk.uploadId,
+    });
+
+    // The resumed browser: same chunk count, changed content → RESET.
+    await t.mutation(api.publish.resetUpload, { attemptId: started.attemptId });
+    const afterReset = await t.run(async (ctx) => ctx.db.get(started.attemptId));
+    expect(afterReset === null ? undefined : afterReset.chunkStorageIds).toStrictEqual([]);
+    expect(afterReset === null ? undefined : afterReset.plannedContentHash).toBeUndefined();
+    expect(afterReset === null ? undefined : afterReset.registeredRowCount).toBeUndefined();
+
+    // …re-plan under the fresh execution's fingerprint…
+    await t.mutation(api.publish.plan, {
+      attemptId: started.attemptId,
+      chunkCount: 2,
+      contentHash: "new-snapshot",
+      totalRows: 2,
+    });
+    // …and upload the new snapshot's chunks (an edited draft keeps the row
+    // count but renames "A" to "A2").
+    for (const rows of [[{ data: { label: "A2" } }], [{ data: { label: "B" } }]]) {
+      // oxlint-disable-next-line no-await-in-loop -- order is the resume index.
+      const { storageId, uploadId } = await storeChunk(t, started.attemptId, rows);
+      // oxlint-disable-next-line no-await-in-loop -- see above.
+      await t.mutation(api.publish.registerChunk, {
+        attemptId: started.attemptId,
+        rowCount: rows.length,
+        storageId,
+        uploadId,
+      });
+    }
+    const planned = await t.run(async (ctx) => ctx.db.get(started.attemptId));
+    expect(planned === null ? undefined : planned.plannedContentHash).toBe("new-snapshot");
+    expect(planned === null ? undefined : planned.registeredRowCount).toBe(2);
+
+    const frozen = await t.mutation(api.publish.freeze, { attemptId: started.attemptId });
+    const schemaId = frozen.schemaId;
+    await drainScheduled(t);
+    const page = await t.query(api.entries.listPage, {
+      paginationOpts: { cursor: null, numItems: 10 },
+      schemaId,
+    });
+    const labels = page.page.map((entry) => (entry.data as { label?: string }).label);
+    // The new snapshot's rows exactly — the old chunk's "A" must not survive.
+    // oxlint-disable-next-line unicorn/no-array-sort -- freshly mapped throwaway array; .toSorted() isn't in the lib app/convex typechecks against.
+    expect(labels.sort((a, b) => (a ?? "").localeCompare(b ?? ""))).toStrictEqual(["A2", "B"]);
+    const attempt = await attemptById(t, started.attemptId);
+    expect(attempt.status).toBe("completed");
   });
 });
 
@@ -844,6 +975,7 @@ describe("stale-attempt revival", () => {
     ]);
     await t.mutation(api.publish.registerChunk, {
       attemptId: started.attemptId,
+      rowCount: 1,
       storageId,
       uploadId,
     });

@@ -251,6 +251,9 @@ export const start = mutation({
     chunkCount: number;
     datasetKind: "derived" | "draft";
     plannedChunkCount?: number;
+    plannedContentHash?: string;
+    plannedTotalRows?: number;
+    registeredRowCount?: number;
     status: "completed" | "failed" | "importing" | "uploading";
   }> => {
     const createdBy = await auth(ctx);
@@ -279,6 +282,12 @@ export const start = mutation({
         chunkCount: latest.chunkStorageIds.length,
         datasetKind: latest.datasetKind,
         plannedChunkCount: latest.plannedChunkCount,
+        // The content signals the resuming client compares its fresh
+        // execution against (issue #130): a differing fingerprint — or a row
+        // total that no longer matches — resets the upload before it resumes.
+        plannedContentHash: latest.plannedContentHash,
+        plannedTotalRows: latest.plannedTotalRows,
+        registeredRowCount: latest.registeredRowCount,
         status: latest.status,
       };
     }
@@ -322,6 +331,9 @@ export const start = mutation({
     chunkCount: v.number(),
     datasetKind: v.union(v.literal("derived"), v.literal("draft")),
     plannedChunkCount: v.optional(v.number()),
+    plannedContentHash: v.optional(v.string()),
+    plannedTotalRows: v.optional(v.number()),
+    registeredRowCount: v.optional(v.number()),
     status: v.union(
       v.literal("uploading"),
       v.literal("importing"),
@@ -356,8 +368,36 @@ async function uploadingAttempt(
 }
 
 /**
+ * The six geometry type literals — the component's geometryTypeValidator
+ * domain (shared/geojson/types.ts). One list, two readers: `plan`'s arg
+ * validator (issue #130: the client-reported type is checked at the boundary,
+ * not taken on trust) and the freeze's `asGeometryType` guard.
+ */
+const GEOMETRY_TYPE_NAMES = [
+  "LineString",
+  "MultiLineString",
+  "MultiPoint",
+  "MultiPolygon",
+  "Point",
+  "Polygon",
+] as const;
+
+const geometryTypeArg = v.optional(
+  v.union(
+    v.literal(GEOMETRY_TYPE_NAMES[0]),
+    v.literal(GEOMETRY_TYPE_NAMES[1]),
+    v.literal(GEOMETRY_TYPE_NAMES[2]),
+    v.literal(GEOMETRY_TYPE_NAMES[3]),
+    v.literal(GEOMETRY_TYPE_NAMES[4]),
+    v.literal(GEOMETRY_TYPE_NAMES[5]),
+  ),
+);
+
+/**
  * Records what the client executed BEFORE it uploads: chunk count and total
- * rows always, and — for a derived publish — the frozen row's schema shape
+ * rows always, the executed content's fingerprint (`contentHash` — issue
+ * #130; a resuming browser resets whenever its fresh execution fingerprints
+ * differently), and — for a derived publish — the frozen row's schema shape
  * (inferred from the executed rows), kind, geometry type, and the spec as
  * actually executed (the lineage recipe records these rows, not whatever the
  * registry row holds by freeze time).
@@ -366,7 +406,8 @@ export const plan = mutation({
   args: {
     attemptId: v.id("publishAttempts"),
     chunkCount: v.number(),
-    geometryType: v.optional(v.string()),
+    contentHash: v.optional(v.string()),
+    geometryType: geometryTypeArg,
     kind: v.optional(v.union(v.literal("standard"), v.literal("geospatial"))),
     schema: v.optional(v.any()),
     spec: v.optional(v.any()),
@@ -384,8 +425,11 @@ export const plan = mutation({
       plannedTotalRows: args.totalRows,
       // Only a derived publish sends the spec; a draft publish keeps the
       // attempt's original (undefined) — the patch must not clobber it with
-      // undefined either way, so it is set only when present.
+      // undefined either way, so it is set only when present. The hash rides
+      // the same rule: a re-planning legacy client must not erase a recorded
+      // fingerprint it doesn't know about.
       ...(args.spec === undefined ? {} : { spec: args.spec }),
+      ...(args.contentHash === undefined ? {} : { plannedContentHash: args.contentHash }),
     });
   },
   returns: v.null(),
@@ -399,9 +443,19 @@ export const plan = mutation({
  * a server-issued upload for this attempt is rejected, so nothing
  * unregistered can ever ride the reset/failure cleanup
  * (`deleteStorageBlobs`) or the freeze's import.
+ *
+ * The chunk's `rowCount` (issue #130) accumulates onto the attempt's
+ * `registeredRowCount`, the total the freeze checks `plannedTotalRows`
+ * against. The client is a trusted collaborator (ADR 0009), so this is a
+ * consistency check against bugs and stale resumes, not a security control.
  */
 export const registerChunk = mutation({
-  args: { attemptId: v.id("publishAttempts"), storageId: v.string(), uploadId: v.string() },
+  args: {
+    attemptId: v.id("publishAttempts"),
+    rowCount: v.number(),
+    storageId: v.string(),
+    uploadId: v.string(),
+  },
   handler: async (ctx, args) => {
     const actorId = await auth(ctx);
     const attempt = await uploadingAttempt(ctx, actorId, args.attemptId);
@@ -421,6 +475,7 @@ export const registerChunk = mutation({
     await ctx.db.patch(args.attemptId, {
       chunkStorageIds: [...attempt.chunkStorageIds, args.storageId],
       lastProgressAt: Date.now(),
+      registeredRowCount: (attempt.registeredRowCount ?? 0) + args.rowCount,
     });
   },
   returns: v.null(),
@@ -449,10 +504,12 @@ export const resetUpload = mutation({
       chunkStorageIds: [],
       lastProgressAt: Date.now(),
       plannedChunkCount: undefined,
+      plannedContentHash: undefined,
       plannedGeometryType: undefined,
       plannedKind: undefined,
       plannedSchema: undefined,
       plannedTotalRows: undefined,
+      registeredRowCount: undefined,
     });
   },
   returns: v.null(),
@@ -485,6 +542,25 @@ type FreezeableAttempt = {
 type FreezeCheck =
   | { attempt: FreezeableAttempt; kind: "ready" }
   | { importId?: string; kind: "frozen"; schemaId: string };
+
+/**
+ * Issue #130's freeze precondition: the chunks that registered declared
+ * their row counts, and their sum must equal the plan's total — a
+ * checkpoint whose registered rows disagree with its plan must never freeze
+ * into the immutable row. Registered rows are absent on pre-#130 attempts
+ * (and on a zero-chunk publish, whose total is trivially 0), so the check
+ * only demands a match when the attempt actually knows its registered total.
+ */
+function registeredRowsMatchPlan(attempt: {
+  plannedTotalRows?: number;
+  registeredRowCount?: number;
+}): boolean {
+  return (
+    attempt.plannedTotalRows === undefined ||
+    attempt.registeredRowCount === undefined ||
+    attempt.registeredRowCount === attempt.plannedTotalRows
+  );
+}
 
 /** Reads the attempt and throws unless it is already frozen or ready to freeze — and the caller owns it (stage 8: a foreign attemptId reads as gone). */
 async function freezeCheck(
@@ -520,6 +596,11 @@ async function freezeCheck(
   ) {
     throw new ConvexError(
       "Not every chunk of this publish has landed yet — finish uploading before freezing.",
+    );
+  }
+  if (!registeredRowsMatchPlan(attempt)) {
+    throw new ConvexError(
+      `This publish's plan recorded ${attempt.plannedTotalRows} rows, but its registered chunks carry ${attempt.registeredRowCount} — retry the publish so its resume check resets the upload.`,
     );
   }
   return { attempt, kind: "ready" };
@@ -704,19 +785,13 @@ async function derivedFreezeInputs(
  * The geometry type literal guard across the host boundary: the attempt
  * stores the client-reported type as a plain string (the host-boundary id
  * rule), and the component's validator wants one of the six literals.
- * Anything else means "no geometry" — a standard dataset.
+ * Anything else means "no geometry" — a standard dataset. (Pre-#130 rows may
+ * still carry an off-list string; `plan`'s arg validator rejects new ones.)
  */
-const GEOMETRY_TYPE_NAMES = new Set([
-  "LineString",
-  "MultiLineString",
-  "MultiPoint",
-  "MultiPolygon",
-  "Point",
-  "Polygon",
-]);
+const GEOMETRY_TYPE_NAME_SET = new Set<string>(GEOMETRY_TYPE_NAMES);
 
 function asGeometryType(value: string | undefined): SchemaGeometryType | undefined {
-  if (value === undefined || !GEOMETRY_TYPE_NAMES.has(value)) {
+  if (value === undefined || !GEOMETRY_TYPE_NAME_SET.has(value)) {
     return undefined;
   }
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- narrowed to the six literals by the set above; the type derives from the component's validator.
