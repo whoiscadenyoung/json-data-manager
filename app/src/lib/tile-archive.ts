@@ -7,9 +7,9 @@
  * Correctness does NOT live here. A rebuild races edits by design; part 2's
  * `setMapTileArchive` `expectedVersion` guard makes a build that started
  * against stale data self-discarding, so this module only needs to keep
- * *scheduling* until the schema's `mapTileCacheVersion` has a matching
- * archive installed. Single-flight + a trailing debounce keep bursts (an
- * N-chunk import bumps the version N times) to one build.
+ * *scheduling* until the schema's `mapTileCacheVersion` has a matching,
+ * current-format archive installed. Single-flight + a trailing debounce
+ * keep bursts (an N-chunk import bumps the version N times) to one build.
  */
 import { useQuery } from "convex/react";
 import { useEffect, useSyncExternalStore } from "react";
@@ -362,6 +362,8 @@ export interface TileArchiveSchemaRow {
   geometryType?: string;
   kind?: "standard" | "geospatial";
   mapTileArchiveBuiltVersion?: number;
+  /** Derived issue #125 gate flag the summary projection computes server-side. */
+  mapTileArchiveFormatCurrent?: boolean;
   mapTileCacheVersion?: number;
 }
 
@@ -393,18 +395,31 @@ export function isBelowThresholdSkipMemoized(schemaId: string, version: number):
  * True when a dataset deserves a (re)build: geospatial with at least one
  * geometry-affecting write, and either no installed archive (first build —
  * covers imports that skipped the ensure-call, geospatial conversion, and
- * datasets that grew past the threshold after import) or an installed one
- * built behind the current version (stale-on-view — the authoritative,
- * self-healing trigger). `mapTileArchiveBuiltVersion` is set iff an archive
- * ever installed (the summaries carry no storage id since #131), so its
- * absence is the "no archive yet" signal — except when the current version
- * already ended `below-threshold`, which the skip memo absorbs.
+ * datasets that grew past the threshold after import), an installed one the
+ * archive-FORMAT gate rejects (issue #125: built by an older builder whose
+ * run-length dedupe could merge across tile-id gaps, so `getMapTileArchiveMeta`
+ * serves it as null until a fresh install stamps the current format), or an
+ * installed one built behind the current version (stale-on-view — the
+ * authoritative, self-healing trigger). `mapTileArchiveBuiltVersion` is set
+ * iff an archive ever installed (the summaries carry no storage id since
+ * #131), so its absence is the "no archive yet" signal — except when the
+ * current version already ended `below-threshold`, which the skip memo
+ * absorbs.
+ *
+ * Exported for tests; `useMapTileArchiveManager` is the production caller.
  */
 export function isTileArchiveStale(schema: TileArchiveSchemaRow, currentVersion: number): boolean {
   if (schema.kind !== "geospatial" || schema.geometryType === undefined) return false;
   if (currentVersion === 0) return false; // never had a geometry write
   if (isBelowThresholdSkipMemoized(schema._id, currentVersion)) return false;
   if (schema.mapTileArchiveBuiltVersion === undefined) return true;
+  // The gate rides the summary as a boolean computed NEXT TO the component's
+  // `MAP_TILE_ARCHIVE_FORMAT` constant — this module deliberately keeps no
+  // copy of the constant (drift would loop rebuilds). Absent — not merely
+  // false — means the row predates the flag (an older backend still serving
+  // the old projection shape, which has no format gate either): fall through
+  // to the built-version check instead of invalidating on it.
+  if (schema.mapTileArchiveFormatCurrent === false) return true;
   return schema.mapTileArchiveBuiltVersion !== currentVersion;
 }
 

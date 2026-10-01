@@ -245,9 +245,9 @@ export default defineSchema({
     // Rendering-cache bookkeeping for the tile-archive path (#58): every
     // geometry-affecting write bumps `mapTileCacheVersion` (see
     // `bumpMapTileCacheVersion` in lib.ts) so a stale rebuild can detect
-    // itself, and the remaining four fields point at the current archive —
+    // itself, and the remaining five fields point at the current archive —
     // set atomically by `setMapTileArchive` only when its `expectedVersion`
-    // still matches. All five are absent on datasets that never had an
+    // still matches. All six are absent on datasets that never had an
     // archive; an absent version reads as 0.
     //
     // The version is MONOTONIC for the dataset's lifetime (issue #129,
@@ -268,6 +268,13 @@ export default defineSchema({
     // `getMapTileArchiveMeta`) behind `mapTileCacheVersion` means edits
     // landed after the archive was built.
     mapTileArchiveBuiltVersion: v.optional(v.number()),
+    // The archive-layout generation the CURRENT installed blob was written
+    // by (`MAP_TILE_ARCHIVE_FORMAT` in lib.ts). Absent = installed before
+    // format tracking (format 1) — those archives were built by a builder
+    // whose run-length dedupe could merge tiles across tile-id gaps
+    // (issue #125), so `getMapTileArchiveMeta` treats them as no archive
+    // and the rebuild machinery replaces them.
+    mapTileArchiveFormat: v.optional(v.number()),
     // True when this dataset normalizes geometry coordinates to
     // GEOMETRY_SIMPLIFY_DECIMAL_PLACES (6dp, ~0.11 m) on every write — set at
     // creation via the importer's "Simplify geometry" checkbox, or by

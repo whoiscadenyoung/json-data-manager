@@ -78,9 +78,16 @@ function digestOf(data: Uint8Array): string {
 }
 
 /**
- * Collapses Hilbert-adjacent identical tiles into run-length entries and
- * deduplicates identical blobs globally so each unique byte string is
- * stored exactly once.
+ * Collapses runs of identical tiles with CONTIGUOUS Hilbert ids into
+ * run-length entries and deduplicates identical blobs globally so each
+ * unique byte string is stored exactly once.
+ *
+ * A PMTiles run covers the id range `[tileId, tileId + runLength)`, so
+ * merging across a gap would hijack the gap ids (resolving tiles that do
+ * not exist) and strand the tile after the gap (#125). Identical tiles
+ * with non-contiguous ids instead get separate entries that share the
+ * same blob — the spec allows several entries to point at one blob, so
+ * byte dedupe is preserved.
  */
 function deduplicateTiles(sorted: readonly ArchiveTile[]): Deduplicated {
   const entries: ContainerEntry[] = [];
@@ -93,7 +100,7 @@ function deduplicateTiles(sorted: readonly ArchiveTile[]): Deduplicated {
     const previous = entries[entries.length - 1];
     if (
       previous !== undefined &&
-      previous.blobIndex >= 0 &&
+      tile.tileId === previous.tileId + previous.runLength &&
       blobData[previous.blobIndex].length === tile.data.length &&
       bytesEqual(blobData[previous.blobIndex], tile.data)
     ) {
