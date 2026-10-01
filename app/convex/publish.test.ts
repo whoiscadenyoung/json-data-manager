@@ -64,10 +64,22 @@ async function drainScheduled(t: TestConvex): Promise<void> {
 /** One chunk blob, planted in the COMPONENT's storage exactly where the
  * client's upload-URL POST would land it (component storage is namespaced —
  * a host-stored blob is invisible to insertChunkFromStorage; see the
- * component's storeTestBlob). */
-async function storeChunk(t: TestConvex, rows: Array<{ data: unknown; geometry?: unknown }>) {
-  const bytes = new TextEncoder().encode(JSON.stringify(rows));
-  return t.action(components.jsonCms.host_support.storeTestBlob, { bytes: bytes.buffer });
+ * component's storeTestBlob), plus the pending-upload token its URL was
+ * "issued" under — minted for the attempt, exactly as the client's upload
+ * flow does (issue #131). */
+async function storeChunk(
+  t: TestConvex,
+  attemptId: AttemptId,
+  rows: Array<{ data: unknown; geometry?: unknown }>,
+): Promise<{ storageId: string; uploadId: string }> {
+  const bytes = new TextEncoder().encode(JSON.stringify(rows)),
+    storageId = await t.action(components.jsonCms.host_support.storeTestBlob, {
+      bytes: bytes.buffer,
+    }),
+    { uploadId } = await t.run(async (ctx) =>
+      ctx.runMutation(components.jsonCms.lib.generateUploadUrl, { scope: attemptId }),
+    );
+  return { storageId, uploadId };
 }
 
 interface PointRow {
@@ -155,9 +167,13 @@ async function drivePublish(
   });
   for (const chunk of options.chunks) {
     // oxlint-disable-next-line no-await-in-loop -- order is the resume index.
-    const storageId = await storeChunk(t, chunk);
+    const { storageId, uploadId } = await storeChunk(t, options.attemptId, chunk);
     // oxlint-disable-next-line no-await-in-loop -- order is the resume index.
-    await t.mutation(api.publish.registerChunk, { attemptId: options.attemptId, storageId });
+    await t.mutation(api.publish.registerChunk, {
+      attemptId: options.attemptId,
+      storageId,
+      uploadId,
+    });
   }
   const frozen = await t.mutation(api.publish.freeze, { attemptId: options.attemptId });
   await drainScheduled(t);
@@ -350,8 +366,14 @@ describe("freeze idempotency by publish key (AC 4's keyed half)", () => {
       chunkCount: 1,
       totalRows: 1,
     });
-    const storageId = await storeChunk(t, [{ data: { label: "A" } }]);
-    await t.mutation(api.publish.registerChunk, { attemptId: started.attemptId, storageId });
+    const { storageId, uploadId } = await storeChunk(t, started.attemptId, [
+      { data: { label: "A" } },
+    ]);
+    await t.mutation(api.publish.registerChunk, {
+      attemptId: started.attemptId,
+      storageId,
+      uploadId,
+    });
 
     const first = await t.mutation(api.publish.freeze, { attemptId: started.attemptId });
     // A concurrent/duplicate freeze of the SAME key cannot fork a second v1.
@@ -384,8 +406,14 @@ describe("freeze idempotency by publish key (AC 4's keyed half)", () => {
       chunkCount: 2,
       totalRows: 2,
     });
-    const storageId = await storeChunk(t, [{ data: { label: "A" } }]);
-    await t.mutation(api.publish.registerChunk, { attemptId: started.attemptId, storageId });
+    const { storageId, uploadId } = await storeChunk(t, started.attemptId, [
+      { data: { label: "A" } },
+    ]);
+    await t.mutation(api.publish.registerChunk, {
+      attemptId: started.attemptId,
+      storageId,
+      uploadId,
+    });
     await expect(t.mutation(api.publish.freeze, { attemptId: started.attemptId })).rejects.toThrow(
       /finish uploading/i,
     );
@@ -403,10 +431,20 @@ describe("chunk registration (the freeze's checkpoint contract)", () => {
       chunkCount: 1,
       totalRows: 1,
     });
-    const storageId = await storeChunk(t, [{ data: { label: "A" } }]);
-    await t.mutation(api.publish.registerChunk, { attemptId: started.attemptId, storageId });
+    const { storageId, uploadId } = await storeChunk(t, started.attemptId, [
+      { data: { label: "A" } },
+    ]);
+    await t.mutation(api.publish.registerChunk, {
+      attemptId: started.attemptId,
+      storageId,
+      uploadId,
+    });
     // The replay (flaky network, Convex mutation retry) — must not append twice.
-    await t.mutation(api.publish.registerChunk, { attemptId: started.attemptId, storageId });
+    await t.mutation(api.publish.registerChunk, {
+      attemptId: started.attemptId,
+      storageId,
+      uploadId,
+    });
 
     const progress = await attemptById(t, started.attemptId);
     expect(progress.chunkCount).toBe(1);
@@ -421,6 +459,54 @@ describe("chunk registration (the freeze's checkpoint contract)", () => {
     expect(published === null ? undefined : published.entryCount).toBe(1);
   });
 
+  it("rejects a chunk whose upload token was issued for another attempt", async () => {
+    const t = signedIn();
+    const draftId = await createDraftDataset(t, { entries: [{ data: { label: "A" } }] });
+    await addEntries(t, draftId, [{ data: { label: "A" } }]);
+    const started = await t.mutation(api.publish.start, { datasetKey: draftId });
+    await t.mutation(api.publish.plan, {
+      attemptId: started.attemptId,
+      chunkCount: 1,
+      totalRows: 1,
+    });
+    // A second attempt's issuance — the cross-attempt mixup the provenance
+    // check exists for (issue #131): the blob must never join THIS
+    // attempt's checkpoint (its reset/failure cleanup would delete it).
+    const otherAttempt = await t.mutation(api.publish.start, {
+      datasetKey: await createDraftDataset(t, { entries: [{ data: { label: "B" } }] }),
+    });
+    const chunk = await storeChunk(t, otherAttempt.attemptId, [{ data: { label: "A" } }]);
+    await expect(
+      t.mutation(api.publish.registerChunk, {
+        attemptId: started.attemptId,
+        storageId: chunk.storageId,
+        uploadId: chunk.uploadId,
+      }),
+    ).rejects.toThrow(/different dataset or publish attempt/);
+    expect((await attemptById(t, started.attemptId)).chunkCount).toBe(0);
+  });
+
+  it("rejects a chunk with a fabricated upload token", async () => {
+    const t = signedIn();
+    const draftId = await createDraftDataset(t, { entries: [{ data: { label: "A" } }] });
+    await addEntries(t, draftId, [{ data: { label: "A" } }]);
+    const started = await t.mutation(api.publish.start, { datasetKey: draftId });
+    await t.mutation(api.publish.plan, {
+      attemptId: started.attemptId,
+      chunkCount: 1,
+      totalRows: 1,
+    });
+    const chunk = await storeChunk(t, started.attemptId, [{ data: { label: "A" } }]);
+    await expect(
+      t.mutation(api.publish.registerChunk, {
+        attemptId: started.attemptId,
+        storageId: chunk.storageId,
+        uploadId: "fabricated000",
+      }),
+    ).rejects.toThrow(/never issued/);
+    expect((await attemptById(t, started.attemptId)).chunkCount).toBe(0);
+  });
+
   it("refuses to freeze an attempt whose registrations climbed above its plan", async () => {
     const t = signedIn();
     const draftId = await createDraftDataset(t, { entries: [{ data: { label: "A" } }] });
@@ -433,9 +519,13 @@ describe("chunk registration (the freeze's checkpoint contract)", () => {
     });
     for (const rows of [[{ data: { label: "A" } }], [{ data: { label: "stray" } }]]) {
       // oxlint-disable-next-line no-await-in-loop -- two registrations, order irrelevant.
-      const storageId = await storeChunk(t, rows);
+      const { storageId, uploadId } = await storeChunk(t, started.attemptId, rows);
       // oxlint-disable-next-line no-await-in-loop -- see above.
-      await t.mutation(api.publish.registerChunk, { attemptId: started.attemptId, storageId });
+      await t.mutation(api.publish.registerChunk, {
+        attemptId: started.attemptId,
+        storageId,
+        uploadId,
+      });
     }
     await expect(t.mutation(api.publish.freeze, { attemptId: started.attemptId })).rejects.toThrow(
       /finish uploading/i,
@@ -460,10 +550,11 @@ describe("interruption resume (AC 4: no duplicate or lost rows)", () => {
       chunkCount: 2,
       totalRows: 2,
     });
-    const firstChunk = await storeChunk(t, [{ data: { label: "A" } }]);
+    const firstChunk = await storeChunk(t, started.attemptId, [{ data: { label: "A" } }]);
     await t.mutation(api.publish.registerChunk, {
       attemptId: started.attemptId,
-      storageId: firstChunk,
+      storageId: firstChunk.storageId,
+      uploadId: firstChunk.uploadId,
     });
     const progress = await attemptById(t, started.attemptId);
     expect(progress.chunkCount).toBe(1);
@@ -474,10 +565,11 @@ describe("interruption resume (AC 4: no duplicate or lost rows)", () => {
     expect(resumed.attemptId).toBe(started.attemptId);
     expect(resumed.alreadyRunning).toBe(true);
     expect(resumed.chunkCount).toBe(1);
-    const secondChunk = await storeChunk(t, [{ data: { label: "B" } }]);
+    const secondChunk = await storeChunk(t, started.attemptId, [{ data: { label: "B" } }]);
     await t.mutation(api.publish.registerChunk, {
       attemptId: started.attemptId,
-      storageId: secondChunk,
+      storageId: secondChunk.storageId,
+      uploadId: secondChunk.uploadId,
     });
     // The plan stands (re-planning is only for a changed chunk count) — the
     // resumed client freezes once both planned chunks are registered.
@@ -509,8 +601,12 @@ describe("interruption resume (AC 4: no duplicate or lost rows)", () => {
       chunkCount: 3,
       totalRows: 3,
     });
-    const stale = await storeChunk(t, [{ data: { label: "stale" } }]);
-    await t.mutation(api.publish.registerChunk, { attemptId: started.attemptId, storageId: stale });
+    const stale = await storeChunk(t, started.attemptId, [{ data: { label: "stale" } }]);
+    await t.mutation(api.publish.registerChunk, {
+      attemptId: started.attemptId,
+      storageId: stale.storageId,
+      uploadId: stale.uploadId,
+    });
 
     // The resumed client's fresh execution finds a different shape → reset.
     await t.mutation(api.publish.resetUpload, { attemptId: started.attemptId });
@@ -743,8 +839,14 @@ describe("stale-attempt revival", () => {
       chunkCount: 1,
       totalRows: 1,
     });
-    const storageId = await storeChunk(t, [{ data: { label: "A" } }]);
-    await t.mutation(api.publish.registerChunk, { attemptId: started.attemptId, storageId });
+    const { storageId, uploadId } = await storeChunk(t, started.attemptId, [
+      { data: { label: "A" } },
+    ]);
+    await t.mutation(api.publish.registerChunk, {
+      attemptId: started.attemptId,
+      storageId,
+      uploadId,
+    });
     const frozen = await t.mutation(api.publish.freeze, { attemptId: started.attemptId });
     expect(frozen.alreadyFrozen).toBe(false);
 

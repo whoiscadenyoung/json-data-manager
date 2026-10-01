@@ -390,9 +390,17 @@ export const plan = mutation({
   returns: v.null(),
 });
 
-/** Appends one uploaded chunk's storage id — the checkpoint a resumed browser resumes from. */
+/**
+ * Appends one uploaded chunk's storage id — the checkpoint a resumed browser
+ * resumes from. Provenance (issue #131): the id must present the
+ * `pendingUploads` token its upload URL was issued under, claimed here for
+ * THIS attempt before it joins the checkpoint — an id that didn't come from
+ * a server-issued upload for this attempt is rejected, so nothing
+ * unregistered can ever ride the reset/failure cleanup
+ * (`deleteStorageBlobs`) or the freeze's import.
+ */
 export const registerChunk = mutation({
-  args: { attemptId: v.id("publishAttempts"), storageId: v.string() },
+  args: { attemptId: v.id("publishAttempts"), storageId: v.string(), uploadId: v.string() },
   handler: async (ctx, args) => {
     const actorId = await auth(ctx);
     const attempt = await uploadingAttempt(ctx, actorId, args.attemptId);
@@ -400,10 +408,15 @@ export const registerChunk = mutation({
       // Idempotent: a client replay of an unacked registration (flaky
       // network, Convex's own mutation replay) must not inflate the count
       // the freeze checks — a doubled registration would wedge the attempt
-      // permanently above its plan.
+      // permanently above its plan. Runs BEFORE the claim, so the replay
+      // no-ops instead of failing on the already-consumed token.
       await ctx.db.patch(args.attemptId, { lastProgressAt: Date.now() });
       return;
     }
+    await ctx.runMutation(components.jsonCms.host_support.claimUpload, {
+      scope: args.attemptId,
+      uploadId: args.uploadId,
+    });
     await ctx.db.patch(args.attemptId, {
       chunkStorageIds: [...attempt.chunkStorageIds, args.storageId],
       lastProgressAt: Date.now(),

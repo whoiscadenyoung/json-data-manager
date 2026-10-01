@@ -276,15 +276,23 @@ async function settledOutcome(
   };
 }
 
-/** Uploads and registers one chunk (the importer's producer shape: upload URL → POST → register). */
+/**
+ * Uploads and registers one chunk (the importer's producer shape: upload URL
+ * → POST → register). The URL is issued for THIS attempt (`scope`), and the
+ * registration presents the issuance token (`uploadId`) — a storage id that
+ * didn't come from a server-issued upload for this attempt is rejected at
+ * `registerChunk` (issue #131).
+ */
 async function uploadChunk(
   convex: ConvexClient,
   attemptId: AttemptId,
   chunk: ImportRow[],
   index: number,
 ): Promise<void> {
-  const uploadUrl = await convex.mutation(api.imports.generateUploadUrl, {});
-  const upload = await fetch(uploadUrl, {
+  const { storageUrl, uploadId } = await convex.mutation(api.imports.generateUploadUrl, {
+    scope: attemptId,
+  });
+  const upload = await fetch(storageUrl, {
     body: JSON.stringify(chunk),
     headers: { "Content-Type": "application/json" },
     method: "POST",
@@ -301,7 +309,11 @@ async function uploadChunk(
   ) {
     throw new Error("Chunk upload did not return a storage id.");
   }
-  await convex.mutation(api.publish.registerChunk, { attemptId, storageId: body.storageId });
+  await convex.mutation(api.publish.registerChunk, {
+    attemptId,
+    storageId: body.storageId,
+    uploadId,
+  });
 }
 
 /**

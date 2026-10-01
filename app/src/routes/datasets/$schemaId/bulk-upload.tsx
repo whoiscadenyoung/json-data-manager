@@ -751,14 +751,17 @@ function BulkUploadBody() {
         // monitored import. Never one giant upload — see
         // `chunkRowsForImport`'s doc comment for why: Convex components
         // can't use the Node runtime, so no server-side step could safely
-        // parse one large upload in a single pass.
+        // parse one large upload in a single pass. Each upload rides the
+        // token its URL was issued under (`uploadId`) — `startImport`
+        // rejects any blob without one, issued for THIS dataset (issue
+        // #131).
         const chunks = chunkRowsForImport(validEntries),
-          storageIds: string[] = [];
+          uploaded: Array<{ storageId: string; uploadId: string }> = [];
         for (const chunk of chunks) {
           // oxlint-disable-next-line no-await-in-loop
-          const uploadUrl = await generateUploadUrl({}),
+          const { storageUrl, uploadId } = await generateUploadUrl({ scope: schemaId }),
             // oxlint-disable-next-line no-await-in-loop
-            res = await fetch(uploadUrl, {
+            res = await fetch(storageUrl, {
               body: JSON.stringify(chunk),
               headers: { "Content-Type": "application/json" },
               method: "POST",
@@ -776,11 +779,11 @@ function BulkUploadBody() {
           ) {
             throw new Error("Upload did not return a storageId.");
           }
-          storageIds.push(body.storageId);
+          uploaded.push({ storageId: body.storageId, uploadId });
         }
         const newImportId = await startImport({
           schemaId,
-          storageIds,
+          chunks: uploaded,
           total: validEntries.length,
         });
         setImportId(newImportId);

@@ -238,7 +238,7 @@ describe("chain resolution (7b, #103): a published map's layer renders its publi
     }
     expect(alias.title).toBe("ds-v1row");
     expect(alias.kind).toBe("geospatial");
-    expect(alias.mapTileArchiveStorageId).toBeUndefined();
+    expect(alias.mapTileArchiveBuiltVersion).toBeUndefined();
     expect(alias.mapTileCacheVersion).toBeUndefined();
     // A target that already has its own summary (live datasets) gets none.
     expect(chainView.aliases.some((row) => row._id === "live1")).toBe(false);

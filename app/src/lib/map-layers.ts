@@ -153,7 +153,6 @@ export function chainViewOf(
       mapTileArchiveBuiltVersion: undefined,
       mapTileArchiveBytes: undefined,
       mapTileArchiveMaxZoom: undefined,
-      mapTileArchiveStorageId: undefined,
       mapTileCacheVersion: undefined,
     });
   }

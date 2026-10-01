@@ -391,4 +391,21 @@ export default defineSchema({
     total: v.number(),
     workflowId: v.optional(v.string()),
   }).index("by_schema", ["schemaId"]),
+
+  // Server-issued upload provenance (issue #131): one row per upload URL the
+  // component hands out (`generateUploadUrl`). The row is the receipt that a
+  // storage id COULD only come from an upload this server invited — consumers
+  // (`startImport`'s client path, the host's chunk-registration and
+  // tile-install flows) claim the row by its id, and a claim against a
+  // missing, already-used, or differently-scoped row rejects the id. An
+  // unclaimed row (the client never presented its blob) is what the
+  // abandoned-upload sweep (`host_support.sweepAbandonedUploads`) deletes.
+  pendingUploads: defineTable({
+    // Set when the row's upload URL was minted for a specific target — the
+    // host's publish-attempt id (chunk registration) or the component schema
+    // id (imports, tile installs). Absent on host-internal issuances (the
+    // tag ingest uploads server-side); an absent scope can never satisfy a
+    // claim, so unscoped URLs stay unregistrable by construction.
+    scope: v.optional(v.string()),
+  }),
 });

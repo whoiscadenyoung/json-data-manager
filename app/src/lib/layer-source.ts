@@ -38,7 +38,6 @@ export interface TileSourceSchemaRow {
   geometryType?: string;
   kind?: "standard" | "geospatial";
   mapTileArchiveBuiltVersion?: number;
-  mapTileArchiveStorageId?: string;
   mapTileCacheVersion?: number;
 }
 
@@ -61,11 +60,12 @@ const PENDING: TileSourceDecision = { kind: "pending" };
 
 /**
  * True when the schema row alone proves a fresh archive is installed
- * (`storageId` present, built-at version current) — the only case whose
- * decision still needs the meta URL.
+ * (`mapTileArchiveBuiltVersion` present — set iff an archive ever installed —
+ * and built at the current version): the only case whose decision still
+ * needs the meta URL. Since #131 the summaries carry no archive storage id,
+ * so built-version presence is the "archive exists" signal.
  */
 function isFreshArchiveCandidate(schema: TileSourceSchemaRow): boolean {
-  if (schema.mapTileArchiveStorageId === undefined) return false;
   if (schema.mapTileArchiveBuiltVersion === undefined) return false;
   return schema.mapTileArchiveBuiltVersion === (schema.mapTileCacheVersion ?? 0);
 }

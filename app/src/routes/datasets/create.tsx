@@ -321,14 +321,17 @@ function ImportFirst({ projectId }: { projectId?: string }) {
         // upload each chunk to its own blob — never one giant upload. See
         // `chunkRowsForImport`'s doc comment for why: Convex components
         // can't use the Node runtime, so no server-side step could safely
-        // parse one large upload in a single pass.
+        // parse one large upload in a single pass. Each upload rides the
+        // token its URL was issued under (`uploadId`) — `startImport`
+        // rejects any blob without one, issued for THIS dataset (issue
+        // #131).
         const chunks = chunkRowsForImport(rows),
-          storageIds: string[] = [];
+          uploaded: Array<{ storageId: string; uploadId: string }> = [];
         for (const chunk of chunks) {
           // oxlint-disable-next-line no-await-in-loop
-          const uploadUrl = await generateUploadUrl({}),
+          const { storageUrl, uploadId } = await generateUploadUrl({ scope: newSchemaId }),
             // oxlint-disable-next-line no-await-in-loop
-            res = await fetch(uploadUrl, {
+            res = await fetch(storageUrl, {
               body: JSON.stringify(chunk),
               headers: { "Content-Type": "application/json" },
               method: "POST",
@@ -346,17 +349,19 @@ function ImportFirst({ projectId }: { projectId?: string }) {
           ) {
             throw new Error("Import upload did not return a storageId.");
           }
-          storageIds.push(body.storageId);
+          uploaded.push({ storageId: body.storageId, uploadId });
         }
 
         // Retain the original file as its own blob so it stays
         // re-downloadable from the dataset page — deliberately NOT in
-        // `storageIds` (the import workflow deletes chunk blobs as it
+        // `uploaded` (the import workflow deletes chunk blobs as it
         // consumes them; this one must survive).
-        let sourceFile: { name: string; size: number; storageId: string } | undefined;
+        let sourceFile:
+          | { name: string; size: number; storageId: string; uploadId: string }
+          | undefined;
         if (options.sourceFile) {
-          const uploadUrl = await generateUploadUrl({}),
-            res = await fetch(uploadUrl, {
+          const { storageUrl, uploadId } = await generateUploadUrl({ scope: newSchemaId }),
+            res = await fetch(storageUrl, {
               body: options.sourceFile,
               headers: {
                 "Content-Type": options.sourceFile.type || "application/octet-stream",
@@ -379,13 +384,14 @@ function ImportFirst({ projectId }: { projectId?: string }) {
             name: options.sourceFile.name,
             size: options.sourceFile.size,
             storageId: body.storageId,
+            uploadId,
           };
         }
 
         const newImportId = await startImport({
           schemaId: newSchemaId,
           sourceFile,
-          storageIds,
+          chunks: uploaded,
           total: rows.length,
         });
         setSchemaId(newSchemaId);

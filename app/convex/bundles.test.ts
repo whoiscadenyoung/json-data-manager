@@ -57,6 +57,15 @@ async function planOf(t: TestConvex, projectId: string) {
   return plan;
 }
 
+/** The pending-upload token a chunk registration must present — issued for
+ * the attempt, exactly as the client's upload flow does (issue #131). */
+async function uploadToken(t: TestConvex, scope: string): Promise<string> {
+  const { uploadId } = await t.run(async (ctx) =>
+    ctx.runMutation(components.jsonCms.lib.generateUploadUrl, { scope }),
+  );
+  return uploadId;
+}
+
 /** Chunk rows a test seeds, keyed by member datasetKey. */
 type ChunkRow = { data: unknown; geometry?: unknown };
 type PlanOverrides = {
@@ -180,7 +189,13 @@ async function driveBundlePress(
         bytes: new TextEncoder().encode(JSON.stringify(plan.chunks)).buffer,
       });
       // oxlint-disable-next-line no-await-in-loop -- see above.
-      await t.mutation(api.publish.registerChunk, { attemptId: attempt.attemptId, storageId });
+      const uploadId = await uploadToken(t, attempt.attemptId);
+      // oxlint-disable-next-line no-await-in-loop -- see above.
+      await t.mutation(api.publish.registerChunk, {
+        attemptId: attempt.attemptId,
+        storageId,
+        uploadId,
+      });
     }
     // oxlint-disable-next-line no-await-in-loop -- see above.
     const frozen = await t.mutation(api.publish.freeze, { attemptId: attempt.attemptId });
@@ -602,7 +617,13 @@ describe("partial bundles and resume", () => {
         ).buffer,
       });
       // oxlint-disable-next-line no-await-in-loop -- press order.
-      await t.mutation(api.publish.registerChunk, { attemptId: attempt.attemptId, storageId });
+      const uploadId = await uploadToken(t, attempt.attemptId);
+      // oxlint-disable-next-line no-await-in-loop -- press order.
+      await t.mutation(api.publish.registerChunk, {
+        attemptId: attempt.attemptId,
+        storageId,
+        uploadId,
+      });
       // oxlint-disable-next-line no-await-in-loop -- press order.
       const frozen = await t.mutation(api.publish.freeze, { attemptId: attempt.attemptId });
       // oxlint-disable-next-line no-await-in-loop -- press order.
@@ -661,7 +682,13 @@ describe("partial bundles and resume", () => {
     const storageId = await t.action(components.jsonCms.host_support.storeTestBlob, {
       bytes: new TextEncoder().encode(JSON.stringify([{ data: { label: "A" } }])).buffer,
     });
-    await t.mutation(api.publish.registerChunk, { attemptId: attempt.attemptId, storageId });
+    const uploadId = await uploadToken(t, attempt.attemptId);
+    // oxlint-disable-next-line no-await-in-loop -- the registration rides its token.
+    await t.mutation(api.publish.registerChunk, {
+      attemptId: attempt.attemptId,
+      storageId,
+      uploadId,
+    });
     const frozen = await t.mutation(api.publish.freeze, { attemptId: attempt.attemptId });
     await drainScheduled(t);
     await t.mutation(api.bundles.recordMember, {
@@ -879,7 +906,13 @@ describe("layer resolutions", () => {
         ]),
       ).buffer,
     });
-    await t.mutation(api.publish.registerChunk, { attemptId: attempt.attemptId, storageId });
+    const uploadId = await uploadToken(t, attempt.attemptId);
+    // oxlint-disable-next-line no-await-in-loop -- the registration rides its token.
+    await t.mutation(api.publish.registerChunk, {
+      attemptId: attempt.attemptId,
+      storageId,
+      uploadId,
+    });
     await t.mutation(api.publish.freeze, { attemptId: attempt.attemptId });
     await drainScheduled(t);
 

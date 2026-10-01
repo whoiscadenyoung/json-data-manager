@@ -24,6 +24,13 @@ import type { FunctionReference } from "convex/server";
 export type ComponentApi<Name extends string | undefined = string | undefined> =
   {
     host_support: {
+      claimUpload: FunctionReference<
+        "mutation",
+        "internal",
+        { scope: string; uploadId: string },
+        null,
+        Name
+      >;
       deleteStorageBlobs: FunctionReference<
         "mutation",
         "internal",
@@ -31,11 +38,25 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         number,
         Name
       >;
+      hasStorageBlob: FunctionReference<
+        "query",
+        "internal",
+        { storageId: string },
+        boolean,
+        Name
+      >;
       storeTestBlob: FunctionReference<
         "action",
         "internal",
         { bytes: ArrayBuffer },
         string,
+        Name
+      >;
+      sweepAbandonedUploads: FunctionReference<
+        "mutation",
+        "internal",
+        { olderThanMs?: number },
+        number,
         Name
       >;
     };
@@ -185,8 +206,8 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       generateUploadUrl: FunctionReference<
         "mutation",
         "internal",
-        {},
-        string,
+        { scope?: string },
+        { storageUrl: string; uploadId: string },
         Name
       >;
       getCollection: FunctionReference<
@@ -300,7 +321,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         null | {
           bytes?: number;
           maxZoom?: number;
-          storageId: string;
           url: string;
           version: number;
         },
@@ -480,7 +500,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
           mapTileArchiveMaxZoom?: number;
-          mapTileArchiveStorageId?: string;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
           source?: { name: string };
@@ -909,7 +928,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
           mapTileArchiveMaxZoom?: number;
-          mapTileArchiveStorageId?: string;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
           source?: { name: string };
@@ -1056,9 +1074,15 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "internal",
         {
           boundWrite?: string;
+          chunks?: Array<{ storageId: string; uploadId: string }>;
           schemaId: string;
-          sourceFile?: { name: string; size: number; storageId: string };
-          storageIds: Array<string>;
+          sourceFile?: {
+            name: string;
+            size: number;
+            storageId: string;
+            uploadId: string;
+          };
+          storageIds?: Array<string>;
           total: number;
         },
         string,

@@ -152,6 +152,18 @@ async function storeRows(t: TestCtx, rows: unknown[]) {
   );
 }
 
+/**
+ * Stores rows as a chunk blob AND issues the pending-upload token its upload
+ * URL would carry — the full client-side shape (`generateUploadUrl` → POST →
+ * `startImport`'s `chunks`), so tests drive the same provenance path a real
+ * upload does (issue #131).
+ */
+async function issuedChunk(t: TestCtx, scope: string, rows: unknown[]) {
+  const storageId = await storeRows(t, rows),
+    { uploadId } = await t.mutation(api.lib.generateUploadUrl, { scope });
+  return { storageId, uploadId };
+}
+
 /** Stores an archive-sized blob and installs it via `setMapTileArchive` at `expectedVersion`. */
 async function installArchive(
   t: TestCtx,
@@ -1968,13 +1980,13 @@ describe("json-cms component", () => {
     it("startImport rejects a missing schema", async () => {
       const t = initConvexTest(),
         schemaId = await createImportSchema(t),
-        storageId = await storeRows(t, [{ name: "a" }]);
+        chunk = await issuedChunk(t, schemaId, [{ name: "a" }]);
 
       // Delete the schema so startImport can't find it.
       await t.mutation(api.lib.deleteSchema, { schemaId });
 
       await expect(
-        t.mutation(api.lib.startImport, { schemaId, storageIds: [storageId], total: 1 }),
+        t.mutation(api.lib.startImport, { chunks: [chunk], schemaId, total: 1 }),
       ).rejects.toThrow("Schema not found");
     });
 
@@ -2523,11 +2535,16 @@ describe("json-cms component", () => {
         // version present" for the meta query.
         const meta = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
         assertDefined(meta);
-        expect(meta.storageId).toBe(storageId);
+        // The meta carries NO storage id (issue #131) — the pointer is only
+        // ever readable back off the stored doc.
+        expect("storageId" in meta).toBe(false);
         expect(meta.version).toBe(0);
         expect(meta.bytes).toBe("legacy-archive".length);
         expect(meta.maxZoom).toBe(12);
         expect(meta.url).toBeTruthy();
+        const row = await t.query(api.lib.getSchema, { schemaId });
+        assertDefined(row);
+        expect(row.mapTileArchiveStorageId).toBe(storageId);
       });
 
       it("makes an archive observably stale when edits land after its install", async () => {
@@ -2554,11 +2571,11 @@ describe("json-cms component", () => {
         // stale-on-view trigger reads as "rebuild".
         const meta = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
         assertDefined(meta);
-        expect(meta.storageId).toBe(storageId);
         expect(meta.version).toBe(0);
         const row = await t.query(api.lib.getSchema, { schemaId });
         assertDefined(row);
         expect(row.mapTileCacheVersion).toBe(1);
+        expect(row.mapTileArchiveStorageId).toBe(storageId);
       });
 
       it("re-installing at the same version deletes the superseded blob and repoints the meta", async () => {
@@ -2571,9 +2588,9 @@ describe("json-cms component", () => {
         const replaced = await t.run(async (ctx) => ctx.storage.get(firstId));
         expect(replaced).toBeNull();
 
-        const meta = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
-        assertDefined(meta);
-        expect(meta.storageId).toBe(secondId);
+        const row = await t.query(api.lib.getSchema, { schemaId });
+        assertDefined(row);
+        expect(row.mapTileArchiveStorageId).toBe(secondId);
       });
 
       it("a stale expectedVersion discards the incoming blob and leaves the row untouched", async () => {
@@ -2607,7 +2624,6 @@ describe("json-cms component", () => {
 
         const meta = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
         assertDefined(meta);
-        expect(meta.storageId).toBe(currentId);
         // `version` is the BUILT-at version of the surviving archive (1) —
         // behind the row's live counter (2), which is exactly the signal a
         // consumer uses to detect that edits landed after the install.

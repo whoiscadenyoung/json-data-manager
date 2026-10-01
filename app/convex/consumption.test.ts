@@ -52,10 +52,20 @@ async function drainScheduled(t: TestConvex): Promise<void> {
   });
 }
 
-/** One chunk blob, planted in the COMPONENT's storage (the publish.test.ts helper). */
-async function storeChunk(t: TestConvex, rows: Array<{ data: unknown; geometry?: unknown }>) {
-  const bytes = new TextEncoder().encode(JSON.stringify(rows));
-  return t.action(components.jsonCms.host_support.storeTestBlob, { bytes: bytes.buffer });
+/** One chunk blob, planted in the COMPONENT's storage (the publish.test.ts helper), plus its pending-upload token (issued for the attempt, issue #131). */
+async function storeChunk(
+  t: TestConvex,
+  attemptId: string,
+  rows: Array<{ data: unknown; geometry?: unknown }>,
+) {
+  const bytes = new TextEncoder().encode(JSON.stringify(rows)),
+    storageId = await t.action(components.jsonCms.host_support.storeTestBlob, {
+      bytes: bytes.buffer,
+    }),
+    { uploadId } = await t.run(async (ctx) =>
+      ctx.runMutation(components.jsonCms.lib.generateUploadUrl, { scope: attemptId }),
+    );
+  return { storageId, uploadId };
 }
 
 /** Creates a lifecycle-draft component dataset directly (the host-only path). The
@@ -112,9 +122,13 @@ async function drivePublish(
   });
   for (const chunk of options.chunks) {
     // oxlint-disable-next-line no-await-in-loop -- order is the resume index.
-    const storageId = await storeChunk(t, chunk);
+    const { storageId, uploadId } = await storeChunk(t, options.attemptId, chunk);
     // oxlint-disable-next-line no-await-in-loop -- order is the resume index.
-    await t.mutation(api.publish.registerChunk, { attemptId: options.attemptId, storageId });
+    await t.mutation(api.publish.registerChunk, {
+      attemptId: options.attemptId,
+      storageId,
+      uploadId,
+    });
   }
   const frozen = await t.mutation(api.publish.freeze, { attemptId: options.attemptId });
   await drainScheduled(t);
