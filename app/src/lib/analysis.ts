@@ -3,8 +3,11 @@
  * message protocol with {@link ./analysis.worker.ts} and the run manager —
  * one lazy module worker, one run at a time (the CPU-bound SQL engine
  * serializes on the worker's single thread), pending runs failed on worker
- * crash with a lazy respawn. The tile-archive rebuild manager is the
- * pattern this copies (./tile-archive.ts).
+ * crash with a lazy respawn, and every run under a wall-clock timeout and
+ * optional AbortSignal that TERMINATE the worker and respawn it (#133 item
+ * 2 — a runaway query must not pin the engine until reload). The
+ * tile-archive rebuild manager is the pattern this copies
+ * (./tile-archive.ts).
  *
  * The RESOLUTION half does not live here: what dataset each table target
  * reads (pin/float per stage-6 semantics) resolves SERVER-side first,
@@ -23,6 +26,8 @@
  */
 import { fetchConvexToken } from "#/lib/convex-auth-token";
 
+import { ANALYSIS_RUN_TIMEOUT_MS } from "./analysis-caps";
+
 /** One resolved table target: the SQL name its rows register under + the component row the seam should page. */
 export interface AnalysisTableTarget {
   /** The SQL name (the spec's `as`). */
@@ -37,9 +42,13 @@ export interface AnalysisRequest {
   limit?: number;
   /** Progress callback for the worker's transient phases (the first run downloads the WASM engine — worth surfacing). */
   onPhase?: (phase: AnalysisRunPhase) => void;
+  /** Aborts the run: the worker is terminated and respawned, and this run (and any queued behind it) rejects (#133 item 2). */
+  signal?: AbortSignal;
   source: AnalysisTableTarget;
   sql: string;
   tables: AnalysisTableTarget[];
+  /** Wall-clock cap for THIS run; defaults to `ANALYSIS_RUN_TIMEOUT_MS` (#133 item 2 — a runaway query must not pin the worker forever). */
+  timeoutMs?: number;
 }
 
 /** What one run returns: plain-record rows plus the engine's diagnostics (error carried here, never thrown). */
@@ -70,6 +79,8 @@ let requestSeq = 0;
 const pendingRuns = new Map<
   number,
   {
+    /** Releases the run's timer + abort listener (the settle and restart paths both call it). */
+    cancel: () => void;
     onPhase?: (phase: AnalysisRunPhase) => void;
     reject: (error: Error) => void;
     resolve: (result: AnalysisRunResult) => void;
@@ -110,6 +121,7 @@ function settlePending(requestId: number, data: Record<string, unknown>): boolea
     return false;
   }
   pendingRuns.delete(requestId);
+  pending.cancel();
   if (data.type === "done") {
     if (isRunResult(data.result)) {
       pending.resolve(data.result);
@@ -155,10 +167,7 @@ function getWorker(): Worker {
     spawned.addEventListener("error", () => {
       // The worker itself died (not just one run): fail everything pending
       // so callers unwedge, and respawn lazily on the next run.
-      for (const [requestId, pending] of pendingRuns) {
-        pendingRuns.delete(requestId);
-        pending.reject(new Error("The analysis worker crashed — try the run again."));
-      }
+      failAllPending("The analysis worker crashed — try the run again.");
       analysisWorker = undefined;
       spawned.terminate();
     });
@@ -167,18 +176,82 @@ function getWorker(): Worker {
   return analysisWorker;
 }
 
+/** Rejects every pending run and releases its timer/listener — the worker-death and restart paths. */
+function failAllPending(message: string): void {
+  for (const [requestId, pending] of pendingRuns) {
+    pendingRuns.delete(requestId);
+    pending.cancel();
+    pending.reject(new Error(message));
+  }
+}
+
+/**
+ * Terminates the worker and forgets it, so the next run respawns a fresh
+ * one (#133 item 2): the CPU-bound WASM query only stops by killing the
+ * worker that runs it, and a killed worker must not stay installed — every
+ * still-pending run is failed by the caller.
+ */
+function terminateWorker(): void {
+  const worker = analysisWorker;
+  if (worker === undefined) {
+    return;
+  }
+  analysisWorker = undefined;
+  worker.terminate();
+}
+
 /**
  * Runs one analysis: spawns (or reuses) the worker, sends the request,
  * resolves with the query's rows + diagnostics. Rejects only on transport
- * failure (worker crash, message loss) — a bad query resolves with
+ * failure (worker crash, timeout expiry, abort) — a bad query resolves with
  * `diagnostics.error` set, because a user-authored SQL text failing is a
  * result, not an exception.
+ *
+ * A runaway query cannot be told to stop — the timeout or abort signal
+ * TERMINATES the worker (#133 item 2), failing this run and everything
+ * still queued with a message that says the worker was restarted.
  */
 export async function runAnalysis(request: AnalysisRequest): Promise<AnalysisRunResult> {
   requestSeq += 1;
   const requestId = requestSeq;
   return await new Promise<AnalysisRunResult>((resolve, reject) => {
-    pendingRuns.set(requestId, { onPhase: request.onPhase, reject, resolve });
+    let timer: ReturnType<typeof setTimeout> | undefined, onAbort: (() => void) | undefined;
+    const cancel = () => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      if (onAbort !== undefined && request.signal !== undefined) {
+        request.signal.removeEventListener("abort", onAbort);
+        onAbort = undefined;
+      }
+    };
+    const restart = (message: string) => {
+      const pending = pendingRuns.get(requestId);
+      if (pending !== undefined) {
+        pendingRuns.delete(requestId);
+        pending.cancel();
+        reject(new Error(message));
+      }
+      // Everything queued behind this run dies with the worker — the
+      // single-threaded engine cannot outlive the kill.
+      failAllPending("The SQL worker was restarted while this run waited — start it again.");
+      terminateWorker();
+    };
+    pendingRuns.set(requestId, { cancel, onPhase: request.onPhase, reject, resolve });
+    timer = setTimeout(() => {
+      restart(
+        `The analysis timed out after ${Math.round(
+          (request.timeoutMs ?? ANALYSIS_RUN_TIMEOUT_MS) / 1000,
+        )}s — the query kept running past the cap, so the SQL worker was restarted. Add a LIMIT, aggregate the rows, or narrow the source dataset.`,
+      );
+    }, request.timeoutMs ?? ANALYSIS_RUN_TIMEOUT_MS);
+    if (request.signal !== undefined) {
+      onAbort = () => {
+        restart("The analysis run was canceled.");
+      };
+      request.signal.addEventListener("abort", onAbort, { once: true });
+    }
     // `Worker.postMessage` takes (message, transfer) — there is no
     // `targetOrigin` parameter to pass at the worker boundary.
     // oxlint-disable unicorn/require-post-message-target-origin -- see above; the rule anchors inside the multi-line call.

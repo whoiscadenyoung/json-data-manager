@@ -183,7 +183,9 @@ function enrichmentFields(
  * values under `<namespace>.<field>`, or null for every enrichment field
  * when unmatched (§6 "null enriched fields", taken literally). A matched
  * row lacking a picked field also lands as null — the namespaced column
- * set is identical on every row either way.
+ * set is identical on every row either way. Cells read through
+ * `ownCellOf`: rows are schemaless user records, and an inherited property
+ * (`constructor`, `toString`) must never enrich a row (#133 item 13).
  */
 function enrichmentFor(
   namespace: string,
@@ -192,9 +194,18 @@ function enrichmentFor(
 ): Record<string, unknown> {
   const enrichment: Record<string, unknown> = {};
   for (const field of fields) {
-    enrichment[`${namespace}.${field}`] = matched === undefined ? null : (matched[field] ?? null);
+    enrichment[`${namespace}.${field}`] = ownCellOf(matched, field);
   }
   return enrichment;
+}
+
+/** The row's OWN cell under `field`, null when the row is unmatched, lacks it, or only INHERITS it (`Object.hasOwn` — an inherited `constructor` is not data, #133 item 13). */
+function ownCellOf(row: Record<string, unknown> | undefined, field: string): unknown {
+  if (row === undefined || !Object.hasOwn(row, field)) {
+    return null;
+  }
+  const cell = row[field];
+  return cell === undefined ? null : cell;
 }
 
 /**
@@ -217,21 +228,15 @@ function orphanKeyText(value: unknown): string | undefined {
  * The geometry reference one output row carries under a `geometrySource`
  * rule, read RAW from the rule's side — a reference is data, not a key, so
  * no normalization applies — with absent cells (and, side "lookup", unmatched
- * rows) resolving to null, never an error (the `?? null` enrichment
- * precedent).
+ * rows) resolving to null, never an error. Both sides read own properties
+ * only (`ownCellOf`, #133 item 13).
  */
 function geometryReferenceOf(
   geometrySource: GeometrySource,
   row: Record<string, unknown>,
   matched: Record<string, unknown> | undefined,
 ): unknown {
-  const cell =
-    geometrySource.side === "base"
-      ? row[geometrySource.column]
-      : matched === undefined
-        ? undefined
-        : matched[geometrySource.column];
-  return cell === undefined ? null : cell;
+  return ownCellOf(geometrySource.side === "base" ? row : matched, geometrySource.column);
 }
 
 /**

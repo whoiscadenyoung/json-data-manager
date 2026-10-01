@@ -2,21 +2,48 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { AsyncDuckDB, AsyncDuckDBConnection } from "@duckdb/duckdb-wasm";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
+  analysisSqlEngine,
   applyEngineLockdown,
+  decimal128TextOf,
+  DuckDbEngine,
   ENGINE_LOCKDOWN_STATEMENTS,
   normalizeArrowValue,
 } from "./analysis-duckdb";
 import type { LockdownConnection } from "./analysis-duckdb";
 
 /**
+ * A failed engine load must not be remembered (#133 item 4): the mock makes
+ * every load attempt throw, and the assertion counts TWO `selectBundle`
+ * calls — a cached rejection would attempt once. (The real-engine suite
+ * below drives the package through `createRequire`, which bypasses this
+ * mock.)
+ */
+const loads = vi.hoisted(() => ({ failures: 0 }));
+vi.mock("@duckdb/duckdb-wasm", () => ({
+  selectBundle: () => {
+    loads.failures += 1;
+    throw new Error("offline");
+  },
+}));
+
+describe("analysisSqlEngine — a failed load is retried, never cached (#133 item 4)", () => {
+  it("attempts the WASM load again after a rejection", async () => {
+    await expect(analysisSqlEngine()).rejects.toThrow("offline");
+    await expect(analysisSqlEngine()).rejects.toThrow("offline");
+    expect(loads.failures).toBe(2);
+  });
+});
+
+/**
  * The pure cell-normalization policy of the DuckDB engine handle (the
  * `SqlEngine` impl's query leg). The WASM engine itself can't run under
  * vitest (no worker/browser WASM in the node environment), so the
  * information_schema drop dance and memory_limit setting stay
- * build-verified only — this file pins the one piece of that module that is
+ * build-verified only — this file pins the pieces of that module that are
  * pure policy: what an Arrow cell becomes in serializable plain data.
  */
 describe("normalizeArrowValue — Arrow cells into serializable plain data", () => {
@@ -37,6 +64,54 @@ describe("normalizeArrowValue — Arrow cells into serializable plain data", () 
     expect(normalizeArrowValue(null)).toBe(null);
     expect(normalizeArrowValue(undefined)).toBe(undefined);
     expect(normalizeArrowValue(true)).toBe(true);
+  });
+
+  it("normalizes RECURSIVELY — lists, nested structures, Dates and blobs land as plain JSON (#133 item 3)", () => {
+    // A LIST column's Vector arrives iterable; nested BigInts normalize too.
+    expect(normalizeArrowValue([1n, ["deep", 2n]])).toStrictEqual([1, ["deep", 2]]);
+    // STRUCT / row-proxy materialization: fresh plain object, own entries.
+    const nested = normalizeArrowValue({ a: { b: 5n }, c: [true, null] });
+    expect(nested).toStrictEqual({ a: { b: 5 }, c: [true, null] });
+    expect(Object.getPrototypeOf(nested)).toBe(Object.prototype);
+    // TIMESTAMP cells that arrive as Dates become ISO text.
+    expect(normalizeArrowValue(new Date("2026-01-02T03:04:05.000Z"))).toBe(
+      "2026-01-02T03:04:05.000Z",
+    );
+    // BLOB typed arrays become number arrays (JSON-safe).
+    expect(normalizeArrowValue(new Uint8Array([1, 2, 3]))).toStrictEqual([1, 2, 3]);
+  });
+
+  it("renders a DECIMAL view through the column's scale (#133 item 3)", () => {
+    // The pinned build hands DECIMAL cells over as 128-bit LE views.
+    expect(normalizeArrowValue(new Uint32Array([123, 0, 0, 0]), 2)).toBe("1.23");
+  });
+});
+
+describe("decimal128TextOf — the scaled DECIMAL text", () => {
+  /** The 128-bit little-endian two's-complement words of one BigInt value (arithmetic, not bitwise — the lint bans bitwise). */
+  function wordsOf(value: bigint): Array<number> {
+    const WORD = 4294967296n,
+      RANGE = 340282366920938463463374607431768211456n,
+      unsigned = value < 0n ? value + RANGE : value;
+    return [0, 1, 2, 3].map((word) => {
+      let rest = unsigned;
+      for (let seen = 0; seen < word; seen += 1) {
+        rest /= WORD;
+      }
+      return Number(rest % WORD);
+    });
+  }
+
+  it("places the decimal point from the scale, keeping trailing zeros", () => {
+    expect(decimal128TextOf(wordsOf(123n), 2)).toBe("1.23");
+    expect(decimal128TextOf(wordsOf(123n), 0)).toBe("123");
+    expect(decimal128TextOf(wordsOf(1n), 4)).toBe("0.0001");
+    expect(decimal128TextOf(wordsOf(12300n), 2)).toBe("123.00");
+  });
+
+  it("reads negatives through two's complement", () => {
+    expect(decimal128TextOf(wordsOf(-45600n), 3)).toBe("-45.600");
+    expect(decimal128TextOf(wordsOf(-1n), 2)).toBe("-0.01");
   });
 });
 
@@ -164,13 +239,22 @@ interface ProbeConnection {
 }
 
 describe("the locked-down engine (real pinned wasm, Node target)", () => {
-  let bridge: NodeWorkerBridge | undefined, connection: ProbeConnection | undefined;
+  let bridge: NodeWorkerBridge | undefined,
+    connection: ProbeConnection | undefined,
+    sqlEngine: DuckDbEngine | undefined;
 
   const engine = (): ProbeConnection => {
     if (connection === undefined) {
       throw new Error("the engine was not built");
     }
     return connection;
+  };
+
+  const handle = (): DuckDbEngine => {
+    if (sqlEngine === undefined) {
+      throw new Error("the engine was not built");
+    }
+    return sqlEngine;
   };
 
   beforeAll(async () => {
@@ -185,6 +269,12 @@ describe("the locked-down engine (real pinned wasm, Node target)", () => {
     // The real code path — the same applier createEngine runs.
     await applyEngineLockdown(opened);
     connection = opened as ProbeConnection;
+    // The same class the app runs, over the real engine — the registration
+    // and retention policies are pinned against it below.
+    sqlEngine = new DuckDbEngine(
+      db as unknown as AsyncDuckDB,
+      opened as unknown as AsyncDuckDBConnection,
+    );
   }, 120_000);
 
   afterAll(async () => {
@@ -228,5 +318,62 @@ describe("the locked-down engine (real pinned wasm, Node target)", () => {
   it("still runs a plain SELECT — the lockdown does not touch legitimate analyses", async () => {
     const result = await engine().query("SELECT 42 AS n");
     expect(result.toArray().map((row) => row.n)).toStrictEqual([42]);
+  }, 30_000);
+
+  it("folds case in the create-or-replace catalog lookup — DuckDB identifiers fold, so 'Grants' IS 'grants' (#133 item 5)", async () => {
+    // Tables come up through SQL here: the node test bridge cannot carry
+    // insertArrowTable's IPC buffer (query-only), so the DROP leg — the
+    // half this fix changed — is what the register exercise pins. The full
+    // replace was verified against the same engine outside vitest (bun:
+    // register "Grants" then "grants" ends with one "grants" table, [{id:2}]).
+    await engine().query('CREATE TABLE "Grants" AS SELECT 1 AS id');
+    await handle().register({
+      coercedNulls: 0,
+      columns: [{ name: "id", type: "number" }],
+      name: "grants",
+      rows: [{ id: 2 }],
+    });
+    const catalog = await handle().query(
+      "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'",
+    );
+    expect(catalog.map((row) => row.table_name)).not.toContain("Grants");
+    // A folded re-register of an unrelated table leaves others standing.
+    await handle().register({
+      coercedNulls: 0,
+      columns: [{ name: "x", type: "number" }],
+      name: "GRANTS2",
+      rows: [{ x: 1 }],
+    });
+    const after = await handle().query(
+      "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'",
+    );
+    expect(after.map((row) => row.table_name)).toStrictEqual([]);
+  }, 30_000);
+
+  it("drops every table the run does not name, folding case in the keep set (#133 item 1)", async () => {
+    await engine().query("CREATE TABLE retAlpha AS SELECT 1 AS a");
+    await engine().query("CREATE TABLE retBeta AS SELECT 2 AS b");
+    await engine().query("CREATE TABLE retGamma AS SELECT 3 AS c");
+    await handle().retainTables(["RETBETA"]);
+    const catalog = await handle().query(
+      "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'",
+    );
+    expect(catalog.map((row) => row.table_name)).toStrictEqual(["retBeta"]);
+  }, 30_000);
+
+  it("normalizes DECIMAL, LIST and STRUCT result cells to plain JSON (#133 item 3)", async () => {
+    expect(await handle().query("SELECT 1.23::DECIMAL(10,2) AS d")).toStrictEqual([{ d: "1.23" }]);
+    expect(await handle().query("SELECT -45.6::DECIMAL(18,3) AS d")).toStrictEqual([
+      { d: "-45.600" },
+    ]);
+    expect(await handle().query("SELECT [1, 2]::BIGINT[] AS l")).toStrictEqual([{ l: [1, 2] }]);
+    expect(await handle().query("SELECT {'a': 1::BIGINT, 'b': 'x'} AS s")).toStrictEqual([
+      { s: { a: 1, b: "x" } },
+    ]);
+    // Everything above survives a JSON round-trip — the postMessage contract.
+    const result = await handle().query(
+      "SELECT 1.5::DECIMAL(6,1) AS d, [1]::BIGINT[] AS l, {'n': 2::BIGINT} AS s",
+    );
+    expect(JSON.parse(JSON.stringify(result))).toStrictEqual([{ d: "1.5", l: [1], s: { n: 2 } }]);
   }, 30_000);
 });

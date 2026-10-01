@@ -16,11 +16,36 @@ import {
   fetchDatasetGeometryRows,
   GEOMETRY_PAGE_ROWS,
   lookupOperationsOfSpec,
+  sharedClient,
 } from "./dataset-rows";
 
 // The seam derives its client lazily from `#/env`; the tests inject a stub
 // client instead, so the env module never has to load.
 vi.mock("#/env", () => ({ env: { VITE_CONVEX_URL: "http://127.0.0.1:3212" } }));
+
+// The shared client's auth policy (#133 item 6) is exercised against a
+// recording ConvexClient stand-in and a scripted token endpoint.
+const convexStands = vi.hoisted(() => ({
+  constructed: [] as Array<{ setAuth: ReturnType<typeof vi.fn> }>,
+  nextToken: "token-1" as string | null,
+}));
+vi.mock("convex/browser", () => ({
+  ConvexClient: class {
+    setAuth = vi.fn<(...args: unknown[]) => void>();
+    constructor() {
+      convexStands.constructed.push(this);
+    }
+  },
+}));
+vi.mock("#/lib/auth-client", () => ({
+  authClient: {
+    convex: {
+      token: async () => ({
+        data: convexStands.nextToken === null ? null : { token: convexStands.nextToken },
+      }),
+    },
+  },
+}));
 
 /** A scripted ConvexClient stand-in: hands out `pages` in call order and records each query's args. */
 function stubClient(pages: Array<{ continueCursor?: string; isDone?: boolean }>) {
@@ -444,5 +469,48 @@ describe("lookupOperationsOfSpec", () => {
     expect(
       lookupOperationsOfSpec(storedSpec([lookupOp({ onDuplicateKey: "firstish" })])),
     ).toStrictEqual([]);
+  });
+});
+
+function attachedAuthOf(): {
+  fetcher: () => Promise<string | null>;
+  setAuth: ReturnType<typeof vi.fn<(...args: unknown[]) => void>>;
+} {
+  const record = convexStands.constructed[0],
+    call = record === undefined ? undefined : record.setAuth.mock.calls[0];
+  if (record === undefined || call === undefined) {
+    throw new Error("the shared client was never constructed with auth attached");
+  }
+  return {
+    fetcher:
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the recorded attachment is the one-argument token fetcher.
+      call[0] as () => Promise<string | null>,
+    setAuth: record.setAuth,
+  };
+}
+
+describe("sharedClient — auth attaches once, re-arms only after a null token (#133 item 6)", () => {
+  it("constructs ONE client across calls and calls setAuth exactly once", () => {
+    const first = sharedClient(),
+      second = sharedClient();
+    expect(second).toBe(first);
+    expect(convexStands.constructed).toHaveLength(1);
+    expect(attachedAuthOf().setAuth).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-arms the fetcher only after the token comes back null", async () => {
+    const { fetcher, setAuth } = attachedAuthOf();
+    // A token return leaves the single attachment alone.
+    await expect(fetcher()).resolves.toBe("token-1");
+    expect(setAuth).toHaveBeenCalledTimes(1);
+    // A null (signed out NOW) re-arms — the sign-in-without-reload path.
+    convexStands.nextToken = null;
+    await expect(fetcher()).resolves.toBe(null);
+    expect(setAuth).toHaveBeenCalledTimes(2);
+    // The re-armed fetcher answers a fresh session without a third attach.
+    convexStands.nextToken = "token-2";
+    const refetched = attachedAuthOf().fetcher;
+    await expect(refetched()).resolves.toBe("token-2");
+    expect(setAuth).toHaveBeenCalledTimes(2);
   });
 });

@@ -40,6 +40,25 @@ describe("coerceNumber", () => {
     expect(coerceNumber(Number.NEGATIVE_INFINITY)).toBeUndefined();
   });
 
+  it("refuses radix-prefix and bare-dot text — identifier-shaped, not numbers (#133)", () => {
+    // Number() would read every one of these; a hex-like id column must stay
+    // text instead of mangling into numbers.
+    expect(coerceNumber("0x1F")).toBeUndefined();
+    expect(coerceNumber("0b11")).toBeUndefined();
+    expect(coerceNumber("0o7")).toBeUndefined();
+    expect(coerceNumber(".5")).toBeUndefined();
+    expect(coerceNumber("42.")).toBeUndefined();
+    expect(coerceNumber("0x")).toBeUndefined();
+  });
+
+  it("still reads plain decimal text, signed, fractional, and exponential", () => {
+    expect(coerceNumber("42")).toStrictEqual(42);
+    expect(coerceNumber("-118.24")).toStrictEqual(-118.24);
+    expect(coerceNumber("+7")).toStrictEqual(7);
+    expect(coerceNumber("1e21")).toStrictEqual(1e21);
+    expect(coerceNumber("2.5E-3")).toStrictEqual(0.0025);
+  });
+
   it("refuses booleans, null, undefined, and non-primitives instead of coercing them", () => {
     expect(coerceNumber(true)).toBeUndefined();
     expect(coerceNumber(false)).toBeUndefined();

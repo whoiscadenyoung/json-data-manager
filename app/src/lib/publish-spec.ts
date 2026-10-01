@@ -34,13 +34,18 @@
  * **The geometry-reference column.** In this app's data model an entry's
  * geometry rides `entries.geometryId`, a field OUTSIDE the row's `data` —
  * so for the engine to see a reference, the orchestrator adapts each entry
- * record with that pointer injected under `PUBLISH_GEOMETRY_COLUMN`, and
- * this module strips the same key from the final rows (it is materialization
- * plumbing; the published rows carry the real geometry payload). Injection
- * and stripping are coordinated through `needsGeometryPlumbing`: a spec with
- * no resolvable `geometrySource` (or one naming a genuine data column)
- * neither injects nor strips, so real data named `geometryId` passes through
- * untouched unless a rule claims the column.
+ * record with that pointer injected under the spec rule's PLUMBING column,
+ * and this module strips the same key from the final rows (it is
+ * materialization plumbing; the published rows carry the real geometry
+ * payload). The plumbing column is whichever spelling the stored rule
+ * names: `PUBLISH_GEOMETRY_COLUMN` ("geometryId", the shipped spelling) or
+ * `PUBLISH_GEOMETRY_PLUMBING_COLUMN` (#133 item 13 — "geometryId" clobbers
+ * a user data column of that name, and it is a real field in this app's
+ * data model; new specs name the collision-proof spelling). Injection and
+ * stripping are coordinated through `plumbingColumnOf`: a spec with no
+ * resolvable `geometrySource` (or one naming a genuine data column)
+ * neither injects nor strips, so real data named `geometryId` passes
+ * through untouched unless a rule claims the column.
  */
 import {
   applyLookup,
@@ -57,8 +62,32 @@ import type {
   SqlOperation,
 } from "@caden/json-cms/transform";
 
-/** The record key an entry's geometry pointer is injected under (see the module doc). */
+import { MAX_ANALYSIS_SOURCE_ROWS, sourceRowCapError } from "./analysis-caps";
+
+/**
+ * The record key an entry's geometry pointer is injected under, when the
+ * spec's rule names it — the LEGACY spelling (#133 item 13): shipped specs
+ * store `column: "geometryId"`, so it stays recognized and its behavior is
+ * unchanged — which also means it still clobbers a user data column with
+ * that name for those specs. New specs should name
+ * `PUBLISH_GEOMETRY_PLUMBING_COLUMN`.
+ */
 export const PUBLISH_GEOMETRY_COLUMN = "geometryId";
+
+/**
+ * The collision-proof plumbing column name (#133 item 13): `geometryId` is
+ * a real field in this app's data model (every geospatial entry carries
+ * one), so a dataset exported from this very app could carry a user column
+ * with that exact name and lose it to the injection. A leading
+ * double-underscore name a user data column will not plausibly carry.
+ */
+export const PUBLISH_GEOMETRY_PLUMBING_COLUMN = "__publishGeometryId";
+
+/** The spec-column spellings the geometry plumbing recognizes. */
+const PLUMBING_COLUMNS: ReadonlySet<string> = new Set([
+  PUBLISH_GEOMETRY_COLUMN,
+  PUBLISH_GEOMETRY_PLUMBING_COLUMN,
+]);
 
 /**
  * The SQL execution a publish may need (stage 9, #105): a lazily provided
@@ -154,22 +183,30 @@ function geometryOpIndexOf(
 }
 
 /**
- * Whether adapting input records with the injected geometry pointer (and
- * stripping it from the output) is part of THIS spec's publish: the rule
- * exists, resolves to an operation, and names the injected column. The one
- * function both the orchestrator's adaptation and the final strip derive
- * from, so they can never disagree. An unresolvable rule (a typo'd dataset
- * id) reads as "no geometry rule" per spec.ts — detectable, never a crash.
+ * The plumbing column THIS spec's geometry rule names, or undefined when it
+ * has none — the one function the orchestrator's injection and the final
+ * strip both derive from, so they can never disagree. An unresolvable rule
+ * (a typo'd dataset id) reads as "no geometry rule" per spec.ts —
+ * detectable, never a crash.
  */
-export function needsGeometryPlumbing(spec: unknown): boolean {
+export function plumbingColumnOf(spec: unknown): string | undefined {
   const rule = geometryRuleOf(spec);
-  if (rule === undefined || rule.column !== PUBLISH_GEOMETRY_COLUMN || !isRecord(spec)) {
-    return false;
+  if (rule === undefined || !PLUMBING_COLUMNS.has(rule.column) || !isRecord(spec)) {
+    return undefined;
   }
   const operations = Array.isArray(spec.operations) ? spec.operations : [];
-  return (
-    geometrySourceOperationOf(asEngineOperations(operations.filter(isRecord)), rule) !== undefined
-  );
+  return geometrySourceOperationOf(asEngineOperations(operations.filter(isRecord)), rule) ===
+    undefined
+    ? undefined
+    : rule.column;
+}
+
+/**
+ * Whether adapting input records with the injected geometry pointer (and
+ * stripping it from the output) is part of THIS spec's publish.
+ */
+export function needsGeometryPlumbing(spec: unknown): boolean {
+  return plumbingColumnOf(spec) !== undefined;
 }
 
 /** The stored operations array as the engine's union — the addressing reads ids and kinds only. */
@@ -178,16 +215,16 @@ function asEngineOperations(operations: Array<Record<string, unknown>>): LookupO
   return operations as unknown as LookupOperation[];
 }
 
-/** Adapts one stored entry row as an engine record, injecting the geometry pointer when the publish needs it. */
+/** Adapts one stored entry row as an engine record, injecting the geometry pointer under `plumbingColumn` (the spec rule's spelling — see `plumbingColumnOf`; undefined means no injection). */
 export function publishRecordOf(
   entry: { data: unknown; geometryId?: string | null },
-  injectGeometry: boolean,
+  plumbingColumn: string | undefined,
 ): Record<string, unknown> {
   const data = isRecord(entry.data) ? entry.data : {};
-  if (!injectGeometry || typeof entry.geometryId !== "string") {
+  if (plumbingColumn === undefined || typeof entry.geometryId !== "string") {
     return { ...data };
   }
-  return { ...data, [PUBLISH_GEOMETRY_COLUMN]: entry.geometryId };
+  return { ...data, [plumbingColumn]: entry.geometryId };
 }
 
 /** The stored operations array as plain records, read structurally. */
@@ -202,17 +239,20 @@ function operationsOf(spec: Record<string, unknown>): Array<Record<string, unkno
 /**
  * The rows of one dataset reference: another registry spec's execution, or
  * the pre-loaded component rows. Unknown ids are a load error — the
- * orchestrator loads every dependency the health walk approved.
+ * orchestrator loads every dependency the health walk approved. `path` is
+ * the CURRENT recursion stack (see `specInputsOf`): a registry spec may be
+ * referenced from many branches — a diamond DAG is legal (#133 item 10) —
+ * but not from inside its own subtree.
  */
 async function rowsOfReference(
   id: string,
   tables: PublishSourceTables,
-  visited: Set<string>,
+  path: Set<string>,
   sql: PublishSqlExecution | undefined,
 ): Promise<Array<Record<string, unknown>>> {
   const nestedSpec = tables.specByDatasetId.get(id);
   if (nestedSpec !== undefined) {
-    return (await executeInternal(nestedSpec, tables, visited, sql)).rows;
+    return (await executeInternal(nestedSpec, tables, path, sql)).rows;
   }
   const loaded = tables.rowsByDatasetId.get(id);
   if (loaded === undefined) {
@@ -295,19 +335,28 @@ function asEngineSql(operation: Record<string, unknown>): SqlOperation {
  * exactly the fabrication the cap's reporting exists to prevent.
  */
 /** One side table's declared columns + pre-loaded rows (the SqlSideTable the engine materializes from). */
+/** Refuses row sets over the analysis cap (#133 item 7) — the same bound the interactive run enforces in the worker. */
+function assertUnderSourceCap(rows: readonly Record<string, unknown>[], datasetId: string): void {
+  if (rows.length > MAX_ANALYSIS_SOURCE_ROWS) {
+    throw new PublishSpecError(sourceRowCapError(datasetId));
+  }
+}
+
 async function sideTableOf(
   ref: { as: string; datasetId: string },
   tables: PublishSourceTables,
-  visited: Set<string>,
+  path: Set<string>,
   sql: PublishSqlExecution | undefined,
 ): Promise<{
   columns: readonly SqlColumnSpec[] | undefined;
   rows: Array<Record<string, unknown>>;
 }> {
-  const columns = tables.columnsByDatasetId;
+  const columns = tables.columnsByDatasetId,
+    rows = await rowsOfReference(ref.datasetId, tables, path, sql);
+  assertUnderSourceCap(rows, ref.datasetId);
   return {
     columns: columns === undefined ? undefined : columns.get(ref.datasetId),
-    rows: await rowsOfReference(ref.datasetId, tables, visited, sql),
+    rows,
   };
 }
 
@@ -317,7 +366,7 @@ async function applySqlOperation(
   sourceDatasetId: string,
   state: FoldState,
   tables: PublishSourceTables,
-  visited: Set<string>,
+  path: Set<string>,
 ): Promise<void> {
   if (state.pairs !== undefined) {
     throw new PublishSpecError(
@@ -329,6 +378,11 @@ async function applySqlOperation(
       "This spec carries a SQL operation, but this publish has no SQL engine to run it with.",
     );
   }
+  // Same cap the interactive run enforces in the worker (#133 item 7): a
+  // sql publish over more source rows would build the in-page engine over
+  // material the tab cannot hold — refused with the cap's message, never
+  // half-materialized.
+  assertUnderSourceCap(state.rows, sourceDatasetId);
   const engine = typeof sql.engine === "function" ? await sql.engine() : sql.engine,
     storedOperation = asEngineSql(operation),
     columns = tables.columnsByDatasetId,
@@ -338,7 +392,7 @@ async function applySqlOperation(
     >();
   for (const ref of storedOperation.tables ?? []) {
     // oxlint-disable-next-line no-await-in-loop -- each reference resolves (possibly a nested spec execution); order follows the spec.
-    sideTables.set(ref.as, await sideTableOf(ref, tables, visited, sql));
+    sideTables.set(ref.as, await sideTableOf(ref, tables, path, sql));
   }
   const result = await applySql(storedOperation, state.rows, sideTables, engine, {
     limit: sql.limit,
@@ -374,11 +428,19 @@ function applyLookupOperation(
   }
 }
 
-/** The validated spec inputs the fold runs on — throws PublishSpecError on every shape it cannot run. */
+/**
+ * The validated spec inputs the fold runs on — throws PublishSpecError on
+ * every shape it cannot run. `path` is the recursion stack of registry-spec
+ * ids currently executing (#133 item 10): entering a spec already on the
+ * stack is a genuine cycle and is rejected, while a spec reached AGAIN from
+ * a SIBLING branch (a diamond DAG, or two operations reading one derived
+ * side) is legal and re-executes — the old single shared `visited` set
+ * flagged exactly those as cycles.
+ */
 async function specInputsOf(
   spec: unknown,
   tables: PublishSourceTables,
-  visited: Set<string>,
+  path: Set<string>,
   sql: PublishSqlExecution | undefined,
 ): Promise<{
   geometryOpIndex: number;
@@ -393,12 +455,12 @@ async function specInputsOf(
   if (typeof spec.sourceDatasetId !== "string" || spec.sourceDatasetId === "") {
     throw new PublishSpecError("The transform spec does not name its source dataset.");
   }
-  if (visited.has(spec.sourceDatasetId) && tables.specByDatasetId.has(spec.sourceDatasetId)) {
+  if (path.has(spec.sourceDatasetId) && tables.specByDatasetId.has(spec.sourceDatasetId)) {
     throw new PublishSpecError(
       `Derived dataset "${spec.sourceDatasetId}" is part of a dependency cycle.`,
     );
   }
-  visited.add(spec.sourceDatasetId);
+  path.add(spec.sourceDatasetId);
   const operations = operationsOf(spec),
     rule = geometryRuleOf(spec);
   return {
@@ -406,53 +468,59 @@ async function specInputsOf(
     operations,
     rule,
     sourceDatasetId: spec.sourceDatasetId,
-    sourceRows: await rowsOfReference(spec.sourceDatasetId, tables, visited, sql),
+    sourceRows: await rowsOfReference(spec.sourceDatasetId, tables, path, sql),
   };
 }
 
-/** Async since stage 9: a sql operation's engine call is inherently so, and the fold is honest about it for every kind rather than special-casing one mid-chain. */
+/** Async since stage 9: a sql operation's engine call is inherently so, and the fold is honest about it for every kind rather than special-casing one mid-chain. The spec's id stays on `path` for the WHOLE fold — a sql side table or lookup side naming the running spec would otherwise recurse into itself undetected. */
 async function executeInternal(
   spec: unknown,
   tables: PublishSourceTables,
-  visited: Set<string>,
+  path: Set<string>,
   sql: PublishSqlExecution | undefined,
 ): Promise<FoldState> {
   const { geometryOpIndex, operations, rule, sourceDatasetId, sourceRows } = await specInputsOf(
     spec,
     tables,
-    visited,
+    path,
     sql,
   );
   const state: FoldState = { pairs: undefined, rows: sourceRows };
 
-  for (const [index, operation] of operations.entries()) {
-    if (operation.kind === "rollup") {
-      applyRollupOperation(operation, state);
-      continue;
-    }
-    if (operation.kind === "sql") {
+  try {
+    for (const [index, operation] of operations.entries()) {
+      if (operation.kind === "rollup") {
+        applyRollupOperation(operation, state);
+        continue;
+      }
+      if (operation.kind === "sql") {
+        // oxlint-disable-next-line no-await-in-loop -- the fold is sequential by definition; each operation consumes the previous one's rows.
+        await applySqlOperation(operation, sql, sourceDatasetId, state, tables, path);
+        continue;
+      }
+      if (operation.kind !== "lookup") {
+        throw new PublishSpecError(
+          `Operation ${index} has kind "${String(operation.kind)}", which the publish executor cannot run.`,
+        );
+      }
       // oxlint-disable-next-line no-await-in-loop -- the fold is sequential by definition; each operation consumes the previous one's rows.
-      await applySqlOperation(operation, sql, sourceDatasetId, state, tables, visited);
-      continue;
-    }
-    if (operation.kind !== "lookup") {
-      throw new PublishSpecError(
-        `Operation ${index} has kind "${String(operation.kind)}", which the publish executor cannot run.`,
+      const lookupRows = await rowsOfReference(
+        String(operation.lookupDatasetId),
+        tables,
+        path,
+        sql,
+      );
+      applyLookupOperation(
+        operation,
+        lookupRows,
+        state,
+        index === geometryOpIndex ? rule : undefined,
       );
     }
-    // oxlint-disable-next-line no-await-in-loop -- the fold is sequential by definition; each operation consumes the previous one's rows.
-    const lookupRows = await rowsOfReference(
-      String(operation.lookupDatasetId),
-      tables,
-      visited,
-      sql,
-    );
-    applyLookupOperation(
-      operation,
-      lookupRows,
-      state,
-      index === geometryOpIndex ? rule : undefined,
-    );
+  } finally {
+    // The stack unwinds with the recursion: a sibling branch may legally
+    // enter this spec again (the diamond case, #133 item 10).
+    path.delete(sourceDatasetId);
   }
   return state;
 }
@@ -469,11 +537,14 @@ function payloadOfReference(
   return payload === undefined ? null : payload;
 }
 
-/** Removes the injected plumbing key without `delete` (the dynamic-delete ban). */
-function stripPlumbingColumn(row: Record<string, unknown>): Record<string, unknown> {
+/** Removes the injected plumbing key (the spec rule's spelling) without `delete` (the dynamic-delete ban). */
+function stripPlumbingColumn(
+  row: Record<string, unknown>,
+  plumbingColumn: string,
+): Record<string, unknown> {
   const stripped: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(row)) {
-    if (key !== PUBLISH_GEOMETRY_COLUMN) {
+    if (key !== plumbingColumn) {
       stripped[key] = value;
     }
   }
@@ -501,11 +572,12 @@ export async function executeSpecForPublish(
 ): Promise<PublishExecution> {
   const { pairs, rows } = await executeInternal(spec, tables, new Set(), sql);
   const geometryPayloads =
-    pairs === undefined
-      ? rows.map(() => null)
-      : pairs.map((reference) => payloadOfReference(reference, tables.geometryById));
+      pairs === undefined
+        ? rows.map(() => null)
+        : pairs.map((reference) => payloadOfReference(reference, tables.geometryById)),
+    plumbing = plumbingColumnOf(spec);
   return {
     geometryPayloads,
-    rows: needsGeometryPlumbing(spec) ? rows.map(stripPlumbingColumn) : rows,
+    rows: plumbing === undefined ? rows : rows.map((row) => stripPlumbingColumn(row, plumbing)),
   };
 }

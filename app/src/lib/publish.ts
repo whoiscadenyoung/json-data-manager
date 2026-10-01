@@ -45,6 +45,7 @@ import {
   executeSpecForPublish,
   geometryRuleOf,
   needsGeometryPlumbing,
+  plumbingColumnOf,
   publishRecordOf,
   type PublishSourceTables,
 } from "./publish-spec";
@@ -161,14 +162,20 @@ function chunkRowsOfExecution(execution: {
 
 /**
  * Loads every dataset one spec reads: component datasets' rows (adapted with
- * the geometry pointer when the spec's rule names it) and geometries, plus
- * nested registry specs for derived-of-derived. Stage 9 (#105): each
- * component dataset's DECLARED structure loads alongside its rows
- * (`columnsByDatasetId`) so the sql engine's registration coerces exactly
- * like the interactive preview did — the declared typing, not row
+ * the geometry pointer when the spec's rule names a plumbing column) and
+ * geometries, plus nested registry specs for derived-of-derived. Stage 9
+ * (#105): each component dataset's DECLARED structure loads alongside its
+ * rows (`columnsByDatasetId`) so the sql engine's registration coerces
+ * exactly like the interactive preview did — the declared typing, not row
  * inference, decides what a mixed-typed column folds into. Cycles can't
  * occur (the save gate rejects them); the has() guards are the defensive
  * stop.
+ *
+ * Geometry payloads load ONLY when the spec carries a resolvable
+ * `geometrySource` (#133 item 7): without one the executor pairs every row
+ * with null and `geometryById` is never read, so the old unconditional
+ * fetch of every geometry row — the whole dataset's payloads, byte budget
+ * and all — was pure waste on every rule-free publish.
  */
 async function loadPublishTables(
   convex: ConvexClient,
@@ -178,12 +185,13 @@ async function loadPublishTables(
     specByDatasetId = new Map<string, unknown>(),
     columnsByDatasetId = new Map<string, SqlColumnSpec[]>(),
     geometryById = new Map<string, unknown>(),
-    injectGeometry = needsGeometryPlumbing(spec);
+    plumbing = plumbingColumnOf(spec),
+    needsGeometry = geometryRuleOf(spec) !== undefined;
   const loadComponent = async (datasetId: string): Promise<void> => {
     const entries = await fetchDatasetEntryRows(datasetId, { convex, entryOrder: "asc" });
     rowsByDatasetId.set(
       datasetId,
-      entries.map((entry) => publishRecordOf(entry, injectGeometry)),
+      entries.map((entry) => publishRecordOf(entry, plumbing)),
     );
     // Metadata read for the declared structure (NOT a row path) — the same
     // read the analysis worker does, so both executors register identical
@@ -198,10 +206,12 @@ async function loadPublishTables(
     if (schema !== null) {
       columnsByDatasetId.set(datasetId, declaredColumnTypes(schema.schema));
     }
-    for (const [id, payload] of await resolveGeometryRows(
-      await fetchDatasetGeometryRows(datasetId, { convex }),
-    )) {
-      geometryById.set(id, payload);
+    if (needsGeometry) {
+      for (const [id, payload] of await resolveGeometryRows(
+        await fetchDatasetGeometryRows(datasetId, { convex }),
+      )) {
+        geometryById.set(id, payload);
+      }
     }
   };
   const visit = async (specValue: unknown): Promise<void> => {

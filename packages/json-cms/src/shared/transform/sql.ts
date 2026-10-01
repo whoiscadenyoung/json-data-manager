@@ -34,16 +34,29 @@
  *   schemaless data), then coerces every cell:
  *   - a NUMBER column reads cells through `coerceNumber` — string "42" is
  *     42; non-numeric cells land null (SQL NULL, never 0);
- *   - a STRING column reads cells through `normalizeKey` — the canonical
- *     join-key form: number 42 → "42", strings trimmed and case-folded
- *     ("Aldine"/"aldine" group together), zero-padded "007" never folding
- *     into 7. The registered table carries canonical key form rather than
- *     display text — the price of "one group per real-world key" inside a
- *     SQL GROUP BY, recorded here so it is a decision, not a surprise;
- *   - a BOOLEAN column keeps booleans, null for everything else.
+ *   - a STRING column keeps its ORIGINAL text — display casing survives
+ *     into the registered table and `SELECT *` output ("Aldine" stays
+ *     "Aldine"; revision of the stage-9 lowercasing decision, issue #133
+ *     item 9, recorded in docs/analysis-layer-design.md §2). Grouping and
+ *     joining still collapse real-world keys through a HIDDEN canonical
+ *     twin column added per string column: `<col>__key` carries
+ *     `normalizeKey`'s form (number 42 → "42", strings trimmed and
+ *     case-folded, zero-padded "007" never folding into 7), so
+ *     `GROUP BY col__key` folds "Aldine"/"aldine" into one group exactly as
+ *     `GROUP BY col` did when the column itself held canonical keys. The
+ *     twin's name extends with `_` if the data already carries
+ *     `<col>__key`. Number cells in a string column render their decimal
+ *     form; booleans, objects, nulls and whitespace-only strings have no
+ *     text form and land null;
+ *   - a BOOLEAN column keeps booleans, now ALSO reading "true"/"false"
+ *     text case-insensitively (#133 item 12 — a textual boolean used to
+ *     become null silently); everything else is null.
  *   Keyless cells (null/objects/arrays) are always null, never "null"
  *   strings — the lookup engine's "a keyless row is an unmatched row, never
- *   a crash" policy, extended to grouping.
+ *   a crash" policy, extended to grouping. Every cell that DID carry a
+ *   value but coerced to null is counted (`SqlTable.coercedNulls`, summed
+ *   into `SqlDiagnostics.coercedNulls`) so a silently-emptied column is
+ *   visible, never silent (#133 item 12).
  * - **Never throws.** A SQL syntax error, unknown table, or engine failure
  *   is a normal outcome of user-authored text: it lands in
  *   `diagnostics.error` and the result rows come back empty. Nothing in a
@@ -83,10 +96,11 @@
  *   storage is `v.any()` and the never-throws contract covers stored data
  *   as it exists.
  * - **Diagnostics are operation-shaped** (spec.ts: no shared result
- *   contract): rows in, the tables registered, rows out, truncation, and
+ *   contract): rows in, the tables registered, rows out, truncation, the
+ *   count of value-carrying cells that coerced to null (#133 item 12), and
  *   the error when the query failed.
  */
-import { coerceNumber, normalizeKey } from "../coercion.js";
+import { coerceNumber, normalizeKey, normalizeText } from "../coercion.js";
 import type { SqlOperation } from "./spec.js";
 
 /** The column types a columnar registration supports (the declared-structure subset that matters for grouping/joining). */
@@ -100,6 +114,8 @@ export interface SqlColumnSpec {
 
 /** One table to register: its SQL name, effective columns, and materialized rows. */
 export interface SqlTable {
+  /** Cells that carried a value but coerced to null under the column's type (see `SqlDiagnostics.coercedNulls`). */
+  coercedNulls: number;
   columns: SqlColumnSpec[];
   name: string;
   rows: Array<Record<string, unknown>>;
@@ -112,10 +128,17 @@ export interface SqlTable {
  * other's tables); `query` runs one read-only statement and returns plain
  * records. Implementations own their own caps/limits beyond
  * `options.limit` — the worker sets memory_limit at instantiation.
+ *
+ * `retainTables` is OPTIONAL (#133 item 1): a long-lived engine keeps one
+ * database across runs, so earlier runs' tables would otherwise stay
+ * registered and resolve in this run's query. `applySql` calls it, when
+ * present, with the exact names it is about to register; an implementation
+ * drops everything else. Stand-in/test engines may omit it.
  */
 export interface SqlEngine {
   query(sql: string): Promise<Array<Record<string, unknown>>>;
   register(table: SqlTable): Promise<void>;
+  retainTables?(names: readonly string[]): Promise<void>;
 }
 
 /** A side table's rows plus its dataset's declared column types, keyed by the operation's `as` name. */
@@ -126,6 +149,8 @@ export interface SqlSideTable {
 
 /** Diagnostics for one `applySql` call — operation-shaped (see the module doc). */
 export interface SqlDiagnostics {
+  /** Cells that carried a value but coerced to null under their column's type (#133 item 12) — e.g. "maybe" in a boolean column. A silently-emptied column is a visible count, never silent. */
+  coercedNulls: number;
   /** The failure that produced empty rows — absent on success. */
   error?: string;
   /** The SQL names registered for this run (source first), in registration order. */
@@ -214,28 +239,65 @@ function inferColumnType(rows: readonly Record<string, unknown>[], name: string)
     .map((row) => row[name])
     .filter((cell) => cell !== null && cell !== undefined)
     .map(inferCellClass);
+  if (classes.length === 0) {
+    // An all-null (or absent) column carries no evidence — text is the least
+    // surprising type (#133 item 12: the vacuous `every` typed it number).
+    return "string";
+  }
   if (classes.every((entry) => entry === "number")) {
     return "number";
   }
   return classes.every((entry) => entry === "boolean") ? "boolean" : "string";
 }
 
-/** One cell as its SQL value under the column's type — the 0.4 coercion policies, per the module doc. */
+/**
+ * "true"/"false" text as its boolean, case-insensitive, trimmed — the #133
+ * item-12 fix: a boolean column's textual cells used to become null
+ * silently. Anything else (including booleans themselves, handled by the
+ * caller first) has no boolean form.
+ */
+function booleanTextOf(cell: unknown): boolean | undefined {
+  if (typeof cell === "boolean") {
+    return cell;
+  }
+  if (typeof cell === "string") {
+    const text = normalizeText(cell);
+    return text === "true" ? true : text === "false" ? false : undefined;
+  }
+  return undefined;
+}
+
+/** One cell as its SQL value under the column's type — the 0.4 coercion policies, per the module doc. String columns keep the original text (#133 item 9); their canonical form rides the hidden `__key` twin column. */
 function materializeCell(cell: unknown, type: SqlColumnType): unknown {
   if (type === "number") {
     return coerceNumber(cell) ?? null;
   }
   if (type === "boolean") {
-    return typeof cell === "boolean" ? cell : null;
+    return booleanTextOf(cell) ?? null;
   }
-  return normalizeKey(cell) ?? null;
+  if (typeof cell === "string") {
+    return cell;
+  }
+  // A number in a string column renders its decimal text form; every other
+  // keyless cell (booleans, objects, arrays, null) is null, never "null".
+  return typeof cell === "number" && Number.isFinite(cell) ? String(cell) : null;
+}
+
+/** The canonical key twin's column name for `name` — extended with `_` until it is free of `taken`, so a user column literally named `<col>__key` is never clobbered (#133). */
+function keyColumnNameOf(name: string, taken: ReadonlySet<string>): string {
+  let candidate = `${name}__key`;
+  while (taken.has(candidate)) {
+    candidate = `${candidate}_`;
+  }
+  return candidate;
 }
 
 /**
  * Materializes one dataset's rows as a typed SQL table (see the module doc
  * for the coercion policies). Columns: the declared types first (first-seen
- * order), then any undeclared keys the rows carry, inferred. Inputs are
- * never mutated; every row is fresh.
+ * order), then any undeclared keys the rows carry, inferred, then one
+ * hidden canonical `<col>__key` twin per string column (#133 item 9).
+ * Inputs are never mutated; every row is fresh.
  */
 export function materializeSqlTable(
   name: string,
@@ -257,14 +319,44 @@ export function materializeSqlTable(
     ...(declaredColumns ?? []),
     ...extraNames.map((extra) => ({ name: extra, type: inferColumnType(rows, extra) })),
   ];
+  // The canonical key twins ride AFTER every visible column, so declared
+  // column order is untouched and `SELECT col, …` reads as authored.
+  const taken = new Set(columns.map((column) => column.name)),
+    keyColumns: Array<{ keyName: string; source: string }> = [];
+  for (const column of columns) {
+    if (column.type === "string") {
+      const keyName = keyColumnNameOf(column.name, taken);
+      taken.add(keyName);
+      keyColumns.push({ keyName, source: column.name });
+    }
+  }
+  let coercedNulls = 0;
   const materialized = rows.map((row) => {
     const out: Record<string, unknown> = {};
     for (const column of columns) {
-      out[column.name] = materializeCell(row[column.name], column.type);
+      const cell = row[column.name],
+        value = materializeCell(cell, column.type);
+      if (value === null && cell !== null && cell !== undefined) {
+        // The row carried something its column's type refused — counted in
+        // diagnostics, never silent (#133 item 12).
+        coercedNulls += 1;
+      }
+      out[column.name] = value;
+    }
+    for (const keyColumn of keyColumns) {
+      out[keyColumn.keyName] = normalizeKey(row[keyColumn.source]) ?? null;
     }
     return out;
   });
-  return { columns, name, rows: materialized };
+  return {
+    coercedNulls,
+    columns: [
+      ...columns,
+      ...keyColumns.map((key) => ({ name: key.keyName, type: "string" as const })),
+    ],
+    name,
+    rows: materialized,
+  };
 }
 
 /** The SQL name the source registers under (the recorded default). */
@@ -294,8 +386,17 @@ function sqlSetupError(sql: string, names: readonly string[]): string | undefine
   if (statementError !== undefined) {
     return statementError;
   }
-  const duplicate = names.find((name, index) => names.indexOf(name) !== index);
-  return duplicate === undefined ? undefined : `Table name "${duplicate}" is used more than once.`;
+  // DuckDB identifiers are CASE-INSENSITIVE: "Grants" and "grants" collide
+  // the moment they register, so the gate compares folded names (#133 item 5).
+  const seen = new Set<string>();
+  for (const name of names) {
+    const folded = name.toLowerCase();
+    if (seen.has(folded)) {
+      return `Table name "${name}" is used more than once (SQL names are case-insensitive).`;
+    }
+    seen.add(folded);
+  }
+  return undefined;
 }
 
 /** The token kinds the statement gate reads; everything else (whitespace, comments, quoted regions, punctuation) is dropped at the scan. */
@@ -578,6 +679,21 @@ function applyOptionsOf(options: SqlApplyOptions | undefined): {
   };
 }
 
+/** Registers this run's tables, first dropping every table an earlier run left behind when the engine supports it (#133 item 1) — a long-lived engine must not leak a side table this run's spec no longer names. */
+async function setUpEngineTables(
+  engine: SqlEngine,
+  tables: readonly SqlTable[],
+  names: readonly string[],
+): Promise<void> {
+  if (engine.retainTables !== undefined) {
+    await engine.retainTables(names);
+  }
+  for (const table of tables) {
+    // oxlint-disable-next-line no-await-in-loop -- registration is per table, in name order; each table must exist before the query runs.
+    await engine.register(table);
+  }
+}
+
 /**
  * Applies one sql operation (stage 9, #105): materialize the source rows
  * and every named side table into typed tables (0.4 coercion), register
@@ -604,6 +720,7 @@ export async function applySql(
     sourceName = sqlSourceName(operation),
     names = [sourceName, ...tableRefs.map((table) => table.as)];
   const base = {
+    coercedNulls: 0,
     resultRows: 0,
     tables: names,
     totalSourceRows: rows.length,
@@ -620,11 +737,11 @@ export async function applySql(
     materializeSqlTable(sourceName, rows, sourceColumns),
     ...tableRefs.map((ref) => materializeSideTable(ref.as, sideTables)),
   ];
+  for (const table of tables) {
+    base.coercedNulls += table.coercedNulls;
+  }
   try {
-    for (const table of tables) {
-      // oxlint-disable-next-line no-await-in-loop -- registration is per table, in name order; each table must exist before the query runs.
-      await engine.register(table);
-    }
+    await setUpEngineTables(engine, tables, names);
     const result = await engine.query(operation.sql);
     return {
       rows: limit === undefined || result.length <= limit ? [...result] : result.slice(0, limit),

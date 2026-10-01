@@ -96,18 +96,37 @@ function cellValue(value: unknown): string | number | null {
   return value as string | number;
 }
 
-/** Excel sheet names: max 31 chars, no [:\\/?*[]], unique within a workbook. */
+/**
+ * Excel sheet names: max 31 chars, no [:\\/?*[]], unique within a workbook.
+ * Uniqueness loops and folds case (#133 item 14): the old single,
+ * case-sensitive dedupe turned "A", "A-3", "A" into TWO "A-3" sheets (the
+ * second suffix landed on an already-taken name), and "a" against "A"
+ * collided outright — Excel reads sheet names case-insensitively.
+ */
 export function sanitizeSheetName(title: string, used: Set<string>): string {
   const base =
-      title
-        .replace(/[:\\/?*[\]]/g, " ")
-        .trim()
-        .slice(0, 31) || "Sheet",
-    dedupe = (name: string) =>
-      used.has(name) ? `${name.slice(0, 31 - 2)}-${used.size + 1}` : name,
-    name = dedupe(base);
+    title
+      .replace(/[:\\/?*[\]]/g, " ")
+      .trim()
+      .slice(0, 31) || "Sheet";
+  let name = base;
+  for (let counter = used.size + 1; containsFolded(used, name); counter += 1) {
+    const suffix = `-${counter}`;
+    name = `${base.slice(0, 31 - suffix.length)}${suffix}`;
+  }
   used.add(name);
   return name;
+}
+
+/** True when any already-used sheet name equals `name` case-insensitively. */
+function containsFolded(used: ReadonlySet<string>, name: string): boolean {
+  const folded = name.toLowerCase();
+  for (const entry of used) {
+    if (entry.toLowerCase() === folded) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**

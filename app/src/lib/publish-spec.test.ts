@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 
+import { MAX_ANALYSIS_SOURCE_ROWS } from "./analysis-caps";
 import {
   PUBLISH_GEOMETRY_COLUMN,
+  PUBLISH_GEOMETRY_PLUMBING_COLUMN,
   PublishSpecError,
   executeSpecForPublish,
   needsGeometryPlumbing,
+  plumbingColumnOf,
   publishRecordOf,
 } from "./publish-spec";
 import type { PublishSourceTables } from "./publish-spec";
@@ -68,7 +71,7 @@ const lookupLocations = (match?: "inner") => ({
 });
 
 describe("needsGeometryPlumbing / publishRecordOf", () => {
-  it("injects only when the rule resolves to an operation naming the plumbing column", async () => {
+  it("injects only when the rule resolves to an operation naming a plumbing column", async () => {
     const withRule = {
         geometrySource: {
           column: PUBLISH_GEOMETRY_COLUMN,
@@ -99,15 +102,55 @@ describe("needsGeometryPlumbing / publishRecordOf", () => {
     expect(needsGeometryPlumbing(dataColumnRule)).toBe(false);
     expect(needsGeometryPlumbing({ operations: [], sourceDatasetId: "rl" })).toBe(false);
 
-    expect(publishRecordOf({ data: { a: 1 }, geometryId: "geo-9" }, true)).toStrictEqual({
+    expect(
+      publishRecordOf({ data: { a: 1 }, geometryId: "geo-9" }, PUBLISH_GEOMETRY_COLUMN),
+    ).toStrictEqual({
       a: 1,
       [PUBLISH_GEOMETRY_COLUMN]: "geo-9",
     });
     // No injection → real data named geometryId survives untouched.
-    expect(publishRecordOf({ data: { geometryId: "kept" } }, false)).toStrictEqual({
+    expect(publishRecordOf({ data: { geometryId: "kept" } }, undefined)).toStrictEqual({
       geometryId: "kept",
     });
-    expect(publishRecordOf({ data: null, geometryId: undefined }, true)).toStrictEqual({});
+    expect(
+      publishRecordOf({ data: null, geometryId: undefined }, PUBLISH_GEOMETRY_PLUMBING_COLUMN),
+    ).toStrictEqual({});
+  });
+
+  it("recognizes the collision-proof plumbing spelling for new specs (#133 item 13)", () => {
+    const newRule = {
+        geometrySource: {
+          column: PUBLISH_GEOMETRY_PLUMBING_COLUMN,
+          lookupDatasetId: "locations",
+          side: "lookup",
+        },
+        operations: [lookupLocations()],
+        sourceDatasetId: "rl",
+      },
+      legacyRule = {
+        geometrySource: {
+          column: PUBLISH_GEOMETRY_COLUMN,
+          lookupDatasetId: "locations",
+          side: "lookup",
+        },
+        operations: [lookupLocations()],
+        sourceDatasetId: "rl",
+      };
+    expect(needsGeometryPlumbing(newRule)).toBe(true);
+    expect(plumbingColumnOf(newRule)).toBe(PUBLISH_GEOMETRY_PLUMBING_COLUMN);
+    // The legacy spelling still resolves — shipped specs keep publishing.
+    expect(plumbingColumnOf(legacyRule)).toBe(PUBLISH_GEOMETRY_COLUMN);
+    // The injected key rides under the RULE's spelling, not a fixed one —
+    // so a user column named geometryId only ever loses to a LEGACY rule.
+    expect(
+      publishRecordOf(
+        { data: { geometryId: "user-data" }, geometryId: "geo-9" },
+        plumbingColumnOf(newRule),
+      ),
+    ).toStrictEqual({
+      geometryId: "user-data",
+      [PUBLISH_GEOMETRY_PLUMBING_COLUMN]: "geo-9",
+    });
   });
 });
 
@@ -330,6 +373,50 @@ describe("executeSpecForPublish — pairing at the geometry op's position (AC 5)
       }),
     ).rejects.toThrow(/cycle/);
   });
+
+  it("executes a diamond DAG — a spec reached again from a SIBLING branch is not a cycle (#133 item 10)", async () => {
+    // base (component) ← leaf (registry) ← left / right (registry) ← top,
+    // whose two lookups read left and right: the old shared `visited` set
+    // flagged leaf's second entry (via right) as a cycle.
+    const baseRows = [{ k: "v", n: 1 }],
+      leaf = { operations: [], sourceDatasetId: "base" },
+      left = { operations: [], sourceDatasetId: "leaf" },
+      right = { operations: [], sourceDatasetId: "leaf" },
+      top = {
+        operations: [
+          { baseKey: "k", kind: "lookup", lookupDatasetId: "left", lookupKey: "k" },
+          { baseKey: "k", kind: "lookup", lookupDatasetId: "right", lookupKey: "k" },
+        ],
+        sourceDatasetId: "base",
+      };
+    const execution = await executeSpecForPublish(top, {
+      geometryById: new globalThis.Map(),
+      rowsByDatasetId: new globalThis.Map([["base", baseRows]]),
+      specByDatasetId: new globalThis.Map([
+        ["leaf", leaf],
+        ["left", left],
+        ["right", right],
+      ]),
+    });
+    // Both folds ran over the same leaf rows — each branch's enrichment
+    // landed (the strongest proof the second entry executed, not cycled).
+    expect(execution.rows).toStrictEqual([{ k: "v", n: 1, "left.n": 1, "right.n": 1 }]);
+  });
+
+  it("still rejects a cycle that runs through a SIBLING'S subtree (path-scoped, not permissive)", async () => {
+    const aToB = { operations: [], sourceDatasetId: "b" },
+      bToA = { operations: [], sourceDatasetId: "a" };
+    await expect(
+      executeSpecForPublish(aToB, {
+        geometryById: new globalThis.Map(),
+        rowsByDatasetId: new globalThis.Map(),
+        specByDatasetId: new globalThis.Map([
+          ["a", aToB],
+          ["b", bToA],
+        ]),
+      }),
+    ).rejects.toThrow(/cycle/);
+  });
 });
 
 /** A stand-in engine answering fixed rows (the sql.test.ts pattern). */
@@ -378,10 +465,11 @@ describe("executeSpecForPublish — sql operations (stage 9, #105)", () => {
     if (seen === undefined) {
       throw new Error("The locations side table was never registered.");
     }
-    // Registration runs materializeSqlTable: cells are the 0.4 canonical
-    // forms (strings normalized keys), NOT raw display text — the
-    // "mixed-type keys coerce" contract, visible right here.
-    expect(seen.map((row) => row.label)).toStrictEqual(["downtown", "riverside", "airport"]);
+    // Registration runs materializeSqlTable: display text is PRESERVED
+    // (#133 item 9) and the canonical form rides the hidden __key twin —
+    // the "mixed-type keys coerce" contract, visible right here.
+    expect(seen.map((row) => row.label)).toStrictEqual(["Downtown", "Riverside", "Airport"]);
+    expect(seen.map((row) => row.label__key)).toStrictEqual(["downtown", "riverside", "airport"]);
   });
 
   it("refuses a sql operation after the geometry operation (rows carry no per-source-row geometry)", async () => {
@@ -431,6 +519,29 @@ describe("executeSpecForPublish — sql operations (stage 9, #105)", () => {
       { engine: fakeEngine([{ n: 1 }, { n: 2 }]), limit: 2 },
     );
     expect(execution.rows).toStrictEqual([{ n: 1 }, { n: 2 }]);
+  });
+
+  it("refuses source rows over the analysis cap, same as the interactive run (#133 item 7)", async () => {
+    const tooMany = Array.from({ length: MAX_ANALYSIS_SOURCE_ROWS + 1 }, () => ({ a: 1 }));
+    await expect(
+      executeSpecForPublish(
+        { operations: [sqlOp], sourceDatasetId: "big" },
+        {
+          geometryById: new globalThis.Map(),
+          rowsByDatasetId: new globalThis.Map([["big", tooMany]]),
+          specByDatasetId: new globalThis.Map(),
+        },
+        { engine: fakeEngine([]) },
+      ),
+    ).rejects.toThrow(/source rows/);
+    // The cap counts side tables too.
+    await expect(
+      executeSpecForPublish(
+        { operations: [sqlOp], sourceDatasetId: "rl" },
+        joinedTablesOf([["locations", tooMany]]),
+        { engine: fakeEngine([]) },
+      ),
+    ).rejects.toThrow(/source rows/);
   });
 
   it("types tables from the DECLARED structures (columnsByDatasetId) — publish coercion matches the preview", async () => {

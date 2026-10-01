@@ -56,22 +56,64 @@ describe("materializeSqlTable — 0.4 coercion policies at registration", () => 
       { name: "lat", type: "number" },
       { name: "label", type: "string" }, // undeclared → inferred (strings)
       { name: "lng", type: "number" }, // undeclared → inferred (all numeric)
+      { name: "state__key", type: "string" }, // the canonical twin (#133 item 9)
+      { name: "label__key", type: "string" },
     ]);
   });
 
-  it('groups mixed-typed string-column cells: 42 and "42" and "  42  " collapse to one key', () => {
+  it("keeps the original text in a string column and collapses mixed-typed cells in its __key twin (#133 item 9)", () => {
     const table = materializeSqlTable("source", locations, DECLARED);
-    const states = table.rows.map((row) => row.state);
-    expect(states).toStrictEqual(["ca", "ca", "42", "42"]);
+    expect(table.rows.map((row) => row.state)).toStrictEqual(["CA", "ca", "42", "  42  "]);
+    expect(table.rows.map((row) => row.state__key)).toStrictEqual(["ca", "ca", "42", "42"]);
   });
 
-  it('case-folds a grouping key so "Aldine" and "aldine" are one group — never numeric-normalizes "007"', () => {
+  it('case-folds the canonical twin so "Aldine" and "aldine" group together — never numeric-normalizing "007"', () => {
     const table = materializeSqlTable(
       "source",
       [{ org: "Aldine" }, { org: "  aldine " }, { org: "007" }, { org: 7 }],
       [{ name: "org", type: "string" }],
     );
-    expect(table.rows.map((row) => row.org)).toStrictEqual(["aldine", "aldine", "007", "7"]);
+    expect(table.rows.map((row) => row.org)).toStrictEqual(["Aldine", "  aldine ", "007", "7"]);
+    expect(table.rows.map((row) => row.org__key)).toStrictEqual(["aldine", "aldine", "007", "7"]);
+  });
+
+  it("names a twin with trailing underscores when the data already carries <col>__key (#133)", () => {
+    const table = materializeSqlTable(
+      "source",
+      [
+        { org: "A", org__key: "user-column" },
+        { org: "a", org__key: "user-column-2" },
+      ],
+      [
+        { name: "org", type: "string" },
+        { name: "org__key", type: "string" },
+      ],
+    );
+    // Visible columns first (the user's org__key untouched), then each
+    // string column's twin — `org`'s twin yields the taken name and gains
+    // an underscore, and `org__key` gets its own twin in turn.
+    expect(table.columns.map((column) => column.name)).toStrictEqual([
+      "org",
+      "org__key",
+      "org__key_",
+      "org__key__key",
+    ]);
+    expect(table.rows[0]).toStrictEqual({
+      org: "A",
+      org__key: "user-column",
+      org__key_: "a",
+      org__key__key: "user-column",
+    });
+  });
+
+  it("keeps a whitespace-only string as text with a null key — the keyless policy, visible not erased (#133 item 9)", () => {
+    const table = materializeSqlTable(
+      "source",
+      [{ org: "   " }, { org: "Aldine" }],
+      [{ name: "org", type: "string" }],
+    );
+    expect(table.rows.map((row) => row.org)).toStrictEqual(["   ", "Aldine"]);
+    expect(table.rows.map((row) => row.org__key)).toStrictEqual([null, "aldine"]);
   });
 
   it('reads number columns through coerceNumber: "42" is 42, non-numeric is null — never 0', () => {
@@ -83,13 +125,34 @@ describe("materializeSqlTable — 0.4 coercion policies at registration", () => 
     expect(table.rows.map((row) => row.amount)).toStrictEqual([42, null, null, null]);
   });
 
-  it('keeps booleans only in boolean columns; keyless cells are null, never "null"', () => {
+  it('coerces "true"/"false" text case-insensitively in boolean columns (#133 item 12)', () => {
     const table = materializeSqlTable(
       "source",
-      [{ active: true }, { active: "yes" }, { active: 1 }],
+      [{ active: "TRUE" }, { active: "false" }, { active: " False " }, { active: "yes" }],
       [{ name: "active", type: "boolean" }],
     );
-    expect(table.rows.map((row) => row.active)).toStrictEqual([true, null, null]);
+    expect(table.rows.map((row) => row.active)).toStrictEqual([true, false, false, null]);
+  });
+
+  it("infers an all-null column as string, never number (#133 item 12)", () => {
+    const table = materializeSqlTable("source", [{ ghost: null }, { ghost: undefined }], []);
+    const ghost = table.columns.find((column) => column.name === "ghost");
+    expect(ghost === undefined ? undefined : ghost.type).toBe("string");
+    expect(table.rows.map((row) => row.ghost)).toStrictEqual([null, null]);
+  });
+
+  it("counts value-carrying cells that coerced to null (#133 item 12)", () => {
+    const table = materializeSqlTable(
+      "source",
+      [
+        { amount: "42" }, // fine
+        { amount: " n/a " }, // coerced
+        { amount: null }, // legitimately null — not counted
+        {},
+      ],
+      [{ name: "amount", type: "number" }],
+    );
+    expect(table.coercedNulls).toBe(1);
   });
 
   it("never mutates its inputs — every materialized row is a fresh object", () => {
@@ -143,6 +206,7 @@ describe("applySql — the one engine interface, fourth argument the handle", ()
     expect(engine.registered.map((table) => table.name)).toStrictEqual(["source", "restaurants"]);
     expect(result.rows).toStrictEqual([{ state: "ca", n: 2 }]);
     expect(result.diagnostics).toStrictEqual({
+      coercedNulls: 0,
       resultRows: 1,
       tables: ["source", "restaurants"],
       totalSourceRows: 4,
@@ -178,6 +242,50 @@ describe("applySql — the one engine interface, fourth argument the handle", ()
     expect(engine.queries).toStrictEqual([]);
   });
 
+  it("folds case in the duplicate-name gate — DuckDB identifiers are case-insensitive (#133 item 5)", async () => {
+    const engine = fakeEngine([]);
+    const dupe = await applySql(
+      sqlOp({ sourceAs: "Grants", tables: [{ as: "grants", datasetId: "g" }] }),
+      locations,
+      new Map(),
+      engine,
+    );
+    expect(dupe.diagnostics.error).toContain("more than once");
+    expect(dupe.diagnostics.error).toContain("case-insensitive");
+    expect(engine.queries).toStrictEqual([]);
+    // Distinct names that merely differ in case from an UNRELATED word run fine.
+    const ok = await applySql(
+      sqlOp({ sourceAs: "Grants", tables: [{ as: "Grants2", datasetId: "g" }] }),
+      locations,
+      new Map(),
+      engine,
+    );
+    expect(ok.diagnostics.error).toBeUndefined();
+  });
+
+  it("drops earlier runs' tables through an engine that implements retainTables (#133 item 1)", async () => {
+    const dropped: Array<readonly string[]> = [];
+    const engine = fakeEngine([{ n: 1 }]);
+    engine.retainTables = async (names) => {
+      dropped.push(names);
+    };
+    const first = await applySql(
+      sqlOp({ tables: [{ as: "restaurants", datasetId: "g" }] }),
+      locations,
+      new Map([["restaurants", { rows: [{ id: "rest-1" }] }]]),
+      engine,
+    );
+    expect(first.diagnostics.error).toBeUndefined();
+    const second = await applySql(sqlOp(), locations, new Map(), engine);
+    expect(second.diagnostics.error).toBeUndefined();
+    // The second run names only its own tables — the engine drops the rest.
+    expect(dropped).toStrictEqual([["source", "restaurants"], ["source"]]);
+    // A stand-in without retainTables still runs (the optional hook).
+    const bareEngine = fakeEngine([]);
+    const bare = await applySql(sqlOp(), locations, new Map(), bareEngine);
+    expect(bare.diagnostics.error).toBeUndefined();
+  });
+
   it("truncates only when asked, and reports the pre-cap count", async () => {
     const many = [{ n: 1 }, { n: 2 }, { n: 3 }],
       capped = await applySql(sqlOp(), locations, new Map(), fakeEngine(many), { limit: 2 });
@@ -197,7 +305,12 @@ describe("applySql — the one engine interface, fourth argument the handle", ()
       new Map(),
       engine,
     );
-    expect(engine.registered[1]).toStrictEqual({ columns: [], name: "restaurants", rows: [] });
+    expect(engine.registered[1]).toStrictEqual({
+      coercedNulls: 0,
+      columns: [],
+      name: "restaurants",
+      rows: [],
+    });
   });
 
   it("never throws on a stored op whose tables field is absent — legal per the save gate's tolerance, so the engine defaults", async () => {
