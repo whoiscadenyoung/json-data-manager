@@ -83,6 +83,31 @@ type CascadePhase =
   | "policies"
   | "tagDeltas";
 
+/** Which host artifact table answers for the deleted id — a component dataset ("dataset") or a derivedDatasets registry row ("derived"). */
+const cascadeArtifactKind = v.union(v.literal("dataset"), v.literal("derived"));
+export type CascadeArtifactKind = "dataset" | "derived";
+
+/**
+ * Schedules the host cascade for one already-deleted (or deleted elsewhere)
+ * id. Split from `deleteDatasetCascading` so flows that delete their own row
+ * — `derivedDatasets.remove` — share the same cleanup without routing a
+ * registry id into the component's delete.
+ */
+export async function scheduleHostCascade(
+  ctx: { scheduler: MutationCtx["scheduler"] },
+  opts: { artifactKind?: CascadeArtifactKind; schemaId: string },
+): Promise<void> {
+  // The cascade runs in its own transaction chain — a component delete may
+  // itself still be draining across its own scheduled hops; host rows don't
+  // depend on it being finished, only on the id.
+  await ctx.scheduler.runAfter(0, internal.schemas.deleteCascadeStep, {
+    artifactKind: opts.artifactKind ?? "dataset",
+    cursor: undefined,
+    phase: "consumerRefs" as const,
+    schemaId: opts.schemaId,
+  });
+}
+
 /**
  * The one entry point for deleting a dataset (component rows AND the host
  * rows keyed by it). `boundWrite` carries the host-only attestation for the
@@ -94,7 +119,7 @@ export async function deleteDatasetCascading(
     runMutation: MutationCtx["runMutation"];
     scheduler: MutationCtx["scheduler"];
   },
-  opts: { boundWrite?: string; schemaId: string },
+  opts: { artifactKind?: CascadeArtifactKind; boundWrite?: string; schemaId: string },
 ): Promise<void> {
   await ctx.runMutation(
     components.jsonCms.lib.deleteSchema,
@@ -102,12 +127,8 @@ export async function deleteDatasetCascading(
       ? { schemaId: opts.schemaId }
       : { boundWrite: opts.boundWrite, schemaId: opts.schemaId },
   );
-  // The cascade runs in its own transaction chain — the component delete
-  // may itself still be draining across its own scheduled hops; host rows
-  // don't depend on it being finished, only on the id.
-  await ctx.scheduler.runAfter(0, internal.schemas.deleteCascadeStep, {
-    cursor: undefined,
-    phase: "consumerRefs" as const,
+  await scheduleHostCascade(ctx, {
+    artifactKind: opts.artifactKind,
     schemaId: opts.schemaId,
   });
 }
@@ -154,6 +175,7 @@ async function deleteArtifactMembership(ctx: MutationCtx, membership: Doc<"proje
 // oxlint-disable-next-line eslint/complexity -- one honest branch per table; splitting the drain would scatter the per-table caps away from their scans.
 async function drainCascadeTable(
   ctx: MutationCtx,
+  artifactKind: CascadeArtifactKind,
   schemaId: string,
   phase: CascadePhase,
   cursor?: string,
@@ -170,7 +192,9 @@ async function drainCascadeTable(
     case "artifacts": {
       const memberships = await ctx.db
         .query("projectArtifacts")
-        .withIndex("by_artifact", (q) => q.eq("artifactKind", "dataset").eq("artifactId", schemaId))
+        .withIndex("by_artifact", (q) =>
+          q.eq("artifactKind", artifactKind).eq("artifactId", schemaId),
+        )
         .take(CASCADE_BATCH);
       await Promise.all(
         memberships.map(async (membership) => deleteArtifactMembership(ctx, membership)),
@@ -251,14 +275,19 @@ async function drainCascadeTable(
 /** One cascade hop: drains tables in order until one hits its batch cap (resume there) or every table is clean (null — done). */
 async function runCascadePhase(
   ctx: MutationCtx,
-  args: { cursor?: string; phase: CascadePhase; schemaId: string },
+  args: {
+    artifactKind: CascadeArtifactKind;
+    cursor?: string;
+    phase: CascadePhase;
+    schemaId: string;
+  },
 ): Promise<{ cursor?: string; phase: CascadePhase } | null> {
   let index = CASCADE_PHASE_ORDER.indexOf(args.phase),
     cursor: string | undefined = args.cursor;
   while (index >= 0 && index < CASCADE_PHASE_ORDER.length) {
     const phase = CASCADE_PHASE_ORDER[index];
     // oxlint-disable-next-line no-await-in-loop -- one bounded table per hop; each drain decides the next.
-    const drained = await drainCascadeTable(ctx, args.schemaId, phase, cursor);
+    const drained = await drainCascadeTable(ctx, args.artifactKind, args.schemaId, phase, cursor);
     if (drained.status === "more") {
       return { cursor: drained.cursor, phase };
     }
@@ -271,6 +300,7 @@ async function runCascadePhase(
 /** The cascade's self-rescheduling continuation (issue #128). */
 export const deleteCascadeStep = internalMutation({
   args: {
+    artifactKind: cascadeArtifactKind,
     cursor: v.optional(v.string()),
     phase: cascadePhaseValidator,
     schemaId: v.string(),
@@ -280,6 +310,7 @@ export const deleteCascadeStep = internalMutation({
     if (next !== null) {
       await ctx.scheduler.runAfter(0, internal.schemas.deleteCascadeStep, {
         ...next,
+        artifactKind: args.artifactKind,
         schemaId: args.schemaId,
       });
     }
