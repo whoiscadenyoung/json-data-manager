@@ -244,6 +244,24 @@ async function appUserForAuthId(ctx: MutationCtx, authId: string) {
  * one fewer round trip) and for the paths only it can see. The isolation
  * check above runs FIRST so a caller learns nothing — not even a dataset's
  * read-only-ness — about rows they cannot see.
+ *
+ * The edit-policy gate (issue #124, ADR 0010): a dataset flagged
+ * `editPolicy: "locked"` answers EVERY write — data, schema, and the
+ * organization ops the read-only gate above deliberately allows — to its
+ * `createdBy` alone; `"open"` (and absent, so every pre-field row) keeps the
+ * trusted-collaborator co-editable default (ADR 0009) and is refused
+ * nowhere. The check runs after the visibility check (an invisible row still
+ * reads as "not found", never as "locked") and before the read-only gate
+ * (frozen/bound datasets stay read-only whatever the policy is — the policy
+ * adds a restriction, never removes one). Reads are untouched:
+ * `publishedVisibility` decides who may see a dataset, `editPolicy` decides
+ * who may change it. Host flows that bypass the wrappers
+ * (`bindings.unbind`, `bundles.recordMember`/`promoteCollection`) call
+ * `assertDatasetWritable` explicitly; `tile_archives.install` rides the
+ * choke point through its `{fn, schemaId, "update"}` operation, and the tag
+ * path's creator rules (`tags.retireVersion`,
+ * `assertChainAnchorWritable`) already answer only to the creator for every
+ * row a policy could lock.
  */
 export async function auth(ctx: { auth: Auth }, operation?: ExposeApiOperation): Promise<string> {
   // The Better Auth session token's subject is the Better Auth user id —
@@ -257,6 +275,7 @@ export async function auth(ctx: { auth: Auth }, operation?: ExposeApiOperation):
     const mutationCtx = ctx as MutationCtx;
     await assertDatasetsVisible(mutationCtx, identity.subject, operation);
     if (operation.type !== "read") {
+      await assertDatasetsWritable(mutationCtx, identity.subject, operation);
       let schemaId = operation.schemaId;
       if (schemaId === undefined && operation.entryId !== undefined) {
         schemaId = await entrySchemaId(mutationCtx, operation.entryId);
@@ -353,6 +372,49 @@ async function assertDatasetsVisible(
       ) {
         throw new ConvexError("That dataset doesn't exist or you don't have access to it.");
       }
+    }),
+  );
+}
+
+/**
+ * The one edit-policy denial (issue #124, ADR 0010), shared by the choke
+ * point's operation loop and the host flows that bypass the wrappers. A
+ * `"locked"` dataset answers every write to its creator alone; `"open"` —
+ * and absent, so every pre-field row — is refused for nobody. The message
+ * keeps today's denial shapes: a plain read-only-shaped `ConvexError`
+ * (visibility is checked first by every caller, so an invisible row still
+ * reads as "not found", and existence is public for published rows, so a
+ * lock denial leaks nothing).
+ */
+export async function assertDatasetWritable(
+  ctx: MutationCtx,
+  actorId: string,
+  schemaId: string,
+): Promise<void> {
+  const doc = await tryGetSchemaForPolicy(ctx, schemaId);
+  if (doc !== null && doc.editPolicy === "locked" && doc.createdBy !== actorId) {
+    throw new ConvexError(
+      "This dataset is locked by its creator — only they can make changes to it.",
+    );
+  }
+}
+
+/**
+ * The edit-policy gate over one write operation (issue #124): every dataset
+ * the operation names — the same resolution the visibility check uses — must
+ * be open for the caller to write. Runs for EVERY write `type`: on a locked
+ * dataset the creator-only rule covers data writes, schema writes, and the
+ * organization ops the read-only gate below deliberately allows, with no
+ * carve-outs. Only the creator (and later, per ADR 0010, team admins) passes.
+ */
+async function assertDatasetsWritable(
+  ctx: MutationCtx,
+  actorId: string,
+  operation: ExposeApiOperation,
+): Promise<void> {
+  await Promise.all(
+    [...(await datasetIdsForOperation(ctx, operation))].map(async (schemaId) => {
+      await assertDatasetWritable(ctx, actorId, schemaId);
     }),
   );
 }

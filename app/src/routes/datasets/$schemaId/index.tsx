@@ -15,9 +15,11 @@ import {
   FilePlus,
   Globe,
   Lock,
+  LockOpen,
   MapIcon,
   MapPinned,
   Pencil,
+  PencilOff,
   Plus,
   UploadCloud,
   Workflow,
@@ -84,6 +86,7 @@ import {
   useDatasetEntryRow,
   useDatasetGeometryRows,
 } from "@/lib/dataset-rows-react";
+import { LOCKED_DATASET_HINT, isLockedForViewer } from "@/lib/edit-policy";
 import { errorMessage } from "@/lib/errors";
 import {
   applyJoinedFields,
@@ -300,21 +303,28 @@ function ConversionSuccessAlert({
   );
 }
 
-/** "Make geospatial" action, only offered for a standard dataset that actually has entries to backfill geometry for. */
+/** "Make geospatial" action, only offered for a standard dataset that actually has entries to backfill geometry for. When the dataset is locked for the viewer (issue #124) it renders disabled with the reason — a visible, explained control, never a silent no-op. */
 function MakeGeospatialButton({
   schema,
   entryCount,
+  lockedHint,
   onClick,
 }: {
   schema: Schema;
   entryCount: number;
+  lockedHint?: string;
   onClick: () => void;
 }) {
   if (schema.kind === "geospatial" || entryCount === 0) {
     return null;
   }
   return (
-    <Button variant="outline" onClick={onClick}>
+    <Button
+      variant="outline"
+      disabled={lockedHint !== undefined}
+      title={lockedHint}
+      onClick={onClick}
+    >
       <MapPinned className="h-4 w-4 mr-2" />
       Make Geospatial
     </Button>
@@ -370,6 +380,9 @@ function SchemaDetailBody() {
     // mounts — issue #135); never throws.
     me = useConvexQuery(api.users.me),
     setVisibility = useMutation(api.schemas.setVisibility),
+    // The edit-policy control's mutation (issue #124) — hoisted beside
+    // setVisibility so every hook stays above the page's early returns.
+    setEditPolicy = useMutation(api.schemas.setEditPolicy),
     // Entries stream in through the row-resolution seam as server-side pages
     // (issue #54) — one `entries.listPage` query per cursor instead of one
     // unbounded collect of every row, so a 20k-row import can't hit the
@@ -415,6 +428,13 @@ function SchemaDetailBody() {
       await navigate({ search: (prev) => ({ ...prev, panel: "create" }) });
     },
     openEditPanel = async (entry: Entry) => {
+      // The edit-policy gate (issue #124): a locked dataset's rows aren't
+      // editable for a non-creator — the click explains itself instead of
+      // opening a form whose save would fail server-side.
+      if (isLockedForViewer(schema, me)) {
+        toast.info(LOCKED_DATASET_HINT);
+        return;
+      }
       await navigate({ search: (prev) => ({ ...prev, entryId: entry._id, panel: "edit" }) });
     },
     closePanel = async () => {
@@ -638,6 +658,26 @@ function SchemaDetailBody() {
       toast.error(errorMessage(error, "Couldn't update who can see this dataset."));
     }
   };
+  // The edit-policy control (issue #124, ADR 0010) sits beside it: a locked
+  // dataset answers every write to its creator, so for everyone else the
+  // write actions render DISABLED with the reason (never a silent no-op —
+  // ui-polish). Read-only datasets (bound/frozen) keep their existing hidden
+  // treatment: nothing about them is editable at any policy.
+  const isLocked = schema.editPolicy === "locked";
+  const lockedForViewer = isLockedForViewer(schema, me);
+  const flipEditPolicy = async () => {
+    const next = isLocked ? ("open" as const) : ("locked" as const);
+    try {
+      await setEditPolicy({ editPolicy: next, schemaId });
+      toast.success(
+        next === "locked"
+          ? "Dataset locked — only you can edit it now."
+          : "Dataset unlocked — every signed-in collaborator can edit it again.",
+      );
+    } catch (error) {
+      toast.error(errorMessage(error, "Couldn't update who can edit this dataset."));
+    }
+  };
 
   return (
     <div className="max-w-4xl mx-auto py-8 px-4 sm:px-0">
@@ -668,6 +708,19 @@ function SchemaDetailBody() {
           </Breadcrumb>
           <div className="flex items-center gap-3">
             <h1 className="text-3xl font-bold text-primary">{schema.title}</h1>
+            {isLocked && (
+              <Badge
+                variant="secondary"
+                title={
+                  isCreator
+                    ? "You locked this dataset — only you can edit it."
+                    : LOCKED_DATASET_HINT
+                }
+              >
+                <PencilOff className="h-3.5 w-3.5" />
+                Locked
+              </Badge>
+            )}
             {binding !== undefined && binding !== null && isSyncStale(binding) && (
               <Badge
                 variant="destructive"
@@ -680,16 +733,25 @@ function SchemaDetailBody() {
           <p className="text-lg text-muted-foreground mt-2">{schema.description}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {!readOnly && (
-            <RouterButton variant="outline" to="/datasets/$schemaId/edit" params={{ schemaId }}>
-              <Pencil className="h-4 w-4 mr-2" />
-              Edit
-            </RouterButton>
-          )}
+          {!readOnly &&
+            (lockedForViewer ? (
+              // Locked for this viewer (issue #124): the action stays visible
+              // but disabled, carrying the reason — never a silent no-op.
+              <Button variant="outline" disabled title={LOCKED_DATASET_HINT}>
+                <Pencil className="h-4 w-4 mr-2" />
+                Edit
+              </Button>
+            ) : (
+              <RouterButton variant="outline" to="/datasets/$schemaId/edit" params={{ schemaId }}>
+                <Pencil className="h-4 w-4 mr-2" />
+                Edit
+              </RouterButton>
+            ))}
           {!readOnly && (
             <MakeGeospatialButton
               schema={schema}
               entryCount={displayCount(schema.entryCount, entries.length)}
+              lockedHint={lockedForViewer ? LOCKED_DATASET_HINT : undefined}
               onClick={() => {
                 setMakeGeospatialOpen(true);
               }}
@@ -705,18 +767,28 @@ function SchemaDetailBody() {
             <Download className="h-4 w-4 mr-2" />
             Export ({displayCount(schema.entryCount, entries.length)})
           </Button>
+          {!readOnly &&
+            (lockedForViewer ? (
+              <Button variant="outline" disabled title={LOCKED_DATASET_HINT}>
+                <UploadCloud className="h-4 w-4 mr-2" />
+                Bulk Upload
+              </Button>
+            ) : (
+              <RouterButton
+                variant="outline"
+                to="/datasets/$schemaId/bulk-upload"
+                params={{ schemaId }}
+              >
+                <UploadCloud className="h-4 w-4 mr-2" />
+                Bulk Upload
+              </RouterButton>
+            ))}
           {!readOnly && (
-            <RouterButton
-              variant="outline"
-              to="/datasets/$schemaId/bulk-upload"
-              params={{ schemaId }}
+            <Button
+              onClick={openCreatePanel}
+              disabled={lockedForViewer}
+              title={lockedForViewer ? LOCKED_DATASET_HINT : undefined}
             >
-              <UploadCloud className="h-4 w-4 mr-2" />
-              Bulk Upload
-            </RouterButton>
-          )}
-          {!readOnly && (
-            <Button onClick={openCreatePanel}>
               <Plus className="h-4 w-4 mr-2" />
               Create Entry
             </Button>
@@ -746,6 +818,25 @@ function SchemaDetailBody() {
                       <Lock className="h-4 w-4 mr-2" />
                     )}
                     {schema.publishedVisibility === "author" ? "Visible to everyone" : "Only me"}
+                  </DropdownMenuItem>
+                )}
+                {isCreator && (
+                  <DropdownMenuItem
+                    onClick={() => {
+                      void flipEditPolicy();
+                    }}
+                    title={
+                      isLocked
+                        ? "Currently only you can edit this dataset — click to let every signed-in collaborator edit."
+                        : "Currently every signed-in collaborator can edit this dataset — click to restrict editing to you."
+                    }
+                  >
+                    {isLocked ? (
+                      <LockOpen className="h-4 w-4 mr-2" />
+                    ) : (
+                      <Lock className="h-4 w-4 mr-2" />
+                    )}
+                    {isLocked ? "Unlock editing" : "Lock editing"}
                   </DropdownMenuItem>
                 )}
                 {isGeospatialDataset && (
@@ -825,7 +916,12 @@ function SchemaDetailBody() {
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6">
-          <DatasetOverview binding={binding ?? undefined} schema={schema} schemaId={schemaId} />
+          <DatasetOverview
+            binding={binding ?? undefined}
+            schema={schema}
+            schemaId={schemaId}
+            lockedHint={lockedForViewer ? LOCKED_DATASET_HINT : undefined}
+          />
         </TabsContent>
 
         <TabsContent value="entries">

@@ -164,16 +164,29 @@ appear in either schema.
      import id) must be visible to the caller; denial reads as "not found".
      Enumeration reads carry no ids and are scoped inside the component by
      `viewerId`; batch-id reads filter component-side instead of denying.
-  3. **Read-only gate** — writes to bound datasets (`datasetBindings` row) and
+  3. **Edit policy** ([ADR 0010](./decisions/0010-dataset-edit-policy.md)) —
+     a dataset flagged `editPolicy: "locked"` answers EVERY write (data,
+     schema, import, transform, and the organization ops) to its
+     `createdBy`; `"open"`/absent keeps ADR 0009's co-editable default.
+     Reads never consult the policy (`publishedVisibility` decides readers).
+     Host flows that bypass the wrappers (`bindings.unbind`,
+     `bundles.recordMember`/`promoteCollection`) call
+     `assertDatasetWritable` explicitly.
+  4. **Read-only gate** — writes to bound datasets (`datasetBindings` row) and
      frozen versions (`lineage`) are rejected. The component enforces the
      same rule itself via the host-only `boundWrite` attestation
-     (`assertDataWritable`), so this is defense-in-depth.
-- **Trust model** ([ADR 0009](./decisions/0009-trusted-collaborator-catalog.md)):
+     (`assertDataWritable`), so this is defense-in-depth. The edit policy
+     never relaxes this gate: frozen/bound stay read-only whatever the
+     policy is.
+- **Trust model** ([ADR 0009](./decisions/0009-trusted-collaborator-catalog.md),
+  refined by [ADR 0010](./decisions/0010-dataset-edit-policy.md)):
   signed-in users are trusted collaborators. **Published datasets, maps,
   collections and groups are co-editable by any signed-in user by design** —
   there is deliberately no creator check on them. **Drafts
   (`lifecycle: "draft"`) and `publishedVisibility: "author"` rows are
-  creator-only.** Opt-in locking of published artifacts is planned in #124.
+  creator-only.** Since #124 a dataset can opt OUT of co-editing per id:
+  `editPolicy: "locked"` is creator-only writes (reads unchanged); `"open"`
+  — and absent — is the default and changes nothing.
 - **Creator-private host state** (stage 8, #104): projects, project
   membership, bundle runs, publish attempts, and registry drafts answer only
   to their `createdBy`; saved registry rows are catalog-visible. Consumer
@@ -204,7 +217,8 @@ appear in either schema.
   Query persist allowlist (`app/src/integrations/tanstack-query/light-namespaces.ts`),
   and saved query hashes all key on them. Every shim passes the host `auth`.
   `schemas.ts` also adds `listDraftSummaries` (opt-in creator-scoped drafts
-  read), `setVisibility`, and `maxTileCacheVersion`.
+  read), `setVisibility`, `setEditPolicy` (the creator's lock control, ADR
+  0010), and `maxTileCacheVersion`.
 - **Identity** — `auth.ts`, `auth.config.ts`, `http.ts`, `users.ts` (above).
 - **Platform layer** — `derivedDatasets.ts`/`derivedSpec.ts` (registry),
   `projects.ts`, `publish.ts`, `bundles.ts`, `consumption.ts`,
@@ -384,20 +398,23 @@ bundle: a collection plus its maps plus the datasets they reference.
 
 ## Sharing and visibility model
 
-| Artifact                                           | Visible to                     | Writable by                                  |
-| -------------------------------------------------- | ------------------------------ | -------------------------------------------- |
-| Draft dataset (`lifecycle: "draft"`)               | creator                        | creator                                      |
-| Registry draft (builder autosave)                  | creator                        | creator                                      |
-| Project, membership, bundle run, attempt           | creator                        | creator                                      |
-| Published dataset, `publishedVisibility: "author"` | creator                        | creator                                      |
-| Published dataset, default (`"everyone"`)          | any signed-in user             | any signed-in user (ADR 0009; locking #124)  |
-| Saved registry row (derived dataset)               | any signed-in user             | creator (owner-checked)                      |
-| Maps, collections, groups                          | any signed-in user             | any signed-in user (ADR 0009)                |
-| Frozen versions / bound datasets                   | per their dataset's visibility | nobody (read-only; organization ops allowed) |
+| Artifact                                           | Visible to                     | Writable by                                                                                           |
+| -------------------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| Draft dataset (`lifecycle: "draft"`)               | creator                        | creator                                                                                               |
+| Registry draft (builder autosave)                  | creator                        | creator                                                                                               |
+| Project, membership, bundle run, attempt           | creator                        | creator                                                                                               |
+| Published dataset, `publishedVisibility: "author"` | creator                        | creator                                                                                               |
+| Published dataset, default (`"everyone"`)          | any signed-in user             | any signed-in user (ADR 0009), unless the dataset is `editPolicy: "locked"` — creator only (ADR 0010) |
+| Saved registry row (derived dataset)               | any signed-in user             | creator (owner-checked)                                                                               |
+| Maps, collections, groups                          | any signed-in user             | any signed-in user (ADR 0009; `mapId` rides every map mutation for a future per-map policy)           |
+| Frozen versions / bound datasets                   | per their dataset's visibility | nobody (read-only; organization ops allowed, locked datasets' to their creator)                       |
 
 `publishedVisibility` is the authoring-time choice and crosses the
 draft→published line with the data (the frozen row inherits it). Denials are
-indistinguishable from "not found".
+indistinguishable from "not found" for invisible rows; a locked dataset's
+write denial is read-only-shaped (existence of a published row is already
+public). `editPolicy` is per-row and does NOT cross the lifecycle line:
+frozen rows carry `lineage` and stay read-only regardless.
 
 ## Analysis layer
 
@@ -524,8 +541,9 @@ ages fast.
   under umbrella issue **#123** (children #124–#139) — including the
   storage-id authorization chain, derived-chain retention after retirement,
   PMTiles run dedupe, DuckDB lockdown, and sync caps. Not repeated here.
-- **Published artifacts are co-editable** by design (ADR 0009); opt-in
-  locking is #124, and sign-up gating is #136.
+- **Published artifacts are co-editable** by design (ADR 0009); per-dataset
+  opt-out shipped as `editPolicy` (ADR 0010, #124), and sign-up gating is
+  #136.
 - **Parquet sidecar deferred** — analysis streams rows through the seam; no
   per-version Parquet artifact exists.
 - **#78 remote transport blocked** — bound datasets sync only from the local

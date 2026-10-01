@@ -4,7 +4,7 @@ import { components, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { ActionCtx } from "./_generated/server";
 import { action, internalMutation, internalQuery, mutation, query } from "./_generated/server";
-import { auth } from "./auth";
+import { assertDatasetWritable, auth } from "./auth";
 import {
   assertChainAnchorWritable,
   pinRefIntoPolicyStore,
@@ -277,6 +277,13 @@ export const retireVersion = mutation({
     if (schema.createdBy !== undefined && schema.createdBy !== actorId) {
       throw new ConvexError("Version dataset not found.");
     }
+    // The edit-policy gate (issue #124, ADR 0010), as an explicit check on
+    // the surface the issue names: retirement deletes a version row, so a
+    // LOCKED one answers only to its creator. Every row a policy could lock
+    // carries a defined creator and was already refused above (keeping the
+    // recorded "not found" denial shape), so this is defense-in-depth that
+    // stays honest if a future flow locks unstamped rows.
+    await assertDatasetWritable(ctx, actorId, args.schemaId);
     if (schema.lineage === undefined) {
       throw new ConvexError("Only a frozen version dataset can be retired here.");
     }
@@ -693,6 +700,11 @@ export const setVersionPinned = mutation({
     // owner may (the consumption.setChainVersionPinned rule, shared helper;
     // createdBy-less legacy/binding rows stay signed-in-writable).
     await assertChainAnchorWritable(ctx, actorId, anchor);
+    // The edit-policy gate (issue #124), defense-in-depth on the surface the
+    // issue names: every lockable row is already creator-refused by the
+    // anchor check above, but pinning is a write on a locked dataset's chain
+    // and the gate stays explicit here.
+    await assertDatasetWritable(ctx, actorId, args.schemaId);
     await pinRefIntoPolicyStore(ctx, { anchorId: anchor, pinned: args.pinned, ref });
   },
   returns: v.null(),
@@ -712,6 +724,11 @@ export const setKeepVersions = mutation({
     // The check runs before the binding lookup so a foreign anchor reads
     // exactly as a gone binding.
     await assertChainAnchorWritable(ctx, actorId, args.sourceSchemaId);
+    // The edit-policy gate (issue #124), defense-in-depth on the surface the
+    // issue names: retention writes a locked dataset's binding store, so the
+    // gate runs even though sync-created rows (the only rows with bindings)
+    // carry no creator stamp and cannot be locked today.
+    await assertDatasetWritable(ctx, actorId, args.sourceSchemaId);
     const binding = await ctx.db
       .query("datasetBindings")
       .withIndex("by_schema", (q) => q.eq("schemaId", args.sourceSchemaId))

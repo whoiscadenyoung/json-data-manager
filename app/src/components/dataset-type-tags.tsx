@@ -6,6 +6,7 @@ import {
   GitFork,
   Lock,
   MapPin,
+  PencilOff,
   RefreshCw,
   Tag,
   Unlink,
@@ -200,6 +201,15 @@ export function DatasetTypeTags({
         >
           <RefreshCw />
           Synced
+        </Badge>
+      )}
+      {dataset.editPolicy === "locked" && (
+        <Badge
+          variant="outline"
+          title="Locked by the creator — only they can edit this dataset. Everyone signed in can still view and export it."
+        >
+          <PencilOff />
+          Locked
         </Badge>
       )}
     </>
