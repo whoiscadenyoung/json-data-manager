@@ -238,6 +238,80 @@ describe("applySql — the one engine interface, fourth argument the handle", ()
     }
     expect(engine.queries.length).toBe(3);
   });
+
+  it("rejects a comment-hidden second statement and a WITH chain whose main verb writes (#132)", async () => {
+    const engine = fakeEngine([]);
+    // The shipped scanner tracked quotes but not comments, so a quote
+    // character inside a comment desynchronized it and the real second
+    // statement after the separator slipped through.
+    for (const sql of [
+      "SELECT 1 /* ' */ ; DROP TABLE source",
+      'SELECT 1 /* " */ ; DROP TABLE source',
+      "SELECT 1 -- '\n; DROP TABLE source",
+      // E'\'' holds one quote (backslash-escaped); the engine then really
+      // runs the DROP — the gate must see it.
+      "SELECT E'\\''; DROP TABLE source",
+      // The main verb after the CTEs is checked too: the pinned engine
+      // parses and executes WITH … DELETE/INSERT (probe-verified 2026-09-30).
+      "WITH t AS (SELECT 1) DELETE FROM t",
+      "WITH t AS (SELECT 1) INSERT INTO t VALUES (2)",
+      "WITH t AS (SELECT 1) UPDATE t SET n = 2",
+      "WITH a AS (SELECT 1), b AS (SELECT 2) DELETE FROM a",
+    ]) {
+      // oxlint-disable-next-line no-await-in-loop -- each candidate runs against the same recording engine; the loop is the assertion table.
+      const rejected = await applySql(sqlOp({ sql }), locations, new Map(), engine);
+      expect(rejected.diagnostics.error).toBeDefined();
+    }
+    expect(engine.queries).toStrictEqual([]);
+  });
+
+  it("scans quoted regions the engine also treats as opaque — dollar quoting, E-strings, doubled quotes", async () => {
+    const engine = fakeEngine([]);
+    // Single statements whose quoted regions hide semicolons, quotes and
+    // comment openers scan clean (the engine runs them as one statement).
+    for (const sql of [
+      "SELECT $$; DROP TABLE x$$ AS s",
+      "SELECT $tag$ ' ; /* still inside $tag$ AS s",
+      "SELECT 'don''t; drop' FROM source",
+      "SELECT E'\\'' AS s",
+      // Trailing comments after the single statement are not a second one.
+      "SELECT 1; -- done",
+      "SELECT 1; /* done */",
+    ]) {
+      // oxlint-disable-next-line no-await-in-loop -- assertion table, same recording engine.
+      const ok = await applySql(sqlOp({ sql }), locations, new Map(), engine);
+      expect(ok.diagnostics.error).toBeUndefined();
+    }
+    // But the same dollar-quoting cannot smuggle a real second statement.
+    const smuggled = await applySql(
+      sqlOp({ sql: "SELECT $t$ ' $t$; DROP TABLE source" }),
+      locations,
+      new Map(),
+      engine,
+    );
+    expect(smuggled.diagnostics.error).toContain("one statement at a time");
+  });
+
+  it("keeps legitimate WITH shapes and keyword-named columns accepted (#132)", async () => {
+    const engine = fakeEngine([{ n: 1 }]);
+    // Keyword-named columns are legal DuckDB without quoting (probe-verified
+    // 2026-09-30) — the gate is verb- and structure-shaped, never a keyword
+    // blacklist that would reject such analyses.
+    for (const sql of [
+      "WITH t AS (SELECT 1 AS n) SELECT n FROM t",
+      "WITH a AS (SELECT 1), b AS (SELECT 2) SELECT * FROM a, b",
+      "WITH RECURSIVE t AS (SELECT 1 AS n) SELECT n FROM t",
+      "WITH t (n) AS (SELECT 1) SELECT n FROM t",
+      "WITH t AS MATERIALIZED (SELECT 1) SELECT 1",
+      "WITH t AS NOT MATERIALIZED (SELECT 1) SELECT 1",
+      "SELECT delete, update FROM source",
+      "/* leading /* nested */ still */ SELECT 1",
+    ]) {
+      // oxlint-disable-next-line no-await-in-loop -- assertion table, same recording engine.
+      const ok = await applySql(sqlOp({ sql }), locations, new Map(), engine);
+      expect(ok.diagnostics.error).toBeUndefined();
+    }
+  });
 });
 
 describe("SqlOperation in the spec union — serializable, walk-aware", () => {

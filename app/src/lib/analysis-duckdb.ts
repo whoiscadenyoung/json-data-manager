@@ -17,6 +17,15 @@ import type { AsyncDuckDB, AsyncDuckDBConnection } from "@duckdb/duckdb-wasm";
  * - **Capped.** `memory_limit` is set on every connection (an analysis must
  *   not OOM the tab); the result-row cap is `applySql`'s `limit` option,
  *   owned by the callers (worker + publish path), not hardcoded here.
+ * - **Locked down (#132).** A saved analysis runs in each viewer's browser,
+ *   so right after instantiation the engine gets external access disabled,
+ *   extension autoinstall/autoload disabled, and its configuration locked
+ *   — a `read_csv('https://…')` in a shared analysis must fail closed, not
+ *   fetch. The probe record lives on `ENGINE_LOCKDOWN_STATEMENTS`; the
+ *   applier swallows an unsupported setting rather than failing startup.
+ *   The pure statement gate in json-cms sql.ts is the host-independent
+ *   layer on top of this (the pinned build exposes no statement-extraction
+ *   API to prefer over it — verified 2026-09-30, see below).
  *
  * Runs identically in the analysis Web Worker (interactive runs) and on the
  * main thread (publish/preview parity — bundle-publish.ts's rule that spec
@@ -30,6 +39,60 @@ import type { Table as ArrowTable } from "apache-arrow";
 
 /** The DuckDB memory cap per engine instance (the build-time cap the issue names). */
 const MEMORY_LIMIT = "1GB";
+
+/**
+ * The post-init lockdown (#132), in application order: external access off
+ * first (kills remote reads and ATTACH), then the extension gates (no
+ * surprise INSTALL/LOAD), and `lock_configuration` LAST — after it every
+ * further SET fails, so the lockdown cannot be undone by a query.
+ * `memory_limit` is deliberately absent: it must run BEFORE the lock, and
+ * `createEngine` sets it immediately before calling the applier.
+ *
+ * Probe record, 2026-09-30, against this exact pin
+ * (`@duckdb/duckdb-wasm` 1.33.1-dev57.0 — its wasm embeds engine v1.5.4;
+ * probed on the package's own Node target under bun, stdout in the PR):
+ * all four statements apply cleanly; afterwards a remote
+ * `read_csv('https://…')` fails with a Permission Error,
+ * `read_parquet`/`parquet_scan` with a Catalog Error (the extension is no
+ * longer autoloaded), `LOAD httpfs` with a Permission Error, `ATTACH
+ * 'https://…'` with a Permission Error, and a further `SET` with "Invalid
+ * Input Error: Cannot change configuration option". Should a future pin
+ * drop one of these settings, startup must not break — `applyEngineLockdown`
+ * swallows a failed statement and moves on; the pure statement gate in
+ * json-cms sql.ts remains the host-independent second layer.
+ */
+export const ENGINE_LOCKDOWN_STATEMENTS: readonly string[] = [
+  "SET enable_external_access = false",
+  "SET autoinstall_known_extensions = false",
+  "SET autoload_known_extensions = false",
+  "SET lock_configuration = true",
+];
+
+/** The connection surface the lockdown needs (the subset of `AsyncDuckDBConnection`). */
+export interface LockdownConnection {
+  query(sql: string): Promise<unknown>;
+}
+
+/**
+ * Applies `ENGINE_LOCKDOWN_STATEMENTS` in order, tolerating a statement the
+ * connected engine does not support (see the probe record above): one
+ * unsupported setting must not fail engine startup, so a per-statement
+ * failure is swallowed and the remaining lockdown still applies. Exported
+ * next to `normalizeArrowValue` for `analysis-duckdb.test.ts`, which pins
+ * both the order and the tolerance against stand-ins.
+ */
+export async function applyEngineLockdown(connection: LockdownConnection): Promise<void> {
+  for (const statement of ENGINE_LOCKDOWN_STATEMENTS) {
+    try {
+      // oxlint-disable-next-line no-await-in-loop -- each setting must apply before the next (lock_configuration last); order is the lockdown.
+      await connection.query(statement);
+    } catch {
+      // Unsupported on this engine build — continue with the remaining
+      // lockdown statements (the probe comment on ENGINE_LOCKDOWN_STATEMENTS
+      // records which settings the pinned build accepts).
+    }
+  }
+}
 
 let enginePromise: Promise<SqlEngine> | undefined;
 
@@ -87,6 +150,9 @@ async function createEngine(): Promise<SqlEngine> {
   await db.instantiate(bundle.mainModule, null);
   const connection = await db.connect();
   await connection.query(`SET memory_limit='${MEMORY_LIMIT}'`);
+  // The lockdown (#132) runs before any caller query; lock_configuration
+  // (last) freezes these settings in place for the engine's lifetime.
+  await applyEngineLockdown(connection);
   return new DuckDbEngine(db, connection);
 }
 

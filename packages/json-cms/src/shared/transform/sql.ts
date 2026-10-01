@@ -61,11 +61,23 @@
  *   a refusal (publish-spec.ts) — the interactive preview shows it as a
  *   badge, but materializing the first N rows as the complete dataset is
  *   exactly the fabrication the reporting exists to prevent.
- * - **Read-only is statement-enforced.** Exactly one statement, and its
- *   first keyword must be SELECT or WITH — an INSERT/CREATE/DROP/ATTACH
- *   would otherwise execute against the (ephemeral, in-memory) database and
- *   surprise the next query. The gate sits in `sqlSetupError`, before the
- *   engine is touched, so both executors inherit it.
+ * - **Read-only is statement-enforced.** Exactly one statement, and it must
+ *   be a SELECT — a bare one, or a WITH whose CTE chain ends in a SELECT.
+ *   The main verb after the CTEs is checked too, not just the head: the
+ *   pinned DuckDB parses `WITH t AS (SELECT 1) DELETE FROM …` fine
+ *   (probe-verified 2026-09-30) and would execute it against the ephemeral
+ *   database. The gate sits in `sqlSetupError`, before the engine is
+ *   touched, so both executors inherit it. It scans comments and quoted
+ *   regions away first (line comments, nestable block comments — the
+ *   engine nests too —, single/double/backtick quotes, E'' backslash
+ *   escapes, $$ dollar quoting), so a quote character inside a comment can
+ *   no longer desynchronize the scan into missing a second statement
+ *   (#132). DuckDB hosts add a second, engine-level layer — the engine is
+ *   created with external access disabled and its configuration locked
+ *   (app/src/lib/analysis-duckdb.ts) — because this package must stay
+ *   engine-free and the pinned duckdb-wasm exposes no statement-extraction
+ *   API to prefer. `EXPLAIN`/`DESCRIBE` and friends are refused (not
+ *   analyses).
  * - **A stored spec that omits `tables` is tolerated by the engine**
  *   (`?? []`): the field is required on the type and at the save gate, but
  *   storage is `v.any()` and the never-throws contract covers stored data
@@ -273,10 +285,12 @@ function materializeSideTable(
 
 /** The setup problem that must stop the run before the engine is touched, or undefined. */
 function sqlSetupError(sql: string, names: readonly string[]): string | undefined {
-  if (sql.trim() === "") {
+  const tokens = sqlTokens(sql);
+  if (tokens.length === 0) {
+    // Whitespace- or comment-only input — there is no statement to gate.
     return "The analysis has no SQL query to run yet.";
   }
-  const statementError = readOnlyStatementError(sql);
+  const statementError = readOnlyStatementError(tokens);
   if (statementError !== undefined) {
     return statementError;
   }
@@ -284,60 +298,272 @@ function sqlSetupError(sql: string, names: readonly string[]): string | undefine
   return duplicate === undefined ? undefined : `Table name "${duplicate}" is used more than once.`;
 }
 
-/** Strips leading whitespace and comments so the statement check sees the first real keyword. */
-function trimmedStatementHead(sql: string): string {
-  let text = sql.trimStart();
-  for (;;) {
-    if (text.startsWith("--")) {
-      const newline = text.indexOf("\n");
-      text = newline === -1 ? "" : text.slice(newline + 1).trimStart();
-      continue;
+/** The token kinds the statement gate reads; everything else (whitespace, comments, quoted regions, punctuation) is dropped at the scan. */
+type SqlTokenKind = "closeParen" | "comma" | "openParen" | "semicolon" | "word";
+
+/** One scanned token: a word (upper-cased — SQL keywords are case-insensitive), a separator, a comma, or a parenthesis. */
+interface SqlToken {
+  kind: SqlTokenKind;
+  text: string;
+}
+
+const WORD_CHARACTER = /[A-Za-z0-9_$]/,
+  DOLLAR_QUOTE_HEAD = /^\$[A-Za-z_]*\$/,
+  SEPARATOR_KINDS: Record<string, SqlTokenKind> = {
+    "(": "openParen",
+    ")": "closeParen",
+    ",": "comma",
+    ";": "semicolon",
+  },
+  READ_ONLY_MESSAGE =
+    "Analyses run read-only SELECT queries (or a WITH … SELECT) — nothing else executes here.";
+
+/** The index just past a `--` line comment opened at `start` (an unterminated one runs to the end). */
+function pastLineComment(sql: string, start: number): number {
+  const newline = sql.indexOf("\n", start);
+  return newline === -1 ? sql.length : newline + 1;
+}
+
+/** The index just past a block comment opened at `start`, nesting like the engine does (probe-verified on the pinned build). */
+function pastBlockComment(sql: string, start: number): number {
+  let depth = 1,
+    index = start + 2;
+  while (index < sql.length && depth > 0) {
+    if (sql[index] === "/" && sql[index + 1] === "*") {
+      depth += 1;
+      index += 2;
+    } else if (sql[index] === "*" && sql[index + 1] === "/") {
+      depth -= 1;
+      index += 2;
+    } else {
+      index += 1;
     }
-    if (text.startsWith("/*")) {
-      const end = text.indexOf("*/");
-      text = end === -1 ? "" : text.slice(end + 2).trimStart();
-      continue;
-    }
-    return text;
   }
+  return index;
+}
+
+/** The index just past a dollar-quoted region ($$…$$ or $tag$…$tag$) opened at `start`, or undefined when the characters there do not open one (a bare `$` is ordinary). */
+function pastDollarQuote(sql: string, start: number): number | undefined {
+  const match = DOLLAR_QUOTE_HEAD.exec(sql.slice(start, start + 64));
+  if (match === null) {
+    return undefined;
+  }
+  const closer = sql.indexOf(match[0], start + match[0].length);
+  return closer === -1 ? sql.length : closer + match[0].length;
+}
+
+/** The index just past a quoted region (string literal or quoted identifier) opened at `start` — the doubled quote is the escape, and a `backslashEscapes` region (the engine's E'' strings) escapes its next character. An unterminated region consumes the rest of the input. */
+function pastQuotedRegion(sql: string, start: number, backslashEscapes: boolean): number {
+  const quote = sql[start];
+  let index = start + 1;
+  while (index < sql.length) {
+    if (backslashEscapes && sql[index] === "\\") {
+      index += 2;
+      continue;
+    }
+    if (sql[index] === quote) {
+      if (sql[index + 1] === quote) {
+        // The doubled quote is the escape — the region continues.
+        index += 2;
+        continue;
+      }
+      return index + 1;
+    }
+    index += 1;
+  }
+  return index;
+}
+
+/** The token one separator/parenthesis character produces, or undefined for any other character. */
+function separatorToken(character: string): SqlToken | undefined {
+  const kind = SEPARATOR_KINDS[character];
+  return kind === undefined ? undefined : { kind, text: "" };
+}
+
+/**
+ * Scans one SQL string into the tokens the statement gate reads, dropping
+ * comments and quoted regions so their contents can never read as syntax:
+ * `--` line comments and nestable block comments (the engine nests them
+ * too — probe-verified on the pinned build); single-quoted strings and
+ * double-/backtick-quoted identifiers (doubled-quote escape, plus
+ * backslash escapes after a bare `E` prefix — the engine's E'' rule); and
+ * $$ / $tag$ dollar quoting, whose contents the engine treats as one
+ * literal. A quote character inside a comment therefore cannot desync the
+ * scan into missing a real second statement — the #132 defect — and a
+ * semicolon inside any quoted region cannot read as a separator.
+ */
+function sqlTokens(sql: string): SqlToken[] {
+  const tokens: SqlToken[] = [];
+  let index = 0;
+  while (index < sql.length) {
+    const past = pastCommentOrQuote(sql, index, tokens);
+    if (past !== undefined) {
+      index = past;
+      continue;
+    }
+    const character = sql[index];
+    if (WORD_CHARACTER.test(character)) {
+      let end = index + 1;
+      while (end < sql.length && WORD_CHARACTER.test(sql[end])) {
+        end += 1;
+      }
+      tokens.push({ kind: "word", text: sql.slice(index, end).toUpperCase() });
+      index = end;
+      continue;
+    }
+    const separator = separatorToken(character);
+    if (separator !== undefined) {
+      tokens.push(separator);
+    }
+    index += 1;
+  }
+  return tokens;
+}
+
+/** True when a single quote continues the engine's backslash-escaped E'' string syntax — the token before it is the bare word E. */
+function singleQuoteEscapes(tokens: readonly SqlToken[], character: string): boolean {
+  const previous = tokens[tokens.length - 1];
+  return (
+    character === "'" &&
+    previous !== undefined &&
+    previous.kind === "word" &&
+    previous.text === "E"
+  );
+}
+
+/** The index just past the comment or quoted region opening at `start`, or undefined when ordinary characters sit there. */
+function pastCommentOrQuote(sql: string, start: number, tokens: readonly SqlToken[]): number | undefined {
+  const character = sql[start];
+  if (character === "-" && sql[start + 1] === "-") {
+    return pastLineComment(sql, start);
+  }
+  if (character === "/" && sql[start + 1] === "*") {
+    return pastBlockComment(sql, start);
+  }
+  if (character === "$") {
+    return pastDollarQuote(sql, start);
+  }
+  if (character === "'" || character === '"' || character === "`") {
+    return pastQuotedRegion(sql, start, singleQuoteEscapes(tokens, character));
+  }
+  return undefined;
+}
+
+/** The upper-cased word at `index`, or "" when no word token sits there. */
+function wordAt(tokens: readonly SqlToken[], index: number): string {
+  const token = tokens[index];
+  return token !== undefined && token.kind === "word" ? token.text : "";
+}
+
+/** The kind of the token at `index`, or undefined past the end. */
+function kindAt(tokens: readonly SqlToken[], index: number): SqlTokenKind | undefined {
+  const token = tokens[index];
+  return token === undefined ? undefined : token.kind;
+}
+
+/** The index just past the group opened at `openIndex`, or undefined when the parens never balance. */
+function pastBalancedParens(tokens: readonly SqlToken[], openIndex: number): number | undefined {
+  let depth = 0;
+  for (let index = openIndex; index < tokens.length; index += 1) {
+    const kind = kindAt(tokens, index);
+    if (kind === "openParen") {
+      depth += 1;
+    } else if (kind === "closeParen") {
+      depth -= 1;
+      if (depth === 0) {
+        return index + 1;
+      }
+    }
+  }
+  return undefined;
+}
+
+/** The index just past one CTE's `name [(columns)]` head, or undefined when no name (plus optional column list) sits at `index`. */
+function pastCteHead(tokens: readonly SqlToken[], index: number): number | undefined {
+  if (wordAt(tokens, index) === "") {
+    return undefined;
+  }
+  const afterName = index + 1;
+  if (kindAt(tokens, afterName) !== "openParen") {
+    return afterName;
+  }
+  return pastBalancedParens(tokens, afterName);
+}
+
+/** The index just past one CTE's `AS [NOT] [MATERIALIZED] (query)` tail, or undefined when it does not sit at `index`. */
+function pastCteTail(tokens: readonly SqlToken[], index: number): number | undefined {
+  if (wordAt(tokens, index) !== "AS") {
+    return undefined;
+  }
+  let cursor = index + 1;
+  if (wordAt(tokens, cursor) === "NOT") {
+    cursor += 1;
+  }
+  if (wordAt(tokens, cursor) === "MATERIALIZED") {
+    cursor += 1;
+  }
+  if (kindAt(tokens, cursor) !== "openParen") {
+    return undefined;
+  }
+  return pastBalancedParens(tokens, cursor);
+}
+
+/**
+ * The WITH chain walk: over `[RECURSIVE] name [(cols)] AS [NOT]
+ * [MATERIALIZED] (query)` groups, then the main query. Returns undefined
+ * only when that main query is a SELECT — a `WITH … DELETE/INSERT/UPDATE`
+ * parses and executes on the pinned engine (probe-verified 2026-09-30), so
+ * the head keyword alone proves nothing. A malformed chain fails closed.
+ */
+function withChainError(tokens: readonly SqlToken[]): string | undefined {
+  let index = 1;
+  if (wordAt(tokens, index) === "RECURSIVE") {
+    index += 1;
+  }
+  while (index < tokens.length) {
+    const head = pastCteHead(tokens, index);
+    if (head === undefined) {
+      return READ_ONLY_MESSAGE;
+    }
+    const tail = pastCteTail(tokens, head);
+    if (tail === undefined) {
+      return READ_ONLY_MESSAGE;
+    }
+    index = tail;
+    if (kindAt(tokens, index) === "comma") {
+      index += 1;
+      continue;
+    }
+    break;
+  }
+  return wordAt(tokens, index) === "SELECT" ? undefined : READ_ONLY_MESSAGE;
+}
+
+/** True when a separator is followed by any further token — the tokenizer already dropped comments and quoted regions, so trailing `; -- done` scans clean. */
+function hasSecondStatement(tokens: readonly SqlToken[]): boolean {
+  const separator = tokens.findIndex((token) => token.kind === "semicolon");
+  return separator !== -1 && separator + 1 < tokens.length;
 }
 
 /**
  * The read-only statement gate: exactly ONE statement (no top-level
- * semicolon separators), and its first keyword must be SELECT or WITH (a
- * CTE chain ending in a SELECT). This is what makes the "read-only" promise
+ * semicolon separators), and it must be a SELECT — bare, or a WITH chain
+ * ending in one. This is what makes the "read-only" promise
  * statement-enforced rather than structural — an INSERT/CREATE/DROP/ATTACH
  * would otherwise succeed against the worker's ephemeral database and just
- * surprise whoever runs the next query. The parenthesized-form `WITH` is
- * covered; `EXPLAIN`/`DESCRIBE` and friends are refused (not analyses).
+ * surprise whoever runs the next query. The scan is comment- and
+ * quote-aware (sqlTokens above); `EXPLAIN`/`DESCRIBE` and friends are
+ * refused (not analyses).
  */
-function readOnlyStatementError(sql: string): string | undefined {
-  const text = trimmedStatementHead(sql);
-  if (hasSecondStatement(text)) {
+function readOnlyStatementError(tokens: readonly SqlToken[]): string | undefined {
+  if (hasSecondStatement(tokens)) {
     return "Run one statement at a time — the analysis takes a single SELECT.";
   }
-  const head = text.slice(0, 12).toUpperCase();
-  if (head.startsWith("SELECT") || head.startsWith("WITH")) {
+  const head = wordAt(tokens, 0);
+  if (head === "SELECT") {
     return undefined;
   }
-  return "Analyses run read-only SELECT queries (or a WITH … SELECT) — nothing else executes here.";
-}
-
-/** True when a statement separator is followed by more text — quote-aware, so a semicolon inside a string literal or quoted identifier is not a separator. */
-function hasSecondStatement(text: string): boolean {
-  let inSingleQuote = false,
-    inDoubleQuote = false;
-  for (let index = 0; index < text.length; index += 1) {
-    const character = text[index];
-    if (character === "'" && !inDoubleQuote) {
-      inSingleQuote = !inSingleQuote;
-    } else if (character === '"' && !inSingleQuote) {
-      inDoubleQuote = !inDoubleQuote;
-    } else if (character === ";" && !inSingleQuote && !inDoubleQuote) {
-      return text.slice(index + 1).trim() !== "";
-    }
-  }
-  return false;
+  return head === "WITH" ? withChainError(tokens) : READ_ONLY_MESSAGE;
 }
 
 /** The run options unwrapped once (absent options object → both undefined). */
