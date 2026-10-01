@@ -537,7 +537,7 @@ describe("json-cms component", () => {
       const t = initConvexTest(),
         schemaId = await createGeospatialSchema(t, "Point");
       const flagOf = async () => {
-        const row = (await t.query(api.lib.listSchemaSummaries, { viewerId: VIEWER })).find(
+        const row = (await t.query(api.lib.listSchemaSummaries, { limit: 500, viewerId: VIEWER })).find(
           (summary) => summary._id === schemaId,
         );
         assertDefined(row);
@@ -2697,7 +2697,10 @@ describe("json-cms component", () => {
         // archive serves normally...
         const fresh = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
         assertDefined(fresh);
-        expect(fresh.storageId).toBe(storageId);
+        expect(fresh.version).toBe(0);
+        // Post-#131 the meta carries no storage id — the url is the
+        // install's fingerprint, captured to prove the rebuild repoints it.
+        const freshUrl = fresh.url;
 
         // ...while a row written before format tracking (field absent —
         // exactly what every pre-#125 install looks like) must read as no
@@ -2719,7 +2722,7 @@ describe("json-cms component", () => {
         expect(replaced).toBeNull();
         const meta = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
         assertDefined(meta);
-        expect(meta.storageId).toBe(rebuiltId);
+        expect(meta.url).not.toBe(freshUrl);
         expect(MAP_TILE_ARCHIVE_FORMAT).toBeGreaterThan(1);
       });
 
