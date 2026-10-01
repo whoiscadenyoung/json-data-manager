@@ -13,4 +13,9 @@ export const {
   createEntry: create,
   createEntriesBulk: createBulk,
   updateEntry: update,
+  // The failed-import recovery path (issue #129): a Retry re-imports into
+  // the SAME dataset, so whatever partial rows the failed attempt committed
+  // are cleared first. Same wrapper, same delete gate (`type: "delete"`) the
+  // component enforces.
+  deleteEntriesBySchema: clearDatasetRows,
 } = exposeApi(components.jsonCms, { auth });

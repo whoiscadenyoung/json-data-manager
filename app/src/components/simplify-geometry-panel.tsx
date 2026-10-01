@@ -26,11 +26,13 @@ function errorMessage(error: unknown, fallback: string): string {
 /** Progress line shown once simplification has started — mirrors the conversion panel's progress bar. */
 function SimplifyProgress({
   processed,
+  skipped,
   total,
   status,
   error,
 }: {
   processed: number;
+  skipped: number;
   total: number;
   status: "pending" | "processing" | "completed" | "failed";
   error: string | undefined;
@@ -49,6 +51,9 @@ function SimplifyProgress({
         {status === "completed"
           ? `Simplified ${processed} of ${total} geometries.`
           : `Simplifying… ${processed} of ${total} geometries.`}
+        {/* Skips are surfaced, never silent (issue #129): unreadable
+            payloads, or rows edited while the run was in flight. */}
+        {skipped > 0 ? ` ${skipped} ${skipped === 1 ? "was" : "were"} left unchanged.` : ""}
       </p>
       <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
         <div
@@ -63,6 +68,7 @@ function SimplifyProgress({
 type ImportStatusDoc = {
   error?: string;
   processed: number;
+  skipped?: number;
   status: "pending" | "processing" | "completed" | "failed";
   total: number;
 };
@@ -80,6 +86,7 @@ function SimplifyRunningView({
     <div className="flex flex-1 flex-col gap-4 p-6">
       <SimplifyProgress
         processed={status.processed}
+        skipped={status.skipped ?? 0}
         total={status.total}
         status={status.status}
         error={status.error}

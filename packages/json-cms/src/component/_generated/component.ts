@@ -291,9 +291,11 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         {
           _creationTime: number;
           _id: string;
+          completedChunks?: Array<{ index: number; rows: number }>;
           error?: string;
           processed: number;
           schemaId: string;
+          skipped?: number;
           status: "pending" | "processing" | "completed" | "failed";
           total: number;
           workflowId?: string;
@@ -1042,6 +1044,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         any,
         Name
       >;
+      setSchemaLifecycle: FunctionReference<
+        "mutation",
+        "internal",
+        { lifecycle: "draft" | "published"; schemaId: string },
+        null,
+        Name
+      >;
       setSchemaVisibility: FunctionReference<
         "mutation",
         "internal",
@@ -1125,6 +1134,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "mutation",
         "internal",
         {
+          boundWrite?: string;
           description?: string;
           schema?: any;
           schemaId: string;

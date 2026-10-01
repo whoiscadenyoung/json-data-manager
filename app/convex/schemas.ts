@@ -309,6 +309,65 @@ export const remove = mutation({
 });
 
 /**
+ * Creates the dataset an import is about to fill, as a lifecycle DRAFT
+ * (issue #129): the import flow creates the dataset BEFORE its rows land, so
+ * the row must not be catalog-visible until that import completes — a failed
+ * or abandoned import then leaves an invisible draft (the creator's drafts
+ * view lists it for Retry/Discard) instead of an empty, published dataset.
+ * Hand-written (the `remove` pattern) because the exposeApi `createSchema`
+ * wrapper deliberately cannot carry `lifecycle` — no client path may create a
+ * draft — while this one is import-scoped and ALWAYS does.
+ */
+export const createDraftForImport = mutation({
+  args: {
+    geometryType: v.optional(
+      v.union(
+        v.literal("Point"),
+        v.literal("MultiPoint"),
+        v.literal("LineString"),
+        v.literal("MultiLineString"),
+        v.literal("Polygon"),
+        v.literal("MultiPolygon"),
+      ),
+    ),
+    kind: v.optional(v.union(v.literal("standard"), v.literal("geospatial"))),
+    schema: v.any(),
+    simplifyGeometry: v.optional(v.boolean()),
+    uiSchema: v.optional(v.any()),
+  },
+  handler: async (ctx, args) => {
+    const actorId = await auth(ctx, { fn: "createSchema", type: "create" });
+    return ctx.runMutation(components.jsonCms.lib.createSchema, {
+      ...args,
+      actorId,
+      lifecycle: "draft" as const,
+    });
+  },
+  returns: v.string(),
+});
+
+/**
+ * Flips an import-created draft to published once its import COMPLETES
+ * (issue #129) — the client calls this when the import status turns
+ * "completed". Creator-only through the isolation check (a draft is visible
+ * to nobody else), and the component's `setSchemaLifecycle` refuses bound
+ * datasets, whose lifecycle belongs to their sync flow. In-project drafts
+ * never take this path: a project draft stays a draft until the project's
+ * own publish (lifecycle §3).
+ */
+export const markImportComplete = mutation({
+  args: { schemaId: v.string() },
+  handler: async (ctx, args) => {
+    await auth(ctx, { fn: "markImportComplete", schemaId: args.schemaId, type: "update" });
+    await ctx.runMutation(components.jsonCms.lib.setSchemaLifecycle, {
+      lifecycle: "published",
+      schemaId: args.schemaId,
+    });
+  },
+  returns: v.null(),
+});
+
+/**
  * The largest `mapTileCacheVersion` across all datasets — the cache-buster for
  * the client's persisted light-state cache (issue #58 part 5). Any
  * geometry-affecting write bumps some dataset's version (part 2), so this one

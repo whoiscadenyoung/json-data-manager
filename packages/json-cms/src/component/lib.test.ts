@@ -2512,7 +2512,7 @@ describe("json-cms component", () => {
       expect(await versionOf(t, simplifySchemaId)).toBe(2);
     });
 
-    it("deleteEntriesBySchema deletes the archive blob and resets all four cache fields", async () => {
+    it("deleteEntriesBySchema deletes the archive blob, clears the archive fields, and bumps the cache version monotonically", async () => {
       const t = initConvexTest(),
         schemaId = await createGeospatialSchema(t, "Point");
       await t.mutation(api.lib.createEntry, {
@@ -2535,7 +2535,10 @@ describe("json-cms component", () => {
       await t.mutation(api.lib.deleteEntriesBySchema, { schemaId });
 
       // The reset is checked on the STORED doc — the public `getSchema` view
-      // deliberately never carries the storage pointer (issue #131).
+      // deliberately never carries the storage pointer (issue #131). The
+      // cache version is NOT reset: it bumps monotonically (issue #129,
+      // revising the recorded exact reset) so a pre-clear rebuild pinned at
+      // version 1 can never pass the `expectedVersion` guard again.
       const stored = await t.run(async (ctx) => ctx.db.get(schemaId));
       assertDefined(stored);
       expect(stored.mapTileArchiveStorageId).toBeUndefined();
@@ -2544,7 +2547,7 @@ describe("json-cms component", () => {
       expect(schemaDoc.mapTileArchiveBytes).toBeUndefined();
       expect(schemaDoc.mapTileArchiveMaxZoom).toBeUndefined();
       expect(schemaDoc.mapTileArchiveBuiltVersion).toBeUndefined();
-      expect(schemaDoc.mapTileCacheVersion).toBeUndefined();
+      expect(schemaDoc.mapTileCacheVersion).toBe(2);
       expect(await t.query(api.lib.getMapTileArchiveMeta, { schemaId })).toBeNull();
       const stillThere = await t.run(async (ctx) => ctx.storage.get(archiveStorageId));
       expect(stillThere).toBeNull();

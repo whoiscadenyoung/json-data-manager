@@ -1,4 +1,12 @@
-import { AlertTriangle, CheckCircle, FileJson, Loader2, Upload, XCircle } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle,
+  FileJson,
+  Loader2,
+  Trash2,
+  Upload,
+  XCircle,
+} from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -24,6 +32,8 @@ export interface DatasetImportProgress {
   processed: number;
   total: number;
   error?: string;
+  /** Rows the run deliberately did not process (simplify skips) — surfaced, never silent (issue #129). */
+  skipped?: number;
 }
 
 /** One row headed for `useDatasetImport().start` — matches `StartDatasetImportArgs.rows`. */
@@ -59,6 +69,12 @@ export interface DatasetImporterProps {
     geometryType: GeometryType | undefined,
     options: DatasetImportOptions,
   ) => Promise<void>;
+  /**
+   * Recovery actions for a FAILED import (issue #129): retry re-runs the
+   * import into the same dataset, discard deletes it, back leaves it as a
+   * draft. Omitted consumers keep today's progress-only failure view.
+   */
+  recovery?: ImportRecoveryActions;
   /** Live progress of the running import (drives the progress bar). */
   progress?: DatasetImportProgress | null;
   saveLabel?: string;
@@ -154,40 +170,118 @@ function progressMetrics(
   return { pct, processed, total };
 }
 
-/** Progress / completion card shown while (and after) the import runs. */
-function ImportProgressView({
-  progress,
-  fallbackTotal,
-}: {
-  progress: DatasetImportProgress | null | undefined;
-  fallbackTotal: number;
-}) {
+/** The recovery actions a failed import offers (issue #129): retry the import into the same dataset, discard (delete) it, or leave it as a draft and go back. */
+export interface ImportRecoveryActions {
+  /** Re-run the import into the SAME dataset — the caller clears any partial rows first. */
+  onRetry: (rows: DatasetImportRow[], options: DatasetImportOptions) => Promise<void>;
+  /** Delete the dataset the failed import created (leaving nothing behind). */
+  onDiscard: () => Promise<void>;
+  /** Keep the (draft) dataset and leave the flow. */
+  onBack: () => void;
+}
+
+/** The message + bar metrics a progress card renders, derived from the live status (all branching kept here so the card component stays simple). */
+function progressSummary(
+  progress: DatasetImportProgress | null | undefined,
+  fallbackTotal: number,
+): {
+  done: boolean;
+  failed: boolean;
+  message: string;
+  pct: number;
+} {
   const status = progress ? progress.status : undefined,
     failed = status === "failed",
     done = status === "completed",
     { pct, processed, total } = progressMetrics(progress, fallbackTotal),
-    errorMsg = (progress && progress.error) || "Something went wrong during the import.";
+    errorMsg = (progress && progress.error) || "Something went wrong during the import.",
+    skipped =
+      progress && progress.skipped !== undefined && progress.skipped > 0 ? progress.skipped : 0,
+    skippedNote = skipped > 0 ? ` ${skipped} row${skipped === 1 ? "" : "s"} skipped.` : "";
+  return {
+    done,
+    failed,
+    // Skips are surfaced, never silent (issue #129).
+    message: failed ? errorMsg : `${processed} of ${total} rows imported.${skippedNote}`,
+    pct,
+  };
+}
+
+/** The Retry / Discard / Back row of a failed import's card (issue #129). */
+function ImportFailedActions({
+  acting,
+  onRetry,
+  onDiscard,
+  onBack,
+}: {
+  acting: boolean;
+  onRetry: () => void;
+  onDiscard: () => void;
+  onBack: () => void;
+}) {
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-2">
+      <Button type="button" size="sm" disabled={acting} onClick={onRetry}>
+        <Upload className="h-3.5 w-3.5 mr-1.5" />
+        Retry import
+      </Button>
+      <Button type="button" size="sm" variant="outline" disabled={acting} onClick={onDiscard}>
+        <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+        Discard dataset
+      </Button>
+      <Button type="button" size="sm" variant="ghost" disabled={acting} onClick={onBack}>
+        Back
+      </Button>
+    </div>
+  );
+}
+
+/** Progress / completion card shown while (and after) the import runs. */
+function ImportProgressView({
+  progress,
+  fallbackTotal,
+  recovery,
+  acting,
+  onRetry,
+  onDiscard,
+  onBack,
+}: {
+  progress: DatasetImportProgress | null | undefined;
+  fallbackTotal: number;
+  recovery?: ImportRecoveryActions;
+  acting: boolean;
+  onRetry: () => void;
+  onDiscard: () => void;
+  onBack: () => void;
+}) {
+  const summary = progressSummary(progress, fallbackTotal);
   return (
     <Card className="max-w-xl mx-auto">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          {statusIcon(failed, done)}
-          {statusTitle(failed, done)}
+          {statusIcon(summary.failed, summary.done)}
+          {statusTitle(summary.failed, summary.done)}
         </CardTitle>
-        <CardDescription>
-          {failed ? errorMsg : `${processed} of ${total} rows imported.`}
-        </CardDescription>
+        <CardDescription>{summary.message}</CardDescription>
       </CardHeader>
       <CardContent>
         <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
           <div
             className={cn(
               "h-full rounded-full transition-all",
-              failed ? "bg-destructive" : "bg-primary",
+              summary.failed ? "bg-destructive" : "bg-primary",
             )}
-            style={{ width: `${failed ? 100 : pct}%` }}
+            style={{ width: `${summary.failed ? 100 : summary.pct}%` }}
           />
         </div>
+        {summary.failed && recovery ? (
+          <ImportFailedActions
+            acting={acting}
+            onBack={onBack}
+            onDiscard={onDiscard}
+            onRetry={onRetry}
+          />
+        ) : null}
       </CardContent>
     </Card>
   );
@@ -533,8 +627,18 @@ function coordinateAwareGeometryProps(
     : { geometryType, geometryTypeReadOnly, geometryTypeSummary };
 }
 
+/** The review rows after the coordinate-columns mapping is applied (a tabular-geospatial save/retry), or the reason it can't be. */
+type FinalRows =
+  | { error: string; rows?: undefined; warning?: undefined }
+  | {
+      error?: undefined;
+      rows: DatasetImportRow[];
+      warning?: string;
+    };
+
 export function DatasetImporter({
   onImport,
+  recovery,
   progress,
   saveLabel = "Create dataset",
 }: DatasetImporterProps) {
@@ -574,6 +678,9 @@ export function DatasetImporter({
     // Defaults to on: rounding to 6dp (~11 cm) is invisible at map scales and
     // shrinks payloads substantially. See the Dataset Type section's checkbox.
     [simplifyGeometry, setSimplifyGeometry] = useState(true),
+    // True while a failed-import recovery action (Retry/Discard) runs — the
+    // recovery buttons disable so a double-click can't double-clear.
+    [recovering, setRecovering] = useState(false),
     // A FeatureCollection / bare Feature array: geometry is split out into its
     // own rows shape and never enters the inferred JSON Schema.
     ingestGeoJson = (parsedJson: unknown, file: File, keepSchema: boolean) => {
@@ -735,27 +842,74 @@ export function DatasetImporter({
       applySheet(sheet, workbookFileName, workbookKeepSchema);
     },
     showCoordinatePicker = needsCoordinatePicker(rowsAreTabular, datasetKind),
+    // The rows an import actually writes: the review rows, with the
+    // coordinate-columns mapping applied for a tabular-geospatial save.
+    // Shared by the save and the failed-import Retry (issue #129) so a retry
+    // re-derives exactly what the first save sent.
+    buildFinalRows = (): FinalRows => {
+      if (rows === null) {
+        return { error: "No rows to import." };
+      }
+      if (showCoordinatePicker) {
+        const built = buildCoordinateRows(rows, coordinateFields);
+        if ("error" in built) {
+          return { error: built.error };
+        }
+        return { rows: built.rows, warning: built.warning };
+      }
+      return { rows };
+    },
+    runRecovery = async (action: () => Promise<void>) => {
+      setRecovering(true);
+      try {
+        await action();
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "That didn't work — try again.");
+      } finally {
+        setRecovering(false);
+      }
+    },
+    handleRetry = () => {
+      if (!recovery) {
+        return;
+      }
+      const finalRows = buildFinalRows();
+      if (finalRows.error !== undefined) {
+        toast.error(finalRows.error);
+        return;
+      }
+      if (finalRows.warning !== undefined) {
+        toast.warning(finalRows.warning);
+      }
+      void runRecovery(async () => {
+        await recovery.onRetry(finalRows.rows, { simplifyGeometry, sourceFile });
+      });
+    },
+    handleDiscard = () => {
+      if (recovery) {
+        void runRecovery(async () => {
+          await recovery.onDiscard();
+        });
+      }
+    },
+    handleBack = () => {
+      if (recovery) {
+        recovery.onBack();
+      }
+    },
     handleSave: SchemaEditorSave = async (
       schemaJson,
       parsedSchema,
       uiSchemaJson,
       parsedUiSchema,
     ) => {
-      if (!rows) {
+      const finalRows = buildFinalRows();
+      if (finalRows.error !== undefined || finalRows.rows === undefined) {
+        toast.error(finalRows.error ?? "No rows to import.");
         return;
       }
-
-      let finalRows = rows;
-      if (showCoordinatePicker) {
-        const built = buildCoordinateRows(rows, coordinateFields);
-        if ("error" in built) {
-          toast.error(built.error);
-          return;
-        }
-        if (built.warning !== undefined) {
-          toast.warning(built.warning);
-        }
-        finalRows = built.rows;
+      if (finalRows.warning !== undefined) {
+        toast.warning(finalRows.warning);
       }
 
       setSubmitting(true);
@@ -765,7 +919,7 @@ export function DatasetImporter({
           parsedSchema,
           uiSchemaJson,
           parsedUiSchema,
-          finalRows,
+          finalRows.rows,
           datasetKind,
           datasetKind === "geospatial" ? (geometryType ?? "Point") : undefined,
           { simplifyGeometry, sourceFile },
@@ -780,7 +934,18 @@ export function DatasetImporter({
     importing = submitting || (status !== undefined && status !== "completed");
 
   if (importing || status === "completed") {
-    return <ImportProgressView progress={progress} fallbackTotal={rows ? rows.length : 0} />;
+    return (
+      <ImportProgressView
+        progress={progress}
+        fallbackTotal={rows ? rows.length : 0}
+        // The view only surfaces it on the failed state (issue #129).
+        recovery={recovery}
+        acting={recovering}
+        onRetry={handleRetry}
+        onDiscard={handleDiscard}
+        onBack={handleBack}
+      />
+    );
   }
 
   if (workbookSheets) {
