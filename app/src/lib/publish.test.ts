@@ -61,28 +61,42 @@ describe("resumePlan — the content check (issue #130)", () => {
     ).toStrictEqual({ from: 0, reset: true });
   });
 
-  it("a registered row total that no longer matches the execution resets", () => {
-    expect(
-      resumePlan(3, 2, 3, {
-        executed,
-        planned: { contentHash: "aaaabbbb", registeredRowCount: 9, totalRows: 12 },
-      }),
-    ).toStrictEqual({ from: 0, reset: true });
-  });
-
   it("a planned total the fresh execution no longer produces resets", () => {
     expect(
       resumePlan(3, 2, 3, { executed, planned: { contentHash: "aaaabbbb", totalRows: 11 } }),
     ).toStrictEqual({ from: 0, reset: true });
   });
 
-  it("matching content and totals resumes the registered prefix", () => {
+  it("a mid-upload checkpoint with matching content resumes the registered prefix", () => {
+    // The registered row total is the RUNNING sum (registerChunk accumulates
+    // per chunk): 2 of 3 chunks carrying 8 of 12 rows under a MATCHING hash
+    // is the healthy checkpoint state, not drift — reading it as drift reset
+    // every partial resume (the PR #151 review finding) and re-uploaded the
+    // registered prefix whole.
     expect(
       resumePlan(3, 2, 3, {
         executed,
-        planned: { contentHash: "aaaabbbb", registeredRowCount: 12, totalRows: 12 },
+        planned: { contentHash: "aaaabbbb", registeredRowCount: 8, totalRows: 12 },
       }),
     ).toStrictEqual({ from: 2, reset: false });
+    // Same decision without a recorded hash (an attempt planned before #130,
+    // its prefix registered after): a running total still isn't drift.
+    expect(
+      resumePlan(3, 2, 3, { executed, planned: { registeredRowCount: 8, totalRows: 12 } }),
+    ).toStrictEqual({ from: 2, reset: false });
+  });
+
+  it("a complete registration whose row total disagrees with the execution resets — the freeze guard's heal", () => {
+    // Every planned chunk registered, but the accumulated total disagrees
+    // with THIS execution: the freeze refuses exactly this state
+    // (registeredRowsMatchPlan) and prescribes a retry — the reset is what
+    // makes that retry heal instead of resuming into the same refusal.
+    expect(
+      resumePlan(3, 3, 3, {
+        executed,
+        planned: { contentHash: "aaaabbbb", registeredRowCount: 13, totalRows: 12 },
+      }),
+    ).toStrictEqual({ from: 0, reset: true });
   });
 
   it("an attempt planned before the hash existed keeps the count-only decision", () => {

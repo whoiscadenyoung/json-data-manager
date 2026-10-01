@@ -397,14 +397,26 @@ interface ResumeCompared {
  * fingerprint and the row totals — disagree with THIS execution. Absent
  * signals (an attempt planned before the hash existed) never count as
  * drift, so pre-#130 attempts keep the count-only decision.
+ *
+ * The registered row total is the RUNNING sum of the chunks registered so
+ * far (`registerChunk` accumulates per chunk), so mid-upload it is
+ * legitimately below the full execution — comparing it there would reset
+ * every partial resume, the checkpointed behavior #130 preserves. It is
+ * only decisive once EVERY planned chunk has registered (`allChunksRegistered`,
+ * which the caller knows exactly): a complete registration whose row total
+ * still disagrees with the execution is the inconsistency the freeze's own
+ * guard refuses (`registeredRowsMatchPlan`), and this comparison is what
+ * makes the retry that guard prescribes actually heal instead of resuming
+ * into the same refusal forever.
  */
-function planDrifted(compared: ResumeCompared): boolean {
+function planDrifted(compared: ResumeCompared, allChunksRegistered: boolean): boolean {
   const { planned } = compared;
   return (
     (planned.contentHash !== undefined && planned.contentHash !== compared.executed.fingerprint) ||
-    (planned.registeredRowCount !== undefined &&
-      planned.registeredRowCount !== compared.executed.rowCount) ||
-    (planned.totalRows !== undefined && planned.totalRows !== compared.executed.rowCount)
+    (planned.totalRows !== undefined && planned.totalRows !== compared.executed.rowCount) ||
+    (allChunksRegistered &&
+      planned.registeredRowCount !== undefined &&
+      planned.registeredRowCount !== compared.executed.rowCount)
   );
 }
 
@@ -429,8 +441,10 @@ function planDrifted(compared: ResumeCompared): boolean {
  * Issue #130 adds the content check (`compared`): counts alone cannot see an
  * edit that preserves the chunk count, so a resume whose re-executed content
  * — fingerprinted by `fingerprintChunks` — differs from the recorded plan
- * resets too, and so does one whose row total no longer matches what the
- * attempt planned or registered.
+ * resets too, as does one whose row total no longer matches what the attempt
+ * planned. The attempt's REGISTERED row total only judges a complete
+ * registration (it is a running sum mid-upload — see `planDrifted`), where a
+ * disagreement is the freeze guard's refused state and the reset is its heal.
  */
 export function resumePlan(
   plannedChunkCount: number | undefined,
@@ -444,7 +458,11 @@ export function resumePlan(
   if (
     plannedChunkCount !== executedCount ||
     registeredCount > plannedChunkCount ||
-    (compared !== undefined && planDrifted(compared))
+    // Past the two count guards above, plannedChunkCount === executedCount
+    // and registeredCount <= plannedChunkCount — so equality here is exactly
+    // "every planned chunk has registered" (planDrifted's gate for the
+    // registered row total).
+    (compared !== undefined && planDrifted(compared, registeredCount === executedCount))
   ) {
     return { from: 0, reset: true };
   }
