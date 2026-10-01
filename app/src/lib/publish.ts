@@ -401,8 +401,7 @@ interface ResumeCompared {
 function planDrifted(compared: ResumeCompared): boolean {
   const { planned } = compared;
   return (
-    (planned.contentHash !== undefined &&
-      planned.contentHash !== compared.executed.fingerprint) ||
+    (planned.contentHash !== undefined && planned.contentHash !== compared.executed.fingerprint) ||
     (planned.registeredRowCount !== undefined &&
       planned.registeredRowCount !== compared.executed.rowCount) ||
     (planned.totalRows !== undefined && planned.totalRows !== compared.executed.rowCount)
