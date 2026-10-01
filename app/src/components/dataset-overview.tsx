@@ -10,6 +10,7 @@ import {
   Layers,
   MapPin,
   Pencil,
+  PencilOff,
   Pin,
   PinOff,
   Plus,
@@ -155,6 +156,22 @@ function CreatedByRow({ authId }: { authId: string }) {
   );
 }
 
+/** The Editing row a locked dataset shows (issue #124): states the policy beside the other facts. Renders nothing while the default ("open") holds, so pre-policy rows look unchanged. */
+function EditingRow({ editPolicy }: { editPolicy?: "open" | "locked" }) {
+  if (editPolicy !== "locked") {
+    return null;
+  }
+  return (
+    <div className="flex flex-col gap-1.5">
+      <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Editing</dt>
+      <dd className="flex items-center gap-1 text-sm">
+        <PencilOff className="h-3.5 w-3.5 text-muted-foreground" />
+        Locked — creator only
+      </dd>
+    </div>
+  );
+}
+
 /** The dataset's type, field count, feature count and creation date at a glance. */
 function DetailsCard({ binding, schema }: { binding?: BindingDoc; schema: DatasetDoc }) {
   const fields = fieldCount(schema.schema),
@@ -231,6 +248,7 @@ function DetailsCard({ binding, schema }: { binding?: BindingDoc; schema: Datase
             </dd>
           </div>
           {schema.createdBy !== undefined && <CreatedByRow authId={schema.createdBy} />}
+          <EditingRow editPolicy={schema.editPolicy} />
         </dl>
         {binding !== undefined && (
           <>
@@ -436,6 +454,7 @@ function SectionActions({
   pickEmptyLabel,
   candidates,
   createForm,
+  lockedHint,
 }: {
   onPick: (id: string) => Promise<void>;
   onTogglePick: () => void;
@@ -447,16 +466,30 @@ function SectionActions({
   pickEmptyLabel: string;
   candidates: Array<{ description?: string; id: string; label: string; subtitle?: string }>;
   createForm: React.ReactNode;
+  /** Set on a locked dataset (issue #124): the membership buttons stay visible but disabled, carrying the reason. */
+  lockedHint?: string;
 }) {
   return (
     <>
       <Separator className="my-4" />
       <div className="flex gap-2">
-        <Button size="sm" variant="outline" onClick={onTogglePick}>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={lockedHint !== undefined}
+          title={lockedHint}
+          onClick={onTogglePick}
+        >
           <Plus className="h-3.5 w-3.5" />
           {pickLabel}
         </Button>
-        <Button size="sm" variant="outline" onClick={onToggleCreate}>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={lockedHint !== undefined}
+          title={lockedHint}
+          onClick={onToggleCreate}
+        >
           {createLabel}
         </Button>
       </div>
@@ -470,8 +503,8 @@ function SectionActions({
   );
 }
 
-/** Many-to-many collection memberships for this dataset, managed inline. */
-function CollectionsSection({ schemaId }: { schemaId: string }) {
+/** Many-to-many collection memberships for this dataset, managed inline. On a locked dataset (issue #124) the membership mutations stay visible but disabled with the reason — the collection rows themselves remain editable by anyone. */
+function CollectionsSection({ schemaId, lockedHint }: { schemaId: string; lockedHint?: string }) {
   const allCollections = useQuery(api.collections.list),
     memberCollections = useQuery(api.collections.listCollectionsBySchema, { schemaId }),
     addSchemaToCollection = useMutation(api.collections.addSchemaToCollection),
@@ -548,6 +581,8 @@ function CollectionsSection({ schemaId }: { schemaId: string }) {
                       variant="ghost"
                       size="icon"
                       aria-label={`Remove from ${collection.name}`}
+                      disabled={lockedHint !== undefined}
+                      title={lockedHint}
                       onClick={() => {
                         void handleRemove(collection);
                       }}
@@ -587,6 +622,7 @@ function CollectionsSection({ schemaId }: { schemaId: string }) {
         <SectionActions
           pickOpen={pickOpen}
           createOpen={createOpen}
+          lockedHint={lockedHint}
           onTogglePick={() => {
             setPickOpen((open) => !open);
             setCreateOpen(false);
@@ -636,13 +672,15 @@ function CollectionsSection({ schemaId }: { schemaId: string }) {
   );
 }
 
-/** The dataset's single group (0–1), managed inline — standalone groups included. */
+/** The dataset's single group (0–1), managed inline — standalone groups included. Same lock treatment as the collections section (issue #124). */
 function GroupSection({
   schemaId,
   groupId: activeGroupId,
+  lockedHint,
 }: {
   schemaId: string;
   groupId?: string;
+  lockedHint?: string;
 }) {
   const allGroups = useQuery(api.groups.list, { limit: 500 }),
     allCollections = useQuery(api.collections.list),
@@ -711,6 +749,8 @@ function GroupSection({
                   variant="ghost"
                   size="icon"
                   aria-label={`Remove from ${currentGroup.name}`}
+                  disabled={lockedHint !== undefined}
+                  title={lockedHint}
                   onClick={async () => {
                     try {
                       await setSchemaGroup({ groupId: null, schemaId });
@@ -757,6 +797,7 @@ function GroupSection({
         <SectionActions
           pickOpen={pickOpen}
           createOpen={createOpen}
+          lockedHint={lockedHint}
           onTogglePick={() => {
             setPickOpen((open) => !open);
             setCreateOpen(false);
@@ -1055,15 +1096,17 @@ function VersionRow({ version }: { version: VersionDoc }) {
   );
 }
 
-/** The Overview tab's content: dataset details plus inline collection/group management. */
+/** The Overview tab's content: dataset details plus inline collection/group management. `lockedHint` (issue #124) is set when the viewer may not write the dataset (editPolicy locked, not the creator) and explains every disabled membership control. */
 export function DatasetOverview({
   binding,
   schema,
   schemaId,
+  lockedHint,
 }: {
   binding?: BindingDoc;
   schema: DatasetDoc;
   schemaId: string;
+  lockedHint?: string;
 }) {
   // A PUBLISHED row's consumption surfaces (stage 6, #101): its sources
   // (with the drift badge + diff + derived sync) and its chain's Versions
@@ -1080,8 +1123,8 @@ export function DatasetOverview({
       {lineage !== undefined && chainAnchor !== undefined && chainAnchor !== schemaId && (
         <ChainVersionsCard anchorId={chainAnchor} />
       )}
-      <CollectionsSection schemaId={schemaId} />
-      <GroupSection schemaId={schemaId} groupId={schema.groupId} />
+      <CollectionsSection schemaId={schemaId} lockedHint={lockedHint} />
+      <GroupSection schemaId={schemaId} groupId={schema.groupId} lockedHint={lockedHint} />
     </div>
   );
 }

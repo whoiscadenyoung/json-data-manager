@@ -316,6 +316,9 @@ function toSchemaSummary(doc: Doc<"schemas">) {
     // for the same reason: host list surfaces re-filtering or attributing
     // rows never need the heavy payloads to apply the identity rule.
     publishedVisibility: doc.publishedVisibility,
+    // The edit policy rides too (issue #124): the datasets browser's lock
+    // badges read the same light summary as every other card field.
+    editPolicy: doc.editPolicy,
     source: doc.source,
     title: doc.title,
   };
@@ -328,6 +331,7 @@ const schemaSummaryValidator = schemaValidator
     "boundingBox",
     "createdBy",
     "description",
+    "editPolicy",
     "entryCount",
     "featureCount",
     "geometryType",
@@ -428,6 +432,30 @@ export const getImportSchemaId = query({
     return doc === null ? null : doc.schemaId;
   },
   returns: v.union(v.null(), v.id("schemas")),
+});
+
+/**
+ * The map a layer row belongs to (issue #124) — lets the host auth policy see
+ * WHICH map a layer-targeted wrapper (`removeMapLayer` and siblings, whose
+ * args carry only `layerId`) is mutating, so a per-map policy becomes
+ * possible without reshaping the wrappers. Maps are shared catalog artifacts
+ * today (no policy reads this yet — the recorded stage-8 boundary); the read
+ * exists so the operation ARG is already honest when one lands. Tolerates a
+ * `layerId` that isn't well-formed (the `getImportSchemaId` pattern — the
+ * policy must never be what crashes a call). Deliberately UNEXPOSED:
+ * host-flow-only, like every policy-seam read.
+ */
+export const getMapLayerMapId = query({
+  args: { layerId: v.string() },
+  handler: async (ctx, args) => {
+    const id = ctx.db.normalizeId("mapLayers", args.layerId);
+    if (id === null) {
+      return null;
+    }
+    const doc = await ctx.db.get(id);
+    return doc === null ? null : doc.mapId;
+  },
+  returns: v.union(v.null(), v.string()),
 });
 
 /**
@@ -756,6 +784,34 @@ export const setSchemaVisibility = mutation({
       throw new ConvexError("Schema not found");
     }
     await ctx.db.patch(args.schemaId, { publishedVisibility: args.publishedVisibility });
+  },
+  returns: v.null(),
+});
+
+/**
+ * Sets (or resets) one dataset's edit policy (issue #124, ADR 0010):
+ * `"locked"` narrows every write to the row's creator, `"open"` restores the
+ * trusted-collaborator default. Public-in-component but deliberately
+ * UNEXPOSED — no exposeApi wrapper carries it, so the only caller is the
+ * host's `schemas.setEditPolicy` mutation, which resolves the caller's
+ * identity at the choke point and enforces the ownership check (only the
+ * row's creator may flip its policy — locking is itself a write the policy
+ * gates). The `setSchemaVisibility` twin: a sharing decision, never part of
+ * the generic `updateSchema` metadata path.
+ */
+export const setEditPolicy = mutation({
+  args: {
+    editPolicy: v.union(v.literal("open"), v.literal("locked")),
+    // The host's ownership check rides on this being reachable only through
+    // its own gated mutation; the component-side existence check stays.
+    schemaId: v.id("schemas"),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.get(args.schemaId);
+    if (!existing) {
+      throw new ConvexError("Schema not found");
+    }
+    await ctx.db.patch(args.schemaId, { editPolicy: args.editPolicy });
   },
   returns: v.null(),
 });

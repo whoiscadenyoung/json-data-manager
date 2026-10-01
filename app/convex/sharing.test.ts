@@ -13,6 +13,10 @@
  * - sharing grants: published datasets stay shared (the D2 default), the
  *   author can narrow one to themselves server-side, and the choice
  *   inherits onto the frozen row at publish;
+ * - dataset edit policy (issue #124, ADR 0010): a `editPolicy: "locked"`
+ *   dataset rejects every write fn for a non-creator (data, schema, import,
+ *   transform, organization, press filing, unbind) while reads stay open and
+ *   the creator keeps writing; an open dataset keeps accepting them all;
  * - anonymous denial: the 0.1 gate holds across every project/share surface.
  *
  * The recorded decisions (issue #104 comment): D1 — per-creator private
@@ -410,6 +414,237 @@ describe("published-visibility control (stage 8 AC, decision D2)", () => {
     const ownConsumers = await mine.query(api.consumption.consumedBy, { datasetId: draftId });
     const fork = ownConsumers.consumers.find((consumer) => consumer.consumerKind === "fork");
     expect(fork === undefined ? undefined : fork.title).toBe("Fork home");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Dataset edit policy (issue #124, ADR 0010): "locked" = creator-only writes
+//
+// The complement of the stage-8 sharing grants: `editPolicy: "locked"`
+// answers EVERY write fn — data, schema, import, transform, and the
+// organization ops the read-only gate allows — to the creator alone, while
+// "open" (and absent) keeps ADR 0009's co-editable default byte-for-byte.
+// Reads never consult the policy; `publishedVisibility` decides readers.
+// ---------------------------------------------------------------------------
+
+describe("dataset edit policy (#124 AC: locked rejects non-creator writes, open accepts)", () => {
+  it("a locked dataset rejects every write fn for a non-creator, keeps reads open, keeps the creator writing", async () => {
+    const mine = signedIn();
+    const lockedId = await createPublishedDataset(mine, "Locked dataset");
+    const entryId = await addEntry(mine, lockedId, "row-1");
+    await mine.mutation(api.schemas.setEditPolicy, { editPolicy: "locked", schemaId: lockedId });
+    const other = mine.withIdentity({ subject: "user-2" });
+    const LOCK = /locked by its creator/i;
+
+    // Reads stay open — and the summary projection carries the policy, which
+    // is what the browser's lock badges read.
+    const foreignDoc = await other.query(api.schemas.get, { schemaId: lockedId });
+    expect(foreignDoc === null ? undefined : foreignDoc.title).toBe("Locked dataset");
+    const summaries = await other.query(api.schemas.listSummaries, { limit: 1000 });
+    expect(summaries.map((row) => row._id)).toContain(lockedId);
+    const summary = summaries.find((row) => row._id === lockedId);
+    expect(summary === undefined ? undefined : summary.editPolicy).toBe("locked");
+
+    // EVERY write fn the issue names, refused for user B with the same
+    // read-only-shaped denial:
+    // data writes…
+    await expect(
+      other.mutation(api.entries.create, { data: { label: "x" }, schemaId: lockedId }),
+    ).rejects.toThrow(LOCK);
+    await expect(
+      other.mutation(api.entries.update, { data: { label: "hijacked" }, entryId }),
+    ).rejects.toThrow(LOCK);
+    await expect(
+      other.mutation(api.entries.clearDatasetRows, { schemaId: lockedId }),
+    ).rejects.toThrow(LOCK);
+    // …deleteEntriesBySchema and schema writes…
+    await expect(
+      other.mutation(api.schemas.update, { schemaId: lockedId, title: "hijacked" }),
+    ).rejects.toThrow(LOCK);
+    await expect(other.mutation(api.schemas.remove, { schemaId: lockedId })).rejects.toThrow(LOCK);
+    // …imports, simplify, convert…
+    await expect(
+      other.mutation(api.imports.startImport, { schemaId: lockedId, total: 1 }),
+    ).rejects.toThrow(LOCK);
+    await expect(
+      other.mutation(api.imports.startSimplification, { schemaId: lockedId, total: 1 }),
+    ).rejects.toThrow(LOCK);
+    await expect(
+      other.mutation(api.imports.startGeospatialConversion, {
+        latField: "lat",
+        lonField: "lon",
+        schemaId: lockedId,
+        total: 1,
+      }),
+    ).rejects.toThrow(LOCK);
+    // …and the organization writes the read-only gate allows — the policy
+    // has no such carve-out (locked means creator-only, full stop).
+    const collectionId = await other.mutation(api.collections.create, { name: "B's shelf" });
+    await expect(
+      other.mutation(api.collections.addSchemaToCollection, { collectionId, schemaId: lockedId }),
+    ).rejects.toThrow(LOCK);
+    await expect(
+      other.mutation(api.collections.setSchemaGroup, { groupId: null, schemaId: lockedId }),
+    ).rejects.toThrow(LOCK);
+
+    // The lock control is the creator's (a foreign flip reads exactly as a
+    // missing row, same as the visibility control beside it).
+    await expect(
+      other.mutation(api.schemas.setEditPolicy, { editPolicy: "open", schemaId: lockedId }),
+    ).rejects.toThrow(NO_ACCESS);
+
+    // The creator keeps writing (positive case).
+    await mine.mutation(api.entries.create, { data: { label: "row-2" }, schemaId: lockedId });
+    await mine.mutation(api.schemas.update, { schemaId: lockedId, title: "Locked dataset" });
+  });
+
+  it("an open dataset keeps accepting every collaborator write (the ADR 0009 default is unchanged)", async () => {
+    const mine = signedIn();
+    const openId = await createPublishedDataset(mine, "Open dataset");
+    const other = mine.withIdentity({ subject: "user-2" });
+
+    // Co-editing preserved: B creates, edits, and files on A's open dataset —
+    // every one of the fns the lock denies stays open here.
+    const entryId = await other.mutation(api.entries.create, {
+      data: { label: "from B" },
+      schemaId: openId,
+    });
+    await other.mutation(api.entries.update, { data: { label: "edited by B" }, entryId });
+    const collectionId = await other.mutation(api.collections.create, { name: "B's shelf" });
+    await other.mutation(api.collections.addSchemaToCollection, { collectionId, schemaId: openId });
+    const rows = await other.query(api.entries.listPage, {
+      paginationOpts: { cursor: null, numItems: 10 },
+      schemaId: openId,
+    });
+    expect(rows.page.map((entry) => entry.data.label)).toEqual(["edited by B"]);
+
+    // B clears the dataset's rows (deleteEntriesBySchema), A keeps writing…
+    await other.mutation(api.entries.clearDatasetRows, { schemaId: openId });
+    const cleared = await other.query(api.entries.listPage, {
+      paginationOpts: { cursor: null, numItems: 10 },
+      schemaId: openId,
+    });
+    expect(cleared.page).toHaveLength(0);
+    await mine.mutation(api.entries.create, { data: { label: "from A" }, schemaId: openId });
+    const restarted = await mine.query(api.entries.listPage, {
+      paginationOpts: { cursor: null, numItems: 10 },
+      schemaId: openId,
+    });
+    expect(restarted.page.map((entry) => entry.data.label)).toEqual(["from A"]);
+  });
+
+  it("unlocking restores co-editing (the creator flips the policy either way)", async () => {
+    const mine = signedIn();
+    const datasetId = await createPublishedDataset(mine, "Lockable");
+    await mine.mutation(api.schemas.setEditPolicy, { editPolicy: "locked", schemaId: datasetId });
+    const other = mine.withIdentity({ subject: "user-2" });
+    await expect(
+      other.mutation(api.entries.create, { data: { label: "x" }, schemaId: datasetId }),
+    ).rejects.toThrow(/locked by its creator/i);
+
+    await mine.mutation(api.schemas.setEditPolicy, { editPolicy: "open", schemaId: datasetId });
+    await other.mutation(api.entries.create, { data: { label: "from B" }, schemaId: datasetId });
+  });
+
+  it("the bundle press refuses a foreign locked dataset and keeps filing open ones (preserve)", async () => {
+    const other = signedIn("user-2");
+    const otherProjectId = await createProject(other, "B's press");
+    const mine = other.withIdentity({ subject: "user-1" });
+    const lockedId = await createPublishedDataset(mine, "A's locked row");
+    await mine.mutation(api.schemas.setEditPolicy, { editPolicy: "locked", schemaId: lockedId });
+    const openId = await createPublishedDataset(mine, "A's open row");
+
+    // B can HOLD A's visible rows as members (membership is a project row,
+    // not a dataset write) — both press as referenced members.
+    await other.mutation(api.projects.addArtifact, {
+      artifactId: lockedId,
+      artifactKind: "dataset",
+      projectId: otherProjectId,
+    });
+    await other.mutation(api.projects.addArtifact, {
+      artifactId: openId,
+      artifactKind: "dataset",
+      projectId: otherProjectId,
+    });
+    const started = await other.mutation(api.bundles.start, { projectId: otherProjectId });
+
+    // Recording the locked row as the run's outcome is refused…
+    await expect(
+      other.mutation(api.bundles.recordMember, {
+        datasetKey: lockedId,
+        publishedSchemaId: lockedId,
+        runId: started.runId,
+        status: "published",
+      }),
+    ).rejects.toThrow(/locked by its creator/i);
+    // …and so is the collection leg's filing of the referenced locked member
+    // (the client-supplied-id bypass the issue names is closed).
+    await expect(
+      other.mutation(api.bundles.promoteCollection, { runId: started.runId }),
+    ).rejects.toThrow(/locked by its creator/i);
+
+    // A press over the OPEN member alone completes and files it — the
+    // shared-catalog bundle flow, preserved for open rows. The refused press
+    // left its run open (terminal runs never reopen), so it closes first and
+    // the re-press starts fresh.
+    await other.mutation(api.bundles.completeRun, { runId: started.runId });
+    await other.mutation(api.projects.removeArtifact, {
+      artifactId: lockedId,
+      artifactKind: "dataset",
+      projectId: otherProjectId,
+    });
+    const second = await other.mutation(api.bundles.start, { projectId: otherProjectId });
+    const collectionId = await other.mutation(api.bundles.promoteCollection, {
+      runId: second.runId,
+    });
+    const members = await other.query(api.collections.listDatasets, { collectionId });
+    expect(members.map((row) => row._id)).toContain(openId);
+  });
+
+  it("unbind refuses a locked projection for a non-creator; the creator unbinds", async () => {
+    const mine = signedIn();
+    const boundId = await createPublishedDataset(mine, "Locked projection");
+    await mine.mutation(api.schemas.setEditPolicy, { editPolicy: "locked", schemaId: boundId });
+    // Sync-created bindings attach to unstamped rows today (which cannot be
+    // locked); the fabricated row simulates a stamped projection so the
+    // surface the issue names has a provable gate.
+    await mine.run(async (ctx) => {
+      await ctx.db.insert("datasetBindings", { schemaId: boundId, source: "test-source" });
+    });
+    const other = mine.withIdentity({ subject: "user-2" });
+    await expect(other.mutation(api.bindings.unbind, { schemaId: boundId })).rejects.toThrow(
+      /locked by its creator/i,
+    );
+    // The creator still unbinds their own locked projection (positive case).
+    await mine.mutation(api.bindings.unbind, { schemaId: boundId });
+    await mine.finishAllScheduledFunctions(() => {
+      vi.runAllTimers();
+    });
+  });
+
+  it("a locked frozen version denies foreign writes; the creator retires it", async () => {
+    const mine = signedIn();
+    const projectId = await createProject(mine);
+    const draftId = await createProjectDraft(mine, projectId);
+    await addEntry(mine, draftId, "IG-1");
+    const frozenId = await publishNow(mine, draftId);
+    await mine.mutation(api.schemas.setEditPolicy, { editPolicy: "locked", schemaId: frozenId });
+    const other = mine.withIdentity({ subject: "user-2" });
+
+    // Retirement is the version row's own creator rule first, so the
+    // recorded "not found" denial shape is unchanged (the policy never
+    // widens what a caller learns)…
+    await expect(other.mutation(api.tags.retireVersion, { schemaId: frozenId })).rejects.toThrow(
+      /Version dataset not found/,
+    );
+    // …while organization writes on the locked frozen row get the policy's
+    // read-only shape (today they were signed-in-wide)…
+    await expect(
+      other.mutation(api.collections.setSchemaGroup, { groupId: null, schemaId: frozenId }),
+    ).rejects.toThrow(/locked by its creator/i);
+
+    // …and the creator retires their own locked version (positive case).
+    await mine.mutation(api.tags.retireVersion, { schemaId: frozenId });
   });
 });
 
@@ -987,6 +1222,9 @@ describe("anonymous denial (stage 8 AC: the 0.1 gate holds)", () => {
     );
     await expect(
       t.mutation(api.schemas.setVisibility, { schemaId: "x", visibility: "author" }),
+    ).rejects.toThrow(GATE_MESSAGE);
+    await expect(
+      t.mutation(api.schemas.setEditPolicy, { editPolicy: "locked", schemaId: "x" }),
     ).rejects.toThrow(GATE_MESSAGE);
   });
 });

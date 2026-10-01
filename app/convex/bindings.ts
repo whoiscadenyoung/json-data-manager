@@ -2,7 +2,7 @@ import { ConvexError, v } from "convex/values";
 
 import { components, internal } from "./_generated/api";
 import { internalMutation, mutation, query } from "./_generated/server";
-import { auth } from "./auth";
+import { assertDatasetWritable, auth } from "./auth";
 import { deleteDatasetCascading } from "./schemas";
 import { SOURCE_KEY } from "./sources";
 
@@ -155,7 +155,14 @@ export const unbindCleanup = internalMutation({
 export const unbind = mutation({
   args: { schemaId: v.string() },
   handler: async (ctx, args) => {
-    await auth(ctx);
+    const actorId = await auth(ctx);
+    // The edit-policy gate (issue #124, ADR 0010): unbinding deletes the
+    // mirrored dataset, so a LOCKED projection answers only to its creator.
+    // Sync-created rows carry no creator stamp today, so they cannot be
+    // locked and this never fires for them — the check is the policy
+    // surface the issue names, kept true if a later sync flow stamps
+    // creators (assertDatasetWritable refuses only locked+foreign).
+    await assertDatasetWritable(ctx, actorId, args.schemaId);
     const binding = await ctx.db
       .query("datasetBindings")
       .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))

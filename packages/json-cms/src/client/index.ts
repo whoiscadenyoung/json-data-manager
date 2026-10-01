@@ -538,17 +538,33 @@ export function exposeApi(component: ComponentApi, options: ExposeApiOptions) {
         return ctx.runMutation(component.lib.addMapLayer, args);
       },
     }),
+    // The layer-targeted mutations resolve their row's map first (issue
+    // #124): the auth hook's operation carries `mapId` — read-only context
+    // today (maps stay shared catalog artifacts), but the shape a per-map
+    // policy needs when one lands. A stale/foreign layerId resolves to no
+    // map and the call proceeds exactly as before (the underlying component
+    // mutation answers "not found").
     removeMapLayer: mutationGeneric({
       args: { layerId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "removeMapLayer", type: "update" });
+        const mapId = await ctx.runQuery(component.lib.getMapLayerMapId, { layerId: args.layerId });
+        await options.auth(ctx, {
+          fn: "removeMapLayer",
+          mapId: mapId ?? undefined,
+          type: "update",
+        });
         return ctx.runMutation(component.lib.removeMapLayer, args);
       },
     }),
     setMapLayerVisibility: mutationGeneric({
       args: { layerId: v.string(), visible: v.boolean() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "setMapLayerVisibility", type: "update" });
+        const mapId = await ctx.runQuery(component.lib.getMapLayerMapId, { layerId: args.layerId });
+        await options.auth(ctx, {
+          fn: "setMapLayerVisibility",
+          mapId: mapId ?? undefined,
+          type: "update",
+        });
         return ctx.runMutation(component.lib.setMapLayerVisibility, args);
       },
     }),
@@ -556,7 +572,8 @@ export function exposeApi(component: ComponentApi, options: ExposeApiOptions) {
     moveMapLayer: mutationGeneric({
       args: { direction: v.union(v.literal("up"), v.literal("down")), layerId: v.string() },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "moveMapLayer", type: "update" });
+        const mapId = await ctx.runQuery(component.lib.getMapLayerMapId, { layerId: args.layerId });
+        await options.auth(ctx, { fn: "moveMapLayer", mapId: mapId ?? undefined, type: "update" });
         return ctx.runMutation(component.lib.moveMapLayer, args);
       },
     }),
@@ -581,7 +598,13 @@ export function exposeApi(component: ComponentApi, options: ExposeApiOptions) {
         visible: v.optional(v.boolean()),
       },
       handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "setMapLayerOverride", type: "update" });
+        // The layer's map rides the auth operation (see removeMapLayer above).
+        const mapId = await ctx.runQuery(component.lib.getMapLayerMapId, { layerId: args.layerId });
+        await options.auth(ctx, {
+          fn: "setMapLayerOverride",
+          mapId: mapId ?? undefined,
+          type: "update",
+        });
         return ctx.runMutation(component.lib.setMapLayerOverride, args);
       },
     }),

@@ -5,7 +5,7 @@ import { components } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
-import { auth } from "./auth";
+import { assertDatasetWritable, auth } from "./auth";
 import { createChainMemo, resolveSourceHead } from "./consumption";
 import { projectForWrite } from "./projects";
 import { CATALOG_READ_LIMIT } from "./schemas";
@@ -931,6 +931,13 @@ async function memberForWrite(
  * frozen row id once `publishDataset` returns, "failed" with the error.
  * Per-member atomicity is the attempt's; this row only records what the
  * press already knows — a killed browser resumes from exactly these rows.
+ *
+ * The client-supplied `publishedSchemaId` is the one place a press accepts a
+ * component row id from the browser (issue #124): a LOCKED dataset answers
+ * only to its creator, so recording it as this run's outcome is refused —
+ * otherwise a run creator could file someone else's locked row into their
+ * promoted collection at the collection leg. Ordinary (open) rows keep
+ * today's accepted flow unchanged.
  */
 export const recordMember = mutation({
   args: {
@@ -945,6 +952,9 @@ export const recordMember = mutation({
     const actorId = await auth(ctx);
     await runningRun(ctx, actorId, args.runId);
     const member = await memberForWrite(ctx, args);
+    if (args.publishedSchemaId !== undefined) {
+      await assertDatasetWritable(ctx, actorId, args.publishedSchemaId);
+    }
     await ctx.db.patch(member._id, {
       attemptId: args.attemptId,
       error: args.error,
@@ -957,10 +967,11 @@ export const recordMember = mutation({
   returns: v.null(),
 });
 
-/** Files one member's row into the promoted collection: the frozen row it produced, or — for a referenced member — itself. A member that never froze files nothing. */
+/** Files one member's row into the promoted collection: the frozen row it produced, or — for a referenced member — itself. A member that never froze files nothing. The edit-policy gate (issue #124) runs on the row being filed: a referenced LOCKED dataset (someone else's locked row that entered the plan as an already-published member) refuses to be filed by a foreign press, while open rows keep today's shared-catalog flow. */
 async function fileMemberIntoCollection(
   ctx: MutationCtx,
   args: {
+    actorId: string;
     collectionId: string;
     member: {
       datasetKey: string;
@@ -980,6 +991,7 @@ async function fileMemberIntoCollection(
   if (rowId === undefined) {
     return;
   }
+  await assertDatasetWritable(ctx, args.actorId, rowId);
   await ctx.runMutation(components.jsonCms.lib.addSchemaToCollection, {
     collectionId: args.collectionId,
     schemaId: rowId,
@@ -1025,7 +1037,7 @@ export const promoteCollection = mutation({
       .collect();
     for (const member of members) {
       // oxlint-disable-next-line no-await-in-loop -- one membership write per member, in press order.
-      await fileMemberIntoCollection(ctx, { collectionId, member });
+      await fileMemberIntoCollection(ctx, { actorId, collectionId, member });
     }
     await ctx.db.patch(runRow._id, { lastProgressAt: Date.now() });
     return collectionId;

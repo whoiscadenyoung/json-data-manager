@@ -314,6 +314,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         },
         Name
       >;
+      getMapLayerMapId: FunctionReference<
+        "query",
+        "internal",
+        { layerId: string },
+        null | string,
+        Name
+      >;
       getMapTileArchiveMeta: FunctionReference<
         "query",
         "internal",
@@ -336,6 +343,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           boundingBox?: Array<number>;
           createdBy?: string;
           description?: string;
+          editPolicy?: "open" | "locked";
           entryCount?: number;
           featureCount?: number;
           geometryType?:
@@ -387,6 +395,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           boundingBox?: Array<number>;
           createdBy?: string;
           description?: string;
+          editPolicy?: "open" | "locked";
           entryCount?: number;
           featureCount?: number;
           geometryType?:
@@ -469,6 +478,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           boundingBox?: Array<number>;
           createdBy?: string;
           description?: string;
+          editPolicy?: "open" | "locked";
           entryCount?: number;
           featureCount?: number;
           fieldCount: number;
@@ -793,6 +803,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           boundingBox?: Array<number>;
           createdBy?: string;
           description?: string;
+          editPolicy?: "open" | "locked";
           entryCount?: number;
           featureCount?: number;
           geometryType?:
@@ -844,6 +855,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           boundingBox?: Array<number>;
           createdBy?: string;
           description?: string;
+          editPolicy?: "open" | "locked";
           entryCount?: number;
           featureCount?: number;
           geometryType?:
@@ -895,6 +907,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           boundingBox?: Array<number>;
           createdBy?: string;
           description?: string;
+          editPolicy?: "open" | "locked";
           entryCount?: number;
           featureCount?: number;
           fieldCount: number;
@@ -941,6 +954,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           boundingBox?: Array<number>;
           createdBy?: string;
           description?: string;
+          editPolicy?: "open" | "locked";
           entryCount?: number;
           featureCount?: number;
           geometryType?:
@@ -1001,6 +1015,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "internal",
         { collectionId: string; schemaId: string },
         any,
+        Name
+      >;
+      setEditPolicy: FunctionReference<
+        "mutation",
+        "internal",
+        { editPolicy: "open" | "locked"; schemaId: string },
+        null,
         Name
       >;
       setGroupCollection: FunctionReference<

@@ -440,6 +440,46 @@ export const setVisibility = mutation({
 });
 
 /**
+ * The creator's edit-policy control (issue #124, ADR 0010): "locked" makes
+ * every write on this dataset creator-only, "open" restores the
+ * trusted-collaborator default (existing rows never migrate — absent reads
+ * as open). Creator-only and enforced HERE, exactly like `setVisibility`
+ * above — the component's `setEditPolicy` is deliberately unexposed, so this
+ * host mutation is the only writer. Locking is itself a write the policy
+ * gates, so only the creator can flip it either way; denials read as "not
+ * found" so an id's existence never leaks. This mutation carries NO
+ * operation into `auth` on purpose: the policy check it enforces is its own
+ * creator rule (routing it through the choke point's write gate would make
+ * unlocking a locked dataset self-denying — the flip must predate the
+ * policy it changes).
+ */
+export const setEditPolicy = mutation({
+  args: {
+    editPolicy: v.union(v.literal("open"), v.literal("locked")),
+    schemaId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const actorId = await auth(ctx);
+    let doc: FunctionReturnType<typeof components.jsonCms.lib.getSchema>;
+    try {
+      doc = await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: args.schemaId });
+    } catch {
+      // A string that isn't a well-formed component id — the same "not
+      // found" as an unknown id (the setVisibility precedent above).
+      doc = null;
+    }
+    if (doc === null || doc.createdBy !== actorId) {
+      throw new ConvexError("That dataset doesn't exist or you don't have access to it.");
+    }
+    await ctx.runMutation(components.jsonCms.lib.setEditPolicy, {
+      editPolicy: args.editPolicy,
+      schemaId: args.schemaId,
+    });
+  },
+  returns: v.null(),
+});
+
+/**
  * One-off maintenance for the denormalized dataset summaries (issue #54):
  * stamps `entryCount` onto every dataset and `kind` onto pre-field collection
  * membership rows inside the component. Idempotent — rerun any time drift is

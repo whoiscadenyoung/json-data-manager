@@ -207,6 +207,19 @@ export default defineSchema({
     // itself, never on project-shaped data: nothing published knows projects
     // exist (lifecycle §4).
     publishedVisibility: v.optional(v.union(v.literal("author"), v.literal("everyone"))),
+    // Per-dataset edit policy (issue #124, ADR 0010): who may WRITE this
+    // dataset. "open" — and ABSENT, so every pre-field row — keeps the
+    // trusted-collaborator default (ADR 0009: any signed-in user); "locked"
+    // answers writes only to the row's creator (`createdBy`). Read visibility
+    // is `publishedVisibility`'s job and stays orthogonal: the two fields
+    // compose into the four public/private × open/locked combinations. The
+    // component stays auth-less, so enforcement is the HOST's `auth` choke
+    // point plus its explicit host-flow checks (the `setSchemaVisibility`
+    // pattern); the only writer is the host's `setEditPolicy` flow — never an
+    // exposeApi wrapper. A literal union (not a boolean) so the recorded
+    // growth path — a later `{ mode: "team", teamId }` — extends additively,
+    // the same way `lifecycle` grew.
+    editPolicy: v.optional(v.union(v.literal("open"), v.literal("locked"))),
     // Denormalized dataset-level summary, maintained incrementally by the
     // entry/geometry mutations in component/lib.ts (never recomputed from a
     // full scan). `featureCount` is kept exactly accurate — cheap to keep
