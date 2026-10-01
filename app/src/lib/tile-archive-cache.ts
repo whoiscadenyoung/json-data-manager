@@ -124,7 +124,10 @@ export function planEviction(
   let remaining = total;
   for (const entry of ordered) {
     if (remaining <= budgetBytes) break;
-    if (protectedKeys !== undefined && protectedKeys.has(archiveKey(entry.schemaId, entry.version))) {
+    if (
+      protectedKeys !== undefined &&
+      protectedKeys.has(archiveKey(entry.schemaId, entry.version))
+    ) {
       continue;
     }
     plan.push({ schemaId: entry.schemaId, version: entry.version });

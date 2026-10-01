@@ -1,7 +1,6 @@
+import type { ConvexClient } from "convex/browser";
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-
-import type { ConvexClient } from "convex/browser";
 
 /**
  * The tile worker's geometry-fetch pool contract (issue #134): at most

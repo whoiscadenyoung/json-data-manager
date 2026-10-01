@@ -35,7 +35,15 @@ function straddlingIsland(id: string, lat: number): GeoJSONFeature {
     geometry: {
       type: "MultiPolygon",
       coordinates: [
-        [[[179.8, lat], [179.95, lat], [179.95, lat + 0.1], [179.8, lat + 0.1], [179.8, lat]]],
+        [
+          [
+            [179.8, lat],
+            [179.95, lat],
+            [179.95, lat + 0.1],
+            [179.8, lat + 0.1],
+            [179.8, lat],
+          ],
+        ],
         [
           [
             [-179.95, lat],
