@@ -19,8 +19,13 @@ the one page-load query.
   projection (`users:profile`), not a component-side creator query — dataset
   counts are far below needing an index.
 - `users:listProfiles` returns authId/name/image **deliberately without
-  email** — the broadest surface gets the least PII; the dataset overview
-  keeps `profileByAuthId` when it needs the email fallback.
+  email** — the broadest surface gets the least PII. **Updated 2026-09-30
+  (#136):** `profileByAuthId`/`profile` now follow the same rule — public
+  projection (plus the row's `_creationTime` for the profile page's "Joined"
+  line), email only when the viewer IS that user; the old "dataset overview
+  keeps profileByAuthId for the email fallback" intent is retired. Signup is
+  closed (`disableSignUp: true`); accounts are minted via the internal
+  `auth.createAccount` mutation — recipe in the ADR 0009 addendum.
 - Dataset browser cards: the creator chip is a **sibling Link of the card's
   Link, never nested** (anchors can't nest — the HTML parser auto-closes the
   outer one and SSR hydration breaks). Card root became the `Card`, with the

@@ -67,7 +67,7 @@ describe("me (the auth-state probe)", () => {
 });
 
 describe("profileByAuthId", () => {
-  it("resolves a mirror row for any signed-in viewer and answers null for an unknown id", async () => {
+  it("resolves the public projection for any signed-in viewer — email only to the user themself (#136)", async () => {
     const t = signedIn();
     await insertMirrorUser(t, {
       authId: "user-2",
@@ -78,11 +78,17 @@ describe("profileByAuthId", () => {
     const profile = await t.query(api.users.profileByAuthId, { authId: "user-2" });
     expect(profile === null ? undefined : profile.name).toBe("User Two");
     expect(profile === null ? undefined : profile.image).toBe("https://example.com/a.png");
-    // Another user's id resolves the same way — the display side of the
-    // component's createdBy stamping.
+    // Another user's id resolves the display side of the component's
+    // createdBy stamping — the public projection, never the email.
     const other = t.withIdentity({ subject: "user-3" });
     const foreign = await other.query(api.users.profileByAuthId, { authId: "user-2" });
-    expect(foreign === null ? undefined : foreign.email).toBe("two@example.com");
+    expect(foreign === null ? undefined : foreign.name).toBe("User Two");
+    expect(foreign === null ? true : "email" in foreign).toBe(false);
+    // The user themself is the one viewer the email comes back to.
+    const self = await t
+      .withIdentity({ subject: "user-2" })
+      .query(api.users.profileByAuthId, { authId: "user-2" });
+    expect(self === null ? undefined : self.email).toBe("two@example.com");
     expect(await t.query(api.users.profileByAuthId, { authId: "nobody" })).toBeNull();
   });
 
@@ -109,15 +115,22 @@ describe("profile (one page load)", () => {
 
     // User One's profile, viewed by user-2: public rows are catalog-visible
     // to every signed-in collaborator (ADR 0009), filtered to the profiled
-    // creator only.
+    // creator only — and `user` is the public projection, never the email.
     const asOther = t.withIdentity({ subject: "user-2" });
     const one = await asOther.query(api.users.profile, { authId: "user-1" });
     expect(one.user === null ? undefined : one.user.name).toBe("User One");
+    expect(one.user === null ? true : "email" in one.user).toBe(false);
     expect(one.datasets.map((dataset) => dataset._id)).toContain(mine);
     expect(one.datasets).toHaveLength(1);
 
     const two = await t.query(api.users.profile, { authId: "user-2" });
     expect(two.datasets.map((dataset) => dataset._id)).toContain(theirs);
+    expect(two.user === null ? true : "email" in two.user).toBe(false);
+
+    // The profiled user themself is the one viewer who gets the email back.
+    const twoSelf = await asOther.query(api.users.profile, { authId: "user-2" });
+    expect(twoSelf.user === null ? false : "email" in twoSelf.user).toBe(true);
+    expect(twoSelf.user === null ? undefined : twoSelf.user.email).toBe("two@example.com");
 
     // An unknown id renders the page's not-found state: user null, no
     // datasets can match.

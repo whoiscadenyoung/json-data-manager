@@ -3,19 +3,53 @@ import { createClient, type AuthFunctions, type GenericCtx } from "@convex-dev/b
 import { convex } from "@convex-dev/better-auth/plugins";
 import { betterAuth } from "better-auth/minimal";
 import type { Auth, FunctionReturnType } from "convex/server";
-import { ConvexError } from "convex/values";
+import { ConvexError, v } from "convex/values";
 
 import { components, internal } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
-import type { MutationCtx } from "./_generated/server";
+import { internalMutation, type MutationCtx } from "./_generated/server";
 import authConfig from "./auth.config";
+
+/**
+ * The localhost fallback for local dev — the only place a missing SITE_URL
+ * is allowed to default (issue #136): on any real deployment the app origin
+ * must be configured explicitly, so cookies and trusted origins are never
+ * quietly issued for localhost in production.
+ */
+const LOCAL_SITE_URL = "http://localhost:3000";
+
+/**
+ * Resolve the app origin, failing closed (issue #136): SITE_URL must be set
+ * on a non-dev deployment — the module-level `siteUrl` below throws at init
+ * otherwise, so the deployment's functions never boot with Better Auth
+ * pointed at the wrong origin. The localhost fallback survives only for
+ * local dev: no `CONVEX_DEPLOYMENT` at all (the test runner, one-off
+ * scripts), a `local-…` backend (the local-backend recipe, which names its
+ * deployment without a cloud kind prefix), or a cloud `dev:` deployment.
+ * Everything else — `prod:`, `preview:`, any unknown kind — is real and
+ * throws.
+ */
+export function resolveSiteUrl(siteUrl: string | undefined, deployment: string | undefined) {
+  if (siteUrl !== undefined && siteUrl !== "") {
+    return siteUrl;
+  }
+  const isLocalDev =
+    deployment === undefined || deployment.startsWith("dev:") || !deployment.includes(":");
+  if (!isLocalDev) {
+    throw new Error(
+      `SITE_URL is not set on deployment "${deployment}". Set it to the origin the app is served from (bunx convex env set SITE_URL https://…): Better Auth issues session cookies and accepts origins only for this URL, so it must be configured explicitly outside local dev.`,
+    );
+  }
+  return LOCAL_SITE_URL;
+}
 
 /**
  * The app origin. Better Auth's `baseURL` and trusted origin — cookies are
  * issued for this origin and the Start server proxies auth requests to the
  * component from here, so the deployment never sees another value in dev.
+ * Throws at init when unset on a non-dev deployment (resolveSiteUrl above).
  */
-const siteUrl = process.env.SITE_URL ?? "http://localhost:3000";
+export const siteUrl = resolveSiteUrl(process.env.SITE_URL, process.env.CONVEX_DEPLOYMENT);
 
 // The explicit annotation matters: these are auth.ts's own exports (via
 // triggersApi below), so an inline literal in the config would make
@@ -70,16 +104,71 @@ export const { onCreate, onUpdate, onDelete } = authComponent.triggersApi();
  * to call per function invocation (the component caches internally); used by
  * http.ts for the route handlers and by authComponent.getAuth for direct
  * Better Auth API calls from Convex functions.
+ *
+ * Signup policy (issue #136, ADR 0009 addendum — option (a)): the trust
+ * model holds only if who can sign in is controlled, so the PUBLIC surface
+ * ships with `disableSignUp: true` — no self-serve registration; the
+ * sign-in endpoint is unaffected. The one way in is `createAccount` below,
+ * an internal mutation, so only host code (or an operator via `convex run`
+ * with the admin key) can mint accounts. `allowSignUp` exists solely for
+ * that path — every HTTP-driven caller of this builder gets the locked
+ * config.
  */
-export const createAuth = (ctx: GenericCtx<DataModel>) => {
+export const createAuth = (ctx: GenericCtx<DataModel>, options?: { allowSignUp?: boolean }) => {
+  // Signup stays closed unless the host-side creation path asks for it open.
+  const allowSignUp = options !== undefined && options.allowSignUp === true;
   return betterAuth({
     baseURL: siteUrl,
     database: authComponent.adapter(ctx),
-    emailAndPassword: { enabled: true },
+    emailAndPassword: {
+      enabled: true,
+      disableSignUp: !allowSignUp,
+    },
     plugins: [convex({ authConfig })],
     trustedOrigins: [siteUrl],
   });
 };
+
+/**
+ * The host-side account-creation path (issue #136): the ONLY way a new user
+ * comes into existence now that the public surface has
+ * `emailAndPassword.disableSignUp`. Internal, so callers are host code and
+ * operators with the deployment admin key — nobody can invoke it from a
+ * browser or client SDK. It drives Better Auth's own sign-up endpoint
+ * (password hashing, credential account linking, and the user trigger that
+ * inserts the `users` mirror row) with the one flag flipped, rather than
+ * Better Auth's admin API: the admin plugin adds `role`/`banned` fields
+ * whose columns the better-auth component's schema lacks (ADR 0009
+ * addendum).
+ *
+ * The operator recipe (also the local-dev first-account flow) lives in the
+ * ADR: bunx convex run auth:createAccount '{"email": …, "password": …,
+ * "name": …}' (local backend: add --url http://127.0.0.1:3212 --admin-key …).
+ * Password must meet Better Auth's minimum (8 characters).
+ */
+export const createAccount = internalMutation({
+  args: {
+    email: v.string(),
+    image: v.optional(v.string()),
+    name: v.string(),
+    password: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const authInstance = createAuth(ctx, { allowSignUp: true });
+    const created = await authInstance.api.signUpEmail({
+      body: {
+        email: args.email,
+        image: args.image,
+        name: args.name,
+        password: args.password,
+      },
+    });
+    // autoSignIn hands back a session token too — the operator's caller is
+    // not a browser; only the created identity matters here.
+    return { authId: created.user.id };
+  },
+  returns: v.object({ authId: v.string() }),
+});
 
 type BetterAuthUser = {
   email: string;

@@ -19,8 +19,8 @@ import { register as registerJsonCms } from "@caden/json-cms/test";
 import { convexTest } from "convex-test";
 import { describe, expect, it } from "vitest";
 
-import { api } from "./_generated/api";
-import { auth } from "./auth";
+import { api, internal } from "./_generated/api";
+import { auth, createAuth, resolveSiteUrl } from "./auth";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -195,5 +195,64 @@ describe("gate: host functions with an explicit gate (bucket 3)", () => {
   it("users.me stays callable signed out and returns null (the deliberate exception)", async () => {
     const t = initTest();
     expect(await t.query(api.users.me, {})).toBeNull();
+  });
+});
+
+describe("signup policy (#136, ADR 0009 addendum)", () => {
+  it("the public auth surface ships with sign-up disabled", async () => {
+    const t = initTest();
+    await t.run(async (ctx) => {
+      // The config the HTTP route handlers get (registerRoutesLazy calls
+      // createAuth(ctx) with no options) — the surface a browser can reach.
+      const policy = createAuth(ctx).options.emailAndPassword;
+      if (policy === undefined) {
+        throw new Error("the auth surface has no emailAndPassword config");
+      }
+      expect(policy.enabled).toBe(true);
+      expect(policy.disableSignUp).toBe(true);
+    });
+  });
+
+  it("only the host-side creation path builds with sign-up enabled", async () => {
+    const t = initTest();
+    await t.run(async (ctx) => {
+      const policy = createAuth(ctx, { allowSignUp: true }).options.emailAndPassword;
+      if (policy === undefined) {
+        throw new Error("the auth surface has no emailAndPassword config");
+      }
+      expect(policy.enabled).toBe(true);
+      expect(policy.disableSignUp).toBe(false);
+    });
+  });
+
+  it("account creation is reachable only as an internal function", () => {
+    // api.auth.createAccount not existing is enforced by the generated types
+    // (tsc fails on it); here we pin the internal half of the contract.
+    expect(internal.auth.createAccount).toBeDefined();
+  });
+});
+
+describe("resolveSiteUrl (SITE_URL fail-closed, #136)", () => {
+  it("returns SITE_URL verbatim when set, on any deployment kind", () => {
+    expect(resolveSiteUrl("https://app.example.com", "prod:app-1")).toBe("https://app.example.com");
+    expect(resolveSiteUrl("http://localhost:5173", "dev:app-1")).toBe("http://localhost:5173");
+  });
+
+  it("falls back to localhost only for local dev", () => {
+    // No deployment at all (the test runner, one-off scripts).
+    expect(resolveSiteUrl(undefined, undefined)).toBe("http://localhost:3000");
+    // The local-backend recipe names its deployment without a cloud kind prefix.
+    expect(resolveSiteUrl(undefined, "local-caden_young_noblis_org-app")).toBe(
+      "http://localhost:3000",
+    );
+    // A cloud dev deployment keeps the fallback (non-dev deployments don't).
+    expect(resolveSiteUrl(undefined, "dev:app-1")).toBe("http://localhost:3000");
+  });
+
+  it("throws when unset on a non-dev deployment", () => {
+    expect(() => resolveSiteUrl(undefined, "prod:app-1")).toThrow(/SITE_URL/);
+    expect(() => resolveSiteUrl(undefined, "preview:app-2")).toThrow(/SITE_URL/);
+    // An empty SITE_URL is as good as missing.
+    expect(() => resolveSiteUrl("", "prod:app-1")).toThrow(/SITE_URL/);
   });
 });

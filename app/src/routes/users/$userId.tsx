@@ -23,6 +23,28 @@ export const Route = createFileRoute("/users/$userId")({
 
 type ProfileDataset = FunctionReturnType<typeof api.users.profile>["datasets"][number];
 
+type ProfileUser = NonNullable<FunctionReturnType<typeof api.users.profile>["user"]>;
+
+/**
+ * The headline name — the display name, or the email the viewer only ever
+ * has about themself (issue #136: another viewer's projection carries no
+ * email at all).
+ */
+function profileDisplayName(user: ProfileUser): string | undefined {
+  if ("email" in user) {
+    return user.name ?? user.email;
+  }
+  return user.name;
+}
+
+/** The subtitle email — only ever present for the user themself, and only when it differs from their name. */
+function profileSubtitleEmail(user: ProfileUser): string | undefined {
+  if ("email" in user && user.name !== user.email) {
+    return user.email;
+  }
+  return undefined;
+}
+
 /**
  * One dataset the profiled user created — the browser card's shape, minus
  * the group/organization details that live on the dataset page itself.
@@ -90,8 +112,12 @@ function UserProfilePage() {
     );
   }
 
+  // `profile.user` carries the email only when the viewer IS the user
+  // (issue #136) — other viewers get the public projection: name, avatar,
+  // joined date, never the email.
   const user = profile.user,
-    displayName = user.name ?? user.email;
+    displayName = profileDisplayName(user),
+    subtitleEmail = profileSubtitleEmail(user);
   return (
     <main className="mx-auto max-w-6xl px-4 py-8">
       <div className="mb-8 flex items-center gap-4">
@@ -102,7 +128,7 @@ function UserProfilePage() {
             {isMe && <Badge variant="outline">You</Badge>}
           </div>
           <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-            {user.name !== undefined && user.name !== user.email && <span>{user.email}</span>}
+            {subtitleEmail !== undefined && <span>{subtitleEmail}</span>}
             <span className="flex items-center">
               <Calendar className="mr-1.5 h-3.5 w-3.5" />
               Joined {new Date(user._creationTime).toLocaleDateString()}
