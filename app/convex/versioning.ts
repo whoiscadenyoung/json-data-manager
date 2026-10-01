@@ -5,7 +5,7 @@ import { naturalKeyOf, type VersionRow } from "../src/lib/version-rows";
 import { components } from "./_generated/api";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { internalMutation } from "./_generated/server";
-import { deleteDatasetCascading } from "./schemas";
+import { CATALOG_READ_LIMIT, deleteDatasetCascading } from "./schemas";
 import type { CommitOp } from "./sources";
 
 // The pure key rule lives in src/lib/version-rows.ts (one definition shared
@@ -411,7 +411,11 @@ export const enforceRetention = internalMutation({
     sourceSchemaId: v.string(),
   },
   handler: async (ctx, args) => {
+    // The fold ceiling (schemas.ts): retention must see the whole chain to
+    // retire everything past keep — keep-N bounds chain length in practice
+    // (issue #128 bounded the underlying component read).
     const versions = await ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+      limit: CATALOG_READ_LIMIT,
       sourceSchemaId: args.sourceSchemaId,
     });
     const retired = versionsToRetire(versions, args.keep, args.pinnedRefs);
@@ -453,7 +457,11 @@ export const recordVersionDelta = internalMutation({
     if (target === null || target.lineage === undefined) {
       return;
     }
+    // The fold ceiling (schemas.ts): the previous-version search must reach
+    // the whole chain (issue #128 bounded the underlying component read;
+    // keep-N retention bounds chain length in practice).
     const versions = await ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+      limit: CATALOG_READ_LIMIT,
       sourceSchemaId: args.sourceSchemaId,
     });
     const previous = previousVersionOf(versions, args.toSchemaId, target.lineage.frozenAt);

@@ -476,15 +476,20 @@ export const getMapLayerMapId = query({
  * Frozen versions (tags) of one bound dataset, newest freeze first — the
  * dataset page's "Versions" list. Only docs carrying `lineage` are in the
  * index, so ordinary datasets list nothing here.
+ *
+ * Required limit (issue #128) — same bound as its sibling reads: each row
+ * maps through `toPublicSchemaView`, so a long chain re-reads full schema
+ * payloads. Chains are keep-N retention-bounded in practice, so the honored
+ * width is headroom, not a correctness cap.
  */
 export const listSchemaVersions = query({
-  args: { sourceSchemaId: v.id("schemas") },
+  args: { limit: v.number(), sourceSchemaId: v.id("schemas") },
   handler: async (ctx, args) => {
     const versions = await ctx.db
       .query("schemas")
       .withIndex("by_lineage_source", (q) => q.eq("lineage.sourceSchemaId", args.sourceSchemaId))
       .order("desc")
-      .collect();
+      .take(clampLimit(args.limit));
     return versions.map(toPublicSchemaView);
   },
   returns: v.array(publicSchemaViewValidator),

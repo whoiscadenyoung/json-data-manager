@@ -18,6 +18,7 @@ import {
   type RegistryRowLike,
 } from "./derivedSpec";
 import schema from "./schema";
+import { scheduleHostCascade } from "./schemas";
 
 /**
  * The derived-dataset registry's functions (roadmap stage 2, #95; ADR 0005
@@ -464,6 +465,16 @@ export const get = query({
  * Deletes one registry row — a discarded draft or an obsolete spec. Dependents
  * (if any) re-read as orphaned on their next read. Creator-only since stage 8
  * (#104): a foreign row reads exactly as a missing one.
+ *
+ * Since issue #128 the row's HOST rows go with it too (the same cascade a
+ * component dataset's delete runs): the edges naming it as a SOURCE (specs
+ * and forks reading this transform), its project memberships (artifactKind
+ * "derived"), the chain's `versionPolicies`/`tagDeltas`/`publishAttempts`
+ * (all keyed by the row id — a derived chain's anchor IS the registry row),
+ * and other rows' `dependsOn` edges naming it. The component's map layers
+ * pointing at the id deliberately stay (the json-cms component schema.ts
+ * dangling-derived-layer rule, packages/json-cms/src/component/schema.ts —
+ * mapLayers readers answer "deleted derived dataset" defensively).
  */
 export const remove = mutation({
   args: { id: v.string() },
@@ -496,6 +507,8 @@ export const remove = mutation({
       await ctx.db.delete(edge._id);
     }
     await ctx.db.delete(id);
+    // The rest of the host cleanup, in its own rescheduled chain (issue #128).
+    await scheduleHostCascade(ctx, { artifactKind: "derived", schemaId: id });
   },
   returns: v.null(),
 });

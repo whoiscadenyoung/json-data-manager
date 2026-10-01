@@ -941,7 +941,10 @@ describe("json-cms component", () => {
       // A different live dataset's version — proves the listing is scoped.
       await freezeVersion(t, otherLiveId, "other-v1");
 
-      const versions = await t.query(api.lib.listSchemaVersions, { sourceSchemaId: liveId });
+      const versions = await t.query(api.lib.listSchemaVersions, {
+        limit: 10,
+        sourceSchemaId: liveId,
+      });
       expect(versions).toHaveLength(2);
       expect(versions.map((version) => version.title)).toEqual([
         "Versioned Schema — v2",
@@ -949,14 +952,41 @@ describe("json-cms component", () => {
       ]);
 
       const otherVersions = await t.query(api.lib.listSchemaVersions, {
+        limit: 10,
         sourceSchemaId: otherLiveId,
       });
       expect(otherVersions).toHaveLength(1);
 
       // Ordinary datasets (no versions) list nothing.
       const plainId = await t.mutation(api.lib.createSchema, { schema: versionedSchema });
-      const none = await t.query(api.lib.listSchemaVersions, { sourceSchemaId: plainId });
+      const none = await t.query(api.lib.listSchemaVersions, {
+        limit: 10,
+        sourceSchemaId: plainId,
+      });
       expect(none).toHaveLength(0);
+    });
+
+    it("listSchemaVersions honors its required limit, keeping the newest (issue #128)", async () => {
+      const t = initConvexTest(),
+        liveId = await createLive(t);
+      await freezeVersion(t, liveId, "v1");
+      // Ticks so each freeze sorts after the previous one.
+      vi.advanceTimersByTime(1);
+      await freezeVersion(t, liveId, "v2");
+      vi.advanceTimersByTime(1);
+      await freezeVersion(t, liveId, "v3");
+
+      const versions = await t.query(api.lib.listSchemaVersions, {
+        limit: 2,
+        sourceSchemaId: liveId,
+      });
+      expect(versions).toHaveLength(2);
+      // The window keeps the NEWEST freezes — the head a badge compares
+      // against never falls out.
+      expect(versions.map((version) => version.title)).toEqual([
+        "Versioned Schema — v3",
+        "Versioned Schema — v2",
+      ]);
     });
 
     it("getSchemaVersionBySnapshotRef resolves the frozen version by ref", async () => {

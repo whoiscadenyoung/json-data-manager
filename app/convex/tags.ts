@@ -10,7 +10,7 @@ import {
   pinRefIntoPolicyStore,
   sourceVisibleToViewer,
 } from "./consumption";
-import { deleteDatasetCascading } from "./schemas";
+import { CATALOG_READ_LIMIT, deleteDatasetCascading } from "./schemas";
 import { chunkByJsonBytes, getSource, SOURCE_KEY } from "./sources";
 import {
   DEFAULT_KEEP_VERSIONS,
@@ -342,12 +342,17 @@ const versionValidator = v.object({
  * The frozen versions of one bound live dataset, newest first — a light
  * projection (no `schema`/`uiSchema` payloads) for the dataset page's
  * Versions list and the snapshots card's ingested-state join.
+ *
+ * Bounded at the host fold ceiling (schemas.ts, issue #128): the component
+ * read now requires a limit, and a frozen version accumulates only per
+ * ingest, so the ceiling is headroom rather than a behavior change.
  */
 export const listVersions = query({
   args: { sourceSchemaId: v.string() },
   handler: async (ctx, args) => {
     await auth(ctx);
     const versions = await ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+      limit: CATALOG_READ_LIMIT,
       sourceSchemaId: args.sourceSchemaId,
     });
     return versions.map((version) => ({

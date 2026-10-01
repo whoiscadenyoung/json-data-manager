@@ -7,7 +7,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { auth } from "./auth";
 import { specDependencies } from "./derivedSpec";
-import { deleteDatasetCascading } from "./schemas";
+import { CATALOG_READ_LIMIT, deleteDatasetCascading } from "./schemas";
 import {
   commitOpValidator,
   DEFAULT_KEEP_VERSIONS,
@@ -343,7 +343,11 @@ async function componentChainVersions(
   }
   let versions: ComponentVersionDoc[];
   try {
+    // The fold ceiling (schemas.ts): chain resolution AND retention math must
+    // see the whole chain — keep-N retention bounds chain length in practice,
+    // so the ceiling is headroom, not a behavior change (issue #128).
     versions = await ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+      limit: CATALOG_READ_LIMIT,
       sourceSchemaId: anchorId,
     });
   } catch {

@@ -947,7 +947,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       listSchemaVersions: FunctionReference<
         "query",
         "internal",
-        { sourceSchemaId: string },
+        { limit: number; sourceSchemaId: string },
         Array<{
           _creationTime: number;
           _id: string;
