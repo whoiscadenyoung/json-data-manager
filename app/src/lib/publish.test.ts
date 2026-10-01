@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 // before the import graph loads.
 vi.mock("#/env", () => ({ env: { VITE_CONVEX_URL: "http://127.0.0.1:3212" } }));
 
-import { resumePlan } from "./publish";
+import { fingerprintChunks, resumePlan } from "./publish";
 
 /**
  * The orchestrator's resume decision (roadmap 5b AC 4) — the exact logic
@@ -40,5 +40,85 @@ describe("resumePlan — the publish resume decision", () => {
     // matches the re-execution, so only the registered>planned comparison
     // can see the inconsistency.
     expect(resumePlan(4, 7, 4)).toStrictEqual({ from: 0, reset: true });
+  });
+});
+
+/**
+ * Issue #130's fix: the resume decision must be CONTENT validation, not a
+ * better count. An edit that preserves the chunk count between a failed
+ * attempt and its resume would otherwise mix two snapshots into the frozen
+ * immutable version — the recorded fingerprint is what sees it.
+ */
+describe("resumePlan — the content check (issue #130)", () => {
+  const executed = { fingerprint: "aaaabbbb", rowCount: 12 };
+
+  it("an equal chunk count with changed content resets — no mixed snapshot", () => {
+    expect(
+      resumePlan(3, 2, 3, {
+        executed,
+        planned: { contentHash: "ccccdddd", registeredRowCount: 8, totalRows: 12 },
+      }),
+    ).toStrictEqual({ from: 0, reset: true });
+  });
+
+  it("a planned total the fresh execution no longer produces resets", () => {
+    expect(
+      resumePlan(3, 2, 3, { executed, planned: { contentHash: "aaaabbbb", totalRows: 11 } }),
+    ).toStrictEqual({ from: 0, reset: true });
+  });
+
+  it("a mid-upload checkpoint with matching content resumes the registered prefix", () => {
+    // The registered row total is the RUNNING sum (registerChunk accumulates
+    // per chunk): 2 of 3 chunks carrying 8 of 12 rows under a MATCHING hash
+    // is the healthy checkpoint state, not drift — reading it as drift reset
+    // every partial resume (the PR #151 review finding) and re-uploaded the
+    // registered prefix whole.
+    expect(
+      resumePlan(3, 2, 3, {
+        executed,
+        planned: { contentHash: "aaaabbbb", registeredRowCount: 8, totalRows: 12 },
+      }),
+    ).toStrictEqual({ from: 2, reset: false });
+    // Same decision without a recorded hash (an attempt planned before #130,
+    // its prefix registered after): a running total still isn't drift.
+    expect(
+      resumePlan(3, 2, 3, { executed, planned: { registeredRowCount: 8, totalRows: 12 } }),
+    ).toStrictEqual({ from: 2, reset: false });
+  });
+
+  it("a complete registration whose row total disagrees with the execution resets — the freeze guard's heal", () => {
+    // Every planned chunk registered, but the accumulated total disagrees
+    // with THIS execution: the freeze refuses exactly this state
+    // (registeredRowsMatchPlan) and prescribes a retry — the reset is what
+    // makes that retry heal instead of resuming into the same refusal.
+    expect(
+      resumePlan(3, 3, 3, {
+        executed,
+        planned: { contentHash: "aaaabbbb", registeredRowCount: 13, totalRows: 12 },
+      }),
+    ).toStrictEqual({ from: 0, reset: true });
+  });
+
+  it("an attempt planned before the hash existed keeps the count-only decision", () => {
+    expect(resumePlan(3, 2, 3, { executed, planned: {} })).toStrictEqual({
+      from: 2,
+      reset: false,
+    });
+    expect(resumePlan(3, 2, 3)).toStrictEqual({ from: 2, reset: false });
+  });
+});
+
+describe("fingerprintChunks — the executed content's fingerprint (issue #130)", () => {
+  it("is deterministic for the same chunks and changes when their content does", () => {
+    const chunks = [[{ data: { label: "A" } }], [{ data: { label: "B" } }]];
+    expect(fingerprintChunks(chunks)).toBe(fingerprintChunks(chunks));
+    const edited = [[{ data: { label: "A" } }], [{ data: { label: "B2" } }]];
+    expect(fingerprintChunks(chunks)).not.toBe(fingerprintChunks(edited));
+  });
+
+  it("changes when the same rows are re-chunked or reordered", () => {
+    const rows = [{ data: { label: "A" } }, { data: { label: "B" } }];
+    expect(fingerprintChunks([rows])).not.toBe(fingerprintChunks([[rows[0]], [rows[1]]]));
+    expect(fingerprintChunks([rows])).not.toBe(fingerprintChunks([[rows[1], rows[0]]]));
   });
 });

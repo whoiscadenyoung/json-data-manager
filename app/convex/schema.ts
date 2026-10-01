@@ -213,12 +213,24 @@ export default defineSchema({
     importId: v.optional(v.string()),
     lastProgressAt: v.number(),
     plannedChunkCount: v.optional(v.number()),
+    // The executed content's fingerprint (issue #130), as the client's plan
+    // reported it: a resuming browser re-fingerprints its own execution and
+    // resets the upload whenever the two differ — counts alone cannot see an
+    // edit that preserves the chunk count. A plain string, not a Convex
+    // hash type: the fingerprint scheme is the client's (see
+    // src/lib/publish.ts fingerprintChunks).
+    plannedContentHash: v.optional(v.string()),
     plannedGeometryType: v.optional(v.string()),
     plannedKind: v.optional(v.union(v.literal("standard"), v.literal("geospatial"))),
     plannedSchema: v.optional(v.any()),
     plannedTotalRows: v.optional(v.number()),
     publishKey: v.string(),
     publishedSchemaId: v.optional(v.string()),
+    // The row total the attempt's registered chunks declared (issue #130) —
+    // registerChunk accumulates each chunk's rowCount here, and the freeze
+    // refuses an attempt whose registered total doesn't match
+    // plannedTotalRows. Absent on attempts that predate the field.
+    registeredRowCount: v.optional(v.number()),
     // The spec the client executed (derived publishes only) — kept so the
     // frozen row's `lineage.recipe` records the rows that actually landed,
     // not whatever the registry row holds at freeze time.

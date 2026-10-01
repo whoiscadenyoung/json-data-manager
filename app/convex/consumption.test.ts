@@ -126,6 +126,7 @@ async function drivePublish(
     // oxlint-disable-next-line no-await-in-loop -- order is the resume index.
     await t.mutation(api.publish.registerChunk, {
       attemptId: options.attemptId,
+      rowCount: chunk.length,
       storageId,
       uploadId,
     });

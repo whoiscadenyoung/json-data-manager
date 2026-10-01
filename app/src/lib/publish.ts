@@ -52,6 +52,9 @@ import {
 /** The attempt id type, as the start mutation mints it. */
 type AttemptId = FunctionReturnType<typeof api.publish.start>["attemptId"];
 
+/** The six geometry type literals, derived from the component doc `api.schemas.get` returns — `publish.plan`'s host validator takes exactly these (issue #130). */
+type GeometryTypeName = NonNullable<FunctionReturnType<typeof api.schemas.get>>["geometryType"];
+
 /** What one publish run ended up as (status "importing" = handed off to the workflow). */
 export interface PublishOutcome {
   attemptId: string;
@@ -62,7 +65,7 @@ export interface PublishOutcome {
 
 /** The frozen-row plan a derived publish reports before uploading (a draft publish needs none — the host reads the draft at freeze). */
 interface DerivedPlan {
-  geometryType?: string;
+  geometryType?: GeometryTypeName;
   kind: "geospatial" | "standard";
   schema: Record<string, unknown>;
   spec: unknown;
@@ -70,6 +73,52 @@ interface DerivedPlan {
 
 function isRecordShaped(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const textEncoder = new TextEncoder();
+
+// The content fingerprint's two arithmetic lanes: distinct multipliers and
+// starting offsets over a 2^32 modulus, so two distinct contents colliding
+// takes a joint 64-bit coincidence. A change DETECTOR for resume safety,
+// not a cryptographic digest — callers are trusted collaborators, and the
+// signal only has to say "the executed chunks are not the ones this attempt
+// planned". (Deliberately arithmetic, not bitwise: this module must fold
+// bytes in every runtime the publish runs in, including vitest's.)
+const FOLD_MODULUS = 2 ** 32,
+  LANE_A_MULTIPLIER = 31,
+  LANE_B_MULTIPLIER = 1_000_003,
+  LANE_A_OFFSET = 5_381,
+  LANE_B_OFFSET = 52_711;
+
+/** Folds one byte into both lanes. */
+function foldByte(laneA: number, laneB: number, byte: number): [number, number] {
+  return [
+    (laneA * LANE_A_MULTIPLIER + byte) % FOLD_MODULUS,
+    (laneB * LANE_B_MULTIPLIER + byte) % FOLD_MODULUS,
+  ];
+}
+
+/**
+ * A deterministic fingerprint of the executed chunks (issue #130): two
+ * multiplicative folds over each chunk's serialized rows, seeded with the
+ * chunk's index and row count so re-chunking the same rows changes the
+ * fingerprint too. Same execution → same fingerprint; an edited draft, a
+ * drifted source, or non-deterministic SQL → a different one. Pure JS (no
+ * crypto.subtle): it must run wherever the publish runs, and it is a change
+ * signal, not a security boundary.
+ */
+export function fingerprintChunks(chunks: ImportRow[][]): string {
+  let laneA = LANE_A_OFFSET,
+    laneB = LANE_B_OFFSET;
+  for (const [index, chunk] of chunks.entries()) {
+    for (const byte of textEncoder.encode(`#${index}:${chunk.length};`)) {
+      [laneA, laneB] = foldByte(laneA, laneB, byte);
+    }
+    for (const byte of textEncoder.encode(JSON.stringify(chunk))) {
+      [laneA, laneB] = foldByte(laneA, laneB, byte);
+    }
+  }
+  return `${laneA.toString(16).padStart(8, "0")}${laneB.toString(16).padStart(8, "0")}`;
 }
 
 /** One draft's rows as chunk rows: every entry, plus its geometry payload when the entry has one. */
@@ -211,7 +260,7 @@ async function derivedPublish(
       limit: MAX_ANALYSIS_RESULT_ROWS,
     }),
     rule = geometryRuleOf(row.spec);
-  let geometryType: string | undefined;
+  let geometryType: GeometryTypeName | undefined;
   if (rule !== undefined && isRecordShaped(row.spec)) {
     geometryType = await geometryTypeOfRuleSide(convex, row.spec, rule);
   }
@@ -231,7 +280,7 @@ async function geometryTypeOfRuleSide(
   convex: ConvexClient,
   spec: Record<string, unknown>,
   rule: GeometrySource,
-): Promise<string | undefined> {
+): Promise<GeometryTypeName | undefined> {
   const operations = Array.isArray(spec.operations) ? spec.operations : [];
   const addressed = geometrySourceOperationOf(
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the stored operations are structurally the engine's union; the addressing reads ids only.
@@ -250,7 +299,7 @@ async function geometryTypeOfRuleSide(
   if (sideDatasetId === "") {
     return undefined;
   }
-  let dataset: { geometryType?: string } | null = null;
+  let dataset: { geometryType?: GeometryTypeName } | null = null;
   try {
     dataset = await convex.query(api.schemas.get, { schemaId: sideDatasetId });
   } catch {
@@ -311,6 +360,10 @@ async function uploadChunk(
   }
   await convex.mutation(api.publish.registerChunk, {
     attemptId,
+    // The chunk's row count (issue #130): the freeze sums these against the
+    // plan's totalRows, so a checkpoint can never freeze a row total its
+    // plan doesn't name.
+    rowCount: chunk.length,
     storageId: body.storageId,
     uploadId,
   });
@@ -333,6 +386,40 @@ async function uploadPendingChunks(
   }
 }
 
+/** The plan-vs-execution comparison the content check (issue #130) reads: what the attempt recorded against what THIS execution produced. */
+interface ResumeCompared {
+  executed: { fingerprint: string; rowCount: number };
+  planned: { contentHash?: string; registeredRowCount?: number; totalRows?: number };
+}
+
+/**
+ * Whether the recorded plan's content signals — the executed chunks'
+ * fingerprint and the row totals — disagree with THIS execution. Absent
+ * signals (an attempt planned before the hash existed) never count as
+ * drift, so pre-#130 attempts keep the count-only decision.
+ *
+ * The registered row total is the RUNNING sum of the chunks registered so
+ * far (`registerChunk` accumulates per chunk), so mid-upload it is
+ * legitimately below the full execution — comparing it there would reset
+ * every partial resume, the checkpointed behavior #130 preserves. It is
+ * only decisive once EVERY planned chunk has registered (`allChunksRegistered`,
+ * which the caller knows exactly): a complete registration whose row total
+ * still disagrees with the execution is the inconsistency the freeze's own
+ * guard refuses (`registeredRowsMatchPlan`), and this comparison is what
+ * makes the retry that guard prescribes actually heal instead of resuming
+ * into the same refusal forever.
+ */
+function planDrifted(compared: ResumeCompared, allChunksRegistered: boolean): boolean {
+  const { planned } = compared;
+  return (
+    (planned.contentHash !== undefined && planned.contentHash !== compared.executed.fingerprint) ||
+    (planned.totalRows !== undefined && planned.totalRows !== compared.executed.rowCount) ||
+    (allChunksRegistered &&
+      planned.registeredRowCount !== undefined &&
+      planned.registeredRowCount !== compared.executed.rowCount)
+  );
+}
+
 /**
  * The resume decision for a joined attempt, from the three counts the client
  * knows: the dead attempt's plan (`plannedChunkCount`), what it managed to
@@ -350,16 +437,33 @@ async function uploadPendingChunks(
  *   matches the execution, so the disagreement is invisible to the count
  *   the reset trigger normally reads);
  * - otherwise the normal resume: skip exactly the registered prefix.
+ *
+ * Issue #130 adds the content check (`compared`): counts alone cannot see an
+ * edit that preserves the chunk count, so a resume whose re-executed content
+ * — fingerprinted by `fingerprintChunks` — differs from the recorded plan
+ * resets too, as does one whose row total no longer matches what the attempt
+ * planned. The attempt's REGISTERED row total only judges a complete
+ * registration (it is a running sum mid-upload — see `planDrifted`), where a
+ * disagreement is the freeze guard's refused state and the reset is its heal.
  */
 export function resumePlan(
   plannedChunkCount: number | undefined,
   registeredCount: number,
   executedCount: number,
+  compared?: ResumeCompared,
 ): { from: number; reset: boolean } {
   if (plannedChunkCount === undefined) {
     return { from: 0, reset: false };
   }
-  if (plannedChunkCount !== executedCount || registeredCount > plannedChunkCount) {
+  if (
+    plannedChunkCount !== executedCount ||
+    registeredCount > plannedChunkCount ||
+    // Past the two count guards above, plannedChunkCount === executedCount
+    // and registeredCount <= plannedChunkCount — so equality here is exactly
+    // "every planned chunk has registered" (planDrifted's gate for the
+    // registered row total).
+    (compared !== undefined && planDrifted(compared, registeredCount === executedCount))
+  ) {
     return { from: 0, reset: true };
   }
   return { from: Math.min(registeredCount, executedCount), reset: false };
@@ -383,7 +487,18 @@ export async function publishDataset(options: {
 
   const derived = await executeForPublish(convex, started.datasetKind, options.datasetKey),
     chunks = chunkRowsForImport(derived.chunkRows),
-    resume = resumePlan(started.plannedChunkCount, started.chunkCount, chunks.length);
+    fingerprint = fingerprintChunks(chunks),
+    // Issue #130: the resume decision now compares CONTENT, not just counts —
+    // an edit (or a non-deterministic spec) that preserves the chunk count
+    // must never resume into the stored prefix of the old snapshot.
+    resume = resumePlan(started.plannedChunkCount, started.chunkCount, chunks.length, {
+      executed: { fingerprint, rowCount: derived.chunkRows.length },
+      planned: {
+        contentHash: started.plannedContentHash,
+        registeredRowCount: started.registeredRowCount,
+        totalRows: started.plannedTotalRows,
+      },
+    });
   if (resume.reset) {
     // The stored chunks describe a publish that no longer exists.
     await convex.mutation(api.publish.resetUpload, { attemptId: started.attemptId });
@@ -391,6 +506,9 @@ export async function publishDataset(options: {
   await convex.mutation(api.publish.plan, {
     attemptId: started.attemptId,
     chunkCount: chunks.length,
+    // The executed content's fingerprint (issue #130): a resumed browser
+    // resets whenever its own execution fingerprints differently.
+    contentHash: fingerprint,
     ...(derived.plan === undefined
       ? {}
       : {
