@@ -50,7 +50,15 @@ export type TileArchiveWorkerOutbound =
       type: "done";
     }
   | { schemaId: string; type: "stale-discarded" }
-  | { reason: "not-geospatial" | "below-threshold"; schemaId: string; type: "skipped" }
+  | {
+      reason: "not-geospatial" | "below-threshold";
+      schemaId: string;
+      type: "skipped";
+      /** The schema version the worker read (0 for not-geospatial, where the
+       * schema was never readable). Lets the manager memoize a below-threshold
+       * skip against the exact version it applies to. */
+      version: number;
+    }
   | { message: string; schemaId: string; type: "error" };
 
 /** Starts one build for a dataset; resolves with its terminal outcome. */
@@ -257,6 +265,14 @@ function handleWorkerTokenRequest(event: MessageEvent<unknown>): void {
   void replyToken(data.requestId);
 }
 
+/** Records a below-threshold skip against the version the worker read (kept
+ * out of {@link handleWorkerMessage} for the complexity budget). */
+function recordSkipMemo(data: Record<string, unknown>, schemaId: string): void {
+  if (data.reason === "below-threshold" && typeof data.version === "number") {
+    rememberBelowThresholdSkip(schemaId, data.version);
+  }
+}
+
 function handleWorkerMessage(event: MessageEvent<unknown>): void {
   const data: unknown = event.data;
   if (!isRecord(data) || typeof data.schemaId !== "string") return;
@@ -276,6 +292,7 @@ function handleWorkerMessage(event: MessageEvent<unknown>): void {
     pending.resolve("discarded");
   } else if (data.type === "skipped") {
     setBuildState(schemaId, "idle");
+    recordSkipMemo(data, schemaId);
     pending.resolve("skipped");
   } else {
     setBuildState(schemaId, "error");
@@ -340,12 +357,36 @@ function getScheduler(): TileArchiveScheduler {
 // --- Triggers ---
 
 /** The schema fields the staleness check reads off `listSchemas` rows. */
-interface TileArchiveSchemaRow {
+export interface TileArchiveSchemaRow {
   _id: string;
   geometryType?: string;
   kind?: "standard" | "geospatial";
   mapTileArchiveBuiltVersion?: number;
   mapTileCacheVersion?: number;
+}
+
+/**
+ * The below-threshold skip memo (issue #134): schemaId → `skipped:<version>`,
+ * recorded when a build fetched the dataset's full geometry payload and the
+ * worker ended `below-threshold` at that version. A dataset under the 256 KB
+ * threshold never installs an archive, so without the memo
+ * `mapTileArchiveBuiltVersion` stays absent and every `listSummaries` update
+ * reads the dataset as stale — a debounced full fetch-and-skip round trip
+ * forever. A later version bump stops matching the memo and scheduling
+ * resumes: the dataset may have grown past the threshold.
+ */
+const belowThresholdSkips = new Map<string, string>();
+
+/** Records that a build ended `below-threshold` at `version` (worker →
+ * manager message path; exported for the memo tests). */
+export function rememberBelowThresholdSkip(schemaId: string, version: number): void {
+  belowThresholdSkips.set(schemaId, `skipped:${version}`);
+}
+
+/** True when the current version is exactly the one a build already skipped
+ * as below-threshold (exported for the memo tests). */
+export function isBelowThresholdSkipMemoized(schemaId: string, version: number): boolean {
+  return belowThresholdSkips.get(schemaId) === `skipped:${version}`;
 }
 
 /**
@@ -356,11 +397,13 @@ interface TileArchiveSchemaRow {
  * built behind the current version (stale-on-view — the authoritative,
  * self-healing trigger). `mapTileArchiveBuiltVersion` is set iff an archive
  * ever installed (the summaries carry no storage id since #131), so its
- * absence is the "no archive yet" signal.
+ * absence is the "no archive yet" signal — except when the current version
+ * already ended `below-threshold`, which the skip memo absorbs.
  */
-function isTileArchiveStale(schema: TileArchiveSchemaRow, currentVersion: number): boolean {
+export function isTileArchiveStale(schema: TileArchiveSchemaRow, currentVersion: number): boolean {
   if (schema.kind !== "geospatial" || schema.geometryType === undefined) return false;
   if (currentVersion === 0) return false; // never had a geometry write
+  if (isBelowThresholdSkipMemoized(schema._id, currentVersion)) return false;
   if (schema.mapTileArchiveBuiltVersion === undefined) return true;
   return schema.mapTileArchiveBuiltVersion !== currentVersion;
 }
