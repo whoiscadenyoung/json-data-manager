@@ -46,7 +46,7 @@ import { ConvexClient } from "convex/browser";
 import type { FunctionReturnType } from "convex/server";
 
 import { env } from "#/env";
-import { fetchConvexToken } from "#/lib/convex-auth-token";
+import { fetchConvexToken, setAuthReasserting } from "#/lib/convex-auth-token";
 import { api } from "#convex/_generated/api";
 
 /** One entry row, as `entries.listPage` pages it. */
@@ -320,12 +320,23 @@ export function applyGeometryRowSpec(row: DatasetGeometryRow): DatasetGeometryRo
 // imperative, signed-in flow.
 let client: ConvexClient | undefined;
 
-/** The shared imperative client, identity attached. Exported for the publish orchestrator; every other consumer goes through the read functions. */
+/**
+ * The shared imperative client, identity attached. Exported for the publish
+ * orchestrator; every other consumer goes through the read functions.
+ *
+ * Auth attaches ONCE, at creation (#133 item 6): `setAuth` pauses the
+ * socket and refetches the token on every call, and this client sits under
+ * every export/publish/preview call — the old per-call re-assert paused the
+ * connection each time. The re-asserting fetcher (`setAuthReasserting`)
+ * keeps the sign-in-without-reload behavior: a client created signed out
+ * attaches again the moment a fetch returns null.
+ */
 export function sharedClient(): ConvexClient {
-  client ??= new ConvexClient(env.VITE_CONVEX_URL);
-  // Identity for the sign-in gate — re-asserted per call so a client first
-  // created signed out still authenticates once the session exists.
-  client.setAuth(fetchConvexToken);
+  if (client === undefined) {
+    const created = new ConvexClient(env.VITE_CONVEX_URL);
+    setAuthReasserting(created, fetchConvexToken);
+    client = created;
+  }
   return client;
 }
 

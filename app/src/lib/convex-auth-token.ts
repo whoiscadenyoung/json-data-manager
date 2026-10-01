@@ -32,3 +32,28 @@ export async function fetchConvexToken(): Promise<string | null> {
   }
   return typeof data.token === "string" ? data.token : null;
 }
+
+/**
+ * Attaches `fetchToken` to a standalone `ConvexClient` EXACTLY ONCE, with a
+ * self re-arming fetcher (#133 item 6): `setAuth` pauses the socket and
+ * refetches the token on every call, so the old per-run/per-call re-asserts
+ * (the seam's `sharedClient`, the analysis worker's per-message call) made
+ * every call pause the connection. The one fetcher re-asserts itself only
+ * when a fetch returns null — a client created signed out must authenticate
+ * as soon as a session exists (sign-in does not reload the page), and a
+ * null is the one signal that says "try attaching again". A token return
+ * leaves the attachment alone.
+ */
+export function setAuthReasserting(
+  client: { setAuth(fetcher: () => Promise<string | null>): void },
+  fetchToken: () => Promise<string | null>,
+): void {
+  const fetcher = async (): Promise<string | null> => {
+    const token = await fetchToken();
+    if (token === null) {
+      client.setAuth(fetcher);
+    }
+    return token;
+  };
+  client.setAuth(fetcher);
+}

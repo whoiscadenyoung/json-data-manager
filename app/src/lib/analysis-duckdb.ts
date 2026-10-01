@@ -34,7 +34,7 @@ import type { AsyncDuckDB, AsyncDuckDBConnection } from "@duckdb/duckdb-wasm";
  * must stay React-free and seam-clean — it imports DuckDB and Arrow, and
  * nothing about datasets at all (rows arrive already materialized).
  */
-import { tableFromArrays } from "apache-arrow";
+import { tableFromArrays, Type } from "apache-arrow";
 import type { Table as ArrowTable } from "apache-arrow";
 
 /** The DuckDB memory cap per engine instance (the build-time cap the issue names). */
@@ -100,10 +100,26 @@ let enginePromise: Promise<SqlEngine> | undefined;
  * The process-wide (per-context) engine: one WASM instance per worker or
  * tab, created on first call. Consecutive calls share it — the registration
  * contract is create-or-replace, so sequential runs cannot see each other's
- * tables under the same names.
+ * tables under the same names (`retainTables` keeps earlier runs' tables
+ * from resolving, #133 item 1).
+ *
+ * A FAILED load is not remembered (#133 item 4): one dropped WASM fetch
+ * (offline moment, cold CDN) used to poison the session until reload, so
+ * the rejected promise is forgotten and the next call retries the load.
+ * The identity check keeps a concurrent caller's failure from clearing a
+ * newer attempt's promise.
  */
 export async function analysisSqlEngine(): Promise<SqlEngine> {
-  enginePromise ??= createEngine();
+  if (enginePromise === undefined) {
+    const attempt = createEngine();
+    enginePromise = attempt;
+    attempt.catch(() => {
+      if (enginePromise === attempt) {
+        enginePromise = undefined;
+      }
+    });
+    return attempt;
+  }
   return enginePromise;
 }
 
@@ -142,22 +158,39 @@ async function createEngine(): Promise<SqlEngine> {
   const workerUrl = URL.createObjectURL(
     new Blob([`importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }),
   );
-  const db = new duckdb.AsyncDuckDB(
-    new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING),
-    new Worker(workerUrl),
-  );
-  // Single-threaded by decision (see the module doc): pthreadWorker null.
-  await db.instantiate(bundle.mainModule, null);
-  const connection = await db.connect();
-  await connection.query(`SET memory_limit='${MEMORY_LIMIT}'`);
-  // The lockdown (#132) runs before any caller query; lock_configuration
-  // (last) freezes these settings in place for the engine's lifetime.
-  await applyEngineLockdown(connection);
-  return new DuckDbEngine(db, connection);
+  // A failed load must not leak the blob (#133 item 4 — the load retry path
+  // of `analysisSqlEngine` otherwise piles up object URLs).
+  try {
+    const db = new duckdb.AsyncDuckDB(
+      new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING),
+      new Worker(workerUrl),
+    );
+    // Single-threaded by decision (see the module doc): pthreadWorker null.
+    await db.instantiate(bundle.mainModule, null);
+    const connection = await db.connect();
+    await connection.query(`SET memory_limit='${MEMORY_LIMIT}'`);
+    // The lockdown (#132) runs before any caller query; lock_configuration
+    // (last) freezes these settings in place for the engine's lifetime.
+    await applyEngineLockdown(connection);
+    return new DuckDbEngine(db, connection);
+  } catch (error) {
+    URL.revokeObjectURL(workerUrl);
+    throw error;
+  }
 }
 
-/** The JS value one Arrow cell arrives as, normalized into serializable plain data. Exported pure for `analysis-duckdb.test.ts` — the engine's WASM path can't run under vitest, but this policy can be pinned. */
-export function normalizeArrowValue(value: unknown): unknown {
+/**
+ * The JS value one Arrow cell arrives as, normalized into serializable plain
+ * data — RECURSIVELY (#133 item 3): DuckDB hands back BigInt aggregates,
+ * DECIMAL views, LIST vectors, STRUCT row proxies and BLOB typed arrays, and
+ * any of them survives to `postMessage` or `JSON.stringify` only to throw
+ * or degrade. `decimalScale`, when given, renders an ArrayBufferView cell as
+ * its DECIMAL text (`1.23::DECIMAL(10,2)` → "1.23" — the scale lives on the
+ * column's Arrow type, not the cell). Exported pure for
+ * `analysis-duckdb.test.ts` — the engine's WASM path can't run under
+ * vitest, but this policy can be pinned.
+ */
+export function normalizeArrowValue(value: unknown, decimalScale?: number): unknown {
   // DuckDB's COUNT/sum aggregates arrive as BigInt (INT64) — fine inside the
   // worker, wrong in a preview/registry spec (JSON.stringify throws). Safe
   // integers narrow to numbers; anything wider keeps its string form honest.
@@ -166,10 +199,109 @@ export function normalizeArrowValue(value: unknown): unknown {
       ? Number(value)
       : value.toString();
   }
+  // TIMESTAMP/TZ cells would arrive as Dates on engines that hand them back
+  // as objects; ISO text keeps them JSON-shaped.
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (ArrayBuffer.isView(value)) {
+    return normalizeViewValue(value, decimalScale);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeArrowValue(entry));
+  }
+  if (isIterableValue(value)) {
+    // LIST columns arrive as Arrow Vectors (iterable, not arrays) —
+    // materialized to a plain array, recursively normalized.
+    return Array.from(value, (entry) => normalizeArrowValue(entry));
+  }
+  if (isRecordValue(value)) {
+    // STRUCT rows (and Arrow's StructRow proxies): materialized to a fresh
+    // plain object so postMessage's structured clone never sees a proxy.
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      out[key] = normalizeArrowValue(entry);
+    }
+    return out;
+  }
   return value;
 }
 
-/** The materialized `SqlTable` as an Arrow table — the doc-named fast registration path (analysis-layer-design.md §2:46). `tableFromArrays` infers each column's type from the cells, which materializeSqlTable already made homogeneous under the 0.4 policies (sql.ts): number columns are numeric-or-null, string columns are normalized-key text, boolean columns booleans. */
+/** A DECIMAL view through its scale, or any other typed array as a plain number array — both JSON-safe (#133 item 3). */
+function normalizeViewValue(value: ArrayBufferView, decimalScale: number | undefined): unknown {
+  if (decimalScale !== undefined) {
+    // DECIMAL: the pinned build hands cells over as a 128-bit
+    // little-endian view (duckdb-wasm's DecimalBigNum) — rendered through
+    // the column's declared scale.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- ArrayBufferView has no number element type; the DECIMAL view is ArrayLike<number>.
+    return decimal128TextOf(value as unknown as ArrayLike<number>, decimalScale);
+  }
+  // Any other typed array (BLOB → Uint8Array, …): a plain number array is
+  // the honest serializable form.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- ArrayBufferView has no number element type; every concrete view is ArrayLike<number>.
+  return Array.from(value as unknown as ArrayLike<number>, (byte) => normalizeArrowValue(byte));
+}
+
+function isIterableValue(value: unknown): value is Iterable<unknown> {
+  return typeof value === "object" && value !== null && Symbol.iterator in value;
+}
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The 32-bit words of one unsigned 128-bit little-endian integer, read little-endian. */
+const DECIMAL_WORDS = 4;
+
+/** The slice of an Arrow field type the DECIMAL scale read needs — read structurally (see the query leg). */
+interface ArrowDecimalTypeLike {
+  readonly scale: unknown;
+  readonly typeId: unknown;
+}
+
+/** The column's DECIMAL scale, or undefined for any other type — `Type.Decimal` (7) is protobuf-stable, so the comparison holds across arrow copies. */
+function decimalScaleOfType(type: unknown): number | undefined {
+  if (typeof type !== "object" || type === null || !("scale" in type) || !("typeId" in type)) {
+    return undefined;
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the `in` checks above establish the shape; the field type is a foreign arrow copy's class instance.
+  const decimal = type as ArrowDecimalTypeLike;
+  return decimal.typeId === Type.Decimal && typeof decimal.scale === "number"
+    ? decimal.scale
+    : undefined;
+}
+
+/**
+ * The text of one DECIMAL cell: `view` holds the unscaled value as a
+ * 128-bit little-endian two's-complement integer (duckdb-wasm hands DECIMAL
+ * cells over as exactly that, a `DecimalBigNum` view, #133 item 3);
+ * `scale` places the decimal point (`{123, 2}` → "1.23"). Trailing zeros
+ * are kept — the declared scale is the cell's honest form.
+ */
+export function decimal128TextOf(view: ArrayLike<number>, scale: number): string {
+  // 2^32 — the little-endian word radix (arithmetic, not bitwise: this
+  // module folds in every runtime, and the lint bans bitwise).
+  const WORD_RADIX = 4294967296n,
+    // 2^128 — the full unsigned range one DECIMAL cell occupies.
+    RANGE_128 = 340282366920938463463374607431768211456n;
+  let magnitude = 0n;
+  for (let index = DECIMAL_WORDS - 1; index >= 0; index -= 1) {
+    magnitude = magnitude * WORD_RADIX + BigInt(view[index] ?? 0);
+  }
+  if (magnitude >= RANGE_128 / 2n) {
+    magnitude -= RANGE_128; // two's complement negative
+  }
+  const negative = magnitude < 0n,
+    digits = (negative ? -magnitude : magnitude).toString();
+  if (scale <= 0) {
+    return (negative ? "-" : "") + digits;
+  }
+  const padded = digits.padStart(scale + 1, "0"),
+    text = `${padded.slice(0, -scale)}.${padded.slice(-scale)}`;
+  return (negative ? "-" : "") + text;
+}
+
+/** The materialized `SqlTable` as an Arrow table — the doc-named fast registration path (analysis-layer-design.md §2:46). `tableFromArrays` infers each column's type from the cells, which materializeSqlTable already made homogeneous under the 0.4 policies (sql.ts): number columns are numeric-or-null, string columns keep their original text (their canonical form rides the hidden `<col>__key` twin columns, #133 item 9), boolean columns booleans. */
 function arrowTableOf(table: SqlTable): ArrowTable {
   const arrays: Record<string, unknown[]> = {};
   for (const column of table.columns) {
@@ -178,18 +310,19 @@ function arrowTableOf(table: SqlTable): ArrowTable {
   return tableFromArrays(arrays);
 }
 
-class DuckDbEngine implements SqlEngine {
+/** Exported for `analysis-duckdb.test.ts`, which drives the class against the package's real Node-target engine (the browser path can't run under vitest). */
+export class DuckDbEngine implements SqlEngine {
   constructor(
     private readonly db: AsyncDuckDB,
     private readonly connection: AsyncDuckDBConnection,
   ) {}
 
-  /** Drops the previous occupant of `name`, whatever kind it was — a view when a query created one, a table when Arrow did. */
+  /** Drops the previous occupant of `name`, whatever kind it was — a view when a query created one, a table when Arrow did. The catalog lookup folds case: DuckDB identifiers are case-insensitive, so a table registered as "Grants" IS "grants" (#133 item 5). */
   async #dropExisting(name: string): Promise<void> {
     const quoted = `"${name.replaceAll('"', '""')}"`,
       literal = `'${name.replaceAll("'", "''")}'`;
     const existing = await this.connection.query(
-      `SELECT table_type FROM information_schema.tables WHERE table_schema = 'main' AND table_name = ${literal}`,
+      `SELECT table_type FROM information_schema.tables WHERE table_schema = 'main' AND lower(table_name) = lower(${literal})`,
     );
     const firstRow = existing.toArray()[0];
     const kind: unknown = firstRow === undefined ? undefined : firstRow.table_type;
@@ -211,14 +344,47 @@ class DuckDbEngine implements SqlEngine {
     });
   }
 
+  /**
+   * Drops every table and view this run does NOT name, before `applySql`
+   * registers its set (#133 item 1): the engine is long-lived per
+   * worker/tab, and a side table removed from the spec (or a whole dataset
+   * from an earlier run) must stop resolving — the publish path, which
+   * builds a fresh engine, never saw it. Case-folded comparison, matching
+   * DuckDB's own identifier rule.
+   */
+  async retainTables(keep: readonly string[]): Promise<void> {
+    const keepFolded = new Set(keep.map((name) => name.toLowerCase())),
+      catalog = await this.connection.query(
+        "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = 'main'",
+      );
+    for (const row of catalog.toArray()) {
+      const name: unknown = row.table_name;
+      if (typeof name !== "string" || keepFolded.has(name.toLowerCase())) {
+        continue;
+      }
+      // oxlint-disable-next-line no-await-in-loop -- each drop must finish before the next catalog decision; the kind (view vs table) comes from the same row.
+      await this.connection.query(
+        row.table_type === "VIEW"
+          ? `DROP VIEW "${name.replaceAll('"', '""')}"`
+          : `DROP TABLE "${name.replaceAll('"', '""')}"`,
+      );
+    }
+  }
+
   async query(sql: string): Promise<Array<Record<string, unknown>>> {
     const result = await this.connection.query(sql),
-      names = result.schema.fields.map((field) => field.name),
+      fields = result.schema.fields,
+      // The DECIMAL scale rides the column's Arrow type, not the cell —
+      // read once per column so the cells can render as text (#133 item 3).
+      // Read STRUCTURALLY (typeId is protobuf-stable) because duckdb-wasm
+      // answers with its own bundled arrow copy — `instanceof` across the
+      // two copies is always false.
+      scales = fields.map((field) => decimalScaleOfType(field.type)),
       rows: Array<Record<string, unknown>> = [];
     for (const row of result.toArray()) {
       const record: Record<string, unknown> = {};
-      for (const name of names) {
-        record[name] = normalizeArrowValue(row[name]);
+      for (const [index, field] of fields.entries()) {
+        record[field.name] = normalizeArrowValue(row[field.name], scales[index]);
       }
       rows.push(record);
     }

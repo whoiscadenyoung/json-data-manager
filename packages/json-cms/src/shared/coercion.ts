@@ -16,6 +16,10 @@
  *   re-interpreted through `Number()`, so zero-padded identifiers stay
  *   distinct. Missed matches (rare float-notation splits) surface as
  *   unmatched rows in match-rate diagnostics rather than as wrong joins.
+ * - **Decimal text only (#133).** `coerceNumber` reads a string through
+ *   `Number()` only after a plain-decimal regex gate: `0x1F`, `0b11`, `0o7`
+ *   and `.5` are identifier-shaped text, not numbers — a hex-like id column
+ *   must infer as text (and group by its key), never mangle into a number.
  * - **Explicit non-coercion.** Only numbers and strings coerce. Booleans,
  *   `null`/`undefined`, arrays and objects never do — dodging the
  *   `Number(true) === 1`, `Number("") === 0` and `Number([]) === 0`
@@ -28,12 +32,24 @@ export function normalizeText(text: string): string {
 }
 
 /**
+ * Plain decimal text: optional sign, at least one integer digit (a bare
+ * `.5` is identifier-shaped, not a number — #133), an optional fractional
+ * part, an optional decimal exponent. `0x`/`0b`/`0o` prefixed text fails
+ * the leading digit, so `Number()`'s radix-prefix reading never runs.
+ */
+const DECIMAL_TEXT = /^[+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+
+/**
  * The number `value` already is, or the number its string form names after
  * trimming — `undefined` for everything else. Non-finite numbers and
  * non-numeric strings (including the empty string) have no numeric value;
  * booleans and non-primitives are refused rather than coerced through
  * `Number()`'s truthiness table. Shared by join keys (as the number-vs-string
  * policy) and column typing (a numeric column's string cells).
+ *
+ * A string must pass the `DECIMAL_TEXT` gate before `Number()` reads it —
+ * `Number("0x1F")` is 31 and `Number(".5")` is 0.5, and neither should ever
+ * sit in a numeric column (#133).
  *
  * `parseCoordinateValue` in `coordinate-columns.ts` is an alias of this
  * function — the dedupe roadmap stage 1 made when the lookup engine landed,
@@ -45,7 +61,7 @@ export function coerceNumber(value: unknown): number | undefined {
   }
   if (typeof value === "string") {
     const trimmed = value.trim();
-    if (trimmed === "") {
+    if (!DECIMAL_TEXT.test(trimmed)) {
       return undefined;
     }
     const parsed = Number(trimmed);

@@ -27,6 +27,41 @@ describe("applyLookup — key coercion via 0.4's normalizeKey", () => {
     expect(rows[0]).toStrictEqual({ id: "a", grantId: 42, "grants.status": "awarded" });
   });
 
+  it("never enriches from an INHERITED property — Object.hasOwn reads own cells only (#133 item 13)", () => {
+    // A schemaless row whose prototype carries data (a parsed-JSON artifact
+    // or a crafted record): the inherited cell must not ride the enrichment,
+    // and the real own cell still does.
+    const inheritedSide = Object.assign(Object.create({ inherited: "boo" }), {
+      grantId: "42",
+      status: "own-value",
+    });
+    const { rows } = applyLookup(
+      grantsOp({ fields: ["status", "inherited"] }),
+      [{ id: "a", grantId: 42 }],
+      [inheritedSide],
+    );
+    expect(rows[0]).toStrictEqual({
+      id: "a",
+      grantId: 42,
+      "grants.status": "own-value",
+      "grants.inherited": null,
+    });
+  });
+
+  it("reads a geometry reference from own cells only — an inherited cell lands null (#133 item 13)", () => {
+    const inheritedSide = Object.assign(Object.create({ geometryId: "geo-inherited" }), {
+      grantId: "42",
+    });
+    const { rows, geometryReferences } = applyLookup(
+      grantsOp({ fields: [] }),
+      [{ id: "a", grantId: 42 }],
+      [inheritedSide],
+      { column: "geometryId", lookupDatasetId: "grants", side: "lookup" },
+    );
+    expect(rows).toHaveLength(1);
+    expect(geometryReferences).toStrictEqual([null]);
+  });
+
   it("trims and case-folds string keys", () => {
     const source = [{ id: "a", code: "ABC-123" }],
       lookup = [{ code: "  abc-123 ", label: "ok" }],

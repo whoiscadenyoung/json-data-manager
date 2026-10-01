@@ -57,9 +57,10 @@ import { api } from "#convex/_generated/api";
  *   seam and never fetches rows itself.
  * - The DuckDB-WASM bundle loads only here — first Run of the surface
  *   (and, in-page, a publish whose spec actually carries a sql operation).
- * - Strings materialize into the registered tables as canonical keys (the
- *   0.4 policies): "Aldine"/"aldine" and 42/"42" group together; display
- *   casing is not preserved inside GROUP BY results (recorded in sql.ts).
+ * - String columns keep their original text and gain a hidden canonical
+ *   `<col>__key` twin (issue #133 item 9): `GROUP BY state__key` folds
+ *   "Aldine"/"aldine" and 42/"42" into one group, while `state` itself
+ *   reads as typed (recorded in sql.ts and docs/analysis-layer-design.md).
  * - The Parquet sidecar (doc §3) is conditional and NOT built in v1 — the
  *   worker's registration path is its future substitute point.
  */
@@ -274,6 +275,8 @@ function ResultTable({ rows }: { rows: Array<Record<string, unknown>> }) {
 
 /** One analysis run's outcome as the preview renders it. */
 interface RunOutcome {
+  /** Cells that carried a value but coerced to null under their column's type (#133 item 12) — surfaced so a silently-emptied column is visible. */
+  coercedNulls: number;
   diagnosticsMessage: string | undefined;
   rows: Array<Record<string, unknown>>;
   truncated: boolean;
@@ -323,6 +326,12 @@ function AnalysisEditorForm({
     // The debounce-armed save closure (the TransformEditor rule): the unmount
     // flush fires it when the editor closes inside the 800 ms window.
     flushSaveRef = useRef<(() => void) | undefined>(undefined),
+    // The run-id guard (#133 item 8): every async run stamps its id, and a
+    // late result whose stamp is stale (a newer Run started, or the editor
+    // unmounted) never touches state — an earlier run's rows must not
+    // overwrite a newer run's.
+    runSeqRef = useRef(0),
+    mountedRef = useRef(true),
     edit = (patch: Partial<EditorDraft>) => {
       revisionRef.current += 1;
       setDraft({ ...draft, ...patch });
@@ -404,9 +413,12 @@ function AnalysisEditorForm({
 
   // Closing inside the debounce window must not lose the edit (issue #135,
   // defect 2): fire the armed save. A no-op once it already fired, was
-  // replaced, or nothing was ever dirty.
+  // replaced, or nothing was ever dirty. The same cleanup disarms the
+  // run-id guard's unmount half (#133 item 8).
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       const flush = flushSaveRef.current;
       if (flush !== undefined) {
         flush();
@@ -464,19 +476,29 @@ function AnalysisEditorForm({
       toast.error(formProblem);
       return;
     }
+    // The run-id guard (#133 item 8): a late result from THIS run is dropped
+    // on every await boundary below once a newer run exists or the editor
+    // unmounted — an earlier run's rows must never overwrite a newer run's.
+    runSeqRef.current += 1;
+    const runId = runSeqRef.current,
+      stale = () => runSeqRef.current !== runId || !mountedRef.current;
     setRunning(true);
     setRunOutcome(undefined);
     setPhase(undefined);
     try {
       // Resolve-then-feed: each target resolves SERVER-side first (stage-6
       // pin/float semantics), the worker receives concrete component ids.
-      const resolutions = await resolveTargetsOf([schemaId, ...tableDatasetIds]),
-        byId = new globalThis.Map(resolutions.map((target) => [target.datasetId, target])),
+      const resolutions = await resolveTargetsOf([schemaId, ...tableDatasetIds]);
+      if (stale()) {
+        return;
+      }
+      const byId = new globalThis.Map(resolutions.map((target) => [target.datasetId, target])),
         unresolvable = resolutions.find(
           (target) => target.status !== "identity" && target.status !== "float",
         );
       if (unresolvable !== undefined) {
         setRunOutcome({
+          coercedNulls: 0,
           diagnosticsMessage:
             unresolvable.status === "registry"
               ? "This analysis reads another derived dataset — analyze imported datasets (run it after publishing the derived one) for now."
@@ -499,6 +521,7 @@ function AnalysisEditorForm({
         });
       if (sourceTarget === undefined) {
         setRunOutcome({
+          coercedNulls: 0,
           diagnosticsMessage: "This dataset couldn't be resolved for analysis.",
           rows: [],
           truncated: false,
@@ -507,21 +530,35 @@ function AnalysisEditorForm({
       }
       const result = await runAnalysis({
         limit: MAX_ANALYSIS_RESULT_ROWS,
-        onPhase: setPhase,
+        onPhase: (phase) => {
+          if (!stale()) {
+            setPhase(phase);
+          }
+        },
         source: sourceTarget,
         sql: sqlText,
         tables: sideTargets,
       });
+      if (stale()) {
+        return;
+      }
       setRunOutcome({
+        coercedNulls: result.diagnostics.coercedNulls,
         diagnosticsMessage: result.diagnostics.error,
         rows: result.rows,
         truncated: result.diagnostics.truncated,
       });
     } catch (error) {
-      toast.error(errorMessage(error, "The analysis run failed."));
+      if (!stale()) {
+        toast.error(errorMessage(error, "The analysis run failed."));
+      }
     } finally {
-      setRunning(false);
-      setPhase(undefined);
+      // A stale run's finally must not clear a NEWER run's running/phase
+      // state — only its own.
+      if (runSeqRef.current === runId && mountedRef.current) {
+        setRunning(false);
+        setPhase(undefined);
+      }
     }
   };
 
@@ -627,9 +664,10 @@ function AnalysisEditorForm({
               }}
             />
             <p className="text-xs text-muted-foreground">
-              Read-only. String keys group by their canonical form — &quot;Aldine&quot; and
-              &quot;aldine&quot; are one group, and 42 groups with &quot;42&quot; (the same policies
-              the rollup uses).
+              Read-only. Each string column keeps its text as typed and gains a canonical{" "}
+              <code>&lt;column&gt;__key</code> twin: <code>GROUP BY state__key</code> folds
+              &quot;Aldine&quot; and &quot;aldine&quot; into one group (and joins 42 with
+              &quot;42&quot;); <code>GROUP BY state</code> groups the text as typed.
             </p>
           </div>
 
@@ -714,6 +752,17 @@ function AnalysisEditorForm({
                 Result truncated at {MAX_ANALYSIS_RESULT_ROWS.toLocaleString()} rows
               </Badge>
             )}
+            {runOutcome !== undefined &&
+              runOutcome.diagnosticsMessage === undefined &&
+              runOutcome.coercedNulls > 0 && (
+                <Badge
+                  variant="outline"
+                  title="Cells that carried a value which doesn't fit the column's type (e.g. text in a number column) — they read as empty."
+                >
+                  {runOutcome.coercedNulls.toLocaleString()}{" "}
+                  {runOutcome.coercedNulls === 1 ? "cell reads" : "cells read"} as empty
+                </Badge>
+              )}
           </div>
           {runOutcome === undefined ? (
             <p className="text-sm text-muted-foreground">Run the query to see its result here.</p>
@@ -797,6 +846,8 @@ function phaseLabel(phase: AnalysisRunPhase): string {
 
 /** The first form problem across the joined tables, or undefined — alias hygiene AND the added-but-unchosen dataset (a half-picked row must block Run with honest copy, not surface later as the resolver's access-denial "missing"). applySql double-checks the server side of the run. */
 function formProblemOf(tables: SideTable[]): string | undefined {
+  // Aliases fold case (#133 item 5): SQL names are case-insensitive, so
+  // "Restaurants" collides with "restaurants" the moment they register.
   const seen = new Set<string>(["source"]);
   for (const [index, table] of tables.entries()) {
     const name = table.alias.trim();
@@ -806,10 +857,10 @@ function formProblemOf(tables: SideTable[]): string | undefined {
     if (table.datasetId === "") {
       return `Joined table ${index + 1} ("${name}"): choose its dataset.`;
     }
-    if (seen.has(name)) {
-      return `The SQL name "${name}" is used more than once.`;
+    if (seen.has(name.toLowerCase())) {
+      return `The SQL name "${name}" is used more than once (SQL names are case-insensitive).`;
     }
-    seen.add(name);
+    seen.add(name.toLowerCase());
   }
   return undefined;
 }

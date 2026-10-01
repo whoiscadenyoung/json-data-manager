@@ -17,8 +17,10 @@
  * - **The auth choke point is inherited, not re-implemented.** The worker's
  *   standalone ConvexClient authenticates through the main thread (its setAuth
  *   fetcher round-trips a token request over the message channel — the worker
- *   has no Better Auth session), re-asserted per inbound message so a client
- *   created signed-out authenticates once a session exists. Every seam call
+ *   has no Better Auth session). The fetcher attaches ONCE
+ *   (`setAuthReasserting`, #133 item 6) and re-arms itself only after a null
+ *   token, so a client created signed-out still authenticates once a session
+ *   exists — and no run pauses the socket re-asserting auth. Every seam call
  *   rides `entries.listPage` behind the app's auth wrapper, which rejects the
  *   unauthenticated and denies invisible datasets — a foreign draft's rows
  *   are unreachable from here by construction.
@@ -30,12 +32,17 @@ import type { SqlColumnSpec, SqlOperation, SqlSideTable } from "@caden/json-cms/
 import { ConvexClient } from "convex/browser";
 
 import { env } from "#/env";
+import { setAuthReasserting } from "#/lib/convex-auth-token";
 import { api } from "#convex/_generated/api";
 
 import type { AnalysisWorkerInbound, AnalysisWorkerOutbound } from "./analysis";
-import { MAX_ANALYSIS_RESULT_ROWS } from "./analysis-caps";
+import {
+  MAX_ANALYSIS_RESULT_ROWS,
+  MAX_ANALYSIS_SOURCE_ROWS,
+  sourceRowCapError,
+} from "./analysis-caps";
 import { analysisSqlEngine } from "./analysis-duckdb";
-import { entryDataRecord, fetchDatasetEntryRows } from "./dataset-rows";
+import { entryDataRecord, forEachDatasetEntryPage } from "./dataset-rows";
 
 /** Worker scope (`DedicatedWorkerGlobalScope`) isn't available to name under the app's DOM-lib tsconfig, but `self.postMessage` / `self.addEventListener` used here are the same calls on the narrow worker surface this module uses — at runtime `self` IS the worker scope. */
 function post(message: AnalysisWorkerOutbound): void {
@@ -53,6 +60,12 @@ let client: ConvexClient | undefined;
  * thread replies with null when signed out; the client then runs
  * unauthenticated and the seam's first page fails with the sign-in gate's
  * error — reported as the run's error message, never a crash.
+ *
+ * The fetcher attaches ONCE (`setAuthReasserting`, #133 item 6) and
+ * re-arms itself only after a null token — a client first created signed
+ * out authenticates as soon as a session exists (sign-out reloads the
+ * page, but sign-in does not). The old per-message `setAuth` re-assert
+ * paused the socket on every run.
  */
 let tokenRequestSeq = 0;
 const pendingTokenRequests = new Map<number, (token: string | null) => void>();
@@ -67,8 +80,9 @@ async function fetchTokenFromMain(): Promise<string | null> {
 
 function convexClient(): ConvexClient {
   if (client === undefined) {
-    client = new ConvexClient(env.VITE_CONVEX_URL);
-    client.setAuth(fetchTokenFromMain);
+    const created = new ConvexClient(env.VITE_CONVEX_URL);
+    setAuthReasserting(created, fetchTokenFromMain);
+    client = created;
   }
   return client;
 }
@@ -90,10 +104,6 @@ self.addEventListener("message", (event: MessageEvent<AnalysisWorkerInbound>) =>
   }
   if (message.type !== "analyze") return;
   const { requestId } = message;
-  // Re-assert auth per run so a client first created signed out
-  // authenticates as soon as a session exists (sign-out reloads the page,
-  // but sign-in does not).
-  convexClient().setAuth(fetchTokenFromMain);
   runQueue = runQueue.then(async () => runAnalysis(requestId, message)).catch(() => undefined); // runAnalysis reports its own error message; the queue keeps draining.
 });
 
@@ -104,6 +114,14 @@ interface LoadedTable {
   title?: string;
 }
 
+/**
+ * Streams one dataset's seam pages into the engine records, capping the
+ * source rows (#133 item 7): each page's rows adapt once —
+ * `entryDataRecord` per row — and the raw `DatasetEntryRow`s are dropped as
+ * the next page loads, instead of the whole entry set and its record copy
+ * being held at once. Past `MAX_ANALYSIS_SOURCE_ROWS` the run fails with
+ * the cap's message; a larger analysis belongs behind a rollup.
+ */
 async function loadTable(schemaId: string): Promise<LoadedTable> {
   const convex = convexClient();
   // Metadata read for the declared structure (NOT a row path): the typed
@@ -115,10 +133,22 @@ async function loadTable(schemaId: string): Promise<LoadedTable> {
     // author-visibility row) and a deleted dataset read the same here.
     throw new Error("A dataset in this analysis doesn't exist or you don't have access to it.");
   }
-  const rows = await fetchDatasetEntryRows(schemaId, { convex });
+  const rows: Array<Record<string, unknown>> = [];
+  await forEachDatasetEntryPage(
+    schemaId,
+    (page) => {
+      if (rows.length + page.length > MAX_ANALYSIS_SOURCE_ROWS) {
+        throw new Error(sourceRowCapError(schema.title));
+      }
+      for (const row of page) {
+        rows.push(entryDataRecord(row));
+      }
+    },
+    { convex },
+  );
   return {
     columns: declaredColumnTypes(schema.schema),
-    rows: rows.map(entryDataRecord),
+    rows,
     title: schema.title,
   };
 }

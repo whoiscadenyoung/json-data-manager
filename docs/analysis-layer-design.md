@@ -44,6 +44,20 @@ waiting, promoted through the lifecycle's materialized publish.
   policies shared with the join key-normalization rules (`GrantId` as string
   in one file, number in another, is the same disease). Arrow
   (`apache-arrow`) registration into DuckDB is the fast path.
+- **String columns keep their casing; grouping collapses through canonical
+  key columns** (decided 2026-10-01, issue #133 item 9 — revising stage 9's
+  shipped lowercasing). At registration a string column holds its ORIGINAL
+  text — "Aldine" stays "Aldine" in `SELECT *` output and in published
+  rows — and `materializeSqlTable` adds one hidden canonical twin per
+  string column, `<col>__key`, carrying `normalizeKey`'s form (trimmed,
+  case-folded, numbers as decimal text). `GROUP BY state__key` and joins on
+  the twin collapse real-world keys exactly as the old lowercased column
+  did; `GROUP BY state` groups the text as typed. The stage-9 decision
+  (canonical keys IN the column, "display casing is the price of one group
+  per real-world key") is revised because the price proved
+  product-visible: published SQL output lost its casing. Lookups and
+  rollups are unaffected — their key hygiene is `normalizeKey` at the
+  engine, not at registration.
 - **Specs stay declarative and serializable**, so a SQL-backed operation can
   join later as just another spec type instead of a parallel universe — and
   saved queries can round-trip as data.
