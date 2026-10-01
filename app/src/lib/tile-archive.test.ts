@@ -326,9 +326,9 @@ describe("isTileArchiveStale", () => {
   });
 
   it("ignores never-written, non-geospatial, and geometry-less rows", () => {
-    expect(
-      isTileArchiveStale({ ...geospatial, mapTileArchiveFormatCurrent: false }, 0),
-    ).toBe(false);
+    expect(isTileArchiveStale({ ...geospatial, mapTileArchiveFormatCurrent: false }, 0)).toBe(
+      false,
+    );
     expect(isTileArchiveStale({ ...geospatial, kind: "standard", mapTileCacheVersion: 1 }, 1)).toBe(
       false,
     );
