@@ -5,8 +5,10 @@
  * per row across every page at once, unbounded in the number of pages.
  *
  * Slots transfer hand-to-hand: a releasing task hands its slot directly to
- * the oldest waiter, so a queued task resumes in submission order and the
- * active count never exceeds the constructor bound.
+ * the oldest waiter, so a queued task resumes in submission order. The
+ * transfer pre-accounts the slot — the woken waiter does not increment the
+ * active count again — so `#active` always equals the number of tasks
+ * currently holding a slot and never exceeds the constructor bound.
  */
 export class BoundedPool {
   readonly #concurrency: number;
@@ -32,14 +34,18 @@ export class BoundedPool {
   }
 
   async #acquire(): Promise<void> {
-    if (this.#active < this.#concurrency) {
+    // Queue behind existing waiters even if a slot looks momentarily free —
+    // while waiters exist the bound is fully subscribed, and this keeps
+    // resumption in submission order.
+    if (this.#active < this.#concurrency && this.#waiters.length === 0) {
       this.#active += 1;
       return;
     }
     await new Promise<void>((resolve) => {
       this.#waiters.push(resolve);
     });
-    this.#active += 1;
+    // Slot transferred by the releasing task: #active already counts this
+    // task, so nothing to increment here.
   }
 
   #release(): void {

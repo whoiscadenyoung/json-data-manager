@@ -155,6 +155,13 @@ export class OpfsArchiveCache {
   readonly #generations = new Map<string, number>();
   /** schemaId:version → in-flight backfill (single-flight per archive). */
   readonly #backfills = new Map<string, Promise<void>>();
+  /** schemaId → versions whose backfill was refused (the archive alone
+   * exceeds the budget). A refusal is final for that frozen version —
+   * re-downloading it on every trigger just burns the wire. Memoized so
+   * re-observations and read-miss re-arms short-circuit (issue #134 review);
+   * cleared when the schema's archive pointer disappears, so a re-import
+   * re-attempts even at the same version number. */
+  readonly #refusedBackfills = new Map<string, Set<number>>();
   #initialized: Promise<void> | undefined;
 
   constructor(
@@ -204,6 +211,7 @@ export class OpfsArchiveCache {
     if (meta === null) {
       this.#generations.set(schemaId, (this.#generations.get(schemaId) ?? 0) + 1);
       this.#observedCurrent.delete(schemaId);
+      this.#refusedBackfills.delete(schemaId);
       await this.#pruneSchema(schemaId);
       this.#enforceBudget();
       return;
@@ -282,6 +290,8 @@ export class OpfsArchiveCache {
 
   async #backfill(schemaId: string, version: number, url: string): Promise<void> {
     const key = archiveKey(schemaId, version);
+    const refused = this.#refusedBackfills.get(schemaId);
+    if (refused !== undefined && refused.has(version)) return;
     const existing = this.#backfills.get(key);
     if (existing !== undefined) return existing;
     const generation = this.#generations.get(schemaId) ?? 0;
@@ -291,8 +301,17 @@ export class OpfsArchiveCache {
         if (data.byteLength > this.#budgetBytes) {
           // Refuse to pin an archive that alone exceeds the budget: it could
           // never fit, so the pin would thrash everything else while itself
-          // remaining unpinnable. Reads fall back to network at the source
-          // layer (issue #134).
+          // remaining unpinnable. The refusal is memoized per archive —
+          // without it, every `metas` update re-observing the schema and
+          // every read-miss re-arm from the rendering map would re-download
+          // the blob in full (issue #134 review). Reads fall back to network
+          // at the source layer.
+          let refusedVersions = this.#refusedBackfills.get(schemaId);
+          if (refusedVersions === undefined) {
+            refusedVersions = new Set<number>();
+            this.#refusedBackfills.set(schemaId, refusedVersions);
+          }
+          refusedVersions.add(version);
           console.warn(
             `[tile-archive-cache] archive ${key} is ${data.byteLength} B, over the ${this.#budgetBytes} B budget; not pinned`,
           );

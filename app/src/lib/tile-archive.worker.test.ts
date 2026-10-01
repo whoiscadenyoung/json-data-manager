@@ -18,13 +18,18 @@ interface FakeGeometryRow {
   geometryUrl?: string;
 }
 
-const { geometryPages, setGeometryPages } = vi.hoisted(() => {
+const { geometryPages, setGeometryPages, setPageGapMs, pageGapMs } = vi.hoisted(() => {
   let pages: Array<Array<FakeGeometryRow>> = [];
+  let pageGap = 0;
   return {
     geometryPages: (): Array<Array<FakeGeometryRow>> => pages,
     setGeometryPages: (next: Array<Array<FakeGeometryRow>>): void => {
       pages = next;
     },
+    setPageGapMs: (ms: number): void => {
+      pageGap = ms;
+    },
+    pageGapMs: (): number => pageGap,
   };
 });
 
@@ -35,6 +40,9 @@ vi.mock("./dataset-rows", () => ({
   ): Promise<void> => {
     for (const page of geometryPages()) {
       onPage(page);
+      const gap = pageGapMs();
+      // oxlint-disable-next-line no-await-in-loop -- the inter-page gap IS the condition under test: it lets the pool drain mid-build.
+      if (gap > 0) await new Promise((resolve) => setTimeout(resolve, gap));
     }
   },
 }));
@@ -67,6 +75,7 @@ function urlRow(i: number): FakeGeometryRow {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  setPageGapMs(0);
 });
 
 describe("worker geometry fetch pool", () => {
@@ -119,6 +128,36 @@ describe("worker geometry fetch pool", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1); // only the url row
     expect(features).toHaveLength(2);
     expect(payloadBytes).toBe(2 * new TextEncoder().encode(GEOMETRY_JSON).byteLength);
+  });
+
+  it("completes when the pool fully drains between pages (wave gap)", async () => {
+    // Production paginates with a convex.query round trip between pages
+    // (dataset-rows.ts), so the pool's task queue can empty mid-build before
+    // the next page's rows are submitted. Page 1 here oversubscribes the pool
+    // and fully drains during the real-timer page gap; page 2's inline rows
+    // resolve in microtasks. Regression for the BoundedPool handoff leak:
+    // the old pool finished the wave with #active at the bound and no tasks
+    // running, so page 2 queued forever and the build never settled.
+    setGeometryPages([
+      Array.from({ length: 25 }, (_, i) => urlRow(i)),
+      Array.from({ length: 5 }, (_, i) => ({
+        entryId: `inline${i}`,
+        geometryJson: GEOMETRY_JSON,
+      })),
+    ]);
+    // Longer than the 2 ms fetch hold, so page 1 is fully drained before
+    // page 2 is queued.
+    setPageGapMs(50);
+    const { fetchMock } = stubFetch();
+
+    const { features, payloadBytes } = await fetchAllGeometryFeatures(
+      {} as ConvexClient,
+      "schema1",
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(25);
+    expect(features).toHaveLength(30);
+    expect(payloadBytes).toBe(30 * new TextEncoder().encode(GEOMETRY_JSON).byteLength);
   });
 
   it("rejects when a payload fetch fails, failing the build", async () => {

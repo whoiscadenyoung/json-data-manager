@@ -251,6 +251,46 @@ describe("OpfsArchiveCache", () => {
     expect(await cache.read(key("big", 1), 0, 1)).toBeUndefined();
   });
 
+  it("memoizes the oversized-archive refusal across re-observations and re-arms", async () => {
+    // Every `metas` update re-runs observeMeta for the schema, and every
+    // local range miss on the unpinned archive re-arms a backfill from the
+    // source layer — without a refusal memo each trigger re-downloaded the
+    // full blob (issue #134 review).
+    const store = new MemoryArchiveStore();
+    const fetchArchive = vi.fn<() => Promise<ArrayBuffer>>(async () => bytes(30, 0));
+    const cache = new OpfsArchiveCache(store, fetchArchive, { budgetBytes: 25 });
+    await cache.observeMeta("big", { url: "https://x/big", version: 1 });
+    expect(fetchArchive).toHaveBeenCalledTimes(1);
+
+    await cache.observeMeta("big", { url: "https://x/big", version: 1 });
+    cache.rearmBackfill(key("big", 1), "https://x/big");
+    await flushMicrotasks();
+    expect(fetchArchive).toHaveBeenCalledTimes(1); // still just the first fetch
+
+    // A new version is a new archive: it must be attempted fresh.
+    fetchArchive.mockImplementation(async () => bytes(5, 0));
+    await cache.observeMeta("big", { url: "https://x/big", version: 2 });
+    expect(fetchArchive).toHaveBeenCalledTimes(2);
+    expect(cache.hasLocal("big", 2)).toBe(true);
+  });
+
+  it("clears the refusal memo when the schema's pointer disappears", async () => {
+    // A delete + re-import can reuse the version number; the refusal is
+    // final only for the frozen version that was refused.
+    const store = new MemoryArchiveStore();
+    let data = bytes(30, 0);
+    const fetchArchive = vi.fn<() => Promise<ArrayBuffer>>(async () => data);
+    const cache = new OpfsArchiveCache(store, fetchArchive, { budgetBytes: 25 });
+    await cache.observeMeta("big", { url: "https://x/big", version: 1 });
+    expect(fetchArchive).toHaveBeenCalledTimes(1);
+
+    await cache.observeMeta("big", null);
+    data = bytes(5, 0);
+    await cache.observeMeta("big", { url: "https://x/big", version: 1 });
+    expect(fetchArchive).toHaveBeenCalledTimes(2);
+    expect(cache.hasLocal("big", 1)).toBe(true);
+  });
+
   it("removes the just-written file when the schema was pruned during the write", async () => {
     const store = new MemoryArchiveStore();
     let releaseWrite!: () => void;
