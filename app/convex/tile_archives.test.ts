@@ -60,7 +60,16 @@ async function archiveBlob(t: ReturnType<typeof signedIn>, payload: string): Pro
   return t.action(components.jsonCms.host_support.storeTestBlob, { bytes: bytes.buffer });
 }
 
-/** The wrapper's install call shape. */
+/** Mints the pending-upload token the install must present — issued for
+ * `schemaId`, exactly as the worker's upload flow does (issue #131). */
+async function uploadToken(t: ReturnType<typeof signedIn>, schemaId: string): Promise<string> {
+  const { uploadId } = await t.run(async (ctx) =>
+    ctx.runMutation(components.jsonCms.lib.generateUploadUrl, { scope: schemaId }),
+  );
+  return uploadId;
+}
+
+/** The wrapper's install call shape, with a freshly issued same-scope token. */
 async function install(
   t: ReturnType<typeof signedIn>,
   args: {
@@ -71,20 +80,22 @@ async function install(
     storageId: string;
   },
 ) {
-  return t.mutation(api.tile_archives.install, args);
+  return t.mutation(api.tile_archives.install, {
+    ...args,
+    uploadId: await uploadToken(t, args.schemaId),
+  });
 }
 
 /** A metas slot narrows to the meta (null means no archive — the readers know one exists). */
 function metaAt(
   metas: Array<{
-    storageId: string;
     bytes?: number;
     maxZoom?: number;
     url: string;
     version: number;
   } | null>,
   index: number,
-): { storageId: string; bytes?: number; maxZoom?: number; url: string; version: number } {
+): { bytes?: number; maxZoom?: number; url: string; version: number } {
   const meta = metas[index];
   if (meta === null || meta === undefined) {
     throw new Error(`test fixture: no archive meta at index ${index}`);
@@ -109,7 +120,9 @@ describe("install", () => {
 
     const metas = await t.query(api.tile_archives.metas, { schemaIds: [schemaId] });
     const meta = metaAt(metas, 0);
-    expect(meta.storageId).toBe(storageId);
+    // No `_storage` id in a public result (issue #131): the meta carries
+    // exactly the decision fields.
+    expect("storageId" in meta).toBe(false);
     expect(meta.bytes).toBe(16);
     expect(meta.maxZoom).toBe(10);
     // `version` is the BUILT version — the snapshot the archive was
@@ -152,7 +165,6 @@ describe("install", () => {
 
     // The incumbent archive is untouched — the raced pointer never landed.
     const metas = await t.query(api.tile_archives.metas, { schemaIds: [schemaId] });
-    expect(metaAt(metas, 0).storageId).toBe(firstBlob);
     expect(metaAt(metas, 0).bytes).toBe(16);
 
     // The rebuild rerun against the CURRENT version installs cleanly.
@@ -168,7 +180,7 @@ describe("install", () => {
     ).toBe("installed");
     const after = await t.query(api.tile_archives.metas, { schemaIds: [schemaId] });
     const fresh = metaAt(after, 0);
-    expect(fresh.storageId).toBe(freshBlob);
+    expect(fresh.bytes).toBe(21);
     expect(fresh.version).toBe(1);
     expect(fresh.maxZoom).toBe(12);
   });
@@ -205,8 +217,74 @@ describe("install", () => {
         maxZoom: 10,
         schemaId,
         storageId: "blob",
+        uploadId: "blob",
       }),
     ).rejects.toThrow(GATE);
+  });
+
+  it("answers to the schema-operation visibility policy (issue #131's auth path)", async () => {
+    // A DRAFT the caller cannot see: the auth() schema operation resolves
+    // the dataset and refuses before anything else — install no longer sits
+    // outside the visibility checks every other write answers to.
+    const t = signedIn();
+    const foreignDraft = await t.run(async (ctx) =>
+      ctx.runMutation(components.jsonCms.lib.createSchema, {
+        actorId: "user-2",
+        geometryType: "Point",
+        kind: "geospatial",
+        lifecycle: "draft",
+        schema: { properties: { label: { type: "string" } }, title: "Foreign", type: "object" },
+      }),
+    );
+    const blob = await archiveBlob(t, "pmtiles-foreign");
+    await expect(
+      t.mutation(api.tile_archives.install, {
+        bytes: 14,
+        expectedVersion: 0,
+        maxZoom: 10,
+        schemaId: foreignDraft,
+        storageId: blob,
+        uploadId: await uploadToken(t, foreignDraft),
+      }),
+    ).rejects.toThrow(/doesn't exist or you don't have access/);
+  });
+});
+
+describe("install provenance", () => {
+  it("rejects an archive blob with no upload token", async () => {
+    const t = signedIn();
+    const schemaId = await geospatialDataset(t);
+    const blob = await archiveBlob(t, "pmtiles-unregistered");
+    await expect(
+      t.mutation(api.tile_archives.install, {
+        bytes: 19,
+        expectedVersion: 0,
+        maxZoom: 10,
+        schemaId,
+        storageId: blob,
+        uploadId: "fabricated000",
+      }),
+    ).rejects.toThrow(/never issued/);
+    // Nothing installed — the dataset still reads as row-path-only.
+    expect(await t.query(api.tile_archives.metas, { schemaIds: [schemaId] })).toStrictEqual([null]);
+  });
+
+  it("rejects a token issued for another dataset", async () => {
+    const t = signedIn();
+    const schemaId = await geospatialDataset(t),
+      otherId = await geospatialDataset(t),
+      blob = await archiveBlob(t, "pmtiles-misfiled");
+    await expect(
+      t.mutation(api.tile_archives.install, {
+        bytes: 17,
+        expectedVersion: 0,
+        maxZoom: 10,
+        schemaId,
+        storageId: blob,
+        uploadId: await uploadToken(t, otherId),
+      }),
+    ).rejects.toThrow(/different dataset or publish attempt/);
+    expect(await t.query(api.tile_archives.metas, { schemaIds: [schemaId] })).toStrictEqual([null]);
   });
 });
 
@@ -236,9 +314,9 @@ describe("metas", () => {
     // Each slot answers by its input position: null where there is no
     // archive, the same meta object where the id repeats.
     expect(metas[0]).toBeNull();
-    expect(metaAt(metas, 1).storageId).toBe(storageId);
+    expect(metaAt(metas, 1).bytes).toBe(12);
     expect(metas[2]).toBeNull();
-    expect(metaAt(metas, 3).storageId).toBe(storageId);
+    expect(metaAt(metas, 3).bytes).toBe(12);
     expect(metaAt(metas, 1).maxZoom).toBe(9);
   });
 });

@@ -345,7 +345,6 @@ interface TileArchiveSchemaRow {
   geometryType?: string;
   kind?: "standard" | "geospatial";
   mapTileArchiveBuiltVersion?: number;
-  mapTileArchiveStorageId?: string;
   mapTileCacheVersion?: number;
 }
 
@@ -355,13 +354,15 @@ interface TileArchiveSchemaRow {
  * covers imports that skipped the ensure-call, geospatial conversion, and
  * datasets that grew past the threshold after import) or an installed one
  * built behind the current version (stale-on-view — the authoritative,
- * self-healing trigger).
+ * self-healing trigger). `mapTileArchiveBuiltVersion` is set iff an archive
+ * ever installed (the summaries carry no storage id since #131), so its
+ * absence is the "no archive yet" signal.
  */
 function isTileArchiveStale(schema: TileArchiveSchemaRow, currentVersion: number): boolean {
   if (schema.kind !== "geospatial" || schema.geometryType === undefined) return false;
   if (currentVersion === 0) return false; // never had a geometry write
-  if (schema.mapTileArchiveStorageId === undefined) return true;
-  return (schema.mapTileArchiveBuiltVersion ?? 0) !== currentVersion;
+  if (schema.mapTileArchiveBuiltVersion === undefined) return true;
+  return schema.mapTileArchiveBuiltVersion !== currentVersion;
 }
 
 /**

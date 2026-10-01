@@ -39,8 +39,12 @@ export interface SchemaDoc {
    * Absent means no simplification (pre-flag datasets).
    */
   simplifyGeometry?: boolean;
-  /** The original imported file, retained in storage for re-download. */
-  sourceFileStorageId?: string;
+  /**
+   * True when the dataset retains its original imported file in storage for
+   * re-download (issue #131: the blob's `_storage` id itself never appears
+   * in a public result — the bytes are reachable only via `getSourceFileUrl`).
+   */
+  hasSourceFile: boolean;
   sourceFileName?: string;
   sourceFileSize?: number;
   /**
@@ -50,8 +54,6 @@ export interface SchemaDoc {
    * tile archive is still current.
    */
   mapTileCacheVersion?: number;
-  /** Pointer to the current tile archive blob, when one is installed. */
-  mapTileArchiveStorageId?: string;
   /** The tile archive's byte length, set at install time. */
   mapTileArchiveBytes?: number;
   /** The tile pyramid's max zoom, set at install time. */
@@ -131,8 +133,6 @@ export interface GeometryDoc {
  * trigger a rebuild, or fall back to the row path until one lands).
  */
 export interface MapTileArchiveMeta {
-  /** The archive blob's storage id (part 3's OPFS pin keys on it). */
-  storageId: string;
   /** The data version the archive was built from. */
   version: number;
   /** The archive's byte length, as reported at install time. */
@@ -226,10 +226,19 @@ export interface JsonCmsApi {
   >;
   deleteEntry: FunctionReference<"mutation", "public", { entryId: string }, null>;
   deleteEntriesBySchema: FunctionReference<"mutation", "public", { schemaId: string }, number>;
-  // Batched dataset import
-  generateImportUploadUrl: FunctionReference<"mutation", "public", Empty, string>;
-  // `storageIds`: one already-small, client-uploaded chunk blob per entry —
-  // see `chunkRowsForImport` for why chunking happens client-side.
+  // Batched dataset import. Upload provenance (#131): each upload URL
+  // carries its `pendingUploads` row id (`uploadId`), and `startImport`
+  // requires one token per uploaded blob — an id with no live, same-scope
+  // token is rejected.
+  generateImportUploadUrl: FunctionReference<
+    "mutation",
+    "public",
+    { scope?: string },
+    { storageUrl: string; uploadId: string }
+  >;
+  // `chunks`: one already-small, client-uploaded chunk blob per entry, each
+  // with the token its upload URL was issued under — see
+  // `chunkRowsForImport` for why chunking happens client-side.
   // `sourceFile`: the original uploaded file, retained on the dataset so the
   // un-simplified source stays re-downloadable after geometry simplification.
   startImport: FunctionReference<
@@ -237,9 +246,9 @@ export interface JsonCmsApi {
     "public",
     {
       schemaId: string;
-      storageIds: string[];
       total: number;
-      sourceFile?: { name: string; size: number; storageId: string };
+      chunks?: Array<{ storageId: string; uploadId: string }>;
+      sourceFile?: { name: string; size: number; storageId: string; uploadId: string };
     },
     string
   >;
@@ -269,14 +278,13 @@ export interface JsonCmsApi {
 
 /**
  * Live status of a batched dataset import, as returned by `getImportStatus`.
+ * The chunk-blob `_storage` ids are deliberately not part of the public
+ * status (issue #131) — the workflow consumes them server-side.
  */
 export interface ImportStatusDoc {
   _id: string;
   _creationTime: number;
   schemaId: SchemaId;
-  /** @deprecated superseded by `storageIds` (one blob per client-uploaded chunk). */
-  storageId?: string;
-  storageIds?: string[];
   total: number;
   processed: number;
   status: "pending" | "processing" | "completed" | "failed";

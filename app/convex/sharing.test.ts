@@ -81,6 +81,15 @@ async function addEntry(t: TestConvex, schemaId: string, label: string): Promise
   return t.mutation(api.entries.create, { data: { label }, schemaId });
 }
 
+/** The pending-upload token a chunk registration must present — issued for
+ * `scope`, exactly as the client's upload flow does (issue #131). */
+async function uploadToken(t: TestConvex, scope: string): Promise<string> {
+  const { uploadId } = await t.run(async (ctx) =>
+    ctx.runMutation(components.jsonCms.lib.generateUploadUrl, { scope }),
+  );
+  return uploadId;
+}
+
 /**
  * Drives one publish to completion for `datasetKey` (a draft dataset id or a
  * saved registry row id) and returns the frozen row id — the chunk plumbing
@@ -106,7 +115,11 @@ async function publishNow(
   const storageId = await t.action(components.jsonCms.host_support.storeTestBlob, {
     bytes: bytes.buffer,
   });
-  await t.mutation(api.publish.registerChunk, { attemptId: started.attemptId, storageId });
+  await t.mutation(api.publish.registerChunk, {
+    attemptId: started.attemptId,
+    storageId,
+    uploadId: await uploadToken(t, started.attemptId),
+  });
   const frozen = await t.mutation(api.publish.freeze, { attemptId: started.attemptId });
   await t.finishAllScheduledFunctions(() => {
     vi.runAllTimers();
@@ -294,6 +307,7 @@ describe("published-visibility control (stage 8 AC, decision D2)", () => {
     await mine.mutation(api.publish.registerChunk, {
       attemptId: started.attemptId,
       storageId,
+      uploadId: await uploadToken(mine, started.attemptId),
     });
     const frozen = await mine.mutation(api.publish.freeze, { attemptId: started.attemptId });
     expect(frozen.alreadyFrozen).toBe(false);
@@ -337,7 +351,11 @@ describe("published-visibility control (stage 8 AC, decision D2)", () => {
       chunkCount: 1,
       totalRows: 1,
     });
-    await mine.mutation(api.publish.registerChunk, { attemptId: started.attemptId, storageId });
+    await mine.mutation(api.publish.registerChunk, {
+      attemptId: started.attemptId,
+      storageId,
+      uploadId: await uploadToken(mine, started.attemptId),
+    });
     const frozen = await mine.mutation(api.publish.freeze, { attemptId: started.attemptId });
     await mine.finishAllScheduledFunctions(() => {
       vi.runAllTimers();
@@ -492,17 +510,23 @@ describe("project writes are creator-only (stage 8 AC, decision D1)", () => {
       }),
     ).rejects.toThrow(GONE_ATTEMPT);
     await expect(
-      other.mutation(api.publish.registerChunk, { attemptId: started.attemptId, storageId: "s1" }),
+      other.mutation(api.publish.registerChunk, {
+        attemptId: started.attemptId,
+        storageId: "s1",
+        uploadId: "s1",
+      }),
     ).rejects.toThrow(GONE_ATTEMPT);
     await expect(
       other.mutation(api.publish.freeze, { attemptId: started.attemptId }),
     ).rejects.toThrow(GONE_ATTEMPT);
     expect(await other.query(api.publish.attempt, { attemptId: started.attemptId })).toBeNull();
 
-    // The creator keeps driving (positive case).
+    // The creator keeps driving (positive case) — with a token issued for
+    // the attempt, as the real client flow mints them.
     await mine.mutation(api.publish.registerChunk, {
       attemptId: started.attemptId,
       storageId: "s1",
+      uploadId: await uploadToken(mine, started.attemptId),
     });
   });
 
@@ -686,10 +710,11 @@ describe("stage-8 batch and cross-dataset reads (review round 2)", () => {
     const storageId = await mine.action(components.jsonCms.host_support.storeTestBlob, {
       bytes: bytes.buffer,
     });
+    const uploadId = await uploadToken(mine, draftId);
     const importId = await mine.run(async (ctx) =>
       ctx.runMutation(components.jsonCms.lib.startImport, {
+        chunks: [{ storageId, uploadId }],
         schemaId: draftId,
-        storageIds: [storageId],
         total: 1,
       }),
     );

@@ -282,17 +282,19 @@ export function useDatasetImport(): DatasetImportHandle {
           // memory) and upload each chunk to its own blob — never one giant
           // blob. See `chunkRowsForImport`'s doc comment for why: Convex
           // components can't use the Node runtime, so no server-side step
-          // could otherwise safely parse a large upload in one shot.
+          // could otherwise safely parse a large upload in one shot. Each
+          // upload rides the token its URL was issued under (`uploadId`) —
+          // `startImport` rejects any blob without one (issue #131).
           chunks = chunkRowsForImport(rows),
-          storageIds: string[] = [];
+          uploaded: Array<{ storageId: string; uploadId: string }> = [];
         // Sequential: keeps upload order predictable and mirrors the
         // workflow's own sequential chunk processing; could be
         // parallelized later if upload latency becomes a bottleneck.
         for (const chunk of chunks) {
           // oxlint-disable-next-line no-await-in-loop
-          const uploadUrl = await generateUploadUrl({}),
+          const { storageUrl, uploadId } = await generateUploadUrl({ scope: newSchemaId }),
             // oxlint-disable-next-line no-await-in-loop
-            res = await fetch(uploadUrl, {
+            res = await fetch(storageUrl, {
               body: JSON.stringify(chunk),
               headers: { "Content-Type": "application/json" },
               method: "POST",
@@ -310,16 +312,18 @@ export function useDatasetImport(): DatasetImportHandle {
           ) {
             throw new Error("Import upload did not return a storageId.");
           }
-          storageIds.push(body.storageId);
+          uploaded.push({ storageId: body.storageId, uploadId });
         }
 
         // Retain the original file as its own blob — deliberately NOT in
-        // `storageIds` (the import workflow deletes chunk blobs as it
+        // `uploaded` (the import workflow deletes chunk blobs as it
         // consumes them; this one must survive).
-        let sourceFileRef: { name: string; size: number; storageId: string } | undefined;
+        let sourceFileRef:
+          | { name: string; size: number; storageId: string; uploadId: string }
+          | undefined;
         if (sourceFile) {
-          const uploadUrl = await generateUploadUrl({}),
-            res = await fetch(uploadUrl, {
+          const { storageUrl, uploadId } = await generateUploadUrl({ scope: newSchemaId }),
+            res = await fetch(storageUrl, {
               body: sourceFile,
               headers: { "Content-Type": sourceFile.type || "application/octet-stream" },
               method: "POST",
@@ -340,13 +344,14 @@ export function useDatasetImport(): DatasetImportHandle {
             name: sourceFile.name,
             size: sourceFile.size,
             storageId: body.storageId,
+            uploadId,
           };
         }
 
         const newImportId = await startImport({
           schemaId: newSchemaId,
           sourceFile: sourceFileRef,
-          storageIds,
+          chunks: uploaded,
           total: rows.length,
         });
         setSchemaId(newSchemaId);

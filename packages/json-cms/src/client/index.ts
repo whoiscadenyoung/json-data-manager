@@ -776,35 +776,48 @@ export function exposeApi(component: ComponentApi, options: ExposeApiOptions) {
     }),
 
     // Batched dataset import operations
+    //
+    // Upload provenance (issue #131): every upload URL carries the id of the
+    // server-side `pendingUploads` row it was minted with, and `startImport`
+    // requires one token per uploaded blob — a storage id with no live,
+    // same-scope token is rejected. `scope` binds the issuance to its target
+    // (the dataset id for imports).
     generateImportUploadUrl: mutationGeneric({
-      args: {},
-      handler: async (ctx) => {
+      args: { scope: v.optional(v.string()) },
+      handler: async (ctx, args) => {
         await options.auth(ctx, { fn: "generateImportUploadUrl", type: "create" });
-        return ctx.runMutation(component.lib.generateUploadUrl, {});
+        return ctx.runMutation(component.lib.generateUploadUrl, { scope: args.scope });
       },
     }),
     startImport: mutationGeneric({
       args: {
         // The original uploaded file, retained on the dataset so the
         // un-simplified source stays re-downloadable after geometry
-        // simplification. Already uploaded by the client to its own blob.
+        // simplification. Already uploaded by the client to its own blob,
+        // against the pending upload its `uploadId` names.
         sourceFile: v.optional(
-          v.object({ name: v.string(), size: v.number(), storageId: v.string() }),
+          v.object({
+            name: v.string(),
+            size: v.number(),
+            storageId: v.string(),
+            uploadId: v.string(),
+          }),
         ),
         schemaId: v.string(),
-        // One already-small, client-uploaded chunk blob per entry — see
+        // One already-small, client-uploaded chunk blob per entry, each with
+        // the token its upload URL was issued under — see
         // `chunkRowsForImport` in the `react` package for why chunking
         // happens client-side (Convex components can't use the Node
         // runtime, so no server-side step can safely parse one giant upload).
-        storageIds: v.array(v.string()),
+        chunks: v.optional(v.array(v.object({ storageId: v.string(), uploadId: v.string() }))),
         total: v.number(),
       },
       handler: async (ctx, args) => {
         await options.auth(ctx, { fn: "startImport", schemaId: args.schemaId, type: "create" });
         return ctx.runMutation(component.lib.startImport, {
+          chunks: args.chunks,
           sourceFile: args.sourceFile,
           schemaId: args.schemaId,
-          storageIds: args.storageIds,
           total: args.total,
         });
       },

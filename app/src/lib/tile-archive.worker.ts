@@ -202,11 +202,23 @@ async function fetchAllGeometryFeatures(
   return { features, payloadBytes };
 }
 
-async function uploadArchive(convex: ConvexClient, archive: Uint8Array): Promise<string> {
-  const uploadUrl = await convex.mutation(api.imports.generateUploadUrl, {});
+/**
+ * Uploads the archive through the app's storage upload-url flow, issued for
+ * THIS dataset (`scope`) — the install then presents the issuance token, and
+ * an id that didn't come from a server-issued upload for this dataset is
+ * rejected at `tile_archives.install` (issue #131).
+ */
+async function uploadArchive(
+  convex: ConvexClient,
+  schemaId: string,
+  archive: Uint8Array,
+): Promise<{ storageId: string; uploadId: string }> {
+  const { storageUrl, uploadId } = await convex.mutation(api.imports.generateUploadUrl, {
+    scope: schemaId,
+  });
   // The archive is one fresh buffer from `assembleArchive`, so an
   // ArrayBuffer-backed copy for the Blob part is the honest typing.
-  const response = await fetch(uploadUrl, {
+  const response = await fetch(storageUrl, {
     body: new Blob([new Uint8Array(archive)], { type: "application/octet-stream" }),
     headers: { "Content-Type": "application/octet-stream" },
     method: "POST",
@@ -223,7 +235,7 @@ async function uploadArchive(convex: ConvexClient, archive: Uint8Array): Promise
   ) {
     throw new Error("Archive upload did not return a storageId.");
   }
-  return body.storageId;
+  return { storageId: body.storageId, uploadId };
 }
 
 async function buildAndInstall(
@@ -239,7 +251,7 @@ async function buildAndInstall(
   });
 
   postPhase(schemaId, "uploading");
-  const storageId = await uploadArchive(convex, archive);
+  const { storageId, uploadId } = await uploadArchive(convex, schemaId, archive);
 
   postPhase(schemaId, "installing");
   const outcome = await convex.mutation(api.tile_archives.install, {
@@ -248,6 +260,7 @@ async function buildAndInstall(
     maxZoom: DEFAULT_MAX_ZOOM,
     schemaId,
     storageId,
+    uploadId,
   });
   if (outcome === "installed") {
     post({

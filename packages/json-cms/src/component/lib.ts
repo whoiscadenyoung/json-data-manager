@@ -33,6 +33,7 @@ import {
   resolveGeometryStorage,
 } from "./geometry_storage.js";
 import type { ResolvedGeometry } from "./geometry_storage.js";
+import { claimPendingUpload } from "./host_support.js";
 import schema, { lineageValidator } from "./schema.js";
 
 const SCHEMA_SIZE_LIMIT = 102_400, // 100 KB
@@ -69,6 +70,18 @@ const SCHEMA_SIZE_LIMIT = 102_400, // 100 KB
     _creationTime: v.number(),
     _id: v.id("schemas"),
   }),
+  // The client-facing view of a `schemas` doc (issue #131): the stored shape
+  // minus its two `_storage` pointers. `mapTileArchiveStorageId` names the
+  // installed archive blob (internal to the install/delete flows — an
+  // installed archive is provable from `mapTileArchiveBuiltVersion` alone);
+  // `sourceFileStorageId` names the retained source-file blob and survives
+  // only as the `hasSourceFile` flag, the bytes staying reachable through
+  // `getSourceFileUrl`'s URL. Every public query that returns a schema doc
+  // projects through `toPublicSchemaView` against this validator, so the
+  // criterion "no public query returns a `_storage` id" holds by construction.
+  publicSchemaViewValidator = schemaValidator
+    .omit("mapTileArchiveStorageId", "sourceFileStorageId")
+    .extend({ hasSourceFile: v.boolean() }),
   entryValidator = schema.tables.entries.validator.extend({
     _creationTime: v.number(),
     _id: v.id("entries"),
@@ -183,13 +196,30 @@ function isCatalogVisibleToViewer(
   return isCatalogVisible(doc) && isVisibleToViewer(doc, viewerId);
 }
 
+/**
+ * The client-facing projection of a full `schemas` doc (issue #131): the
+ * stored shape with the two `_storage` pointers stripped — the storage-id
+ * secrecy half of the fix. `mapTileArchiveStorageId` is internal to the
+ * install/delete flows; `sourceFileStorageId` becomes `hasSourceFile`, so a
+ * caller can still tell "this dataset has a retained original" without
+ * learning the blob's id. Every public query that returns a schema doc maps
+ * through here — host flows that need the raw pointers read the stored doc
+ * component-side (`ctx.db.get`), never through a public result.
+ */
+function toPublicSchemaView(doc: Doc<"schemas">) {
+  const { mapTileArchiveStorageId: _archiveId, sourceFileStorageId: _sourceFileId, ...view } = doc;
+  return { ...view, hasSourceFile: _sourceFileId !== undefined };
+}
+
 export const listSchemas = query({
   args: { viewerId: v.string() },
   handler: async (ctx, args) => {
     const docs = await ctx.db.query("schemas").order("desc").collect();
-    return docs.filter((doc) => isCatalogVisibleToViewer(doc, args.viewerId));
+    return docs
+      .filter((doc) => isCatalogVisibleToViewer(doc, args.viewerId))
+      .map(toPublicSchemaView);
   },
-  returns: v.array(schemaValidator),
+  returns: v.array(publicSchemaViewValidator),
 });
 
 /** Number of top-level `properties` on a stored JSON schema — the datasets
@@ -247,7 +277,10 @@ function toSchemaSummary(doc: Doc<"schemas">) {
     mapTileArchiveBuiltVersion: doc.mapTileArchiveBuiltVersion,
     mapTileArchiveBytes: doc.mapTileArchiveBytes,
     mapTileArchiveMaxZoom: doc.mapTileArchiveMaxZoom,
-    mapTileArchiveStorageId: doc.mapTileArchiveStorageId,
+    // Deliberately NO `mapTileArchiveStorageId` (issue #131): the summary is
+    // a public result, and a `_storage` id in it invites cross-dataset blob
+    // mishandling downstream. An installed archive is provable from
+    // `mapTileArchiveBuiltVersion` alone (set iff one ever installed).
     mapTileCacheVersion: doc.mapTileCacheVersion,
     // The published-visibility control rides the projection (stage 8, #104)
     // for the same reason: host list surfaces re-filtering or attributing
@@ -275,7 +308,6 @@ const schemaSummaryValidator = schemaValidator
     "mapTileArchiveBuiltVersion",
     "mapTileArchiveBytes",
     "mapTileArchiveMaxZoom",
-    "mapTileArchiveStorageId",
     "mapTileCacheVersion",
     "publishedVisibility",
     "source",
@@ -319,8 +351,11 @@ export const listDraftSchemaSummaries = query({
 
 export const getSchema = query({
   args: { schemaId: v.id("schemas") },
-  handler: async (ctx, args) => ctx.db.get(args.schemaId),
-  returns: v.union(v.null(), schemaValidator),
+  handler: async (ctx, args) => {
+    const doc = await ctx.db.get(args.schemaId);
+    return doc === null ? null : toPublicSchemaView(doc);
+  },
+  returns: v.union(v.null(), publicSchemaViewValidator),
 });
 
 /**
@@ -368,13 +403,15 @@ export const getImportSchemaId = query({
  */
 export const listSchemaVersions = query({
   args: { sourceSchemaId: v.id("schemas") },
-  handler: async (ctx, args) =>
-    ctx.db
+  handler: async (ctx, args) => {
+    const versions = await ctx.db
       .query("schemas")
       .withIndex("by_lineage_source", (q) => q.eq("lineage.sourceSchemaId", args.sourceSchemaId))
       .order("desc")
-      .collect(),
-  returns: v.array(schemaValidator),
+      .collect();
+    return versions.map(toPublicSchemaView);
+  },
+  returns: v.array(publicSchemaViewValidator),
 });
 
 /**
@@ -385,12 +422,14 @@ export const listSchemaVersions = query({
  */
 export const getSchemaVersionBySnapshotRef = query({
   args: { snapshotRef: v.string() },
-  handler: async (ctx, args) =>
-    ctx.db
+  handler: async (ctx, args) => {
+    const doc = await ctx.db
       .query("schemas")
       .withIndex("by_lineage_snapshotRef", (q) => q.eq("lineage.snapshotRef", args.snapshotRef))
-      .first(),
-  returns: v.union(v.null(), schemaValidator),
+      .first();
+    return doc === null ? null : toPublicSchemaView(doc);
+  },
+  returns: v.union(v.null(), publicSchemaViewValidator),
 });
 
 /**
@@ -455,10 +494,12 @@ export const getMapTileArchiveMeta = query({
     if (url === null) {
       return null;
     }
+    // Deliberately NO `storageId` here (issue #131): clients decide between
+    // the tile and row paths from `url`/`version` alone — a `_storage` id in
+    // a public result invites cross-dataset blob mishandling downstream.
     return {
       bytes: schemaDoc.mapTileArchiveBytes,
       maxZoom: schemaDoc.mapTileArchiveMaxZoom,
-      storageId: schemaDoc.mapTileArchiveStorageId,
       url,
       version: schemaDoc.mapTileArchiveBuiltVersion,
     };
@@ -468,7 +509,6 @@ export const getMapTileArchiveMeta = query({
     v.object({
       bytes: v.optional(v.number()),
       maxZoom: v.optional(v.number()),
-      storageId: v.id("_storage"),
       url: v.string(),
       version: v.number(),
     }),
@@ -1030,12 +1070,14 @@ export const listSchemasByCollection = query({
       .withIndex("by_collection", (q) => q.eq("collectionId", args.collectionId))
       .collect();
     const datasets = await Promise.all(memberships.map(async (row) => ctx.db.get(row.schemaId)));
-    return datasets.filter(
-      (dataset): dataset is NonNullable<typeof dataset> =>
-        dataset !== null && isCatalogVisibleToViewer(dataset, args.viewerId),
-    );
+    return datasets
+      .filter(
+        (dataset): dataset is NonNullable<typeof dataset> =>
+          dataset !== null && isCatalogVisibleToViewer(dataset, args.viewerId),
+      )
+      .map(toPublicSchemaView);
   },
-  returns: v.array(schemaValidator),
+  returns: v.array(publicSchemaViewValidator),
 });
 
 /** Every `{dataset, collection}` membership row — lets clients count/filter memberships without one query per collection. */
@@ -2980,28 +3022,71 @@ export const backfillDatasetSummaries = mutation({
 // ---------------------------------------------------------------------------
 
 const importValidator = schema.tables.imports.validator.extend({
-  _creationTime: v.number(),
-  _id: v.id("imports"),
-});
+    _creationTime: v.number(),
+    _id: v.id("imports"),
+  }),
+  // The public status view (issue #131): everything the progress UI and the
+  // host pollers read, minus the chunk-blob pointers (`storageId` legacy /
+  // `storageIds`) — no public query returns a `_storage` id. The workflow
+  // receives the chunk ids through its own args, never through this result.
+  importStatusValidator = importValidator.omit("storageId", "storageIds");
 
-/** Generate a short-lived URL the client POSTs one chunk of serialized rows to. Called once per chunk. */
+/**
+ * Generate a short-lived URL the client POSTs one chunk of serialized rows to.
+ * Called once per chunk.
+ *
+ * Every issuance is tracked server-side (issue #131): the return carries the
+ * `pendingUploads` row this URL was minted with, and the consumer of the
+ * uploaded blob (`startImport`'s client path; the host's chunk-registration
+ * and tile-install flows) must present that `uploadId` to prove the blob came
+ * through a server-issued URL — a claim against an unknown, already-used, or
+ * differently-scoped row rejects the id. A claim deletes its row, so the
+ * table only ever holds uploads that never reached a consumer — exactly what
+ * `host_support.sweepAbandonedUploads` clears out.
+ *
+ * `scope` binds the issuance to its intended target: the host's publish
+ * attempt id (chunk registration) or the component schema id (imports, tile
+ * installs). Host-internal uploads (the tag ingest uploads server-side) issue
+ * without one; a scope-less row can never satisfy a claim.
+ */
 export const generateUploadUrl = mutation({
-  args: {},
-  handler: async (ctx) => ctx.storage.generateUploadUrl(),
-  returns: v.string(),
+  args: { scope: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const uploadId = await ctx.db.insert("pendingUploads", { scope: args.scope });
+    return { storageUrl: await ctx.storage.generateUploadUrl(), uploadId };
+  },
+  returns: v.object({ storageUrl: v.string(), uploadId: v.string() }),
 });
 
 /** Read the import status doc (client subscribes to this for progress). */
 export const getImportStatus = query({
   args: { importId: v.id("imports") },
-  handler: async (ctx, args) => ctx.db.get(args.importId),
-  returns: v.union(importValidator, v.null()),
+  handler: async (ctx, args) => {
+    const doc = await ctx.db.get(args.importId);
+    if (doc === null) {
+      return null;
+    }
+    const { storageId: _legacyId, storageIds: _chunkIds, ...status } = doc;
+    return status;
+  },
+  returns: v.union(importStatusValidator, v.null()),
 });
 
 /**
- * Create the status doc and start the durable import workflow. `storageIds`
- * is the ordered list of already-small, client-uploaded chunk blobs (see the
- * doc comment above) — each one gets its own `insertChunkFromStorage` step.
+ * Create the status doc and start the durable import workflow. Each chunk is
+ * one already-small, client-uploaded blob (see the doc comment above) — each
+ * one gets its own `insertChunkFromStorage` step.
+ *
+ * Storage-id provenance (issue #131) forks the two callers apart:
+ * - Client path (no `boundWrite`): every blob arrives as
+ *   `{storageId, uploadId}` — the pending-upload row its upload URL was
+ *   issued under. All rows are claimed here, in this transaction, so a
+ *   storage id that wasn't issued for THIS dataset (unknown token, already
+ *   spent, different scope) rejects the whole import.
+ * - Host-attested path (`boundWrite` — the host's freeze/ingest flows, which
+ *   no client wrapper can carry): plain ids the host flow vetted at its own
+ *   boundary (publish chunks are claimed when they register; tag-ingest
+ *   chunks are uploaded server-side).
  */
 export const startImport = mutation({
   args: {
@@ -3011,11 +3096,20 @@ export const startImport = mutation({
     // its own storage blob — retained on the schema doc so the original
     // (un-simplified) data stays re-downloadable even when geometry is being
     // simplified on write. Absent for imports that didn't provide one.
+    // `uploadId` is the pending-upload row the blob was uploaded against.
     sourceFile: v.optional(
-      v.object({ name: v.string(), size: v.number(), storageId: v.id("_storage") }),
+      v.object({
+        name: v.string(),
+        size: v.number(),
+        storageId: v.id("_storage"),
+        uploadId: v.string(),
+      }),
     ),
     schemaId: v.id("schemas"),
-    storageIds: v.array(v.id("_storage")),
+    // Client path: one uploaded chunk blob per entry plus its upload token.
+    chunks: v.optional(v.array(v.object({ storageId: v.id("_storage"), uploadId: v.string() }))),
+    // Host-attested path: chunk blob ids vetted by the calling host flow.
+    storageIds: v.optional(v.array(v.id("_storage"))),
     total: v.number(),
   },
   handler: async (ctx, args) => {
@@ -3026,6 +3120,36 @@ export const startImport = mutation({
     // An import writes entries, so a bound dataset only accepts one from its
     // host's tag-ingest flow.
     assertDataWritable(targetSchema, args.boundWrite);
+
+    let storageIds: Array<Id<"_storage">>;
+    if (args.boundWrite !== undefined) {
+      if (args.storageIds === undefined) {
+        throw new ConvexError("An attested import must carry its chunk storage ids.");
+      }
+      if (args.chunks !== undefined) {
+        throw new ConvexError("An attested import carries raw chunk ids, not upload tokens.");
+      }
+      storageIds = args.storageIds;
+    } else {
+      if (args.storageIds !== undefined) {
+        throw new ConvexError(
+          "This import carries raw storage ids — upload its chunks through issued URLs and pass each blob's token.",
+        );
+      }
+      if (args.chunks === undefined) {
+        throw new ConvexError(
+          "This import carries no registered uploads — request upload URLs and pass each blob's token.",
+        );
+      }
+      for (const chunk of args.chunks) {
+        // oxlint-disable-next-line no-await-in-loop -- every claim consumes its row before the next read; any rejection rolls the whole import back.
+        await claimPendingUpload(ctx, chunk.uploadId, args.schemaId);
+      }
+      if (args.sourceFile !== undefined) {
+        await claimPendingUpload(ctx, args.sourceFile.uploadId, args.schemaId);
+      }
+      storageIds = args.chunks.map((chunk) => chunk.storageId);
+    }
 
     if (args.sourceFile !== undefined) {
       await ctx.db.patch(args.schemaId, {
@@ -3039,7 +3163,7 @@ export const startImport = mutation({
         processed: 0,
         schemaId: args.schemaId,
         status: "pending",
-        storageIds: args.storageIds,
+        storageIds,
         total: args.total,
       }),
       workflowId = await workflow.start(
@@ -3048,14 +3172,14 @@ export const startImport = mutation({
         {
           importId,
           schemaId: args.schemaId,
-          storageIds: args.storageIds,
+          storageIds,
           total: args.total,
         },
         {
           // Carried through to `handleImportComplete` so a failed/canceled
           // import's not-yet-processed chunk blobs get cleaned up too (each
           // chunk deletes its own blob on success, inside the loop below).
-          context: { importId, storageIds: args.storageIds },
+          context: { importId, storageIds },
           onComplete: internal.lib.handleImportComplete,
           startAsync: true,
         },

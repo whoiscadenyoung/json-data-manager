@@ -422,7 +422,7 @@ async function fetchSnapshotRows(
   return parseSnapshotRows(await response.text());
 }
 
-/** Uploads rows as chunk blobs the import workflow can read (the browser importer's path). */
+/** Uploads rows as chunk blobs the import workflow can read (the browser importer's path). Server-internal uploads — no pending-upload scope, the ids never pass through a client (issue #131 tracks the issuance row regardless). */
 async function uploadChunkBlobs(
   ctx: Pick<ActionCtx, "runMutation">,
   rows: SnapshotRow[],
@@ -430,9 +430,9 @@ async function uploadChunkBlobs(
   const chunkStorageIds: string[] = [];
   for (const chunk of chunkRows(rows)) {
     // oxlint-disable-next-line no-await-in-loop -- chunks upload sequentially, mirroring the browser importer.
-    const uploadUrl = await ctx.runMutation(components.jsonCms.lib.generateUploadUrl, {});
+    const { storageUrl } = await ctx.runMutation(components.jsonCms.lib.generateUploadUrl, {});
     // oxlint-disable-next-line no-await-in-loop
-    const upload = await fetch(uploadUrl, {
+    const upload = await fetch(storageUrl, {
       body: JSON.stringify(chunk),
       headers: { "Content-Type": "application/json" },
       method: "POST",

@@ -24,6 +24,13 @@ import type { FunctionReference } from "convex/server";
 export type ComponentApi<Name extends string | undefined = string | undefined> =
   {
     host_support: {
+      claimUpload: FunctionReference<
+        "mutation",
+        "internal",
+        { scope: string; uploadId: string },
+        null,
+        Name
+      >;
       deleteStorageBlobs: FunctionReference<
         "mutation",
         "internal",
@@ -31,11 +38,25 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         number,
         Name
       >;
+      hasStorageBlob: FunctionReference<
+        "query",
+        "internal",
+        { storageId: string },
+        boolean,
+        Name
+      >;
       storeTestBlob: FunctionReference<
         "action",
         "internal",
         { bytes: ArrayBuffer },
         string,
+        Name
+      >;
+      sweepAbandonedUploads: FunctionReference<
+        "mutation",
+        "internal",
+        { olderThanMs?: number },
+        number,
         Name
       >;
     };
@@ -185,8 +206,8 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       generateUploadUrl: FunctionReference<
         "mutation",
         "internal",
-        {},
-        string,
+        { scope?: string },
+        { storageUrl: string; uploadId: string },
         Name
       >;
       getCollection: FunctionReference<
@@ -274,8 +295,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           processed: number;
           schemaId: string;
           status: "pending" | "processing" | "completed" | "failed";
-          storageId?: string;
-          storageIds?: Array<string>;
           total: number;
           workflowId?: string;
         } | null,
@@ -300,7 +319,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         null | {
           bytes?: number;
           maxZoom?: number;
-          storageId: string;
           url: string;
           version: number;
         },
@@ -326,6 +344,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "Polygon"
             | "MultiPolygon";
           groupId?: string;
+          hasSourceFile: boolean;
           kind?: "standard" | "geospatial";
           lifecycle?: "draft" | "published";
           lineage?: {
@@ -344,7 +363,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
           mapTileArchiveMaxZoom?: number;
-          mapTileArchiveStorageId?: string;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
           schema: any;
@@ -352,7 +370,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           source?: { name: string };
           sourceFileName?: string;
           sourceFileSize?: number;
-          sourceFileStorageId?: string;
           title: string;
           uiSchema?: any;
         },
@@ -378,6 +395,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "Polygon"
             | "MultiPolygon";
           groupId?: string;
+          hasSourceFile: boolean;
           kind?: "standard" | "geospatial";
           lifecycle?: "draft" | "published";
           lineage?: {
@@ -396,7 +414,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
           mapTileArchiveMaxZoom?: number;
-          mapTileArchiveStorageId?: string;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
           schema: any;
@@ -404,7 +421,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           source?: { name: string };
           sourceFileName?: string;
           sourceFileSize?: number;
-          sourceFileStorageId?: string;
           title: string;
           uiSchema?: any;
         },
@@ -480,7 +496,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
           mapTileArchiveMaxZoom?: number;
-          mapTileArchiveStorageId?: string;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
           source?: { name: string };
@@ -786,6 +801,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "Polygon"
             | "MultiPolygon";
           groupId?: string;
+          hasSourceFile: boolean;
           kind?: "standard" | "geospatial";
           lifecycle?: "draft" | "published";
           lineage?: {
@@ -804,7 +820,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
           mapTileArchiveMaxZoom?: number;
-          mapTileArchiveStorageId?: string;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
           schema: any;
@@ -812,7 +827,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           source?: { name: string };
           sourceFileName?: string;
           sourceFileSize?: number;
-          sourceFileStorageId?: string;
           title: string;
           uiSchema?: any;
         }>,
@@ -838,6 +852,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "Polygon"
             | "MultiPolygon";
           groupId?: string;
+          hasSourceFile: boolean;
           kind?: "standard" | "geospatial";
           lifecycle?: "draft" | "published";
           lineage?: {
@@ -856,7 +871,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
           mapTileArchiveMaxZoom?: number;
-          mapTileArchiveStorageId?: string;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
           schema: any;
@@ -864,7 +878,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           source?: { name: string };
           sourceFileName?: string;
           sourceFileSize?: number;
-          sourceFileStorageId?: string;
           title: string;
           uiSchema?: any;
         }>,
@@ -909,7 +922,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
           mapTileArchiveMaxZoom?: number;
-          mapTileArchiveStorageId?: string;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
           source?: { name: string };
@@ -937,6 +949,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "Polygon"
             | "MultiPolygon";
           groupId?: string;
+          hasSourceFile: boolean;
           kind?: "standard" | "geospatial";
           lifecycle?: "draft" | "published";
           lineage?: {
@@ -955,7 +968,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
           mapTileArchiveMaxZoom?: number;
-          mapTileArchiveStorageId?: string;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
           schema: any;
@@ -963,7 +975,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           source?: { name: string };
           sourceFileName?: string;
           sourceFileSize?: number;
-          sourceFileStorageId?: string;
           title: string;
           uiSchema?: any;
         }>,
@@ -1056,9 +1067,15 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "internal",
         {
           boundWrite?: string;
+          chunks?: Array<{ storageId: string; uploadId: string }>;
           schemaId: string;
-          sourceFile?: { name: string; size: number; storageId: string };
-          storageIds: Array<string>;
+          sourceFile?: {
+            name: string;
+            size: number;
+            storageId: string;
+            uploadId: string;
+          };
+          storageIds?: Array<string>;
           total: number;
         },
         string,

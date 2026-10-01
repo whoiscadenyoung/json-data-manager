@@ -18,15 +18,26 @@ import { auth } from "./auth";
  * browser client has a path to it. Only the rebuild worker — via its
  * standalone ConvexClient — reaches this mutation. Ids arrive as plain
  * strings (`v.string()`, like every exposeApi boundary); the component
- * re-validates them against its own tables. `auth` runs here so the seam
- * matches every exposeApi wrapper (the worker's client authenticates via
- * the tile-archive manager's token round-trip).
+ * re-validates them against its own tables. `auth` runs here WITH the
+ * schema operation (issue #131), so the install answers to the same
+ * visibility policy as every other write — and `type: "update"` with no
+ * entry keeps the read-only gate out of the way, exactly as for metadata
+ * writes: a rendering cache is not data, and bound datasets keep theirs.
+ *
+ * Storage-id provenance (issue #131): the archive blob must present the
+ * `uploadId` its upload URL was issued under, claimed here for THIS schema
+ * before the install — a blob id that didn't come from a server-issued
+ * upload for this dataset is rejected, never installed (and never deleted
+ * on a stale path it doesn't belong to).
  *
  * Returns whether the install took: `setMapTileArchive` is
  * indistinguishable-by-result between "installed" and "stale-discarded"
  * (the guard's discard is a silent no-op that deletes the incoming blob),
- * so this re-reads the archive meta in the same transaction and compares
- * pointers — the worker's progress reporting needs the outcome.
+ * so this probes the incoming blob through the component in the same
+ * transaction (component storage is namespaced — the host's own
+ * `ctx.storage` can't see it): "installed" iff the blob survived the call,
+ * which is exactly the install path; both discard paths (stale version,
+ * dataset gone) delete it.
  */
 export const install = mutation({
   args: {
@@ -35,9 +46,14 @@ export const install = mutation({
     maxZoom: v.number(),
     schemaId: v.string(),
     storageId: v.string(),
+    uploadId: v.string(),
   },
   handler: async (ctx, args) => {
-    await auth(ctx);
+    await auth(ctx, { fn: "tile_archives.install", schemaId: args.schemaId, type: "update" });
+    await ctx.runMutation(components.jsonCms.host_support.claimUpload, {
+      scope: args.schemaId,
+      uploadId: args.uploadId,
+    });
     await ctx.runMutation(components.jsonCms.lib.setMapTileArchive, {
       bytes: args.bytes,
       expectedVersion: args.expectedVersion,
@@ -45,12 +61,10 @@ export const install = mutation({
       schemaId: args.schemaId,
       storageId: args.storageId,
     });
-    const meta = await ctx.runQuery(components.jsonCms.lib.getMapTileArchiveMeta, {
-      schemaId: args.schemaId,
+    const incoming = await ctx.runQuery(components.jsonCms.host_support.hasStorageBlob, {
+      storageId: args.storageId,
     });
-    return meta !== null && meta.storageId === args.storageId
-      ? ("installed" as const)
-      : ("discarded" as const);
+    return incoming ? ("installed" as const) : ("discarded" as const);
   },
   returns: v.union(v.literal("installed"), v.literal("discarded")),
 });
@@ -88,7 +102,10 @@ export const metas = query({
       v.object({
         bytes: v.optional(v.number()),
         maxZoom: v.optional(v.number()),
-        storageId: v.string(),
+        // Deliberately NO `storageId` (issue #131): clients decide the tile
+        // path from `url` + `version` alone — a `_storage` id here would
+        // hand every signed-in client the archive blob pointers of every
+        // requested dataset.
         url: v.string(),
         version: v.number(),
       }),
