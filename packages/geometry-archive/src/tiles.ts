@@ -22,9 +22,6 @@ export const MVT_EXTENT = 4096;
 /** Per-side tile buffer in extent units; near-edge features repeat next door. */
 export const TILE_BUFFER_UNITS = 64;
 
-/** Highest latitude representable in web-mercator tile space. */
-const WEB_MERCATOR_MAX_LAT = 85.05112877980659;
-
 interface Bounds {
   minLon: number;
   minLat: number;
@@ -79,18 +76,6 @@ function visitCoordinates(node: unknown, bounds: Bounds): void {
   if (Number.isFinite(lon) && Number.isFinite(lat)) {
     widenBounds(bounds, lon, lat);
   }
-}
-
-/** Overall bounds of one geometry's finite positions, or undefined if none. */
-function boundsOfGeometry(geometry: ConcreteGeometry): Bounds | undefined {
-  const bounds: Bounds = {
-    minLon: Number.POSITIVE_INFINITY,
-    minLat: Number.POSITIVE_INFINITY,
-    maxLon: Number.NEGATIVE_INFINITY,
-    maxLat: Number.NEGATIVE_INFINITY,
-  };
-  visitCoordinates(geometry.coordinates, bounds);
-  return Number.isFinite(bounds.minLon) ? bounds : undefined;
 }
 
 /** Overall bounds over every finite position in the feature collection. */
@@ -167,45 +152,6 @@ function projectProperties(
   return properties;
 }
 
-function mercatorX(lon: number): number {
-  return (lon + 180) / 360;
-}
-
-function mercatorY(lat: number): number {
-  const clamped = Math.min(WEB_MERCATOR_MAX_LAT, Math.max(-WEB_MERCATOR_MAX_LAT, lat));
-  const radians = (clamped * Math.PI) / 180;
-  return 0.5 - Math.asinh(Math.tan(radians)) / (2 * Math.PI);
-}
-
-function clampTile(value: number, tilesPerSide: number): number {
-  if (value < 0) {
-    return 0;
-  }
-  if (value > tilesPerSide - 1) {
-    return tilesPerSide - 1;
-  }
-  return value;
-}
-
-/**
- * Inclusive tile-index range covering the bounds plus the buffer pad.
- * Tile rows grow southward while latitude grows northward, so the north
- * edge (`maxLat`) yields the smaller row index and the south edge (`minLat`)
- * the larger one.
- */
-function candidateRange(
-  bounds: Bounds,
-  tilesPerSide: number,
-  pad: number,
-): { x0: number; x1: number; y0: number; y1: number } {
-  return {
-    x0: clampTile(Math.floor((mercatorX(bounds.minLon) - pad) * tilesPerSide), tilesPerSide),
-    x1: clampTile(Math.floor((mercatorX(bounds.maxLon) + pad) * tilesPerSide), tilesPerSide),
-    y0: clampTile(Math.floor((mercatorY(bounds.maxLat) - pad) * tilesPerSide), tilesPerSide),
-    y1: clampTile(Math.floor((mercatorY(bounds.minLat) + pad) * tilesPerSide), tilesPerSide),
-  };
-}
-
 /** Encodes one geojson-vt tile to gzip-compressed MVT bytes. */
 function encodeTile(tile: { features: unknown[] }): Uint8Array {
   const pbf = vtPbf.fromGeojsonVt({ geojson: tile }, { extent: MVT_EXTENT, version: 2 });
@@ -234,55 +180,31 @@ function projectAll(
   return projected;
 }
 
-/** Collects every non-empty geojson-vt tile the features reach, tile-id sorted. */
-function collectTiles(
-  index: GeoJSONVT,
-  projected: readonly ProjectedFeature[],
-  minZoom: number,
-  maxZoom: number,
-): ArchiveTile[] {
-  const seen = new Set<number>();
+/**
+ * Encodes every non-empty tile the index built between minZoom and maxZoom,
+ * tile-id sorted. The index is constructed fully eager (see
+ * {@link tileFeatures}), so `tileCoords` is exactly the tiles geojson-vt
+ * populated plus their immediate empty neighbors — one `getTile` per
+ * candidate, no per-feature bbox sweep. (The sweep this replaced walked each
+ * feature's full mercator tile range at every zoom, which an
+ * antimeridian-crossing island chain turned into millions of empty-tile
+ * probes per build; issue #134.) Buffer repeats need no extra handling —
+ * geojson-vt's clip windows carry a near-edge feature into the neighboring
+ * tiles themselves.
+ */
+function collectTiles(index: GeoJSONVT, minZoom: number, maxZoom: number): ArchiveTile[] {
   const tiles: ArchiveTile[] = [];
-  for (let z = minZoom; z <= maxZoom; z += 1) {
-    const tilesPerSide = 2 ** z;
-    const pad = TILE_BUFFER_UNITS / MVT_EXTENT / tilesPerSide;
-    for (const feature of projected) {
-      const bounds = boundsOfGeometry(feature.geometry);
-      if (bounds === undefined) {
-        continue;
-      }
-      const { x0, x1, y0, y1 } = candidateRange(bounds, tilesPerSide, pad);
-      for (let x = x0; x <= x1; x += 1) {
-        for (let y = y0; y <= y1; y += 1) {
-          const tile = tileFor(index, seen, z, x, y);
-          if (tile !== undefined) {
-            tiles.push(tile);
-          }
-        }
-      }
+  for (const coord of index.tileCoords) {
+    if (coord.z < minZoom || coord.z > maxZoom) {
+      continue;
     }
+    const tile = index.getTile(coord.z, coord.x, coord.y);
+    if (tile === null || tile.features.length === 0) {
+      continue;
+    }
+    tiles.push({ tileId: zxyToTileId(coord.z, coord.x, coord.y), data: encodeTile(tile) });
   }
   return tiles.toSorted((a, b) => a.tileId - b.tileId);
-}
-
-/** Fetches and encodes one tile, skipping empty and already-seen tiles. */
-function tileFor(
-  index: GeoJSONVT,
-  seen: Set<number>,
-  z: number,
-  x: number,
-  y: number,
-): ArchiveTile | undefined {
-  const tileId = zxyToTileId(z, x, y);
-  if (seen.has(tileId)) {
-    return undefined;
-  }
-  seen.add(tileId);
-  const tile = index.getTile(z, x, y);
-  if (tile === null || tile.features.length === 0) {
-    return undefined;
-  }
-  return { tileId, data: encodeTile(tile) };
 }
 
 /**
@@ -303,7 +225,24 @@ export function tileFeatures(
   }
   const index = new GeoJSONVT(
     { type: "FeatureCollection", features: projected },
-    { maxZoom, extent: MVT_EXTENT, buffer: TILE_BUFFER_UNITS },
+    {
+      // Fully eager indexing along populated paths: the defaults index only
+      // z ≤ 5 and drill down lazily per lookup, which left enumeration to a
+      // per-feature bbox sweep. With `indexMaxZoom: maxZoom` and
+      // `indexMaxPoints: 0` the eager pass reaches maxZoom everywhere the
+      // features reach, and `tileCoords` — documented public API — lists
+      // exactly the tiles geojson-vt populated plus their immediate empty
+      // neighbors for {@link collectTiles} to walk. That is the antimeridian
+      // fix: a dateline-crossing feature's ~360° bbox made the sweep walk
+      // the full tile row at every zoom (issue #134). Total clip work is the
+      // same set of tiles the lazy drills would have built, minus their
+      // repeated per-lookup descent.
+      maxZoom,
+      indexMaxZoom: maxZoom,
+      indexMaxPoints: 0,
+      extent: MVT_EXTENT,
+      buffer: TILE_BUFFER_UNITS,
+    },
   );
-  return collectTiles(index, projected, minZoom, maxZoom);
+  return collectTiles(index, minZoom, maxZoom);
 }

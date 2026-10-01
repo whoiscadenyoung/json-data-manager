@@ -93,14 +93,26 @@ export function supersededVersions(versions: Array<number>, currentVersion: numb
   return versions.filter((version) => version !== currentVersion);
 }
 
+/** Colon-joined storage address of one pinned archive (also the backfill
+ * single-flight key). */
+function archiveKey(schemaId: string, version: number): string {
+  return `${schemaId}:${version}`;
+}
+
 /**
  * LRU eviction plan: the entries to delete, oldest-use first, until the total
  * is back under budget. Pure so tests can pin the ordering; the class applies
- * the plan through the store.
+ * the plan through the store. `protectedKeys` ({@link archiveKey} addresses)
+ * are never planned away — the class passes the observed current versions and
+ * the just-written archive, which eviction must not touch (issue #134): an
+ * evicted live archive re-downloads on its very next read. Protected entries
+ * still count toward `budgetBytes`, so an over-budget protected set plans the
+ * removal of everything unprotected and holds the rest.
  */
 export function planEviction(
   entries: Array<CachedArchiveEntry>,
   budgetBytes: number,
+  protectedKeys?: ReadonlySet<string>,
 ): Array<{ schemaId: string; version: number }> {
   let total = 0;
   for (const entry of entries) {
@@ -112,6 +124,12 @@ export function planEviction(
   let remaining = total;
   for (const entry of ordered) {
     if (remaining <= budgetBytes) break;
+    if (
+      protectedKeys !== undefined &&
+      protectedKeys.has(archiveKey(entry.schemaId, entry.version))
+    ) {
+      continue;
+    }
     plan.push({ schemaId: entry.schemaId, version: entry.version });
     remaining -= entry.bytes;
   }
@@ -137,6 +155,13 @@ export class OpfsArchiveCache {
   readonly #generations = new Map<string, number>();
   /** schemaId:version → in-flight backfill (single-flight per archive). */
   readonly #backfills = new Map<string, Promise<void>>();
+  /** schemaId → versions whose backfill was refused (the archive alone
+   * exceeds the budget). A refusal is final for that frozen version —
+   * re-downloading it on every trigger just burns the wire. Memoized so
+   * re-observations and read-miss re-arms short-circuit (issue #134 review);
+   * cleared when the schema's archive pointer disappears, so a re-import
+   * re-attempts even at the same version number. */
+  readonly #refusedBackfills = new Map<string, Set<number>>();
   #initialized: Promise<void> | undefined;
 
   constructor(
@@ -186,6 +211,7 @@ export class OpfsArchiveCache {
     if (meta === null) {
       this.#generations.set(schemaId, (this.#generations.get(schemaId) ?? 0) + 1);
       this.#observedCurrent.delete(schemaId);
+      this.#refusedBackfills.delete(schemaId);
       await this.#pruneSchema(schemaId);
       this.#enforceBudget();
       return;
@@ -249,7 +275,7 @@ export class OpfsArchiveCache {
 
   /** True while a backfill for this exact archive is in flight. */
   isBackfilling(schemaId: string, version: number): boolean {
-    return this.#backfills.has(`${schemaId}:${version}`);
+    return this.#backfills.has(archiveKey(schemaId, version));
   }
 
   /**
@@ -263,15 +289,44 @@ export class OpfsArchiveCache {
   }
 
   async #backfill(schemaId: string, version: number, url: string): Promise<void> {
-    const key = `${schemaId}:${version}`;
+    const key = archiveKey(schemaId, version);
+    const refused = this.#refusedBackfills.get(schemaId);
+    if (refused !== undefined && refused.has(version)) return;
     const existing = this.#backfills.get(key);
     if (existing !== undefined) return existing;
     const generation = this.#generations.get(schemaId) ?? 0;
     const run = (async () => {
       try {
         const data = await this.#fetchArchive(url);
-        if ((this.#generations.get(schemaId) ?? 0) !== generation) return; // pruned mid-flight
+        if (data.byteLength > this.#budgetBytes) {
+          // Refuse to pin an archive that alone exceeds the budget: it could
+          // never fit, so the pin would thrash everything else while itself
+          // remaining unpinnable. The refusal is memoized per archive —
+          // without it, every `metas` update re-observing the schema and
+          // every read-miss re-arm from the rendering map would re-download
+          // the blob in full (issue #134 review). Reads fall back to network
+          // at the source layer.
+          let refusedVersions = this.#refusedBackfills.get(schemaId);
+          if (refusedVersions === undefined) {
+            refusedVersions = new Set<number>();
+            this.#refusedBackfills.set(schemaId, refusedVersions);
+          }
+          refusedVersions.add(version);
+          console.warn(
+            `[tile-archive-cache] archive ${key} is ${data.byteLength} B, over the ${this.#budgetBytes} B budget; not pinned`,
+          );
+          return;
+        }
         await this.#store.write({ schemaId, version }, data);
+        if ((this.#generations.get(schemaId) ?? 0) !== generation) {
+          // The schema's archive pointer disappeared while the write was in
+          // flight — the just-written file must not outlive the pruning that
+          // dropped it, so remove it before it can be read again (issue #134;
+          // the check used to run before the write, leaving deleted datasets
+          // pinned).
+          await this.#remove(schemaId, version);
+          return;
+        }
         const versions = this.#entries.get(schemaId) ?? new Map<number, CachedArchiveEntry>();
         versions.set(version, {
           bytes: data.byteLength,
@@ -281,7 +336,7 @@ export class OpfsArchiveCache {
         });
         this.#entries.set(schemaId, versions);
         await this.#pruneSuperseded(schemaId, version);
-        this.#enforceBudget();
+        this.#enforceBudget({ schemaId, version });
       } catch (error) {
         console.warn(`[tile-archive-cache] backfill failed for ${key}`, error);
       } finally {
@@ -326,8 +381,23 @@ export class OpfsArchiveCache {
     if (versions !== undefined) versions.delete(version);
   }
 
-  #enforceBudget(): void {
-    for (const plan of planEviction(this.allEntries(), this.#budgetBytes)) {
+  /**
+   * Applies the eviction plan with the pin set protected: every observed
+   * current version (maps are rendering them — evicting one turns its next
+   * read into a re-download) and `justWritten` (the archive a backfill just
+   * landed) are excluded from the plan. With several live archives together
+   * over budget nothing unprotected may remain, but the live set itself is
+   * never evicted against another live member (issue #134).
+   */
+  #enforceBudget(justWritten?: CachedArchiveKey): void {
+    const protectedKeys = new Set<string>();
+    for (const [schemaId, version] of this.#observedCurrent) {
+      protectedKeys.add(archiveKey(schemaId, version));
+    }
+    if (justWritten !== undefined) {
+      protectedKeys.add(archiveKey(justWritten.schemaId, justWritten.version));
+    }
+    for (const plan of planEviction(this.allEntries(), this.#budgetBytes, protectedKeys)) {
       void this.#remove(plan.schemaId, plan.version);
     }
   }
@@ -544,6 +614,11 @@ export function TileArchiveCacheManager(): null {
           continue;
         }
         wireProtocolSource(schemaId, meta.version, meta.url);
+        // A version bump wires a new PMTiles instance for the new storage
+        // URL; drop the superseded instances (kept out of the protocol map,
+        // already-loaded maps are untouched) so they stop accumulating across
+        // rebuilds (issue #134).
+        unwireProtocolSources(schemaId, meta.version);
         // oxlint-disable-next-line no-await-in-loop -- sequential pin updates; ordering keeps the backfill generation sane.
         await cache.observeMeta(schemaId, { url: meta.url, version: meta.version });
       }

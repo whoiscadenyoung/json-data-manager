@@ -25,6 +25,7 @@ import { ConvexClient } from "convex/browser";
 import { env } from "#/env";
 import { api } from "#convex/_generated/api";
 
+import { BoundedPool } from "./bounded-pool";
 import { forEachDatasetGeometryPage, type DatasetGeometryRow } from "./dataset-rows";
 import type {
   TileArchiveBuildPhase,
@@ -40,6 +41,14 @@ import type {
  * `skipped`.
  */
 const MAP_TILE_ARCHIVE_MIN_BYTES = 262_144; // 256 KB
+
+/**
+ * Geometry payload fetches in flight at once (issue #134's 8–16 band). Each
+ * page's rows used to start fetching unbounded — a 40-page dataset ran
+ * hundreds of concurrent fetches. Twelve overlaps page round trips without
+ * thrashing the browser's per-origin connection pool.
+ */
+const GEOMETRY_FETCH_POOL_SIZE = 12;
 
 // Worker scope (`DedicatedWorkerGlobalScope`) isn't available to name under
 // the app's DOM-lib tsconfig, but `self.postMessage` / `self.addEventListener`
@@ -142,8 +151,17 @@ async function fetchGeometry(url: string): Promise<{ bytes: number; geometry: Ge
   if (!response.ok) {
     throw new Error(`Geometry payload fetch failed with HTTP ${response.status}`);
   }
-  const text = await response.text();
-  return { bytes: text.length, geometry: parseGeometry(text, `Geometry payload ${url}`) };
+  // Count real bytes off the wire — `text.length` counts UTF-16 code units,
+  // which undercounts multi-byte payloads (issue #134).
+  const buffer = await response.arrayBuffer();
+  const text = new TextDecoder().decode(buffer);
+  return { bytes: buffer.byteLength, geometry: parseGeometry(text, `Geometry payload ${url}`) };
+}
+
+/** UTF-8 byte length of an inline payload — `text.length` counts UTF-16 code
+ * units, not bytes (issue #134). */
+function utf8ByteLength(text: string): number {
+  return new TextEncoder().encode(text).byteLength;
 }
 
 function feature(entryId: string, geometry: GeoJSONGeometry): GeoJSONFeature {
@@ -161,7 +179,7 @@ interface ResolvedGeometryRow {
 async function resolveRow(row: DatasetGeometryRow): Promise<ResolvedGeometryRow | null> {
   if (row.geometryJson !== undefined) {
     return {
-      bytes: row.geometryJson.length,
+      bytes: utf8ByteLength(row.geometryJson),
       entryId: row.entryId,
       geometry: parseGeometry(row.geometryJson, `Geometry row ${row.entryId}`),
     };
@@ -175,26 +193,34 @@ async function resolveRow(row: DatasetGeometryRow): Promise<ResolvedGeometryRow 
  * Pages the dataset to exhaustion (`isDone`) and accumulates its features —
  * the cursor chain, page size, and completeness semantics live in the
  * row-resolution seam (`forEachDatasetGeometryPage`, run here on this
- * worker's own client). Rows within a page resolve in parallel; each batch
- * is settled together with every other page's batch once the sequential
- * paging ends.
+ * worker's own client). Rows resolve through {@link BoundedPool} so at most
+ * {@link GEOMETRY_FETCH_POOL_SIZE} fetches are ever in flight, across pages
+ * too: a page's fetches run while the next page's query is still in flight.
+ * Exported for the pool-contract test (issue #134).
  */
-async function fetchAllGeometryFeatures(
+export async function fetchAllGeometryFeatures(
   convex: ConvexClient,
   schemaId: string,
 ): Promise<{ features: Array<GeoJSONFeature>; payloadBytes: number }> {
-  const features: Array<GeoJSONFeature> = [],
-    pageRowBatches: Array<Promise<Array<ResolvedGeometryRow | null>>> = [];
-  let payloadBytes = 0;
+  const features: Array<GeoJSONFeature> = [];
+  const pool = new BoundedPool(GEOMETRY_FETCH_POOL_SIZE);
+  const rowTasks: Array<Promise<ResolvedGeometryRow | null>> = [];
   await forEachDatasetGeometryPage(
     schemaId,
     (rows) => {
-      pageRowBatches.push(Promise.all(rows.map(resolveRow)));
+      for (const row of rows) {
+        rowTasks.push(
+          pool.run(async () => {
+            return await resolveRow(row);
+          }),
+        );
+      }
     },
     { convex },
   );
-  const resolvedRows = await Promise.all(pageRowBatches);
-  for (const resolved of resolvedRows.flat()) {
+  const resolvedRows = await Promise.all(rowTasks);
+  let payloadBytes = 0;
+  for (const resolved of resolvedRows) {
     if (resolved === null) continue;
     features.push(feature(resolved.entryId, resolved.geometry));
     payloadBytes += resolved.bytes;
@@ -283,13 +309,16 @@ async function runBuild(schemaId: string): Promise<void> {
     postPhase(schemaId, "fetching");
     const schema = await convex.query(api.schemas.get, { schemaId });
     if (schema === null || schema.kind !== "geospatial" || schema.geometryType === undefined) {
-      post({ reason: "not-geospatial", schemaId, type: "skipped" });
+      post({ reason: "not-geospatial", schemaId, type: "skipped", version: 0 });
       return;
     }
     const expectedVersion = schema.mapTileCacheVersion ?? 0;
     const { features, payloadBytes } = await fetchAllGeometryFeatures(convex, schemaId);
     if (payloadBytes < MAP_TILE_ARCHIVE_MIN_BYTES) {
-      post({ reason: "below-threshold", schemaId, type: "skipped" });
+      // The version rides along so the manager can memoize the skip —
+      // without it a below-threshold dataset reads as stale forever and
+      // refetches on every summaries update (issue #134).
+      post({ reason: "below-threshold", schemaId, type: "skipped", version: expectedVersion });
       return;
     }
     await buildAndInstall(convex, schemaId, expectedVersion, features);

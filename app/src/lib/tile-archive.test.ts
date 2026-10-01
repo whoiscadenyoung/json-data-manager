@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { TileArchiveScheduler, type TileArchiveBuildOutcome } from "./tile-archive";
+import {
+  TileArchiveScheduler,
+  isBelowThresholdSkipMemoized,
+  isTileArchiveStale,
+  rememberBelowThresholdSkip,
+  type TileArchiveBuildOutcome,
+} from "./tile-archive";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -203,5 +209,47 @@ describe("TileArchiveScheduler", () => {
     } finally {
       scheduler.dispose();
     }
+  });
+});
+
+/**
+ * The below-threshold skip memo (issue #134): a dataset under the 256 KB
+ * threshold never installs an archive, so without the memo its absent
+ * `mapTileArchiveBuiltVersion` reads as stale on every summaries update and
+ * each one schedules another full fetch-and-skip round trip.
+ */
+/** A summaries row for the memo tests: geospatial, current version 3, with
+ * `mapTileArchiveBuiltVersion` only when an archive ever installed. */
+const memoRow = (schemaId: string, builtVersion?: number) => ({
+  _id: schemaId,
+  geometryType: "Point",
+  kind: "geospatial" as const,
+  mapTileCacheVersion: 3,
+  ...(builtVersion === undefined ? {} : { mapTileArchiveBuiltVersion: builtVersion }),
+});
+
+describe("below-threshold skip memo", () => {
+  it("a memoized skip at the current version is not stale, archive or not", () => {
+    rememberBelowThresholdSkip("memo-s1", 3);
+    expect(isBelowThresholdSkipMemoized("memo-s1", 3)).toBe(true);
+    expect(isTileArchiveStale(memoRow("memo-s1"), 3)).toBe(false);
+    expect(isTileArchiveStale(memoRow("memo-s1", 1), 3)).toBe(false);
+  });
+
+  it("a version bump stops matching the memo and is stale again", () => {
+    rememberBelowThresholdSkip("memo-s2", 3);
+    expect(isTileArchiveStale(memoRow("memo-s2"), 4)).toBe(true);
+    // And the newer version is not itself memoized.
+    expect(isBelowThresholdSkipMemoized("memo-s2", 4)).toBe(false);
+  });
+
+  it("an unmemoized dataset behaves exactly as before", () => {
+    expect(isBelowThresholdSkipMemoized("memo-s3", 3)).toBe(false);
+    // No archive ever built → stale (the first-build trigger).
+    expect(isTileArchiveStale(memoRow("memo-s3"), 3)).toBe(true);
+    // Archive built at the current version → fresh.
+    expect(isTileArchiveStale(memoRow("memo-s3", 3), 3)).toBe(false);
+    // Archive built behind → stale (the stale-on-view trigger).
+    expect(isTileArchiveStale(memoRow("memo-s3", 2), 3)).toBe(true);
   });
 });

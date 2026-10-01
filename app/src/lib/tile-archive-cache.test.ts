@@ -21,6 +21,9 @@ class MemoryArchiveStore implements ArchiveBlobStore {
   readonly files = new Map<string, ArrayBuffer>();
   writes = 0;
   removes = 0;
+  /** When set, every write waits on it before recording — lets a test land
+   * the pruning of a schema *during* a backfill's store.write. */
+  writeGate: Promise<void> | undefined;
 
   #name(k: CachedArchiveKey): string {
     return `${k.schemaId}/${k.version}`;
@@ -50,6 +53,7 @@ class MemoryArchiveStore implements ArchiveBlobStore {
   }
 
   async write(k: CachedArchiveKey, data: ArrayBuffer) {
+    if (this.writeGate !== undefined) await this.writeGate;
     this.writes += 1;
     this.files.set(this.#name(k), data);
   }
@@ -112,6 +116,16 @@ describe("planEviction", () => {
       { schemaId: "b", version: 1 },
       { schemaId: "c", version: 1 },
     ]);
+  });
+
+  it("never plans a protected entry, even the least-recently-used one", () => {
+    const entries = [entry("a", 10, 1), entry("b", 10, 2)];
+    expect(planEviction(entries, 15, new Set(["a:1"]))).toEqual([{ schemaId: "b", version: 1 }]);
+  });
+
+  it("an over-budget all-protected set plans nothing", () => {
+    const entries = [entry("a", 10, 1), entry("b", 10, 2)];
+    expect(planEviction(entries, 15, new Set(["a:1", "b:1"]))).toEqual([]);
   });
 });
 
@@ -182,23 +196,123 @@ describe("OpfsArchiveCache", () => {
     expect(cache.hasLocal("s1", 2)).toBe(false);
   });
 
-  it("enforces the LRU budget after a backfill, evicting oldest-use first", async () => {
+  it("enforces the LRU budget on entries nothing protects, oldest-use first", async () => {
+    // `gone` sits on disk but its schema is no longer observed (pre-seeded
+    // scan entry), so it is the only eviction candidate when the two live
+    // archives push the total over budget — the observed versions themselves
+    // must never be planned away (issue #134).
     const store = new MemoryArchiveStore();
+    await store.write(key("gone", 1), bytes(10, 1));
     let clock = 100;
-    const cache = new OpfsArchiveCache(store, async (url) => bytes(10, url.length), {
+    const cache = new OpfsArchiveCache(store, async () => bytes(10, 0), {
       budgetBytes: 25,
       now: () => clock,
     });
-    await cache.observeMeta("old", { url: "https://x/old", version: 1 }); // lastUsed 100
+    await cache.init();
     clock = 200;
-    await cache.observeMeta("mid", { url: "https://x/mid", version: 1 }); // lastUsed 200
+    await cache.observeMeta("mid", { url: "https://x/mid", version: 1 });
     clock = 300;
     await cache.observeMeta("new", { url: "https://x/new", version: 1 }); // 30 total → evict until ≤ 25
     await flushMicrotasks();
 
-    expect(cache.hasLocal("old", 1)).toBe(false);
+    expect(cache.hasLocal("gone", 1)).toBe(false);
     expect(cache.hasLocal("mid", 1)).toBe(true);
     expect(cache.hasLocal("new", 1)).toBe(true);
+  });
+
+  it("keeps every observed current version even when together over budget", async () => {
+    const store = new MemoryArchiveStore();
+    const cache = new OpfsArchiveCache(store, async () => bytes(10, 0), { budgetBytes: 25 });
+    await cache.observeMeta("a", { url: "https://x/a", version: 1 });
+    await cache.observeMeta("b", { url: "https://x/b", version: 1 });
+    await cache.observeMeta("c", { url: "https://x/c", version: 1 }); // 30 total > 25
+    await flushMicrotasks();
+
+    // Live archives never evict each other: each miss would re-download the
+    // archive a map is rendering right now (issue #134).
+    expect(cache.hasLocal("a", 1)).toBe(true);
+    expect(cache.hasLocal("b", 1)).toBe(true);
+    expect(cache.hasLocal("c", 1)).toBe(true);
+  });
+
+  it("refuses to pin an archive larger than the budget", async () => {
+    const store = new MemoryArchiveStore();
+    const fetchArchive = vi.fn<() => Promise<ArrayBuffer>>(async () => bytes(30, 0));
+    const cache = new OpfsArchiveCache(store, fetchArchive, { budgetBytes: 25 });
+    await expect(
+      cache.observeMeta("big", { url: "https://x/big", version: 1 }),
+    ).resolves.toBeUndefined();
+
+    // Nothing written, nothing pinned — the pin could never fit, and reads
+    // fall back to network at the source layer (issue #134).
+    expect(fetchArchive).toHaveBeenCalledTimes(1);
+    expect(store.writes).toBe(0);
+    expect(cache.hasLocal("big", 1)).toBe(false);
+    expect(await cache.read(key("big", 1), 0, 1)).toBeUndefined();
+  });
+
+  it("memoizes the oversized-archive refusal across re-observations and re-arms", async () => {
+    // Every `metas` update re-runs observeMeta for the schema, and every
+    // local range miss on the unpinned archive re-arms a backfill from the
+    // source layer — without a refusal memo each trigger re-downloaded the
+    // full blob (issue #134 review).
+    const store = new MemoryArchiveStore();
+    const fetchArchive = vi.fn<() => Promise<ArrayBuffer>>(async () => bytes(30, 0));
+    const cache = new OpfsArchiveCache(store, fetchArchive, { budgetBytes: 25 });
+    await cache.observeMeta("big", { url: "https://x/big", version: 1 });
+    expect(fetchArchive).toHaveBeenCalledTimes(1);
+
+    await cache.observeMeta("big", { url: "https://x/big", version: 1 });
+    cache.rearmBackfill(key("big", 1), "https://x/big");
+    await flushMicrotasks();
+    expect(fetchArchive).toHaveBeenCalledTimes(1); // still just the first fetch
+
+    // A new version is a new archive: it must be attempted fresh.
+    fetchArchive.mockImplementation(async () => bytes(5, 0));
+    await cache.observeMeta("big", { url: "https://x/big", version: 2 });
+    expect(fetchArchive).toHaveBeenCalledTimes(2);
+    expect(cache.hasLocal("big", 2)).toBe(true);
+  });
+
+  it("clears the refusal memo when the schema's pointer disappears", async () => {
+    // A delete + re-import can reuse the version number; the refusal is
+    // final only for the frozen version that was refused.
+    const store = new MemoryArchiveStore();
+    let data = bytes(30, 0);
+    const fetchArchive = vi.fn<() => Promise<ArrayBuffer>>(async () => data);
+    const cache = new OpfsArchiveCache(store, fetchArchive, { budgetBytes: 25 });
+    await cache.observeMeta("big", { url: "https://x/big", version: 1 });
+    expect(fetchArchive).toHaveBeenCalledTimes(1);
+
+    await cache.observeMeta("big", null);
+    data = bytes(5, 0);
+    await cache.observeMeta("big", { url: "https://x/big", version: 1 });
+    expect(fetchArchive).toHaveBeenCalledTimes(2);
+    expect(cache.hasLocal("big", 1)).toBe(true);
+  });
+
+  it("removes the just-written file when the schema was pruned during the write", async () => {
+    const store = new MemoryArchiveStore();
+    let releaseWrite!: () => void;
+    store.writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const { fetchArchive, pending } = deferredFetchArchive();
+    const cache = new OpfsArchiveCache(store, fetchArchive);
+    const backfill = cache.observeMeta("s1", { url: "https://x/v2", version: 2 });
+    await flushMicrotasks();
+    release(pending, 0, bytes(5, 2)); // fetch resolves → store.write starts, blocks on the gate
+    await flushMicrotasks();
+    // The dataset is deleted while the write is in flight.
+    await cache.observeMeta("s1", null);
+    releaseWrite();
+    await backfill;
+    await flushMicrotasks();
+
+    // The generation check runs AFTER store.write (issue #134): the write
+    // must not outlive the pruning that dropped the schema.
+    expect(store.files.size).toBe(0);
+    expect(cache.hasLocal("s1", 2)).toBe(false);
   });
 
   it("serves local reads and drops an entry whose file came up short", async () => {
