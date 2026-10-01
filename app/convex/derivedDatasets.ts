@@ -472,8 +472,9 @@ export const get = query({
  * "derived"), the chain's `versionPolicies`/`tagDeltas`/`publishAttempts`
  * (all keyed by the row id — a derived chain's anchor IS the registry row),
  * and other rows' `dependsOn` edges naming it. The component's map layers
- * pointing at the id deliberately stay (the schema.ts dangling-derived-layer
- * rule — readers answer "deleted derived dataset" defensively).
+ * pointing at the id deliberately stay (the json-cms component schema.ts
+ * dangling-derived-layer rule, packages/json-cms/src/component/schema.ts —
+ * mapLayers readers answer "deleted derived dataset" defensively).
  */
 export const remove = mutation({
   args: { id: v.string() },

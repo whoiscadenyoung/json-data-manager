@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, components } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { CATALOG_READ_LIMIT } from "./schemas";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -230,7 +231,10 @@ async function runOf(t: TestConvex, runId: Id<"bundleRuns">) {
 /** A dataset's frozen versions of either chain kind, read through the component. */
 async function versionsOf(t: TestConvex, sourceSchemaId: string) {
   return t.run(async (ctx) =>
-    ctx.runQuery(components.jsonCms.lib.listSchemaVersions, { sourceSchemaId }),
+    ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+      limit: CATALOG_READ_LIMIT,
+      sourceSchemaId,
+    }),
   );
 }
 

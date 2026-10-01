@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { api, components, internal } from "./_generated/api";
 import schema from "./schema";
+import { CATALOG_READ_LIMIT } from "./schemas";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -295,7 +296,10 @@ describe("publishing an imported draft (AC 1: a real frozen row; sources unchang
 
     expect(v2.schemaId).not.toBe(v1.schemaId);
     const versions = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.listSchemaVersions, { sourceSchemaId: draftId }),
+      ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+        limit: CATALOG_READ_LIMIT,
+        sourceSchemaId: draftId,
+      }),
     );
     expect(versions).toHaveLength(2);
     const labels = versions
@@ -391,7 +395,10 @@ describe("freeze idempotency by publish key (AC 4's keyed half)", () => {
 
     await drainScheduled(t);
     const versions = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.listSchemaVersions, { sourceSchemaId: draftId }),
+      ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+        limit: CATALOG_READ_LIMIT,
+        sourceSchemaId: draftId,
+      }),
     );
     expect(versions).toHaveLength(1);
     const attempt = await attemptById(t, started.attemptId);
@@ -953,7 +960,10 @@ describe("failed imports keep the key retryable", () => {
     const startedAgain = await t.mutation(api.publish.start, { datasetKey: draftId });
     expect(startedAgain.attemptId).not.toBe(started.attemptId);
     const versions = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.listSchemaVersions, { sourceSchemaId: draftId }),
+      ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+        limit: CATALOG_READ_LIMIT,
+        sourceSchemaId: draftId,
+      }),
     );
     expect(versions).toHaveLength(0);
   });
@@ -996,7 +1006,10 @@ describe("stale-attempt revival", () => {
     expect(attempt.status).toBe("completed");
     // Unmentioned internal invariant: the import completed exactly once.
     const versions = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.listSchemaVersions, { sourceSchemaId: draftId }),
+      ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+        limit: CATALOG_READ_LIMIT,
+        sourceSchemaId: draftId,
+      }),
     );
     expect(versions).toHaveLength(1);
   });

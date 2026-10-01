@@ -24,6 +24,7 @@ import {
 } from "./consumption";
 import type { AttemptVersionLike, ChainVersion } from "./consumption";
 import schema from "./schema";
+import { CATALOG_READ_LIMIT } from "./schemas";
 import { VERSION_DIFF_LIMIT } from "./versioning";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -630,6 +631,7 @@ async function referenceRow(
 async function headRefOf(t: TestConvex, anchorId: string): Promise<string | undefined> {
   return t.run(async (ctx) => {
     const versions = await ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+      limit: CATALOG_READ_LIMIT,
       sourceSchemaId: anchorId,
     });
     const newest = versions[0];
@@ -1089,5 +1091,82 @@ describe("analysisTargets", () => {
     expect(
       await asUser2.query(api.consumption.analysisTargets, { datasetIds: [draftRow] }),
     ).toStrictEqual([{ datasetId: draftRow, status: "registry" }]);
+  });
+});
+
+describe("reads at the 500-row bound (issue #128 AC 3)", () => {
+  it("sourceBadges caps a 500-registry fixture at the documented 200-consumer window", async () => {
+    const t = signedIn(),
+      ids: string[] = [];
+    await t.run(async (ctx) => {
+      for (let index = 0; index < 500; index += 1) {
+        // oxlint-disable-next-line no-await-in-loop -- fixture seeding, ordered.
+        const id = await ctx.db.insert("derivedDatasets", {
+          createdBy: "user-1",
+          dependsOn: [],
+          sourceDatasetId: "bound-fixture-source",
+          spec: { operations: [], sourceDatasetId: "bound-fixture-source" },
+          status: "saved",
+          title: `Badge fixture ${index}`,
+        });
+        ids.push(id);
+      }
+    });
+
+    // 500 ids in, the documented per-call window (MAX_CONSUMERS) answers —
+    // the read completing AT ALL is the AC: 500 unbounded per-consumer walks
+    // is exactly what blew the limits before #128.
+    const badges = await t.query(api.consumption.sourceBadges, {
+      registryIds: ids,
+      schemaIds: [],
+    });
+    expect(Object.keys(badges.byRegistryId)).toHaveLength(200);
+    // The window keeps the CALLER'S first 200 — deterministic, not arbitrary.
+    expect(Object.keys(badges.byRegistryId)).toStrictEqual(ids.slice(0, 200));
+    // A registry row with no completed attempt badges as nothing — every
+    // walk resolved without a single attempt read blowing the budget.
+    expect(Object.values(badges.byRegistryId)).toStrictEqual(ids.slice(0, 200).map(() => []));
+  });
+
+  it("consumedBy resolves a 500-consumer fixture under the read limits — both legs, deduped", async () => {
+    const t = signedIn(),
+      source = await createDraftDataset(t, { title: "Consumed" }),
+      ids: string[] = [];
+    // Every consumer rides BOTH legs: an edge (the refs leg's take window)
+    // and a saved registry row (the scan leg's take(500)) — the union must
+    // dedup to exactly the fixture, under the read limits.
+    await t.run(async (ctx) => {
+      for (let index = 0; index < 500; index += 1) {
+        // oxlint-disable-next-line no-await-in-loop -- fixture seeding, ordered.
+        const id = await ctx.db.insert("derivedDatasets", {
+          createdBy: "user-1",
+          dependsOn: [source],
+          sourceDatasetId: source,
+          spec: { operations: [], sourceDatasetId: source },
+          status: "saved",
+          title: `Consumer ${index}`,
+        });
+        // oxlint-disable-next-line no-await-in-loop -- fixture seeding, ordered.
+        await ctx.db.insert("consumerReferences", {
+          consumerId: id,
+          consumerKind: "derived",
+          mode: "float",
+          sourceDatasetId: source,
+        });
+        ids.push(id);
+      }
+    });
+
+    const result = await t.query(api.consumption.consumedBy, { datasetId: source });
+    expect(result.consumers).toHaveLength(500);
+    expect(result.consumers.map((consumer) => consumer.consumerId)).toStrictEqual(ids);
+    // The first MAX_CONSUMERS answers through their edges (referenceId set);
+    // the scan leg contributes the rest (rows saved before stage 6 wrote
+    // edges — its documented purpose).
+    expect(result.consumers.filter((consumer) => consumer.referenceId !== undefined)).toHaveLength(
+      200,
+    );
+    // No consumer holds a completed attempt — nothing reads as changed.
+    expect(result.consumers.every((consumer) => !consumer.changed)).toBe(true);
   });
 });
