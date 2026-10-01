@@ -143,8 +143,8 @@ function GroupDetailPage() {
       api.collections.get,
       group && group.collectionId !== undefined ? { collectionId: group.collectionId } : "skip",
     ),
-    groups = useQuery(api.groups.list, {}),
-    allDatasets = useQuery(api.schemas.listSummaries),
+    groups = useQuery(api.groups.list, { limit: 500 }),
+    allDatasets = useQuery(api.schemas.listSummaries, { limit: 1000 }),
     datasets = (allDatasets ?? []).filter((dataset) => dataset.groupId === groupId),
     addCandidates = (allDatasets ?? []).filter((dataset) => dataset.groupId !== groupId),
     memberSchemaIds = datasets.map((dataset) => dataset._id),
@@ -166,7 +166,7 @@ function GroupDetailPage() {
     // this one unpaginated collect.
     entries = useQuery(
       api.entries.listEntriesForSchemas,
-      memberSchemaIds.length > 0 ? { schemaIds: memberSchemaIds } : "skip",
+      memberSchemaIds.length > 0 ? { limit: 1000, schemaIds: memberSchemaIds } : "skip",
     ),
     // The saved transforms authored over this group's members (read-time
     // health included) — the summaries projection is stage 3's designated

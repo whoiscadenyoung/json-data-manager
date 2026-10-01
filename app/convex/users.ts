@@ -4,6 +4,7 @@ import { components } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { query } from "./_generated/server";
 import { auth, authComponent } from "./auth";
+import { CATALOG_READ_LIMIT } from "./schemas";
 
 /**
  * The public profile projection — everything one signed-in collaborator may
@@ -125,6 +126,7 @@ export const profile = query({
     // that user; drafts never appear in any viewer's profile either way (the
     // summaries projection excludes them).
     const summaries = await ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, {
+      limit: CATALOG_READ_LIMIT,
       viewerId,
     });
     return {

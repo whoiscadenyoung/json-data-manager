@@ -160,11 +160,11 @@ function useMapLayerActions(mapId: string) {
 function MapDetailPage() {
   const { mapId } = Route.useParams(),
     map = useQuery(api.maps.get, { mapId }),
-    layers = useQuery(api.maps.listLayers, { mapId }),
-    datasets = useQuery(api.schemas.listSummaries),
+    layers = useQuery(api.maps.listLayers, { limit: 500, mapId }),
+    datasets = useQuery(api.schemas.listSummaries, { limit: 1000 }),
     collections = useQuery(api.collections.list),
-    groups = useQuery(api.groups.list, {}),
-    memberships = useQuery(api.collections.listSchemaCollections),
+    groups = useQuery(api.groups.list, { limit: 500 }),
+    memberships = useQuery(api.collections.listSchemaCollections, { limit: 1000 }),
     // Saved derived datasets (read-time health included) — the summaries
     // projection is stage 3's single merge point. Feeds the picker's
     // candidates, the layer expansion, and the popup-title lookups.

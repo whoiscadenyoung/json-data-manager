@@ -19,7 +19,7 @@ describe("addMapLayer derived targets (roadmap 3a, #96)", () => {
         targetType: "derived",
       });
     expect(layerId).not.toBeNull();
-    const layers = await t.query(api.lib.listMapLayers, { mapId });
+    const layers = await t.query(api.lib.listMapLayers, { limit: 500, mapId });
     expect(layers).toHaveLength(1);
     expect(layers[0].targetType).toBe("derived");
     // The host id rides through verbatim (never mangled into a component id).
@@ -64,15 +64,15 @@ describe("addMapLayer derived targets (roadmap 3a, #96)", () => {
       throw new Error("layer was not created");
     }
     await t.mutation(api.lib.setMapLayerVisibility, { layerId, visible: false });
-    let layers = await t.query(api.lib.listMapLayers, { mapId });
+    let layers = await t.query(api.lib.listMapLayers, { limit: 500, mapId });
     expect(layers[0].visible).toBe(false);
 
     await t.mutation(api.lib.moveMapLayer, { direction: "up", layerId });
-    layers = await t.query(api.lib.listMapLayers, { mapId });
+    layers = await t.query(api.lib.listMapLayers, { limit: 500, mapId });
     expect(layers[0].order).toBe(0);
 
     await t.mutation(api.lib.removeMapLayer, { layerId });
-    layers = await t.query(api.lib.listMapLayers, { mapId });
+    layers = await t.query(api.lib.listMapLayers, { limit: 500, mapId });
     expect(layers).toHaveLength(0);
   });
 });

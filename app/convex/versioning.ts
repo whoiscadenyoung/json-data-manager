@@ -5,6 +5,7 @@ import { naturalKeyOf, type VersionRow } from "../src/lib/version-rows";
 import { components } from "./_generated/api";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { internalMutation } from "./_generated/server";
+import { deleteDatasetCascading } from "./schemas";
 import type { CommitOp } from "./sources";
 
 // The pure key rule lives in src/lib/version-rows.ts (one definition shared
@@ -416,8 +417,12 @@ export const enforceRetention = internalMutation({
     const retired = versionsToRetire(versions, args.keep, args.pinnedRefs);
     for (const version of retired) {
       // oxlint-disable-next-line no-await-in-loop -- ordered retirements under the write budget.
-      await ctx.runMutation(components.jsonCms.lib.deleteSchema, {
+      await deleteDatasetCascading(ctx, {
         boundWrite: "retire",
+        // Retired VERSION ids: the cascade cleans only rows keyed by the
+        // version itself (fork edges, memberships, spec edges) — the
+        // chain's own policy/deltas/attempts hang from the anchor and
+        // survive (issue #128).
         schemaId: version.id,
       });
     }

@@ -350,3 +350,68 @@ describe("remove", () => {
     );
   });
 });
+
+describe("listBySource windowing (issue #128)", () => {
+  it("foreign drafts can no longer push a visible saved row out of the take window", async () => {
+    const t = signedIn(),
+      schemaId = await createComponentDataset(t, { GrantId: { type: "string" } }),
+      savedId = await t.mutation(api.derivedDatasets.save, saveArgs(specOf(schemaId)));
+    // 210 foreign drafts over the same source — more than the read's 200-row
+    // bound. The old read scanned by_source and filtered AFTER the take, so
+    // these pushed every visible row out of the window.
+    await t.run(async (ctx) => {
+      for (let index = 0; index < 210; index += 1) {
+        // oxlint-disable-next-line no-await-in-loop -- fixture seeding, ordered.
+        await ctx.db.insert("derivedDatasets", {
+          createdBy: "user-2",
+          dependsOn: [schemaId],
+          sourceDatasetId: schemaId,
+          spec: { operations: [], sourceDatasetId: schemaId },
+          status: "draft",
+          title: `Foreign autosave ${index}`,
+        });
+      }
+    });
+
+    const rows = await t.query(api.derivedDatasets.listBySource, {
+      sourceDatasetId: schemaId,
+    });
+    // The saved row (another catalog-visible leg) is STILL there…
+    expect(rows.some((row) => row._id === savedId)).toBe(true);
+    // …and no foreign draft leaked into the caller's list.
+    expect(rows.every((row) => row.status === "saved" || row.createdBy === "user-1")).toBe(true);
+  });
+});
+
+describe("summaries at the 500-row bound (issue #128 AC 3)", () => {
+  it("500 saved rows over a shared source set resolve under the read limits, health included", async () => {
+    const t = signedIn(),
+      // Three shared sources: the memo makes the catalog's read cost
+      // proportional to DISTINCT sources, not rows (the measured ceiling:
+      // 500 rows over 500 DISTINCT fat schemas is the documented bound —
+      // see summaries' doc comment in derivedDatasets.ts).
+      sourceA = await createComponentDataset(t, { GrantId: { type: "string" } }),
+      sourceB = await createComponentDataset(t, { GrantId: { type: "string" } }),
+      sourceC = await createComponentDataset(t, { GrantId: { type: "string" } });
+    await t.run(async (ctx) => {
+      for (let index = 0; index < 500; index += 1) {
+        const source = index % 3 === 0 ? sourceA : index % 3 === 1 ? sourceB : sourceC;
+        // oxlint-disable-next-line no-await-in-loop -- fixture seeding, ordered.
+        await ctx.db.insert("derivedDatasets", {
+          createdBy: "user-1",
+          dependsOn: [source],
+          sourceDatasetId: source,
+          spec: { operations: [], sourceDatasetId: source },
+          status: "saved",
+          title: `Saved spec ${index}`,
+        });
+      }
+    });
+
+    const rows = await t.query(api.derivedDatasets.summaries, {});
+    expect(rows).toHaveLength(500);
+    // Health resolved for every row without blowing the read budget (the
+    // shared sources collapsed the component reads to three).
+    expect(rows.every((row) => row.health === "ready")).toBe(true);
+  });
+});

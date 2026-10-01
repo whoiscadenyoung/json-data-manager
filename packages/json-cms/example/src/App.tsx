@@ -6,7 +6,7 @@ import { useState } from "react";
 import { api } from "../convex/_generated/api";
 
 export function App() {
-  const schemas = useQuery(api.example.listSchemas, {}),
+  const schemas = useQuery(api.example.listSchemas, { limit: 500 }),
     createSchema = useMutation(api.example.createSchema),
     [newSchema, setNewSchema] = useState({
       description: "",

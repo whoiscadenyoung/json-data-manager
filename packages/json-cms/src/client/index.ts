@@ -135,21 +135,24 @@ export function exposeApi(component: ComponentApi, options: ExposeApiOptions) {
     // The catalog enumerations pass the auth hook's identity through as
     // `viewerId` (stage 8, #104): the component scopes drafts to their
     // creator and `publishedVisibility: "author"` rows to theirs, server-side.
+    // Every enumeration below takes a REQUIRED `limit` (issue #128): the
+    // component bounds each read with it, so no wrapper query can read a
+    // whole table.
     listSchemas: queryGeneric({
-      args: {},
-      handler: async (ctx) => {
+      args: { limit: v.number() },
+      handler: async (ctx, args) => {
         const viewerId = await options.auth(ctx, { fn: "listSchemas", type: "read" });
-        return ctx.runQuery(component.lib.listSchemas, { viewerId });
+        return ctx.runQuery(component.lib.listSchemas, { limit: args.limit, viewerId });
       },
     }),
     // List-page projection — no `schema`/`uiSchema` payloads (issue #53).
     // Structure/editor surfaces keep using `getSchema`. Drafts are filtered
     // server-side; this is the catalog consumers' read.
     listSchemaSummaries: queryGeneric({
-      args: {},
-      handler: async (ctx) => {
+      args: { limit: v.number() },
+      handler: async (ctx, args) => {
         const viewerId = await options.auth(ctx, { fn: "listSchemaSummaries", type: "read" });
-        return ctx.runQuery(component.lib.listSchemaSummaries, { viewerId });
+        return ctx.runQuery(component.lib.listSchemaSummaries, { limit: args.limit, viewerId });
       },
     }),
     // The opt-in drafts view (roadmap 5a, #99): the same projection, drafts
@@ -159,10 +162,16 @@ export function exposeApi(component: ComponentApi, options: ExposeApiOptions) {
     // Since stage 8 (#104) the drafts come back CREATOR-SCOPED: the identity
     // from the auth hook decides whose drafts are listed.
     listDraftSchemaSummaries: queryGeneric({
-      args: {},
-      handler: async (ctx) => {
-        const viewerId = await options.auth(ctx, { fn: "listDraftSchemaSummaries", type: "read" });
-        return ctx.runQuery(component.lib.listDraftSchemaSummaries, { viewerId });
+      args: { limit: v.number() },
+      handler: async (ctx, args) => {
+        const viewerId = await options.auth(ctx, {
+          fn: "listDraftSchemaSummaries",
+          type: "read",
+        });
+        return ctx.runQuery(component.lib.listDraftSchemaSummaries, {
+          limit: args.limit,
+          viewerId,
+        });
       },
     }),
     getSchema: queryGeneric({
@@ -290,7 +299,7 @@ export function exposeApi(component: ComponentApi, options: ExposeApiOptions) {
 
     // Group operations
     listGroups: queryGeneric({
-      args: { collectionId: v.optional(v.string()) },
+      args: { collectionId: v.optional(v.string()), limit: v.number() },
       handler: async (ctx, args) => {
         await options.auth(ctx, {
           collectionId: args.collectionId,
@@ -299,6 +308,7 @@ export function exposeApi(component: ComponentApi, options: ExposeApiOptions) {
         });
         return ctx.runQuery(component.lib.listGroups, {
           collectionId: args.collectionId,
+          limit: args.limit,
         });
       },
     }),
@@ -373,7 +383,9 @@ export function exposeApi(component: ComponentApi, options: ExposeApiOptions) {
     // `listGeometries` once per schema, merging client-side — see
     // `useAllPaginated` in the `react` package.
     listEntriesByCollection: queryGeneric({
-      args: { collectionId: v.string(), limit: v.optional(v.number()) },
+      // `limit` is REQUIRED (issue #128) — the old omitted cap read as
+      // MAX_SAFE_INTEGER, an unbounded read.
+      args: { collectionId: v.string(), limit: v.number() },
       handler: async (ctx, args) => {
         // Viewer-scoped like its sibling `listSchemasByCollection` (stage 8,
         // #104): a collection can contain a member's own draft or author-only
@@ -391,12 +403,13 @@ export function exposeApi(component: ComponentApi, options: ExposeApiOptions) {
       },
     }),
     // Every `{dataset, collection}` membership row — lets clients count or
-    // filter memberships without one query per collection.
+    // filter memberships without one query per collection. Required `limit`
+    // (issue #128).
     listSchemaCollections: queryGeneric({
-      args: {},
-      handler: async (ctx) => {
+      args: { limit: v.number() },
+      handler: async (ctx, args) => {
         await options.auth(ctx, { fn: "listSchemaCollections", type: "read" });
-        return ctx.runQuery(component.lib.listSchemaCollections, {});
+        return ctx.runQuery(component.lib.listSchemaCollections, { limit: args.limit });
       },
     }),
     // The collections a dataset currently belongs to.
@@ -465,10 +478,10 @@ export function exposeApi(component: ComponentApi, options: ExposeApiOptions) {
     // `mapId` for auth and travel as plain strings, re-validated inside the
     // component (see the id-validation note above).
     listMaps: queryGeneric({
-      args: {},
-      handler: async (ctx) => {
+      args: { limit: v.number() },
+      handler: async (ctx, args) => {
         await options.auth(ctx, { fn: "listMaps", type: "read" });
-        return ctx.runQuery(component.lib.listMaps, {});
+        return ctx.runQuery(component.lib.listMaps, { limit: args.limit });
       },
     }),
     getMap: queryGeneric({
@@ -504,12 +517,13 @@ export function exposeApi(component: ComponentApi, options: ExposeApiOptions) {
       },
     }),
     // A map's layers in draw order; every layer across all maps when `mapId`
-    // is omitted (one query lets a client count layers per map).
+    // is omitted (one query lets a client count layers per map). Required
+    // `limit` (issue #128) bounds both branches.
     listMapLayers: queryGeneric({
-      args: { mapId: v.optional(v.string()) },
+      args: { limit: v.number(), mapId: v.optional(v.string()) },
       handler: async (ctx, args) => {
         await options.auth(ctx, { fn: "listMapLayers", mapId: args.mapId, type: "read" });
-        return ctx.runQuery(component.lib.listMapLayers, { mapId: args.mapId });
+        return ctx.runQuery(component.lib.listMapLayers, { limit: args.limit, mapId: args.mapId });
       },
     }),
     // Appends a layer (a no-op when the target is already a layer of the map).
@@ -574,10 +588,13 @@ export function exposeApi(component: ComponentApi, options: ExposeApiOptions) {
 
     // Entry operations
     listEntries: queryGeneric({
-      args: { schemaId: v.string() },
+      // Required `limit` (issue #128) — the old form collected the dataset's
+      // whole row set in one query.
+      args: { limit: v.number(), schemaId: v.string() },
       handler: async (ctx, args) => {
         await options.auth(ctx, { fn: "listEntries", schemaId: args.schemaId, type: "read" });
         return ctx.runQuery(component.lib.listEntries, {
+          limit: args.limit,
           schemaId: args.schemaId,
         });
       },
@@ -632,9 +649,10 @@ export function exposeApi(component: ComponentApi, options: ExposeApiOptions) {
     }),
     // Entries from several datasets at once — e.g. building a reference
     // field's candidate picker without one round trip per dataset. `limit`
-    // optionally caps rows taken per dataset (issue #54).
+    // is REQUIRED (issue #128 — the old omitted cap read as
+    // MAX_SAFE_INTEGER) and caps rows taken per dataset (issue #54).
     listEntriesForSchemas: queryGeneric({
-      args: { limit: v.optional(v.number()), schemaIds: v.array(v.string()) },
+      args: { limit: v.number(), schemaIds: v.array(v.string()) },
       handler: async (ctx, args) => {
         // The batch read FILTERS rather than throws (stage 8, #104): an
         // invisible reference target contributes no candidates — a foreign

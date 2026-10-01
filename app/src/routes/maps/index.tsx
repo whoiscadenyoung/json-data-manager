@@ -97,8 +97,8 @@ function countByMap(
 }
 
 function MapsPage() {
-  const maps = useQuery(api.maps.list),
-    layers = useQuery(api.maps.listLayers, {}),
+  const maps = useQuery(api.maps.list, { limit: 500 }),
+    layers = useQuery(api.maps.listLayers, { limit: 500 }),
     deleteMap = useMutation(api.maps.remove),
     [formOpen, setFormOpen] = useState(false),
     [editing, setEditing] = useState<MapDoc | undefined>(),

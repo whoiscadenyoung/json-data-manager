@@ -7,6 +7,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { auth } from "./auth";
 import { specDependencies } from "./derivedSpec";
+import { deleteDatasetCascading } from "./schemas";
 import {
   commitOpValidator,
   DEFAULT_KEEP_VERSIONS,
@@ -29,6 +30,31 @@ type ComponentVersionDoc = FunctionReturnType<
 
 /** One component schema doc, as `getSchema` returns it (null when gone). */
 type ComponentSchemaDoc = FunctionReturnType<typeof components.jsonCms.lib.getSchema>;
+
+/**
+ * Per-call resolution memo (issue #128): the consumption queries resolve the
+ * same datasets, chains, and attempt feeds repeatedly — once per consumer
+ * row, once per badge source — and every miss is a component round trip or
+ * an indexed scan. One memo per query execution makes the reads
+ * proportional to DISTINCT ids, not rows. Deliberately fresh per call, so
+ * nothing ever serves a resolution from before this transaction saw.
+ */
+export function createChainMemo(): {
+  attempts: Map<string, Doc<"publishAttempts">[]>;
+  heads: Map<string, ChainHead | undefined>;
+  schemas: Map<string, ComponentSchemaDoc>;
+  versions: Map<string, ComponentVersionDoc[]>;
+} {
+  return {
+    attempts: new Map<string, Doc<"publishAttempts">[]>(),
+    heads: new Map<string, ChainHead | undefined>(),
+    schemas: new Map<string, ComponentSchemaDoc>(),
+    versions: new Map<string, ComponentVersionDoc[]>(),
+  };
+}
+
+/** The resolution memo threaded through a read (optional everywhere — a caller without one simply resolves uncached, the pre-#128 behavior). */
+type ChainMemo = ReturnType<typeof createChainMemo>;
 
 /**
  * One version row as the chain reads see it — the versioning cores'
@@ -278,52 +304,88 @@ export function badgeStateOf(
  * One component schema read that tolerates a stored id that isn't a
  * well-formed component id (the publish.ts precedent — the validator would
  * throw, and "not a component dataset" is the answer that keeps walks
- * uniform over plain strings).
+ * uniform over plain strings). Memoized per call (issue #128).
  */
 async function tryGetSchema(
   ctx: { runQuery: RunQuery },
   schemaId: string,
+  memo?: ChainMemo,
 ): Promise<ComponentSchemaDoc> {
-  try {
-    return await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId });
-  } catch {
-    return null;
+  if (memo !== undefined) {
+    const hit = memo.schemas.get(schemaId);
+    if (hit !== undefined) {
+      return hit;
+    }
   }
+  let doc: ComponentSchemaDoc;
+  try {
+    doc = await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId });
+  } catch {
+    doc = null;
+  }
+  if (memo !== undefined) {
+    memo.schemas.set(schemaId, doc);
+  }
+  return doc;
 }
 
-/** A component chain's frozen versions — [] when the anchor isn't a component id. */
+/** A component chain's frozen versions — [] when the anchor isn't a component id. Memoized per call (issue #128). */
 async function componentChainVersions(
   ctx: { runQuery: RunQuery },
   anchorId: string,
+  memo?: ChainMemo,
 ): Promise<ComponentVersionDoc[]> {
+  if (memo !== undefined) {
+    const hit = memo.versions.get(anchorId);
+    if (hit !== undefined) {
+      return hit;
+    }
+  }
+  let versions: ComponentVersionDoc[];
   try {
-    return await ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+    versions = await ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
       sourceSchemaId: anchorId,
     });
   } catch {
-    return [];
+    versions = [];
   }
+  if (memo !== undefined) {
+    memo.versions.set(anchorId, versions);
+  }
+  return versions;
 }
 
 /**
  * A derived chain's COMPLETED attempts — [] when the anchor isn't a registry
  * row. The status filter is the name's promise (#126): a failed or in-flight
  * attempt is not a version, and letting one into the feed made retention
- * under-count keeps and could steal a delta's `previous` slot.
+ * under-count keeps and could steal a delta's `previous` slot. Memoized per
+ * call (issue #128).
  */
 async function completedAttemptsFor(
   ctx: { db: ReadDb },
   anchorId: string,
+  memo?: ChainMemo,
 ): Promise<Doc<"publishAttempts">[]> {
-  const registryId = ctx.db.normalizeId("derivedDatasets", anchorId);
-  if (registryId === null) {
-    return [];
+  if (memo !== undefined) {
+    const hit = memo.attempts.get(anchorId);
+    if (hit !== undefined) {
+      return hit;
+    }
   }
-  return ctx.db
-    .query("publishAttempts")
-    .withIndex("by_dataset", (q) => q.eq("datasetKey", anchorId))
-    .filter((q) => q.eq(q.field("status"), "completed"))
-    .collect();
+  const registryId = ctx.db.normalizeId("derivedDatasets", anchorId);
+  const attempts =
+    registryId === null
+      ? []
+      : await ctx.db
+          .query("publishAttempts")
+          .withIndex("by_dataset", (q) => q.eq("datasetKey", anchorId))
+          .filter((q) => q.eq(q.field("status"), "completed"))
+          .collect();
+  if (memo !== undefined) {
+    memo.attempts.set(anchorId, attempts);
+  }
+  return attempts;
 }
 
 /**
@@ -340,15 +402,16 @@ async function completedAttemptsFor(
 async function survivingAttemptsFor(
   ctx: { db: ReadDb; runQuery: RunQuery },
   anchorId: string,
+  memo?: ChainMemo,
 ): Promise<Doc<"publishAttempts">[]> {
-  const attempts = await completedAttemptsFor(ctx, anchorId),
+  const attempts = await completedAttemptsFor(ctx, anchorId, memo),
     surviving: Doc<"publishAttempts">[] = [];
   for (const attempt of attempts) {
     if (attempt.publishedSchemaId === undefined) {
       continue;
     }
     // oxlint-disable-next-line no-await-in-loop -- one existence read per attempt, ordered like the chain.
-    if ((await tryGetSchema(ctx, attempt.publishedSchemaId)) === null) {
+    if ((await tryGetSchema(ctx, attempt.publishedSchemaId, memo)) === null) {
       continue;
     }
     surviving.push(attempt);
@@ -366,12 +429,13 @@ async function survivingAttemptsFor(
 async function chainVersionsFor(
   ctx: { db: ReadDb; runQuery: RunQuery },
   anchorId: string,
+  memo?: ChainMemo,
 ): Promise<ChainVersion[]> {
-  const versions = await componentChainVersions(ctx, anchorId);
+  const versions = await componentChainVersions(ctx, anchorId, memo);
   if (versions.length > 0) {
     return versions;
   }
-  const attempts = await survivingAttemptsFor(ctx, anchorId);
+  const attempts = await survivingAttemptsFor(ctx, anchorId, memo);
   return attempts.map((attempt) => ({
     _id: attempt.publishedSchemaId ?? "",
     lineage: {
@@ -386,20 +450,35 @@ async function chainVersionsFor(
  * Shared beyond this module from 7b (#103): the bundle press's layer
  * resolutions (`bundles.layerResolutions`) resolve a map's dataset-layer
  * targets through the same heads, so a float layer and a drift badge can
- * never disagree about what "head" is.
+ * never disagree about what "head" is. Memoized per call (issue #128) —
+ * the badge/consumed-by walks resolve the same source once no matter how
+ * many consumers name it.
  */
 export async function resolveSourceHead(
   ctx: { db: ReadDb; runQuery: RunQuery },
   sourceDatasetId: string,
+  memo?: ChainMemo,
 ): Promise<ChainHead | undefined> {
-  const source = await tryGetSchema(ctx, sourceDatasetId),
-    anchor = chainAnchorOf(source === null ? undefined : source.lineage, sourceDatasetId);
-  const componentHead = headOfComponentChain(await componentChainVersions(ctx, anchor));
-  if (componentHead !== undefined) {
-    return { ...componentHead, anchorId: anchor };
+  if (memo !== undefined) {
+    const hit = memo.heads.get(sourceDatasetId);
+    if (hit !== undefined) {
+      return hit;
+    }
   }
-  const attemptHead = headOfAttemptChain(await completedAttemptsFor(ctx, anchor));
-  return attemptHead === undefined ? undefined : { ...attemptHead, anchorId: anchor };
+  const source = await tryGetSchema(ctx, sourceDatasetId, memo),
+    anchor = chainAnchorOf(source === null ? undefined : source.lineage, sourceDatasetId);
+  const componentHead = headOfComponentChain(await componentChainVersions(ctx, anchor, memo));
+  let head: ChainHead | undefined;
+  if (componentHead !== undefined) {
+    head = { ...componentHead, anchorId: anchor };
+  } else {
+    const attemptHead = headOfAttemptChain(await completedAttemptsFor(ctx, anchor, memo));
+    head = attemptHead === undefined ? undefined : { ...attemptHead, anchorId: anchor };
+  }
+  if (memo !== undefined) {
+    memo.heads.set(sourceDatasetId, head);
+  }
+  return head;
 }
 
 /** The unified retention-policy read: the binding store (the tag path's) first, then the publish-chain store, then the defaults. */
@@ -502,7 +581,12 @@ function isSchemaGone(error: unknown): boolean {
  * feed; #126's silent-stop failure mode was exactly this throw).
  */
 async function enforceRetentionForAnchor(
-  ctx: { db: ReadDb; runMutation: RunMutation; runQuery: RunQuery },
+  ctx: {
+    db: ReadDb;
+    runMutation: RunMutation;
+    runQuery: RunQuery;
+    scheduler: MutationCtx["scheduler"];
+  },
   anchorId: string,
 ): Promise<number> {
   const policy = await resolvePolicyForAnchor(ctx, anchorId),
@@ -515,7 +599,9 @@ async function enforceRetentionForAnchor(
     }
     try {
       // oxlint-disable-next-line no-await-in-loop -- ordered retirements under the write budget (the versioning.enforceRetention pattern).
-      await ctx.runMutation(components.jsonCms.lib.deleteSchema, {
+      await deleteDatasetCascading(ctx, {
+        // The host cascade (issue #128): a retired version's own host rows
+        // go with it; its chain's anchor-keyed stores survive (schemas.ts).
         boundWrite: "retire",
         schemaId: version.id,
       });
@@ -700,8 +786,9 @@ export async function sourceVisibleToViewer(
   ctx: { db: ReadDb; runQuery: RunQuery },
   datasetId: string,
   viewerId: string,
+  memo?: ChainMemo,
 ): Promise<boolean> {
-  const row = await tryGetSchema(ctx, datasetId);
+  const row = await tryGetSchema(ctx, datasetId, memo);
   if (row !== null) {
     return rowVisibleToViewer(row, viewerId);
   }
@@ -718,8 +805,9 @@ async function badgesForDatasetRow(
   ctx: { db: ReadDb; runQuery: RunQuery },
   schemaId: string,
   viewerId: string,
+  memo?: ChainMemo,
 ): Promise<SourceBadge[]> {
-  const row = await tryGetSchema(ctx, schemaId),
+  const row = await tryGetSchema(ctx, schemaId, memo),
     recorded = row === null || row.lineage === undefined ? undefined : row.lineage.sourceVersions;
   // An invisible row (a foreign draft, an author-restricted row) badges as
   // nothing — its source graph is content too (stage 8).
@@ -729,7 +817,7 @@ async function badgesForDatasetRow(
   const badges: SourceBadge[] = [];
   for (const source of recorded) {
     // oxlint-disable-next-line no-await-in-loop -- the walk resolves each source in order; each read decides the next hop.
-    const head = await resolveSourceHead(ctx, source.datasetId);
+    const head = await resolveSourceHead(ctx, source.datasetId, memo);
     let recordedRow: ComponentSchemaDoc = null;
     if (source.ref !== undefined) {
       // oxlint-disable-next-line no-await-in-loop -- see above.
@@ -766,7 +854,7 @@ async function badgesForDatasetRow(
     // row) contributes no title — the badge stays, the name doesn't leak
     // (stage 8, #104).
     // oxlint-disable-next-line no-await-in-loop -- see above.
-    const sourceDoc = await tryGetSchema(ctx, source.datasetId);
+    const sourceDoc = await tryGetSchema(ctx, source.datasetId, memo);
     if (sourceDoc !== null) {
       if (rowVisibleToViewer(sourceDoc, viewerId)) {
         badge.sourceTitle = sourceDoc.title;
@@ -785,12 +873,13 @@ async function badgesForRegistryConsumer(
   ctx: { db: ReadDb; runQuery: RunQuery },
   registryId: string,
   viewerId: string,
+  memo?: ChainMemo,
 ): Promise<SourceBadge[]> {
-  const head = headOfAttemptChain(await completedAttemptsFor(ctx, registryId));
+  const head = headOfAttemptChain(await completedAttemptsFor(ctx, registryId, memo));
   if (head === undefined) {
     return [];
   }
-  return badgesForDatasetRow(ctx, head.schemaId, viewerId);
+  return badgesForDatasetRow(ctx, head.schemaId, viewerId, memo);
 }
 
 /**
@@ -803,16 +892,19 @@ async function badgesForRegistryConsumer(
 export const sourceBadges = query({
   args: { registryIds: v.array(v.string()), schemaIds: v.array(v.string()) },
   handler: async (ctx, args) => {
-    const viewerId = await auth(ctx);
+    const viewerId = await auth(ctx),
+      // One memo per execution (issue #128): repeated sources/chains across
+      // the badge walk resolve once.
+      memo = createChainMemo();
     const byRegistryId: Record<string, SourceBadge[]> = {};
     for (const registryId of args.registryIds.slice(0, MAX_CONSUMERS)) {
       // oxlint-disable-next-line no-await-in-loop -- one consumer per hop; each read decides the next.
-      byRegistryId[registryId] = await badgesForRegistryConsumer(ctx, registryId, viewerId);
+      byRegistryId[registryId] = await badgesForRegistryConsumer(ctx, registryId, viewerId, memo);
     }
     const bySchemaId: Record<string, SourceBadge[]> = {};
     for (const schemaId of args.schemaIds.slice(0, MAX_CONSUMERS)) {
       // oxlint-disable-next-line no-await-in-loop -- see above.
-      bySchemaId[schemaId] = await badgesForDatasetRow(ctx, schemaId, viewerId);
+      bySchemaId[schemaId] = await badgesForDatasetRow(ctx, schemaId, viewerId, memo);
     }
     return { byRegistryId, bySchemaId };
   },
@@ -857,11 +949,14 @@ const consumedByValidator = v.object({
 export const consumedBy = query({
   args: { datasetId: v.string() },
   handler: async (ctx, args) => {
-    const viewerId = await auth(ctx);
+    const viewerId = await auth(ctx),
+      // One memo per execution (issue #128): every consumer's changed check
+      // resolves the SAME source head — it must resolve once.
+      memo = createChainMemo();
     // The source's own visibility gates the whole projection (stage 8): a
     // foreign draft or author-restricted row names no consumers to a caller
     // who cannot see the row — the same empty answer an unknown id gives.
-    if (!(await sourceVisibleToViewer(ctx, args.datasetId, viewerId))) {
+    if (!(await sourceVisibleToViewer(ctx, args.datasetId, viewerId, memo))) {
       return { consumers: [], knownConsumerKinds: ["derived", "fork", "map"] };
     }
     const refs = await ctx.db
@@ -901,7 +996,7 @@ export const consumedBy = query({
         continue;
       }
       // oxlint-disable-next-line no-await-in-loop -- see above.
-      const changed = await referenceChangedFor(ctx, ref, args.datasetId);
+      const changed = await referenceChangedFor(ctx, ref, args.datasetId, memo);
       consumers.set(ref.consumerId, {
         changed,
         consumerId: ref.consumerId,
@@ -918,7 +1013,7 @@ export const consumedBy = query({
         continue;
       }
       // oxlint-disable-next-line no-await-in-loop -- see above.
-      const changed = await registryRowChangedFor(ctx, row, args.datasetId);
+      const changed = await registryRowChangedFor(ctx, row, args.datasetId, memo);
       consumers.set(row._id, {
         changed,
         consumerId: row._id,
@@ -1022,14 +1117,15 @@ async function referenceChangedFor(
   ctx: { db: ReadDb; runQuery: RunQuery },
   ref: Doc<"consumerReferences">,
   datasetId: string,
+  memo?: ChainMemo,
 ): Promise<boolean> {
-  const head = await resolveSourceHead(ctx, datasetId);
+  const head = await resolveSourceHead(ctx, datasetId, memo);
   if (ref.mode === "pin") {
     return badgeStateOf({ ref: ref.pinnedRef }, head) !== "current";
   }
   // Float is at head by definition — unless the consumer's own published
   // rows recorded this source BEFORE it moved (the lineage badge's signal).
-  return registryRowChangedFor(ctx, { _id: ref.consumerId }, datasetId);
+  return registryRowChangedFor(ctx, { _id: ref.consumerId }, datasetId, memo);
 }
 
 /** Whether one registry row's head published row recorded `datasetId` at a ref that has since moved. */
@@ -1037,12 +1133,13 @@ async function registryRowChangedFor(
   ctx: { db: ReadDb; runQuery: RunQuery },
   row: { _id: string },
   datasetId: string,
+  memo?: ChainMemo,
 ): Promise<boolean> {
-  const head = headOfAttemptChain(await completedAttemptsFor(ctx, row._id));
+  const head = headOfAttemptChain(await completedAttemptsFor(ctx, row._id, memo));
   if (head === undefined) {
     return false;
   }
-  const published = await tryGetSchema(ctx, head.schemaId),
+  const published = await tryGetSchema(ctx, head.schemaId, memo),
     recorded =
       published === null || published.lineage === undefined
         ? undefined
@@ -1051,7 +1148,7 @@ async function registryRowChangedFor(
     return false;
   }
   const source = recorded.find((entry) => entry.datasetId === datasetId),
-    sourceHead = await resolveSourceHead(ctx, datasetId);
+    sourceHead = await resolveSourceHead(ctx, datasetId, memo);
   const state = badgeStateOf(
     source ?? {},
     sourceHead,
@@ -1079,13 +1176,14 @@ const chainVersionValidator = v.object({
 export const chainVersions = query({
   args: { anchorId: v.string() },
   handler: async (ctx, args) => {
-    const viewerId = await auth(ctx);
+    const viewerId = await auth(ctx),
+      memo = createChainMemo();
     // An invisible anchor (a foreign draft, an author-restricted row) reads
     // as a chain with no versions — titles and refs never leak (stage 8).
-    if (!(await sourceVisibleToViewer(ctx, args.anchorId, viewerId))) {
+    if (!(await sourceVisibleToViewer(ctx, args.anchorId, viewerId, memo))) {
       return [];
     }
-    const componentVersions = await componentChainVersions(ctx, args.anchorId);
+    const componentVersions = await componentChainVersions(ctx, args.anchorId, memo);
     if (componentVersions.length > 0) {
       const rows = componentVersions.map((version) => {
         const row = {
@@ -1103,7 +1201,7 @@ export const chainVersions = query({
     // The SURVIVING attempts only (#126): a retired version's attempt row
     // lingers, but it is not a version — listing it offered a Retire button
     // on a row that was already gone.
-    const rows = (await survivingAttemptsFor(ctx, args.anchorId)).map((attempt) => ({
+    const rows = (await survivingAttemptsFor(ctx, args.anchorId, memo)).map((attempt) => ({
       entryCount: undefined,
       frozenAt: attempt.finishedAt ?? attempt._creationTime,
       schemaId: attempt.publishedSchemaId ?? "",
@@ -1148,7 +1246,8 @@ function newestFirst<T extends { frozenAt: number }>(rows: T[]): T[] {
 export const analysisTargets = query({
   args: { datasetIds: v.array(v.string()) },
   handler: async (ctx, args) => {
-    const viewerId = await auth(ctx);
+    const viewerId = await auth(ctx),
+      memo = createChainMemo();
     const targets: Array<{
       datasetId: string;
       resolvedSchemaId?: string;
@@ -1158,7 +1257,7 @@ export const analysisTargets = query({
     for (const datasetId of args.datasetIds.slice(0, MAX_CONSUMERS)) {
       // One target per hop; each read decides the next (the badge shape).
       // oxlint-disable-next-line no-await-in-loop -- see above.
-      const row = await tryGetSchema(ctx, datasetId);
+      const row = await tryGetSchema(ctx, datasetId, memo);
       if (row === null) {
         const registryId = ctx.db.normalizeId("derivedDatasets", datasetId);
         if (registryId === null) {
@@ -1183,7 +1282,7 @@ export const analysisTargets = query({
         continue;
       }
       // oxlint-disable-next-line no-await-in-loop -- see above.
-      if (!(await sourceVisibleToViewer(ctx, datasetId, viewerId))) {
+      if (!(await sourceVisibleToViewer(ctx, datasetId, viewerId, memo))) {
         targets.push({ datasetId, status: "missing" });
         continue;
       }
@@ -1197,7 +1296,7 @@ export const analysisTargets = query({
         continue;
       }
       // oxlint-disable-next-line no-await-in-loop -- see above.
-      const head = await resolveSourceHead(ctx, datasetId);
+      const head = await resolveSourceHead(ctx, datasetId, memo);
       targets.push(
         head === undefined
           ? { datasetId, resolvedSchemaId: datasetId, status: "identity", title: row.title }

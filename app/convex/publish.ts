@@ -15,6 +15,7 @@ import { auth } from "./auth";
 import { newestCompletedAttempt } from "./consumption";
 import { resolveDataset } from "./derivedDatasets";
 import { specDependencies, specStatus } from "./derivedSpec";
+import { deleteDatasetCascading } from "./schemas";
 import { alreadyFrozenByRef, createFrozenVersion, type SchemaGeometryType } from "./versioning";
 
 /**
@@ -795,13 +796,15 @@ export const getAttemptDoc = internalQuery({
  * attempt's counts and extent exact.
  */
 async function deletePartialFrozenVersion(
-  ctx: Pick<MutationCtx, "runQuery" | "runMutation">,
+  ctx: Pick<MutationCtx, "runQuery" | "runMutation" | "scheduler">,
   publishKey: string,
 ): Promise<void> {
   try {
     const partial = await alreadyFrozenByRef(ctx, publishKey);
     if (partial !== null) {
-      await ctx.runMutation(components.jsonCms.lib.deleteSchema, {
+      // The host cascade (issue #128): a half-built frozen row's host rows
+      // (fork edges, memberships, spec edges) go with it.
+      await deleteDatasetCascading(ctx, {
         boundWrite: "retire",
         schemaId: partial._id,
       });

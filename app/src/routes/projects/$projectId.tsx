@@ -377,10 +377,16 @@ function AddReferenceDialog({
     fork = useMutation(api.projects.forkAsSpec),
     [kind, setKind] = useState<"dataset" | "derived" | "map">("dataset"),
     [pendingId, setPendingId] = useState<string | undefined>(),
-    datasets = useQuery({ ...convexQuery(api.schemas.listSummaries), enabled: open }).data,
-    drafts = useQuery({ ...convexQuery(api.schemas.listDraftSummaries), enabled: open }).data,
+    datasets = useQuery({
+      ...convexQuery(api.schemas.listSummaries, { limit: 1000 }),
+      enabled: open,
+    }).data,
+    drafts = useQuery({
+      ...convexQuery(api.schemas.listDraftSummaries, { limit: 1000 }),
+      enabled: open,
+    }).data,
     derived = useQuery({ ...convexQuery(api.derivedDatasets.summaries, {}), enabled: open }).data,
-    maps = useQuery({ ...convexQuery(api.maps.list), enabled: open }).data,
+    maps = useQuery({ ...convexQuery(api.maps.list, { limit: 500 }), enabled: open }).data,
     available = buildCandidates(kind, ownerAuthId, existingIds, {
       datasets,
       drafts,

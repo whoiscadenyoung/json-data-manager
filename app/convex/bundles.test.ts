@@ -304,7 +304,7 @@ describe("one press, one bundle (AC 1)", () => {
     const mapPlan = plan.members.find((member) => member.kind === "map");
     expect(prop(mapPlan, "layerTargets")).toStrictEqual([draftA]);
 
-    const before = (await t.query(api.schemas.listSummaries, {})).length;
+    const before = (await t.query(api.schemas.listSummaries, { limit: 1000 })).length;
     const press = await driveBundlePress(t, projectId, {
       [draftA]: {
         chunks: [
@@ -331,7 +331,7 @@ describe("one press, one bundle (AC 1)", () => {
     expect(await versionsOf(t, draftB)).toHaveLength(1);
     // Exactly the bundle's datasets entered the catalog — one frozen row per
     // referenced dataset, nothing else.
-    expect((await t.query(api.schemas.listSummaries, {})).length).toBe(before + 2);
+    expect((await t.query(api.schemas.listSummaries, { limit: 1000 })).length).toBe(before + 2);
 
     // The promoted collection: named for the project, holding the frozen rows.
     const collectionId = run.run.collectionId;
@@ -464,7 +464,7 @@ describe("auto-publish and exposure (AC 2, AC 3)", () => {
     // catalog-visible and its lineage still names the source.
     expect(await lifecycleOf(t, sourceId)).toBe("draft");
     expect(await versionsOf(t, sourceId)).toHaveLength(0);
-    const catalog = await t.query(api.schemas.listSummaries, {});
+    const catalog = await t.query(api.schemas.listSummaries, { limit: 1000 });
     expect(catalog.some((row) => row._id === sourceId)).toBe(false);
     expect(catalog.some((row) => row._id === frozenId)).toBe(true);
   });

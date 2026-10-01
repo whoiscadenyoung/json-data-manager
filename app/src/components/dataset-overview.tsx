@@ -653,7 +653,7 @@ function GroupSection({
   schemaId: string;
   groupId?: string;
 }) {
-  const allGroups = useQuery(api.groups.list, {}),
+  const allGroups = useQuery(api.groups.list, { limit: 500 }),
     allCollections = useQuery(api.collections.list),
     setSchemaGroup = useMutation(api.collections.setSchemaGroup),
     createGroup = useMutation(api.groups.create),

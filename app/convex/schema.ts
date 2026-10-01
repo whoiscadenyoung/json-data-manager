@@ -284,7 +284,13 @@ export default defineSchema({
     // Status leads so the catalog projection can scan saved rows directly
     // (drafts are invisible to catalog consumers — lifecycle doc §3); the
     // trailing sourceDatasetId keeps every index field in the name.
-    .index("by_status_and_source", ["status", "sourceDatasetId"]),
+    .index("by_status_and_source", ["status", "sourceDatasetId"])
+    // The Transform tab's index-served leg (issue #128): source first,
+    // creator second, so a viewer's own rows for one source read without
+    // scanning anyone else's drafts — the old by_source read filtered
+    // visibility AFTER take(200), letting other users' drafts push visible
+    // rows out of the window.
+    .index("by_source_and_creator", ["sourceDatasetId", "createdBy"]),
 
   // One version reference a consuming artifact holds on another dataset's
   // version chain (roadmap stage 6, #101; lifecycle doc §2/§7): pin (a

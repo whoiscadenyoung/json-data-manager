@@ -196,6 +196,31 @@ function isCatalogVisibleToViewer(
   return isCatalogVisible(doc) && isVisibleToViewer(doc, viewerId);
 }
 
+// ---------------------------------------------------------------------------
+// List-read bounds (issue #128)
+//
+// Every enumeration below takes a REQUIRED `limit` — the unbounded
+// full-table `.collect()` reads are gone. Each read honors the limit up to
+// `LIST_LIMIT_MAX` and bounds its scan with `.take()`, so no query execution
+// can read a whole table. The visibility/lifecycle filters are applied AFTER
+// the take (no index serves absent-OR-published lifecycle, and
+// publishedVisibility is likewise unindexeable for the same reason): a
+// catalog dominated by rows the viewer cannot see can therefore answer with
+// fewer than `limit` rows — the documented cost of the bound, and the
+// windowed-scan trade-off the issue records for `consumedBy`'s take(500)
+// scan. Reading fewer FULL schema docs per execution is also what keeps the
+// ~16 MiB per-execution read cap reachable at all (each doc can carry 200 KB
+// of schema/uiSchema payload).
+// ---------------------------------------------------------------------------
+
+/** The largest `limit` any list read honors — callers may pass more, the scan never exceeds this. */
+const LIST_LIMIT_MAX = 1000;
+
+/** Normalizes a required list `limit` to the honored width (≥ 1, capped at `LIST_LIMIT_MAX`). */
+function clampLimit(limit: number): number {
+  return Math.max(1, Math.min(Math.floor(limit), LIST_LIMIT_MAX));
+}
+
 /**
  * The client-facing projection of a full `schemas` doc (issue #131): the
  * stored shape with the two `_storage` pointers stripped — the storage-id
@@ -212,9 +237,14 @@ function toPublicSchemaView(doc: Doc<"schemas">) {
 }
 
 export const listSchemas = query({
-  args: { viewerId: v.string() },
+  // Required limit (issue #128): the read is bounded to `limit` docs — full
+  // schema docs are the heaviest rows in the component (up to 200 KB of
+  // schema + uiSchema payload each), so an unbounded collect here was the
+  // catalog's worst read amplification. See the module note above on the
+  // filter-after-take window.
+  args: { limit: v.number(), viewerId: v.string() },
   handler: async (ctx, args) => {
-    const docs = await ctx.db.query("schemas").order("desc").collect();
+    const docs = await ctx.db.query("schemas").order("desc").take(clampLimit(args.limit));
     return docs
       .filter((doc) => isCatalogVisibleToViewer(doc, args.viewerId))
       .map(toPublicSchemaView);
@@ -316,9 +346,12 @@ const schemaSummaryValidator = schemaValidator
   .extend({ fieldCount: v.number() });
 
 export const listSchemaSummaries = query({
-  args: { viewerId: v.string() },
+  // Required limit (issue #128) — same bound as `listSchemas`; the summary
+  // projection (#52/#53) keeps the RETURN light, and the take keeps the READ
+  // (which still touches the full docs — Convex reads whole documents) bounded.
+  args: { limit: v.number(), viewerId: v.string() },
   handler: async (ctx, args) => {
-    const docs = await ctx.db.query("schemas").order("desc").collect();
+    const docs = await ctx.db.query("schemas").order("desc").take(clampLimit(args.limit));
     return docs.filter((doc) => isCatalogVisibleToViewer(doc, args.viewerId)).map(toSchemaSummary);
   },
   returns: v.array(schemaSummaryValidator),
@@ -339,9 +372,10 @@ export const listSchemaSummaries = query({
  * draft leak in the catalog surface.
  */
 export const listDraftSchemaSummaries = query({
-  args: { viewerId: v.string() },
+  // Required limit (issue #128) — same bound as its sibling reads.
+  args: { limit: v.number(), viewerId: v.string() },
   handler: async (ctx, args) => {
-    const docs = await ctx.db.query("schemas").order("desc").collect();
+    const docs = await ctx.db.query("schemas").order("desc").take(clampLimit(args.limit));
     return docs
       .filter((doc) => doc.lifecycle === "draft" && isVisibleToViewer(doc, args.viewerId))
       .map(toSchemaSummary);
@@ -765,6 +799,264 @@ export const updateSchema = mutation({
   },
 });
 
+// ---------------------------------------------------------------------------
+// Batched, budget-aware deletes (issue #128)
+//
+// Convex caps a single mutation at ~16k documents written, ~32k read and
+// ~16 MiB read, so a dataset of a few thousand entries with geometry cannot
+// be deleted or cleared in one transaction. Both `deleteSchema` and
+// `deleteEntriesBySchema` therefore drain in batches: each pass deletes up
+// to one budget-sized batch — every entry together with its references rows
+// (both sides), its geometry row, and that row's storage blob — then checks
+// the transaction's remaining read budget and, while rows remain and the
+// budget is nearly spent, schedules itself for a fresh transaction
+// (`ctx.scheduler.runAfter(0, …)`) instead of blowing the cap.
+//
+// Small datasets — every fixture-sized one — still complete SYNCHRONOUSLY
+// inside the calling mutation, so the delete/clear contract is unchanged for
+// them; a large drain finishes across subsequent scheduled transactions and
+// always ends with the schema row itself deleted LAST (a clear resets the
+// schema row's counters instead), so no child ever dangles mid-drain.
+// ---------------------------------------------------------------------------
+
+/** Rows per `.take()` while the delete budget is plentiful. */
+const DELETE_BATCH_ROWS = 100,
+  // Stop draining inline once the transaction's remaining read budget falls
+  // under this — the next batch (up to DELETE_BATCH_ROWS fat entry docs)
+  // still needs headroom — and hand off to a scheduled continuation.
+  DELETE_BYTE_RESERVE = 4_000_000,
+  // Conservative per-row read estimate used to size each batch DOWN as the
+  // budget drains (an entry doc plus its geometry row; `data` payloads vary,
+  // so the estimate assumes a fat row).
+  DELETE_ROW_BYTE_ESTIMATE = 100_000;
+
+/** The transaction's remaining read budget, or null when the context cannot
+ * report it (contexts without metrics — the test simulator among them —
+ * fall back to the fixed batch cap, which alone sits far under every limit). */
+async function transactionReadRemaining(ctx: MutationCtx): Promise<number | null> {
+  try {
+    return (await ctx.meta.getTransactionMetrics()).bytesRead.remaining;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One bounded delete batch's width: never above `DELETE_BATCH_ROWS`, shrunk
+ * to what the transaction's remaining read budget can absorb. Zero means
+ * "the budget says hand off to a scheduled continuation now".
+ */
+async function deleteBatchWidth(ctx: MutationCtx): Promise<number> {
+  const remaining = await transactionReadRemaining(ctx);
+  if (remaining === null) {
+    return DELETE_BATCH_ROWS;
+  }
+  if (remaining <= DELETE_BYTE_RESERVE) {
+    return 0;
+  }
+  return Math.min(
+    DELETE_BATCH_ROWS,
+    Math.floor((remaining - DELETE_BYTE_RESERVE) / DELETE_ROW_BYTE_ESTIMATE),
+  );
+}
+
+/** Deletes one entry with everything hanging off it: its references rows (as source AND as target — every reference naming one of this schema's entries names one of its entries), its geometry row, and that row's storage blob. */
+async function deleteEntryWithCascade(ctx: MutationCtx, entry: EntryDbRow): Promise<void> {
+  const geometry = entry.geometryId !== undefined ? await ctx.db.get(entry.geometryId) : null;
+  if (entry.geometryId !== undefined) {
+    await ctx.db.delete(entry.geometryId);
+  }
+  await deleteGeometryStorageIfAny(ctx, geometry);
+  await deleteReferencesForEntry(ctx, entry._id);
+  await ctx.db.delete(entry._id);
+}
+
+/** Deletes one geometry row together with its storage blob (the leftover-geometry drain's row unit). */
+async function deleteGeometryWithBlob(
+  ctx: MutationCtx,
+  geometryId: Id<"geometries">,
+): Promise<void> {
+  const geometry = await ctx.db.get(geometryId);
+  await ctx.db.delete(geometryId);
+  await deleteGeometryStorageIfAny(ctx, geometry);
+}
+
+/** The phases a schema delete / clear walks, in drain order: entries (each with its references, geometry, blob) → leftover geometry rows → the mutator-specific finisher. */
+const deletePhaseValidator = v.union(
+  v.literal("entries"),
+  v.literal("geometries"),
+  v.literal("finish"),
+);
+type DeletePhase = "entries" | "geometries" | "finish";
+
+/** Drains the schema's entries (each with its cascades) until the index is empty or the read budget says hand off. Accumulates into `deleted.entries` when the caller tracks the count. */
+async function drainEntriesPhase(
+  ctx: MutationCtx,
+  schemaId: Id<"schemas">,
+  deleted?: { entries: number },
+): Promise<"drained" | "more"> {
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- each batch resumes from the previous batch's budget; the drain is inherently sequential.
+    const width = await deleteBatchWidth(ctx);
+    if (width === 0) {
+      return "more";
+    }
+    // oxlint-disable-next-line no-await-in-loop -- see above.
+    const rows = await ctx.db
+      .query("entries")
+      .withIndex("by_schema", (q) => q.eq("schemaId", schemaId))
+      .take(width);
+    if (rows.length === 0) {
+      return "drained";
+    }
+    // oxlint-disable-next-line no-await-in-loop -- see above.
+    await Promise.all(rows.map(async (entry) => deleteEntryWithCascade(ctx, entry)));
+    if (deleted !== undefined) {
+      deleted.entries += rows.length;
+    }
+    if (rows.length < width) {
+      return "drained"; // The index ran dry inside this batch.
+    }
+  }
+}
+
+/** Drains the schema's leftover `geometries` rows (each with its blob) until the index is empty or the budget says hand off. */
+async function drainGeometriesPhase(
+  ctx: MutationCtx,
+  schemaId: Id<"schemas">,
+): Promise<"drained" | "more"> {
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- each batch resumes from the previous batch's budget; the drain is inherently sequential.
+    const width = await deleteBatchWidth(ctx);
+    if (width === 0) {
+      return "more";
+    }
+    // oxlint-disable-next-line no-await-in-loop -- see above.
+    const rows = await ctx.db
+      .query("geometries")
+      .withIndex("by_schema", (q) => q.eq("schemaId", schemaId))
+      .take(width);
+    if (rows.length === 0) {
+      return "drained";
+    }
+    // oxlint-disable-next-line no-await-in-loop -- see above.
+    await Promise.all(rows.map(async (row) => deleteGeometryWithBlob(ctx, row._id)));
+    if (rows.length < width) {
+      return "drained";
+    }
+  }
+}
+
+/** The clear's finisher: the exact reset the single-transaction clear used to patch in one go — counters to zero, the five tile-archive fields cleared (the archive blob itself was deleted with the data), so a fresh import starts from a clean version-0 slate. */
+async function finishClear(ctx: MutationCtx, schemaId: Id<"schemas">): Promise<void> {
+  const doc = await ctx.db.get(schemaId);
+  if (doc === null) {
+    return;
+  }
+  await ctx.db.patch(schemaId, {
+    boundingBox: undefined,
+    entryCount: 0,
+    featureCount: doc.kind === "geospatial" ? 0 : undefined,
+    mapTileArchiveBuiltVersion: undefined,
+    mapTileArchiveBytes: undefined,
+    mapTileArchiveMaxZoom: undefined,
+    mapTileArchiveStorageId: undefined,
+    mapTileCacheVersion: undefined,
+  });
+}
+
+/** The delete's finisher: collection memberships, then any map layers pointing at the dataset (their override rows too), then the schema row itself — deleted LAST, so no child ever dangles mid-drain. */
+async function finishSchemaDelete(ctx: MutationCtx, schemaId: Id<"schemas">): Promise<void> {
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- each batch only exists because the previous one was full; inherently sequential.
+    const memberships = await ctx.db
+      .query("schemaCollections")
+      .withIndex("by_schema", (q) => q.eq("schemaId", schemaId))
+      .take(DELETE_BATCH_ROWS);
+    // oxlint-disable-next-line no-await-in-loop -- see above.
+    await Promise.all(memberships.map(async (row) => ctx.db.delete(row._id)));
+    if (memberships.length < DELETE_BATCH_ROWS) {
+      break;
+    }
+  }
+  await deleteMapLayersForTarget(ctx, schemaId);
+  if ((await ctx.db.get(schemaId)) !== null) {
+    await ctx.db.delete(schemaId);
+  }
+}
+
+/**
+ * Drives `phase` — and every phase after it — of a schema delete or clear to
+ * completion within this transaction. Returns the phase to resume from when
+ * the read budget stopped the drain (`complete: false`); the caller then
+ * schedules its continuation step with exactly that phase. `finish` is the
+ * mutator-specific endgame (`finishClear` vs `finishSchemaDelete`).
+ */
+async function runDeletePhases(
+  ctx: MutationCtx,
+  schemaId: Id<"schemas">,
+  phase: DeletePhase,
+  finish: (ctx: MutationCtx, schemaId: Id<"schemas">) => Promise<void>,
+  deleted?: { entries: number },
+): Promise<{ complete: boolean; phase: DeletePhase }> {
+  let at = phase;
+  if (at === "entries") {
+    if ((await drainEntriesPhase(ctx, schemaId, deleted)) === "more") {
+      return { complete: false, phase: at };
+    }
+    at = "geometries";
+  }
+  if (at === "geometries") {
+    if ((await drainGeometriesPhase(ctx, schemaId)) === "more") {
+      return { complete: false, phase: at };
+    }
+    at = "finish";
+  }
+  await finish(ctx, schemaId);
+  return { complete: true, phase: at };
+}
+
+/** Continuation hop for `deleteEntriesBySchema`'s drain (issue #128): resumes at `phase` and reschedules itself until the clear is complete. A schema deleted mid-clear stops the drain — the delete flow's own steps own the row. */
+export const clearEntriesStep = internalMutation({
+  args: { phase: deletePhaseValidator, schemaId: v.id("schemas") },
+  handler: async (ctx, args) => {
+    if ((await ctx.db.get(args.schemaId)) === null) {
+      return;
+    }
+    const { complete, phase } = await runDeletePhases(ctx, args.schemaId, args.phase, finishClear);
+    if (!complete) {
+      await ctx.scheduler.runAfter(0, internal.lib.clearEntriesStep, {
+        phase,
+        schemaId: args.schemaId,
+      });
+    }
+  },
+  returns: v.null(),
+});
+
+/** Continuation hop for `deleteSchema`'s drain — the same loop, with the schema row deleted last. */
+export const deleteSchemaStep = internalMutation({
+  args: { phase: deletePhaseValidator, schemaId: v.id("schemas") },
+  handler: async (ctx, args) => {
+    if ((await ctx.db.get(args.schemaId)) === null) {
+      return;
+    }
+    const { complete, phase } = await runDeletePhases(
+      ctx,
+      args.schemaId,
+      args.phase,
+      finishSchemaDelete,
+    );
+    if (!complete) {
+      await ctx.scheduler.runAfter(0, internal.lib.deleteSchemaStep, {
+        phase,
+        schemaId: args.schemaId,
+      });
+    }
+  },
+  returns: v.null(),
+});
+
 export const deleteSchema = mutation({
   args: {
     // Host-only bound-dataset write attestation — see `assertDataWritable`.
@@ -780,45 +1072,31 @@ export const deleteSchema = mutation({
     // belongs to the host's unbind/retirement flows only.
     assertDataWritable(existing, args.boundWrite);
 
-    // Delete all entries and geometries associated with this schema first
-    const [entries, geometries, memberships] = await Promise.all([
-      ctx.db
-        .query("entries")
-        .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
-        .collect(),
-      ctx.db
-        .query("geometries")
-        .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
-        .collect(),
-      ctx.db
-        .query("schemaCollections")
-        .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
-        .collect(),
-    ]);
+    // The retained original import file and the tile archive's blob go in
+    // this first transaction — nothing outside the schema doc references
+    // either (see setMapTileArchive / startImport), and the drain below never
+    // touches them.
+    if (existing.sourceFileStorageId !== undefined) {
+      await ctx.storage.delete(existing.sourceFileStorageId);
+    }
+    if (existing.mapTileArchiveStorageId !== undefined) {
+      await ctx.storage.delete(existing.mapTileArchiveStorageId);
+    }
 
-    await Promise.all([
-      ...entries.map(async (entry) => ctx.db.delete(entry._id)),
-      ...geometries.map(async (geometry) => {
-        await ctx.db.delete(geometry._id);
-        await deleteGeometryStorageIfAny(ctx, geometry);
-      }),
-      deleteReferencesForSchema(ctx, args.schemaId),
-      ...memberships.map(async (membership) => ctx.db.delete(membership._id)),
-      // Any map layer pointing at this dataset goes with it.
-      deleteMapLayersForTarget(ctx, args.schemaId),
-      // The retained original import file goes with the dataset — nothing
-      // else can reference a schema's own source-file blob.
-      existing.sourceFileStorageId !== undefined
-        ? ctx.storage.delete(existing.sourceFileStorageId)
-        : undefined,
-      // Same for the tile archive's blob (see setMapTileArchive) — the whole
-      // schema doc is going away, so the cache fields die with it.
-      existing.mapTileArchiveStorageId !== undefined
-        ? ctx.storage.delete(existing.mapTileArchiveStorageId)
-        : undefined,
-    ]);
-
-    await ctx.db.delete(args.schemaId);
+    const { complete, phase } = await runDeletePhases(
+      ctx,
+      args.schemaId,
+      "entries",
+      finishSchemaDelete,
+    );
+    if (!complete) {
+      // Big dataset: the drain continues across scheduled transactions and
+      // deletes the schema row last (see `deleteSchemaStep`).
+      await ctx.scheduler.runAfter(0, internal.lib.deleteSchemaStep, {
+        phase,
+        schemaId: args.schemaId,
+      });
+    }
   },
 });
 
@@ -935,19 +1213,20 @@ export const deleteCollection = mutation({
 
 /**
  * Lists groups — every group when `collectionId` is omitted (standalone
- * groups included), or just the groups nested in that collection.
+ * groups included), or just the groups nested in that collection. Required
+ * `limit` (issue #128) bounds both branches.
  */
 export const listGroups = query({
-  args: { collectionId: v.optional(v.id("collections")) },
+  args: { collectionId: v.optional(v.id("collections")), limit: v.number() },
   handler: async (ctx, args) => {
     const { collectionId } = args;
     if (collectionId === undefined) {
-      return ctx.db.query("groups").order("desc").collect();
+      return ctx.db.query("groups").order("desc").take(clampLimit(args.limit));
     }
     return ctx.db
       .query("groups")
       .withIndex("by_collection", (q) => q.eq("collectionId", collectionId))
-      .collect();
+      .take(clampLimit(args.limit));
   },
   returns: v.array(groupValidator),
 });
@@ -1080,10 +1359,11 @@ export const listSchemasByCollection = query({
   returns: v.array(publicSchemaViewValidator),
 });
 
-/** Every `{dataset, collection}` membership row — lets clients count/filter memberships without one query per collection. */
+/** Every `{dataset, collection}` membership row — lets clients count/filter memberships without one query per collection. Required `limit` (issue #128) bounds the scan. */
 export const listSchemaCollections = query({
-  args: {},
-  handler: async (ctx) => ctx.db.query("schemaCollections").collect(),
+  args: { limit: v.number() },
+  handler: async (ctx, args) =>
+    ctx.db.query("schemaCollections").order("desc").take(clampLimit(args.limit)),
   returns: v.array(schemaCollectionValidator),
 });
 
@@ -1223,8 +1503,10 @@ export const setGroupCollection = mutation({
 // Map queries
 
 export const listMaps = query({
-  args: {},
-  handler: async (ctx) => ctx.db.query("maps").order("desc").collect(),
+  // Required limit (issue #128) — saved maps are a small per-user table, but
+  // the read is bounded like every other enumeration.
+  args: { limit: v.number() },
+  handler: async (ctx, args) => ctx.db.query("maps").order("desc").take(clampLimit(args.limit)),
   returns: v.array(mapValidator),
 });
 
@@ -1301,20 +1583,21 @@ export const deleteMap = mutation({
  * Lists a map's layers in draw order (the `by_map` index covers
  * `[mapId, order]`, so an ascending index scan IS the draw order). With
  * `mapId` omitted, lists every layer across all maps — lets a client count
- * layers per map in one query instead of one query per map.
+ * layers per map in one query instead of one query per map. Required
+ * `limit` (issue #128) bounds both branches.
  */
 export const listMapLayers = query({
-  args: { mapId: v.optional(v.id("maps")) },
+  args: { limit: v.number(), mapId: v.optional(v.id("maps")) },
   handler: async (ctx, args) => {
     const { mapId } = args;
     if (mapId === undefined) {
-      return ctx.db.query("mapLayers").order("asc").collect();
+      return ctx.db.query("mapLayers").order("asc").take(clampLimit(args.limit));
     }
     return ctx.db
       .query("mapLayers")
       .withIndex("by_map", (q) => q.eq("mapId", mapId))
       .order("asc")
-      .collect();
+      .take(clampLimit(args.limit));
   },
   returns: v.array(mapLayerValidator),
 });
@@ -1638,7 +1921,11 @@ async function deleteMapLayersForCollectionTree(
 // Entry queries
 
 export const listEntries = query({
-  args: { schemaId: v.id("schemas") },
+  // Required limit (issue #128): the read is bounded to `limit` of the
+  // dataset's rows on the `by_schema` index (no filter after the take — the
+  // index IS the read bound). Anything rendered per page or read to the end
+  // belongs on the paginated `listEntriesPage`.
+  args: { limit: v.number(), schemaId: v.id("schemas") },
   handler: async (ctx, args) => {
     // Verify schema exists
     const schemaDoc = await ctx.db.get(args.schemaId);
@@ -1650,7 +1937,7 @@ export const listEntries = query({
       .query("entries")
       .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
       .order("desc")
-      .collect();
+      .take(clampLimit(args.limit));
   },
   returns: v.array(entryValidator),
 });
@@ -2028,15 +2315,16 @@ async function visibleSchemaIds(
  * Aggregated entry rows for every geospatial dataset in a collection — joined
  * client-side for feature-detail popups on the collection map view.
  *
- * `limit` optionally caps rows taken PER DATASET (issue #54): these per-dataset
- * collects are unbounded by nature (a collection spans several datasets), and
- * a dataset past Convex's ~16 MiB per-execution read budget would fail the
- * whole query. Pass a cap at call sites that don't need the full set; the
- * group-page export is the one caller that legitimately wants everything and
- * omits the cap.
+ * `limit` (REQUIRED since issue #128 — the old omitted cap read as
+ * MAX_SAFE_INTEGER, an unbounded read) caps rows taken PER DATASET (issue
+ * #54): a collection spans several datasets, and a dataset past Convex's
+ * ~16 MiB per-execution read budget would fail the whole query. Callers that
+ * legitimately want everything pass an explicit bound (the group export
+ * passes `LIST_LIMIT_MAX`-style caps per dataset or reads `listEntriesPage`
+ * to exhaustion instead).
  */
 export const listEntriesByCollection = query({
-  args: { collectionId: v.id("collections"), limit: v.optional(v.number()), viewerId: v.string() },
+  args: { collectionId: v.id("collections"), limit: v.number(), viewerId: v.string() },
   handler: async (ctx, args) => {
     // Viewer-scoped like its dataset-listing sibling `listSchemasByCollection`
     // (stage 8, #104): a creator may add their own draft or author-only row to
@@ -2049,9 +2337,7 @@ export const listEntriesByCollection = query({
           ctx.db
             .query("entries")
             .withIndex("by_schema", (q) => q.eq("schemaId", schemaId))
-            // An omitted cap reads as "no cap" — `take` with the max safe
-            // integer simply runs until the index range is exhausted.
-            .take(args.limit ?? Number.MAX_SAFE_INTEGER),
+            .take(clampLimit(args.limit)),
         ),
       );
     return rows.flat();
@@ -2070,13 +2356,15 @@ export const getEntry = query({
  * still carries its own `schemaId`). Powers building a reference field's
  * candidate picker without one round trip per referenced dataset.
  *
- * `limit` optionally caps rows taken PER DATASET (issue #54) — same rationale
- * as `listEntriesByCollection`. The map workspace's popup lookup passes a cap;
- * callers that genuinely need every row omit it.
+ * `limit` (REQUIRED since issue #128 — the old omitted cap read as
+ * MAX_SAFE_INTEGER, an unbounded read) caps rows taken PER DATASET (issue
+ * #54) — same rationale as `listEntriesByCollection`. The map workspace's
+ * popup lookup passes a cap; callers that genuinely need every row page
+ * `listEntriesPage` instead.
  */
 export const listEntriesForSchemas = query({
   args: {
-    limit: v.optional(v.number()),
+    limit: v.number(),
     schemaIds: v.array(v.id("schemas")),
     viewerId: v.string(),
   },
@@ -2090,7 +2378,7 @@ export const listEntriesForSchemas = query({
           ctx.db
             .query("entries")
             .withIndex("by_schema", (q) => q.eq("schemaId", schemaId))
-            .take(args.limit ?? Number.MAX_SAFE_INTEGER),
+            .take(clampLimit(args.limit)),
         ),
       );
     return rows.flat();
@@ -2439,39 +2727,15 @@ async function attachGeometry(
 }
 
 /**
- * Deletes every `references` row for `schemaId`, on either side of the
- * pointer: rows sourced from one of this schema's own entries (gone with
- * the schema), and rows targeting one of its entries from some other
+ * Deletes every `references` row naming one entry, on either side of the
+ * pointer: rows sourced from it, and rows targeting it from some other
  * dataset's entry (which would otherwise dangle, pointing at a deleted
- * entry). A row can appear in both queries for a schema that
- * self-references, hence the de-dupe.
+ * entry). A row can appear in both queries for a self-referencing entry,
+ * hence the de-dupe. Called per entry by the batched delete drain (issue
+ * #128) — every reference row naming a deleted schema names one of its
+ * entries, so per-entry cleanup covers both sides of the old schema-wide
+ * pass.
  */
-async function deleteReferencesForSchema(ctx: MutationCtx, schemaId: Id<"schemas">): Promise<void> {
-  const [asSource, asTarget] = await Promise.all([
-    ctx.db
-      .query("references")
-      .withIndex("by_source_schema", (q) => q.eq("sourceSchemaId", schemaId))
-      .collect(),
-    ctx.db
-      .query("references")
-      .withIndex("by_target_schema", (q) => q.eq("targetSchemaId", schemaId))
-      .collect(),
-  ]);
-  const seen = new Set<Id<"references">>();
-  await Promise.all(
-    [...asSource, ...asTarget]
-      .filter((row) => {
-        if (seen.has(row._id)) {
-          return false;
-        }
-        seen.add(row._id);
-        return true;
-      })
-      .map(async (row) => ctx.db.delete(row._id)),
-  );
-}
-
-/** Same as {@link deleteReferencesForSchema}, scoped to a single entry (both as source and as target). */
 async function deleteReferencesForEntry(ctx: MutationCtx, entryId: Id<"entries">): Promise<void> {
   const [asSource, asTarget] = await Promise.all([
     ctx.db
@@ -2838,48 +3102,24 @@ export const deleteEntriesBySchema = mutation({
     }
     assertDataWritable(schemaDoc, args.boundWrite);
 
-    const [entries, geometries] = await Promise.all([
-      ctx.db
-        .query("entries")
-        .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
-        .collect(),
-      ctx.db
-        .query("geometries")
-        .withIndex("by_schema", (q) => q.eq("schemaId", args.schemaId))
-        .collect(),
-    ]);
+    // The tile archive's blob goes with the data — like the source-file blob
+    // in `deleteSchema`, nothing outside the schema doc references it. The
+    // five cache FIELDS reset in the clear's finisher, so a fresh import
+    // starts from a clean version-0 slate.
+    if (schemaDoc.mapTileArchiveStorageId !== undefined) {
+      await ctx.storage.delete(schemaDoc.mapTileArchiveStorageId);
+    }
 
-    await Promise.all([
-      ...entries.map(async (entry) => ctx.db.delete(entry._id)),
-      ...geometries.map(async (geometry) => {
-        await ctx.db.delete(geometry._id);
-        await deleteGeometryStorageIfAny(ctx, geometry);
-      }),
-      deleteReferencesForSchema(ctx, args.schemaId),
-      // The tile archive's blob goes with the dataset too — like the
-      // source-file blob below, nothing outside the schema doc references it.
-      schemaDoc.mapTileArchiveStorageId !== undefined
-        ? ctx.storage.delete(schemaDoc.mapTileArchiveStorageId)
-        : undefined,
-    ]);
-
-    // The whole dataset's entries/geometries are gone, so — unlike a single
-    // entry delete — the exact reset (rather than only-grow) is safe here.
-    // The tile archive goes with the data: its blob is deleted (nothing else
-    // references a schema's own archive) and all five cache fields reset, so
-    // a fresh import starts from a clean version-0 slate.
-    await ctx.db.patch(args.schemaId, {
-      boundingBox: undefined,
-      entryCount: 0,
-      featureCount: schemaDoc.kind === "geospatial" ? 0 : undefined,
-      mapTileArchiveBuiltVersion: undefined,
-      mapTileArchiveBytes: undefined,
-      mapTileArchiveMaxZoom: undefined,
-      mapTileArchiveStorageId: undefined,
-      mapTileCacheVersion: undefined,
-    });
-
-    return entries.length;
+    const deleted = { entries: 0 },
+      { complete } = await runDeletePhases(ctx, args.schemaId, "entries", finishClear, deleted);
+    if (complete) {
+      return deleted.entries;
+    }
+    // The drain continues across scheduled transactions (`clearEntriesStep`);
+    // report the dataset's own pre-clear count — the total this call set out
+    // to delete (`entryCount` is kept exact by the entry mutations, so it is
+    // what the single-transaction clear would have returned).
+    return schemaDoc.entryCount ?? deleted.entries;
   },
   returns: v.number(),
 });
@@ -2934,28 +3174,90 @@ export const deleteEntryInternal = internalMutation({
   },
 });
 
-/**
- * One-off maintenance for the denormalized summaries (issue #54): stamps
- * `entryCount` onto every dataset and `kind` onto every collection-membership
- * row that predates the fields. Idempotent — counts are recomputed from the
- * entries themselves, so re-running also repairs any drift (the incremental
- * maintainers keep it exact; this is the bootstrap/repair path).
- *
- * Bounds: membership rows are a small table, and per-dataset counting
- * iterates that dataset's entries via async iteration (never `.collect()` of
- * everything at once — but the whole mutation still reads every entry doc
- * once, so a dataset beyond Convex's ~16 MiB per-execution read budget would
- * need a sliced variant rather than this one).
- *
- * Public (not internal) so a host app can wrap it — component internals are
- * only reachable inside the component. Hosts should put their own auth gate
- * in front, as `app/convex/schemas.ts` does.
- */
-export const backfillDatasetSummaries = mutation({
-  args: {},
-  handler: async (ctx) => {
-    const stats = { membershipsPatched: 0, schemasPatched: 0 };
+// One-off maintenance for the denormalized summaries (issue #54): stamps
+// `entryCount` onto every dataset and `kind` onto every collection-membership
+// row that predates the fields. Idempotent — counts are recomputed from the
+// entries themselves, so re-running also repairs any drift (the incremental
+// maintainers keep it exact; this is the bootstrap/repair path).
+//
+// Bounds (issue #128 — the old form read every entry of every schema in ONE
+// mutation, past the per-transaction read caps on any real catalog): the
+// membership stamping stays one bounded pass (thin rows, catalog-scale
+// table), and the entry counting walks schemas one at a time through the
+// `by_creation_time` system index, counting each dataset's entries in
+// paginated chunks and handing off to `backfillDatasetSummariesStep` — a
+// fresh transaction — whenever the read budget runs low. The public mutation
+// returns the stats for the work that completed synchronously (all of it for
+// a fixture-sized catalog); the scheduled hops land the rest, so the count
+// converges without anyone watching.
 
+/** Entry rows examined per pagination chunk while counting one schema. */
+const BACKFILL_CHUNK_ROWS = 500,
+  // Hand off to a scheduled continuation once the remaining read budget
+  // falls under this (the delete drain's reserve — same headroom logic).
+  BACKFILL_BYTE_RESERVE = DELETE_BYTE_RESERVE;
+
+/** The drain's resumable position: the schemas before `schemaCreationTime` are done, `schemaId`'s count reached `entryCursor` having seen `counted` rows. */
+interface BackfillState {
+  counted: number;
+  entryCursor: string | null;
+  membershipsPatched: number;
+  schemaCreationTime: number;
+  schemaId: Id<"schemas"> | null;
+  schemasPatched: number;
+}
+
+/**
+ * Counts one chunk of `schemaId`'s entries through the shared entries
+ * paginator (which reads full entry docs — the count's honest cost), up to
+ * the budget. Returns the advanced cursor state; `complete` when the
+ * schema's index is exhausted.
+ */
+async function countSchemaEntries(
+  ctx: MutationCtx,
+  schemaId: Id<"schemas">,
+  state: Pick<BackfillState, "counted" | "entryCursor">,
+): Promise<Pick<BackfillState, "counted" | "entryCursor"> & { complete: boolean }> {
+  let counted = state.counted,
+    cursor = state.entryCursor;
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- each chunk resumes from the previous chunk's budget; inherently sequential.
+    const remaining = await transactionReadRemaining(ctx);
+    if (remaining !== null && remaining < BACKFILL_BYTE_RESERVE) {
+      return { complete: false, counted, entryCursor: cursor };
+    }
+    // oxlint-disable-next-line no-await-in-loop -- each chunk resumes from the previous chunk's cursor; inherently sequential.
+    const { continueCursor, isDone, page } = await paginateEntriesBySchema(
+      ctx,
+      schemaId,
+      cursor,
+      Math.max(
+        1,
+        Math.min(
+          BACKFILL_CHUNK_ROWS,
+          remaining === null
+            ? BACKFILL_CHUNK_ROWS
+            : Math.floor((remaining - BACKFILL_BYTE_RESERVE) / DELETE_ROW_BYTE_ESTIMATE),
+        ),
+      ),
+      "asc",
+    );
+    counted += page.length;
+    cursor = continueCursor === "" ? null : continueCursor;
+    if (isDone) {
+      return { complete: true, counted, entryCursor: null };
+    }
+  }
+}
+
+/** The shared drain behind `backfillDatasetSummaries` and its scheduled continuation: stamps membership kinds (first hop only), then walks schemas in creation order, counting and patching each until done or out of budget. */
+async function runBackfillHops(
+  ctx: MutationCtx,
+  state: BackfillState,
+  stampMemberships: boolean,
+): Promise<BackfillState & { done: boolean }> {
+  const s: BackfillState = { ...state };
+  if (stampMemberships) {
     const memberships = await ctx.db.query("schemaCollections").collect();
     await Promise.all(
       memberships.map(async (row) => {
@@ -2967,24 +3269,116 @@ export const backfillDatasetSummaries = mutation({
           return;
         }
         await ctx.db.patch(row._id, { kind: schemaDoc.kind ?? "standard" });
-        stats.membershipsPatched += 1;
+        s.membershipsPatched += 1;
       }),
     );
-
-    for await (const schemaDoc of ctx.db.query("schemas")) {
-      let total = 0;
-      for await (const _entry of ctx.db
-        .query("entries")
-        .withIndex("by_schema", (q) => q.eq("schemaId", schemaDoc._id))) {
-        total += 1;
-      }
-      if (schemaDoc.entryCount !== total) {
-        await ctx.db.patch(schemaDoc._id, { entryCount: total });
-        stats.schemasPatched += 1;
-      }
+  }
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- each hop resumes from the previous hop's budget; inherently sequential.
+    const remaining = await transactionReadRemaining(ctx);
+    if (remaining !== null && remaining < BACKFILL_BYTE_RESERVE) {
+      return { ...s, done: false };
     }
+    if (s.schemaId === null) {
+      // oxlint-disable-next-line no-await-in-loop -- see above.
+      const [next] = await ctx.db
+        .query("schemas")
+        .withIndex("by_creation_time", (q) => q.gt("_creationTime", s.schemaCreationTime))
+        .take(1);
+      if (next === undefined) {
+        return { ...s, done: true };
+      }
+      s.schemaId = next._id;
+      s.schemaCreationTime = next._creationTime;
+      // Pre-read the stored count so the patch below only lands on drift.
+      s.counted = 0;
+      s.entryCursor = null;
+    }
+    // One doc read per schema visit; a resuming visit re-reads it the same way.
+    // oxlint-disable-next-line no-await-in-loop -- one schema per hop stretch; inherently sequential.
+    const schemaDoc = await ctx.db.get(s.schemaId);
+    if (schemaDoc === null) {
+      // Deleted mid-backfill — move on.
+      s.schemaId = null;
+      continue;
+    }
+    // oxlint-disable-next-line no-await-in-loop -- one schema per hop stretch; inherently sequential.
+    const count = await countSchemaEntries(ctx, s.schemaId, {
+      counted: s.counted,
+      entryCursor: s.entryCursor,
+    });
+    s.counted = count.counted;
+    s.entryCursor = count.entryCursor;
+    if (!count.complete) {
+      return { ...s, done: false };
+    }
+    if (schemaDoc.entryCount !== s.counted) {
+      // oxlint-disable-next-line no-await-in-loop -- see above.
+      await ctx.db.patch(s.schemaId, { entryCount: s.counted });
+      s.schemasPatched += 1;
+    }
+    s.schemaId = null;
+  }
+}
 
-    return stats;
+/** Continuation hop for `backfillDatasetSummaries` (issue #128): resumes the schema walk at the given state until done. */
+export const backfillDatasetSummariesStep = internalMutation({
+  args: {
+    counted: v.number(),
+    entryCursor: v.union(v.string(), v.null()),
+    membershipsPatched: v.number(),
+    schemaCreationTime: v.number(),
+    schemaId: v.union(v.id("schemas"), v.null()),
+    schemasPatched: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const { done, ...state } = await runBackfillHops(
+      ctx,
+      {
+        counted: args.counted,
+        entryCursor: args.entryCursor,
+        membershipsPatched: args.membershipsPatched,
+        schemaCreationTime: args.schemaCreationTime,
+        schemaId: args.schemaId,
+        schemasPatched: args.schemasPatched,
+      },
+      false,
+    );
+    if (!done) {
+      await ctx.scheduler.runAfter(0, internal.lib.backfillDatasetSummariesStep, state);
+    }
+  },
+  returns: v.null(),
+});
+
+/**
+ * Public (not internal) so a host app can wrap it — component internals are
+ * only reachable inside the component. Hosts should put their own auth gate
+ * in front, as `app/convex/schemas.ts` does.
+ */
+export const backfillDatasetSummaries = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const { done, membershipsPatched, schemasPatched, ...rest } = await runBackfillHops(
+      ctx,
+      {
+        counted: 0,
+        entryCursor: null,
+        membershipsPatched: 0,
+        schemaCreationTime: -1,
+        schemaId: null,
+        schemasPatched: 0,
+      },
+      true,
+    );
+    if (!done) {
+      await ctx.scheduler.runAfter(0, internal.lib.backfillDatasetSummariesStep, {
+        ...rest,
+        membershipsPatched,
+        schemasPatched,
+      });
+    }
+    return { membershipsPatched, schemasPatched };
   },
   returns: v.object({ membershipsPatched: v.number(), schemasPatched: v.number() }),
 });

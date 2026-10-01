@@ -47,7 +47,7 @@ describe("addDerivedLayer (roadmap 3a, #96)", () => {
       mapId = await t.mutation(api.maps.create, { name: "Corridors" }),
       layerId = await t.mutation(api.maps.addDerivedLayer, { mapId, targetId: derivedId });
     expect(layerId).not.toBeNull();
-    const layers = await t.query(api.maps.listLayers, { mapId });
+    const layers = await t.query(api.maps.listLayers, { limit: 500, mapId });
     expect(layers).toHaveLength(1);
     expect(layers[0].targetType).toBe("derived");
     expect(layers[0].targetId).toBe(derivedId);

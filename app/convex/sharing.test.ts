@@ -151,15 +151,17 @@ describe("isolation: user B never sees user A's drafts (stage 8 AC)", () => {
     const other = mine.withIdentity({ subject: "user-2" });
 
     // Enumeration paths (server-side filters, not UI hiding)…
-    expect((await other.query(api.schemas.list, {})).map((row) => row._id)).not.toContain(draftId);
-    expect((await other.query(api.schemas.listSummaries, {})).map((row) => row._id)).not.toContain(
-      draftId,
-    );
+    expect(
+      (await other.query(api.schemas.list, { limit: 1000 })).map((row) => row._id),
+    ).not.toContain(draftId);
+    expect(
+      (await other.query(api.schemas.listSummaries, { limit: 1000 })).map((row) => row._id),
+    ).not.toContain(draftId);
     // …the 5a drafts toggle: creator-scoped since stage 8 (was the widest leak).
-    expect(await other.query(api.schemas.listDraftSummaries, {})).toHaveLength(0);
-    expect((await mine.query(api.schemas.listDraftSummaries, {})).map((row) => row._id)).toContain(
-      draftId,
-    );
+    expect(await other.query(api.schemas.listDraftSummaries, { limit: 1000 })).toHaveLength(0);
+    expect(
+      (await mine.query(api.schemas.listDraftSummaries, { limit: 1000 })).map((row) => row._id),
+    ).toContain(draftId);
 
     // …and the by-id surfaces (the pre-stage-8 leak): every one answers the
     // same indistinguishable denial, so an id's existence never leaks.
@@ -170,7 +172,9 @@ describe("isolation: user B never sees user A's drafts (stage 8 AC)", () => {
         schemaId: draftId,
       }),
     ).rejects.toThrow(NO_ACCESS);
-    await expect(other.query(api.entries.list, { schemaId: draftId })).rejects.toThrow(NO_ACCESS);
+    await expect(other.query(api.entries.list, { limit: 500, schemaId: draftId })).rejects.toThrow(
+      NO_ACCESS,
+    );
     await expect(
       other.query(api.geometries.list, {
         paginationOpts: { cursor: null, numItems: 10 },
@@ -236,9 +240,9 @@ describe("published-visibility control (stage 8 AC, decision D2)", () => {
     const other = mine.withIdentity({ subject: "user-2" });
 
     // Positive sharing case: another signed-in user reads the published row…
-    expect((await other.query(api.schemas.listSummaries, {})).map((row) => row._id)).toContain(
-      publishedId,
-    );
+    expect(
+      (await other.query(api.schemas.listSummaries, { limit: 1000 })).map((row) => row._id),
+    ).toContain(publishedId);
     await other.query(api.schemas.get, { schemaId: publishedId });
 
     // …but only its CREATOR may narrow it (the control is creator-only, and
@@ -253,12 +257,12 @@ describe("published-visibility control (stage 8 AC, decision D2)", () => {
     });
 
     // Enforced server-side on EVERY catalog path — enumeration and by-id.
-    expect((await other.query(api.schemas.listSummaries, {})).map((row) => row._id)).not.toContain(
-      publishedId,
-    );
-    expect((await other.query(api.schemas.list, {})).map((row) => row._id)).not.toContain(
-      publishedId,
-    );
+    expect(
+      (await other.query(api.schemas.listSummaries, { limit: 1000 })).map((row) => row._id),
+    ).not.toContain(publishedId);
+    expect(
+      (await other.query(api.schemas.list, { limit: 1000 })).map((row) => row._id),
+    ).not.toContain(publishedId);
     await expect(other.query(api.schemas.get, { schemaId: publishedId })).rejects.toThrow(
       NO_ACCESS,
     );
@@ -267,9 +271,9 @@ describe("published-visibility control (stage 8 AC, decision D2)", () => {
       other.mutation(api.entries.create, { data: { label: "x" }, schemaId: publishedId }),
     ).rejects.toThrow(NO_ACCESS);
     // …while the author keeps full access.
-    expect((await mine.query(api.schemas.listSummaries, {})).map((row) => row._id)).toContain(
-      publishedId,
-    );
+    expect(
+      (await mine.query(api.schemas.listSummaries, { limit: 1000 })).map((row) => row._id),
+    ).toContain(publishedId);
     await mine.query(api.schemas.get, { schemaId: publishedId });
 
     // Flipping back restores the shared default for everyone.
@@ -277,9 +281,9 @@ describe("published-visibility control (stage 8 AC, decision D2)", () => {
       schemaId: publishedId,
       visibility: "everyone",
     });
-    expect((await other.query(api.schemas.listSummaries, {})).map((row) => row._id)).toContain(
-      publishedId,
-    );
+    expect(
+      (await other.query(api.schemas.listSummaries, { limit: 1000 })).map((row) => row._id),
+    ).toContain(publishedId);
   });
 
   it("the author's visibility choice inherits onto the frozen row at publish", async () => {
@@ -325,15 +329,15 @@ describe("published-visibility control (stage 8 AC, decision D2)", () => {
     // …so user B can neither enumerate nor open the published version, while
     // the author (and only the author) can.
     const other = mine.withIdentity({ subject: "user-2" });
-    expect((await other.query(api.schemas.listSummaries, {})).map((row) => row._id)).not.toContain(
-      frozen.schemaId,
-    );
+    expect(
+      (await other.query(api.schemas.listSummaries, { limit: 1000 })).map((row) => row._id),
+    ).not.toContain(frozen.schemaId);
     await expect(other.query(api.schemas.get, { schemaId: frozen.schemaId })).rejects.toThrow(
       NO_ACCESS,
     );
-    expect((await mine.query(api.schemas.listSummaries, {})).map((row) => row._id)).toContain(
-      frozen.schemaId,
-    );
+    expect(
+      (await mine.query(api.schemas.listSummaries, { limit: 1000 })).map((row) => row._id),
+    ).toContain(frozen.schemaId);
   });
 
   it("an author-narrowed dataset's chain and consumer reads answer empty to others, real to the author", async () => {
@@ -685,6 +689,7 @@ describe("stage-8 batch and cross-dataset reads (review round 2)", () => {
     // answers the VISIBLE subset — no denial, no leak: the reference picker
     // shows fewer candidates instead of the form crashing.
     const batch = await other.query(api.entries.listEntriesForSchemas, {
+      limit: 500,
       schemaIds: [publishedId, draftId],
     });
     expect(batch).toHaveLength(1);
@@ -939,9 +944,11 @@ describe("anonymous denial (stage 8 AC: the 0.1 gate holds)", () => {
       GATE_MESSAGE,
     );
     // Catalog + drafts toggle
-    await expect(t.query(api.schemas.list, {})).rejects.toThrow(GATE_MESSAGE);
-    await expect(t.query(api.schemas.listSummaries, {})).rejects.toThrow(GATE_MESSAGE);
-    await expect(t.query(api.schemas.listDraftSummaries, {})).rejects.toThrow(GATE_MESSAGE);
+    await expect(t.query(api.schemas.list, { limit: 1000 })).rejects.toThrow(GATE_MESSAGE);
+    await expect(t.query(api.schemas.listSummaries, { limit: 1000 })).rejects.toThrow(GATE_MESSAGE);
+    await expect(t.query(api.schemas.listDraftSummaries, { limit: 1000 })).rejects.toThrow(
+      GATE_MESSAGE,
+    );
     await expect(t.query(api.schemas.get, { schemaId: "whatever" })).rejects.toThrow(GATE_MESSAGE);
     await expect(t.query(api.schemas.maxTileCacheVersion, {})).rejects.toThrow(GATE_MESSAGE);
     // Publish + press + consumption + registry + maps

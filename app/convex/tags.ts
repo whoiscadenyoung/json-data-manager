@@ -10,6 +10,7 @@ import {
   pinRefIntoPolicyStore,
   sourceVisibleToViewer,
 } from "./consumption";
+import { deleteDatasetCascading } from "./schemas";
 import { chunkByJsonBytes, getSource, SOURCE_KEY } from "./sources";
 import {
   DEFAULT_KEEP_VERSIONS,
@@ -288,11 +289,15 @@ export const retireVersion = mutation({
         "This version is pinned by a consumer — float or unpin that reference before retiring it.",
       );
     }
-    await ctx.runMutation(components.jsonCms.lib.deleteSchema, {
+    // Through the host cascade (issue #128): the version's own host rows —
+    // fork edges, project memberships, spec dependency edges — go with it;
+    // the chain's anchor-keyed stores are deliberately untouched.
+    await deleteDatasetCascading(ctx, {
       boundWrite: "retire",
       schemaId: args.schemaId,
     });
   },
+  returns: v.null(),
 });
 
 const versionValidator = v.object({

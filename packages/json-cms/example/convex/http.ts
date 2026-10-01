@@ -11,6 +11,7 @@ const http = httpRouter();
 http.route({
   handler: httpActionGeneric(async (ctx, _request) => {
     const schemas = await ctx.runQuery(components.jsonCms.lib.listSchemas, {
+      limit: 500,
       viewerId: "example-http-viewer",
     });
     return new Response(JSON.stringify(schemas), {
@@ -28,7 +29,7 @@ http.route({
   handler: httpActionGeneric(async (ctx, request) => {
     const segments = new URL(request.url).pathname.split("/"),
       schemaId = segments[2] ?? "",
-      entries = await ctx.runQuery(components.jsonCms.lib.listEntries, { schemaId });
+      entries = await ctx.runQuery(components.jsonCms.lib.listEntries, { limit: 500, schemaId });
     return new Response(JSON.stringify(entries), {
       headers: { "Content-Type": "application/json" },
       status: 200,

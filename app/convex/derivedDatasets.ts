@@ -14,6 +14,7 @@ import {
   validateSpecShape,
   type DerivedHealth,
   type DatasetResolver,
+  type ReferencedDataset,
   type RegistryRowLike,
 } from "./derivedSpec";
 import schema from "./schema";
@@ -79,39 +80,61 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * every dependency walk stays uniform over strings and asks each table in
  * turn). Exported for the publish flow's freeze-time health gate (roadmap
  * 5b), which runs the same `specStatus` walk over the same resolver.
+ *
+ * The optional `cache` is the per-call memo (issue #128): a list computing
+ * health for N rows resolves the same source ids repeatedly, and every miss
+ * is a component round trip — one shared cache makes the reads proportional
+ * to DISTINCT ids, not rows. Fresh per query execution, so reads stay
+ * transaction-fresh.
  */
-export function resolveDataset(ctx: QueryCtx): DatasetResolver {
+export function resolveDataset(
+  ctx: QueryCtx,
+  cache?: Map<string, ReferencedDataset>,
+): DatasetResolver {
   return async (id) => {
-    const registryId = ctx.db.normalizeId("derivedDatasets", id);
-    if (registryId !== null) {
-      const row = await ctx.db.get(registryId);
-      if (row !== null) {
-        return { kind: "registry", spec: row.spec, title: row.title };
-      }
+    const hit = cache === undefined ? undefined : cache.get(id);
+    if (hit !== undefined) {
+      return hit;
     }
-    try {
-      const dataset = await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: id });
-      if (dataset !== null) {
-        return {
-          kind: "component",
-          properties: schemaProperties(dataset.schema),
-          title: dataset.title,
-        };
-      }
-    } catch {
-      // A stored id that isn't a well-formed component id fails to decode —
-      // the same "not a dataset" as a null read. Health computation must
-      // never be the thing that crashes a list.
+    const resolved = await resolveDatasetUncached(ctx, id);
+    if (cache !== undefined) {
+      cache.set(id, resolved);
     }
-    return { kind: "missing" };
+    return resolved;
   };
+}
+
+async function resolveDatasetUncached(ctx: QueryCtx, id: string): Promise<ReferencedDataset> {
+  const registryId = ctx.db.normalizeId("derivedDatasets", id);
+  if (registryId !== null) {
+    const row = await ctx.db.get(registryId);
+    if (row !== null) {
+      return { kind: "registry", spec: row.spec, title: row.title };
+    }
+  }
+  try {
+    const dataset = await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: id });
+    if (dataset !== null) {
+      return {
+        kind: "component",
+        properties: schemaProperties(dataset.schema),
+        title: dataset.title,
+      };
+    }
+  } catch {
+    // A stored id that isn't a well-formed component id fails to decode —
+    // the same "not a dataset" as a null read. Health computation must
+    // never be the thing that crashes a list.
+  }
+  return { kind: "missing" };
 }
 
 async function healthOf(
   ctx: QueryCtx,
   spec: unknown,
+  cache?: Map<string, ReferencedDataset>,
 ): Promise<{ health: DerivedHealth; reason?: string }> {
-  return specStatus(isRecord(spec) ? spec : {}, resolveDataset(ctx));
+  return specStatus(isRecord(spec) ? spec : {}, resolveDataset(ctx, cache));
 }
 
 /** Structural read: does the stored spec carry a sql operation? (The summary projection's one spec peek — the derivedSpec tolerance rule, kept local and narrow.) */
@@ -315,27 +338,60 @@ async function syncConsumerReferences(
   await syncRegistryReferenceEdges(ctx, { registryId, spec });
 }
 
+/** Upper bound per read of `listBySource` — the same documented bound the read always had, now served per index leg. */
+const LIST_BY_SOURCE_MAX = 200;
+
 /**
  * Every registry row targeting one source dataset, newest first — the
  * Transform tab's list (specs authored over THIS dataset). Bounded; health
- * is computed per row at read time. Draft rows are the caller's own since
- * stage 8 (#104) — another user's autosaves are invisible; SAVED rows stay
- * catalog-visible for every signed-in viewer (they are this registry's
- * published side).
+ * is computed per row at read time over one shared resolution memo (issue
+ * #128). Draft rows are the caller's own since stage 8 (#104) — another
+ * user's autosaves are invisible; SAVED rows stay catalog-visible for every
+ * signed-in viewer (they are this registry's published side).
+ *
+ * Since issue #128 the two visibility legs are served by INDEXES (no filter
+ * after the take): saved rows read `by_status_and_source` (status leads),
+ * the caller's own rows read `by_source_and_creator` — another user's
+ * drafts can no longer push visible rows out of the take window (the old
+ * read filtered `by_source` after take(200)).
  */
 export const listBySource = query({
   args: { sourceDatasetId: v.string() },
   handler: async (ctx, args) => {
-    const viewer = await auth(ctx);
-    const rows = await ctx.db
-      .query("derivedDatasets")
-      .withIndex("by_source", (q) => q.eq("sourceDatasetId", args.sourceDatasetId))
-      .order("desc")
-      .take(200);
+    const viewer = await auth(ctx),
+      cache = new Map<string, ReferencedDataset>(),
+      [saved, own] = await Promise.all([
+        ctx.db
+          .query("derivedDatasets")
+          .withIndex("by_status_and_source", (q) =>
+            q.eq("status", "saved").eq("sourceDatasetId", args.sourceDatasetId),
+          )
+          .order("desc")
+          .take(LIST_BY_SOURCE_MAX),
+        ctx.db
+          .query("derivedDatasets")
+          .withIndex("by_source_and_creator", (q) =>
+            q.eq("sourceDatasetId", args.sourceDatasetId).eq("createdBy", viewer),
+          )
+          .order("desc")
+          .take(LIST_BY_SOURCE_MAX),
+      ]);
+    // Merge the legs, dedupe (the caller's own saved rows appear in both),
+    // newest first, and bound the union to the same documented cap.
+    const seen = new Set<string>(),
+      rows = [...saved, ...own]
+        .filter((row) => {
+          if (seen.has(row._id)) {
+            return false;
+          }
+          seen.add(row._id);
+          return true;
+        })
+        // oxlint-disable-next-line unicorn/no-array-sort -- `.toSorted()` isn't in the lib app/convex typechecks against (the consumption.ts newestFirst precedent); this is a fresh throwaway copy.
+        .sort((a, b) => b._creationTime - a._creationTime)
+        .slice(0, LIST_BY_SOURCE_MAX);
     return Promise.all(
-      rows
-        .filter((row) => row.status === "saved" || row.createdBy === viewer)
-        .map(async (row) => toSummary(row, await healthOf(ctx, row.spec))),
+      rows.map(async (row) => toSummary(row, await healthOf(ctx, row.spec, cache))),
     );
   },
   returns: v.array(summaryValidator),
@@ -348,17 +404,31 @@ export const listBySource = query({
  * lifecycle doc §3; the Transform tab reads drafts via listBySource).
  * Bounded well below catalog scale; stage 3's consumers (map layers,
  * exports) read the same projection so the derived-badge merge point stays
- * single.
+ * single. Health runs over one shared per-call memo (issue #128), so N rows
+ * over the same sources resolve each source once.
+ *
+ * Measured read ceiling (issue #128 AC 3): with 500 saved rows the read is
+ * bounded by the take(500) — its per-row cost is one thin registry doc plus
+ * the resolver's component reads, MEMOIZED per distinct id. 500 rows over
+ * 500 DISTINCT sources would still make 500 component `getSchema` reads
+ * (full schema payloads — up to ~200 KB each), which is why the fixture in
+ * derivedDatasets.test.ts shares sources: the common catalog (many specs
+ * over few sources) collapses to a handful of component reads. A catalog
+ * of 500 specs over 500 distinct fat schemas is the documented ceiling —
+ * past it, `summaries` must gain pagination (the take is the bound today).
  */
 export const summaries = query({
   args: {},
   handler: async (ctx) => {
     await auth(ctx);
-    const rows = await ctx.db
-      .query("derivedDatasets")
-      .withIndex("by_status_and_source", (q) => q.eq("status", "saved"))
-      .take(500);
-    return Promise.all(rows.map(async (row) => toSummary(row, await healthOf(ctx, row.spec))));
+    const cache = new Map<string, ReferencedDataset>(),
+      rows = await ctx.db
+        .query("derivedDatasets")
+        .withIndex("by_status_and_source", (q) => q.eq("status", "saved"))
+        .take(500);
+    return Promise.all(
+      rows.map(async (row) => toSummary(row, await healthOf(ctx, row.spec, cache))),
+    );
   },
   returns: v.array(summaryValidator),
 });

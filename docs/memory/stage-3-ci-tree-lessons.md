@@ -31,5 +31,10 @@ merged 2026-09-28):
 
 Also: a stale `packages/json-cms/dist` produces phantom type errors in
 oxlint's type-aware pass (app reads component types from dist) — rebuild
-from the branch before trusting lint diagnostics. Related:
-[[roadmap-kickoff-run]], [[local-dev-verification]].
+from the branch before trusting lint diagnostics. And changing any
+component function's args/returns needs
+`bunx convex codegen --component-dir ./src/component` (from
+packages/json-cms) BEFORE `bun run build` — the client wrappers type
+against `_generated/component.ts`, which only codegen regenerates; a plain
+tsc build fails with "Property X does not exist" against every host call
+site. Related: [[roadmap-kickoff-run]], [[local-dev-verification]].

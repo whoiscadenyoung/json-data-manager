@@ -12,6 +12,7 @@ import {
   query,
 } from "./_generated/server";
 import { auth } from "./auth";
+import { deleteDatasetCascading } from "./schemas";
 import {
   chunkByJsonBytes,
   type CommitFeedEntry,
@@ -206,8 +207,12 @@ async function ensureBoundDataset(
   const existing = await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId });
   if (existing === null || existing.source === undefined) {
     if (existing !== null) {
-      // The legacy copy is unmarked, so the gate allows this delete.
-      await ctx.runMutation(components.jsonCms.lib.deleteSchema, { schemaId });
+      // The legacy copy is unmarked, so the gate allows this delete. The
+      // host cascade (issue #128) cleans the host rows keyed by the old id;
+      // the binding is re-pointed to the new id right below, so its activity
+      // rows keyed by the binding survive by design (they read as inert
+      // history under the re-pointed binding).
+      await deleteDatasetCascading(ctx, { schemaId });
     }
     schemaId = await ctx.runMutation(components.jsonCms.lib.createSchema, {
       geometryType: source.dataset.geometryType,

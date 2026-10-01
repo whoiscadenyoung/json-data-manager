@@ -6,8 +6,9 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { auth } from "./auth";
-import { resolveSourceHead } from "./consumption";
+import { createChainMemo, resolveSourceHead } from "./consumption";
 import { projectForWrite } from "./projects";
+import { CATALOG_READ_LIMIT } from "./schemas";
 
 /**
  * Bundle publish and fork (roadmap 7b, #103; lifecycle doc §2/§5-§6, ADR
@@ -430,6 +431,7 @@ async function collectLayersByMap(
     }
     // oxlint-disable-next-line no-await-in-loop -- see above.
     const layers = await ctx.runQuery(components.jsonCms.lib.listMapLayers, {
+      limit: CATALOG_READ_LIMIT,
       mapId: membership.artifactId,
     });
     for (const layer of layers) {
@@ -469,10 +471,16 @@ async function collectClosureInput(
     .withIndex("by_project", (q) => q.eq("projectId", projectId))
     .take(MAX_MAPS * 5);
   const [summaries, drafts, membershipsRows, groups] = await Promise.all([
-    ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, { viewerId }),
-    ctx.runQuery(components.jsonCms.lib.listDraftSchemaSummaries, { viewerId }),
-    ctx.runQuery(components.jsonCms.lib.listSchemaCollections, {}),
-    ctx.runQuery(components.jsonCms.lib.listGroups, {}),
+    ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, {
+      limit: CATALOG_READ_LIMIT,
+      viewerId,
+    }),
+    ctx.runQuery(components.jsonCms.lib.listDraftSchemaSummaries, {
+      limit: CATALOG_READ_LIMIT,
+      viewerId,
+    }),
+    ctx.runQuery(components.jsonCms.lib.listSchemaCollections, { limit: CATALOG_READ_LIMIT }),
+    ctx.runQuery(components.jsonCms.lib.listGroups, { limit: CATALOG_READ_LIMIT }),
   ]);
 
   const lifecycleByDataset = new Map<string, "draft" | "published">(),
@@ -747,6 +755,9 @@ export const layerResolutions = query({
       .query("consumerReferences")
       .withIndex("by_consumer", (q) => q.eq("consumerId", args.mapId))
       .collect();
+    // One memo per execution (issue #128): repeated layer targets resolve
+    // their chain heads once.
+    const memo = createChainMemo();
     const resolutions: Array<{
       anchorId: string;
       mode: "float" | "pin";
@@ -769,7 +780,7 @@ export const layerResolutions = query({
           edge.pinnedSchemaId !== undefined && pinnedRow !== null ? edge.pinnedSchemaId : undefined;
       } else {
         // oxlint-disable-next-line no-await-in-loop -- see above.
-        const head = await resolveSourceHead(ctx, edge.sourceDatasetId);
+        const head = await resolveSourceHead(ctx, edge.sourceDatasetId, memo);
         resolvedSchemaId = head === undefined ? undefined : head.schemaId;
       }
       resolutions.push({ anchorId: edge.sourceDatasetId, mode: edge.mode, resolvedSchemaId });
@@ -1050,7 +1061,10 @@ export const linkMapLayers = mutation({
       // layer is gone must not survive the leg.
       // oxlint-disable-next-line no-await-in-loop -- one layers read + one edge scan per map member, bounded by the run's member count.
       const [layers, existing] = await Promise.all([
-        ctx.runQuery(components.jsonCms.lib.listMapLayers, { mapId: member.datasetKey }),
+        ctx.runQuery(components.jsonCms.lib.listMapLayers, {
+          limit: CATALOG_READ_LIMIT,
+          mapId: member.datasetKey,
+        }),
         ctx.db
           .query("consumerReferences")
           .withIndex("by_consumer", (q) => q.eq("consumerId", member.datasetKey))

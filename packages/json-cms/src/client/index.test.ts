@@ -48,7 +48,7 @@ describe("client tests", () => {
       })) as SchemaId;
     expect(schemaId).toBeDefined();
 
-    const schemas = await t.query(testApi.listSchemas, {});
+    const schemas = await t.query(testApi.listSchemas, { limit: 500 });
     expect(schemas).toHaveLength(1);
     expect(schemas[0].title).toBe("Test Schema");
 
@@ -58,7 +58,7 @@ describe("client tests", () => {
     });
     expect(entryId).toBeDefined();
 
-    const entries = await t.query(testApi.listEntries, { schemaId });
+    const entries = await t.query(testApi.listEntries, { limit: 500, schemaId });
     expect(entries).toHaveLength(1);
     expect(entries[0].data).toStrictEqual({ name: "John" });
   });
