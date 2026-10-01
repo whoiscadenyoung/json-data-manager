@@ -236,6 +236,13 @@ export default defineSchema({
     // set atomically by `setMapTileArchive` only when its `expectedVersion`
     // still matches. All five are absent on datasets that never had an
     // archive; an absent version reads as 0.
+    //
+    // The version is MONOTONIC for the dataset's lifetime (issue #129,
+    // revising the recorded exact-reset decision): clearing the data bumps
+    // it like any other geometry-affecting write instead of resetting it to
+    // 0. A rebuild snapshotted at the pre-clear version N — or an OPFS pin
+    // keyed (schemaId, N) — can therefore never be satisfied by post-clear
+    // data re-climbing to N, because the counter never returns to N.
     mapTileCacheVersion: v.optional(v.number()),
     mapTileArchiveStorageId: v.optional(v.id("_storage")),
     mapTileArchiveBytes: v.optional(v.number()),
@@ -376,9 +383,21 @@ export default defineSchema({
   // the Node runtime at all, so no server-side step can safely hold a whole
   // multi-tens-of-MB upload at once) and uploads each to its own storage blob.
   imports: defineTable({
+    // Per-chunk completion journal (issue #129): one entry per chunk whose
+    // rows are durably inserted — written in the SAME transaction as the
+    // inserts (`insertEntriesChunkInternal`), so a workflow step that
+    // crashed after committing but before returning replays as a no-op
+    // (it returns the recorded row count instead of inserting twice).
+    // `rows` is what the replay reports, keeping `processed` exact.
+    completedChunks: v.optional(v.array(v.object({ index: v.number(), rows: v.number() }))),
     error: v.optional(v.string()),
     processed: v.number(),
     schemaId: v.id("schemas"),
+    // Rows the run deliberately did NOT process, surfaced rather than
+    // silently dropped (issue #129): the simplify workflow counts malformed
+    // payloads and rows another write touched mid-run (the compare-and-swap
+    // skip). Absent for runs that never skip (imports, conversion).
+    skipped: v.optional(v.number()),
     status: v.union(
       v.literal("pending"),
       v.literal("processing"),

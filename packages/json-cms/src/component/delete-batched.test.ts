@@ -122,6 +122,13 @@ describe("batched deletes (issue #128)", () => {
       const t = initConvexTest(),
         schemaId = await seedBigDataset(t, ENTRY_COUNT);
 
+      // The version the clear must RETIRE (issue #129 — monotonic, never reset).
+      const before = await t.run(async (ctx) => ctx.db.get(schemaId));
+      if (before === null || before.mapTileCacheVersion === undefined) {
+        throw new Error("seed did not bump mapTileCacheVersion");
+      }
+      const versionBeforeClear = before.mapTileCacheVersion;
+
       const cleared = await t.mutation(api.lib.deleteEntriesBySchema, { schemaId });
       await drainScheduled(t);
 
@@ -140,7 +147,10 @@ describe("batched deletes (issue #128)", () => {
             .take(1),
         ).toStrictEqual([]);
         // The dataset itself SURVIVES a clear, with its counters reset and
-        // the summary fields back to a clean slate.
+        // the four archive fields cleared — but the tile-cache version is
+        // BUMPED monotonically (issue #129, revising the recorded exact
+        // reset): version N's pre-clear rebuilds and OPFS pins can never be
+        // satisfied by post-clear data re-climbing to N.
         const doc = await ctx.db.get(schemaId);
         if (doc === null) {
           throw new Error("clear deleted the schema row — it must survive");
@@ -148,7 +158,9 @@ describe("batched deletes (issue #128)", () => {
         expect(doc.entryCount).toBe(0);
         expect(doc.featureCount).toBe(0);
         expect(doc.boundingBox).toBeUndefined();
-        expect(doc.mapTileCacheVersion).toBeUndefined();
+        expect(doc.mapTileArchiveStorageId).toBeUndefined();
+        expect(doc.mapTileArchiveBuiltVersion).toBeUndefined();
+        expect(doc.mapTileCacheVersion).toBe(versionBeforeClear + 1);
       });
     },
   );

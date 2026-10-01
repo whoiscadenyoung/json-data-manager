@@ -22,7 +22,13 @@ export type { ReferenceCandidate } from "./reference-widget.js";
 
 // New batteries-included components
 export { DatasetImporter } from "./dataset-importer.js";
-export type { DatasetImporterProps, DatasetImportProgress } from "./dataset-importer.js";
+export type {
+  DatasetImporterProps,
+  DatasetImportProgress,
+  DatasetImportOptions,
+  DatasetImportRow,
+  ImportRecoveryActions,
+} from "./dataset-importer.js";
 export { EntryForm } from "./entry-form.js";
 export type { EntryFormProps } from "./entry-form.js";
 export { SchemaList } from "./schema-list.js";

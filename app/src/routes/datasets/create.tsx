@@ -1,5 +1,6 @@
 import type { GeometryType } from "@caden/json-cms/react";
 import { chunkRowsForImport } from "@caden/json-cms/react";
+import type { DatasetImportOptions, DatasetImportRow } from "@caden/json-cms/react/ui";
 import { DatasetImporter, SchemaEditor } from "@caden/json-cms/react/ui";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
@@ -247,18 +248,129 @@ function SchemaFirst({ projectId }: { projectId?: string }) {
   );
 }
 
+/** The `{storageId, uploadId}` pair one uploaded blob is tracked by until `startImport` claims it. */
+interface UploadedBlob {
+  storageId: string;
+  uploadId: string;
+}
+
+/** Narrows the upload endpoint's JSON response to its storage id. */
+function storageIdFromUploadResponse(body: unknown, failure: string): string {
+  if (
+    typeof body !== "object" ||
+    body === null ||
+    !("storageId" in body) ||
+    typeof body.storageId !== "string"
+  ) {
+    throw new Error(failure);
+  }
+  return body.storageId;
+}
+
+/** POSTs one serialized row chunk to its upload URL and returns the blob's id. */
+async function uploadChunkBlob(storageUrl: string, chunk: DatasetImportRow[]): Promise<string> {
+  const res = await fetch(storageUrl, {
+    body: JSON.stringify(chunk),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  if (!res.ok) {
+    throw new Error("Failed to upload import data.");
+  }
+  return storageIdFromUploadResponse(await res.json(), "Import upload did not return a storageId.");
+}
+
+/** POSTs the retained original file to its upload URL and returns the blob's id. */
+async function uploadSourceFileBlob(storageUrl: string, file: File): Promise<string> {
+  const res = await fetch(storageUrl, {
+    body: file,
+    headers: {
+      "Content-Type": file.type || "application/octet-stream",
+    },
+    method: "POST",
+  });
+  if (!res.ok) {
+    throw new Error("Failed to upload the original file.");
+  }
+  return storageIdFromUploadResponse(
+    await res.json(),
+    "Original-file upload did not return a storageId.",
+  );
+}
+
 function ImportFirst({ projectId }: { projectId?: string }) {
   const navigate = useNavigate(),
-    createSchema = useMutation(api.schemas.create),
+    // The dataset an import fills is created as a lifecycle DRAFT and flips
+    // to published only when the import completes (issue #129) — a failed
+    // import leaves an invisible draft for Retry/Discard instead of an
+    // empty, published dataset in the catalog.
+    createDraftForImport = useMutation(api.schemas.createDraftForImport),
     createDraft = useMutation(api.projects.createDraftDataset),
     generateUploadUrl = useMutation(api.imports.generateUploadUrl),
     startImport = useMutation(api.imports.startImport),
+    clearRows = useMutation(api.entries.clearDatasetRows),
+    removeDataset = useMutation(api.schemas.remove),
+    markComplete = useMutation(api.schemas.markImportComplete),
     [importId, setImportId] = useState<string | undefined>(),
     [schemaId, setSchemaId] = useState<string | undefined>(),
     status = useQuery({
       ...convexQuery(api.imports.getImportStatus, importId ? { importId } : "skip"),
     }).data,
     importStatus = status ? status.status : undefined;
+
+  // Uploads the row chunks (and the retained original file) for an already
+  // created dataset and starts the import workflow. Shared by the first
+  // import and a failed-import Retry — same flow, same target dataset
+  // (issue #129).
+  async function runRowImport(
+    targetSchemaId: string,
+    rows: DatasetImportRow[],
+    options: DatasetImportOptions,
+  ) {
+    // Split client-side (we already have every row parsed here) and
+    // upload each chunk to its own blob — never one giant upload. See
+    // `chunkRowsForImport`'s doc comment for why: Convex components
+    // can't use the Node runtime, so no server-side step could safely
+    // parse one large upload in a single pass. Each upload rides the
+    // token its URL was issued under (`uploadId`) — `startImport`
+    // rejects any blob without one, issued for THIS dataset (issue
+    // #131).
+    const chunks = chunkRowsForImport(rows),
+      uploaded: UploadedBlob[] = [];
+    for (const chunk of chunks) {
+      // oxlint-disable-next-line no-await-in-loop
+      const { storageUrl, uploadId } = await generateUploadUrl({ scope: targetSchemaId });
+      // oxlint-disable-next-line no-await-in-loop -- chunks upload sequentially so a failed upload aborts before later chunks are sent.
+      const storageId = await uploadChunkBlob(storageUrl, chunk);
+      uploaded.push({ storageId, uploadId });
+    }
+
+    // Retain the original file as its own blob so it stays
+    // re-downloadable from the dataset page — deliberately NOT in
+    // `uploaded` (the import workflow deletes chunk blobs as it
+    // consumes them; this one must survive). A Retry re-attaches it too;
+    // `startImport` deletes the superseded blob on the swap.
+    let sourceFile: { name: string; size: number; storageId: string; uploadId: string } | undefined;
+    if (options.sourceFile) {
+      const { storageUrl, uploadId } = await generateUploadUrl({ scope: targetSchemaId }),
+        storageId = await uploadSourceFileBlob(storageUrl, options.sourceFile);
+      sourceFile = {
+        name: options.sourceFile.name,
+        size: options.sourceFile.size,
+        storageId,
+        uploadId,
+      };
+    }
+
+    const newImportId = await startImport({
+      schemaId: targetSchemaId,
+      sourceFile,
+      chunks: uploaded,
+      total: rows.length,
+    });
+    setSchemaId(targetSchemaId);
+    setImportId(newImportId);
+  }
 
   // Navigate to the new dataset (or back to the project, in the in-project
   // variant) once the import finishes. The tile archive rebuild happens
@@ -268,19 +380,36 @@ function ImportFirst({ projectId }: { projectId?: string }) {
   useEffect(() => {
     if (importStatus === "completed" && schemaId) {
       ensureMapTileArchive(schemaId);
-      toast.success("Dataset imported!");
-      void navigate(
-        projectId === undefined
-          ? { params: { schemaId }, to: "/datasets/$schemaId" }
-          : { params: { projectId }, to: "/projects/$projectId" },
-      );
+      void (async () => {
+        // The standalone draft becomes catalog-visible only now that its
+        // import completed (issue #129). In-project datasets stay drafts —
+        // the project's own publish owns that step (lifecycle §3).
+        if (projectId === undefined) {
+          try {
+            await markComplete({ schemaId });
+          } catch {
+            // Benign: the dataset survives as a draft, visible to its
+            // creator via the drafts toggle — never a lost dataset.
+            toast.error(
+              "The import finished, but making the dataset public failed — it is saved as a draft.",
+            );
+          }
+        }
+        toast.success("Dataset imported!");
+        await navigate(
+          projectId === undefined
+            ? { params: { schemaId }, to: "/datasets/$schemaId" }
+            : { params: { projectId }, to: "/projects/$projectId" },
+        );
+      })();
     }
-  }, [importStatus, schemaId, navigate, projectId]);
+  }, [importStatus, schemaId, navigate, projectId, markComplete]);
 
   const progress = status
     ? {
         error: status.error,
         processed: status.processed,
+        skipped: status.skipped,
         status: status.status,
         total: status.total,
       }
@@ -289,6 +418,42 @@ function ImportFirst({ projectId }: { projectId?: string }) {
   return (
     <DatasetImporter
       progress={progress}
+      recovery={{
+        // Re-import into the SAME dataset: whatever partial rows the failed
+        // attempt committed are cleared first, then the full file runs again
+        // (issue #129). The dataset keeps its schema, kind, and project
+        // membership — no duplicate catalog entries.
+        onRetry: async (rows, options) => {
+          if (schemaId === undefined) {
+            throw new Error("This dataset is gone — start a new import instead.");
+          }
+          await clearRows({ schemaId });
+          await runRowImport(schemaId, rows, options);
+        },
+        // Delete the dataset the failed import created — nothing left
+        // behind (the host cascade removes the project membership too).
+        onDiscard: async () => {
+          if (schemaId !== undefined) {
+            await removeDataset({ schemaId });
+          }
+          toast.success("Draft dataset discarded.");
+          await navigate(
+            projectId === undefined
+              ? { to: "/datasets" }
+              : { params: { projectId }, to: "/projects/$projectId" },
+          );
+          setSchemaId(undefined);
+          setImportId(undefined);
+        },
+        // Keep the (draft) dataset and leave the flow.
+        onBack: () => {
+          void navigate(
+            projectId === undefined
+              ? { to: "/datasets" }
+              : { params: { projectId }, to: "/projects/$projectId" },
+          );
+        },
+      }}
       // oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
       onImport={async (
         _json,
@@ -314,88 +479,10 @@ function ImportFirst({ projectId }: { projectId?: string }) {
         );
         const newSchemaId =
           projectId === undefined
-            ? await createSchema(args)
+            ? await createDraftForImport(args)
             : await createDraft({ ...args, projectId });
 
-        // Split client-side (we already have every row parsed here) and
-        // upload each chunk to its own blob — never one giant upload. See
-        // `chunkRowsForImport`'s doc comment for why: Convex components
-        // can't use the Node runtime, so no server-side step could safely
-        // parse one large upload in a single pass. Each upload rides the
-        // token its URL was issued under (`uploadId`) — `startImport`
-        // rejects any blob without one, issued for THIS dataset (issue
-        // #131).
-        const chunks = chunkRowsForImport(rows),
-          uploaded: Array<{ storageId: string; uploadId: string }> = [];
-        for (const chunk of chunks) {
-          // oxlint-disable-next-line no-await-in-loop
-          const { storageUrl, uploadId } = await generateUploadUrl({ scope: newSchemaId }),
-            // oxlint-disable-next-line no-await-in-loop
-            res = await fetch(storageUrl, {
-              body: JSON.stringify(chunk),
-              headers: { "Content-Type": "application/json" },
-              method: "POST",
-            });
-          if (!res.ok) {
-            throw new Error("Failed to upload import data.");
-          }
-          // oxlint-disable-next-line no-await-in-loop
-          const body: unknown = await res.json();
-          if (
-            typeof body !== "object" ||
-            body === null ||
-            !("storageId" in body) ||
-            typeof body.storageId !== "string"
-          ) {
-            throw new Error("Import upload did not return a storageId.");
-          }
-          uploaded.push({ storageId: body.storageId, uploadId });
-        }
-
-        // Retain the original file as its own blob so it stays
-        // re-downloadable from the dataset page — deliberately NOT in
-        // `uploaded` (the import workflow deletes chunk blobs as it
-        // consumes them; this one must survive).
-        let sourceFile:
-          | { name: string; size: number; storageId: string; uploadId: string }
-          | undefined;
-        if (options.sourceFile) {
-          const { storageUrl, uploadId } = await generateUploadUrl({ scope: newSchemaId }),
-            res = await fetch(storageUrl, {
-              body: options.sourceFile,
-              headers: {
-                "Content-Type": options.sourceFile.type || "application/octet-stream",
-              },
-              method: "POST",
-            });
-          if (!res.ok) {
-            throw new Error("Failed to upload the original file.");
-          }
-          const body: unknown = await res.json();
-          if (
-            typeof body !== "object" ||
-            body === null ||
-            !("storageId" in body) ||
-            typeof body.storageId !== "string"
-          ) {
-            throw new Error("Original-file upload did not return a storageId.");
-          }
-          sourceFile = {
-            name: options.sourceFile.name,
-            size: options.sourceFile.size,
-            storageId: body.storageId,
-            uploadId,
-          };
-        }
-
-        const newImportId = await startImport({
-          schemaId: newSchemaId,
-          sourceFile,
-          chunks: uploaded,
-          total: rows.length,
-        });
-        setSchemaId(newSchemaId);
-        setImportId(newImportId);
+        await runRowImport(newSchemaId, rows, options);
       }}
     />
   );

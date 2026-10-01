@@ -56,6 +56,15 @@ behavior change; #61 makes archives self-maintaining; #62 is the visible
 payoff measured on FY22 (≤5% of 46.55 MB, no main-thread parse, instant
 toggles); #63 completes the cache layers (repeat opens = zero bytes).
 
+**REVISION (2026-10-01, issue #129 → PR #150): `mapTileCacheVersion` is now
+MONOTONIC for the dataset's lifetime — a clear bumps it instead of resetting
+it to absent/0.** This deliberately revises the version-0-slate decision
+recorded in #60's clear finisher: an exact reset let an in-flight rebuild
+snapshotted at version N (or an OPFS pin keyed `(schemaId, N)`) pass the
+`setMapTileArchive` `expectedVersion` guard once a clear + re-import climbed
+back to N. Do not "simplify" the clear back to a reset — the bump IS the
+guard's liveness guarantee now.
+
 ## Outstanding follow-ups (2026-09-18 review — #58 itself complete)
 
 - **RESOLVED 2026-09-18: json-cms `tsc --noEmit` green for the first time since

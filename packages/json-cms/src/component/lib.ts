@@ -14,7 +14,7 @@ import type { BoundingBox } from "../shared/geojson/geometry.js";
 import type { Geometry } from "../shared/geojson/types.js";
 import { geometryTypeValidator } from "../shared/geojson/validators.js";
 import type { GeometryTypeArg } from "../shared/geojson/validators.js";
-import { extractReferences } from "../shared/reference.js";
+import { extractReferences, REFERENCE_KEYWORD } from "../shared/reference.js";
 import { components, internal } from "./_generated/api.js";
 import type { Doc, Id } from "./_generated/dataModel.js";
 import {
@@ -583,8 +583,11 @@ export const setMapTileArchive = mutation({
       await ctx.storage.delete(args.storageId);
       return;
     }
-    // An absent version field reads as 0 — a dataset that predates these
-    // fields (or was cleared) has never had a geometry-affecting write.
+    // The current version reads as 0 only when ABSENT — a dataset that
+    // predates these fields. A cleared dataset carries a monotonically
+    // bumped version (issue #129), so a rebuild snapshotted before the
+    // clear can never pass this guard again — the counter never returns to
+    // a version it has already left.
     const currentVersion = schemaDoc.mapTileCacheVersion ?? 0;
     if (currentVersion !== args.expectedVersion) {
       // Stale rebuild: edits happened during generation. Discard the
@@ -681,6 +684,12 @@ export const createSchema = mutation({
     uiSchema: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
+    // The validator is `v.any()`, so a null/non-object `schema` reaches here —
+    // read it defensively (issue #129): a bare `args.schema.title` threw a raw
+    // TypeError instead of a client-facing ConvexError.
+    if (typeof args.schema !== "object" || args.schema === null || Array.isArray(args.schema)) {
+      throw new ConvexError("Schema must be an object with a non-empty 'title' property.");
+    }
     if (!args.schema.title) {
       throw new ConvexError("Schema must have a non-empty 'title' property");
     }
@@ -751,8 +760,77 @@ export const setSchemaVisibility = mutation({
   returns: v.null(),
 });
 
+/**
+ * Throws unless `schema` is a JSON-Schema-shaped record carrying a non-empty
+ * `title` (issue #129: a null schema used to surface as a raw TypeError
+ * because the validator is `v.any()`).
+ */
+function assertValidSchemaPayload(
+  schemaPayload: unknown,
+): asserts schemaPayload is Record<string, unknown> {
+  if (typeof schemaPayload !== "object" || schemaPayload === null || Array.isArray(schemaPayload)) {
+    throw new ConvexError("Schema must be an object with a non-empty 'title' property.");
+  }
+  if (!("title" in schemaPayload) || !schemaPayload.title) {
+    throw new ConvexError("Schema must have a non-empty 'title' property");
+  }
+}
+
+/**
+ * Validates `updateSchema`'s args and folds them into the patch to apply.
+ * `structureChanged` marks a schema/uiSchema change (as opposed to
+ * metadata-only edits, which stay allowed on read-only datasets — the
+ * recorded behavior `bound-write.test.ts` pins). Extracted from the handler
+ * so its branch count stays manageable.
+ */
+function buildSchemaUpdatePatch(args: {
+  description?: string;
+  schema?: unknown;
+  title?: string;
+  uiSchema?: unknown;
+}): { patch: Record<string, unknown>; structureChanged: boolean } {
+  const patch: Record<string, unknown> = {};
+  let structureChanged = false;
+
+  const nextSchema = args.schema;
+  if (nextSchema === undefined) {
+    if (args.title !== undefined) {
+      patch.title = args.title;
+    }
+    if (args.description !== undefined) {
+      patch.description = args.description;
+    }
+  } else {
+    assertValidSchemaPayload(nextSchema);
+    const schemaStr = JSON.stringify(nextSchema);
+    if (schemaStr.length > SCHEMA_SIZE_LIMIT) {
+      throw new ConvexError("Schema exceeds the 100 KB size limit.");
+    }
+    patch.schema = nextSchema;
+    patch.title = nextSchema.title;
+    patch.description = "description" in nextSchema ? nextSchema.description : undefined;
+    structureChanged = true;
+  }
+
+  if (args.uiSchema !== undefined) {
+    const uiSchemaStr = JSON.stringify(args.uiSchema);
+    if (uiSchemaStr.length > SCHEMA_SIZE_LIMIT) {
+      throw new ConvexError("UI Schema exceeds the 100 KB size limit.");
+    }
+    patch.uiSchema = args.uiSchema;
+    structureChanged = true;
+  }
+
+  return { patch, structureChanged };
+}
+
 export const updateSchema = mutation({
   args: {
+    // Host-only bound-dataset write attestation — see `assertDataWritable`.
+    // Carried by host flows that legitimately rewrite a bound dataset's
+    // structure (the sync engine's schema migration); never accepted from
+    // the exposeApi wrapper (its exact validators omit it).
+    boundWrite: boundWriteValidator,
     description: v.optional(v.string()),
     schema: v.optional(v.any()),
     schemaId: v.id("schemas"),
@@ -765,39 +843,108 @@ export const updateSchema = mutation({
       throw new ConvexError("Schema not found");
     }
 
-    const patch: Record<string, unknown> = {};
+    const { patch, structureChanged } = buildSchemaUpdatePatch(args);
 
-    if (args.schema === undefined) {
-      if (args.title !== undefined) {
-        patch.title = args.title;
-      }
-      if (args.description !== undefined) {
-        patch.description = args.description;
-      }
-    } else {
-      if (!args.schema.title) {
-        throw new ConvexError("Schema must have a non-empty 'title' property");
-      }
-      const schemaStr = JSON.stringify(args.schema);
-      if (schemaStr.length > SCHEMA_SIZE_LIMIT) {
-        throw new ConvexError("Schema exceeds the 100 KB size limit.");
-      }
-      patch.schema = args.schema;
-      patch.title = args.schema.title;
-      patch.description = args.schema.description;
-    }
-
-    if (args.uiSchema !== undefined) {
-      const uiSchemaStr = JSON.stringify(args.uiSchema);
-      if (uiSchemaStr.length > SCHEMA_SIZE_LIMIT) {
-        throw new ConvexError("UI Schema exceeds the 100 KB size limit.");
-      }
-      patch.uiSchema = args.uiSchema;
+    // A structure change on a frozen (`lineage`) or bound (`source`) dataset
+    // is a write to its locked definition, so it goes through the same
+    // read-only gate as data (issue #129: this mutation was the one
+    // data-adjacent path that skipped `assertDataWritable`).
+    if (structureChanged) {
+      assertDataWritable(existing, args.boundWrite);
     }
 
     await ctx.db.patch(args.schemaId, patch);
+
+    // The `references` table mirrors each entry's outgoing pointers as
+    // derived from the schema's `x-reference` fields — a structure change
+    // can re-write that derivation, so the mirror re-syncs (issue #129:
+    // reverse lookups went stale after every x-reference edit). Scheduled
+    // as a batched re-index so a large dataset never blocks the edit; the
+    // cheap keyword guard skips the walk entirely when neither the old nor
+    // the new schema mentions a reference field.
+    if (args.schema !== undefined && referenceFieldsMayHaveChanged(existing.schema, args.schema)) {
+      await ctx.scheduler.runAfter(0, internal.lib.resyncSchemaReferencesStep, {
+        cursor: null,
+        schemaId: args.schemaId,
+      });
+    }
   },
 });
+
+/** Rows per `resyncSchemaReferencesStep` pass — entries are thin-to-moderate; the width shrinks with the transaction's remaining read budget (the delete drain's estimate). */
+const REFERENCE_RESYNC_BATCH = 100;
+
+/**
+ * One budget-bounded pass of the scheduled references re-index
+ * (`updateSchema`): re-derives every reference row for the next batch of the
+ * dataset's entries against the JUST-UPDATED schema, then reschedules itself
+ * until the index is exhausted. The schema doc is re-read each pass so a
+ * schema replaced again mid-resync resyncs against the newest definition.
+ */
+export const resyncSchemaReferencesStep = internalMutation({
+  args: { cursor: v.union(v.string(), v.null()), schemaId: v.id("schemas") },
+  handler: async (ctx, args) => {
+    const schemaDoc = await ctx.db.get(args.schemaId);
+    if (schemaDoc === null) {
+      return; // The dataset went away mid-resync — nothing to re-derive.
+    }
+    const remaining = await transactionReadRemaining(ctx);
+    if (remaining !== null && remaining < DELETE_BYTE_RESERVE) {
+      // Out of budget — hand off with the SAME cursor; the fresh transaction
+      // resumes exactly where this one stopped.
+      await ctx.scheduler.runAfter(0, internal.lib.resyncSchemaReferencesStep, {
+        cursor: args.cursor,
+        schemaId: args.schemaId,
+      });
+      return;
+    }
+    const width =
+        remaining === null
+          ? REFERENCE_RESYNC_BATCH
+          : Math.max(
+              1,
+              Math.min(
+                REFERENCE_RESYNC_BATCH,
+                Math.floor((remaining - DELETE_BYTE_RESERVE) / DELETE_ROW_BYTE_ESTIMATE),
+              ),
+            ),
+      { continueCursor, isDone, page } = await paginateEntriesBySchema(
+        ctx,
+        args.schemaId,
+        args.cursor,
+        width,
+        "asc",
+      );
+    await Promise.all(
+      page.map(
+        async (entry) =>
+          await syncEntryReferences(ctx, entry._id, args.schemaId, schemaDoc, entry.data),
+      ),
+    );
+    if (!isDone) {
+      await ctx.scheduler.runAfter(0, internal.lib.resyncSchemaReferencesStep, {
+        cursor: continueCursor,
+        schemaId: args.schemaId,
+      });
+    }
+  },
+  returns: v.null(),
+});
+
+/**
+ * Whether editing the schema COULD have changed the reference-field set:
+ * true when either the stored or the incoming schema mentions the
+ * `x-reference` keyword at all. Reference fields are top-level properties
+ * annotated with that keyword (see ../shared/reference.ts), so two schemas
+ * that never mention it derive exactly the same (empty) reference set — the
+ * re-index walk can be skipped outright.
+ */
+function referenceFieldsMayHaveChanged(oldSchema: unknown, nextSchema: unknown): boolean {
+  return (
+    JSON.stringify(oldSchema).includes(REFERENCE_KEYWORD) ||
+    JSON.stringify(nextSchema).includes(REFERENCE_KEYWORD)
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Batched, budget-aware deletes (issue #128)
@@ -947,7 +1094,15 @@ async function drainGeometriesPhase(
   }
 }
 
-/** The clear's finisher: the exact reset the single-transaction clear used to patch in one go — counters to zero, the five tile-archive fields cleared (the archive blob itself was deleted with the data), so a fresh import starts from a clean version-0 slate. */
+/**
+ * The clear's finisher: counters to zero, the four tile-archive fields
+ * cleared (the archive blob itself was deleted with the data) — and
+ * `mapTileCacheVersion` bumped MONOTONICALLY past every version a pre-clear
+ * rebuild or OPFS pin could have snapshotted (issue #129, revising the
+ * recorded exact-reset decision: a reset to 0 would let a stale archive
+ * built at version N pass the `setMapTileArchive` `expectedVersion` guard
+ * once a re-import climbed back to N — see `deleteEntriesBySchema`).
+ */
 async function finishClear(ctx: MutationCtx, schemaId: Id<"schemas">): Promise<void> {
   const doc = await ctx.db.get(schemaId);
   if (doc === null) {
@@ -961,8 +1116,34 @@ async function finishClear(ctx: MutationCtx, schemaId: Id<"schemas">): Promise<v
     mapTileArchiveBytes: undefined,
     mapTileArchiveMaxZoom: undefined,
     mapTileArchiveStorageId: undefined,
-    mapTileCacheVersion: undefined,
+    // Monotonic bump, never a reset: the version is now "how many
+    // geometry-affecting writes this dataset has ever seen" (see the field's
+    // doc on the `schemas` table).
+    mapTileCacheVersion: (doc.mapTileCacheVersion ?? 0) + 1,
   });
+}
+
+/** Deletes one import status doc together with any chunk blobs it still points at (unconsumed leftovers of a failed/canceled import — consumed chunks already deleted their own). */
+async function deleteImportWithBlobs(ctx: MutationCtx, row: Doc<"imports">): Promise<void> {
+  await Promise.all([
+    ...(row.storageIds ?? []).map(async (storageId) => {
+      try {
+        await ctx.storage.delete(storageId);
+      } catch {
+        // Already consumed or already gone — best-effort cleanup.
+      }
+    }),
+    (async () => {
+      if (row.storageId !== undefined) {
+        try {
+          await ctx.storage.delete(row.storageId);
+        } catch {
+          // Same — best-effort (the deprecated single-blob form).
+        }
+      }
+    })(),
+  ]);
+  await ctx.db.delete(row._id);
 }
 
 /** The delete's finisher: collection memberships, then any map layers pointing at the dataset (their override rows too), then the schema row itself — deleted LAST, so no child ever dangles mid-drain. */
@@ -976,6 +1157,22 @@ async function finishSchemaDelete(ctx: MutationCtx, schemaId: Id<"schemas">): Pr
     // oxlint-disable-next-line no-await-in-loop -- see above.
     await Promise.all(memberships.map(async (row) => ctx.db.delete(row._id)));
     if (memberships.length < DELETE_BATCH_ROWS) {
+      break;
+    }
+  }
+  // Import status docs go with the dataset — each carrying its leftover
+  // chunk blobs (issue #129: `imports` rows were never cleaned up here, so
+  // a dataset's failed-import records and their unconsumed blobs outlived
+  // it).
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- each batch only exists because the previous one was full; inherently sequential.
+    const imports = await ctx.db
+      .query("imports")
+      .withIndex("by_schema", (q) => q.eq("schemaId", schemaId))
+      .take(DELETE_BATCH_ROWS);
+    // oxlint-disable-next-line no-await-in-loop -- see above.
+    await Promise.all(imports.map(async (row) => deleteImportWithBlobs(ctx, row)));
+    if (imports.length < DELETE_BATCH_ROWS) {
       break;
     }
   }
@@ -1465,6 +1662,35 @@ export const setSchemaGroup = mutation({
     }
     await ctx.db.patch(args.schemaId, { groupId: args.groupId });
   },
+});
+
+/**
+ * Flips a dataset's catalog lifecycle between "draft" and "published"
+ * (roadmap 5a, #99). Public-in-component but deliberately UNEXPOSED — the
+ * `setSchemaVisibility` pattern: the only caller is the host, which resolves
+ * identity at its own choke point (the import flow's
+ * `schemas.markImportComplete` — issue #129's draft-until-complete rule).
+ * Never part of `updateSchema`, whose wrapper path must stay unable to touch
+ * lifecycle at all.
+ */
+export const setSchemaLifecycle = mutation({
+  args: {
+    lifecycle: v.union(v.literal("draft"), v.literal("published")),
+    schemaId: v.id("schemas"),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.get(args.schemaId);
+    if (!existing) {
+      throw new ConvexError("Schema not found");
+    }
+    // A bound dataset's lifecycle belongs to its host sync/ingest flow —
+    // this mutation serves the ordinary import lifecycle only.
+    if (existing.source !== undefined) {
+      throw new ConvexError("A bound dataset's lifecycle is managed by its source sync flow.");
+    }
+    await ctx.db.patch(args.schemaId, { lifecycle: args.lifecycle });
+  },
+  returns: v.null(),
 });
 
 /**
@@ -2839,6 +3065,25 @@ function checkResolvedGeometryCompatible(
 }
 
 /**
+ * Server-side cap on one entry's serialized `data` payload (issue #129):
+ * AJV row validation runs client-side only, so `v.any()` on `entries.data`
+ * otherwise accepts anything a caller posts. Convex caps a document at
+ * ~1 MiB total; this sits under that with headroom for the row's pointer
+ * fields. Checked on every write path so the invariant holds regardless of
+ * entry point.
+ */
+const ENTRY_DATA_MAX_BYTES = 1_000_000;
+
+/** Throws unless `data` serializes under the entry payload cap. */
+function assertEntryDataSize(data: unknown): void {
+  if (byteLength(JSON.stringify(data)) > ENTRY_DATA_MAX_BYTES) {
+    throw new ConvexError(
+      `Entry data exceeds the ${ENTRY_DATA_MAX_BYTES} byte limit — split or trim the row before saving.`,
+    );
+  }
+}
+
+/**
  * Inserts a batch of `{data, geometry?}` rows as entries, attaching a
  * `geometries` row for any row that has one, and folds the whole batch's
  * count-added/bbox-expansion into a single `schemas` patch at the end
@@ -2861,6 +3106,9 @@ async function insertEntryBatch(
   rows: Array<{ data: unknown; geometry?: PendingGeometry }>,
 ): Promise<Array<Id<"entries">>> {
   const resolvedGeometries = rows.map((row) => {
+    // The payload cap is checked before anything else so an oversized row
+    // fails the batch atomically (issue #129).
+    assertEntryDataSize(row.data);
     if (row.geometry === undefined) {
       return undefined;
     }
@@ -3045,6 +3293,7 @@ export const updateEntry = mutation({
     // Checked before any write so a rejected call leaves the entry untouched
     // (the transaction would roll back anyway; failing fast is clearer).
     assertDataWritable(schemaDoc, args.boundWrite);
+    assertEntryDataSize(args.data);
 
     await ctx.db.patch(args.entryId, { data: args.data });
 
@@ -3104,8 +3353,13 @@ export const deleteEntriesBySchema = mutation({
 
     // The tile archive's blob goes with the data — like the source-file blob
     // in `deleteSchema`, nothing outside the schema doc references it. The
-    // five cache FIELDS reset in the clear's finisher, so a fresh import
-    // starts from a clean version-0 slate.
+    // four cache FIELDS reset in the clear's finisher, but
+    // `mapTileCacheVersion` is bumped monotonically instead (issue #129,
+    // revising the recorded exact-reset decision): a rebuild snapshotted at
+    // the pre-clear version N — or an OPFS pin keyed (schemaId, N) — must
+    // never be satisfiable by post-clear data, and a reset to 0 would let a
+    // re-import climb right back to N and pass the `expectedVersion` guard.
+    // Bumped, N is retired forever.
     if (schemaDoc.mapTileArchiveStorageId !== undefined) {
       await ctx.storage.delete(schemaDoc.mapTileArchiveStorageId);
     }
@@ -3153,6 +3407,7 @@ export const patchEntryInternal = internalMutation({
     entryId: v.id("entries"),
   },
   handler: async (ctx, args) => {
+    assertEntryDataSize(args.data);
     const existing = await ctx.db.get(args.entryId);
     await ctx.db.patch(args.entryId, { data: args.data });
     if (!existing) {
@@ -3467,11 +3722,65 @@ export const getImportStatus = query({
 });
 
 /**
- * Create the status doc and start the durable import workflow. Each chunk is
- * one already-small, client-uploaded blob (see the doc comment above) — each
- * one gets its own `insertChunkFromStorage` step.
+ * The completion record for one chunk of an import, if its rows are already
+ * durably inserted — the replay check `insertChunkFromStorage` performs
+ * (issue #129). `null` means "not yet inserted", `non-null` means "a prior
+ * attempt of this step committed its rows and crashed before returning":
+ * the replay must skip the insert and report the recorded row count, making
+ * the step idempotent end to end.
+ */
+export const getImportChunkRecord = internalQuery({
+  args: { chunkIndex: v.number(), importId: v.id("imports") },
+  handler: async (ctx, args) => {
+    const doc = await ctx.db.get(args.importId);
+    if (doc === null) {
+      return null;
+    }
+    const record =
+      doc.completedChunks !== undefined
+        ? doc.completedChunks.find((chunk) => chunk.index === args.chunkIndex)
+        : undefined;
+    return record === undefined ? null : record;
+  },
+  returns: v.union(v.null(), v.object({ index: v.number(), rows: v.number() })),
+});
+
+/** Throws unless `total` is a non-negative integer row count (issue #129: the field drove progress and the completion check, but nothing validated it). */
+function assertValidTotal(total: number): void {
+  if (!Number.isInteger(total) || total < 0) {
+    throw new ConvexError("total must be a non-negative integer row count.");
+  }
+}
+
+/**
+ * One data operation at a time per dataset (issue #129): an import,
+ * conversion, or simplification still `pending`/`processing` blocks another
+ * from starting, so two concurrent workflows can't interleave their writes
+ * into one dataset's counters and tile-cache version. A run that crashed
+ * hard resolves to `failed` through `handleImportComplete` and unblocks the
+ * next one; the durable workflow engine's own resume keeps a live run from
+ * wedging here.
+ */
+async function assertNoActiveDataRun(ctx: MutationCtx, schemaId: Id<"schemas">): Promise<void> {
+  const runs = await ctx.db
+    .query("imports")
+    .withIndex("by_schema", (q) => q.eq("schemaId", schemaId))
+    .collect();
+  if (runs.some((row) => row.status === "pending" || row.status === "processing")) {
+    throw new ConvexError(
+      "Another import, conversion, or simplification is already running for this dataset — wait for it to finish first.",
+    );
+  }
+}
+
+/**
+ * Resolves `startImport`'s chunk-blob provenance (issue #131's fork):
+ * validates which of the two carrying shapes the import used, claims every
+ * pending-upload row on the client path (any rejection rolls the whole
+ * import back), and returns the chunk storage ids. Extracted from the
+ * handler so its branch count stays manageable.
  *
- * Storage-id provenance (issue #131) forks the two callers apart:
+ * The two carrying shapes:
  * - Client path (no `boundWrite`): every blob arrives as
  *   `{storageId, uploadId}` — the pending-upload row its upload URL was
  *   issued under. All rows are claimed here, in this transaction, so a
@@ -3481,6 +3790,71 @@ export const getImportStatus = query({
  *   no client wrapper can carry): plain ids the host flow vetted at its own
  *   boundary (publish chunks are claimed when they register; tag-ingest
  *   chunks are uploaded server-side).
+ */
+async function resolveImportStorageIds(
+  ctx: MutationCtx,
+  args: {
+    boundWrite?: string;
+    chunks?: Array<{ storageId: Id<"_storage">; uploadId: string }>;
+    schemaId: Id<"schemas">;
+    sourceFile?: { storageId: Id<"_storage">; uploadId: string };
+    storageIds?: Array<Id<"_storage">>;
+  },
+): Promise<Array<Id<"_storage">>> {
+  if (args.boundWrite !== undefined) {
+    if (args.storageIds === undefined) {
+      throw new ConvexError("An attested import must carry its chunk storage ids.");
+    }
+    if (args.chunks !== undefined) {
+      throw new ConvexError("An attested import carries raw chunk ids, not upload tokens.");
+    }
+    return args.storageIds;
+  }
+  if (args.storageIds !== undefined) {
+    throw new ConvexError(
+      "This import carries raw storage ids — upload its chunks through issued URLs and pass each blob's token.",
+    );
+  }
+  if (args.chunks === undefined) {
+    throw new ConvexError(
+      "This import carries no registered uploads — request upload URLs and pass each blob's token.",
+    );
+  }
+  for (const chunk of args.chunks) {
+    // oxlint-disable-next-line no-await-in-loop -- every claim consumes its row before the next read; any rejection rolls the whole import back.
+    await claimPendingUpload(ctx, chunk.uploadId, args.schemaId);
+  }
+  if (args.sourceFile !== undefined) {
+    await claimPendingUpload(ctx, args.sourceFile.uploadId, args.schemaId);
+  }
+  return args.chunks.map((chunk) => chunk.storageId);
+}
+
+/** Attaches (or replaces) the retained original-file blob on the schema doc, deleting the blob a previous import left referenced so the pointer swap never orphans it (issue #129; source-file retention is #46). */
+async function attachSourceFile(
+  ctx: MutationCtx,
+  schemaId: Id<"schemas">,
+  schemaDoc: { sourceFileStorageId?: Id<"_storage"> },
+  sourceFile: { name: string; size: number; storageId: Id<"_storage"> },
+): Promise<void> {
+  if (
+    schemaDoc.sourceFileStorageId !== undefined &&
+    schemaDoc.sourceFileStorageId !== sourceFile.storageId
+  ) {
+    await ctx.storage.delete(schemaDoc.sourceFileStorageId);
+  }
+  await ctx.db.patch(schemaId, {
+    sourceFileName: sourceFile.name,
+    sourceFileStorageId: sourceFile.storageId,
+    sourceFileSize: sourceFile.size,
+  });
+}
+
+/**
+ * Create the status doc and start the durable import workflow. Each chunk is
+ * one already-small, client-uploaded blob (see the module doc comment above)
+ * — each one gets its own `insertChunkFromStorage` step, which carries the
+ * per-chunk completion journal that makes step replays no-ops (issue #129).
  */
 export const startImport = mutation({
   args: {
@@ -3514,43 +3888,13 @@ export const startImport = mutation({
     // An import writes entries, so a bound dataset only accepts one from its
     // host's tag-ingest flow.
     assertDataWritable(targetSchema, args.boundWrite);
+    assertValidTotal(args.total);
+    await assertNoActiveDataRun(ctx, args.schemaId);
 
-    let storageIds: Array<Id<"_storage">>;
-    if (args.boundWrite !== undefined) {
-      if (args.storageIds === undefined) {
-        throw new ConvexError("An attested import must carry its chunk storage ids.");
-      }
-      if (args.chunks !== undefined) {
-        throw new ConvexError("An attested import carries raw chunk ids, not upload tokens.");
-      }
-      storageIds = args.storageIds;
-    } else {
-      if (args.storageIds !== undefined) {
-        throw new ConvexError(
-          "This import carries raw storage ids — upload its chunks through issued URLs and pass each blob's token.",
-        );
-      }
-      if (args.chunks === undefined) {
-        throw new ConvexError(
-          "This import carries no registered uploads — request upload URLs and pass each blob's token.",
-        );
-      }
-      for (const chunk of args.chunks) {
-        // oxlint-disable-next-line no-await-in-loop -- every claim consumes its row before the next read; any rejection rolls the whole import back.
-        await claimPendingUpload(ctx, chunk.uploadId, args.schemaId);
-      }
-      if (args.sourceFile !== undefined) {
-        await claimPendingUpload(ctx, args.sourceFile.uploadId, args.schemaId);
-      }
-      storageIds = args.chunks.map((chunk) => chunk.storageId);
-    }
+    const storageIds = await resolveImportStorageIds(ctx, args);
 
     if (args.sourceFile !== undefined) {
-      await ctx.db.patch(args.schemaId, {
-        sourceFileName: args.sourceFile.name,
-        sourceFileStorageId: args.sourceFile.storageId,
-        sourceFileSize: args.sourceFile.size,
-      });
+      await attachSourceFile(ctx, args.schemaId, targetSchema, args.sourceFile);
     }
 
     const importId = await ctx.db.insert("imports", {
@@ -3589,9 +3933,14 @@ export const startImport = mutation({
  * Best-effort delete of a storage blob referenced by a plain string id (the
  * form workflow steps pass storage ids in — see `insertChunkFromStorage`).
  * Swallows "already gone" rather than failing an otherwise-successful import
- * over cleanup.
+ * over cleanup. Takes the minimal structural storage surface both the
+ * mutation and action contexts provide, so a workflow step's replay path can
+ * call it from either.
  */
-async function tryDeleteStorage(ctx: MutationCtx, storageId: string): Promise<void> {
+async function tryDeleteStorage(
+  ctx: { storage: { delete(storageId: Id<"_storage">): Promise<void> } },
+  storageId: string,
+): Promise<void> {
   try {
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- see callers for why storage ids travel as plain strings here.
     await ctx.storage.delete(storageId as Id<"_storage">);
@@ -3670,6 +4019,7 @@ export const updateImportProgress = internalMutation({
     error: v.optional(v.string()),
     importId: v.id("imports"),
     processed: v.optional(v.number()),
+    skipped: v.optional(v.number()),
     status: v.optional(
       v.union(
         v.literal("pending"),
@@ -3684,6 +4034,9 @@ export const updateImportProgress = internalMutation({
     if (args.processed !== undefined) {
       patch.processed = args.processed;
     }
+    if (args.skipped !== undefined) {
+      patch.skipped = args.skipped;
+    }
     if (args.status !== undefined) {
       patch.status = args.status;
     }
@@ -3692,6 +4045,27 @@ export const updateImportProgress = internalMutation({
     }
     await ctx.db.patch(args.importId, patch);
   },
+  returns: v.null(),
+});
+
+/**
+ * The import workflow's completion gate (issue #129): `processed` must equal
+ * `total` or the import FAILS instead of reporting a false "completed" —
+ * the check the workflow never made, which is how a lost/malformed chunk
+ * used to pass as done. Lives in a step-callable mutation so the guard is
+ * verifiable without running the workflow engine (see lib.test.ts's note).
+ */
+export const completeImport = internalMutation({
+  args: { importId: v.id("imports"), processed: v.number(), total: v.number() },
+  handler: async (ctx, args) => {
+    if (args.processed !== args.total) {
+      throw new ConvexError(
+        `Imported ${args.processed} of ${args.total} rows — the import is incomplete and has been marked failed.`,
+      );
+    }
+    await ctx.db.patch(args.importId, { processed: args.processed, status: "completed" });
+  },
+  returns: v.null(),
 });
 
 /**
@@ -3741,17 +4115,82 @@ async function resolveImportRowGeometry(
  * inserts the batch. Runs entirely in Convex's default action runtime — a
  * chunk is small enough by construction (see `chunkRowsForImport`) that this
  * never needs Node. Deletes its own chunk blob once the insert succeeds.
- * Runs as a workflow step so a failed chunk is retried in isolation.
  * Returns the number of rows inserted.
+ *
+ * Step-retry semantics (issue #129, correcting the old "retried in
+ * isolation" claim): the workflow engine journals a step's COMPLETION, so a
+ * step that threw or whose execution crashed re-runs from its start — it is
+ * not "retried in isolation" mid-flight, and an action's earlier side
+ * effects (committed mutations, stored blobs) survive into the retry. That
+ * window is closed two ways here:
+ * - the row inserts record a per-chunk completion entry on the `imports`
+ *   doc IN THE SAME TRANSACTION (`insertEntriesChunkInternal`), so a replay
+ *   after "committed but never returned" finds the record and returns the
+ *   recorded row count instead of inserting duplicates;
+ * - geometry blobs this attempt stored for rows that never landed are
+ *   deleted on the way out, so a failing row doesn't orphan them.
+ * A step that THROWS (malformed chunk, bad row) fails the import — the
+ * workflow engine runs a step once; only a crashed/interrupted step re-runs.
  */
+
+/**
+ * Validates and resolves every row of one parsed chunk (the per-row loop of
+ * `insertChunkFromStorage`; extracted so that handler's own complexity stays
+ * manageable). Appends every file-storage geometry blob it creates to
+ * `storedGeometryIds` so the caller can clean them up if a later row (or the
+ * insert itself) fails.
+ */
+async function resolveImportChunkRows(
+  ctx: { storage: { store(blob: Blob, options?: { sha256?: string }): Promise<Id<"_storage">> } },
+  rows: unknown[],
+  schemaDoc: {
+    kind?: "standard" | "geospatial";
+    geometryType?: GeometryTypeArg;
+    simplifyGeometry?: boolean;
+  },
+  storedGeometryIds: Array<Id<"_storage">>,
+): Promise<Array<{ data: unknown; resolvedGeometry?: ResolvedGeometry }>> {
+  const resolvedRows: Array<{ data: unknown; resolvedGeometry?: ResolvedGeometry }> = [];
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i];
+    if (typeof row !== "object" || row === null) {
+      throw new ConvexError(`Row ${i} is not an object.`);
+    }
+    // The uploaded chunk is always `{ data, geometry? }[]` — validated below.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    const { data, geometry } = row as { data: unknown; geometry?: unknown };
+    if (geometry === undefined) {
+      resolvedRows.push({ data });
+      continue;
+    }
+    // oxlint-disable-next-line no-await-in-loop -- storage writes must land in row order; this loop is inherently sequential.
+    const resolvedGeometry = await resolveImportRowGeometry(ctx, i, geometry, schemaDoc);
+    if (resolvedGeometry.geometryStorageId !== undefined) {
+      storedGeometryIds.push(resolvedGeometry.geometryStorageId);
+    }
+    resolvedRows.push({ data, resolvedGeometry });
+  }
+  return resolvedRows;
+}
+
 export const insertChunkFromStorage = internalAction({
   args: {
+    // The chunk's position in the import's `storageIds` — with `importId`,
+    // keys the per-chunk completion journal. Optional only for the direct
+    // test/one-off callers that predate the journal (the workflow always
+    // passes both).
+    chunkIndex: v.optional(v.number()),
+    importId: v.optional(v.id("imports")),
     schemaId: v.id("schemas"),
     // A `_storage` id — passed as a plain string because system-table ids can't
     // Be journaled/validated as `v.id("_storage")` through the workflow engine.
     storageId: v.string(),
   },
-  handler: async (ctx, args) => {
+  // Explicit return type — the inferred one flows back through this
+  // handler's own `internal.lib` references (the replay-check query) and
+  // circularly references the export being defined (the memory-note gotcha:
+  // annotate steps whose results cross `internal.lib`).
+  handler: async (ctx, args): Promise<number> => {
     const schemaDoc = await ctx.runQuery(internal.lib.getSchemaInternal, {
       schemaId: args.schemaId,
     });
@@ -3759,42 +4198,70 @@ export const insertChunkFromStorage = internalAction({
       throw new ConvexError("Schema not found");
     }
 
+    const { chunkIndex, importId } = args;
+    if (chunkIndex !== undefined && importId !== undefined) {
+      const done: { index: number; rows: number } | null = await ctx.runQuery(
+        internal.lib.getImportChunkRecord,
+        { chunkIndex, importId },
+      );
+      if (done !== null) {
+        // A previous attempt committed this chunk's rows and died before
+        // returning. No duplicates — finish the blob cleanup it may have
+        // missed and report the recorded count so `processed` stays exact.
+        await tryDeleteStorage(ctx, args.storageId);
+        return done.rows;
+      }
+    }
+
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- actions have no `normalizeId`; `storageId` is always a real `_storage` id, just untyped over the workflow boundary.
     const blob = await ctx.storage.get(args.storageId as Id<"_storage">);
     if (!blob) {
       throw new ConvexError("Import chunk not found in storage");
     }
-    const parsed: unknown = JSON.parse(await blob.text()),
-      rawRows = Array.isArray(parsed) ? parsed : [];
-
-    const resolvedRows: Array<{ data: unknown; resolvedGeometry?: ResolvedGeometry }> = [];
-    for (let i = 0; i < rawRows.length; i += 1) {
-      const row = rawRows[i];
-      if (typeof row !== "object" || row === null) {
-        throw new ConvexError(`Row ${i} is not an object.`);
-      }
-      // The uploaded chunk is always `{ data, geometry? }[]` — validated below.
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-      const { data, geometry } = row as { data: unknown; geometry?: unknown };
-      if (geometry === undefined) {
-        resolvedRows.push({ data });
-        continue;
-      }
-      // oxlint-disable-next-line no-await-in-loop -- storage writes must land in row order; this loop is inherently sequential.
-      const resolvedGeometry = await resolveImportRowGeometry(ctx, i, geometry, schemaDoc);
-      resolvedRows.push({ data, resolvedGeometry });
+    const parsed: unknown = JSON.parse(await blob.text());
+    if (!Array.isArray(parsed)) {
+      // A non-array chunk used to read as ZERO rows and its blob was then
+      // deleted — a silently lost chunk behind a "completed" import
+      // (issue #129). Malformed input fails the import instead.
+      throw new ConvexError(
+        "Import chunk is malformed — expected an array of {data, geometry?} rows.",
+      );
     }
 
-    if (resolvedRows.length > 0) {
+    // Geometry blobs stored for this attempt's rows (only
+    // `resolveGeometryStorage`'s file-storage fallbacks land here). If a
+    // later row fails, the rows never insert — delete the blobs instead of
+    // orphaning them (issue #129).
+    const storedGeometryIds: Array<Id<"_storage">> = [];
+    let insertedRows: Array<{ data: unknown; resolvedGeometry?: ResolvedGeometry }>;
+    try {
+      insertedRows = await resolveImportChunkRows(ctx, parsed, schemaDoc, storedGeometryIds);
       await ctx.runMutation(internal.lib.insertEntriesChunkInternal, {
-        dataArray: resolvedRows,
+        chunkIndex: args.chunkIndex,
+        dataArray: insertedRows,
+        importId: args.importId,
         schemaId: args.schemaId,
       });
+    } catch (err) {
+      // The rows never landed — the geometry blobs this attempt stored for
+      // them are unreferenced now. Best-effort delete, then rethrow. (The
+      // CHUNK blob's own delete stays outside this catch: once the rows are
+      // in, the geometry blobs are referenced data, not litter.)
+      await Promise.all(
+        storedGeometryIds.map(async (geometryStorageId) => {
+          try {
+            await ctx.storage.delete(geometryStorageId);
+          } catch {
+            // Already gone — best-effort cleanup on the failure path.
+          }
+        }),
+      );
+      throw err;
     }
 
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion
     await ctx.storage.delete(args.storageId as Id<"_storage">);
-    return resolvedRows.length;
+    return insertedRows.length;
   },
   returns: v.number(),
 });
@@ -3804,12 +4271,19 @@ export const insertChunkFromStorage = internalAction({
  * row's geometry was already structurally validated and resolved (inline
  * vs. file storage) by `insertChunkFromStorage` — this only re-checks the
  * cheap dataset-type-compatibility rule before writing.
+ *
+ * When called with `importId` + `chunkIndex` (the workflow's chunk path),
+ * the per-chunk completion record is written HERE, in the same transaction
+ * as the inserts (issue #129) — that atomicity is what makes a replayed
+ * chunk step a no-op rather than a duplicate insert.
  */
 export const insertEntriesChunkInternal = internalMutation({
   args: {
+    chunkIndex: v.optional(v.number()),
     dataArray: v.array(
       v.object({ data: v.any(), resolvedGeometry: v.optional(resolvedGeometryValidator) }),
     ),
+    importId: v.optional(v.id("imports")),
     schemaId: v.id("schemas"),
   },
   handler: async (ctx, args) => {
@@ -3828,6 +4302,18 @@ export const insertEntriesChunkInternal = internalMutation({
           row.resolvedGeometry === undefined ? undefined : asResolvedGeometry(row.resolvedGeometry),
       })),
     );
+
+    if (args.importId !== undefined && args.chunkIndex !== undefined) {
+      const importDoc = await ctx.db.get(args.importId);
+      if (importDoc !== null) {
+        // Replace-by-index (defensive: the replay check upstream normally
+        // prevents double-marking) so the journal stays one row per chunk.
+        const completedChunks = (importDoc.completedChunks ?? [])
+          .filter((chunk) => chunk.index !== args.chunkIndex)
+          .concat([{ index: args.chunkIndex, rows: args.dataArray.length }]);
+        await ctx.db.patch(args.importId, { completedChunks });
+      }
+    }
     return null;
   },
   returns: v.null(),
@@ -3850,10 +4336,14 @@ export const importWorkflow = workflow.define({
 
     let processed = 0;
     // Chunks run sequentially so memory stays bounded and progress lands
-    // incrementally; parallelizing the steps would defeat both.
-    for (const storageId of args.storageIds) {
+    // incrementally; parallelizing the steps would defeat both. Each step is
+    // replay-safe (see `insertChunkFromStorage`'s doc comment); a step that
+    // throws — a malformed chunk, a bad row — fails the whole import.
+    for (const [chunkIndex, storageId] of args.storageIds.entries()) {
       // oxlint-disable-next-line no-await-in-loop
-      const inserted = await step.runAction(internal.lib.insertChunkFromStorage, {
+      const inserted: number = await step.runAction(internal.lib.insertChunkFromStorage, {
+        chunkIndex,
+        importId: args.importId,
         schemaId: args.schemaId,
         storageId,
       });
@@ -3865,10 +4355,13 @@ export const importWorkflow = workflow.define({
       });
     }
 
-    await step.runMutation(internal.lib.updateImportProgress, {
+    // The completion gate (issue #129): mark "completed" only when every
+    // expected row landed; otherwise `completeImport` throws and the
+    // workflow finishes failed (`handleImportComplete` records it).
+    await step.runMutation(internal.lib.completeImport, {
       importId: args.importId,
       processed,
-      status: "completed",
+      total: args.total,
     });
   },
 });
@@ -4117,6 +4610,8 @@ export const startGeospatialConversion = mutation({
     }
     assertDataWritable(schemaDoc, args.boundWrite);
     assertConversionFieldsValid(schemaDoc, args.latField, args.lonField);
+    assertValidTotal(args.total);
+    await assertNoActiveDataRun(ctx, args.schemaId);
 
     await ctx.db.patch(args.schemaId, {
       boundingBox: undefined,
@@ -4218,12 +4713,26 @@ export const listSimplifyBatchInternal = internalQuery({
   }),
 });
 
-/** Writes one batch of already-rounded payloads back onto their `geometries` rows, clearing whichever storage form each row no longer uses and deleting the blob it replaced. */
+/**
+ * Writes one batch of already-rounded payloads back onto their `geometries`
+ * rows — guarded by a compare-and-swap on the payload each row carried when
+ * the simplify action read it (issue #129): a row whose inline text or
+ * storage blob changed since the read was edited concurrently, and
+ * overwriting it here would revert that edit, so it is SKIPPED and counted
+ * instead. Clears whichever storage form each applied row no longer uses and
+ * deletes the blob it replaced. Returns how many rows were applied and how
+ * many were left untouched.
+ */
 export const applySimplifiedGeometriesInternal = internalMutation({
   args: {
     updates: v.array(
       v.object({
         bbox: v.optional(v.array(v.number())),
+        // The CAS tokens: exactly what the action read for this row (the
+        // inline text, or the immutable blob's id). A row matches only if
+        // what it carries NOW is still what the action rounded FROM.
+        expectedGeometryJson: v.optional(v.string()),
+        expectedGeometryStorageId: v.optional(v.id("_storage")),
         geometryJson: v.optional(v.string()),
         geometryStorageId: v.optional(v.id("_storage")),
         id: v.id("geometries"),
@@ -4231,12 +4740,28 @@ export const applySimplifiedGeometriesInternal = internalMutation({
     ),
   },
   handler: async (ctx, args) => {
-    let touchedSchemaId: Id<"schemas"> | undefined;
+    let applied = 0,
+      skipped = 0,
+      touchedSchemaId: Id<"schemas"> | undefined;
     for (const update of args.updates) {
       // oxlint-disable-next-line no-await-in-loop -- the batch is one transaction; row writes land in order under its write budget.
       const existing = await ctx.db.get(update.id);
       if (existing === null) {
-        continue; // Deleted (or its whole dataset went) mid-run — nothing to round.
+        skipped += 1; // Deleted (or its whole dataset went) mid-run.
+        continue;
+      }
+      // Compare-and-swap (issue #129): blobs are immutable, so an unchanged
+      // storage id proves the payload is the one that was read; inline rows
+      // compare their text. A mismatch means the row was written to during
+      // the batch — leave the newer value alone.
+      const unchanged =
+        (update.expectedGeometryJson !== undefined &&
+          existing.geometryJson === update.expectedGeometryJson) ||
+        (update.expectedGeometryStorageId !== undefined &&
+          existing.geometryStorageId === update.expectedGeometryStorageId);
+      if (!unchanged) {
+        skipped += 1;
+        continue;
       }
       touchedSchemaId ??= existing.schemaId;
       // The row's old blob is always superseded by this write: either the
@@ -4251,6 +4776,7 @@ export const applySimplifiedGeometriesInternal = internalMutation({
         geometryJson: update.geometryJson,
         geometryStorageId: update.geometryStorageId,
       });
+      applied += 1;
     }
     // One bump per batch write, not per row — the batch is one transaction,
     // so consumers only need to know the data changed at all (and the
@@ -4263,9 +4789,9 @@ export const applySimplifiedGeometriesInternal = internalMutation({
         await bumpMapTileCacheVersion(ctx, touchedSchemaId, schemaDoc);
       }
     }
-    return null;
+    return { applied, skipped };
   },
-  returns: v.null(),
+  returns: v.object({ applied: v.number(), skipped: v.number() }),
 });
 
 // Rows per simplify batch: the same ceiling `listGeometries` honors — the
@@ -4282,8 +4808,12 @@ const SIMPLIFY_BATCH_ROWS = MAX_GEOMETRY_PAGE_ROWS,
  * Rounds ONE batch of the schema's geometry payloads and writes them back.
  * Runs as a workflow step (see the module comment above for why an action is
  * required). Malformed payloads — which current write paths never produce —
- * are skipped rather than failing the batch. Returns how many rows were
- * rewritten (for progress) plus the pagination cursor.
+ * are skipped rather than failing the batch, and the skip is COUNTED and
+ * reported (issue #129: the old bare `catch {}` made a partial run read as a
+ * clean one). Returns how many rows were rewritten, how many were skipped
+ * (unreadable payloads, concurrent edits lost to the compare-and-swap), and
+ * the pagination cursor. Blobs stored for rows whose apply never lands are
+ * deleted on the failure path, so an interrupted attempt orphans nothing.
  */
 export const simplifyGeometryBatchInternal = internalAction({
   args: {
@@ -4297,7 +4827,7 @@ export const simplifyGeometryBatchInternal = internalAction({
   handler: async (
     ctx,
     args,
-  ): Promise<{ continueCursor: string; isDone: boolean; simplified: number }> => {
+  ): Promise<{ continueCursor: string; isDone: boolean; simplified: number; skipped: number }> => {
     const { continueCursor, isDone, page } = await ctx.runQuery(
       internal.lib.listSimplifyBatchInternal,
       {
@@ -4308,13 +4838,19 @@ export const simplifyGeometryBatchInternal = internalAction({
     );
 
     let simplified = 0,
+      skipped = 0,
       pendingBytes = 0;
     const pending: Array<{
-      bbox?: number[];
-      geometryJson?: string;
-      geometryStorageId?: Id<"_storage">;
-      id: Id<"geometries">;
-    }> = [];
+        bbox?: number[];
+        expectedGeometryJson?: string;
+        expectedGeometryStorageId?: Id<"_storage">;
+        geometryJson?: string;
+        geometryStorageId?: Id<"_storage">;
+        id: Id<"geometries">;
+      }> = [],
+      // Blobs `resolveGeometryStorage` stored for rows still awaiting their
+      // apply — deleted if the step fails so they never orphan (issue #129).
+      unappliedStorageIds: Array<Id<"_storage">> = [];
     // Flushes `pending` to the write mutation, chunked by payload bytes so a
     // full batch of near-limit geometries never exceeds the per-transaction
     // write budget the import path has already proven (see
@@ -4323,63 +4859,97 @@ export const simplifyGeometryBatchInternal = internalAction({
       if (pending.length === 0) {
         return;
       }
-      await ctx.runMutation(internal.lib.applySimplifiedGeometriesInternal, {
-        updates: pending.splice(0),
-      });
+      const result: { applied: number; skipped: number } = await ctx.runMutation(
+        internal.lib.applySimplifiedGeometriesInternal,
+        { updates: pending.splice(0) },
+      );
+      simplified += result.applied;
+      skipped += result.skipped;
+      unappliedStorageIds.length = 0;
       pendingBytes = 0;
     };
 
-    for (const row of page) {
-      try {
-        let raw: string;
-        if (row.geometryJson !== undefined) {
-          raw = row.geometryJson;
-        } else {
-          // oxlint-disable-next-line no-await-in-loop -- per-row payload reads; the batch is bounded by the shared paginator's byte budget.
-          const blob =
-            row.geometryStorageId !== undefined
-              ? // oxlint-disable-next-line no-await-in-loop
-                await ctx.storage.get(row.geometryStorageId)
-              : null;
-          if (blob === null) {
-            throw new Error("Geometry payload blob is missing.");
+    try {
+      for (const row of page) {
+        try {
+          let raw: string;
+          if (row.geometryJson !== undefined) {
+            raw = row.geometryJson;
+          } else {
+            // oxlint-disable-next-line no-await-in-loop -- per-row payload reads; the batch is bounded by the shared paginator's byte budget.
+            const blob =
+              row.geometryStorageId !== undefined
+                ? // oxlint-disable-next-line no-await-in-loop
+                  await ctx.storage.get(row.geometryStorageId)
+                : null;
+            if (blob === null) {
+              throw new Error("Geometry payload blob is missing.");
+            }
+            // oxlint-disable-next-line no-await-in-loop
+            raw = await blob.text();
           }
+          const parsedGeometry = parseAndValidateGeometry(raw);
+          // oxlint-disable-next-line no-await-in-loop -- storage-form resolution writes per row, chunked into the pending flush below.
+          const rounded = roundGeometryCoordinates(
+              parsedGeometry,
+              GEOMETRY_SIMPLIFY_DECIMAL_PLACES,
+            ),
+            roundedJson = JSON.stringify(rounded);
           // oxlint-disable-next-line no-await-in-loop
-          raw = await blob.text();
+          const resolved = await resolveGeometryStorage(ctx, rounded, roundedJson);
+          if (resolved.geometryStorageId !== undefined) {
+            unappliedStorageIds.push(resolved.geometryStorageId);
+          }
+          // `resolved` also carries `type` (unchanged by rounding) — only the
+          // fields this write actually touches travel to the mutation,
+          // alongside the CAS tokens (what the row carried when read).
+          pending.push({
+            bbox: resolved.bbox,
+            expectedGeometryJson: row.geometryJson,
+            expectedGeometryStorageId: row.geometryStorageId,
+            geometryJson: resolved.geometryJson,
+            geometryStorageId: resolved.geometryStorageId,
+            id: row.id,
+          });
+          pendingBytes += byteLength(roundedJson);
+        } catch (rowError) {
+          // Unreadable/unparseable payload — leave the row as-is and keep
+          // the batch moving, but SAY so: the skip count rides the status
+          // doc instead of vanishing (issue #129).
+          skipped += 1;
+          console.warn(
+            `simplify: skipped geometry row ${row.id}:`,
+            rowError instanceof Error ? rowError.message : rowError,
+          );
         }
-        const parsedGeometry = parseAndValidateGeometry(raw);
-        // oxlint-disable-next-line no-await-in-loop -- storage-form resolution writes per row, chunked into the pending flush below.
-        const rounded = roundGeometryCoordinates(parsedGeometry, GEOMETRY_SIMPLIFY_DECIMAL_PLACES),
-          roundedJson = JSON.stringify(rounded);
-        // oxlint-disable-next-line no-await-in-loop
-        const resolved = await resolveGeometryStorage(ctx, rounded, roundedJson);
-        // `resolved` also carries `type` (unchanged by rounding) — only the
-        // fields this write actually touches travel to the mutation.
-        pending.push({
-          bbox: resolved.bbox,
-          geometryJson: resolved.geometryJson,
-          geometryStorageId: resolved.geometryStorageId,
-          id: row.id,
-        });
-        pendingBytes += byteLength(roundedJson);
-        simplified += 1;
-      } catch {
-        // Unreadable/unparseable payload — leave the row as-is and keep the
-        // batch moving; everything else still simplifies.
+        if (pendingBytes >= SIMPLIFY_WRITE_CHUNK_BYTES) {
+          // oxlint-disable-next-line no-await-in-loop -- chunked writes must land in payload order; inherently sequential.
+          await flush();
+        }
       }
-      if (pendingBytes >= SIMPLIFY_WRITE_CHUNK_BYTES) {
-        // oxlint-disable-next-line no-await-in-loop -- chunked writes must land in payload order; inherently sequential.
-        await flush();
-      }
+      await flush();
+    } catch (err) {
+      // The step (or a flush) failed — every blob stored above for rows that
+      // never got applied is unreferenced now. Best-effort delete, rethrow.
+      await Promise.all(
+        unappliedStorageIds.map(async (geometryStorageId) => {
+          try {
+            await ctx.storage.delete(geometryStorageId);
+          } catch {
+            // Already gone — best-effort cleanup on the failure path.
+          }
+        }),
+      );
+      throw err;
     }
-    await flush();
 
-    return { continueCursor, isDone, simplified };
+    return { continueCursor, isDone, simplified, skipped };
   },
   returns: v.object({
     continueCursor: v.string(),
     isDone: v.boolean(),
     simplified: v.number(),
+    skipped: v.number(),
   }),
 });
 
@@ -4397,6 +4967,7 @@ export const simplifyGeometryWorkflow = workflow.define({
     });
 
     let processed = 0,
+      skipped = 0,
       cursor: string | null = null,
       isDone = false;
     // Sequential for the same reason `importWorkflow` is: memory stays
@@ -4404,25 +4975,37 @@ export const simplifyGeometryWorkflow = workflow.define({
     while (!isDone) {
       // Explicitly typed to avoid a circular type reference — see the same
       // pattern in `geospatialConversionWorkflow` above.
-      const result: { continueCursor: string; isDone: boolean; simplified: number } =
+      const result: {
+        continueCursor: string;
+        isDone: boolean;
+        simplified: number;
+        skipped: number;
+      } =
         // oxlint-disable-next-line no-await-in-loop
         await step.runAction(internal.lib.simplifyGeometryBatchInternal, {
           cursor,
           schemaId: args.schemaId,
         });
       processed += result.simplified;
+      skipped += result.skipped;
       cursor = result.continueCursor;
       isDone = result.isDone;
       // oxlint-disable-next-line no-await-in-loop
       await step.runMutation(internal.lib.updateImportProgress, {
         importId: args.importId,
         processed,
+        skipped,
       });
     }
 
+    // A simplify run COMPLETES with skips surfaced (issue #129) — a skipped
+    // row is a payload the run couldn't rewrite (or deliberately didn't:
+    // the compare-and-swap), not a reason to fail the dataset's own request.
+    // The count rides the status doc so the UI can show it.
     await step.runMutation(internal.lib.updateImportProgress, {
       importId: args.importId,
       processed,
+      skipped,
       status: "completed",
     });
   },
@@ -4455,6 +5038,8 @@ export const startSimplification = mutation({
     if (schemaDoc.kind !== "geospatial") {
       throw new ConvexError("Only a geospatial dataset can simplify geometry.");
     }
+    assertValidTotal(args.total);
+    await assertNoActiveDataRun(ctx, args.schemaId);
 
     // Future writes (entry creates/updates, imports) simplify from now on,
     // matching the data this run is about to normalize.
