@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * same-scope token, and unclaimed rows are swept. Driven through the same
  * surfaces the real flows use — `generateUploadUrl` → blob → `startImport`'s
  * client path / the host claim — plus the public-result check that no
- * tile-archive metadata leaks a `_storage` id.
+ * client-exposed read leaks a `_storage` id.
  *
  * Blob planting uses the host-support test action (convex-test does not
  * serve upload URLs; see host_support.storeTestBlob) — the token mechanics
@@ -219,7 +219,7 @@ describe("sweepAbandonedUploads", () => {
 });
 
 describe("public results carry no storage ids", () => {
-  it("getMapTileArchiveMeta and the schema summaries never return a _storage id", async () => {
+  it("no client-exposed read of a fully-decorated dataset carries a _storage id", async () => {
     const t = initTest(),
       schemaId = await t.mutation(api.lib.createSchema, {
         geometryType: "Point",
@@ -228,6 +228,9 @@ describe("public results carry no storage ids", () => {
       }),
       archive = await t.run(async (ctx) =>
         ctx.storage.store(new Blob(["pmtiles"], { type: "application/octet-stream" })),
+      ),
+      sourceFile = await t.run(async (ctx) =>
+        ctx.storage.store(new Blob(["original"], { type: "application/json" })),
       );
     await t.mutation(api.lib.setMapTileArchive, {
       bytes: 7,
@@ -236,6 +239,82 @@ describe("public results carry no storage ids", () => {
       schemaId,
       storageId: archive,
     });
+
+    // A started import (its workflow never drains under this harness) leaves
+    // the status doc holding the chunk pointers — exactly what
+    // `getImportStatus` used to hand back. The source file rides the same
+    // call, so the dataset also has a retained original.
+    const chunk = await plantChunk(t, [{ name: "a" }]),
+      chunkIssue = await t.mutation(api.lib.generateUploadUrl, { scope: schemaId }),
+      sourceIssue = await t.mutation(api.lib.generateUploadUrl, { scope: schemaId }),
+      importId = await t.mutation(api.lib.startImport, {
+        chunks: [{ storageId: chunk, uploadId: chunkIssue.uploadId }],
+        schemaId,
+        sourceFile: {
+          name: "original.json",
+          size: 8,
+          storageId: sourceFile,
+          uploadId: sourceIssue.uploadId,
+        },
+        total: 1,
+      });
+
+    // A second dataset (no source file) and a collection covering both, so
+    // the list reads have rows beyond the primary one.
+    const otherSchemaId = await createImportSchema(t),
+      collectionId = await t.mutation(api.lib.createCollection, { name: "Collection" });
+    await t.mutation(api.lib.addSchemaToCollection, { collectionId, schemaId });
+    await t.mutation(api.lib.addSchemaToCollection, { collectionId, schemaId: otherSchemaId });
+
+    // Every planted blob id must be absent from every public result — the
+    // storage-id secrecy half of issue #131, enforced at the value level so
+    // a leak through ANY field (present or future) fails this check.
+    const planted = [archive, sourceFile, chunk];
+    const expectNoLeak = (label: string, result: unknown) => {
+      const serialized = JSON.stringify(result ?? null) ?? "";
+      for (const id of planted) {
+        expect(serialized.includes(id), `${label} leaked a _storage id`).toBe(false);
+      }
+    };
+
+    // The full-doc reads (the finding-1 fix): the stored shape minus the two
+    // `_storage` pointers, with the retained source file downgraded to a flag.
+    const doc = await t.query(api.lib.getSchema, { schemaId });
+    if (doc === null) {
+      throw new Error("test fixture: the decorated dataset vanished");
+    }
+    expect(doc.hasSourceFile).toBe(true);
+    expect("mapTileArchiveStorageId" in doc).toBe(false);
+    expect("sourceFileStorageId" in doc).toBe(false);
+    expectNoLeak("getSchema", doc);
+
+    const plainDoc = await t.query(api.lib.getSchema, { schemaId: otherSchemaId });
+    if (plainDoc === null) {
+      throw new Error("test fixture: the plain dataset vanished");
+    }
+    expect(plainDoc.hasSourceFile).toBe(false);
+
+    const listed = await t.query(api.lib.listSchemas, { viewerId: "someone" });
+    expect(listed.map((row) => row._id).toSorted()).toStrictEqual(
+      [schemaId, otherSchemaId].toSorted(),
+    );
+    expectNoLeak("listSchemas", listed);
+
+    const inCollection = await t.query(api.lib.listSchemasByCollection, {
+      collectionId,
+      viewerId: "someone",
+    });
+    expect(inCollection.map((row) => row._id).toSorted()).toStrictEqual(
+      [schemaId, otherSchemaId].toSorted(),
+    );
+    expectNoLeak("listSchemasByCollection", inCollection);
+
+    // Import status: progress only, never the chunk pointers.
+    const status = await t.query(api.lib.getImportStatus, { importId });
+    expect(status).not.toBeNull();
+    expect("storageId" in (status ?? {})).toBe(false);
+    expect("storageIds" in (status ?? {})).toBe(false);
+    expectNoLeak("getImportStatus", status);
 
     // The tile meta: exactly the decision fields, never the blob pointer.
     const meta = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
@@ -246,11 +325,16 @@ describe("public results carry no storage ids", () => {
       "url",
       "version",
     ]);
+    expectNoLeak("getMapTileArchiveMeta", meta);
 
     // The summaries: no archive storage id either (issue #131).
     const summaries = await t.query(api.lib.listSchemaSummaries, { viewerId: "someone" });
     const row = summaries.find((summary) => summary._id === schemaId);
     expect(row).toBeDefined();
     expect("mapTileArchiveStorageId" in (row ?? {})).toBe(false);
+    expectNoLeak("listSchemaSummaries", summaries);
+
+    const drafts = await t.query(api.lib.listDraftSchemaSummaries, { viewerId: "someone" });
+    expectNoLeak("listDraftSchemaSummaries", drafts);
   });
 });

@@ -467,9 +467,7 @@ function SchemaDetailBody() {
     sourceFileUrl = useQuery({
       ...convexQuery(
         api.schemas.getSourceFileUrl,
-        schema !== undefined && schema !== null && schema.sourceFileStorageId !== undefined
-          ? { schemaId }
-          : "skip",
+        schema !== undefined && schema !== null && schema.hasSourceFile ? { schemaId } : "skip",
       ),
     }).data,
     downloadSourceFile = async () => {
@@ -732,7 +730,7 @@ function SchemaDetailBody() {
               Create Entry
             </Button>
           )}
-          {(isGeospatialDataset || schema.sourceFileStorageId !== undefined || isCreator) && (
+          {(isGeospatialDataset || schema.hasSourceFile || isCreator) && (
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={<Button variant="outline" size="icon" aria-label="More actions" />}
@@ -779,7 +777,7 @@ function SchemaDetailBody() {
                     Simplify geometry…
                   </DropdownMenuItem>
                 )}
-                {schema.sourceFileStorageId !== undefined && (
+                {schema.hasSourceFile && (
                   <DropdownMenuItem
                     disabled={sourceFileUrl === undefined}
                     onClick={() => void downloadSourceFile()}

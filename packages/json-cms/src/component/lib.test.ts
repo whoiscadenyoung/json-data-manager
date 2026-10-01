@@ -2492,9 +2492,13 @@ describe("json-cms component", () => {
 
       await t.mutation(api.lib.deleteEntriesBySchema, { schemaId });
 
+      // The reset is checked on the STORED doc — the public `getSchema` view
+      // deliberately never carries the storage pointer (issue #131).
+      const stored = await t.run(async (ctx) => ctx.db.get(schemaId));
+      assertDefined(stored);
+      expect(stored.mapTileArchiveStorageId).toBeUndefined();
       const schemaDoc = await t.query(api.lib.getSchema, { schemaId });
       assertDefined(schemaDoc);
-      expect(schemaDoc.mapTileArchiveStorageId).toBeUndefined();
       expect(schemaDoc.mapTileArchiveBytes).toBeUndefined();
       expect(schemaDoc.mapTileArchiveMaxZoom).toBeUndefined();
       expect(schemaDoc.mapTileArchiveBuiltVersion).toBeUndefined();
@@ -2535,16 +2539,17 @@ describe("json-cms component", () => {
         // version present" for the meta query.
         const meta = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
         assertDefined(meta);
-        // The meta carries NO storage id (issue #131) — the pointer is only
-        // ever readable back off the stored doc.
+        // The meta carries NO storage id (issue #131).
         expect("storageId" in meta).toBe(false);
         expect(meta.version).toBe(0);
         expect(meta.bytes).toBe("legacy-archive".length);
         expect(meta.maxZoom).toBe(12);
         expect(meta.url).toBeTruthy();
-        const row = await t.query(api.lib.getSchema, { schemaId });
-        assertDefined(row);
-        expect(row.mapTileArchiveStorageId).toBe(storageId);
+        // The pointer is only ever readable back off the STORED doc — the
+        // public `getSchema` view strips it (issue #131).
+        const stored = await t.run(async (ctx) => ctx.db.get(schemaId));
+        assertDefined(stored);
+        expect(stored.mapTileArchiveStorageId).toBe(storageId);
       });
 
       it("makes an archive observably stale when edits land after its install", async () => {
@@ -2575,7 +2580,9 @@ describe("json-cms component", () => {
         const row = await t.query(api.lib.getSchema, { schemaId });
         assertDefined(row);
         expect(row.mapTileCacheVersion).toBe(1);
-        expect(row.mapTileArchiveStorageId).toBe(storageId);
+        const stored = await t.run(async (ctx) => ctx.db.get(schemaId));
+        assertDefined(stored);
+        expect(stored.mapTileArchiveStorageId).toBe(storageId);
       });
 
       it("re-installing at the same version deletes the superseded blob and repoints the meta", async () => {
@@ -2588,9 +2595,9 @@ describe("json-cms component", () => {
         const replaced = await t.run(async (ctx) => ctx.storage.get(firstId));
         expect(replaced).toBeNull();
 
-        const row = await t.query(api.lib.getSchema, { schemaId });
-        assertDefined(row);
-        expect(row.mapTileArchiveStorageId).toBe(secondId);
+        const stored = await t.run(async (ctx) => ctx.db.get(schemaId));
+        assertDefined(stored);
+        expect(stored.mapTileArchiveStorageId).toBe(secondId);
       });
 
       it("a stale expectedVersion discards the incoming blob and leaves the row untouched", async () => {
@@ -2616,9 +2623,11 @@ describe("json-cms component", () => {
 
         const discarded = await t.run(async (ctx) => ctx.storage.get(staleId));
         expect(discarded).toBeNull();
+        const stored = await t.run(async (ctx) => ctx.db.get(schemaId));
+        assertDefined(stored);
+        expect(stored.mapTileArchiveStorageId).toBe(currentId);
         const after = await t.query(api.lib.getSchema, { schemaId });
         assertDefined(after);
-        expect(after.mapTileArchiveStorageId).toBe(currentId);
         expect(after.mapTileCacheVersion).toBe(2);
         expect(after.mapTileArchiveBytes).toBe(before.mapTileArchiveBytes);
 

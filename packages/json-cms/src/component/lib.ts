@@ -70,6 +70,18 @@ const SCHEMA_SIZE_LIMIT = 102_400, // 100 KB
     _creationTime: v.number(),
     _id: v.id("schemas"),
   }),
+  // The client-facing view of a `schemas` doc (issue #131): the stored shape
+  // minus its two `_storage` pointers. `mapTileArchiveStorageId` names the
+  // installed archive blob (internal to the install/delete flows — an
+  // installed archive is provable from `mapTileArchiveBuiltVersion` alone);
+  // `sourceFileStorageId` names the retained source-file blob and survives
+  // only as the `hasSourceFile` flag, the bytes staying reachable through
+  // `getSourceFileUrl`'s URL. Every public query that returns a schema doc
+  // projects through `toPublicSchemaView` against this validator, so the
+  // criterion "no public query returns a `_storage` id" holds by construction.
+  publicSchemaViewValidator = schemaValidator
+    .omit("mapTileArchiveStorageId", "sourceFileStorageId")
+    .extend({ hasSourceFile: v.boolean() }),
   entryValidator = schema.tables.entries.validator.extend({
     _creationTime: v.number(),
     _id: v.id("entries"),
@@ -184,13 +196,30 @@ function isCatalogVisibleToViewer(
   return isCatalogVisible(doc) && isVisibleToViewer(doc, viewerId);
 }
 
+/**
+ * The client-facing projection of a full `schemas` doc (issue #131): the
+ * stored shape with the two `_storage` pointers stripped — the storage-id
+ * secrecy half of the fix. `mapTileArchiveStorageId` is internal to the
+ * install/delete flows; `sourceFileStorageId` becomes `hasSourceFile`, so a
+ * caller can still tell "this dataset has a retained original" without
+ * learning the blob's id. Every public query that returns a schema doc maps
+ * through here — host flows that need the raw pointers read the stored doc
+ * component-side (`ctx.db.get`), never through a public result.
+ */
+function toPublicSchemaView(doc: Doc<"schemas">) {
+  const { mapTileArchiveStorageId: _archiveId, sourceFileStorageId: _sourceFileId, ...view } = doc;
+  return { ...view, hasSourceFile: _sourceFileId !== undefined };
+}
+
 export const listSchemas = query({
   args: { viewerId: v.string() },
   handler: async (ctx, args) => {
     const docs = await ctx.db.query("schemas").order("desc").collect();
-    return docs.filter((doc) => isCatalogVisibleToViewer(doc, args.viewerId));
+    return docs
+      .filter((doc) => isCatalogVisibleToViewer(doc, args.viewerId))
+      .map(toPublicSchemaView);
   },
-  returns: v.array(schemaValidator),
+  returns: v.array(publicSchemaViewValidator),
 });
 
 /** Number of top-level `properties` on a stored JSON schema — the datasets
@@ -322,8 +351,11 @@ export const listDraftSchemaSummaries = query({
 
 export const getSchema = query({
   args: { schemaId: v.id("schemas") },
-  handler: async (ctx, args) => ctx.db.get(args.schemaId),
-  returns: v.union(v.null(), schemaValidator),
+  handler: async (ctx, args) => {
+    const doc = await ctx.db.get(args.schemaId);
+    return doc === null ? null : toPublicSchemaView(doc);
+  },
+  returns: v.union(v.null(), publicSchemaViewValidator),
 });
 
 /**
@@ -371,13 +403,15 @@ export const getImportSchemaId = query({
  */
 export const listSchemaVersions = query({
   args: { sourceSchemaId: v.id("schemas") },
-  handler: async (ctx, args) =>
-    ctx.db
+  handler: async (ctx, args) => {
+    const versions = await ctx.db
       .query("schemas")
       .withIndex("by_lineage_source", (q) => q.eq("lineage.sourceSchemaId", args.sourceSchemaId))
       .order("desc")
-      .collect(),
-  returns: v.array(schemaValidator),
+      .collect();
+    return versions.map(toPublicSchemaView);
+  },
+  returns: v.array(publicSchemaViewValidator),
 });
 
 /**
@@ -388,12 +422,14 @@ export const listSchemaVersions = query({
  */
 export const getSchemaVersionBySnapshotRef = query({
   args: { snapshotRef: v.string() },
-  handler: async (ctx, args) =>
-    ctx.db
+  handler: async (ctx, args) => {
+    const doc = await ctx.db
       .query("schemas")
       .withIndex("by_lineage_snapshotRef", (q) => q.eq("lineage.snapshotRef", args.snapshotRef))
-      .first(),
-  returns: v.union(v.null(), schemaValidator),
+      .first();
+    return doc === null ? null : toPublicSchemaView(doc);
+  },
+  returns: v.union(v.null(), publicSchemaViewValidator),
 });
 
 /**
@@ -1034,12 +1070,14 @@ export const listSchemasByCollection = query({
       .withIndex("by_collection", (q) => q.eq("collectionId", args.collectionId))
       .collect();
     const datasets = await Promise.all(memberships.map(async (row) => ctx.db.get(row.schemaId)));
-    return datasets.filter(
-      (dataset): dataset is NonNullable<typeof dataset> =>
-        dataset !== null && isCatalogVisibleToViewer(dataset, args.viewerId),
-    );
+    return datasets
+      .filter(
+        (dataset): dataset is NonNullable<typeof dataset> =>
+          dataset !== null && isCatalogVisibleToViewer(dataset, args.viewerId),
+      )
+      .map(toPublicSchemaView);
   },
-  returns: v.array(schemaValidator),
+  returns: v.array(publicSchemaViewValidator),
 });
 
 /** Every `{dataset, collection}` membership row — lets clients count/filter memberships without one query per collection. */
@@ -2984,9 +3022,14 @@ export const backfillDatasetSummaries = mutation({
 // ---------------------------------------------------------------------------
 
 const importValidator = schema.tables.imports.validator.extend({
-  _creationTime: v.number(),
-  _id: v.id("imports"),
-});
+    _creationTime: v.number(),
+    _id: v.id("imports"),
+  }),
+  // The public status view (issue #131): everything the progress UI and the
+  // host pollers read, minus the chunk-blob pointers (`storageId` legacy /
+  // `storageIds`) — no public query returns a `_storage` id. The workflow
+  // receives the chunk ids through its own args, never through this result.
+  importStatusValidator = importValidator.omit("storageId", "storageIds");
 
 /**
  * Generate a short-lived URL the client POSTs one chunk of serialized rows to.
@@ -3018,8 +3061,15 @@ export const generateUploadUrl = mutation({
 /** Read the import status doc (client subscribes to this for progress). */
 export const getImportStatus = query({
   args: { importId: v.id("imports") },
-  handler: async (ctx, args) => ctx.db.get(args.importId),
-  returns: v.union(importValidator, v.null()),
+  handler: async (ctx, args) => {
+    const doc = await ctx.db.get(args.importId);
+    if (doc === null) {
+      return null;
+    }
+    const { storageId: _legacyId, storageIds: _chunkIds, ...status } = doc;
+    return status;
+  },
+  returns: v.union(importStatusValidator, v.null()),
 });
 
 /**

@@ -39,8 +39,12 @@ export interface SchemaDoc {
    * Absent means no simplification (pre-flag datasets).
    */
   simplifyGeometry?: boolean;
-  /** The original imported file, retained in storage for re-download. */
-  sourceFileStorageId?: string;
+  /**
+   * True when the dataset retains its original imported file in storage for
+   * re-download (issue #131: the blob's `_storage` id itself never appears
+   * in a public result — the bytes are reachable only via `getSourceFileUrl`).
+   */
+  hasSourceFile: boolean;
   sourceFileName?: string;
   sourceFileSize?: number;
   /**
@@ -50,8 +54,6 @@ export interface SchemaDoc {
    * tile archive is still current.
    */
   mapTileCacheVersion?: number;
-  /** Pointer to the current tile archive blob, when one is installed. */
-  mapTileArchiveStorageId?: string;
   /** The tile archive's byte length, set at install time. */
   mapTileArchiveBytes?: number;
   /** The tile pyramid's max zoom, set at install time. */
@@ -276,14 +278,13 @@ export interface JsonCmsApi {
 
 /**
  * Live status of a batched dataset import, as returned by `getImportStatus`.
+ * The chunk-blob `_storage` ids are deliberately not part of the public
+ * status (issue #131) — the workflow consumes them server-side.
  */
 export interface ImportStatusDoc {
   _id: string;
   _creationTime: number;
   schemaId: SchemaId;
-  /** @deprecated superseded by `storageIds` (one blob per client-uploaded chunk). */
-  storageId?: string;
-  storageIds?: string[];
   total: number;
   processed: number;
   status: "pending" | "processing" | "completed" | "failed";

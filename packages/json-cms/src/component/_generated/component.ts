@@ -295,8 +295,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           processed: number;
           schemaId: string;
           status: "pending" | "processing" | "completed" | "failed";
-          storageId?: string;
-          storageIds?: Array<string>;
           total: number;
           workflowId?: string;
         } | null,
@@ -346,6 +344,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "Polygon"
             | "MultiPolygon";
           groupId?: string;
+          hasSourceFile: boolean;
           kind?: "standard" | "geospatial";
           lifecycle?: "draft" | "published";
           lineage?: {
@@ -364,7 +363,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
           mapTileArchiveMaxZoom?: number;
-          mapTileArchiveStorageId?: string;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
           schema: any;
@@ -372,7 +370,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           source?: { name: string };
           sourceFileName?: string;
           sourceFileSize?: number;
-          sourceFileStorageId?: string;
           title: string;
           uiSchema?: any;
         },
@@ -398,6 +395,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "Polygon"
             | "MultiPolygon";
           groupId?: string;
+          hasSourceFile: boolean;
           kind?: "standard" | "geospatial";
           lifecycle?: "draft" | "published";
           lineage?: {
@@ -416,7 +414,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
           mapTileArchiveMaxZoom?: number;
-          mapTileArchiveStorageId?: string;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
           schema: any;
@@ -424,7 +421,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           source?: { name: string };
           sourceFileName?: string;
           sourceFileSize?: number;
-          sourceFileStorageId?: string;
           title: string;
           uiSchema?: any;
         },
@@ -805,6 +801,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "Polygon"
             | "MultiPolygon";
           groupId?: string;
+          hasSourceFile: boolean;
           kind?: "standard" | "geospatial";
           lifecycle?: "draft" | "published";
           lineage?: {
@@ -823,7 +820,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
           mapTileArchiveMaxZoom?: number;
-          mapTileArchiveStorageId?: string;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
           schema: any;
@@ -831,7 +827,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           source?: { name: string };
           sourceFileName?: string;
           sourceFileSize?: number;
-          sourceFileStorageId?: string;
           title: string;
           uiSchema?: any;
         }>,
@@ -857,6 +852,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "Polygon"
             | "MultiPolygon";
           groupId?: string;
+          hasSourceFile: boolean;
           kind?: "standard" | "geospatial";
           lifecycle?: "draft" | "published";
           lineage?: {
@@ -875,7 +871,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
           mapTileArchiveMaxZoom?: number;
-          mapTileArchiveStorageId?: string;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
           schema: any;
@@ -883,7 +878,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           source?: { name: string };
           sourceFileName?: string;
           sourceFileSize?: number;
-          sourceFileStorageId?: string;
           title: string;
           uiSchema?: any;
         }>,
@@ -955,6 +949,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "Polygon"
             | "MultiPolygon";
           groupId?: string;
+          hasSourceFile: boolean;
           kind?: "standard" | "geospatial";
           lifecycle?: "draft" | "published";
           lineage?: {
@@ -973,7 +968,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
           mapTileArchiveMaxZoom?: number;
-          mapTileArchiveStorageId?: string;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
           schema: any;
@@ -981,7 +975,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           source?: { name: string };
           sourceFileName?: string;
           sourceFileSize?: number;
-          sourceFileStorageId?: string;
           title: string;
           uiSchema?: any;
         }>,
