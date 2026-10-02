@@ -15,6 +15,6 @@ Close-out details worth remembering:
 - **#152 (#128 follow-up) was the stale-dist phantom:** its red type-aware oxlint gate passed immediately after a fresh json-cms dist build (rebuild dists before trusting lint — confirmed again).
 - The stash was 100% subsumed by #152's pushed commits + the re-committed MEMORY.md line; dropped.
 - Gotcha re-confirmed: `cmd | tail` masks exit codes — a failing fmt:check slipped through a `&&` chain into a merged commit; fixed with an immediate style commit (the train's own precedent).
-- Manual follow-up: in-browser verification of the #135 sign-in gate and #124 lock toggles.
+- **Manual browser verification DONE 2026-10-02** (local backend, two accounts: gate redirects on all routes, lock/loop incl. backend denial of a deep-linked save, co-editing restored on unlock). Live testing found + fixed two gate-defeating root siblings: the tile-archive watchers and the persister buster query — f5632e5/18635d2, documented on #135. Demo stack torn down after.
 
 Related: [[dwf-provider-quota-behavior]], [[code-review-2026-09-30]].
