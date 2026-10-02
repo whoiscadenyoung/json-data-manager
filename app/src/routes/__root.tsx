@@ -3,7 +3,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { HeadContent, Scripts, createRootRouteWithContext } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 
-import { AuthGate } from "#/components/auth-gate";
+import { AuthGate, SignedInOnly } from "#/components/auth-gate";
 import { Header } from "#/components/header";
 import { Toaster } from "#/components/ui/sonner";
 import { AppConvexProvider } from "#/integrations/convex/provider";
@@ -54,8 +54,13 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       <body className="font-sans antialiased wrap-anywhere selection:bg-[rgba(79,184,178,0.24)]">
         <AppConvexProvider>
           <TanStackQueryProvider>
-            <TileArchiveManager />
-            <TileArchiveCacheManager />
+            {/* The catalog watchers query the moment they mount — they ride
+                SignedInOnly so a signed-out visitor's gate redirect can't be
+                replaced by their "You're signed out" failures (#135). */}
+            <SignedInOnly>
+              <TileArchiveManager />
+              <TileArchiveCacheManager />
+            </SignedInOnly>
             <Header />
             {/* The app-wide sign-in gate (issue #135): nothing routed renders
                 — or queries — until the session resolves as signed in. */}

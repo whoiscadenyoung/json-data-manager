@@ -35,3 +35,18 @@ export function AuthGate({ children }: { children: ReactNode }) {
   }
   return <>{children}</>;
 }
+
+/**
+ * Renders its children only once the session resolves as signed in — nothing
+ * while resolving, nothing signed out, no redirect. For the root-level
+ * watchers that sit outside the routed tree (#135 follow-up): their queries
+ * must never fire anonymously, and their failures must not reach the
+ * provider-level boundary whose screen would replace the gate's redirect.
+ */
+export function SignedInOnly({ children }: { children: ReactNode }) {
+  const { isAuthenticated, isLoading } = useConvexAuth();
+  if (isLoading || !isAuthenticated) {
+    return null;
+  }
+  return <>{children}</>;
+}
