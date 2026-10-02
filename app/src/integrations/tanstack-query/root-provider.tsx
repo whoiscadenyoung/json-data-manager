@@ -4,7 +4,7 @@ import {
   PersistQueryClientProvider,
   persistQueryClientSave,
 } from "@tanstack/react-query-persist-client";
-import { useQuery } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { createStore, del, get, set } from "idb-keyval";
 import type { UseStore } from "idb-keyval";
 import { useMemo, type ReactNode } from "react";
@@ -130,7 +130,15 @@ export function getContext() {
 
 export function TanStackQueryProvider({ children }: { children: ReactNode }) {
   const { queryClient } = getContext();
-  const maxTileCacheVersion = useQuery(api.schemas.maxTileCacheVersion);
+  const { isAuthenticated } = useConvexAuth();
+  // The buster only matters for signed-in light-state — an anonymous call
+  // here throws "You're signed out" at the provider-level boundary, whose
+  // screen replaces the gate's redirect (#135 follow-up). Signed out, boot
+  // on the plain provider: the gate mounts nothing that would cache anyway.
+  const maxTileCacheVersion = useQuery(
+    api.schemas.maxTileCacheVersion,
+    isAuthenticated ? {} : "skip",
+  );
   const persister = useMemo(
     () => (typeof document === "undefined" ? undefined : createLightStatePersister()),
     [],
