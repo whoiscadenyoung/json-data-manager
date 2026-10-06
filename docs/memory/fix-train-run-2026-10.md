@@ -1,13 +1,13 @@
 ---
 name: fix-train-run-2026-10
-description: State of the #124–#139 code-review fix-train workflow run — 10/15 merged, #125 blocked with red CI, resume id and remaining issues
+description: Record of the #124–#139 code-review fix-train run — complete, 14/15 merged, #137 parked; close-out lessons
 metadata:
   type: project
 ---
 
 The 2026-10-01 fix train (dynamic-workflow run `dwfrun-1c036bee-bfe8-47e4-b5ab-3bcd21f3bc68`, third settings-successor in the family: `dwfrun-b2383f50…` → `dwfrun-fb2f7bff…` → `dwfrun-1c036bee…`; script `.zcode/workflow-drafts/review-fixes.dwf.ts`) implements #124–#139 as one sequential branch/PR per issue with local CI-parity gates + independent review + merge. #137 excluded by maintainer decision.
 
-**🏁 REVIEW FULLY CLOSED 2026-10-01 evening.** Post-train close-out landed the last two PRs and closed umbrella #123. All 15 review issues (#124–#139) resolved: **14 fixed and merged (#141–#156), #137 closed as do-not-implement by maintainer decision** (issue stays open as the latent-defects record for a future wire-in).
+**🏁 REVIEW FULLY CLOSED 2026-10-01 evening.** Post-train close-out landed the last two PRs and closed umbrella #123. All 15 review issues (#124–#139) resolved: **14 fixed and merged (#141–#156), #137 parked as do-not-implement by maintainer decision** (the issue stays OPEN as the latent-defects record for a future wire-in).
 
 Close-out details worth remembering:
 
@@ -17,4 +17,4 @@ Close-out details worth remembering:
 - Gotcha re-confirmed: `cmd | tail` masks exit codes — a failing fmt:check slipped through a `&&` chain into a merged commit; fixed with an immediate style commit (the train's own precedent).
 - **Manual browser verification DONE 2026-10-02** (local backend, two accounts: gate redirects on all routes, lock/loop incl. backend denial of a deep-linked save, co-editing restored on unlock). Live testing found + fixed two gate-defeating root siblings: the tile-archive watchers and the persister buster query — f5632e5/18635d2, documented on #135. Demo stack torn down after.
 
-Related: [[dwf-provider-quota-behavior]], [[code-review-2026-09-30]].
+Related: [[code-review-2026-09-30]].

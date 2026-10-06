@@ -1,6 +1,7 @@
 # Architecture
 
-> Last verified against the code 2026-09-30 (post data-platform roadmap, #88).
+> Last verified against the code 2026-09-30 (post data-platform roadmap, #88);
+> CI, auth and known-gaps sections refreshed 2026-10-06 after the #123 fixes.
 > For the reasoning behind major decisions, see [`docs/decisions/`](./decisions/);
 > for topic designs, the [documentation map](#documentation-map) at the end.
 
@@ -32,7 +33,7 @@ Bun workspace (`bun.lock` at the root; use `bun`, not node/npm):
 | `app/`                       | The application: TanStack Start (React 19) frontend in `app/src`, Convex host functions in `app/convex`.                                                                                                                                                                                                                                                                                                    |
 | `packages/json-cms/`         | `@caden/json-cms` — the CMS Convex component (`src/component`), a typed client facade with `exposeApi` (`src/client`), React hooks + prop-driven UI (`src/react`), backend-free shared code (`src/shared`: geojson, references, **coercion** utilities, **transform engine** `src/shared/transform`, exported React-free as `@caden/json-cms/transform`). Keeps its own `example/` app as dev/codegen host. |
 | `packages/geometry-archive/` | `@caden/geometry-archive` — PMTiles archive writer + tile logic used by the map tile pipeline (issue #58).                                                                                                                                                                                                                                                                                                  |
-| `packages/data-export/`      | `@caden/data-export` — durable snapshot-export component. **Built but not wired in**: no consumer, not registered in `app/convex/convex.config.ts`, not run in CI. Decision pending: wire in as the backup story or archive it.                                                                                                                                                                             |
+| `packages/data-export/`      | `@caden/data-export` — durable snapshot-export component. **Built but not wired in**: no consumer, not registered in `app/convex/convex.config.ts`; typechecked and tested in CI. Latent defects parked on #137 for any future wire-in.                                                                                                                                                                     |
 | `.github/workflows/ci.yml`   | Root CI (see [Development](#development)).                                                                                                                                                                                                                                                                                                                                                                  |
 | `docs/`                      | Design docs, decision records, and project memory (see the map at the end).                                                                                                                                                                                                                                                                                                                                 |
 
@@ -149,8 +150,9 @@ appear in either schema.
   `app/src/routes/api/auth/$.tsx` → `app/src/lib/auth-server.ts`. Convex
   verifies the component's JWTs via `auth.config.ts` (must stay in sync with
   the `convex()` plugin, or everything reads as signed out). Env per
-  deployment: `BETTER_AUTH_SECRET`, `SITE_URL`. Sign-up is open (gating is
-  #136). Standalone `ConvexClient`s (the row-resolution seam's client, tile
+  deployment: `BETTER_AUTH_SECRET`, `SITE_URL`. Sign-up is closed
+  (`disableSignUp`, #136); accounts are minted host-side via the internal
+  `auth:createAccount`. Standalone `ConvexClient`s (the row-resolution seam's client, tile
   and analysis workers) authenticate via `fetchConvexToken`
   (`app/src/lib/convex-auth-token.ts`).
 - **`auth(ctx, operation?)` is the single choke point.** Every `exposeApi`
@@ -506,10 +508,10 @@ json-cms develops against its own `example/` host (`bun run dev` there runs
 backend + example + codegen watch) and carries its own vitest suite.
 
 **CI** (`.github/workflows/ci.yml`, one job on PRs and pushes to `main`):
-build json-cms and geometry-archive dists, then lint, typecheck (json-cms,
-geometry-archive, app), and test (json-cms, geometry-archive, app). Not
-gated: `oxfmt --check` (pre-existing unformatted files), `data-export`
-tests, deploys. App tests whose imports reach `env.ts` must `vi.mock("#/env")`
+build json-cms and geometry-archive dists, then `oxfmt --check`, lint,
+typecheck (json-cms, geometry-archive, data-export, app), test (json-cms,
+geometry-archive, app, data-export), and finally the app build. Not gated:
+deploys. App tests whose imports reach `env.ts` must `vi.mock("#/env")`
 (CI has no `.env.local`).
 
 Deployment has been volatile — the cloud dev deployment was disabled on
@@ -528,31 +530,31 @@ ages fast.
 | [`catalog-lifecycle-design.md`](./catalog-lifecycle-design.md)                 | implemented           | Projects, draft→publish, versioned consumption, bundles; ADR 0008.                                                                     |
 | [`analysis-layer-design.md`](./analysis-layer-design.md)                       | implemented           | DuckDB-WASM analysis design; Parquet sidecar still deferred.                                                                           |
 | [`data-platform-roadmap.md`](./data-platform-roadmap.md)                       | complete (2026-09-29) | Phase 0 + stages 1–9 (umbrella #88).                                                                                                   |
-| [`code-review-2026-09-30.md`](./code-review-2026-09-30.md)                     | historical record     | Post-roadmap full-repo review; known defects tracked under umbrella #123.                                                              |
+| [`code-review-2026-09-30.md`](./code-review-2026-09-30.md)                     | historical record     | Post-roadmap full-repo review; all findings resolved under umbrella #123.                                                              |
 | [`map-performance-audit-2026-09-16.md`](./map-performance-audit-2026-09-16.md) | historical record     | The audit that produced #48–#55; method + measurements still cited by the geometry path.                                               |
 | [`gis-geometry-transport-survey.md`](./gis-geometry-transport-survey.md)       | research (2026-09-17) | Survey of how major GIS platforms transport geometry; rationale companion to the tile path.                                            |
-| [`decisions/`](./decisions/)                                                   | living log            | Numbered decision records (ADR-style), 0001–0009.                                                                                      |
+| [`decisions/`](./decisions/)                                                   | living log            | Numbered decision records (ADR-style), 0001–0010.                                                                                      |
 | [`memory/`](./memory/MEMORY.md)                                                | living log            | Project memory: durable lessons, verification gotchas, per-initiative records. Policy in the repo `AGENTS.md`.                         |
 
 ## Known gaps
 
-- **Known defects** are catalogued in
-  [`code-review-2026-09-30.md`](./code-review-2026-09-30.md) and tracked
-  under umbrella issue **#123** (children #124–#139) — including the
-  storage-id authorization chain, derived-chain retention after retirement,
-  PMTiles run dedupe, DuckDB lockdown, and sync caps. Not repeated here.
+- **The 2026-09-30 review is closed** — every finding in
+  [`code-review-2026-09-30.md`](./code-review-2026-09-30.md) was fixed under
+  umbrella **#123** (#124–#139) except #137, parked below.
 - **Published artifacts are co-editable** by design (ADR 0009); per-dataset
-  opt-out shipped as `editPolicy` (ADR 0010, #124), and sign-up gating is
-  #136.
+  opt-out shipped as `editPolicy` (ADR 0010, #124), and sign-up is closed
+  (#136).
+- **Unverified in a browser:** a first real materialized publish +
+  republish (stage 5b) and a first DuckDB-WASM SQL query (stage 9) — both
+  unit-tested only (manual-verification list on #88).
 - **Parquet sidecar deferred** — analysis streams rows through the seam; no
   per-version Parquet artifact exists.
 - **#78 remote transport blocked** — bound datasets sync only from the local
   foreign-domain stand-in until the hosting-fork decision lands.
-- **#71 tile verification debt** — cloud range-request parity unverified,
-  one undiagnosed worker error, multi-tab rebuild convergence covered only by
-  unit tests.
 - **`@caden/data-export` is unwired** — the backup story exists as a package
-  but nothing registers or calls it, and CI does not run its tests.
+  but nothing registers or calls it; CI typechecks and tests it. Its latent
+  defects (table allowlist, streaming parts, idempotent file records) are
+  parked on #137 — fix them before any wire-in.
 - **#82** records a full architecture review (monolith splits, vendor
   boundary, host-schema segmentation) as reference-only; nothing there is
   approved work.

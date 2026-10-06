@@ -85,16 +85,12 @@ guard's liveness guarantee now.
   The verification-debt trio below is now tracked as **issue #71** (was
   memory-only). #54's remaining scope: entries-table server pagination,
   basemap style JSON off cartocdn, collection N+1, two unbounded fan-outs.
-- **Cloud range-request parity still unverified (tracked in #71)** — #58's risk
-  list asked for one `curl -H "Range: bytes=0-100"` probe against a CLOUD
-  storage URL during implementation; part 4 verified range requests on the
-  local dev backend only. Only matters when the app runs against a cloud
-  Convex deployment.
-- **Transient worker error, unroot-caused (tracked in #71):** part-5 live
-  verification observed one worker failure during "fetching" (a directly
-  spawned worker built fine); never reproduced or diagnosed.
-- **Multi-tab convergence is pinned by prune-rule unit tests only (tracked in
-  #71)** — never driven live with two tabs.
+- **#71 verification debt — CLOSED 2026-09-19, all four criteria verified
+  live:** cloud range probe passed; two-tab edit → rebuild convergence driven
+  live (both tabs built identical archives at the same version); cold-start
+  restore confirmed at mechanism level; the transient worker failure was
+  root-caused as environmental (flapping local backend) and rebuild failures
+  now surface as a toast + map chip (PR #73).
 - **Accepted costs, by design (documented so nobody re-litigates):** every
   geometry edit flips the dataset to the row path until the rebuild converges
   (~60 MB FY22 row pass; rebuild ≈4–5 min for 450 features z0–14); the real FY22
