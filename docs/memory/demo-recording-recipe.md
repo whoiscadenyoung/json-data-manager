@@ -52,9 +52,24 @@ lives in /tmp/demo-rec — scratch, re-buildable from this recipe):
 - **Demo data**: `.input/funding/ss4a-awards/geojson/fy24_implementation_grant_awards.geojson`
   (70 polygons), `.input/funding/tiger_build_raise-awards/TIGER 2009 - BUILD
   2026 Awards.xlsx` (1512 rows, Latitude/Longitude columns → geospatial
-  coordinate-picker flow), plus a scratch CSV for the in-project draft.
-  Analysis SQL: `SELECT "State", count(*) AS awards FROM source GROUP BY
-  "State" ORDER BY awards DESC`.
+  coordinate-picker flow), plus a scratch `state-priorities.csv` (16 states)
+  that the project publishes as "FY26 State Priorities" so the TRANSFORM
+  section can lookup-join it onto SS4A by State ("SS4A awards with state
+  priorities"; the payoff shot is the editor preview + catalog Derived badge —
+  derived cards link back to the source's Transform tab, first-class derived
+  pages are stage 3). Analysis SQL: `SELECT "State", count(*) AS awards FROM
+  source GROUP BY "State" ORDER BY awards DESC`.
+  v2 gotchas: the transform editor opens from the tab's list ("New transform")
+  but a prior autosaved draft AUTO-RESUMES past the list; operations start
+  EMPTY ("Add lookup step" first); keys are selects `#transform-base-key-0` /
+  `#transform-lookup-key-0`; "Save transform" closes the editor back to the
+  list itself. The Export beat's dialog never rendered on film (click+Escape
+  raced) — harmless button-focus flash only. Second app bug fixed for v2: the
+  transform PREVIEW hung on "Loading every row…" forever — its effect cleanup
+  cancelled the debounced run while the content guard then early-returned, so
+  any render inside the 600ms window (autosave, select re-render) killed it;
+  fix keeps the timer in a ref and reschedules only on real content changes
+  (transform-preview.tsx).
 
 Related: [[convex-dev-stack-outage-workaround]], [[better-auth-setup]],
 [[local-dev-verification]]

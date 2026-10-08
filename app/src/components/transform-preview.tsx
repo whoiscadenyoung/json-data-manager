@@ -82,8 +82,13 @@ function TransformPreviewRun({
     [failed, setFailed] = useState(false),
     // Identity guard: the caller's operations array is a per-render
     // derivation, so the effect keys on its serialized CONTENT and re-runs
-    // only when the spec actually changed.
-    scheduledContentRef = useRef<string | undefined>(undefined);
+    // only when the spec actually changed. The debounce timer lives in a
+    // ref instead of the effect cleanup: a re-render with UNCHANGED content
+    // early-returns below, and a cleanup that cancelled the pending run
+    // there left the preview stuck on "Loading…" forever — any render
+    // inside the 600ms window (an autosave, a select re-render) killed it.
+    scheduledContentRef = useRef<string | undefined>(undefined),
+    timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     const content = JSON.stringify([sourceDatasetId, operations]);
@@ -91,8 +96,10 @@ function TransformPreviewRun({
       return undefined;
     }
     scheduledContentRef.current = content;
-    let cancelled = false;
-    const timer = setTimeout(() => {
+    if (timerRef.current !== undefined) {
+      clearTimeout(timerRef.current);
+    }
+    timerRef.current = setTimeout(() => {
       void (async () => {
         try {
           const lookupRows = new globalThis.Map<string, Array<Record<string, unknown>>>(),
@@ -109,20 +116,12 @@ function TransformPreviewRun({
             rows = applied.rows;
             stats.push(applied.diagnostics);
           }
-          if (!cancelled) {
-            setResult({ rows, stats });
-          }
+          setResult({ rows, stats });
         } catch {
-          if (!cancelled) {
-            setFailed(true);
-          }
+          setFailed(true);
         }
       })();
     }, 600);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
   }, [operations, sourceDatasetId]);
 
   // Columns come from the FULL output set, not the rendered slice: with a
