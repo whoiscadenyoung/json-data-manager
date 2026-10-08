@@ -9,7 +9,9 @@ metadata:
 
 Product demo recording recipe (built 2026-10-08; delivered video:
 `docs/demo/json-data-manager-demo.mp4`, ~7.9 min, untracked; full harness
-lives in /tmp/demo-rec — scratch, re-buildable from this recipe):
+lives in /tmp/demo-rec — scratch; the distilled, generic how-to is now the
+`demo-video` agent skill (repo `.agents/skills/`, global `~/.agents/skills/`),
+re-buildable from this recipe):
 
 - **Stack**: fresh local backend DB (`demo.sqlite3` positional arg, same
   --instance-secret/--instance-name from config.json, cwd =
