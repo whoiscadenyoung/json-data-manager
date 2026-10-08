@@ -152,11 +152,23 @@ async function createEngine(): Promise<SqlEngine> {
     eh: { mainModule: ehModule, mainWorker: ehWorker },
     mvp: { mainModule: mvpModule, mainWorker: mvpWorker },
   });
+  const { mainModule, mainWorker } = bundle;
+  if (mainModule === null || mainWorker === null) {
+    throw new Error("The selected DuckDB bundle is missing its module or worker.");
+  }
+  // The bundler's `?url` assets are root-relative (/@fs/… in dev, /assets/…
+  // in prod). DuckDB's worker side consumes them with importScripts and
+  // `new Request(...)`, neither of which has a base URL to resolve against
+  // inside a worker born from a blob — hand it ABSOLUTE URLs instead.
+  const absoluteModule = new URL(mainModule, globalThis.location.href).href,
+    absoluteWorker = new URL(mainWorker, globalThis.location.href).href;
   // The bundle's worker scripts are classic scripts; the documented bundler
   // path wraps the URL in an importScripts blob (a module worker cannot
   // importScripts its own URL, and the blob sidesteps that).
   const workerUrl = URL.createObjectURL(
-    new Blob([`importScripts("${bundle.mainWorker}");`], { type: "text/javascript" }),
+    new Blob([`importScripts("${absoluteWorker}");`], {
+      type: "text/javascript",
+    }),
   );
   // A failed load must not leak the blob (#133 item 4 — the load retry path
   // of `analysisSqlEngine` otherwise piles up object URLs).
@@ -166,7 +178,7 @@ async function createEngine(): Promise<SqlEngine> {
       new Worker(workerUrl),
     );
     // Single-threaded by decision (see the module doc): pthreadWorker null.
-    await db.instantiate(bundle.mainModule, null);
+    await db.instantiate(absoluteModule, null);
     const connection = await db.connect();
     await connection.query(`SET memory_limit='${MEMORY_LIMIT}'`);
     // The lockdown (#132) runs before any caller query; lock_configuration
