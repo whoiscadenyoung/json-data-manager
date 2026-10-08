@@ -7,8 +7,9 @@ metadata:
   type: project
 ---
 
-Product demo recording recipe (built 2026-10-08, video in /tmp/demo-rec —
-scratch, not committed):
+Product demo recording recipe (built 2026-10-08; delivered video:
+`docs/demo/json-data-manager-demo.mp4`, ~7.9 min, untracked; full harness
+lives in /tmp/demo-rec — scratch, re-buildable from this recipe):
 
 - **Stack**: fresh local backend DB (`demo.sqlite3` positional arg, same
   --instance-secret/--instance-name from config.json, cwd =
