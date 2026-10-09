@@ -27,6 +27,9 @@ function dataset(id: string, kind: "geospatial" | "standard", groupId?: string):
     fieldCount: 0,
     groupId,
     kind,
+    // The projection's derived archive-format gate (issue #125) — fixtures
+    // name a current format, the no-stale-archive default.
+    mapTileArchiveFormatCurrent: true,
     title: `ds-${id}`,
   };
 }
