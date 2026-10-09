@@ -424,13 +424,38 @@ export default defineSchema({
   // in ONE transaction (projects.createDraftDataset), so a crash can never
   // orphan either. NEVER an array field on the project doc instead: membership
   // grows unbounded and every add would rewrite the project (guidelines).
+  //
+  // Phase 2 of the project-workspace design adds the member-role pair — the
+  // "link XOR modify" line of the model table:
+  // - `role: "owned" | "linked"` — OWNED: the workspace's own working copy
+  //   (a draft created in the project, or any draft pulled in by reference —
+  //   ADR 0011 makes project-held drafts member-editable, which IS the
+  //   "modify" side). LINKED: a versioned row the project references but
+  //   didn't create — a published dataset, a saved derived row, a map. The
+  //   project's view of a linked member is PINNED (the version-reference edge
+  //   below); "read-only" is the pin, not a write restriction on the
+  //   underlying row (ADR 0009's co-editable clause stands for it).
+  // - `syncMode: "manual" | "auto"` — the per-member "keep in sync" checkbox
+  //   (design model rules): "manual" (the default) keeps a LINKED member
+  //   pinned — updates are the explicit Sync action; "auto" floats it live on
+  //   the source's chain head. Meaningless on owned members (they have no
+  //   version relationship; the sync surface refuses them) and stamped
+  //   uniformly anyway so every row carries the same shape.
+  //
+  // Both fields are OPTIONAL on purpose (ADR 0010's additive-field stance):
+  // absent reads as the phase-1 behavior — rows minted before this phase
+  // floated their version edges, so absent `syncMode` reads as "auto", and
+  // absent `role` derives from what the row is (draft → "owned", else
+  // "linked"). projects.ts's artifactRoleOf/syncModeOf are the one derivation;
+  // every INSERT path stamps both fields explicitly.
   projectArtifacts: defineTable({
     // Attribution, same stance as projects.createdBy (ownership rides the
     // membership's project's creator check — stage 8).
     addedBy: v.string(),
     // The referenced artifact — ONE plain-string id space across kinds:
     // artifactKind says which table answers (a component dataset id, a
-    // derivedDatasets registry row id, or a component map id). Component
+    // derivedDatasets registry row id, a component map id, or — from phase 3
+    // of the project-workspace design — a layers row id). Component
     // tables don't exist in this deployment's generated data model, so no
     // v.id() of them is possible here (the datasetBindings precedent).
     // NEVER overloaded onto a spec's dependsOn or any component field.
@@ -441,8 +466,18 @@ export default defineSchema({
     // row (a sql operation is just another spec kind), so analyses join
     // projects as artifactKind "derived" — no new lifecycle concepts, no
     // migration, and this union stayed open for whatever a later stage adds.
-    artifactKind: v.union(v.literal("dataset"), v.literal("derived"), v.literal("map")),
+    // Phase 2 adds "layer" (the design's kind list dataset|derived|layer|map);
+    // nothing writes it until phase 3 introduces the layers table — the
+    // artifact-resolution paths answer "missing" for it until then.
+    artifactKind: v.union(
+      v.literal("dataset"),
+      v.literal("derived"),
+      v.literal("layer"),
+      v.literal("map"),
+    ),
     projectId: v.id("projects"),
+    role: v.optional(v.union(v.literal("owned"), v.literal("linked"))),
+    syncMode: v.optional(v.union(v.literal("manual"), v.literal("auto"))),
   })
     // The workspace read: everything in one project.
     .index("by_project", ["projectId"])

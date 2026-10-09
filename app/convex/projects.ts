@@ -5,7 +5,7 @@ import { components } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { auth } from "./auth";
-import { syncRegistryReferenceEdges } from "./consumption";
+import { createChainMemo, resolveSourceHead, syncRegistryReferenceEdges } from "./consumption";
 import {
   datasetVisibleTo,
   projectRoleFor,
@@ -70,7 +70,56 @@ const MAX_ARTIFACTS = 500;
 /** Bound on how many projects may hold ONE artifact — a sharing-width cap, not a membership-size cap; the duplicate/removal lookups stay exact at any per-project membership size. */
 const MAX_HOLDERS = 200;
 
-const artifactKindValidator = v.union(v.literal("dataset"), v.literal("derived"), v.literal("map"));
+const artifactKindValidator = v.union(
+  v.literal("dataset"),
+  v.literal("derived"),
+  v.literal("layer"),
+  v.literal("map"),
+);
+
+/** The membership kinds, as the callers that slice by kind name them (phase 3 adds the layers entity). */
+type ArtifactKind = "dataset" | "derived" | "layer" | "map";
+
+/**
+ * The member-role pair (phase 2 of the project-workspace design): "owned" is
+ * the workspace's own working copy (member-editable per ADR 0011), "linked"
+ * a versioned row the project references — its view pinned to a version, with
+ * explicit sync.
+ */
+type ArtifactRole = "owned" | "linked";
+
+/** The per-member "keep in sync" checkbox: manual = pinned, auto = floats on the source's head. */
+type ArtifactSyncMode = "manual" | "auto";
+
+const artifactSyncModeValidator = v.union(v.literal("manual"), v.literal("auto"));
+
+/**
+ * The stored `role` of one membership row, with the pre-field answer: rows
+ * minted before phase 2 carried no role, and what the row IS decides — drafts
+ * were (and are) the member-editable working copies, everything else a
+ * reference. `resolved` is the same draft-ness `assertArtifactExists` resolves;
+ * an unresolvable (deleted) artifact answers "linked" — the honest default for
+ * a reference row, and display-only either way.
+ */
+function artifactRoleOf(
+  membership: Pick<Doc<"projectArtifacts">, "role" | "artifactKind">,
+  resolved: { draft: boolean } | undefined,
+): ArtifactRole {
+  if (membership.role !== undefined) {
+    return membership.role;
+  }
+  return resolved !== undefined && resolved.draft ? "owned" : "linked";
+}
+
+/**
+ * The stored `syncMode`, with the pre-field answer: every row minted before
+ * phase 2 floated its version edge, which is exactly "auto" behavior.
+ */
+function artifactSyncModeOf(
+  membership: Pick<Doc<"projectArtifacts">, "syncMode">,
+): ArtifactSyncMode {
+  return membership.syncMode ?? "auto";
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -138,31 +187,43 @@ function registryRowVisibleTo(
  * reference may still point at ANY lifecycle state the caller can see (their
  * own draft is exactly what lands in a project; published datasets and
  * frozen versions are what "fork = add-to-project" references).
+ *
+ * Returns the resolved artifact's draft-ness — the input `addArtifact`'s
+ * role decision reads (draft → owned, else linked; phase 2) — so the
+ * membership insert needs no second component read. A "layer" has no
+ * resolution yet (phase 3 introduces the entity): it reads exactly as
+ * missing, the same answer every consumer gives it.
  */
 async function assertArtifactExists(
   ctx: MutationCtx,
   actorId: string,
-  kind: "dataset" | "derived" | "map",
+  kind: ArtifactKind,
   artifactId: string,
-): Promise<void> {
+): Promise<{ draft: boolean }> {
   if (kind === "derived") {
     const id = ctx.db.normalizeId("derivedDatasets", artifactId);
     const row = id === null ? null : await ctx.db.get(id);
     if (row !== null && registryRowVisibleTo(row, actorId)) {
-      return;
+      return { draft: row.status === "draft" };
     }
     throw new ConvexError("No derived dataset was found at that id — it may have been deleted.");
   }
   if (kind === "dataset") {
     const dataset = await tryGetSchema(ctx, artifactId);
     if (dataset !== null && (await datasetVisibleTo(ctx, artifactId, dataset, actorId))) {
-      return;
+      return { draft: dataset.lifecycle === "draft" };
     }
     throw new ConvexError("No dataset was found at that id — it may have been deleted.");
   }
+  if (kind === "layer") {
+    // Phase 3's entity — nothing resolves one yet, so a layer id is not a
+    // real artifact today and the reference is refused with the same shape
+    // the other missing kinds use.
+    throw new ConvexError("No layer was found at that id — it may have been deleted.");
+  }
   const map = await tryGetMap(ctx, artifactId);
   if (map !== null) {
-    return;
+    return { draft: false };
   }
   throw new ConvexError("No map was found at that id — it may have been deleted.");
 }
@@ -196,18 +257,28 @@ async function assertForkSourceVisible(
 /**
  * The membership insert plus the project's denormalized count, in-transaction
  * (the syncRegistryReferenceEdges pattern: a plain helper so the caller's
- * mutation commits both atomically).
+ * mutation commits both atomically). Every insert stamps the phase-2 role
+ * pair explicitly — the optional fields exist only for rows minted before
+ * this phase (see the schema comment), never for new ones.
  */
 async function insertMembership(
   ctx: MutationCtx,
   project: Doc<"projects">,
-  row: { addedBy: string; artifactId: string; artifactKind: "dataset" | "derived" | "map" },
+  row: {
+    addedBy: string;
+    artifactId: string;
+    artifactKind: ArtifactKind;
+    role: ArtifactRole;
+    syncMode: ArtifactSyncMode;
+  },
 ): Promise<Id<"projectArtifacts">> {
   const inserted = await ctx.db.insert("projectArtifacts", {
     addedBy: row.addedBy,
     artifactId: row.artifactId,
     artifactKind: row.artifactKind,
     projectId: project._id,
+    role: row.role,
+    syncMode: row.syncMode,
   });
   await ctx.db.patch(project._id, { artifactCount: project.artifactCount + 1 });
   return inserted;
@@ -354,6 +425,8 @@ export const createDraftDataset = mutation({
       addedBy: actorId,
       artifactId: schemaId,
       artifactKind: "dataset",
+      role: "owned",
+      syncMode: "manual",
     });
     return schemaId;
   },
@@ -364,18 +437,27 @@ export const createDraftDataset = mutation({
  * Adds one existing artifact to a project — the reference insertion ("fork =
  * add-to-project", lifecycle §3). No component row, no catalog row, no copy
  * of anything (the issue's "forking-as-reference creates no catalog row").
- * Since 7b (#103), a dataset membership also mints ONE float
- * `consumerReferences` edge (consumerKind "fork", consumerId = the membership
- * row) — the version-reference leg: the fork floats the source's chain, and
- * stage 6's pin/sync/revert mutations operate on it like any consumer. Any
- * lifecycle state may be referenced — a draft (pulled into the project), a
- * published dataset or frozen version, a saved derived spec, a map.
+ *
+ * Phase 2 of the project-workspace design gives the membership its role pair:
+ * a DRAFT lands "owned" (the workspace's own working copy — ADR 0011 makes
+ * project-held drafts member-editable, which is the "modify" side of the
+ * model's link-XOR-modify line); everything versioned lands "linked" (a
+ * published dataset, a saved derived row, a map). A linked DATASET membership
+ * mints its version-reference edge PINNED at the source chain's current head —
+ * the design's "linked add mints a pin edge at head (today it floats)" —
+ * unless the add asked to keep it in sync (`syncMode: "auto"`), which floats
+ * the edge live. `syncMode: "manual"` with no head to pin (a published row
+ * that was never version-frozen) falls back to float: there is nothing to pin
+ * yet, and float is the only honest state — the first Sync/keep-in-sync flip
+ * pins it. Any lifecycle state may be referenced — a draft (pulled into the
+ * project), a published dataset or frozen version, a saved derived spec, a map.
  */
 export const addArtifact = mutation({
   args: {
     artifactId: v.string(),
     artifactKind: artifactKindValidator,
     projectId: v.string(),
+    syncMode: v.optional(artifactSyncModeValidator),
   },
   handler: async (ctx, args) => {
     const addedBy = await auth(ctx),
@@ -384,7 +466,7 @@ export const addArtifact = mutation({
       throw new ConvexError("This project no longer exists — it may have been deleted.");
     }
     const project = await projectForWrite(ctx, addedBy, projectId);
-    await assertArtifactExists(ctx, addedBy, args.artifactKind, args.artifactId);
+    const resolved = await assertArtifactExists(ctx, addedBy, args.artifactKind, args.artifactId);
     // Uniqueness is an in-transaction by-ref re-check, not an index — Convex
     // has none (the publishKey precedent): a double-add lands once. The
     // by_artifact lookup answers EXACTLY at any membership size (its width is
@@ -399,20 +481,36 @@ export const addArtifact = mutation({
     if (holders.some((row) => row.projectId === projectId)) {
       throw new ConvexError("That artifact is already in this project.");
     }
+    const syncMode = args.syncMode ?? "manual",
+      role: ArtifactRole = resolved.draft ? "owned" : "linked";
     const membership = await insertMembership(ctx, project, {
       addedBy,
       artifactId: args.artifactId,
       artifactKind: args.artifactKind,
+      role,
+      syncMode,
     });
     if (args.artifactKind === "dataset") {
-      // The fork's version-reference edge, born with the membership in the
-      // same transaction — float by default (the registry save path's
-      // precedent; pin later through consumption.setReferenceMode).
+      // The version-reference edge, born with the membership in the same
+      // transaction. Owned members (drafts) float — their working copy IS the
+      // project's view, and the sync surface refuses them. Linked members pin
+      // at head unless the add asked to keep them in sync.
+      let edgeMode: "float" | "pin" = "float";
+      let pinned: { ref?: string; schemaId?: string } = {};
+      if (role === "linked" && syncMode === "manual") {
+        const head = await resolveSourceHead(ctx, args.artifactId);
+        if (head !== undefined) {
+          edgeMode = "pin";
+          pinned = { ref: head.ref, schemaId: head.schemaId };
+        }
+      }
       await ctx.db.insert("consumerReferences", {
         consumerId: membership,
         consumerKind: "fork",
-        mode: "float",
+        mode: edgeMode,
         sourceDatasetId: args.artifactId,
+        pinnedRef: pinned.ref,
+        pinnedSchemaId: pinned.schemaId,
       });
     }
     return membership;
@@ -471,6 +569,116 @@ export const removeArtifact = mutation({
 });
 
 /**
+ * The per-member "keep in sync" checkbox (phase 2 of the project-workspace
+ * design): sets one LINKED member's `syncMode` and moves its version edge to
+ * match — "auto" floats the edge live on the source's head; "manual" pins it
+ * at the CURRENT head ("stop following, freeze where we are"). Editor-and-up
+ * (a reference's sync preference is a content write, ADR 0011). The link-XOR-
+ * modify guard: an OWNED member is refused — it is the project's working copy,
+ * edited in place, with no version relationship to configure; maps are refused
+ * too (no version chains until phase 3 retires them into projects).
+ */
+export const setMemberSync = mutation({
+  args: {
+    artifactId: v.string(),
+    artifactKind: artifactKindValidator,
+    projectId: v.string(),
+    syncMode: artifactSyncModeValidator,
+  },
+  handler: async (ctx, args) => {
+    const actorId = await auth(ctx),
+      projectId = projectIdArg(ctx, args.projectId);
+    if (projectId === null) {
+      throw goneProject();
+    }
+    // Editor-and-up: the sync preference is a content write on the project's
+    // reference state (the project row itself is not needed past the guard).
+    await projectForWrite(ctx, actorId, projectId);
+    const holders = await ctx.db
+      .query("projectArtifacts")
+      .withIndex("by_artifact", (q) =>
+        q.eq("artifactKind", args.artifactKind).eq("artifactId", args.artifactId),
+      )
+      .take(MAX_HOLDERS);
+    const membership = holders.find((row) => row.projectId === projectId);
+    if (membership === undefined) {
+      throw new ConvexError("That artifact isn't in this project.");
+    }
+    if (membership.role === "owned") {
+      throw new ConvexError(
+        "Owned members are edited in place — keep-in-sync applies to linked references only.",
+      );
+    }
+    if (args.artifactKind === "map") {
+      throw new ConvexError("Maps don't carry version chains to sync yet.");
+    }
+    if (args.artifactKind === "layer") {
+      throw new ConvexError("Layers aren't referenceable yet.");
+    }
+    const edge = await ctx.db
+      .query("consumerReferences")
+      .withIndex("by_consumer", (q) => q.eq("consumerId", membership._id))
+      .first();
+    if (edge === null) {
+      throw new ConvexError(
+        "This member has no version reference to configure — only linked datasets carry one today.",
+      );
+    }
+    if (args.syncMode === "auto") {
+      await ctx.db.patch(edge._id, {
+        mode: "float",
+        pinnedRef: undefined,
+        pinnedSchemaId: undefined,
+      });
+      await ctx.db.patch(membership._id, { syncMode: "auto" });
+      return null;
+    }
+    const head = await resolveSourceHead(ctx, membership.artifactId);
+    if (head === undefined) {
+      throw new ConvexError("The source has no published versions to pin yet — publish it first.");
+    }
+    await ctx.db.patch(edge._id, {
+      mode: "pin",
+      pinnedRef: head.ref,
+      pinnedSchemaId: head.schemaId,
+    });
+    await ctx.db.patch(membership._id, { syncMode: "manual" });
+    return null;
+  },
+  returns: v.null(),
+});
+
+/**
+ * Which of the CALLER's projects hold one artifact — the "Add to project"
+ * sheets' Added badges (the browser/detail entry points, phase 2). Scoped to
+ * the viewer's own memberships: a project they hold no role in contributes
+ * nothing, so another user's workspace never leaks through a dataset they can
+ * see. Bounded at MAX_HOLDERS like every by_artifact lookup.
+ */
+export const holdingProjects = query({
+  args: { artifactId: v.string(), artifactKind: artifactKindValidator },
+  handler: async (ctx, args) => {
+    const viewer = await auth(ctx);
+    const holders = await ctx.db
+      .query("projectArtifacts")
+      .withIndex("by_artifact", (q) =>
+        q.eq("artifactKind", args.artifactKind).eq("artifactId", args.artifactId),
+      )
+      .take(MAX_HOLDERS);
+    const mine: Id<"projects">[] = [];
+    for (const row of holders) {
+      // oxlint-disable-next-line no-await-in-loop -- short-circuit membership checks, one per holder, bounded by MAX_HOLDERS.
+      const role = await projectRoleFor(ctx, row.projectId, viewer);
+      if (role !== null) {
+        mine.push(row.projectId);
+      }
+    }
+    return mine;
+  },
+  returns: v.array(v.id("projects")),
+});
+
+/**
  * Fork-as-spec (roadmap 7b, #103; lifecycle §3's "reuse-with-transforms
  * creates a derived spec over the published source"): creates a SAVED
  * derivedDatasets registry row whose spec is the identity over
@@ -524,6 +732,10 @@ export const forkAsSpec = mutation({
       addedBy,
       artifactId: registryRowId,
       artifactKind: "derived",
+      // Born in this project: the workspace's own fork, member-publishable —
+      // owned (phase 2), never the linked/pinned kind.
+      role: "owned",
+      syncMode: "manual",
     });
     return registryRowId;
   },
@@ -587,27 +799,40 @@ type DatasetSummary = FunctionReturnType<typeof components.jsonCms.lib.listSchem
 type ComponentMap = FunctionReturnType<typeof components.jsonCms.lib.listMaps>[number];
 type Membership = Doc<"projectArtifacts">;
 
+/**
+ * One LINKED dataset member's version-reference state (phase 2): the edge the
+ * workspace's Sync/Revert actions drive (by id, through
+ * `consumption.syncReference`/`revertReference`), its mode, and the
+ * "update available" answer — a pinned edge whose source chain's head has
+ * moved. Float edges are always current (live IS head); a pin whose chain has
+ * NO head at all (every version retired) reads as not-up-to-date, and Sync
+ * gives the honest error.
+ */
+type MemberSyncState = {
+  headRef?: string;
+  headVersionLabel?: string;
+  mode: "float" | "pin";
+  pinnedRef?: string;
+  referenceId: Id<"consumerReferences">;
+  upToDate: boolean;
+};
+
+/** The role/sync pair every artifact row carries (see artifactRoleOf/artifactSyncModeOf for the pre-field defaults). `sync` is populated for LINKED dataset members only — the union keeps it optional at the base so every consumer reads one shape. */
+type ResolvedArtifactBase = {
+  addedAt: number;
+  artifactId: string;
+  artifactKind: ArtifactKind;
+  _id: Id<"projectArtifacts">;
+  role: ArtifactRole;
+  syncMode: ArtifactSyncMode;
+  sync?: MemberSyncState;
+};
+
 /** The workspace's per-artifact resolution: the reference, resolved — or `missing` when the artifact was deleted out from under the project (readers answer defensively, the mapLayers precedent). */
 type ResolvedArtifact =
-  | {
-      addedAt: number;
-      artifactId: string;
-      artifactKind: "dataset" | "derived" | "map";
-      _id: Id<"projectArtifacts">;
-      state: { kind: "missing" };
-    }
-  | {
-      addedAt: number;
-      artifactId: string;
-      artifactKind: "dataset" | "derived" | "map";
-      _id: Id<"projectArtifacts">;
-      state: { kind: "dataset"; summary: DatasetSummary };
-    }
-  | {
-      addedAt: number;
-      artifactId: string;
-      artifactKind: "dataset" | "derived" | "map";
-      _id: Id<"projectArtifacts">;
+  | (ResolvedArtifactBase & { state: { kind: "missing" } })
+  | (ResolvedArtifactBase & { state: { kind: "dataset"; summary: DatasetSummary } })
+  | (ResolvedArtifactBase & {
       state: {
         kind: "derived";
         row: {
@@ -617,50 +842,86 @@ type ResolvedArtifact =
           title: string;
         };
       };
-    }
-  | {
-      addedAt: number;
-      artifactId: string;
-      artifactKind: "dataset" | "derived" | "map";
-      _id: Id<"projectArtifacts">;
-      state: { kind: "map"; map: ComponentMap };
-    };
+    })
+  | (ResolvedArtifactBase & { state: { kind: "map"; map: ComponentMap } });
 
-async function resolveArtifact(
+/**
+ * The version-reference state of one dataset membership, for the workspace's
+ * sync column: the membership's fork edge plus the source chain's head, only
+ * resolved when the edge is PINNED (a float is current by definition —
+ * resolving its head would be a component read per row for a badge that can
+ * never show).
+ */
+async function memberSyncStateOf(
   ctx: QueryCtx,
   membership: Membership,
-  datasetById: Map<string, DatasetSummary>,
-  mapById: Map<string, ComponentMap>,
-  viewerId: string,
+  memo: ReturnType<typeof createChainMemo>,
+): Promise<MemberSyncState | undefined> {
+  const edge = await ctx.db
+    .query("consumerReferences")
+    .withIndex("by_consumer", (q) => q.eq("consumerId", membership._id))
+    .first();
+  if (edge === null) {
+    return undefined;
+  }
+  if (edge.mode === "float") {
+    return { mode: "float", referenceId: edge._id, upToDate: true };
+  }
+  const head = await resolveSourceHead(ctx, edge.sourceDatasetId, memo);
+  return {
+    headRef: head === undefined ? undefined : head.ref,
+    headVersionLabel: head === undefined ? undefined : head.versionLabel,
+    mode: "pin",
+    pinnedRef: edge.pinnedRef,
+    referenceId: edge._id,
+    upToDate: head !== undefined && head.ref === edge.pinnedRef,
+  };
+}
+
+/** The dataset arm of `resolveArtifact`: role from the summary's lifecycle, and the sync projection for LINKED members. */
+async function resolveDatasetArtifact(
+  ctx: QueryCtx,
+  membership: Membership,
+  summary: DatasetSummary,
+  memo: ReturnType<typeof createChainMemo>,
 ): Promise<ResolvedArtifact> {
   const base = {
     _id: membership._id,
     addedAt: membership._creationTime,
     artifactId: membership.artifactId,
     artifactKind: membership.artifactKind,
+    syncMode: artifactSyncModeOf(membership),
   };
-  if (membership.artifactKind === "dataset") {
-    const summary = datasetById.get(membership.artifactId);
-    if (summary === undefined) {
-      return { ...base, state: { kind: "missing" } };
-    }
-    return { ...base, state: { kind: "dataset", summary } };
-  }
-  if (membership.artifactKind === "map") {
-    const map = mapById.get(membership.artifactId);
-    if (map === undefined) {
-      return { ...base, state: { kind: "missing" } };
-    }
-    return { ...base, state: { kind: "map", map } };
-  }
-  const registryId = ctx.db.normalizeId("derivedDatasets", membership.artifactId);
-  const row = registryId === null ? null : await ctx.db.get(registryId);
+  const role = artifactRoleOf(membership, { draft: summary.lifecycle === "draft" });
+  const sync = role === "linked" ? await memberSyncStateOf(ctx, membership, memo) : undefined;
+  return {
+    ...base,
+    role,
+    state: { kind: "dataset", summary },
+    ...(sync === undefined ? {} : { sync }),
+  };
+}
+
+/** The registry-row arm: visibility first (stage 8's leak rule), then the role and the Transform-tab link target. */
+function resolveDerivedArtifact(
+  membership: Membership,
+  row: Doc<"derivedDatasets">,
+  viewerId: string,
+  datasetById: Map<string, DatasetSummary>,
+): ResolvedArtifact {
+  const base = {
+    _id: membership._id,
+    addedAt: membership._creationTime,
+    artifactId: membership.artifactId,
+    artifactKind: membership.artifactKind,
+    syncMode: artifactSyncModeOf(membership),
+  };
   // Stage 8 (#104): the registry's draft/saved line is its visibility rule
   // (the derivedDatasets.get precedent) — a foreign builder autosave resolved
   // here would leak its title/description/source through this projection, so
   // it reads exactly as a deleted artifact (readers answer `missing`).
-  if (row === null || (row.status !== "saved" && row.createdBy !== viewerId)) {
-    return { ...base, state: { kind: "missing" } };
+  if (row.status !== "saved" && row.createdBy !== viewerId) {
+    return { ...base, role: artifactRoleOf(membership, undefined), state: { kind: "missing" } };
   }
   // The Transform-tab link target, browser-parity (the datasets browser's
   // DerivedDatasetCard links only when the source is a COMPONENT dataset —
@@ -669,6 +930,7 @@ async function resolveArtifact(
   const sourceDatasetId = datasetById.has(row.sourceDatasetId) ? row.sourceDatasetId : undefined;
   return {
     ...base,
+    role: artifactRoleOf(membership, { draft: row.status === "draft" }),
     state: {
       kind: "derived",
       row: {
@@ -679,6 +941,45 @@ async function resolveArtifact(
       },
     },
   };
+}
+
+async function resolveArtifact(
+  ctx: QueryCtx,
+  membership: Membership,
+  datasetById: Map<string, DatasetSummary>,
+  mapById: Map<string, ComponentMap>,
+  viewerId: string,
+  memo: ReturnType<typeof createChainMemo>,
+): Promise<ResolvedArtifact> {
+  const base = {
+    _id: membership._id,
+    addedAt: membership._creationTime,
+    artifactId: membership.artifactId,
+    artifactKind: membership.artifactKind,
+    syncMode: artifactSyncModeOf(membership),
+  };
+  if (membership.artifactKind === "dataset") {
+    const summary = datasetById.get(membership.artifactId);
+    return summary === undefined
+      ? { ...base, role: artifactRoleOf(membership, undefined), state: { kind: "missing" } }
+      : resolveDatasetArtifact(ctx, membership, summary, memo);
+  }
+  if (membership.artifactKind === "map") {
+    const map = mapById.get(membership.artifactId);
+    return map === undefined
+      ? { ...base, role: artifactRoleOf(membership, undefined), state: { kind: "missing" } }
+      : { ...base, role: artifactRoleOf(membership, undefined), state: { kind: "map", map } };
+  }
+  if (membership.artifactKind === "layer") {
+    // Phase 3's entity: nothing resolves one yet, so the row reads exactly as
+    // a deleted artifact until the layers table lands.
+    return { ...base, role: artifactRoleOf(membership, undefined), state: { kind: "missing" } };
+  }
+  const registryId = ctx.db.normalizeId("derivedDatasets", membership.artifactId);
+  const row = registryId === null ? null : await ctx.db.get(registryId);
+  return row === null
+    ? { ...base, role: artifactRoleOf(membership, undefined), state: { kind: "missing" } }
+    : resolveDerivedArtifact(membership, row, viewerId, datasetById);
 }
 
 /**
@@ -693,6 +994,12 @@ async function resolveArtifact(
  * identity-scoped component reads cover the caller's own rows, and the rest
  * resolve through the by-ids host read, fed ONLY this project's membership
  * ids (the role check above is what authorizes the whole payload).
+ *
+ * Phase 2 of the project-workspace design: every artifact row also carries
+ * its role pair (`role`/`syncMode`, the pre-field defaults derived in
+ * artifactRoleOf/artifactSyncModeOf), and LINKED dataset members carry
+ * `sync` — the version-reference state the workspace's Sync/Revert actions
+ * and "update available" badge render from.
  *
  * No `returns` validator: the resolved dataset artifacts embed the
  * component's own summary projection, and re-declaring that shape host-side
@@ -766,9 +1073,12 @@ export const get = query({
     for (const row of maps) {
       mapById.set(row._id, row);
     }
+    // The per-call resolution memo (issue #128): the linked members' chain
+    // heads resolve once per DISTINCT source, not once per row.
+    const memo = createChainMemo();
     const artifacts = await Promise.all(
       memberships.map(async (membership) =>
-        resolveArtifact(ctx, membership, datasetById, mapById, viewer),
+        resolveArtifact(ctx, membership, datasetById, mapById, viewer, memo),
       ),
     );
     return {

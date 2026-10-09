@@ -4,15 +4,19 @@ import { Link, createFileRoute } from "@tanstack/react-router";
 import { useConvexAuth, useMutation } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import {
+  ArrowDownToLine,
   ArrowLeft,
   Calendar,
   Database,
   FolderKanban,
   GitFork,
+  History,
+  Link2,
   ListPlus,
   Loader2,
   Map as MapIcon,
   Plus,
+  RefreshCw,
   Rocket,
   Trash2,
   Users,
@@ -26,6 +30,7 @@ import { RouterButton } from "#/components/router-button";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Card } from "#/components/ui/card";
+import { Checkbox } from "#/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -51,13 +56,22 @@ import { api } from "../../../convex/_generated/api";
  * the project listed by kind, with the create/import entry points (which
  * land IN the project — the create page's `?projectId=` variant) and the
  * add-reference action ("fork = add-to-project": reuse adds a reference,
- * never a copy; 7b mints the fork's float version-reference edge with it).
+ * never a copy; 7b mints the fork's version-reference edge with it).
  * 7b (#103) adds the stage's own seam: the one-press BUNDLE PUBLISH —
  * collection + maps + referenced datasets through the 5b machinery — with
  * the press's progress and the promoted collection link from
  * `api.bundles.latestForProject`, plus "fork as transform" in the add
  * dialog (a saved identity spec over the published source — reuse with
  * transforms, no copy).
+ *
+ * Phase 2 of the project-workspace design gives every member row its role
+ * pair: OWNED members (project drafts and forks — the "modify" side) badge
+ * as owned; LINKED members (versioned rows the project references) badge as
+ * linked and carry the sync column — the per-member "Keep in sync" checkbox
+ * (`projects.setMemberSync`), the "Update available" badge, and Sync/Revert
+ * through the stage-6 reference mutations. The add dialog offers the
+ * keep-in-sync choice at add time (default pins the linked member at the
+ * source chain's current head).
  *
  * The read is `projects.get` — member-scoped server-side (ADR 0011); null
  * renders the not-found card, so a project that hasn't been shared with the
@@ -75,25 +89,32 @@ type Workspace = FunctionReturnType<typeof api.projects.get>;
 type WorkspaceData = NonNullable<Workspace>;
 type Artifact = WorkspaceData["artifacts"][number];
 
+/** The membership kinds the workspace renders sections for (phase 3 adds the layers entity and its section). */
+type WorkspaceKind = "dataset" | "derived" | "layer" | "map";
+
 /** Splits the membership rows by their declared kind — the workspace's section order. */
 function groupByKind(artifacts: Artifact[]): {
   datasets: Artifact[];
   derived: Artifact[];
+  layers: Artifact[];
   maps: Artifact[];
 } {
   const datasets: Artifact[] = [],
     derived: Artifact[] = [],
+    layers: Artifact[] = [],
     maps: Artifact[] = [];
   for (const artifact of artifacts) {
     if (artifact.artifactKind === "dataset") {
       datasets.push(artifact);
     } else if (artifact.artifactKind === "derived") {
       derived.push(artifact);
+    } else if (artifact.artifactKind === "layer") {
+      layers.push(artifact);
     } else {
       maps.push(artifact);
     }
   }
-  return { datasets, derived, maps };
+  return { datasets, derived, layers, maps };
 }
 
 /** Display count for a referenced dataset: features for geospatial, entries otherwise. */
@@ -110,11 +131,14 @@ function datasetRowCount(
 }
 
 /** The defensive label for an artifact deleted out from under the project. */
-function missingLabel(kind: "dataset" | "derived" | "map"): string {
+function missingLabel(kind: WorkspaceKind): string {
   if (kind === "dataset") {
     return "Deleted dataset";
   }
-  return kind === "derived" ? "Deleted derived dataset" : "Deleted map";
+  if (kind === "derived") {
+    return "Deleted derived dataset";
+  }
+  return kind === "layer" ? "Deleted layer" : "Deleted map";
 }
 
 /**
@@ -148,7 +172,7 @@ function RemoveButton({
   canWrite: boolean;
   projectId: string;
   artifactId: string;
-  artifactKind: "dataset" | "derived" | "map";
+  artifactKind: WorkspaceKind;
 }) {
   const remove = useMutation(api.projects.removeArtifact);
   // A viewer's read-only seat is surfaced on the control, never hidden:
@@ -192,6 +216,204 @@ function RemoveButton({
   );
 }
 
+/**
+ * The member-role badge (phase 2): OWNED — the workspace's own working copy,
+ * member-editable (ADR 0011); LINKED — a versioned row the project
+ * references, its view pinned to a version until someone Syncs.
+ */
+function MemberRoleBadge({ role }: { role: "owned" | "linked" }) {
+  if (role === "owned") {
+    return (
+      <Badge
+        variant="outline"
+        title="Created in this project (or pulled in as a draft) — its members edit this copy directly."
+      >
+        Owned
+      </Badge>
+    );
+  }
+  return (
+    <Badge
+      variant="secondary"
+      title="A published row this project references — the project pins a version and advances it explicitly."
+    >
+      <Link2 className="h-3 w-3" />
+      Linked
+    </Badge>
+  );
+}
+
+/** The viewer's seat, as one boolean plus the reason a disabled control shows. */
+const VIEWER_HINT = "Viewers have read-only access — an editor or owner can change sync settings.";
+
+/** The badge per sync state: floating (auto), pinned-and-current, or the "update available" answer. */
+function SyncStateBadge({ sync }: { sync: NonNullable<Artifact["sync"]> }) {
+  if (sync.mode === "float") {
+    return (
+      <Badge
+        variant="secondary"
+        title="This member floats on the source's newest published version."
+      >
+        <RefreshCw className="h-3 w-3" />
+        Auto-syncs
+      </Badge>
+    );
+  }
+  if (sync.upToDate) {
+    return (
+      <Badge variant="secondary" title="The pin matches the source's newest published version.">
+        <ArrowDownToLine className="h-3 w-3" />
+        up to date
+      </Badge>
+    );
+  }
+  return (
+    <Badge
+      variant="destructive"
+      title={
+        sync.headVersionLabel === undefined
+          ? "The source's pinned version is no longer its head."
+          : `The source is now at ${sync.headVersionLabel}.`
+      }
+    >
+      Update available
+    </Badge>
+  );
+}
+
+/** Sync (only when the pin has somewhere to advance) and Revert, for a pinned member. Float members carry neither. */
+function SyncActionButtons({
+  canWrite,
+  onRun,
+  pending,
+  sync,
+}: {
+  canWrite: boolean;
+  onRun: (action: "sync" | "revert") => void;
+  pending: string | undefined;
+  sync: NonNullable<Artifact["sync"]>;
+}) {
+  if (sync.mode === "float") {
+    return null;
+  }
+  return (
+    <>
+      {!sync.upToDate && canWrite && (
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={pending !== undefined}
+          onClick={() => {
+            onRun("sync");
+          }}
+        >
+          <RefreshCw className="h-3.5 w-3.5" />
+          {pending === "sync" ? "Syncing…" : "Sync"}
+        </Button>
+      )}
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled={!canWrite || pending !== undefined}
+        title={canWrite ? undefined : VIEWER_HINT}
+        onClick={() => {
+          onRun("revert");
+        }}
+      >
+        <History className="h-3.5 w-3.5" />
+        {pending === "revert" ? "Reverting…" : "Revert"}
+      </Button>
+    </>
+  );
+}
+
+/**
+ * One LINKED dataset member's sync column (phase 2): the "Update available"
+ * badge when the source chain has moved past the pin, Sync/Revert through the
+ * stage-6 reference mutations, and the per-member "Keep in sync" checkbox
+ * (`projects.setMemberSync` — auto floats on the source's head, manual pins).
+ * Owned members render nothing here (they are edited in place — the link-XOR-
+ * modify line); viewers see the state with the controls disabled and the
+ * reason on them, never silent no-ops.
+ */
+function MemberSyncControls({
+  artifact,
+  canWrite,
+  projectId,
+}: {
+  artifact: Artifact;
+  canWrite: boolean;
+  projectId: string;
+}) {
+  const setMemberSync = useMutation(api.projects.setMemberSync),
+    syncReference = useMutation(api.consumption.syncReference),
+    revertReference = useMutation(api.consumption.revertReference),
+    [pending, setPending] = useState<string>(),
+    sync = artifact.sync;
+  if (sync === undefined) {
+    return null;
+  }
+  const run = async (action: "sync" | "revert" | "auto" | "manual"): Promise<void> => {
+    setPending(action);
+    try {
+      if (action === "sync") {
+        await syncReference({ referenceId: sync.referenceId });
+        toast.success("Synced — the project's pin now sits at the source's newest version.");
+      } else if (action === "revert") {
+        await revertReference({ referenceId: sync.referenceId });
+        toast.success("Reverted — the pin moved back one version.");
+      } else {
+        await setMemberSync({
+          artifactId: artifact.artifactId,
+          artifactKind: artifact.artifactKind,
+          projectId,
+          syncMode: action === "auto" ? "auto" : "manual",
+        });
+        toast.success(
+          action === "auto"
+            ? "Keeping this member in sync — it floats on the source's newest version."
+            : "Sync paused — the member is pinned at the current version.",
+        );
+      }
+    } catch (error) {
+      toast.error(errorMessage(error, "Something went wrong."));
+    } finally {
+      setPending(undefined);
+    }
+  };
+  const auto = sync.mode === "float";
+  return (
+    <div className="flex shrink-0 flex-col items-end gap-1">
+      <div className="flex flex-wrap items-center justify-end gap-1.5">
+        <SyncStateBadge sync={sync} />
+        <SyncActionButtons
+          canWrite={canWrite}
+          onRun={(action) => {
+            void run(action);
+          }}
+          pending={pending}
+          sync={sync}
+        />
+      </div>
+      <label
+        className="flex items-center gap-1.5 text-xs text-muted-foreground"
+        htmlFor={`keep-in-sync-${artifact.artifactId}`}
+      >
+        <Checkbox
+          checked={auto}
+          disabled={!canWrite || pending !== undefined}
+          id={`keep-in-sync-${artifact.artifactId}`}
+          onCheckedChange={(checked) => {
+            void run(checked ? "auto" : "manual");
+          }}
+          title={canWrite ? undefined : VIEWER_HINT}
+        />
+        <span>Keep in sync</span>
+      </label>
+    </div>
+  );
+}
+
 function DatasetRow({
   artifact,
   canWrite,
@@ -221,6 +443,7 @@ function DatasetRow({
             dataset={summary}
             draftTitle="Draft — lives in this project, hidden from the catalog until it's published."
           />
+          <MemberRoleBadge role={artifact.role} />
           <span className="text-xs text-muted-foreground">{datasetRowCount(summary)}</span>
         </div>
         <p className="truncate text-sm font-medium">{summary.title}</p>
@@ -228,6 +451,7 @@ function DatasetRow({
           <p className="truncate text-xs text-muted-foreground">{summary.description}</p>
         )}
       </Link>
+      <MemberSyncControls artifact={artifact} canWrite={canWrite} projectId={projectId} />
       <RemoveButton
         artifactId={artifact.artifactId}
         artifactKind={artifact.artifactKind}
@@ -255,6 +479,7 @@ function DerivedRow({
     <>
       <div className="flex flex-wrap items-center gap-2">
         <DerivedDatasetBadge />
+        <MemberRoleBadge role={artifact.role} />
         {row.status === "draft" && (
           <Badge
             variant="outline"
@@ -408,9 +633,12 @@ function buildCandidates(
  * membership row and nothing else — no catalog row, no copy ("fork =
  * add-to-project"). Dataset candidates also offer "fork as transform" (7b):
  * a SAVED identity spec over the source, born a project member — reuse with
- * transforms, publishable day one. Editor-and-up only: the page never mounts
- * it for a viewer (their write buttons are disabled with the reason, so the
- * dialog never opens into a wall of server denials).
+ * transforms, publishable day one. Phase 2 adds the keep-in-sync choice for
+ * dataset adds: the default pins a linked member at the source chain's
+ * current head; checked, the member floats live ("auto"). Editor-and-up
+ * only: the page never mounts it for a viewer (their write buttons are
+ * disabled with the reason, so the dialog never opens into a wall of server
+ * denials).
  */
 function AddReferenceDialog({
   projectId,
@@ -427,6 +655,7 @@ function AddReferenceDialog({
     fork = useMutation(api.projects.forkAsSpec),
     [kind, setKind] = useState<"dataset" | "derived" | "map">("dataset"),
     [pendingId, setPendingId] = useState<string | undefined>(),
+    [keepInSync, setKeepInSync] = useState(false),
     datasets = useQuery({
       ...convexQuery(api.schemas.listSummaries, { limit: 1000 }),
       enabled: open,
@@ -447,7 +676,14 @@ function AddReferenceDialog({
   const addArtifact = async (artifactId: string, artifactKind: "dataset" | "derived" | "map") => {
     setPendingId(artifactId);
     try {
-      await add({ artifactId, artifactKind, projectId });
+      await add({
+        artifactId,
+        artifactKind,
+        projectId,
+        // Drafts land owned regardless; linked datasets honor the choice
+        // (manual pins at head, auto floats).
+        syncMode: keepInSync ? "auto" : "manual",
+      });
       toast.success("Added to project.");
       onOpenChange(false);
     } catch (error) {
@@ -504,6 +740,25 @@ function AddReferenceDialog({
             </Button>
           ))}
         </div>
+        {kind === "dataset" && (
+          <div className="flex flex-col gap-1 rounded-md border px-3 py-2">
+            <label className="flex items-center gap-2 text-sm" htmlFor="keep-added-in-sync">
+              <Checkbox
+                checked={keepInSync}
+                id="keep-added-in-sync"
+                onCheckedChange={(checked) => {
+                  setKeepInSync(checked);
+                }}
+              />
+              <span>Keep added datasets in sync</span>
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Off (default): each added dataset is pinned at its newest published version and moves
+              only when someone presses Sync. On: they float on the source's newest version
+              automatically.
+            </p>
+          </div>
+        )}
         {available.length === 0 ? (
           <p className="rounded-lg border px-4 py-6 text-center text-sm text-muted-foreground">
             Nothing left to add here.
@@ -882,6 +1137,7 @@ function ProjectWorkspacePage() {
             [
               ["Datasets", grouped.datasets.length, "datasets"],
               ["Derived", grouped.derived.length, "derived"],
+              ["Layers", grouped.layers.length, "layers"],
               ["Maps", grouped.maps.length, "maps"],
             ] as const
           ).map(([heading, count, kind]) =>

@@ -422,7 +422,7 @@ async function tryGetMap(
  */
 async function collectLayersByMap(
   ctx: QueryCtx,
-  memberships: Array<{ artifactId: string; artifactKind: "dataset" | "derived" | "map" }>,
+  memberships: Array<{ artifactId: string; artifactKind: "dataset" | "derived" | "layer" | "map" }>,
   checkRegistry: (id: string) => Promise<void>,
 ): Promise<BundleMapLayersLike[]> {
   const layersByMap: BundleMapLayersLike[] = [];
@@ -553,10 +553,19 @@ async function collectClosureInput(
       .map((group) => ({ collectionId: group.collectionId ?? "", groupId: group._id })),
     layersByMap: await collectLayersByMap(ctx, mapMemberships, checkRegistry),
     lifecycleByDataset,
-    memberships: memberships.map((row) => ({
-      artifactId: row.artifactId,
-      artifactKind: row.artifactKind,
-    })),
+    // Phase 2 of the project-workspace design added the "layer" kind (the
+    // design's kind list dataset|derived|layer|map); the layers entity itself
+    // is phase 3 and its press story is phase 5, so a layer membership is not
+    // a bundle member today and never enters the closure input.
+    memberships: memberships
+      .filter(
+        (row): row is typeof row & { artifactKind: "dataset" | "derived" | "map" } =>
+          row.artifactKind !== "layer",
+      )
+      .map((row) => ({
+        artifactId: row.artifactId,
+        artifactKind: row.artifactKind,
+      })),
     savedRegistryIds,
     unexaminedMapIds: new Set(mapMemberships.slice(MAX_MAPS).map((row) => row.artifactId)),
   };

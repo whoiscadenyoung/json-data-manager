@@ -9,11 +9,18 @@
  * stay real and resolvable through the seam), membership semantics
  * (references, not containment — adding a reference creates no catalog row),
  * creator-scoped reads, and the atomic birth of draft + membership row.
+ *
+ * Phase 2 of the project-workspace design adds the member-role suite: a
+ * LINKED add (a published dataset, by its frozen row's id) pins its version
+ * edge at the source chain's head — `syncMode: "auto"` floats it — the
+ * workspace read projects the "update available" answer, Sync advances the
+ * pin (editor members included, not the creator alone), and the link-XOR-
+ * modify line refuses the sync surface on OWNED members.
  */
 import { register as registerJsonCms } from "@caden/json-cms/test";
 import { convexTest } from "convex-test";
 import type { FunctionReturnType } from "convex/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { api, components } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
@@ -164,6 +171,20 @@ describe("projects: the working container (roadmap 7a, #102)", () => {
     ).rejects.toThrow(GATE_MESSAGE);
     await expect(
       anonymous.mutation(api.projects.removeMember, { projectId: "whatever", userId: "u" }),
+    ).rejects.toThrow(GATE_MESSAGE);
+    await expect(
+      anonymous.mutation(api.projects.setMemberSync, {
+        artifactId: "whatever",
+        artifactKind: "dataset",
+        projectId: "whatever",
+        syncMode: "auto",
+      }),
+    ).rejects.toThrow(GATE_MESSAGE);
+    await expect(
+      anonymous.query(api.projects.holdingProjects, {
+        artifactId: "whatever",
+        artifactKind: "dataset",
+      }),
     ).rejects.toThrow(GATE_MESSAGE);
 
     const mine = signedIn();
@@ -821,5 +842,354 @@ describe("projects: collaboration — the role access matrix (ADR 0011)", () => 
     await expect(editor.mutation(api.publish.start, { datasetKey: ownerDraftId })).rejects.toThrow(
       /Nothing to publish/,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Member roles and pin/sync (phase 2 of the project-workspace design): the
+// linked-add pin, the auto float, the update-available projection, per-member
+// Sync/Revert, and the link-XOR-modify guard.
+// ---------------------------------------------------------------------------
+
+/** Runs every scheduled function — the publish poller and its completion hook — to completion (the consumption.test.ts shape). */
+async function drainScheduled(t: TestConvex): Promise<void> {
+  await t.finishAllScheduledFunctions(() => {
+    vi.runAllTimers();
+  });
+}
+
+/** One chunk blob, planted in the COMPONENT's storage (the consumption.test.ts helper), plus its pending-upload token (issued for the attempt). */
+async function storeChunk(t: TestConvex, attemptId: string, rows: Array<{ data: unknown }>) {
+  const bytes = new TextEncoder().encode(JSON.stringify(rows)),
+    storageId = await t.action(components.jsonCms.host_support.storeTestBlob, {
+      bytes: bytes.buffer,
+    }),
+    { uploadId } = await t.run(async (ctx) =>
+      ctx.runMutation(components.jsonCms.lib.generateUploadUrl, { scope: attemptId }),
+    );
+  return { storageId, uploadId };
+}
+
+/** Drives one full publish: plan → register → freeze → drain (the consumption.test.ts shape). */
+async function drivePublish(
+  t: TestConvex,
+  options: {
+    attemptId: FunctionReturnType<typeof api.publish.start>["attemptId"];
+    chunks: Array<Array<{ data: unknown }>>;
+    totalRows: number;
+  },
+): Promise<{ schemaId: string }> {
+  await t.mutation(api.publish.plan, {
+    attemptId: options.attemptId,
+    chunkCount: options.chunks.length,
+    totalRows: options.totalRows,
+  });
+  for (const chunk of options.chunks) {
+    // oxlint-disable-next-line no-await-in-loop -- order is the resume index.
+    const { storageId, uploadId } = await storeChunk(t, options.attemptId, chunk);
+    // oxlint-disable-next-line no-await-in-loop -- order is the resume index.
+    await t.mutation(api.publish.registerChunk, {
+      attemptId: options.attemptId,
+      rowCount: chunk.length,
+      storageId,
+      uploadId,
+    });
+  }
+  const frozen = await t.mutation(api.publish.freeze, { attemptId: options.attemptId });
+  await drainScheduled(t);
+  return { schemaId: frozen.schemaId };
+}
+
+/** Publishes a draft's current rows as its next version (start → drive) — the consumption.test.ts helper, reshaped for this file's fixtures. */
+async function publishDraft(
+  t: TestConvex,
+  draftId: string,
+  rows: Array<{ data: Record<string, unknown> }>,
+): Promise<{ schemaId: string }> {
+  const started = await t.mutation(api.publish.start, { datasetKey: draftId });
+  return drivePublish(t, {
+    attemptId: started.attemptId,
+    chunks: rows.length === 0 ? [] : [rows],
+    totalRows: rows.length,
+  });
+}
+
+/** Creates a lifecycle-draft component dataset OUTSIDE any project — the host-only path (the consumption.test.ts shape): the source a linked member references. */
+async function createStandaloneDraft(t: TestConvex, title = "Source locations"): Promise<string> {
+  return t.run(async (ctx) =>
+    ctx.runMutation(components.jsonCms.lib.createSchema, {
+      actorId: "user-1",
+      lifecycle: "draft",
+      schema: { properties: { label: { type: "string" } }, title, type: "object" },
+    }),
+  );
+}
+
+/** The frozen row's global snapshot ref — the pin identity (the consumption.test.ts refOf shape). */
+function refOf(doc: { lineage?: { snapshotRef?: string } } | null): string | undefined {
+  return doc === null || doc.lineage === undefined ? undefined : doc.lineage.snapshotRef;
+}
+
+/** The membership row the workspace read names for one artifact, narrowed. */
+function artifactOf(workspace: Workspace, artifactId: string): Artifact {
+  const match = workspace.artifacts.find((row) => row.artifactId === artifactId);
+  if (match === undefined) {
+    throw new Error(`expected the workspace to hold ${artifactId}`);
+  }
+  return match;
+}
+
+/** One linked member's sync projection, narrowed — the house lint bans optional chaining (the consumption.test.ts `defined` shape). */
+function syncStateOf(artifact: Artifact): NonNullable<Artifact["sync"]> {
+  const sync = artifact.sync;
+  if (sync === undefined) {
+    throw new Error("expected this linked member to carry sync state");
+  }
+  return sync;
+}
+
+describe("projects: member roles and pin/sync (phase 2 of the project-workspace design)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /**
+   * The suite's fixture: one project, one published source chain (v1 frozen),
+   * the frozen row added to the project as a LINKED member, plus an in-project
+   * draft (OWNED). Returns everything the sync tests assert through.
+   */
+  async function linkedFixture(t: TestConvex) {
+    const projectId = await createProject(t, "Sync project");
+    const draftId = await createStandaloneDraft(t);
+    await t.mutation(api.entries.create, { data: { label: "A" }, schemaId: draftId });
+    const v1 = await publishDraft(t, draftId, [{ data: { label: "A" } }]);
+    await t.mutation(api.projects.addArtifact, {
+      artifactId: v1.schemaId,
+      artifactKind: "dataset",
+      projectId,
+    });
+    const ownedId = await createProjectDraft(t, projectId, "Owned draft");
+    const v1Head = await t.run(async (ctx) =>
+      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: v1.schemaId }),
+    );
+    return { draftId, linkedId: v1.schemaId, ownedId, projectId, v1Ref: refOf(v1Head) };
+  }
+
+  it("lands a linked add pinned at the source's head, badges the drift, and Sync — by any editor, not the creator alone — advances the pin", async () => {
+    const t = signedIn("user-1");
+    const { draftId, linkedId, projectId, v1Ref } = await linkedFixture(t);
+
+    // The linked member: role linked, sync manual (the default), edge pinned
+    // at v1 — the design's "a linked add mints a pin edge at head".
+    let linked = artifactOf(await workspaceOf(t, projectId), linkedId);
+    expect(linked.role).toBe("linked");
+    expect(linked.syncMode).toBe("manual");
+    let sync = syncStateOf(linked);
+    expect(sync.mode).toBe("pin");
+    expect(sync.upToDate).toBe(true);
+    expect(sync.pinnedRef).toBe(v1Ref);
+
+    // The source republishes → v2: the workspace read badges "update
+    // available" (upToDate false), naming the new head.
+    const v2 = await publishDraft(t, draftId, [{ data: { label: "A" } }, { data: { label: "B" } }]);
+    linked = artifactOf(await workspaceOf(t, projectId), linkedId);
+    sync = syncStateOf(linked);
+    expect(sync.upToDate).toBe(false);
+    expect(sync.headVersionLabel).toBe("v2");
+    const v2Head = await t.run(async (ctx) =>
+      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: v2.schemaId }),
+    );
+
+    // Sync by a NON-creator editor — the per-member half of the feature (the
+    // pre-phase-2 guard answered to the project's creator alone).
+    await seedUsers(t, [{ authId: "editor-1", email: "editor@example.com" }]);
+    await addMember(t, projectId, "editor-1", "editor");
+    const editor = t.withIdentity({ subject: "editor-1" });
+    const synced = await editor.mutation(api.consumption.syncReference, {
+      referenceId: sync.referenceId,
+    });
+    expect(synced.mode).toBe("pin");
+    linked = artifactOf(await workspaceOf(t, projectId), linkedId);
+    sync = syncStateOf(linked);
+    expect(sync.upToDate).toBe(true);
+    expect(sync.pinnedRef).toBe(refOf(v2Head));
+
+    // A viewer-role member reads the state and never writes it — the honest
+    // view-only denial (they can see the workspace; ADR 0011's denial rule).
+    await seedUsers(t, [{ authId: "viewer-1", email: "viewer@example.com" }]);
+    await addMember(t, projectId, "viewer-1", "viewer");
+    const viewer = t.withIdentity({ subject: "viewer-1" });
+    await expect(
+      viewer.mutation(api.consumption.syncReference, { referenceId: sync.referenceId }),
+    ).rejects.toThrow(/view-only/i);
+    // ...and an outsider reads the edge as gone (the stage-8 denial shape).
+    await expect(
+      t
+        .withIdentity({ subject: "outsider-1" })
+        .mutation(api.consumption.syncReference, { referenceId: sync.referenceId }),
+    ).rejects.toThrow(/no longer exists/i);
+  });
+
+  it("floats an auto add and drives the per-member keep-in-sync flip through setMemberSync", async () => {
+    const t = signedIn("user-1");
+    const projectId = await createProject(t, "Auto project");
+    const draftId = await createStandaloneDraft(t, "Auto source");
+    await t.mutation(api.entries.create, { data: { label: "A" }, schemaId: draftId });
+    const v1 = await publishDraft(t, draftId, [{ data: { label: "A" } }]);
+
+    // auto = float: the edge is born floating and stays current through a
+    // republish — no badge, no sync needed.
+    await t.mutation(api.projects.addArtifact, {
+      artifactId: v1.schemaId,
+      artifactKind: "dataset",
+      projectId,
+      syncMode: "auto",
+    });
+    let linked = artifactOf(await workspaceOf(t, projectId), v1.schemaId);
+    expect(linked.role).toBe("linked");
+    expect(linked.syncMode).toBe("auto");
+    let sync = syncStateOf(linked);
+    expect(sync.mode).toBe("float");
+    expect(sync.upToDate).toBe(true);
+    await publishDraft(t, draftId, [{ data: { label: "A" } }, { data: { label: "B" } }]);
+    linked = artifactOf(await workspaceOf(t, projectId), v1.schemaId);
+    expect(syncStateOf(linked).upToDate).toBe(true);
+
+    // Flip to manual: pin at the CURRENT head ("stop following, freeze where
+    // we are") — afterwards a republish badges again.
+    await t.mutation(api.projects.setMemberSync, {
+      artifactId: v1.schemaId,
+      artifactKind: "dataset",
+      projectId,
+      syncMode: "manual",
+    });
+    linked = artifactOf(await workspaceOf(t, projectId), v1.schemaId);
+    expect(linked.syncMode).toBe("manual");
+    sync = syncStateOf(linked);
+    expect(sync.mode).toBe("pin");
+    expect(sync.upToDate).toBe(true);
+    await publishDraft(t, draftId, [{ data: { label: "A" } }, { data: { label: "C" } }]);
+    linked = artifactOf(await workspaceOf(t, projectId), v1.schemaId);
+    expect(syncStateOf(linked).upToDate).toBe(false);
+
+    // And back to auto: the pin dissolves into a float, current again.
+    await t.mutation(api.projects.setMemberSync, {
+      artifactId: v1.schemaId,
+      artifactKind: "dataset",
+      projectId,
+      syncMode: "auto",
+    });
+    linked = artifactOf(await workspaceOf(t, projectId), v1.schemaId);
+    expect(linked.syncMode).toBe("auto");
+    sync = syncStateOf(linked);
+    expect(sync.mode).toBe("float");
+    expect(sync.upToDate).toBe(true);
+  });
+
+  it("enforces link XOR modify: owned members refuse the sync surface, drafts land owned, and maps are refused", async () => {
+    const t = signedIn("user-1");
+    const { linkedId, ownedId, projectId } = await linkedFixture(t);
+
+    // An in-project draft is OWNED — the modify side. setMemberSync refuses
+    // it: an owned member is edited in place, never pinned/synced.
+    const owned = artifactOf(await workspaceOf(t, projectId), ownedId);
+    expect(owned.role).toBe("owned");
+    await expect(
+      t.mutation(api.projects.setMemberSync, {
+        artifactId: ownedId,
+        artifactKind: "dataset",
+        projectId,
+        syncMode: "auto",
+      }),
+    ).rejects.toThrow(/Owned members are edited in place/);
+
+    // The other owned path: adding a DRAFT by reference (a creator pulling
+    // their own WIP in) lands owned too — ADR 0011's member-editable line —
+    // and carries no sync state to badge.
+    const wipId = await createStandaloneDraft(t, "WIP pulled in");
+    await t.mutation(api.projects.addArtifact, {
+      artifactId: wipId,
+      artifactKind: "dataset",
+      projectId,
+    });
+    const wip = artifactOf(await workspaceOf(t, projectId), wipId);
+    expect(wip.role).toBe("owned");
+    expect(wip.sync).toBeUndefined();
+    await expect(
+      t.mutation(api.projects.setMemberSync, {
+        artifactId: wipId,
+        artifactKind: "dataset",
+        projectId,
+        syncMode: "manual",
+      }),
+    ).rejects.toThrow(/Owned members are edited in place/);
+
+    // Maps hold no version chain — the sync surface refuses them too.
+    const mapId = await t.mutation(api.maps.create, { name: "Sync project map" });
+    await t.mutation(api.projects.addArtifact, {
+      artifactId: mapId,
+      artifactKind: "map",
+      projectId,
+    });
+    await expect(
+      t.mutation(api.projects.setMemberSync, {
+        artifactId: mapId,
+        artifactKind: "map",
+        projectId,
+        syncMode: "auto",
+      }),
+    ).rejects.toThrow(/Maps don't carry version chains/);
+
+    // Not a member of this project: the artifact isn't in it, plain answer.
+    await expect(
+      t.mutation(api.projects.setMemberSync, {
+        artifactId: linkedId,
+        artifactKind: "dataset",
+        projectId: await createProject(t, "Other project"),
+        syncMode: "auto",
+      }),
+    ).rejects.toThrow(/isn't in this project/);
+  });
+
+  it("answers holdingProjects with the caller's own member projects only", async () => {
+    const t = signedIn("user-1");
+    const projectId = await createProject(t, "Holder");
+    const { linkedId } = await linkedFixture(t);
+    // linkedFixture created its own project; this one gets a direct member.
+    const draftId = await createStandaloneDraft(t, "Held source");
+    await t.mutation(api.entries.create, { data: { label: "A" }, schemaId: draftId });
+    const v1 = await publishDraft(t, draftId, [{ data: { label: "A" } }]);
+    await t.mutation(api.projects.addArtifact, {
+      artifactId: v1.schemaId,
+      artifactKind: "dataset",
+      projectId,
+    });
+
+    expect(
+      await t.query(api.projects.holdingProjects, {
+        artifactId: v1.schemaId,
+        artifactKind: "dataset",
+      }),
+    ).toEqual([projectId]);
+    // A project the caller holds no role in contributes nothing — another
+    // user's workspace never leaks through a dataset they can see.
+    const other = t.withIdentity({ subject: "someone-else" });
+    expect(
+      await other.query(api.projects.holdingProjects, {
+        artifactId: v1.schemaId,
+        artifactKind: "dataset",
+      }),
+    ).toEqual([]);
+    // Both linked members answer with their own holders.
+    expect(
+      await t.query(api.projects.holdingProjects, {
+        artifactId: linkedId,
+        artifactKind: "dataset",
+      }),
+    ).toHaveLength(1);
   });
 });

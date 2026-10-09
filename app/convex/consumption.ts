@@ -7,6 +7,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { auth } from "./auth";
 import { specDependencies } from "./derivedSpec";
+import { projectRoleFor, roleAtLeast } from "./projectAccess";
 import { CATALOG_READ_LIMIT, deleteDatasetCascading } from "./schemas";
 import {
   commitOpValidator,
@@ -673,11 +674,16 @@ function referenceDenied(): ConvexError<string> {
 
 /**
  * Whether the caller may mutate one consumer reference (stage 8, #104): the
- * derived consumer's registry row must be theirs, a fork's edge belongs to
- * the membership's project's creator, and a MAP edge is the recorded
- * exception — maps are shared catalog artifacts (no creator stamp exists on
- * the component's maps table), so any signed-in viewer may adjust its layer
- * pins. `auth(ctx)` has already guaranteed the caller is signed in.
+ * derived consumer's registry row must be theirs, a fork's edge answers to
+ * its membership's project — since phase 2 of the project-workspace design to
+ * the project's SEAT (editor-and-up, the same guard every other project
+ * content write runs), where it had answered to the creator stamp alone; a
+ * viewer-role member gets the honest view-only denial (the workspace read
+ * already told them they belong — ADR 0011's denial-shape rule), a non-member
+ * the gone-shaped one — and a MAP edge is the recorded exception — maps are
+ * shared catalog artifacts (no creator stamp exists on the component's maps
+ * table), so any signed-in viewer may adjust its layer pins. `auth(ctx)` has
+ * already guaranteed the caller is signed in.
  */
 async function assertConsumerWritable(
   ctx: { db: ReadDb },
@@ -694,9 +700,17 @@ async function assertConsumerWritable(
   if (ref.consumerKind === "fork") {
     const membershipId = ctx.db.normalizeId("projectArtifacts", ref.consumerId);
     const membership = membershipId === null ? null : await ctx.db.get(membershipId);
-    const project = membership === null ? null : await ctx.db.get(membership.projectId);
-    if (project === null || project.createdBy !== actorId) {
+    if (membership === null) {
       throw referenceDenied();
+    }
+    const role = await projectRoleFor(ctx, membership.projectId, actorId);
+    if (role === null) {
+      throw referenceDenied();
+    }
+    if (!roleAtLeast(role, "editor")) {
+      throw new ConvexError(
+        "You have view-only access — an editor or owner can sync this project's references.",
+      );
     }
     return;
   }

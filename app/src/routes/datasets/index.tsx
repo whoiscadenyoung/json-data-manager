@@ -2,9 +2,18 @@ import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import type { FunctionReturnType } from "convex/server";
-import { Calendar, ChevronRight, FolderOpen, Layers, Plus, Search } from "lucide-react";
+import {
+  Calendar,
+  ChevronRight,
+  FolderKanban,
+  FolderOpen,
+  Layers,
+  Plus,
+  Search,
+} from "lucide-react";
 import { useState } from "react";
 
+import { AddToProjectSheet } from "#/components/add-to-project-sheet";
 import {
   DerivedDatasetBadge,
   DatasetTypeTags,
@@ -13,6 +22,7 @@ import {
 } from "#/components/dataset-type-tags";
 import { RouterButton } from "#/components/router-button";
 import { Badge } from "#/components/ui/badge";
+import { Button } from "#/components/ui/button";
 import { Card } from "#/components/ui/card";
 import {
   Empty,
@@ -219,10 +229,12 @@ function DatasetCard({
   dataset,
   profile,
   badges,
+  onAddToProject,
 }: {
   dataset: DatasetSummary;
   profile?: UserProfile;
   badges?: SourceBadge[];
+  onAddToProject: () => void;
 }) {
   return (
     <Card className="flex-row items-center gap-4 px-4 transition-shadow hover:shadow-md">
@@ -260,6 +272,19 @@ function DatasetCard({
           {profile.name ?? "Unnamed"}
         </Link>
       )}
+      {/* Add to project (phase 2 of the project-workspace design): a sibling
+          button for the same reason — the card's main surface stays a link.
+          The sheet picks which of the viewer's projects receives it. */}
+      <Button
+        variant="ghost"
+        size="icon"
+        className="shrink-0 text-muted-foreground"
+        aria-label={`Add ${dataset.title} to a project`}
+        title="Add to project — reference this dataset from one of your projects"
+        onClick={onAddToProject}
+      >
+        <FolderKanban className="h-4 w-4" />
+      </Button>
       <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
     </Card>
   );
@@ -506,6 +531,11 @@ function DatasetsPage() {
     [sort, setSort] = useState<SortOption>("newest"),
     [typeFilter, setTypeFilter] = useState<TypeFilter>("all"),
     [showDrafts, setShowDrafts] = useState(false),
+    // The "Add to project" sheet's target (phase 2): the dataset a card's
+    // FolderKanban action pointed at, or absent while the sheet is closed.
+    [addToProjectTarget, setAddToProjectTarget] = useState<
+      { id: string; title: string } | undefined
+    >(undefined),
     { datasets, drafts, groups, collections, profiles, derived } =
       useBrowserLightQueries(showDrafts),
     collectionNames = new Map<string, string>();
@@ -664,6 +694,9 @@ function DatasetsPage() {
                           ? undefined
                           : driftBadges.bySchemaId[item.dataset._id]
                       }
+                      onAddToProject={() => {
+                        setAddToProjectTarget({ id: item.dataset._id, title: item.dataset.title });
+                      }}
                     />
                   ),
                 )}
@@ -671,6 +704,20 @@ function DatasetsPage() {
             )}
           </div>
         </div>
+      )}
+
+      {addToProjectTarget !== undefined && (
+        <AddToProjectSheet
+          artifactId={addToProjectTarget.id}
+          artifactKind="dataset"
+          artifactTitle={addToProjectTarget.title}
+          open={addToProjectTarget !== undefined}
+          onOpenChange={(next) => {
+            if (!next) {
+              setAddToProjectTarget(undefined);
+            }
+          }}
+        />
       )}
     </main>
   );

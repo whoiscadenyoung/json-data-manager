@@ -13,6 +13,7 @@ import {
   Ellipsis,
   FileDown,
   FilePlus,
+  FolderKanban,
   Globe,
   Lock,
   LockOpen,
@@ -30,6 +31,7 @@ import { toast } from "sonner";
 import { z } from "zod";
 
 import { AddToMapSheet } from "@/components/add-to-map-sheet";
+import { AddToProjectSheet } from "@/components/add-to-project-sheet";
 import { AnalysisPanel } from "@/components/analysis-panel";
 import { DatasetHistoryPanel } from "@/components/dataset-history-panel";
 import { DatasetOverview } from "@/components/dataset-overview";
@@ -420,6 +422,7 @@ function SchemaDetailBody() {
     [exportOpen, setExportOpen] = useState(false),
     [simplifyOpen, setSimplifyOpen] = useState(false),
     [addToMapOpen, setAddToMapOpen] = useState(false),
+    [addToProjectOpen, setAddToProjectOpen] = useState(false),
     [jsonDefinitionOpen, setJsonDefinitionOpen] = useState(false),
     [conversionSuccess, setConversionSuccess] = useState<
       { processed: number; total: number } | undefined
@@ -793,84 +796,93 @@ function SchemaDetailBody() {
               Create Entry
             </Button>
           )}
-          {(isGeospatialDataset || schema.hasSourceFile || isCreator) && (
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={<Button variant="outline" size="icon" aria-label="More actions" />}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={<Button variant="outline" size="icon" aria-label="More actions" />}
+            >
+              <Ellipsis className="h-4 w-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {/* Add to project (phase 2): every signed-in viewer belongs to
+                  some project or can create one — the entry is unconditional,
+                  which is also why the menu itself now always renders. */}
+              <DropdownMenuItem
+                onClick={() => {
+                  setAddToProjectOpen(true);
+                }}
               >
-                <Ellipsis className="h-4 w-4" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {isCreator && (
-                  <DropdownMenuItem
-                    onClick={() => {
-                      void flipVisibility();
-                    }}
-                    title={
-                      schema.publishedVisibility === "author"
-                        ? "Currently only you can see this dataset — click to share it with everyone signed in."
-                        : "Currently every signed-in user can see this dataset — click to restrict it to you."
-                    }
-                  >
-                    {schema.publishedVisibility === "author" ? (
-                      <Globe className="h-4 w-4 mr-2" />
-                    ) : (
-                      <Lock className="h-4 w-4 mr-2" />
-                    )}
-                    {schema.publishedVisibility === "author" ? "Visible to everyone" : "Only me"}
-                  </DropdownMenuItem>
-                )}
-                {isCreator && (
-                  <DropdownMenuItem
-                    onClick={() => {
-                      void flipEditPolicy();
-                    }}
-                    title={
-                      isLocked
-                        ? "Currently only you can edit this dataset — click to let every signed-in collaborator edit."
-                        : "Currently every signed-in collaborator can edit this dataset — click to restrict editing to you."
-                    }
-                  >
-                    {isLocked ? (
-                      <LockOpen className="h-4 w-4 mr-2" />
-                    ) : (
-                      <Lock className="h-4 w-4 mr-2" />
-                    )}
-                    {isLocked ? "Unlock editing" : "Lock editing"}
-                  </DropdownMenuItem>
-                )}
-                {isGeospatialDataset && (
-                  <DropdownMenuItem
-                    onClick={() => {
-                      setAddToMapOpen(true);
-                    }}
-                  >
-                    <MapIcon className="h-4 w-4 mr-2" />
-                    Add to map…
-                  </DropdownMenuItem>
-                )}
-                {isGeospatialDataset && !readOnly && (
-                  <DropdownMenuItem
-                    onClick={() => {
-                      setSimplifyOpen(true);
-                    }}
-                  >
-                    <MapPinned className="h-4 w-4 mr-2" />
-                    Simplify geometry…
-                  </DropdownMenuItem>
-                )}
-                {schema.hasSourceFile && (
-                  <DropdownMenuItem
-                    disabled={sourceFileUrl === undefined}
-                    onClick={() => void downloadSourceFile()}
-                  >
-                    <FileDown className="h-4 w-4 mr-2" />
-                    Download original file
-                  </DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
+                <FolderKanban className="h-4 w-4 mr-2" />
+                Add to project…
+              </DropdownMenuItem>
+              {isCreator && (
+                <DropdownMenuItem
+                  onClick={() => {
+                    void flipVisibility();
+                  }}
+                  title={
+                    schema.publishedVisibility === "author"
+                      ? "Currently only you can see this dataset — click to share it with everyone signed in."
+                      : "Currently every signed-in user can see this dataset — click to restrict it to you."
+                  }
+                >
+                  {schema.publishedVisibility === "author" ? (
+                    <Globe className="h-4 w-4 mr-2" />
+                  ) : (
+                    <Lock className="h-4 w-4 mr-2" />
+                  )}
+                  {schema.publishedVisibility === "author" ? "Visible to everyone" : "Only me"}
+                </DropdownMenuItem>
+              )}
+              {isCreator && (
+                <DropdownMenuItem
+                  onClick={() => {
+                    void flipEditPolicy();
+                  }}
+                  title={
+                    isLocked
+                      ? "Currently only you can edit this dataset — click to let every signed-in collaborator edit."
+                      : "Currently every signed-in collaborator can edit this dataset — click to restrict editing to you."
+                  }
+                >
+                  {isLocked ? (
+                    <LockOpen className="h-4 w-4 mr-2" />
+                  ) : (
+                    <Lock className="h-4 w-4 mr-2" />
+                  )}
+                  {isLocked ? "Unlock editing" : "Lock editing"}
+                </DropdownMenuItem>
+              )}
+              {isGeospatialDataset && (
+                <DropdownMenuItem
+                  onClick={() => {
+                    setAddToMapOpen(true);
+                  }}
+                >
+                  <MapIcon className="h-4 w-4 mr-2" />
+                  Add to map…
+                </DropdownMenuItem>
+              )}
+              {isGeospatialDataset && !readOnly && (
+                <DropdownMenuItem
+                  onClick={() => {
+                    setSimplifyOpen(true);
+                  }}
+                >
+                  <MapPinned className="h-4 w-4 mr-2" />
+                  Simplify geometry…
+                </DropdownMenuItem>
+              )}
+              {schema.hasSourceFile && (
+                <DropdownMenuItem
+                  disabled={sourceFileUrl === undefined}
+                  onClick={() => void downloadSourceFile()}
+                >
+                  <FileDown className="h-4 w-4 mr-2" />
+                  Download original file
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -1089,6 +1101,14 @@ function SchemaDetailBody() {
           target={{ targetId: schemaId, targetType: "dataset", targetName: schema.title }}
         />
       )}
+
+      <AddToProjectSheet
+        artifactId={schemaId}
+        artifactKind="dataset"
+        artifactTitle={schema.title}
+        open={addToProjectOpen}
+        onOpenChange={setAddToProjectOpen}
+      />
     </div>
   );
 }
