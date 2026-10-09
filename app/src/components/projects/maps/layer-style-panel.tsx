@@ -129,9 +129,7 @@ function LinkedStyleCard({ placement }: { placement: Extract<MapPlacement, { kin
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           {placement.layer.name}
-          <Badge variant="secondary">
-            pinned {placement.layer.versionLabel}
-          </Badge>
+          <Badge variant="secondary">pinned {placement.layer.versionLabel}</Badge>
         </CardTitle>
         <CardDescription>
           A linked layer renders its pinned version read-only — the frozen style below is what the
@@ -169,11 +167,13 @@ function LinkedStyleCard({ placement }: { placement: Extract<MapPlacement, { kin
  */
 // oxlint-disable-next-line eslint/complexity -- the form's branches ARE its render states (saving spinner, dirty hints, reset gating); splitting them into named components scatters one form across the file.
 function OwnedStyleForm({
+  canWrite,
   placement,
   viewerHint,
   onSave,
   saving,
 }: {
+  canWrite: boolean;
   placement: Extract<MapPlacement, { kind: "owned" }>;
   viewerHint: string;
   onSave: (draft: { name: string; style: LayerStyle }) => void | Promise<void>;
@@ -183,6 +183,7 @@ function OwnedStyleForm({
     stored = styleOrDefault(layer.style),
     [name, setName] = useState(layer.name),
     [style, setStyle] = useState<LayerStyle>(stored),
+    locked = !canWrite || saving,
     dirty =
       name !== layer.name ||
       style.color !== stored.color ||
@@ -217,7 +218,8 @@ function OwnedStyleForm({
           <Input
             id="layer-style-name"
             value={name}
-            disabled={saving}
+            disabled={locked}
+            title={canWrite ? undefined : viewerHint}
             onChange={(e) => {
               setName(e.target.value);
             }}
@@ -227,7 +229,7 @@ function OwnedStyleForm({
           id="layer-style-color"
           label="Stroke / points"
           value={style.color}
-          disabled={saving}
+          disabled={locked}
           onChange={(color) => {
             setStyle((prev) => ({ ...prev, color }));
           }}
@@ -236,7 +238,7 @@ function OwnedStyleForm({
           id="layer-style-fill"
           label="Fill"
           value={style.fillColor}
-          disabled={saving}
+          disabled={locked}
           onChange={(fillColor) => {
             setStyle((prev) => ({ ...prev, fillColor }));
           }}
@@ -250,7 +252,7 @@ function OwnedStyleForm({
             min={0}
             max={1}
             step={0.05}
-            disabled={saving}
+            disabled={locked}
             onChange={(fillOpacity) => {
               setStyle((prev) => ({ ...prev, fillOpacity }));
             }}
@@ -263,7 +265,7 @@ function OwnedStyleForm({
             min={0.5}
             max={10}
             step={0.5}
-            disabled={saving}
+            disabled={locked}
             onChange={(weight) => {
               setStyle((prev) => ({ ...prev, weight }));
             }}
@@ -276,7 +278,7 @@ function OwnedStyleForm({
             min={2}
             max={20}
             step={1}
-            disabled={saving}
+            disabled={locked}
             onChange={(radius) => {
               setStyle((prev) => ({ ...prev, radius }));
             }}
@@ -289,7 +291,7 @@ function OwnedStyleForm({
             min={0}
             max={1}
             step={0.05}
-            disabled={saving}
+            disabled={locked}
             onChange={(opacity) => {
               setStyle((prev) => ({ ...prev, opacity }));
             }}
@@ -298,8 +300,8 @@ function OwnedStyleForm({
         <div className="flex items-center gap-2">
           <Button
             type="button"
-            disabled={saving || !dirty}
-            title={!dirty ? "No changes to save yet" : undefined}
+            disabled={locked || !dirty}
+            title={!canWrite ? viewerHint : !dirty ? "No changes to save yet" : undefined}
             onClick={() => {
               void onSave({ name, style });
             }}
@@ -316,7 +318,8 @@ function OwnedStyleForm({
           <Button
             type="button"
             variant="outline"
-            disabled={saving || !dirty}
+            disabled={locked || !dirty}
+            title={canWrite ? undefined : viewerHint}
             onClick={() => {
               setName(layer.name);
               setStyle(stored);
@@ -331,8 +334,9 @@ function OwnedStyleForm({
           </p>
         )}
         <p className="text-[10px] text-muted-foreground" title={viewerHint}>
-          Defaults: {DEFAULT_LAYER_STYLE.color} stroke, {Math.round(DEFAULT_LAYER_STYLE.fillOpacity * 100)}%
-          fill — what an auto-created layer carries before anyone styles it.
+          Defaults: {DEFAULT_LAYER_STYLE.color} stroke,{" "}
+          {Math.round(DEFAULT_LAYER_STYLE.fillOpacity * 100)}% fill — what an auto-created layer
+          carries before anyone styles it.
         </p>
       </CardContent>
     </Card>
@@ -340,20 +344,129 @@ function OwnedStyleForm({
 }
 
 /**
- * The style panel for the selected placement: the owned form (the remount
- * `key` re-seeds the draft per layer), the linked read-only card, or nothing
- * for a missing placement.
+ * The editable form for one owned GROUP placement — name + the group
+ * transparency slider, the one style a group owns (the canvas scales every
+ * child's fill/stroke opacities by it). A group's stored STYLE is rendered
+ * by nothing (groups draw only through their children), so offering the
+ * stroke/fill form here would save a silent no-op.
+ */
+// oxlint-disable-next-line eslint/complexity -- the form's branches ARE its render states (saving spinner, dirty hints, reset gating), same as OwnedStyleForm.
+function GroupStyleForm({
+  canWrite,
+  placement,
+  viewerHint,
+  onSave,
+  saving,
+}: {
+  canWrite: boolean;
+  placement: Extract<MapPlacement, { kind: "owned" }>;
+  viewerHint: string;
+  onSave: (draft: { name: string; opacity: number }) => Promise<void>;
+  saving: boolean;
+}) {
+  const layer = placement.layer,
+    [name, setName] = useState(layer.name),
+    [opacity, setOpacity] = useState(layer.opacity ?? 1),
+    locked = !canWrite || saving,
+    dirty = name !== layer.name || opacity !== (layer.opacity ?? 1);
+  return (
+    <Card className="h-fit">
+      <CardHeader>
+        <CardTitle className="text-base">Group</CardTitle>
+        <CardDescription>
+          A group draws only through its children — name it and set how transparent the whole
+          subtree draws. Restyle each child by selecting it in the tree.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="group-style-name" className="text-xs">
+            Name
+          </Label>
+          <Input
+            id="group-style-name"
+            value={name}
+            disabled={locked}
+            title={canWrite ? undefined : viewerHint}
+            onChange={(e) => {
+              setName(e.target.value);
+            }}
+          />
+        </div>
+        <NumberField
+          id="group-style-opacity"
+          label="Group transparency"
+          hint="0–1 — scales every child's fill and stroke opacity"
+          value={opacity}
+          min={0}
+          max={1}
+          step={0.05}
+          disabled={locked}
+          onChange={(value) => {
+            setOpacity(value);
+          }}
+        />
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            disabled={locked || !dirty}
+            title={!canWrite ? viewerHint : !dirty ? "No changes to save yet" : undefined}
+            onClick={() => {
+              void onSave({ name, opacity });
+            }}
+          >
+            {saving ? (
+              <>
+                <Loader2 className="mr-2 size-4 animate-spin" />
+                Saving…
+              </>
+            ) : (
+              "Save group"
+            )}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={locked || !dirty}
+            title={canWrite ? undefined : viewerHint}
+            onClick={() => {
+              setName(layer.name);
+              setOpacity(layer.opacity ?? 1);
+            }}
+          >
+            Reset
+          </Button>
+        </div>
+        {dirty && (
+          <p className="text-xs text-muted-foreground">
+            Unsaved changes — children draw at the saved transparency until you save.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * The style panel for the selected placement: the owned data form (the
+ * remount `key` re-seeds the draft per layer), the owned GROUP form (name +
+ * transparency — a group's stored style is rendered by nothing), the linked
+ * read-only card, or nothing for a missing placement.
  */
 export function LayerStylePanel({
+  canWrite,
   placement,
   viewerHint,
   saving,
   onSave,
+  onSaveGroup,
 }: {
+  canWrite: boolean;
   placement: MapPlacement | undefined;
   viewerHint: string;
   saving: boolean;
   onSave: (draft: { name: string; style: LayerStyle }) => void | Promise<void>;
+  onSaveGroup: (draft: { name: string; opacity: number }) => Promise<void>;
 }) {
   if (placement === undefined) {
     return null;
@@ -364,9 +477,22 @@ export function LayerStylePanel({
   if (placement.kind === "missing") {
     return null;
   }
+  if (placement.layer.kind === "group") {
+    return (
+      <GroupStyleForm
+        key={placement.layer.layerId}
+        canWrite={canWrite}
+        placement={placement}
+        viewerHint={viewerHint}
+        saving={saving}
+        onSave={onSaveGroup}
+      />
+    );
+  }
   return (
     <OwnedStyleForm
       key={placement.layer.layerId}
+      canWrite={canWrite}
       placement={placement}
       viewerHint={viewerHint}
       saving={saving}

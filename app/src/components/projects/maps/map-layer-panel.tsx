@@ -57,12 +57,15 @@ function PlacementEyeButton({
   visible,
   disabled,
   disabledReason,
+  scopeHint,
   onToggle,
 }: {
   label: string;
   visible: boolean;
   disabled: boolean;
   disabledReason?: string;
+  /** The enabled-state hint — WHICH eye this is (map-local or layer-wide). */
+  scopeHint?: string;
   onToggle: () => void;
 }) {
   return (
@@ -71,7 +74,7 @@ function PlacementEyeButton({
       size="icon"
       className="size-7"
       aria-label={visible ? `Hide ${label}` : `Show ${label}`}
-      title={disabled ? disabledReason : undefined}
+      title={disabled ? disabledReason : scopeHint}
       disabled={disabled}
       onClick={onToggle}
     >
@@ -176,6 +179,7 @@ function GroupChildRow({
             ? "Linked children render read-only — the group's eye controls them."
             : disabledReason
         }
+        scopeHint="Layer-wide — the layer's own default; this hides it on every map, not just this one"
         onToggle={() => {
           onToggleChild(child, visible);
         }}
@@ -187,6 +191,18 @@ function GroupChildRow({
 /** The placement's name, per kind (a missing placement lost its layer row). */
 function placementName(placement: MapPlacement): string {
   return placement.kind === "missing" ? "Deleted layer" : placement.layer.name;
+}
+
+/** The owned layer's kind — undefined for linked/missing (they carry no editable row). */
+function placementLayerKind(placement: MapPlacement): "data" | "group" | undefined {
+  return placement.kind === "owned" ? placement.layer.kind : undefined;
+}
+
+/** True when the row draws: the placement's map-local eye AND (for owned layers) the layer-wide one. */
+function placementDraws(placement: MapPlacement): boolean {
+  return placement.kind === "owned"
+    ? placement.visible && placement.layer.visible
+    : placement.visible;
 }
 
 /** The badge row: draft, linked-pin, and drift states. */
@@ -229,8 +245,16 @@ function PlacementMeta({
   if (placement.kind === "linked") {
     return <>pinned {placement.layer.versionLabel}</>;
   }
+  if (!placement.layer.visible) {
+    return <>hidden layer-wide — show it on the Layers tab</>;
+  }
   if (placement.layer.kind === "group") {
-    return <>{childrenCount === undefined ? "…" : childrenCount} {childrenCount === 1 ? "child" : "children"}</>;
+    return (
+      <>
+        {childrenCount === undefined ? "…" : childrenCount}{" "}
+        {childrenCount === 1 ? "child" : "children"}
+      </>
+    );
   }
   return (
     <>
@@ -247,6 +271,7 @@ function PlacementControls({
   visible,
   index,
   totalCount,
+  placement,
   selectable,
   viewerHint,
   onSelect,
@@ -259,6 +284,7 @@ function PlacementControls({
   visible: boolean;
   index: number;
   totalCount: number;
+  placement: MapPlacement;
   selectable: boolean;
   viewerHint: string;
   onSelect: () => void;
@@ -286,6 +312,7 @@ function PlacementControls({
         visible={visible}
         disabled={!canWrite}
         disabledReason={viewerHint}
+        scopeHint="This map only — the layer-wide eye lives on the Layers tab"
         onToggle={onToggleVisibility}
       />
       {selectable && (
@@ -293,8 +320,14 @@ function PlacementControls({
           variant="ghost"
           size="icon"
           className="size-7"
-          aria-label={`Style ${name}`}
-          title={canWrite ? "Style this layer — the stored style is what the map draws" : viewerHint}
+          aria-label={`Edit ${name}`}
+          title={
+            !canWrite
+              ? viewerHint
+              : placementLayerKind(placement) === "group"
+                ? "Edit this group's name and transparency"
+                : "Style this layer — the stored style is what the map draws"
+          }
           disabled={!canWrite}
           onClick={onSelect}
         >
@@ -371,7 +404,9 @@ function PlacementHeader({
         className={`flex min-w-0 flex-1 flex-col items-start text-left ${selectable ? "cursor-pointer" : "cursor-default"}`}
         title={
           placement.kind === "owned"
-            ? "Select to restyle this layer"
+            ? canWrite
+              ? "Select to restyle this layer"
+              : "Select to view this layer's style — viewers are read-only"
             : placement.kind === "linked"
               ? "A linked layer is read-only — its pinned version renders as published"
               : undefined
@@ -396,6 +431,7 @@ function PlacementHeader({
         visible={placement.visible}
         index={index}
         totalCount={totalCount}
+        placement={placement}
         selectable={selectable}
         viewerHint={viewerHint}
         onSelect={onSelect}
@@ -486,7 +522,7 @@ function PlacementRow({
   return (
     <li
       className={`rounded-md border px-2.5 py-2 transition-opacity ${
-        placement.visible ? "" : "opacity-55"
+        placementDraws(placement) ? "" : "opacity-55"
       } ${selected ? "border-primary" : ""}`}
     >
       <PlacementHeader

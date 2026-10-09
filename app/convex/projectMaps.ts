@@ -171,6 +171,10 @@ export const layers = query({
               // (and the style panel edits) it without a per-layer get
               // (phase 4).
               style: resolved.layer.style,
+              // The layer-wide eye — the render gate ANDs it into the
+              // placement's map-local one, so hiding a layer on the Layers
+              // tab hides it on every map it sits on.
+              visible: resolved.layer.visible,
             },
             layerMemberId: placement.layerMemberId,
             order: placement.order,
@@ -185,7 +189,9 @@ export const layers = query({
                 ? record.name
                 : "Linked layer",
             kind =
-              record !== undefined && record.kind === "group" ? ("group" as const) : ("data" as const),
+              record !== undefined && record.kind === "group"
+                ? ("group" as const)
+                : ("data" as const),
             dataset = resolved.version.dataset;
           return {
             _creationTime: placement._creationTime,
@@ -245,6 +251,7 @@ export const layers = query({
           needsAttention: v.optional(v.string()),
           opacity: v.optional(v.number()),
           style: v.optional(layerStyleValidator),
+          visible: v.boolean(),
         }),
         layerMemberId: v.id("projectArtifacts"),
         order: v.number(),

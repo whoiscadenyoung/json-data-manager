@@ -1,7 +1,7 @@
 import { ConfirmDialog } from "@caden/json-cms/react/ui";
 import { convexQuery } from "@convex-dev/react-query";
-import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQueries, useQuery } from "@tanstack/react-query";
+import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useConvexAuth, useMutation } from "convex/react";
 import {
   ArrowLeft,
@@ -14,8 +14,8 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
-import { useRef, useState } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { LayerStylePanel } from "#/components/projects/maps/layer-style-panel";
@@ -230,16 +230,16 @@ function EditorNotFoundCard({ projectId }: { projectId: string }) {
 
 /**
  * The editor's mutation handlers, extracted so the page stays readable (the
- * retired standalone editor's useMapLayerActions shape, carried over).
- * `membershipIdByVersionId` is the workspace read's join — the linked-layer
- * flow pins a version (`layers.link` returns its id), and the placement
- * names the MEMBERSHIP whose artifactId is that version.
+ * retired standalone editor's useMapLayerActions shape, carried over —
+ * including its catch + toast on every mutation: the app has no global
+ * unhandledrejection handler). The error contract: handlers the PICKER
+ * awaits rethrow after toasting (so the sheet stays open on failure), while
+ * handlers invoked through `void` swallow after toasting (no unhandled
+ * rejection). Link & place is ONE server call — layers.link takes the
+ * mapId and inserts the placement in the same transaction as the pinned
+ * membership, so the flow cannot race the workspace read.
  */
-function useMapLayerActions(
-  mapId: string,
-  projectId: string,
-  membershipIdByVersionId: ReadonlyMap<string, string>,
-) {
+function useMapLayerActions(mapId: string, projectId: string) {
   const navigate = useNavigate(),
     addExisting = useMutation(api.projectMaps.addLayer),
     addDataset = useMutation(api.projectMaps.addDatasetToMap),
@@ -251,65 +251,95 @@ function useMapLayerActions(
     deleteMap = useMutation(api.projectMaps.remove);
 
   const handleAddExistingLayer = async (layerMemberId: string): Promise<void> => {
-    await addExisting({ layerMemberId, mapId });
-    toast.success("Layer placed on the map.");
+    try {
+      await addExisting({ layerMemberId, mapId });
+      toast.success("Layer placed on the map.");
+    } catch (error) {
+      toast.error(errorMessage(error, "Failed to place the layer."));
+      throw error;
+    }
   };
 
   const handleAddDataset = async (datasetId: string): Promise<void> => {
-    const outcome = await addDataset({ datasetId, mapId });
-    toast.success(
-      outcome.created
-        ? "Imported and layered — the dataset joined the project with its own layer."
-        : "Layered — the dataset's existing layer joined the map.",
-    );
+    try {
+      const outcome = await addDataset({ datasetId, mapId });
+      toast.success(
+        outcome.created
+          ? "Imported and layered — the dataset joined the project with its own layer."
+          : "Layered — the dataset's existing layer joined the map.",
+      );
+    } catch (error) {
+      toast.error(errorMessage(error, "Failed to layer the dataset."));
+      throw error;
+    }
   };
 
   const handleAddAll = async (target: {
     collectionId?: string;
     groupId?: string;
   }): Promise<void> => {
-    const outcome = await addAll({ ...target, mapId }),
-      skipped =
-        outcome.skipped === 0
-          ? ""
-          : ` — ${outcome.skipped} dataset${outcome.skipped === 1 ? "" : "s"} skipped (no geometry)`;
-    toast.success(`Added ${outcome.added} ${outcome.added === 1 ? "layer" : "layers"}${skipped}.`);
+    try {
+      const outcome = await addAll({ ...target, mapId }),
+        skipped =
+          outcome.skipped === 0
+            ? ""
+            : ` — ${outcome.skipped} dataset${outcome.skipped === 1 ? "" : "s"} skipped (no geometry)`;
+      toast.success(
+        `Added ${outcome.added} ${outcome.added === 1 ? "layer" : "layers"}${skipped}.`,
+      );
+    } catch (error) {
+      toast.error(errorMessage(error, "Failed to add the datasets."));
+      throw error;
+    }
   };
 
   const handleLinkAndPlace = async (sourceLayerId: string): Promise<void> => {
-    const versionId = await linkLayer({ layerId: sourceLayerId, projectId }),
-      membershipId = membershipIdByVersionId.get(versionId);
-    if (membershipId === undefined) {
-      toast.error(
-        "Linked, but the placement couldn't find the new membership — reopen the map to place it.",
-      );
-      return;
+    try {
+      await linkLayer({ layerId: sourceLayerId, mapId, projectId });
+      toast.success("Layer linked into the project and placed on the map.");
+    } catch (error) {
+      toast.error(errorMessage(error, "Failed to link the layer."));
+      throw error;
     }
-    await addExisting({ layerMemberId: membershipId, mapId });
-    toast.success("Layer linked into the project and placed on the map.");
   };
 
   const handleRemoveLayer = async (mapLayerId: string): Promise<void> => {
-    await removeLayer({ mapLayerId });
-    toast.success("Layer removed from the map.");
+    try {
+      await removeLayer({ mapLayerId });
+      toast.success("Layer removed from the map.");
+    } catch (error) {
+      toast.error(errorMessage(error, "Failed to remove the layer."));
+    }
   };
 
   const handleToggleVisibility = async (mapLayerId: string, visible: boolean): Promise<void> => {
-    await setLayerVisibility({ mapLayerId, visible });
+    try {
+      await setLayerVisibility({ mapLayerId, visible });
+    } catch (error) {
+      toast.error(errorMessage(error, "Failed to toggle the layer."));
+    }
   };
 
   const handleMoveLayer = async (mapLayerId: string, direction: "up" | "down"): Promise<void> => {
-    await moveLayer({ direction, mapLayerId });
+    try {
+      await moveLayer({ direction, mapLayerId });
+    } catch (error) {
+      toast.error(errorMessage(error, "Failed to move the layer."));
+    }
   };
 
   const handleDeleteMap = async (): Promise<void> => {
-    await deleteMap({ mapId });
-    toast.success("Map deleted.");
-    await navigate({
-      params: { projectId },
-      search: { view: "maps" },
-      to: "/projects/$projectId",
-    });
+    try {
+      await deleteMap({ mapId });
+      toast.success("Map deleted.");
+      await navigate({
+        params: { projectId },
+        search: { view: "maps" },
+        to: "/projects/$projectId",
+      });
+    } catch (error) {
+      toast.error(errorMessage(error, "Failed to delete the map."));
+    }
   };
 
   return {
@@ -331,15 +361,16 @@ function ProjectMapEditorPage() {
     // throws, and without this branch that shows as an infinite spinner.
     { isAuthenticated, isLoading: authLoading } = useConvexAuth(),
     authed = !authLoading && isAuthenticated,
-    workspace = useQuery({ ...convexQuery(api.projects.get, { projectId }), enabled: authed })
-      .data,
+    workspace = useQuery({ ...convexQuery(api.projects.get, { projectId }), enabled: authed }).data,
     maps = useQuery({ ...convexQuery(api.projectMaps.list, { projectId }), enabled: authed }).data,
     placementsQuery = useQuery({
       ...convexQuery(api.projectMaps.layers, { mapId }),
       enabled: authed,
     }),
-    projectLayers = useQuery({ ...convexQuery(api.layers.list, { projectId }), enabled: authed })
-      .data,
+    projectLayers = useQuery({
+      ...convexQuery(api.layers.list, { projectId }),
+      enabled: authed,
+    }).data,
     datasetsQuery = useQuery({
       ...convexQuery(api.schemas.listSummaries, { limit: 1000 }),
       enabled: authed,
@@ -371,13 +402,12 @@ function ProjectMapEditorPage() {
   const placements = placementsQuery.data ?? [],
     datasets = datasetsQuery.data ?? [],
     workspaceArtifacts = workspace === null || workspace === undefined ? [] : workspace.artifacts,
-    datasetIdByMembershipId = new globalThis.Map<string, string>(),
-    membershipIdByVersionId = new globalThis.Map<string, string>();
+    // Owned layers style DATASETS through memberships; geometry rows key on
+    // the dataset id — this is the workspace read's join.
+    datasetIdByMembershipId = new globalThis.Map<string, string>();
   for (const artifact of workspaceArtifacts) {
     if (artifact.artifactKind === "dataset") {
       datasetIdByMembershipId.set(artifact._id, artifact.artifactId);
-    } else if (artifact.artifactKind === "layer") {
-      membershipIdByVersionId.set(artifact.artifactId, artifact._id);
     }
   }
   const groupDetailById = useQueries({
@@ -421,7 +451,7 @@ function ProjectMapEditorPage() {
       tileSchemaIds,
       arrivedTileSchemaIds,
     ),
-    actions = useMapLayerActions(mapId, projectId, membershipIdByVersionId);
+    actions = useMapLayerActions(mapId, projectId);
 
   if (authLoading) {
     return <EditorSpinner />;
@@ -505,6 +535,11 @@ function ProjectMapEditorPage() {
     if (selectedPlacement === undefined || selectedPlacement.kind !== "owned") {
       return;
     }
+    if (selectedPlacement.layer.kind !== "data") {
+      // Groups carry no stored style the canvas reads — their panel is the
+      // name + opacity form below.
+      return;
+    }
     setSavingStyle(true);
     try {
       await updateLayer({
@@ -515,6 +550,29 @@ function ProjectMapEditorPage() {
       toast.success("Style saved — the map draws it now.");
     } catch (error) {
       toast.error(errorMessage(error, "Failed to save the style."));
+    } finally {
+      setSavingStyle(false);
+    }
+  };
+
+  // A placed GROUP's honest write surface: name + the group-transparency
+  // slider (the one style a group owns — the canvas scales children's
+  // opacities by it). Name stays the only required field.
+  const saveGroup = async (draft: { name: string; opacity: number }): Promise<void> => {
+    if (selectedPlacement === undefined || selectedPlacement.kind !== "owned") {
+      return;
+    }
+    setSavingStyle(true);
+    try {
+      await updateLayer({
+        layerId: selectedPlacement.layer.layerId,
+        name: draft.name,
+        opacity: draft.opacity,
+      });
+      toast.success("Group updated — children draw at the new transparency.");
+    } catch (error) {
+      toast.error(errorMessage(error, "Failed to update the group."));
+      throw error;
     } finally {
       setSavingStyle(false);
     }
@@ -717,11 +775,15 @@ function ProjectMapEditorPage() {
               }}
             />
             <LayerStylePanel
+              canWrite={canWrite}
               placement={selectedPlacement}
               saving={savingStyle}
               viewerHint={VIEWER_HINT}
               onSave={(draft) => {
                 void saveStyle(draft);
+              }}
+              onSaveGroup={async (draft) => {
+                await saveGroup(draft);
               }}
             />
           </div>

@@ -701,9 +701,16 @@ export const remove = mutation({
  * chain to pin — "publish it first", the setMemberSync answer's shape) and a
  * double link (the in-transaction re-check over the project's layer
  * memberships, resolved back to source layers).
+ *
+ * With `mapId`, the linked layer is ALSO placed on that map in the SAME
+ * transaction (the editor's "Link & place" one-click flow): the map must
+ * belong to the project being linked INTO, and a duplicate placement is
+ * refused exactly as projectMaps.addLayer refuses one. Placing without the
+ * membership read racing the client is why this rides the link mutation —
+ * the placement names the membership, which only this transaction knows.
  */
 export const link = mutation({
-  args: { layerId: v.string(), projectId: v.string() },
+  args: { layerId: v.string(), mapId: v.optional(v.string()), projectId: v.string() },
   handler: async (ctx, args) => {
     const actorId = await auth(ctx),
       projectId = ctx.db.normalizeId("projects", args.projectId),
@@ -750,13 +757,33 @@ export const link = mutation({
         throw new ConvexError("That layer is already linked in this project.");
       }
     }
-    await insertMembership(ctx, project, {
+    const membershipId = await insertMembership(ctx, project, {
       addedBy: actorId,
       artifactId: head._id,
       artifactKind: "layer",
       role: "linked",
       syncMode: "manual",
     });
+    if (args.mapId !== undefined) {
+      const mapId = ctx.db.normalizeId("projectMaps", args.mapId),
+        map = mapId === null ? null : await ctx.db.get(mapId);
+      if (map === null || map.projectId !== projectId) {
+        throw new ConvexError("That map isn't in this project.");
+      }
+      const placements = await ctx.db
+        .query("mapLayers")
+        .withIndex("by_map", (q) => q.eq("mapId", map._id))
+        .collect();
+      if (placements.some((placement) => placement.layerMemberId === membershipId)) {
+        throw new ConvexError("That layer is already on this map.");
+      }
+      await ctx.db.insert("mapLayers", {
+        layerMemberId: membershipId,
+        mapId: map._id,
+        order: placements.reduce((next, placement) => Math.max(next, placement.order + 1), 0),
+        visible: true,
+      });
+    }
     return head._id;
   },
   returns: v.id("layerVersions"),

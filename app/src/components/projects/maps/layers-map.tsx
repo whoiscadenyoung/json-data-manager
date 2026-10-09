@@ -2,21 +2,21 @@ import { buildFeatureCollection, unionBbox, useResolvedGeometries } from "@caden
 import type { BoundingBox, Geometry } from "@caden/json-cms/react";
 import { Link } from "@tanstack/react-router";
 import { ChevronRight, Loader2, X } from "lucide-react";
-import { Fragment, useState, type Ref } from "react";
 import type { Map as MapLibreMap } from "maplibre-gl";
+import { Fragment, useState, type Ref } from "react";
 
 import { Button } from "#/components/ui/button";
 import { Map, MapClusterLayer, MapGeoJSON, MapVectorTiles } from "#/components/ui/map";
 import type { DatasetEntryRow, DatasetGeometryRow } from "#/lib/dataset-rows";
 import { useEnrichedDatasetEntryRow } from "#/lib/dataset-rows-react";
 import { formatPropertyValue } from "#/lib/format";
-import type { RenderLayer } from "#/lib/projects/map-layers";
-import { toFeatureRow } from "#/lib/projects/map-layers";
 import {
   asBoundingBox,
   buildPointFeatureCollection,
   splitPointLikeGeometries,
 } from "#/lib/point-geometry";
+import type { RenderLayer } from "#/lib/projects/map-layers";
+import { toFeatureRow } from "#/lib/projects/map-layers";
 
 /** A geometry row re-keyed to its render layer (`sourceSchemaId` is the entry's real home dataset). */
 type KeyedGeometryEntry = DatasetGeometryRow & { sourceSchemaId?: string };
@@ -237,14 +237,13 @@ export function ProjectMapCanvas({
     [selected, setSelected] = useState<FeatureProperties | null>(null),
     popup = useEnrichedDatasetEntryRow(selected === null ? undefined : selected),
     byRenderId = geometryRowsByRenderId(visibleGeometries),
-    tileByRenderId = new globalThis.Map(
-      tileRenderLayers.map((tile) => [tile.renderId, tile]),
-    ),
+    tileByRenderId = new globalThis.Map(tileRenderLayers.map((tile) => [tile.renderId, tile])),
     legendLayers = renderLayers.filter(
       (layer) => byRenderId.has(layer.renderId) || tileByRenderId.has(layer.renderId),
     ),
-    visibleTileCount = tileRenderLayers.filter((tile) => visibleRenderIds.has(tile.renderId))
-      .length,
+    visibleTileCount = tileRenderLayers.filter((tile) =>
+      visibleRenderIds.has(tile.renderId),
+    ).length,
     handleFeatureSelect = (properties: FeatureProperties) => {
       setSelected(properties);
     };

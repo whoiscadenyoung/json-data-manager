@@ -34,6 +34,7 @@ const asId = <T extends TableNames>(value: string): Id<T> => value as Id<T>;
 function ownedDataPlacement(overrides: {
   _id?: string;
   datasetMemberId?: string;
+  layerVisible?: boolean;
   lifecycle?: "draft" | "published";
   name?: string;
   style?: StoredStyle;
@@ -55,6 +56,7 @@ function ownedDataPlacement(overrides: {
       needsAttention: undefined,
       opacity: undefined,
       style: overrides.style,
+      visible: overrides.layerVisible ?? true,
     },
     layerMemberId: asId<"projectArtifacts">("mem1"),
     order: 0,
@@ -98,7 +100,11 @@ function missingPlacement(id: string): MapPlacement {
   };
 }
 
-function groupPlacement(layerId: string, placementId: string, visible?: boolean): MapPlacement {
+function groupPlacement(
+  layerId: string,
+  placementId: string,
+  overrides: { layerVisible?: boolean; opacity?: number; visible?: boolean } = {},
+): MapPlacement {
   return {
     _creationTime: 0,
     _id: asId<"mapLayers">(placementId),
@@ -110,12 +116,13 @@ function groupPlacement(layerId: string, placementId: string, visible?: boolean)
       lifecycle: "draft",
       name: "A group",
       needsAttention: undefined,
-      opacity: undefined,
+      opacity: overrides.opacity,
       style: undefined,
+      visible: overrides.layerVisible ?? true,
     },
     layerMemberId: asId<"projectArtifacts">("mem-group"),
     order: 0,
-    visible: visible ?? true,
+    visible: overrides.visible ?? true,
   };
 }
 
@@ -289,9 +296,73 @@ describe("effectiveRenderLayers", () => {
       },
     ]);
     const renderLayers = effectiveRenderLayers(
-      [groupPlacement("G1", "pg", false)],
+      [groupPlacement("G1", "pg", { visible: false })],
       new globalThis.Map([["G1", detail]]),
       new globalThis.Map([["m1", "ds1"]]),
+    );
+    const child = renderLayers[0];
+    expect(child === undefined ? undefined : child.visible).toBe(false);
+  });
+
+  it("hides a root owned layer when the LAYER-WIDE eye is off, placement eye on", () => {
+    const renderLayers = effectiveRenderLayers(
+      [ownedDataPlacement({ datasetMemberId: "m1", layerVisible: false, visible: true })],
+      new globalThis.Map(),
+      membershipJoin,
+    );
+    const layer = renderLayers[0];
+    expect(layer === undefined ? undefined : layer.visible).toBe(false);
+  });
+
+  it("scales a group child's fill/stroke opacities by the group's transparency", () => {
+    const detail = groupDetail([
+      {
+        child: {
+          kind: "data",
+          lifecycle: "draft",
+          name: "Child A",
+          needsAttention: undefined,
+          opacity: undefined,
+          style: { color: "#22c55e", fillOpacity: 0.2, opacity: 1 },
+          visible: true,
+        },
+        childKind: "owned",
+        childLayerId: "c1",
+        order: 0,
+      },
+    ]);
+    const renderLayers = effectiveRenderLayers(
+      [groupPlacement("G1", "pg", { opacity: 0.5 })],
+      new globalThis.Map([["G1", detail]]),
+      membershipJoin,
+    );
+    const child = renderLayers[0];
+    expect(child === undefined ? undefined : child.style.fillOpacity).toBe(0.1);
+    expect(child === undefined ? undefined : child.style.opacity).toBe(0.5);
+    expect(child === undefined ? undefined : child.style.color).toBe("#22c55e");
+  });
+
+  it("hides the whole subtree when the group LAYER-WIDE eye is off", () => {
+    const detail = groupDetail([
+      {
+        child: {
+          kind: "data",
+          lifecycle: "draft",
+          name: "Child A",
+          needsAttention: undefined,
+          opacity: undefined,
+          style: undefined,
+          visible: true,
+        },
+        childKind: "owned",
+        childLayerId: "c1",
+        order: 0,
+      },
+    ]);
+    const renderLayers = effectiveRenderLayers(
+      [groupPlacement("G1", "pg", { layerVisible: false })],
+      new globalThis.Map([["G1", detail]]),
+      membershipJoin,
     );
     const child = renderLayers[0];
     expect(child === undefined ? undefined : child.visible).toBe(false);

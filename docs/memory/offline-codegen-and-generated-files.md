@@ -23,7 +23,7 @@ type: workflow
 - **The route tree regenerates ONLY through the vite build** — no `tsr` CLI
   is installed (`@tanstack/router-plugin` wraps the generator as a library;
   `bunx tsr` downloads an unrelated broken package). `cd app && bun run
-  build` regenerates `routeTree.gen.ts` — note `bun --cwd app run build`
+build` regenerates `routeTree.gen.ts` — note `bun --cwd app run build`
   just prints the script menu and runs nothing from the repo root; cd in.
 
 ## How to apply

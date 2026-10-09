@@ -710,11 +710,7 @@ function LayerManageRow({
           void run();
         }}
       >
-        {layer.visible ? (
-          <MapPin className="h-4 w-4" />
-        ) : (
-          <MapPin className="h-4 w-4 opacity-40" />
-        )}
+        {layer.visible ? <MapPin className="h-4 w-4" /> : <MapPin className="h-4 w-4 opacity-40" />}
       </Button>
       {canWrite ? (
         <Button
@@ -1151,9 +1147,8 @@ function LayersTab({
           </span>
         </h2>
         <p className="mb-3 text-xs text-muted-foreground">
-          Styling lives on the maps — open a map and select a layer to restyle it. Publishing
-          layers (freezing versions other projects can link or clone) arrives with the project
-          bundle.
+          Styling lives on the maps — open a map and select a layer to restyle it. Publishing layers
+          (freezing versions other projects can link or clone) arrives with the project bundle.
         </p>
         {layers === undefined ? (
           <div className="flex justify-center py-8">
@@ -1734,8 +1729,8 @@ function ProjectWorkspacePage() {
         <div className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm text-muted-foreground">
-              Derived datasets — the analysis tier. A transform reads source datasets and computes
-              a new table; fork one in from the Datasets tab's add dialog ("Fork").
+              Derived datasets — the analysis tier. A transform reads source datasets and computes a
+              new table; fork one in from the Datasets tab's add dialog ("Fork").
             </p>
             {canWrite && (
               <Button

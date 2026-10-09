@@ -1,6 +1,6 @@
-import type { FunctionReturnType } from "convex/server";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
+import type { FunctionReturnType } from "convex/server";
 import {
   FolderOpen,
   Import,
@@ -48,7 +48,12 @@ const SECTION_ORDER: Array<{ label: string; section: PickerSection }> = [
 ];
 
 /** One geospatial dataset member of the project (membership id + dataset id), pre-resolved by the page. */
-export type PickerDatasetMember = { datasetId: string; geometryType?: string; membershipId: string; title: string };
+export type PickerDatasetMember = {
+  datasetId: string;
+  geometryType?: string;
+  membershipId: string;
+  title: string;
+};
 
 /**
  * The picker's candidates, built in one pass (module-level — the component
@@ -135,10 +140,7 @@ function importCandidates(
 }
 
 /** The "Collections"/"Groups" sections: "add all datasets" — each geospatial member expands to its own layer, no-geometry ones reported in the toast. */
-function expansionCandidates(
-  collections: CollectionDoc[],
-  groups: GroupDoc[],
-): PickerCandidate[] {
+function expansionCandidates(collections: CollectionDoc[], groups: GroupDoc[]): PickerCandidate[] {
   const candidates: PickerCandidate[] = [];
   for (const collection of collections) {
     candidates.push({
@@ -199,8 +201,7 @@ function PublishedLayerList({
   if (published.length === 0) {
     return (
       <p className="px-3 py-2 text-xs text-muted-foreground">
-        No published layers here yet — publishing a layer freezes a version other projects can
-        link.
+        No published layers here yet — publishing a layer freezes a version other projects can link.
       </p>
     );
   }
@@ -304,6 +305,9 @@ export function MapLayerPickerSheet({
       setPendingKey(key);
       try {
         await action();
+      } catch {
+        // The handler already toasted the refusal; keep the sheet open so
+        // the user can retry, and clear the pending flag.
       } finally {
         setPendingKey(undefined);
       }
@@ -348,9 +352,7 @@ export function MapLayerPickerSheet({
               </div>
 
               {SECTION_ORDER.map(({ label, section }) => {
-                const sectionRows = visible.filter(
-                  (candidate) => candidate.section === section,
-                );
+                const sectionRows = visible.filter((candidate) => candidate.section === section);
                 if (sectionRows.length === 0) {
                   return null;
                 }
@@ -378,7 +380,9 @@ export function MapLayerPickerSheet({
                             disabled={pendingKey !== undefined}
                             onClick={() => {
                               if (candidate.section === "layers") {
-                                void run(candidate.key, async () => onAddExistingLayer(candidate.id));
+                                void run(candidate.key, async () =>
+                                  onAddExistingLayer(candidate.id),
+                                );
                               } else if (candidate.section === "import") {
                                 void run(candidate.key, async () => onAddDataset(candidate.id));
                               } else if (candidate.section === "datasets") {
@@ -388,7 +392,9 @@ export function MapLayerPickerSheet({
                                   onAddAll({ collectionId: candidate.id }),
                                 );
                               } else {
-                                void run(candidate.key, async () => onAddAll({ groupId: candidate.id }));
+                                void run(candidate.key, async () =>
+                                  onAddAll({ groupId: candidate.id }),
+                                );
                               }
                             }}
                           >

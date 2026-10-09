@@ -86,7 +86,10 @@ export function styleOrDefault(style: StoredStyle | undefined): LayerStyle {
   return {
     color,
     fillColor: stringOr(style === undefined ? undefined : style.fillColor, color),
-    fillOpacity: finiteOr(style === undefined ? undefined : style.fillOpacity, DEFAULT_LAYER_STYLE.fillOpacity),
+    fillOpacity: finiteOr(
+      style === undefined ? undefined : style.fillOpacity,
+      DEFAULT_LAYER_STYLE.fillOpacity,
+    ),
     opacity: finiteOr(style === undefined ? undefined : style.opacity, DEFAULT_LAYER_STYLE.opacity),
     radius: finiteOr(style === undefined ? undefined : style.radius, DEFAULT_LAYER_STYLE.radius),
     weight: finiteOr(style === undefined ? undefined : style.weight, DEFAULT_LAYER_STYLE.weight),
@@ -165,10 +168,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Narrows one owned child row (the live-layer arm of the read). */
-function narrowOwnedChild(
-  child: Record<string, unknown>,
-  childLayerId: string,
-): GroupChild {
+function narrowOwnedChild(child: Record<string, unknown>, childLayerId: string): GroupChild {
   return {
     childKind: "owned",
     childLayerId,
@@ -184,10 +184,7 @@ function narrowOwnedChild(
 }
 
 /** Narrows one linked child row (the pinned-version arm of the read). */
-function narrowLinkedChild(
-  child: Record<string, unknown>,
-  childLayerId: string,
-): GroupChild {
+function narrowLinkedChild(child: Record<string, unknown>, childLayerId: string): GroupChild {
   return {
     childKind: "linked",
     childLayerId,
@@ -298,7 +295,9 @@ export function effectiveRenderLayers(
           placementId: placement._id,
           renderId: placement._id,
           style: styleOrDefault(layer.style),
-          visible: placement.visible,
+          // Both eyes: the map-local placement eye AND the layer-wide one
+          // (the Layers-tab eye hides the layer on every map it sits on).
+          visible: placement.visible && layer.visible,
         });
       }
       continue;
@@ -312,6 +311,8 @@ export function effectiveRenderLayers(
         placementId: placement._id,
         renderId: placement._id,
         style: styleOrDefault(layer.style),
+        // A pin has no layer-wide eye of its own (one read-only unit; local
+        // visibility toggles only, per the model) — the placement eye gates.
         visible: placement.visible,
       });
     }
@@ -320,24 +321,44 @@ export function effectiveRenderLayers(
   return renderLayers;
 }
 
-/** One group child's render layer, gated by the group placement's eye. */
+/** Clamps a number into [0, 1] — opacity scalars never leave that range. */
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value));
+}
+
+/** The dataset a group child draws from, resolved per child kind (undefined when it draws nothing). */
+function childDatasetIdOf(
+  child: GroupChild,
+  datasetIdByMembershipId: ReadonlyMap<string, string>,
+): string | undefined {
+  if (child.childKind === "owned") {
+    return child.datasetMemberId === undefined
+      ? undefined
+      : datasetIdByMembershipId.get(child.datasetMemberId);
+  }
+  return child.datasetPinnedSchemaId;
+}
+
+/** Whether this child draws geometry at all — a nested group child draws via its own direct placement. */
+function childDraws(child: GroupChild): boolean {
+  if (child.childKind === "owned") {
+    return child.kind === "data";
+  }
+  return child.datasetPinnedSchemaId !== undefined;
+}
+
+/** One group child's render layer: gated by both group eyes, tinted by the group's opacity. */
 function groupChildRenderLayer(
   placement: Extract<MapPlacement, { kind: "owned" }>,
   child: GroupChild,
   datasetIdByMembershipId: ReadonlyMap<string, string>,
 ): RenderLayer {
-  const datasetId =
-    child.childKind === "owned"
-      ? child.datasetMemberId === undefined
-        ? undefined
-        : datasetIdByMembershipId.get(child.datasetMemberId)
-      : child.datasetPinnedSchemaId;
-  // A nested group child (a group inside a group) has no dataset of its own;
-  // its children draw via its own direct placement.
-  const draws =
-    child.childKind === "owned" ? child.kind === "data" : child.datasetPinnedSchemaId !== undefined;
+  const style = styleOrDefault(child.style),
+    // The group's transparency is the one style a group layer owns: it
+    // scales every child's fill/stroke opacities (absent reads as 1).
+    groupOpacity = clamp01(placement.layer.opacity ?? 1);
   return {
-    datasetId: draws ? datasetId : undefined,
+    datasetId: childDraws(child) ? childDatasetIdOf(child, datasetIdByMembershipId) : undefined,
     kind: "group-child",
     lifecycle: child.childKind === "owned" ? child.lifecycle : undefined,
     name: child.name,
@@ -345,10 +366,19 @@ function groupChildRenderLayer(
     parentPlacementId: placement._id,
     placementId: placement._id,
     renderId: `${placement._id}:${child.childLayerId}`,
-    style: styleOrDefault(child.style),
-    // A child draws only when both it and its group placement are shown; a
-    // linked child has no local eye (read-only pin), so it rides the group's.
-    visible: placement.visible && (child.childKind === "owned" ? child.visible : true),
+    style: {
+      ...style,
+      fillOpacity: clamp01(style.fillOpacity * groupOpacity),
+      opacity: clamp01(style.opacity * groupOpacity),
+    },
+    // Three gates for an owned child: the placement's map-local eye, the
+    // group layer's own eye (the Layers-tab one), and the child layer's. A
+    // linked child has no local eye (read-only pin), so it rides the two
+    // group gates.
+    visible:
+      placement.visible &&
+      (placement.layer.visible ?? true) &&
+      (child.childKind === "owned" ? child.visible : true),
   };
 }
 
@@ -484,9 +514,6 @@ export function isLayersWorkspaceComplete(
  * The map mounts on the first served rows OR any tile source — before that
  * only the loading chip shows.
  */
-export function layersMapShouldMount(
-  servedGeometries: unknown,
-  tileSourceCount: number,
-): boolean {
+export function layersMapShouldMount(servedGeometries: unknown, tileSourceCount: number): boolean {
   return servedGeometries !== undefined || tileSourceCount > 0;
 }

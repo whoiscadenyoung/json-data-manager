@@ -383,6 +383,54 @@ describe("layers: link (published → pinned read-only member)", () => {
       t.mutation(api.layers.link, { layerId: bareLayer, projectId: sourceProject }),
     ).rejects.toThrow(/Only a published layer can be linked/);
   });
+
+  it("with a mapId, places the linked layer on that map in the same transaction", async () => {
+    const t = signedIn();
+    const sourceProject = await createProject(t, "Source");
+    const datasetId = await createGeospatialDataset(t);
+    const sourceLayerId = await createDataLayer(t, sourceProject, datasetId, "River style");
+    await seedVersion(t, sourceLayerId, { kind: "data", name: "River style" });
+
+    // The editor's "Link & place" one-click: the map lives in the project
+    // being linked INTO, and the placement lands beside the pinned
+    // membership in one transaction (projectMaps.create is editor-gated;
+    // the same test user owns both projects).
+    const target = await createProject(t, "Target");
+    const mapId = await t.mutation(api.projectMaps.create, { name: "Canvas", projectId: target });
+    await t.mutation(api.layers.link, { layerId: sourceLayerId, mapId, projectId: target });
+
+    const placements = await t.query(api.projectMaps.layers, { mapId });
+    expect(placements).toHaveLength(1);
+    const placement = placements[0];
+    expect(placement === undefined ? undefined : placement.kind).toBe("linked");
+    const layer =
+      placement !== undefined && placement.kind === "linked" ? placement.layer : undefined;
+    expect(layer === undefined ? undefined : layer.name).toBe("River style");
+    expect(layer === undefined ? undefined : layer.versionLabel).toBe("v1");
+
+    // The placement names the membership: removing it unhooks the canvas,
+    // exactly as for an owned placement.
+    const placementId = placement === undefined ? undefined : placement._id;
+    if (placementId !== undefined) {
+      await t.mutation(api.projectMaps.removeLayer, { mapLayerId: placementId });
+    }
+    expect(await t.query(api.projectMaps.layers, { mapId })).toEqual([]);
+
+    // A map of ANOTHER project is refused — placement follows the link.
+    const stranger = await createProject(t, "Stranger");
+    const strangerMapId = await t.mutation(api.projectMaps.create, {
+      name: "Elsewhere",
+      projectId: stranger,
+    });
+    const secondTarget = await createProject(t, "Target 2");
+    await expect(
+      t.mutation(api.layers.link, {
+        layerId: sourceLayerId,
+        mapId: strangerMapId,
+        projectId: secondTarget,
+      }),
+    ).rejects.toThrow(/isn't in this project/);
+  });
 });
 
 describe("layers: clone (published → owned draft, deep for groups)", () => {
