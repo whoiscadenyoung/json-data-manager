@@ -7,6 +7,11 @@ import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/s
 import { auth } from "./auth";
 import { createChainMemo, resolveSourceHead, syncRegistryReferenceEdges } from "./consumption";
 import {
+  deleteLayerMembershipCascade,
+  deleteProjectMapsCascade,
+  deleteStrayLayers,
+} from "./layerTeardown";
+import {
   datasetVisibleTo,
   projectRoleFor,
   projectRoleValidator,
@@ -559,12 +564,16 @@ export const addArtifact = mutation({
 });
 
 /**
- * Removes one membership row — and, in the same transaction, the fork's
- * consumer edges minted with it (a reference's version leg lives and dies
- * with the membership). Deliberately touches NOTHING else: the referenced
- * artifact stays exactly as it was (references, not containment — removing a
- * dataset from a project never deletes the dataset, and a draft stays
- * draft-side until its own publish flow crosses it).
+ * Removes one membership row — and, in the same transaction, everything
+ * that lives and dies with it: the fork's consumer edges for a dataset
+ * (a reference's version leg), and the FULL layer teardown for a layer
+ * membership (its map placements, and for an OWNED layer its group child
+ * rows, version chain, and the `layers` row itself — layerTeardown.ts's
+ * shared cascade). Everything else is deliberately untouched: the
+ * referenced artifact stays exactly as it was (references, not containment
+ * — removing a dataset never deletes the dataset, a draft stays draft-side
+ * until its own publish flow crosses it, and a linked layer's pinned
+ * version belongs to its source project's chain).
  */
 export const removeArtifact = mutation({
   args: {
@@ -592,6 +601,13 @@ export const removeArtifact = mutation({
     const membership = holders.find((row) => row.projectId === projectId);
     if (membership === undefined) {
       throw new ConvexError("That artifact isn't in this project.");
+    }
+    if (args.artifactKind === "layer") {
+      // A layer member is project-OWNED state (row + placement targets),
+      // not a reference — its teardown owns placements, tree, and versions
+      // (and, for a linked layer, just the placements and the pin).
+      await deleteLayerMembershipCascade(ctx, membership);
+      return null;
     }
     const edges = await ctx.db
       .query("consumerReferences")
@@ -1274,15 +1290,25 @@ export const update = mutation({
 });
 
 /**
- * Deletes the project — owner-only. The cascade is the MEMBERSHIP side:
- * every projectArtifacts row, every projectMembers row, and the fork
- * reference edges minted with dataset memberships go with the project, in
- * one transaction. Deliberately NOT the artifacts — references, not
- * containment (the removeArtifact rule, unchanged): a draft created in the
- * project survives as its creator's draft (visible in their drafts toggle,
- * publishable on its own), and published rows never even notice. The UI's
- * confirm dialog says exactly this, because it is destructive only to the
- * collaboration, never to the data.
+ * Deletes the project — owner-only. Two kinds of rows go, and one kind
+ * deliberately stays:
+ *
+ * - PROJECT-OWNED ROWS (phase 3, ADR 0012) are deleted: every layer
+ *   membership tears down its placements, tree, versions, and `layers` row
+ *   (layerTeardown.ts's shared cascade), and every `projectMaps`/`mapLayers`
+ *   row goes with the project. A layer or map has no existence outside its
+ *   project — every read is project-scoped — so sparing them would strand
+ *   permanently unreachable rows.
+ * - The MEMBERSHIP side: every projectArtifacts row (the layer ones through
+ *   the cascade), every projectMembers row, and the fork reference edges
+ *   minted with dataset memberships.
+ * - The ARTIFACTS stay — references, not containment (the removeArtifact
+ *   rule, unchanged): a draft created in the project survives as its
+ *   creator's draft (visible in their drafts toggle, publishable on its
+ *   own), and published component rows never even notice. A LINKED layer's
+ *   pinned version stays too — it belongs to its SOURCE project's chain.
+ *   The UI's confirm dialog says exactly this, because it is destructive to
+ *   the workspace (layers and maps included) but never to the data.
  */
 export const remove = mutation({
   args: { projectId: v.string() },
@@ -1294,14 +1320,21 @@ export const remove = mutation({
     }
     const project = await projectForWrite(ctx, actorId, projectId, "owner");
     // Exact reads on purpose — a deletion that stops at a display cap would
-    // orphan membership rows (and their edges) forever. Projects and their
-    // memberships are human-scale; the unbounded walk is the honest shape
-    // for a one-transaction teardown.
+    // orphan rows forever. Projects and their memberships are human-scale;
+    // the unbounded walk is the honest shape for a one-transaction teardown.
     const memberships = await ctx.db
       .query("projectArtifacts")
       .withIndex("by_project", (q) => q.eq("projectId", projectId))
       .collect();
     for (const membership of memberships) {
+      if (membership.artifactKind === "layer") {
+        // The full layer cascade: placements, tree, versions, row,
+        // membership, count (the count patch is moot — the project row goes
+        // below — but the helper owns the whole teardown).
+        // oxlint-disable-next-line no-await-in-loop -- one membership per loop, ordered and small.
+        await deleteLayerMembershipCascade(ctx, membership);
+        continue;
+      }
       // oxlint-disable-next-line no-await-in-loop -- one membership per loop, ordered and small (the removeArtifact shape).
       const edges = await ctx.db
         .query("consumerReferences")
@@ -1314,6 +1347,10 @@ export const remove = mutation({
       // oxlint-disable-next-line no-await-in-loop -- one membership per loop, ordered and small (the removeArtifact shape).
       await ctx.db.delete(membership._id);
     }
+    // The maps and any stray layer rows (impossible by the atomic create;
+    // defensive) — after the membership cascades, so nothing re-sweeps.
+    await deleteProjectMapsCascade(ctx, projectId);
+    await deleteStrayLayers(ctx, projectId);
     const members = await ctx.db
       .query("projectMembers")
       .withIndex("by_project", (q) => q.eq("projectId", projectId))

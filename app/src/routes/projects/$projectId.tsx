@@ -195,7 +195,7 @@ function RemoveButton({
       variant="ghost"
       size="icon"
       className="shrink-0 text-muted-foreground hover:text-destructive"
-      title="Remove from project (the artifact itself is not deleted)"
+      title={removeHint(artifactKind)}
       aria-label="Remove from project"
       onClick={() => {
         const run = async () => {
@@ -831,6 +831,14 @@ function AddReferenceDialog({
   );
 }
 
+/** The remove control's honest copy per kind: a layer member is project-owned state — removing an OWNED layer deletes the layer, its versions, and its map placements (a linked one just unpins) — while datasets and derived specs are references that survive the removal. */
+function removeHint(kind: WorkspaceKind): string {
+  if (kind === "layer") {
+    return "Remove from project — an owned layer is deleted with its versions and map placements; a linked layer just unpins (the source stays).";
+  }
+  return "Remove from project (the artifact itself is not deleted)";
+}
+
 /** The stale-run threshold, the syncRuns/publishAttempts value: a press whose checkpoint hasn't moved for this long was abandoned by its browser, and pressing again RESUMES it (start joins running runs). */
 const STALE_PRESS_MS = 2 * 60 * 1000;
 
@@ -944,6 +952,16 @@ function ProjectWorkspacePage() {
     // This project's newest press (7b): drives the publish button's state
     // and the status line. undefined until it loads; null before any press.
     latestBundle = useQuery({ ...convexQuery(api.bundles.latestForProject, { projectId }) }).data,
+    // The project-owned maps (phase 3, ADR 0012): listed read-only in the
+    // Maps section — the map editor under /projects/... is the next phase's
+    // deliverable. Mounted UNCONDITIONALLY beside the other hooks (Rules of
+    // Hooks — an early return above here would flip the hook count between
+    // renders); the `enabled` flag keeps it idle until the auth gate and,
+    // for a project the viewer can't see, the read answers empty anyway.
+    maps = useQuery({
+      ...convexQuery(api.projectMaps.list, { projectId }),
+      enabled: !authLoading && isAuthenticated,
+    }).data,
     [addOpen, setAddOpen] = useState(false),
     [membersOpen, setMembersOpen] = useState(false),
     { press, pressing } = usePressBundle(projectId);
@@ -1002,13 +1020,7 @@ function ProjectWorkspacePage() {
     canWrite = project.role === "owner" || project.role === "editor",
     grouped = groupByKind(artifacts),
     existingIds = new Set(artifacts.map((artifact) => artifact.artifactId)),
-    empty = artifacts.length === 0,
-    // The project-owned maps (phase 3, ADR 0012): listed read-only here —
-    // the map editor under /projects/... is the next phase's deliverable.
-    maps = useQuery({
-      ...convexQuery(api.projectMaps.list, { projectId }),
-      enabled: !authLoading && isAuthenticated,
-    }).data;
+    empty = artifacts.length === 0;
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-8">

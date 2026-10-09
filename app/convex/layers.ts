@@ -3,6 +3,11 @@ import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { auth } from "./auth";
+import {
+  deleteLayerVersionsCascade,
+  deletePlacementsForMembership,
+  layerMembershipRow,
+} from "./layerTeardown";
 import { projectRoleFor } from "./projectAccess";
 import { addDatasetMembership, insertMembership, projectForWrite } from "./projects";
 
@@ -118,22 +123,15 @@ async function headVersionOf(
 
 /**
  * The membership row an owned layer was born with (or a linked layer's
- * placement target): the unique projectArtifacts row of kind "layer" whose
- * artifactId names `layerId` IN THE LAYER'S OWN PROJECT. Uniqueness is the
- * create/link paths' in-transaction rule (Convex has none by index); a
- * missing row (a phase-2-era layer created before the table existed —
- * impossible in greenfield, defensive here) answers undefined and the
- * callers refuse honestly.
+ * placement target) — the shared lookup in layerTeardown.ts (one
+ * implementation for this module, projects.removeArtifact, and the project
+ * teardown).
  */
 async function layerMembershipOf(
-  ctx: Pick<QueryCtx, "db">,
+  ctx: { db: QueryCtx["db"] },
   layer: Doc<"layers">,
 ): Promise<Doc<"projectArtifacts"> | null> {
-  const holders = await ctx.db
-    .query("projectArtifacts")
-    .withIndex("by_artifact", (q) => q.eq("artifactKind", "layer").eq("artifactId", layer._id))
-    .take(200);
-  return holders.find((row) => row.projectId === layer.projectId) ?? null;
+  return layerMembershipRow(ctx, layer);
 }
 
 /** The group holding one layer (its parent), or null when it sits at the root — the by_child lookup the cycle guard and the tree reads share. */
@@ -592,14 +590,13 @@ export const setVisible = mutation({
 });
 
 /**
- * Removes one layer: its placements (every map of the project scanned — the
- * by_map index is the only one the design gives placements), its child rows
- * (it stops being anyone's child), its group's children (its own subtree
- * unparents UP a level — removing a group never deletes the layers inside
- * it, the references-not-containment rule), its version chain (the anchor
- * is gone; greenfield, nothing links these rows from outside a live layer),
- * and its membership row + the project's count. The DATASET behind a data
- * layer is never touched.
+ * Removes one layer: its child rows both ways (it stops being anyone's
+ * child; its own children unparent UP a level — removing a group never
+ * deletes the layers inside it), its version chain, then the membership
+ * cascade — placements (which name it THROUGH its membership), the
+ * membership row, and the project's count — and the row itself. The
+ * cascade's shape is shared with projects.removeArtifact's layer arm
+ * (layerTeardown.ts); the dataset behind a data layer is never touched.
  */
 export const remove = mutation({
   args: { layerId: v.string() },
@@ -610,30 +607,11 @@ export const remove = mutation({
       throw goneLayer();
     }
     const layer = await layerForWrite(ctx, actorId, layerId),
-      project = await ctx.db.get(layer.projectId);
-    // Placements: this project's maps, this layer's membership.
-    const membership = await layerMembershipOf(ctx, layer),
-      maps = await ctx.db
-        .query("projectMaps")
-        .withIndex("by_project", (q) => q.eq("projectId", layer.projectId))
-        .collect();
-    for (const map of maps) {
-      // oxlint-disable-next-line no-await-in-loop -- one map's placements per hop, project-scale bounded.
-      const placements = await ctx.db
-        .query("mapLayers")
-        .withIndex("by_map", (q) => q.eq("mapId", map._id))
-        .collect();
-      for (const placement of placements) {
-        if (membership !== null && placement.layerMemberId === membership._id) {
-          // oxlint-disable-next-line no-await-in-loop -- one placement per hop.
-          await ctx.db.delete(placement._id);
-        }
-      }
-    }
-    // The tree: rows naming this layer as a child (it stops being anyone's
-    // child), then the children it held as a group (unparented UP a level —
-    // removing a group never deletes the layers inside it, the
-    // references-not-containment rule).
+      membership = await layerMembershipRow(ctx, layer);
+    // The tree answers only by the row's own id — swept first. Versions go
+    // EXCEPT the frozen rows a foreign project's linked membership pins
+    // (the retire-pin-refusal rule, carried to layers); placements go
+    // BEFORE the membership row does, while it can still name them.
     for await (const edge of ctx.db
       .query("layerChildren")
       .withIndex("by_child", (q) => q.eq("childLayerId", layer._id))) {
@@ -646,15 +624,11 @@ export const remove = mutation({
       // oxlint-disable-next-line no-await-in-loop -- one edge per hop.
       await ctx.db.delete(edge._id);
     }
-    // The version chain goes with its anchor.
-    for await (const version of ctx.db
-      .query("layerVersions")
-      .withIndex("by_layer", (q) => q.eq("layerId", layer._id))) {
-      // oxlint-disable-next-line no-await-in-loop -- one version per hop.
-      await ctx.db.delete(version._id);
-    }
+    await deleteLayerVersionsCascade(ctx, layer._id, layer.projectId);
     if (membership !== null) {
+      await deletePlacementsForMembership(ctx, membership);
       await ctx.db.delete(membership._id);
+      const project = await ctx.db.get(layer.projectId);
       if (project !== null) {
         await ctx.db.patch(project._id, {
           artifactCount: Math.max(0, project.artifactCount - 1),

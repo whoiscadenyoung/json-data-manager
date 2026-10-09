@@ -730,3 +730,174 @@ describe("layers: schema drift → needsAttention (ADR 0012)", () => {
     expect((await layerOf(t, layerId)).needsAttention).toBeUndefined();
   });
 });
+
+describe("layers: teardown cascades (review fixes)", () => {
+  /** Places a layer on a map of its project, via its membership (the sheet's flow). */
+  async function placeOnMap(
+    t: TestConvex,
+    projectId: string,
+    layerId: string,
+    name = "Canvas",
+  ): Promise<string> {
+    const mapId = await t.mutation(api.projectMaps.create, { name, projectId });
+    const workspace = await t.query(api.projects.get, { projectId });
+    const membership =
+      workspace === null
+        ? undefined
+        : workspace.artifacts.find(
+            (row) => row.artifactKind === "layer" && row.artifactId === layerId,
+          );
+    if (membership === undefined) {
+      throw new Error("expected the layer membership");
+    }
+    await t.mutation(api.projectMaps.addLayer, { layerMemberId: membership._id, mapId });
+    return mapId;
+  }
+
+  /** Raw row counts, for the "nothing stranded" assertions. */
+  async function rowCount(
+    t: TestConvex,
+    table: "layers" | "layerVersions" | "layerChildren" | "projectMaps" | "mapLayers",
+  ): Promise<number> {
+    return t.run(async (ctx) => {
+      let n = 0;
+      for await (const _row of ctx.db.query(table)) {
+        n += 1;
+      }
+      return n;
+    });
+  }
+
+  it("removeArtifact on an OWNED layer deletes the layer, its versions, its placements — never the dataset", async () => {
+    const t = signedIn();
+    const projectId = await createProject(t);
+    const datasetId = await createGeospatialDataset(t);
+    const layerId = await createDataLayer(t, projectId, datasetId, "Doomed");
+    await seedVersion(t, layerId, { kind: "data", name: "Doomed" });
+    await placeOnMap(t, projectId, layerId);
+    const workspace = await t.query(api.projects.get, { projectId });
+    const membership =
+      workspace === null
+        ? undefined
+        : workspace.artifacts.find((row) => row.artifactKind === "layer");
+    if (membership === undefined) {
+      throw new Error("expected the layer membership");
+    }
+
+    await t.mutation(api.projects.removeArtifact, {
+      artifactId: layerId,
+      artifactKind: "layer",
+      projectId,
+    });
+
+    // Nothing stranded: the layer row, its chain, and the placement are
+    // gone with the membership.
+    expect(await t.query(api.layers.get, { layerId })).toBeNull();
+    expect(await rowCount(t, "layers")).toBe(0);
+    expect(await rowCount(t, "layerVersions")).toBe(0);
+    expect(await rowCount(t, "layerChildren")).toBe(0);
+    expect(await rowCount(t, "mapLayers")).toBe(0);
+    // References, not containment: the styled dataset survives.
+    expect(
+      (await t.query(api.schemas.listSummaries, { limit: 1000 })).map((row) => row._id),
+    ).toContain(datasetId);
+    // The count kept honest.
+    const after = await t.query(api.projects.get, { projectId });
+    expect(after === null ? undefined : after.project.artifactCount).toBe(1);
+    expect(membership).not.toBeUndefined();
+  });
+
+  it("removeArtifact on a LINKED layer unpins: placements and membership go, the source's pinned version stays", async () => {
+    const t = signedIn();
+    const sourceProject = await createProject(t, "Source");
+    const datasetId = await createGeospatialDataset(t);
+    const sourceLayerId = await createDataLayer(t, sourceProject, datasetId, "River style");
+    const versionId = await seedVersion(t, sourceLayerId, { kind: "data", name: "River style" });
+    const target = await createProject(t, "Target");
+    await t.mutation(api.layers.link, { layerId: sourceLayerId, projectId: target });
+    await placeOnMap(t, target, versionId);
+
+    await t.mutation(api.projects.removeArtifact, {
+      artifactId: versionId,
+      artifactKind: "layer",
+      projectId: target,
+    });
+
+    // The pin and its placements are gone; the SOURCE layer and its frozen
+    // version are untouched.
+    expect(await rowCount(t, "mapLayers")).toBe(0);
+    const workspace = await t.query(api.projects.get, { projectId: target });
+    expect(workspace === null ? 0 : workspace.artifacts.length).toBe(0);
+    expect(await t.query(api.layers.get, { layerId: sourceLayerId })).not.toBeNull();
+    const version = await t.run(async (ctx) => ctx.db.get(versionId));
+    expect(version === null ? undefined : version.layerId).toBeTruthy();
+  });
+
+  it("projects.remove tears down every owned layer, version, and map — never the datasets", async () => {
+    const owner = signedIn("owner-1");
+    const projectId = await createProject(owner);
+    await owner.run(async (ctx) => {
+      await ctx.db.insert("users", {
+        authId: "editor-9",
+        email: "e9@example.com",
+        emailVerified: true,
+      });
+    });
+    await owner.mutation(api.projects.addMember, { projectId, role: "editor", user: "editor-9" });
+    const datasetId = await createGeospatialDataset(owner);
+    const layerA = await owner.mutation(api.layers.create, {
+      kind: "group",
+      name: "A",
+      projectId,
+    });
+    const layerB = await createDataLayer(owner, projectId, datasetId, "B");
+    await owner.mutation(api.layers.addToGroup, { groupId: layerA, layerId: layerB });
+    await seedVersion(owner, layerB, { kind: "data", name: "B" });
+    await placeOnMap(owner, projectId, layerB);
+    // A linked member of ANOTHER project pinning this project's published
+    // layer — its version row must survive this project's deletion.
+    const otherProject = await createProject(owner, "Other");
+    const versionId = await seedVersion(owner, layerA, { kind: "data", name: "A" });
+    const pinnedVersionId = await owner.mutation(api.layers.link, {
+      layerId: layerA,
+      projectId: otherProject,
+    });
+    expect(pinnedVersionId).toBe(versionId);
+
+    await owner.mutation(api.projects.remove, { projectId });
+
+    // The workspace's owned rows are gone — no orphans in any table.
+    expect(await rowCount(owner, "layers")).toBe(0);
+    expect(await rowCount(owner, "layerChildren")).toBe(0);
+    expect(await rowCount(owner, "projectMaps")).toBe(0);
+    expect(await rowCount(owner, "mapLayers")).toBe(0);
+    // The ONE version row that survives is the one the OTHER project's
+    // linked membership pins (the retire-pin-refusal rule, carried to
+    // layers) — layerB's unpinned version went with its layer.
+    expect(await rowCount(owner, "layerVersions")).toBe(1);
+    const otherWorkspace = await owner.query(api.projects.get, { projectId: otherProject });
+    expect(otherWorkspace === null ? 0 : otherWorkspace.artifacts.length).toBe(1);
+    const linkedArtifact =
+      otherWorkspace === null || otherWorkspace === undefined
+        ? undefined
+        : otherWorkspace.artifacts[0];
+    const linkedState =
+      linkedArtifact !== undefined && linkedArtifact.state.kind === "layer"
+        ? linkedArtifact.state.layer
+        : undefined;
+    // The pin still RESOLVES (not "missing"): its frozen row survived.
+    expect(linkedState === undefined ? undefined : linkedState.pinnedVersionLabel).toBe("v1");
+    const survivor = await owner.run(async (ctx) => {
+      const rows: string[] = [];
+      for await (const row of ctx.db.query("layerVersions")) {
+        rows.push(row._id);
+      }
+      return rows;
+    });
+    expect(survivor).toStrictEqual([versionId]);
+    // References, not containment: the dataset outlives the project.
+    expect(
+      (await owner.query(api.schemas.listSummaries, { limit: 1000 })).map((row) => row._id),
+    ).toContain(datasetId);
+  });
+});
