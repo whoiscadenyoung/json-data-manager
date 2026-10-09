@@ -5,7 +5,7 @@ import {
   splitSchemaIdsByDecision,
   type TileSourceDecision,
 } from "./layer-source";
-import type { DatasetSummary } from "./map-layers";
+import type { DatasetSummary } from "./layer-source";
 
 function dataset(id: string, kind: "geospatial" | "standard"): DatasetSummary {
   return {

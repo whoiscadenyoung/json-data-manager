@@ -7,6 +7,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { auth } from "./auth";
 import { specDependencies } from "./derivedSpec";
+import { markLayerDriftForPinMove } from "./layerDrift";
 import { projectRoleFor, roleAtLeast } from "./projectAccess";
 import { CATALOG_READ_LIMIT, deleteDatasetCascading } from "./schemas";
 import {
@@ -680,10 +681,9 @@ function referenceDenied(): ConvexError<string> {
  * content write runs), where it had answered to the creator stamp alone; a
  * viewer-role member gets the honest view-only denial (the workspace read
  * already told them they belong — ADR 0011's denial-shape rule), a non-member
- * the gone-shaped one — and a MAP edge is the recorded exception — maps are
- * shared catalog artifacts (no creator stamp exists on the component's maps
- * table), so any signed-in viewer may adjust its layer pins. `auth(ctx)` has
- * already guaranteed the caller is signed in.
+ * the gone-shaped one. The stage-8 "map edge" exception is gone with the
+ * standalone maps (phase 3, ADR 0012) — a map holds no dataset edges anymore.
+ * `auth(ctx)` has already guaranteed the caller is signed in.
  */
 async function assertConsumerWritable(
   ctx: { db: ReadDb },
@@ -697,22 +697,19 @@ async function assertConsumerWritable(
     }
     return;
   }
-  if (ref.consumerKind === "fork") {
-    const membershipId = ctx.db.normalizeId("projectArtifacts", ref.consumerId);
-    const membership = membershipId === null ? null : await ctx.db.get(membershipId);
-    if (membership === null) {
-      throw referenceDenied();
-    }
-    const role = await projectRoleFor(ctx, membership.projectId, actorId);
-    if (role === null) {
-      throw referenceDenied();
-    }
-    if (!roleAtLeast(role, "editor")) {
-      throw new ConvexError(
-        "You have view-only access — an editor or owner can sync this project's references.",
-      );
-    }
-    return;
+  const membershipId = ctx.db.normalizeId("projectArtifacts", ref.consumerId);
+  const membership = membershipId === null ? null : await ctx.db.get(membershipId);
+  if (membership === null) {
+    throw referenceDenied();
+  }
+  const role = await projectRoleFor(ctx, membership.projectId, actorId);
+  if (role === null) {
+    throw referenceDenied();
+  }
+  if (!roleAtLeast(role, "editor")) {
+    throw new ConvexError(
+      "You have view-only access — an editor or owner can sync this project's references.",
+    );
   }
 }
 
@@ -949,9 +946,11 @@ const consumedByValidator = v.object({
       title: v.string(),
     }),
   ),
-  // The honesty field: which consumer kinds this projection knows. Maps and
-  // collections reference datasets but hold NO version reference — they join
-  // additively when a stage gives them one, and the UI says so.
+  // The honesty field: which consumer kinds this projection knows. Since
+  // phase 3 of the project-workspace design (ADR 0012) that's exactly the
+  // edge kinds — collections reference datasets but hold NO version
+  // reference, and maps are project-owned rows with no dataset edges at all
+  // — and the UI says so.
   knownConsumerKinds: v.array(v.string()),
 });
 
@@ -959,7 +958,7 @@ const consumedByValidator = v.object({
  * The consumed-by projection for one dataset (lifecycle §7): every consumer
  * that holds a reference on this dataset, with its pin/float state and
  * whether a new head awaits it. Union of the `consumerReferences` edges (the
- * authoritative leg — the save path and the 7b fork/map legs) and the bounded
+ * authoritative leg — the save path and the 7b fork leg) and the bounded
  * saved-registry scan, which exists only for rows saved before stage 6 wrote
  * edges; its take(500) is the summaries projection's documented bound, not a
  * correctness cap. Deduped by consumer id.
@@ -975,7 +974,7 @@ export const consumedBy = query({
     // foreign draft or author-restricted row names no consumers to a caller
     // who cannot see the row — the same empty answer an unknown id gives.
     if (!(await sourceVisibleToViewer(ctx, args.datasetId, viewerId, memo))) {
-      return { consumers: [], knownConsumerKinds: ["derived", "fork", "map"] };
+      return { consumers: [], knownConsumerKinds: ["derived", "fork"] };
     }
     const refs = await ctx.db
       .query("consumerReferences")
@@ -1002,12 +1001,12 @@ export const consumedBy = query({
       // The consumer must still exist (and, for a registry consumer, be
       // catalog-visible): a deleted transform's stale edge (removed deletes
       // its edges now, but rows deleted before that shipped leave orphans), a
-      // saved row the builder demoted to draft by re-autosaving, a removed
-      // project membership, and a deleted map all resolve to nothing here —
-      // drafts are invisible to catalog consumers (lifecycle §3). Since
-      // stage 8 (#104) the viewer rides along too: a FORK consumer surfaces
-      // only to its own project's creator — one user's consumed-by read
-      // never discloses another user's project title.
+      // saved row the builder demoted to draft by re-autosaving, and a removed
+      // project membership all resolve to nothing here — drafts are invisible
+      // to catalog consumers (lifecycle §3). Since stage 8 (#104) the viewer
+      // rides along too: a FORK consumer surfaces only to its own project's
+      // creator — one user's consumed-by read never discloses another user's
+      // project title.
       // oxlint-disable-next-line no-await-in-loop -- one consumer per hop; each read decides the next.
       const title = await consumerTitleFor(ctx, ref, viewerId);
       if (title === null) {
@@ -1042,7 +1041,7 @@ export const consumedBy = query({
     }
     return {
       consumers: [...consumers.values()],
-      knownConsumerKinds: ["derived", "fork", "map"],
+      knownConsumerKinds: ["derived", "fork"],
     };
   },
   returns: consumedByValidator,
@@ -1053,10 +1052,11 @@ export const consumedBy = query({
  * title (and must still be saved — the visibility rule above), fork consumers
  * answer their membership's project's — SINCE STAGE 8 (#104) only to that
  * project's creator (a foreign fork drops out of the projection entirely, so
- * a consumed-by read never discloses another user's project titles) — map
- * consumers the map's name (maps are shared catalog artifacts). A gone
- * consumer (deleted row, removed membership, deleted map) answers null and
- * drops out of the projection — the defensive read every kind shares.
+ * a consumed-by read never discloses another user's project titles). The
+ * map-consumer arm is gone with the standalone maps (phase 3, ADR 0012 — a
+ * map holds no dataset edges anymore). A gone consumer (deleted row, removed
+ * membership) answers null and drops out of the projection — the defensive
+ * read every kind shares.
  */
 async function consumerTitleFor(
   ctx: { db: ReadDb; runQuery: RunQuery },
@@ -1070,17 +1070,7 @@ async function consumerTitleFor(
     }
     return row.title;
   }
-  if (ref.consumerKind === "fork") {
-    return forkConsumerTitle(ctx, ref.consumerId, viewerId);
-  }
-  try {
-    const map = await ctx.runQuery(components.jsonCms.lib.getMap, { mapId: ref.consumerId });
-    return map === null ? null : map.name;
-  } catch {
-    // A consumerId that isn't a well-formed component map id — the
-    // id-duality rule's "not a map" answer.
-    return null;
-  }
+  return forkConsumerTitle(ctx, ref.consumerId, viewerId);
 }
 
 /**
@@ -1515,6 +1505,13 @@ export const setReferenceMode = mutation({
  * definition, so syncing one is an honest no-op.) This is a policy-store
  * write ONLY — it never touches the component and never re-executes
  * anything; a derived consumer's sync is `publishDataset`, not this.
+ *
+ * Phase 3 of the project-workspace design (ADR 0012) adds the drift stamp:
+ * when the pin lands on a version whose FIELD SET differs from the
+ * previously pinned row's, every data layer styling this membership is
+ * flagged `needsAttention` (layerDrift.ts) — the layer's stored styling may
+ * name fields the new version lacks, and a flag beats a silently broken
+ * layer.
  */
 export const syncReference = mutation({
   args: { referenceId: v.string() },
@@ -1540,6 +1537,7 @@ export const syncReference = mutation({
     }
     if (head.ref !== ref.pinnedRef) {
       await ctx.db.patch(referenceId, { pinnedRef: head.ref, pinnedSchemaId: head.schemaId });
+      await markLayerDriftForPinMove(ctx, ref, head);
     }
     return { mode: "pin" as const, pinnedRef: head.ref };
   },

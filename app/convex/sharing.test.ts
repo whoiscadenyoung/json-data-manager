@@ -878,35 +878,6 @@ describe("project writes are creator-only (stage 8 AC, decision D1)", () => {
     });
     await mine.mutation(api.derivedDatasets.remove, { id: draftRowId });
   });
-
-  it("map layers refuse foreign invisible targets; maps stay shared catalog artifacts (recorded)", async () => {
-    const mine = signedIn();
-    const projectId = await createProject(mine);
-    const draftId = await createProjectDraft(mine, projectId);
-    const publishedId = await createPublishedDataset(mine, "Layerable");
-    const other = mine.withIdentity({ subject: "user-2" });
-    const otherMapId = await other.mutation(api.maps.create, { name: "B's map" });
-
-    // Layering another user's draft onto a shared map would write their
-    // invisible row into shared state — denied, same answer as a bad id.
-    await expect(
-      other.mutation(api.maps.addLayer, {
-        mapId: otherMapId,
-        targetId: draftId,
-        targetType: "dataset",
-      }),
-    ).rejects.toThrow(/Dataset not found/);
-    // Published rows layer fine for anyone (positive sharing case).
-    await other.mutation(api.maps.addLayer, {
-      mapId: otherMapId,
-      targetId: publishedId,
-      targetType: "dataset",
-    });
-    // Maps themselves stay shared (the recorded D1 boundary): B reads A's map.
-    const myMapId = await mine.mutation(api.maps.create, { name: "A's map" });
-    const foreignMap = await other.query(api.maps.get, { mapId: myMapId });
-    expect(foreignMap === null ? undefined : foreignMap.name).toBe("A's map");
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1079,19 +1050,13 @@ describe("stage-8 authoring boundaries (review round 2)", () => {
     });
   });
 
-  it("forkAsSpec refuses invisible sources; addDerivedLayer refuses foreign autosaves", async () => {
+  it("forkAsSpec refuses invisible sources", async () => {
     const mine = signedIn();
     const projectId = await createProject(mine);
     const draftId = await createProjectDraft(mine, projectId);
-    const draftRegistryId = await mine.mutation(api.derivedDatasets.save, {
-      spec: { operations: [], sourceDatasetId: draftId },
-      status: "draft",
-      title: "A's autosave",
-    });
     const publishedId = await createPublishedDataset(mine, "Forkable");
     const other = mine.withIdentity({ subject: "user-2" });
     const otherProjectId = await createProject(other, "B's fork home");
-    const otherMapId = await other.mutation(api.maps.create, { name: "B's map" });
 
     // A fork over a foreign draft would mint a SAVED (catalog-visible)
     // registry row naming an invisible id — refused as missing.
@@ -1102,9 +1067,6 @@ describe("stage-8 authoring boundaries (review round 2)", () => {
         title: "ghost fork",
       }),
     ).rejects.toThrow(/No dataset was found/);
-    await expect(
-      other.mutation(api.maps.addDerivedLayer, { mapId: otherMapId, targetId: draftRegistryId }),
-    ).rejects.toThrow(/Derived dataset not found/);
 
     // Forking the PUBLISHED source works (the design's shape).
     const forkId = await other.mutation(api.projects.forkAsSpec, {
@@ -1215,9 +1177,6 @@ describe("anonymous denial (stage 8 AC: the 0.1 gate holds)", () => {
       }),
     ).rejects.toThrow(GATE_MESSAGE);
     await expect(t.query(api.derivedDatasets.get, { id: "whatever" })).rejects.toThrow(
-      GATE_MESSAGE,
-    );
-    await expect(t.query(api.bundles.layerResolutions, { mapId: "whatever" })).rejects.toThrow(
       GATE_MESSAGE,
     );
     await expect(

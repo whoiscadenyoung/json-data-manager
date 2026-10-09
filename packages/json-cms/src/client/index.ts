@@ -35,7 +35,6 @@ export type ExposeApiOperation = {
   entryId?: string;
   collectionId?: string;
   groupId?: string;
-  mapId?: string;
   /** The import id of `getImportStatus` (stage 8, #104) — resolved host-side to its dataset for scoping. */
   importId?: string;
   // The BATCH id lists (`listEntriesForIds`' entryIds, `listEntriesForSchemas`' schemaIds) deliberately carry NO operation field (stage 8, #104): the host policy must not deny a whole batch read on one invisible id — those reads FILTER component-side by the viewerId instead, so an invisible reference target renders as no candidates, never as a broken form or leaked rows.
@@ -102,16 +101,6 @@ export type ExposeApiOptions = {
  *   removeSchemaFromCollection,
  *   setSchemaGroup,
  *   setGroupCollection,
- *   listMaps,
- *   getMap,
- *   createMap,
- *   updateMap,
- *   deleteMap,
- *   listMapLayers,
- *   addMapLayer,
- *   removeMapLayer,
- *   setMapLayerVisibility,
- *   moveMapLayer,
  * } = exposeApi(components.jsonCms, {
  *   auth: async (ctx, operation) => {
  *     const userId = await getAuthUserId(ctx);
@@ -470,142 +459,6 @@ export function exposeApi(component: ComponentApi, options: ExposeApiOptions) {
           type: "update",
         });
         return ctx.runMutation(component.lib.setGroupCollection, args);
-      },
-    }),
-
-    // Map operations — a saved arrangement of layers (collections, groups,
-    // or datasets) rendered together on one map. Layer mutations carry
-    // `mapId` for auth and travel as plain strings, re-validated inside the
-    // component (see the id-validation note above).
-    listMaps: queryGeneric({
-      args: { limit: v.number() },
-      handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "listMaps", type: "read" });
-        return ctx.runQuery(component.lib.listMaps, { limit: args.limit });
-      },
-    }),
-    getMap: queryGeneric({
-      args: { mapId: v.string() },
-      handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "getMap", mapId: args.mapId, type: "read" });
-        return ctx.runQuery(component.lib.getMap, { mapId: args.mapId });
-      },
-    }),
-    createMap: mutationGeneric({
-      args: { description: v.optional(v.string()), name: v.string() },
-      handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "createMap", type: "create" });
-        return ctx.runMutation(component.lib.createMap, args);
-      },
-    }),
-    updateMap: mutationGeneric({
-      args: {
-        description: v.optional(v.string()),
-        mapId: v.string(),
-        name: v.optional(v.string()),
-      },
-      handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "updateMap", mapId: args.mapId, type: "update" });
-        return ctx.runMutation(component.lib.updateMap, args);
-      },
-    }),
-    deleteMap: mutationGeneric({
-      args: { mapId: v.string() },
-      handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "deleteMap", mapId: args.mapId, type: "delete" });
-        return ctx.runMutation(component.lib.deleteMap, args);
-      },
-    }),
-    // A map's layers in draw order; every layer across all maps when `mapId`
-    // is omitted (one query lets a client count layers per map). Required
-    // `limit` (issue #128) bounds both branches.
-    listMapLayers: queryGeneric({
-      args: { limit: v.number(), mapId: v.optional(v.string()) },
-      handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "listMapLayers", mapId: args.mapId, type: "read" });
-        return ctx.runQuery(component.lib.listMapLayers, { limit: args.limit, mapId: args.mapId });
-      },
-    }),
-    // Appends a layer (a no-op when the target is already a layer of the map).
-    addMapLayer: mutationGeneric({
-      args: {
-        mapId: v.string(),
-        targetId: v.string(),
-        targetType: v.union(v.literal("collection"), v.literal("group"), v.literal("dataset")),
-      },
-      handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "addMapLayer", mapId: args.mapId, type: "update" });
-        return ctx.runMutation(component.lib.addMapLayer, args);
-      },
-    }),
-    // The layer-targeted mutations resolve their row's map first (issue
-    // #124): the auth hook's operation carries `mapId` — read-only context
-    // today (maps stay shared catalog artifacts), but the shape a per-map
-    // policy needs when one lands. A stale/foreign layerId resolves to no
-    // map and the call proceeds exactly as before (the underlying component
-    // mutation answers "not found").
-    removeMapLayer: mutationGeneric({
-      args: { layerId: v.string() },
-      handler: async (ctx, args) => {
-        const mapId = await ctx.runQuery(component.lib.getMapLayerMapId, { layerId: args.layerId });
-        await options.auth(ctx, {
-          fn: "removeMapLayer",
-          mapId: mapId ?? undefined,
-          type: "update",
-        });
-        return ctx.runMutation(component.lib.removeMapLayer, args);
-      },
-    }),
-    setMapLayerVisibility: mutationGeneric({
-      args: { layerId: v.string(), visible: v.boolean() },
-      handler: async (ctx, args) => {
-        const mapId = await ctx.runQuery(component.lib.getMapLayerMapId, { layerId: args.layerId });
-        await options.auth(ctx, {
-          fn: "setMapLayerVisibility",
-          mapId: mapId ?? undefined,
-          type: "update",
-        });
-        return ctx.runMutation(component.lib.setMapLayerVisibility, args);
-      },
-    }),
-    // Swaps a layer with its neighbor in draw order.
-    moveMapLayer: mutationGeneric({
-      args: { direction: v.union(v.literal("up"), v.literal("down")), layerId: v.string() },
-      handler: async (ctx, args) => {
-        const mapId = await ctx.runQuery(component.lib.getMapLayerMapId, { layerId: args.layerId });
-        await options.auth(ctx, { fn: "moveMapLayer", mapId: mapId ?? undefined, type: "update" });
-        return ctx.runMutation(component.lib.moveMapLayer, args);
-      },
-    }),
-    // Every layer's per-child visibility overrides in one query (only
-    // explicitly-toggled children have rows — clients match them against the
-    // layers' live children and ignore stale ones).
-    listMapLayerOverrides: queryGeneric({
-      args: { mapId: v.string() },
-      handler: async (ctx, args) => {
-        await options.auth(ctx, { fn: "listMapLayerOverrides", mapId: args.mapId, type: "read" });
-        return ctx.runQuery(component.lib.listMapLayerOverridesForMap, {
-          mapId: args.mapId,
-        });
-      },
-    }),
-    // Sets (or clears, via `visible: undefined`) a child's visibility
-    // override within one layer. `childKey` is `group:<id>`/`dataset:<id>`.
-    setMapLayerOverride: mutationGeneric({
-      args: {
-        childKey: v.string(),
-        layerId: v.string(),
-        visible: v.optional(v.boolean()),
-      },
-      handler: async (ctx, args) => {
-        // The layer's map rides the auth operation (see removeMapLayer above).
-        const mapId = await ctx.runQuery(component.lib.getMapLayerMapId, { layerId: args.layerId });
-        await options.auth(ctx, {
-          fn: "setMapLayerOverride",
-          mapId: mapId ?? undefined,
-          type: "update",
-        });
-        return ctx.runMutation(component.lib.setMapLayerOverride, args);
       },
     }),
 

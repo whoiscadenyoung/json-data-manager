@@ -6,7 +6,6 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { assertDatasetWritable, auth } from "./auth";
-import { createChainMemo, resolveSourceHead } from "./consumption";
 import { projectRoleFor, roleAtLeast } from "./projectAccess";
 import { projectForRead as projectsProjectForRead, projectForWrite } from "./projects";
 import { CATALOG_READ_LIMIT } from "./schemas";
@@ -14,24 +13,23 @@ import { CATALOG_READ_LIMIT } from "./schemas";
 /**
  * Bundle publish and fork (roadmap 7b, #103; lifecycle doc §2/§5-§6, ADR
  * 0008): one project presses once and produces exactly one bundle — the
- * collection (promoted), each map (promoted behaviorally, its
- * mapLayers/mapLayerOverrides untouched), and the deduped referenced datasets
- * frozen as versions through the EXISTING 5b state machine
- * (`api.publish.*` — deliberately never forked).
+ * collection (promoted) and the project's members frozen as versions through
+ * the EXISTING 5b state machine (`api.publish.*` — deliberately never
+ * forked).
  *
- * The act has four legs, in WRITE order:
+ * The act has three legs, in WRITE order:
  *
  * 1. **The closure walk** (the pure `bundleClosure` core below, resolved by
- *    `collectClosureInput`): every project membership plus every dataset each
- *    map's layers reach — collection/group layers expand LIVE exactly like
- *    the map workspace's `expandLayerDatasets`, deduped by id ("datasets
- *    referenced multiple times publish once"), cycle-safe by visited set
- *    (the findCycleToOrigin precedent — drafts cannot cycle, but the walk is
- *    total over any layer graph). Derived members' own sources stay OUT of
- *    the closure (exposure decoupled, lifecycle §2): they surface only as the
- *    lineage the 5b freeze records. The collection's files are member rows of
- *    a `bundleRuns` press (schema.ts) — the bundle-level checkpoint that
- *    makes one-press resume exact.
+ *    `collectClosureInput`): every project membership — datasets and saved
+ *    derived rows — deduped by id ("datasets referenced multiple times
+ *    publish once"). (Phase 3 of the project-workspace design, ADR 0012,
+ *    retired the map leg with the standalone maps: a map no longer drags its
+ *    layer datasets into the press — datasets join a project as MEMBERS, and
+ *    layers/maps join the closure in phase 5.) Derived members' own sources
+ *    stay OUT of the closure (exposure decoupled, lifecycle §2): they
+ *    surface only as the lineage the 5b freeze records. The collection's
+ *    files are member rows of a `bundleRuns` press (schema.ts) — the
+ *    bundle-level checkpoint that makes one-press resume exact.
  * 2. **Per-member publish** — CLIENT-driven (`src/lib/bundle-publish.ts`),
  *    calling `publishDataset` per member exactly as the dataset page does;
  *    the host only checkpoints outcomes (`recordMember`). Already-published
@@ -43,42 +41,16 @@ import { CATALOG_READ_LIMIT } from "./schemas";
  *    its draft's group — group layers would otherwise render nothing
  *    post-publish, since a frozen row is born ungrouped. Both are
  *    organization writes, which the component allows on lineage rows.
- * 4. **The map leg** (`linkMapLayers`): one float `consumerReferences` row
- *    per direct dataset layer target (consumerKind "map"). Maps are promoted
- *    by their rows persisting; this leg is only the version-reference edge —
- *    the stale-id trap's answer.
  *
  * Recorded decisions (the issue's open items):
- * - **Stale-id handling: resolution, never repointing.** A layer target id is
- *   a chain ANCHOR; reads resolve it (float → the chain's head via
- *   `consumption.resolveSourceHead`, pin → the pinned row) and render the
- *   resolved row's data under the anchor's id — layer structure, overrides,
- *   and live-layer state stay shared and untouched. Collection layers
- *   self-heal through live membership (frozen rows are filed into the
- *   collection), group layers through the group re-attach in leg 3; only
- *   direct dataset layers need the edge. A target with no chain renders
- *   itself — today's behavior, unchanged. A PIN whose pinned row was retired
- *   resolves to NOTHING, and the workspace SUPPRESSES the layer instead of
- *   letting it fall back to the anchor's live rows — rendering newer data
- *   than the pin would be the stale-id leak in the other direction; the
- *   sync/revert mutations are its repair path.
  * - **Republish: a re-press re-promotes every member** (new attempts, vN+1,
  *   append-only) — no per-dataset change signal exists to do
  *   changed-inputs-only honestly; keep-N retention bounds the chains. See
  *   the `bundleRuns` table doc.
- * - **Exposure defaults:** import sources are exposed by inclusion (they are
- *   what the maps and collection reference); derived sources stay private
- *   with lineage-only provenance. No per-artifact "expose source?" toggle
- *   ships here — adding the source to the project puts it in the next press.
- * - **Live-expansion asymmetry (recorded, not left implicit):** a
- *   collection/group layer expands LIVE at read time, so datasets added to
- *   the group later appear in the published map WITHOUT a republish — but
- *   they are not bundle members until the next press. On the CAPTURE side the
- *   bundle rule holds ("SMART 2024, not 'all SMART'"): expansion only ever
- *   captures datasets the project already holds (its memberships, its maps'
- *   direct layer targets) or datasets that are already published — a foreign
- *   draft sharing a layered collection is dropped from the plan, never
- *   silently frozen into the catalog by someone else's press.
+ * - **Exposure defaults:** import sources are exposed by inclusion; derived
+ *   sources stay private with lineage-only provenance. No per-artifact
+ *   "expose source?" toggle ships here — adding the source to the project
+ *   puts it in the next press.
  * - **Derived members publish in topological order** (by the registry rows'
  *   `dependsOn`): a fork-of-fork pair publishes its source first, so the
  *   fork's freeze records the source's FRESH head in lineage — provenance
@@ -88,20 +60,10 @@ import { CATALOG_READ_LIMIT } from "./schemas";
  * 0011): the press answers to the project's ROLE, not one creator — `start`
  * and every leg mutation (via `runningRun`) write through
  * `projects.projectForWrite`'s editor-and-up check, a viewer or outsider's
- * runId reads as "no longer exists", and the closure is complete over every
- * PROJECT-HELD row (ADR 0011: `collectClosureInput` resolves the memberships
- * by id past the identity-scoped pre-pass, so a member's press plans and
- * publishes drafts any member created, not just their own — and `plan` and
- * `start` pass the same viewer identity, so a preview and the press it
- * started can never disagree). Reads stay split
- * deliberately: the project-scoped ones (`plan`, `run`, `latestForProject`)
- * are member-scoped like `projects.get`, while `layerResolutions` still
- * answers to any signed-in MAP viewer — maps are shared catalog artifacts
- * (the recorded D1 boundary: the component's maps table carries no creator
- * stamp; adding one is the recorded follow-up), and the read exposes only
- * the anchor ids and modes the map's own layer rows already show. A draft
- * target resolves to no
- * chain either way, so it leaks nothing.
+ * runId reads as "no longer exists". Reads stay member-scoped: the
+ * project-scoped ones (`plan`, `run`, `latestForProject`) answer like
+ * `projects.get`. (The old `layerResolutions` read — the only signed-in-
+ * viewer surface — went with the map leg.)
  */
 
 // ---------------------------------------------------------------------------
@@ -112,38 +74,21 @@ import { CATALOG_READ_LIMIT } from "./schemas";
 /** A project membership as the closure walk sees it. */
 export interface BundleMembershipLike {
   artifactId: string;
-  artifactKind: "dataset" | "derived" | "map";
+  artifactKind: "dataset" | "derived";
 }
 
-/** One map's layers, as `listMapLayers` returns them (structural slice). */
-export interface BundleMapLayersLike {
-  layers: ReadonlyArray<{
-    targetId: string;
-    targetType: "collection" | "dataset" | "derived" | "group";
-  }>;
-  mapId: string;
-}
-
-/** Everything the walk expands through, resolved host-side from component reads. */
+/** Everything the walk resolves, host-side from component reads. */
 export interface BundleClosureInput {
-  /** Component `{collection, dataset}` membership rows (ALL of them — drafts included; the consumer `listSchemasByCollection` read filters drafts, so the walk uses the raw rows). */
-  collectionMembers: ReadonlyArray<{ collectionId: string; schemaId: string }>;
-  /** Saved registry row id → its persisted `dependsOn` edges — the derived members' topological order. */
-  dependsOnByRegistry?: ReadonlyMap<string, readonly string[]>;
   /** Dataset id → its group (both summary lists merged — drafts included). */
   groupIdByDataset: ReadonlyMap<string, string>;
   /** Dataset id → "draft" | "published" (absent = unknown/deleted → dropped). */
   lifecycleByDataset: ReadonlyMap<string, "draft" | "published">;
   /** The project's membership rows. */
   memberships: ReadonlyArray<BundleMembershipLike>;
-  /** Existing maps' layers (a deleted map never enters this list). */
-  layersByMap: ReadonlyArray<BundleMapLayersLike>;
-  /** Component groups with a collection — the collection-layer expansion's group leg. */
-  groupsByCollection: ReadonlyArray<{ collectionId: string; groupId: string }>;
+  /** Saved registry row id → its persisted `dependsOn` edges — the derived members' topological order. */
+  dependsOnByRegistry?: ReadonlyMap<string, readonly string[]>;
   /** Registry row ids whose status is "saved" (publishable; autosaves and deleted rows are out). */
   savedRegistryIds: ReadonlySet<string>;
-  /** Map memberships past the press's read bound (maps.deleteMapLayersForCollectionTree-era bound, MAX_MAPS) — reported distinctly, never as "deleted". */
-  unexaminedMapIds?: ReadonlySet<string>;
 }
 
 /** One planned member of one press. */
@@ -151,45 +96,16 @@ export interface BundleMemberPlan {
   datasetKey: string;
   /** Dataset members: the draft's group, re-attached to the frozen row at the collection leg. */
   groupId?: string;
-  kind: "dataset" | "derived" | "map";
-  /** Map members: the direct dataset-layer targets the map leg mints references for. */
-  layerTargets: string[];
+  kind: "dataset" | "derived";
   /** False for already-published dataset members (membership only, never a new version). */
   publish: boolean;
 }
 
 export interface BundleClosureResult {
-  /** References the plan had to leave out, with why (deleted artifact, builder autosave, a foreign draft). */
+  /** References the plan had to leave out, with why (deleted artifact, builder autosave). */
   dropped: Array<{ id: string; reason: string }>;
-  /** Canonical WRITE order: datasets, then derived (topological — sources before the forks over them), then maps. */
+  /** Canonical WRITE order: datasets, then derived (topological — sources before the forks over them). */
   members: BundleMemberPlan[];
-}
-
-/** A live-expansion target resolved to the dataset ids it currently reaches — the map workspace's `expandLayerDatasets` shape, at publish time. */
-function expandLiveLayer(
-  input: BundleClosureInput,
-  targetId: string,
-  targetType: "collection" | "group",
-): string[] {
-  if (targetType === "group") {
-    return [...input.groupIdByDataset]
-      .filter(([, groupId]) => groupId === targetId)
-      .map(([datasetId]) => datasetId);
-  }
-  const memberIds = input.collectionMembers
-      .filter((membership) => membership.collectionId === targetId)
-      .map((membership) => membership.schemaId),
-    groupIds = new Set(
-      input.groupsByCollection
-        .filter((group) => group.collectionId === targetId)
-        .map((group) => group.groupId),
-    );
-  for (const [datasetId, groupId] of input.groupIdByDataset) {
-    if (groupIds.has(groupId)) {
-      memberIds.push(datasetId);
-    }
-  }
-  return memberIds;
 }
 
 /**
@@ -233,32 +149,20 @@ function topologicalDerivedOrder(
 }
 
 /**
- * The bundle closure (issue acceptance #1): the collection's datasets are
- * every project membership plus every dataset the project's maps reach,
- * deduped by id. A draft publishes (v1, or vN+1 on a re-press) when the
- * project HOLDS it — a membership or one of its maps' direct layer targets;
- * a draft discovered only through a live collection/group expansion belongs
- * to whoever owns it and is dropped, never frozen by this press. An
- * already-published dataset is a member only; a saved transform publishes
- * through the derived half of the 5b machine; a map is promoted with its
- * dataset-layer targets recorded. The visited sets are the cycle guard — the
- * live expansion graph (collection ↔ groups ↔ datasets through many-to-many
- * memberships) is walked defensively, shared branches visited once.
+ * The bundle closure: the collection's datasets are the project's dataset
+ * memberships, deduped by id. A draft publishes (v1, or vN+1 on a re-press)
+ * when the project HOLDS it; an already-published dataset is a member only;
+ * a saved transform publishes through the derived half of the 5b machine.
+ * (Phase 3 of the project-workspace design, ADR 0012, retired the map walk
+ * with the standalone maps — the closure is exactly the memberships, plus
+ * the derived members' topological order.)
  */
 export function bundleClosure(input: BundleClosureInput): BundleClosureResult {
   const datasetMembers = new Map<string, BundleMemberPlan>(),
     derivedMembers: string[] = [],
-    dropped: Array<{ id: string; reason: string }> = [],
-    mapMembers: BundleMemberPlan[] = [],
-    ownDatasetIds = new Set(
-      input.memberships
-        .filter((membership) => membership.artifactKind === "dataset")
-        .map((membership) => membership.artifactId),
-    ),
-    seenDerived = new Set<string>(),
-    seenMaps = new Set<string>();
+    dropped: Array<{ id: string; reason: string }> = [];
 
-  const addDataset = (id: string, via: "membership" | "layer" | "expansion"): void => {
+  const addDataset = (id: string): void => {
     if (datasetMembers.has(id)) {
       return;
     }
@@ -268,21 +172,10 @@ export function bundleClosure(input: BundleClosureInput): BundleClosureResult {
       return;
     }
     if (lifecycle === "draft") {
-      if (via === "expansion" && !ownDatasetIds.has(id)) {
-        // Someone else's WIP sharing a layered collection — the bundle rule
-        // keeps it out of this press.
-        dropped.push({
-          id,
-          reason:
-            "A draft this project doesn't hold — it stays with its own project until published.",
-        });
-        return;
-      }
       datasetMembers.set(id, {
         datasetKey: id,
         groupId: input.groupIdByDataset.get(id),
         kind: "dataset",
-        layerTargets: [],
         publish: true,
       });
       return;
@@ -291,16 +184,14 @@ export function bundleClosure(input: BundleClosureInput): BundleClosureResult {
     datasetMembers.set(id, {
       datasetKey: id,
       kind: "dataset",
-      layerTargets: [],
       publish: false,
     });
   };
 
   const addDerived = (id: string): void => {
-    if (seenDerived.has(id)) {
+    if (derivedMembers.includes(id)) {
       return;
     }
-    seenDerived.add(id);
     if (!input.savedRegistryIds.has(id)) {
       dropped.push({
         id,
@@ -311,53 +202,11 @@ export function bundleClosure(input: BundleClosureInput): BundleClosureResult {
     derivedMembers.push(id);
   };
 
-  const addMap = (map: BundleMapLayersLike): void => {
-    if (seenMaps.has(map.mapId)) {
-      return;
-    }
-    seenMaps.add(map.mapId);
-    const layerTargets: string[] = [];
-    for (const layer of map.layers) {
-      if (layer.targetType === "dataset") {
-        // Recorded for the map leg even when unknown — the edge names the
-        // layer's own target id, whatever it resolves to at read time.
-        layerTargets.push(layer.targetId);
-        addDataset(layer.targetId, "layer");
-      } else if (layer.targetType === "derived") {
-        // A map forces its layer datasets to publish — derived layers
-        // included (their sources stay out of the closure, §2).
-        addDerived(layer.targetId);
-      } else {
-        for (const id of expandLiveLayer(input, layer.targetId, layer.targetType)) {
-          addDataset(id, "expansion");
-        }
-      }
-    }
-    mapMembers.push({
-      datasetKey: map.mapId,
-      kind: "map",
-      layerTargets,
-      publish: false,
-    });
-  };
-
   for (const membership of input.memberships) {
     if (membership.artifactKind === "dataset") {
-      addDataset(membership.artifactId, "membership");
-    } else if (membership.artifactKind === "derived") {
-      addDerived(membership.artifactId);
+      addDataset(membership.artifactId);
     } else {
-      const map = input.layersByMap.find((entry) => entry.mapId === membership.artifactId);
-      if (map === undefined) {
-        dropped.push({
-          id: membership.artifactId,
-          reason: (input.unexaminedMapIds ?? new Set()).has(membership.artifactId)
-            ? "Over the press's 200-map read bound — it joins the next press."
-            : "The map no longer exists.",
-        });
-        continue;
-      }
-      addMap(map);
+      addDerived(membership.artifactId);
     }
   }
 
@@ -369,11 +218,9 @@ export function bundleClosure(input: BundleClosureInput): BundleClosureResult {
         (id) => ({
           datasetKey: id,
           kind: "derived" as const,
-          layerTargets: [],
           publish: true,
         }),
       ),
-      ...mapMembers,
     ],
   };
 }
@@ -382,14 +229,15 @@ export function bundleClosure(input: BundleClosureInput): BundleClosureResult {
 // Host-side closure resolution: component reads → the pure core's input
 // ---------------------------------------------------------------------------
 
-/** Upper bounds per collection read — the walk stays bounded like every host enumeration. */
-const MAX_MAPS = 200;
+/** Upper bound on the membership read — the walk stays bounded like every host enumeration. */
+const MAX_MEMBERS = 1000;
 /** Failed members reported per latestForProject read — the detail list is bounded like every read; the count stays exact. */
 const MAX_REPORTED_FAILURES = 20;
 
 /**
  * One component read that tolerates a stored id that isn't well-formed (the
- * publish.ts/projects.ts precedent — "not a collection" keeps the legs total).
+ * publish.ts/projects.ts precedent — "not a collection" keeps the collection
+ * leg total).
  */
 async function tryGetCollection(
   ctx: { runQuery: QueryCtx["runQuery"] },
@@ -402,73 +250,22 @@ async function tryGetCollection(
   }
 }
 
-/** The map twin (projects.ts's `tryGetMap`). */
-async function tryGetMap(
-  ctx: { runQuery: QueryCtx["runQuery"] },
-  mapId: string,
-): Promise<FunctionReturnType<typeof components.jsonCms.lib.getMap>> {
-  try {
-    return await ctx.runQuery(components.jsonCms.lib.getMap, { mapId });
-  } catch {
-    return null;
-  }
-}
-
-/**
- * The map memberships' layers, resolved for the closure core: one map read +
- * one layers read per map membership (bounded by MAX_MAPS), and every derived
- * layer target checked against the registry. A deleted map simply doesn't
- * enter the list — the core reports the membership as dropped.
- */
-async function collectLayersByMap(
-  ctx: QueryCtx,
-  memberships: Array<{ artifactId: string; artifactKind: "dataset" | "derived" | "layer" | "map" }>,
-  checkRegistry: (id: string) => Promise<void>,
-): Promise<BundleMapLayersLike[]> {
-  const layersByMap: BundleMapLayersLike[] = [];
-  for (const membership of memberships) {
-    if (membership.artifactKind !== "map" || layersByMap.length >= MAX_MAPS) {
-      continue;
-    }
-    // oxlint-disable-next-line no-await-in-loop -- one map read per map membership, bounded by MAX_MAPS.
-    const map = await tryGetMap(ctx, membership.artifactId);
-    if (map === null) {
-      continue; // Deleted maps are dropped by the core, not here — it reports them.
-    }
-    // oxlint-disable-next-line no-await-in-loop -- see above.
-    const layers = await ctx.runQuery(components.jsonCms.lib.listMapLayers, {
-      limit: CATALOG_READ_LIMIT,
-      mapId: membership.artifactId,
-    });
-    for (const layer of layers) {
-      if (layer.targetType === "derived") {
-        // oxlint-disable-next-line no-await-in-loop -- one registry read per derived layer, bounded by layer count.
-        await checkRegistry(layer.targetId);
-      }
-    }
-    layersByMap.push({
-      layers: layers.map((layer) => ({ targetId: layer.targetId, targetType: layer.targetType })),
-      mapId: membership.artifactId,
-    });
-  }
-  return layersByMap;
-}
-
 /**
  * Resolves everything the pure closure core reads, from the project's
  * membership rows plus light component reads: the identity-scoped summaries
  * pair `projects.get` pays (the pre-pass), plus the raw membership rows,
- * which include the drafts the consumer `listSchemasByCollection` filters
- * out, and the groups list. Phase 1 of the project-workspace design (ADR
- * 0011): the identity-scoped pair can never return one member another
- * member's draft, so the pass below resolves the REST of this project's
- * dataset memberships by id through the host-flow by-ids read — the closure
- * is complete over every project-held row, whatever member created it (the
- * role guard every caller runs is what authorizes the payload).
- * `viewerId` only seeds the pre-pass, so `plan` and `start` pass the same
- * identity (the project's creator) and can never disagree about what a
- * press would do. The registry reads also capture each saved row's
- * `dependsOn` edges, so derived members can be ordered sources-before-forks.
+ * which include the drafts those consumer reads filter out, and the groups
+ * list (the draft's group re-attach at the collection leg). Phase 1 of the
+ * project-workspace design (ADR 0011): the identity-scoped pair can never
+ * return one member another member's draft, so the pass below resolves the
+ * REST of this project's dataset memberships by id through the host-flow
+ * by-ids read — the closure is complete over every project-held row,
+ * whatever member created it (the role guard every caller runs is what
+ * authorizes the payload). `viewerId` only seeds the pre-pass, so `plan` and
+ * `start` pass the same identity (the project's creator) and can never
+ * disagree about what a press would do. The registry reads also capture each
+ * saved row's `dependsOn` edges, so derived members can be ordered
+ * sources-before-forks.
  */
 async function collectClosureInput(
   ctx: QueryCtx,
@@ -478,8 +275,8 @@ async function collectClosureInput(
   const memberships = await ctx.db
     .query("projectArtifacts")
     .withIndex("by_project", (q) => q.eq("projectId", projectId))
-    .take(MAX_MAPS * 5);
-  const [summaries, drafts, membershipsRows, groups] = await Promise.all([
+    .take(MAX_MEMBERS);
+  const [summaries, drafts] = await Promise.all([
     ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, {
       limit: CATALOG_READ_LIMIT,
       viewerId,
@@ -488,8 +285,6 @@ async function collectClosureInput(
       limit: CATALOG_READ_LIMIT,
       viewerId,
     }),
-    ctx.runQuery(components.jsonCms.lib.listSchemaCollections, { limit: CATALOG_READ_LIMIT }),
-    ctx.runQuery(components.jsonCms.lib.listGroups, { limit: CATALOG_READ_LIMIT }),
   ]);
   // The member-held rows the identity-scoped pair can never return: resolved
   // by id from THIS project's membership rows only. Junk ids (a membership
@@ -522,44 +317,31 @@ async function collectClosureInput(
 
   const savedRegistryIds = new Set<string>(),
     dependsOnByRegistry = new Map<string, string[]>();
-  const checkRegistry = async (id: string): Promise<void> => {
-    const registryId = ctx.db.normalizeId("derivedDatasets", id);
-    if (registryId === null) {
-      return;
-    }
-    const row = await ctx.db.get(registryId);
-    if (row !== null && row.status === "saved") {
-      savedRegistryIds.add(id);
-      dependsOnByRegistry.set(id, row.dependsOn);
-    }
-  };
   for (const membership of memberships) {
-    if (membership.artifactKind === "derived") {
-      // oxlint-disable-next-line no-await-in-loop -- one registry read per derived membership, bounded by membership count.
-      await checkRegistry(membership.artifactId);
+    if (membership.artifactKind !== "derived") {
+      continue;
+    }
+    // oxlint-disable-next-line no-await-in-loop -- one registry read per derived membership, bounded by membership count.
+    const registryId = ctx.db.normalizeId("derivedDatasets", membership.artifactId);
+    // oxlint-disable-next-line no-await-in-loop -- see above.
+    const row = registryId === null ? null : await ctx.db.get(registryId);
+    if (row !== null && row.status === "saved") {
+      savedRegistryIds.add(membership.artifactId);
+      dependsOnByRegistry.set(membership.artifactId, row.dependsOn);
     }
   }
 
-  const mapMemberships = memberships.filter((membership) => membership.artifactKind === "map");
+  // Phase 2 of the project-workspace design added the "layer" kind; the
+  // layers entity landed in phase 3 and its press story is phase 5, so a
+  // layer membership is not a bundle member today and never enters the
+  // closure input. The "map" kind is retired with the standalone maps.
   return {
-    collectionMembers: membershipsRows.map((row) => ({
-      collectionId: row.collectionId,
-      schemaId: row.schemaId,
-    })),
     dependsOnByRegistry,
     groupIdByDataset,
-    groupsByCollection: groups
-      .filter((group) => group.collectionId !== undefined)
-      .map((group) => ({ collectionId: group.collectionId ?? "", groupId: group._id })),
-    layersByMap: await collectLayersByMap(ctx, mapMemberships, checkRegistry),
     lifecycleByDataset,
-    // Phase 2 of the project-workspace design added the "layer" kind (the
-    // design's kind list dataset|derived|layer|map); the layers entity itself
-    // is phase 3 and its press story is phase 5, so a layer membership is not
-    // a bundle member today and never enters the closure input.
     memberships: memberships
       .filter(
-        (row): row is typeof row & { artifactKind: "dataset" | "derived" | "map" } =>
+        (row): row is typeof row & { artifactKind: "dataset" | "derived" } =>
           row.artifactKind !== "layer",
       )
       .map((row) => ({
@@ -567,7 +349,6 @@ async function collectClosureInput(
         artifactKind: row.artifactKind,
       })),
     savedRegistryIds,
-    unexaminedMapIds: new Set(mapMemberships.slice(MAX_MAPS).map((row) => row.artifactId)),
   };
 }
 
@@ -578,8 +359,7 @@ async function collectClosureInput(
 const memberPlanValidator = v.object({
   datasetKey: v.string(),
   groupId: v.optional(v.string()),
-  kind: v.union(v.literal("dataset"), v.literal("derived"), v.literal("map")),
-  layerTargets: v.array(v.string()),
+  kind: v.union(v.literal("dataset"), v.literal("derived")),
   publish: v.boolean(),
 });
 
@@ -626,7 +406,6 @@ const memberStatusValidator = v.union(
   v.literal("publishing"),
   v.literal("published"),
   v.literal("referenced"),
-  v.literal("linked"),
   v.literal("failed"),
 );
 
@@ -635,8 +414,7 @@ const runMemberValidator = v.object({
   datasetKey: v.string(),
   error: v.optional(v.string()),
   groupId: v.optional(v.string()),
-  kind: v.union(v.literal("dataset"), v.literal("derived"), v.literal("map")),
-  layerTargets: v.optional(v.array(v.string())),
+  kind: v.union(v.literal("dataset"), v.literal("derived")),
   publishedSchemaId: v.optional(v.string()),
   publish: v.boolean(),
   status: memberStatusValidator,
@@ -666,7 +444,6 @@ export const run = query({
         error: member.error,
         groupId: member.groupId,
         kind: member.kind,
-        layerTargets: member.layerTargets,
         publishedSchemaId: member.publishedSchemaId,
         publish: member.publish,
         status: member.status,
@@ -768,91 +545,17 @@ export const latestForProject = query({
   ),
 });
 
-/**
- * The published map's layer resolutions (the stale-id leg): for every
- * consumerReferences row this map holds on a dataset, the row id its layer
- * should RENDER — the pinned row for a pin, the chain's head for a float,
- * and nothing for a target with no chain (the layer renders itself — its
- * live rows — exactly as before 7b). A PIN whose row no longer exists also
- * resolves to nothing — but that is NOT the no-chain case: the client
- * suppresses such a layer entirely rather than letting it fall back to the
- * anchor's live rows (rendering newer data than the pin would be the
- * stale-id leak in the other direction); the sync/revert mutations are its
- * repair path. The workspace substitutes render-side only; stored layer rows
- * are never rewritten.
- */
-export const layerResolutions = query({
-  args: { mapId: v.string() },
-  handler: async (ctx, args) => {
-    await auth(ctx);
-    const edges = await ctx.db
-      .query("consumerReferences")
-      .withIndex("by_consumer", (q) => q.eq("consumerId", args.mapId))
-      .collect();
-    // One memo per execution (issue #128): repeated layer targets resolve
-    // their chain heads once.
-    const memo = createChainMemo();
-    const resolutions: Array<{
-      anchorId: string;
-      mode: "float" | "pin";
-      resolvedSchemaId?: string;
-    }> = [];
-    for (const edge of edges) {
-      if (edge.consumerKind !== "map") {
-        continue;
-      }
-      let resolvedSchemaId: string | undefined;
-      if (edge.mode === "pin") {
-        // The pinned row, if it still exists. One edge resolution per hop,
-        // each read deciding the next (the consumption.ts badge shape).
-        // oxlint-disable-next-line no-await-in-loop -- see above.
-        const pinnedRow =
-          edge.pinnedSchemaId === undefined
-            ? null
-            : await tryGetSchemaOrNull(ctx, edge.pinnedSchemaId);
-        resolvedSchemaId =
-          edge.pinnedSchemaId !== undefined && pinnedRow !== null ? edge.pinnedSchemaId : undefined;
-      } else {
-        // oxlint-disable-next-line no-await-in-loop -- see above.
-        const head = await resolveSourceHead(ctx, edge.sourceDatasetId, memo);
-        resolvedSchemaId = head === undefined ? undefined : head.schemaId;
-      }
-      resolutions.push({ anchorId: edge.sourceDatasetId, mode: edge.mode, resolvedSchemaId });
-    }
-    return resolutions;
-  },
-  returns: v.array(
-    v.object({
-      anchorId: v.string(),
-      mode: v.union(v.literal("float"), v.literal("pin")),
-      resolvedSchemaId: v.optional(v.string()),
-    }),
-  ),
-});
-
-/** The light component read `layerResolutions` needs (the consumption.ts twin). */
-async function tryGetSchemaOrNull(
-  ctx: { runQuery: QueryCtx["runQuery"] },
-  schemaId: string,
-): Promise<FunctionReturnType<typeof components.jsonCms.lib.getSchema>> {
-  try {
-    return await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId });
-  } catch {
-    return null;
-  }
-}
-
 // ---------------------------------------------------------------------------
-// Mutations: the press's four legs (the client orchestrator drives them)
+// Mutations: the press's legs (the client orchestrator drives them)
 // ---------------------------------------------------------------------------
 
 /**
  * A run is only alive while its press is running — terminal runs never reopen
  * (a re-press is a NEW run). Since stage 8 (#104) this is also the press-leg
  * ownership guard: every leg mutation (recordMember/promoteCollection/
- * linkMapLayers/completeRun) funnels through here, and only the run
- * project's creator passes — a foreign or gone run reads as "no longer
- * exists", never disclosing which.
+ * completeRun) funnels through here, and only the run project's editor-and-up
+ * passes — a foreign or gone run reads as "no longer exists", never
+ * disclosing which.
  */
 async function runningRun(ctx: MutationCtx, actorId: string, runId: Id<"bundleRuns">) {
   const runRow = await ctx.db.get(runId);
@@ -922,7 +625,7 @@ export const start = mutation({
       // The server-side gate behind the workspace's disabled control: an
       // empty press would mint an empty promoted collection and nothing else.
       throw new ConvexError(
-        "Nothing to publish yet — add a dataset or a map with layers to this project first.",
+        "Nothing to publish yet — add a dataset or a transform to this project first.",
       );
     }
     const runId = await ctx.db.insert("bundleRuns", {
@@ -946,7 +649,6 @@ export const start = mutation({
         datasetKey: member.datasetKey,
         groupId: member.groupId,
         kind: member.kind,
-        layerTargets: member.kind === "map" ? member.layerTargets : undefined,
         publish: member.publish,
         runId,
         status: member.kind === "dataset" && !member.publish ? "referenced" : "pending",
@@ -1024,15 +726,12 @@ async function fileMemberIntoCollection(
     member: {
       datasetKey: string;
       groupId?: string;
-      kind: "dataset" | "derived" | "map";
+      kind: "dataset" | "derived";
       publishedSchemaId?: string;
       status: string;
     };
   },
 ): Promise<void> {
-  if (args.member.kind === "map") {
-    return;
-  }
   const rowId =
     args.member.publishedSchemaId ??
     (args.member.status === "referenced" ? args.member.datasetKey : undefined);
@@ -1091,75 +790,6 @@ export const promoteCollection = mutation({
     return collectionId;
   },
   returns: v.string(),
-});
-
-/**
- * The map leg: reconcile each member map's dataset-layer reference edges with
- * the map's CURRENT layers — one float `consumerReferences` row (consumerKind
- * "map") per direct dataset-layer target, edges for layers removed since the
- * press started (or since an earlier press) DELETED. Maps themselves are
- * already promoted: their rows and layer structure persist untouched; this
- * leg is only the version-reference edges, kept true to the live layer list
- * so the consumed-by projection and the layer resolutions never name a layer
- * the map no longer has.
- */
-export const linkMapLayers = mutation({
-  args: { runId: v.id("bundleRuns") },
-  handler: async (ctx, args) => {
-    const actorId = await auth(ctx);
-    const runRow = await runningRun(ctx, actorId, args.runId);
-    const members = await ctx.db
-      .query("bundleRunMembers")
-      .withIndex("by_run", (q) => q.eq("runId", args.runId))
-      .collect();
-    for (const member of members) {
-      if (member.kind !== "map") {
-        continue;
-      }
-      // The CURRENT layer list, not the press-time snapshot: a layer removed
-      // between `start` and this leg must not gain an edge, and an edge whose
-      // layer is gone must not survive the leg.
-      // oxlint-disable-next-line no-await-in-loop -- one layers read + one edge scan per map member, bounded by the run's member count.
-      const [layers, existing] = await Promise.all([
-        ctx.runQuery(components.jsonCms.lib.listMapLayers, {
-          limit: CATALOG_READ_LIMIT,
-          mapId: member.datasetKey,
-        }),
-        ctx.db
-          .query("consumerReferences")
-          .withIndex("by_consumer", (q) => q.eq("consumerId", member.datasetKey))
-          .collect(),
-      ]);
-      const currentTargets = new Set(
-        layers.filter((layer) => layer.targetType === "dataset").map((layer) => layer.targetId),
-      );
-      for (const edge of existing) {
-        if (edge.consumerKind === "map" && !currentTargets.has(edge.sourceDatasetId)) {
-          // oxlint-disable-next-line no-await-in-loop -- one stale-edge delete per edge, bounded.
-          await ctx.db.delete(edge._id);
-        }
-      }
-      for (const target of currentTargets) {
-        if (
-          existing.some((edge) => edge.consumerKind === "map" && edge.sourceDatasetId === target)
-        ) {
-          continue;
-        }
-        // oxlint-disable-next-line no-await-in-loop -- one edge per target, in layer order.
-        await ctx.db.insert("consumerReferences", {
-          consumerId: member.datasetKey,
-          consumerKind: "map",
-          mode: "float",
-          sourceDatasetId: target,
-        });
-      }
-      // oxlint-disable-next-line no-await-in-loop -- one status patch per map member, in press order.
-      await ctx.db.patch(member._id, { status: "linked" });
-    }
-    await ctx.db.patch(runRow._id, { lastProgressAt: Date.now() });
-    return null;
-  },
-  returns: v.null(),
 });
 
 /**

@@ -1,20 +1,21 @@
 /**
  * The bundle press — the client orchestrator of roadmap 7b (#103; lifecycle
  * doc §5-§6, ADR 0008). One project publishes as one bundle: the collection
- * (promoted), each map (promoted — its layer structure persists untouched),
- * and the deduped referenced datasets, each frozen through the EXISTING 5b
- * state machine via `publishDataset` — deliberately never a fork of it
- * (spec execution is client-side bulk compute, the roadmap's fixed boundary;
- * there is no server-side re-run path to reuse).
+ * (promoted) and the project's member datasets/transforms, each frozen
+ * through the EXISTING 5b state machine via `publishDataset` — deliberately
+ * never a fork of it (spec execution is client-side bulk compute, the
+ * roadmap's fixed boundary; there is no server-side re-run path to reuse).
+ * (Phase 3 of the project-workspace design, ADR 0012, retired the map leg
+ * with the standalone maps.)
  *
  * The press is a LOOP over the host-side run's member rows
  * (`api.bundles.start` → per-member `publishDataset` → `recordMember` →
- * collection leg → map leg → `completeRun`). Every leg is idempotent and
- * every outcome is checkpointed on the run, so a killed browser re-presses
- * into the SAME run (`start` joins it) and resumes only the members that
- * never finished — per-member durability is already each publishAttempt's
- * (join-or-revive, by-ref freeze, chunk registration); the run row is what
- * makes WHICH members are done exact.
+ * collection leg → `completeRun`). Every leg is idempotent and every outcome
+ * is checkpointed on the run, so a killed browser re-presses into the SAME
+ * run (`start` joins it) and resumes only the members that never finished —
+ * per-member durability is already each publishAttempt's (join-or-revive,
+ * by-ref freeze, chunk registration); the run row is what makes WHICH
+ * members are done exact.
  *
  * Atomicity is per-member, by design: one member failing leaves the bundle
  * partial — completed members KEEP their frozen rows (append-only), the
@@ -44,13 +45,13 @@ export interface BundlePressOutcome {
 function publishableMembers(
   members: Array<{
     datasetKey: string;
-    kind: "dataset" | "derived" | "map";
+    kind: "dataset" | "derived";
     publish: boolean;
     status: string;
   }>,
-): Array<{ datasetKey: string; kind: "dataset" | "derived" | "map" }> {
+): Array<{ datasetKey: string; kind: "dataset" | "derived" }> {
   return members
-    .filter((member) => member.publish && member.kind !== "map" && member.status !== "published")
+    .filter((member) => member.publish && member.status !== "published")
     .map((member) => ({ datasetKey: member.datasetKey, kind: member.kind }));
 }
 
@@ -58,10 +59,9 @@ function publishableMembers(
  * Publishes one project as its bundle: start (or join) the run → publish
  * every not-yet-published dataset/derived member through `publishDataset`,
  * checkpointing each outcome → promote the collection (create-once,
- * file-every-member, group re-attach) → mint the maps' layer references →
- * close the run. Member order is the run's write order (datasets, then
- * derived), so derived lineage freezes against sources that already
- * published.
+ * file-every-member, group re-attach) → close the run. Member order is the
+ * run's write order (datasets, then derived), so derived lineage freezes
+ * against sources that already published.
  */
 export async function publishProjectBundle(options: {
   convex?: ConvexClient;
@@ -112,7 +112,6 @@ export async function publishProjectBundle(options: {
   }
 
   await convex.mutation(api.bundles.promoteCollection, { runId: started.runId });
-  await convex.mutation(api.bundles.linkMapLayers, { runId: started.runId });
   const closed = await convex.mutation(api.bundles.completeRun, { runId: started.runId });
   return {
     collectionId: closed.collectionId,

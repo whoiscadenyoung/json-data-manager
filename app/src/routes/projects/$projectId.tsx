@@ -57,11 +57,10 @@ import { api } from "../../../convex/_generated/api";
  * land IN the project — the create page's `?projectId=` variant) and the
  * add-reference action ("fork = add-to-project": reuse adds a reference,
  * never a copy; 7b mints the fork's version-reference edge with it).
- * 7b (#103) adds the stage's own seam: the one-press BUNDLE PUBLISH —
- * collection + maps + referenced datasets through the 5b machinery — with
- * the press's progress and the promoted collection link from
- * `api.bundles.latestForProject`, plus "fork as transform" in the add
- * dialog (a saved identity spec over the published source — reuse with
+ * 7b (#103) adds the stage's own seam: the one-press BUNDLE PUBLISH through
+ * the 5b machinery, with the press's progress and the promoted collection
+ * link from `api.bundles.latestForProject`, plus "fork as transform" in the
+ * add dialog (a saved identity spec over the published source — reuse with
  * transforms, no copy).
  *
  * Phase 2 of the project-workspace design gives every member row its role
@@ -72,6 +71,12 @@ import { api } from "../../../convex/_generated/api";
  * through the stage-6 reference mutations. The add dialog offers the
  * keep-in-sync choice at add time (default pins the linked member at the
  * source chain's current head).
+ *
+ * Phase 3 of the project-workspace design (ADR 0012): LAYERS are members now
+ * (their own section — owned drafts and linked pinned units, needsAttention
+ * drift badges included), and the MAPS section reads the project-owned
+ * `projectMaps` rows (the standalone component maps are retired; a map
+ * exists only inside a project — the editor itself is phase 4).
  *
  * The read is `projects.get` — member-scoped server-side (ADR 0011); null
  * renders the not-found card, so a project that hasn't been shared with the
@@ -89,32 +94,28 @@ type Workspace = FunctionReturnType<typeof api.projects.get>;
 type WorkspaceData = NonNullable<Workspace>;
 type Artifact = WorkspaceData["artifacts"][number];
 
-/** The membership kinds the workspace renders sections for (phase 3 adds the layers entity and its section). */
-type WorkspaceKind = "dataset" | "derived" | "layer" | "map";
+/** The membership kinds the workspace renders sections for (phase 3 retired the map kind — a map is a projectMaps row now). */
+type WorkspaceKind = "dataset" | "derived" | "layer";
 
 /** Splits the membership rows by their declared kind — the workspace's section order. */
 function groupByKind(artifacts: Artifact[]): {
   datasets: Artifact[];
   derived: Artifact[];
   layers: Artifact[];
-  maps: Artifact[];
 } {
   const datasets: Artifact[] = [],
     derived: Artifact[] = [],
-    layers: Artifact[] = [],
-    maps: Artifact[] = [];
+    layers: Artifact[] = [];
   for (const artifact of artifacts) {
     if (artifact.artifactKind === "dataset") {
       datasets.push(artifact);
     } else if (artifact.artifactKind === "derived") {
       derived.push(artifact);
-    } else if (artifact.artifactKind === "layer") {
-      layers.push(artifact);
     } else {
-      maps.push(artifact);
+      layers.push(artifact);
     }
   }
-  return { datasets, derived, layers, maps };
+  return { datasets, derived, layers };
 }
 
 /** Display count for a referenced dataset: features for geospatial, entries otherwise. */
@@ -135,10 +136,7 @@ function missingLabel(kind: WorkspaceKind): string {
   if (kind === "dataset") {
     return "Deleted dataset";
   }
-  if (kind === "derived") {
-    return "Deleted derived dataset";
-  }
-  return kind === "layer" ? "Deleted layer" : "Deleted map";
+  return kind === "derived" ? "Deleted derived dataset" : "Deleted layer";
 }
 
 /**
@@ -523,7 +521,12 @@ function DerivedRow({
   );
 }
 
-function MapRow({
+/**
+ * One layer member (phase 3, ADR 0012): the kind badge (data/group), the
+ * Owned/Linked pair, the drift flag when a dataset sync changed the layer's
+ * fields, and — for a linked member — the pinned version it renders.
+ */
+function LayerRow({
   artifact,
   canWrite,
   projectId,
@@ -532,28 +535,49 @@ function MapRow({
   canWrite: boolean;
   projectId: string;
 }) {
-  if (artifact.state.kind !== "map") {
+  if (artifact.state.kind !== "layer") {
     return <MissingRow artifact={artifact} canWrite={canWrite} projectId={projectId} />;
   }
-  const map = artifact.state.map;
+  const layer = artifact.state.layer;
   return (
     <Card className="flex-row items-center gap-4 px-4 transition-shadow hover:shadow-md">
-      <Link
-        to="/maps/$mapId"
-        params={{ mapId: artifact.artifactId }}
-        className="flex min-w-0 flex-1 flex-col gap-1 py-0"
-      >
+      <div className="flex min-w-0 flex-1 flex-col gap-1 py-0">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="default">
-            <MapIcon />
-            Map
-          </Badge>
+          <Badge variant="default">{layer.kind === "group" ? "Group layer" : "Layer"}</Badge>
+          <MemberRoleBadge role={artifact.role} />
+          {layer.source === "owned" ? (
+            layer.lifecycle === "draft" ? (
+              <Badge
+                variant="outline"
+                title="A working definition — publishing it (phase 5) freezes a version others can link or clone."
+              >
+                Draft
+              </Badge>
+            ) : null
+          ) : (
+            <Badge
+              variant="secondary"
+              title={
+                layer.pinnedVersionLabel === undefined
+                  ? "A published layer this project references, pinned to one frozen version."
+                  : `Pinned at ${layer.pinnedVersionLabel}.`
+              }
+            >
+              <Link2 className="h-3 w-3" />
+              Pinned version
+            </Badge>
+          )}
+          {layer.needsAttention !== undefined && (
+            <Badge variant="destructive" title={layer.needsAttention}>
+              Needs attention
+            </Badge>
+          )}
         </div>
-        <p className="truncate text-sm font-medium">{map.name}</p>
-        {map.description !== undefined && (
-          <p className="truncate text-xs text-muted-foreground">{map.description}</p>
+        <p className="truncate text-sm font-medium">{layer.name}</p>
+        {layer.needsAttention !== undefined && (
+          <p className="truncate text-xs text-destructive">{layer.needsAttention}</p>
         )}
-      </Link>
+      </div>
       <RemoveButton
         artifactId={artifact.artifactId}
         artifactKind={artifact.artifactKind}
@@ -597,17 +621,18 @@ function MissingRow({
  * The add-reference candidates for one kind: published datasets plus the
  * VIEWER'S OWN drafts (the drafts read is the viewer-scoped 5a read — a
  * member's candidates are their own drafts; project-held drafts are already
- * members), saved derived specs, or maps — already-added ids excluded.
- * Module-level so the dialog stays under the complexity budget.
+ * members), or saved derived specs — already-added ids excluded. (Layers
+ * join through their own create/link flows, and maps are projectMaps rows —
+ * neither is a bare reference, phase 3.) Module-level so the dialog stays
+ * under the complexity budget.
  */
 function buildCandidates(
-  kind: "dataset" | "derived" | "map",
+  kind: "dataset" | "derived",
   existingIds: Set<string>,
   lists: {
     datasets?: FunctionReturnType<typeof api.schemas.listSummaries>;
     drafts?: FunctionReturnType<typeof api.schemas.listDraftSummaries>;
     derived?: FunctionReturnType<typeof api.derivedDatasets.summaries>;
-    maps?: FunctionReturnType<typeof api.maps.list>;
   },
 ): { id: string; label: string; hint?: string }[] {
   const candidates: { id: string; label: string; hint?: string }[] = [];
@@ -615,13 +640,9 @@ function buildCandidates(
     for (const row of [...(lists.datasets ?? []), ...(lists.drafts ?? [])]) {
       candidates.push({ hint: row.description, id: row._id, label: row.title });
     }
-  } else if (kind === "derived") {
+  } else {
     for (const row of lists.derived ?? []) {
       candidates.push({ hint: row.description, id: row._id, label: row.title });
-    }
-  } else {
-    for (const row of lists.maps ?? []) {
-      candidates.push({ hint: row.description, id: row._id, label: row.name });
     }
   }
   return candidates.filter((candidate) => !existingIds.has(candidate.id));
@@ -653,7 +674,7 @@ function AddReferenceDialog({
 }) {
   const add = useMutation(api.projects.addArtifact),
     fork = useMutation(api.projects.forkAsSpec),
-    [kind, setKind] = useState<"dataset" | "derived" | "map">("dataset"),
+    [kind, setKind] = useState<"dataset" | "derived">("dataset"),
     [pendingId, setPendingId] = useState<string | undefined>(),
     [keepInSync, setKeepInSync] = useState(false),
     datasets = useQuery({
@@ -665,15 +686,9 @@ function AddReferenceDialog({
       enabled: open,
     }).data,
     derived = useQuery({ ...convexQuery(api.derivedDatasets.summaries, {}), enabled: open }).data,
-    maps = useQuery({ ...convexQuery(api.maps.list, { limit: 500 }), enabled: open }).data,
-    available = buildCandidates(kind, existingIds, {
-      datasets,
-      drafts,
-      derived,
-      maps,
-    });
+    available = buildCandidates(kind, existingIds, { datasets, drafts, derived });
 
-  const addArtifact = async (artifactId: string, artifactKind: "dataset" | "derived" | "map") => {
+  const addArtifact = async (artifactId: string, artifactKind: "dataset" | "derived") => {
     setPendingId(artifactId);
     try {
       await add({
@@ -724,7 +739,6 @@ function AddReferenceDialog({
             [
               ["dataset", "Datasets"],
               ["derived", "Derived"],
-              ["map", "Maps"],
             ] as const
           ).map(([value, label]) => (
             <Button
@@ -988,7 +1002,13 @@ function ProjectWorkspacePage() {
     canWrite = project.role === "owner" || project.role === "editor",
     grouped = groupByKind(artifacts),
     existingIds = new Set(artifacts.map((artifact) => artifact.artifactId)),
-    empty = artifacts.length === 0;
+    empty = artifacts.length === 0,
+    // The project-owned maps (phase 3, ADR 0012): listed read-only here —
+    // the map editor under /projects/... is the next phase's deliverable.
+    maps = useQuery({
+      ...convexQuery(api.projectMaps.list, { projectId }),
+      enabled: !authLoading && isAuthenticated,
+    }).data;
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-8">
@@ -1050,7 +1070,7 @@ function ProjectWorkspacePage() {
                 !canWrite
                   ? "Viewers have read-only access — an editor or owner can publish."
                   : empty
-                    ? "Nothing to publish yet — add a dataset or a map with layers first."
+                    ? "Nothing to publish yet — add a dataset or a transform first."
                     : undefined
               }
             >
@@ -1138,7 +1158,6 @@ function ProjectWorkspacePage() {
               ["Datasets", grouped.datasets.length, "datasets"],
               ["Derived", grouped.derived.length, "derived"],
               ["Layers", grouped.layers.length, "layers"],
-              ["Maps", grouped.maps.length, "maps"],
             ] as const
           ).map(([heading, count, kind]) =>
             count === 0 ? null : (
@@ -1168,9 +1187,9 @@ function ProjectWorkspacePage() {
                         projectId={projectId}
                       />
                     ))}
-                  {kind === "maps" &&
-                    grouped.maps.map((artifact) => (
-                      <MapRow
+                  {kind === "layers" &&
+                    grouped.layers.map((artifact) => (
+                      <LayerRow
                         key={artifact._id}
                         artifact={artifact}
                         canWrite={canWrite}
@@ -1180,6 +1199,37 @@ function ProjectWorkspacePage() {
                 </div>
               </section>
             ),
+          )}
+          {maps !== undefined && maps.length > 0 && (
+            <section>
+              <h2 className="mb-2 text-sm font-semibold text-muted-foreground">
+                Maps{" "}
+                <span className="font-normal">
+                  ({maps.length} {maps.length === 1 ? "map" : "maps"})
+                </span>
+              </h2>
+              <div className="flex flex-col gap-3">
+                {maps.map((map) => (
+                  <Card key={map._id} className="flex-row items-center gap-4 px-4">
+                    <div className="flex min-w-0 flex-1 flex-col gap-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="default">
+                          <MapIcon />
+                          Map
+                        </Badge>
+                      </div>
+                      <p className="truncate text-sm font-medium">{map.name}</p>
+                      {map.description !== undefined && (
+                        <p className="truncate text-xs text-muted-foreground">{map.description}</p>
+                      )}
+                    </div>
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      {map.layerCount} {map.layerCount === 1 ? "layer" : "layers"}
+                    </span>
+                  </Card>
+                ))}
+              </div>
+            </section>
           )}
         </div>
       )}

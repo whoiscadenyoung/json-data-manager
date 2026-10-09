@@ -61,17 +61,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       >;
     };
     lib: {
-      addMapLayer: FunctionReference<
-        "mutation",
-        "internal",
-        {
-          mapId: string;
-          targetId: string;
-          targetType: "collection" | "group" | "dataset" | "derived";
-        },
-        string | null,
-        Name
-      >;
       addSchemaToCollection: FunctionReference<
         "mutation",
         "internal",
@@ -115,13 +104,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "mutation",
         "internal",
         { collectionId?: string; description?: string; name: string },
-        string,
-        Name
-      >;
-      createMap: FunctionReference<
-        "mutation",
-        "internal",
-        { description?: string; name: string },
         string,
         Name
       >;
@@ -186,13 +168,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "mutation",
         "internal",
         { groupId: string },
-        any,
-        Name
-      >;
-      deleteMap: FunctionReference<
-        "mutation",
-        "internal",
-        { mapId: string },
         any,
         Name
       >;
@@ -300,25 +275,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           total: number;
           workflowId?: string;
         } | null,
-        Name
-      >;
-      getMap: FunctionReference<
-        "query",
-        "internal",
-        { mapId: string },
-        null | {
-          _creationTime: number;
-          _id: string;
-          description?: string;
-          name: string;
-        },
-        Name
-      >;
-      getMapLayerMapId: FunctionReference<
-        "query",
-        "internal",
-        { layerId: string },
-        null | string,
         Name
       >;
       getMapTileArchiveMeta: FunctionReference<
@@ -754,59 +710,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         }>,
         Name
       >;
-      listMapLayerOverrides: FunctionReference<
-        "query",
-        "internal",
-        { layerId: string },
-        Array<{
-          _creationTime: number;
-          _id: string;
-          childKey: string;
-          layerId: string;
-          visible: boolean;
-        }>,
-        Name
-      >;
-      listMapLayerOverridesForMap: FunctionReference<
-        "query",
-        "internal",
-        { mapId: string },
-        Array<{
-          _creationTime: number;
-          _id: string;
-          childKey: string;
-          layerId: string;
-          visible: boolean;
-        }>,
-        Name
-      >;
-      listMapLayers: FunctionReference<
-        "query",
-        "internal",
-        { limit: number; mapId?: string },
-        Array<{
-          _creationTime: number;
-          _id: string;
-          mapId: string;
-          order: number;
-          targetId: string | string | string | string;
-          targetType: "collection" | "group" | "dataset" | "derived";
-          visible: boolean;
-        }>,
-        Name
-      >;
-      listMaps: FunctionReference<
-        "query",
-        "internal",
-        { limit: number },
-        Array<{
-          _creationTime: number;
-          _id: string;
-          description?: string;
-          name: string;
-        }>,
-        Name
-      >;
       listReferencingEntries: FunctionReference<
         "query",
         "internal",
@@ -1051,20 +954,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         }>,
         Name
       >;
-      moveMapLayer: FunctionReference<
-        "mutation",
-        "internal",
-        { direction: "up" | "down"; layerId: string },
-        any,
-        Name
-      >;
-      removeMapLayer: FunctionReference<
-        "mutation",
-        "internal",
-        { layerId: string },
-        any,
-        Name
-      >;
       removeSchemaFromCollection: FunctionReference<
         "mutation",
         "internal",
@@ -1083,20 +972,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "mutation",
         "internal",
         { collectionId: string | null; groupId: string },
-        any,
-        Name
-      >;
-      setMapLayerOverride: FunctionReference<
-        "mutation",
-        "internal",
-        { childKey: string; layerId: string; visible?: boolean },
-        any,
-        Name
-      >;
-      setMapLayerVisibility: FunctionReference<
-        "mutation",
-        "internal",
-        { layerId: string; visible: boolean },
         any,
         Name
       >;
@@ -1196,13 +1071,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "mutation",
         "internal",
         { description?: string; groupId: string; name?: string },
-        any,
-        Name
-      >;
-      updateMap: FunctionReference<
-        "mutation",
-        "internal",
-        { description?: string; mapId: string; name?: string },
         any,
         Name
       >;

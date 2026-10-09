@@ -299,29 +299,24 @@ describe("projects: the working container (roadmap 7a, #102)", () => {
       beforeDrafts,
     );
 
-    // A derived spec references by registry id; a map by component id —
-    // both resolve through the same workspace read.
+    // A derived spec references by registry id — it resolves through the
+    // same workspace read. (Maps stopped being members in phase 3: a map is
+    // a projectMaps row, never an artifact kind.)
     const derivedId = await t.mutation(api.derivedDatasets.save, {
       spec: { operations: [], sourceDatasetId: publishedId },
       status: "saved",
       title: "Join restaurants",
     });
-    const mapId = await t.mutation(api.maps.create, { name: "SMART 2024 map" });
     await t.mutation(api.projects.addArtifact, {
       artifactId: derivedId,
       artifactKind: "derived",
       projectId,
     });
-    await t.mutation(api.projects.addArtifact, {
-      artifactId: mapId,
-      artifactKind: "map",
-      projectId,
-    });
     workspace = await workspaceOf(t, projectId);
-    expect(workspace.project.artifactCount).toBe(3);
+    expect(workspace.project.artifactCount).toBe(2);
     // oxlint-disable-next-line unicorn/no-array-sort -- freshly mapped throwaway array; .toSorted() isn't in the lib app/convex typechecks against (the publish.test.ts note).
     const kinds = workspace.artifacts.map((row) => row.state.kind).sort();
-    expect(kinds).toEqual(["dataset", "derived", "map"]);
+    expect(kinds).toEqual(["dataset", "derived"]);
 
     // Duplicate adds land once (the in-transaction re-check — Convex has no
     // unique indexes).
@@ -333,15 +328,15 @@ describe("projects: the working container (roadmap 7a, #102)", () => {
       }),
     ).rejects.toThrow(/already in this project/);
 
-    // Unknown ids are rejected per kind — the reference must name something
-    // real.
+    // Layers join through their own flows (create/link) — a bare reference
+    // is refused, never a dangling membership.
     await expect(
       t.mutation(api.projects.addArtifact, {
         artifactId: publishedId,
-        artifactKind: "map",
+        artifactKind: "layer",
         projectId,
       }),
-    ).rejects.toThrow(/No map was found/);
+    ).rejects.toThrow(/Layers join a project by being created or linked/);
     await expect(
       t.mutation(api.projects.addArtifact, {
         artifactId: "does-not-exist",
@@ -715,18 +710,17 @@ describe("projects: collaboration — the role access matrix (ADR 0011)", () => 
 
   it("lets an editor press the project's bundle and read its plan — viewer and outsider get the gone answer", async () => {
     const { projectId, owner, editor, viewer, outsider } = await matrix();
-    // A map with one dataset layer, so the press has something to publish —
-    // the bundles.test.ts shape, kept minimal.
+    // One dataset member (plus a saved transform), so the press has
+    // something to publish — the bundles.test.ts shape, kept minimal.
     const publishedId = await createPublishedDataset(owner);
-    const mapId = await owner.mutation(api.maps.create, { name: "Shared map" });
-    await owner.mutation(api.maps.addLayer, {
-      mapId,
-      targetId: publishedId,
-      targetType: "dataset",
+    const derivedId = await owner.mutation(api.derivedDatasets.save, {
+      spec: { operations: [], sourceDatasetId: publishedId },
+      status: "saved",
+      title: "Shared fork",
     });
     await editor.mutation(api.projects.addArtifact, {
-      artifactId: mapId,
-      artifactKind: "map",
+      artifactId: derivedId,
+      artifactKind: "derived",
       projectId,
     });
     await editor.mutation(api.projects.addArtifact, {
@@ -1090,7 +1084,7 @@ describe("projects: member roles and pin/sync (phase 2 of the project-workspace 
     expect(sync.upToDate).toBe(true);
   });
 
-  it("enforces link XOR modify: owned members refuse the sync surface, drafts land owned, and maps are refused", async () => {
+  it("enforces link XOR modify: owned members refuse the sync surface and drafts land owned", async () => {
     const t = signedIn("user-1");
     const { linkedId, ownedId, projectId } = await linkedFixture(t);
 
@@ -1127,22 +1121,6 @@ describe("projects: member roles and pin/sync (phase 2 of the project-workspace 
         syncMode: "manual",
       }),
     ).rejects.toThrow(/Owned members are edited in place/);
-
-    // Maps hold no version chain — the sync surface refuses them too.
-    const mapId = await t.mutation(api.maps.create, { name: "Sync project map" });
-    await t.mutation(api.projects.addArtifact, {
-      artifactId: mapId,
-      artifactKind: "map",
-      projectId,
-    });
-    await expect(
-      t.mutation(api.projects.setMemberSync, {
-        artifactId: mapId,
-        artifactKind: "map",
-        projectId,
-        syncMode: "auto",
-      }),
-    ).rejects.toThrow(/Maps don't carry version chains/);
 
     // Not a member of this project: the artifact isn't in it, plain answer.
     await expect(

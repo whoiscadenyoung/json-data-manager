@@ -160,7 +160,7 @@ async function driveBundlePress(
     throw new Error("the run vanished");
   }
   for (const member of run.members) {
-    if (!member.publish || member.kind === "map" || member.status === "published") {
+    if (!member.publish || member.status === "published") {
       continue;
     }
     const plan = plans[member.datasetKey];
@@ -214,7 +214,6 @@ async function driveBundlePress(
     });
   }
   await t.mutation(api.bundles.promoteCollection, { runId: started.runId });
-  await t.mutation(api.bundles.linkMapLayers, { runId: started.runId });
   const closed = await t.mutation(api.bundles.completeRun, { runId: started.runId });
   return { runId: started.runId, status: closed.status };
 }
@@ -258,9 +257,6 @@ describe("gate", () => {
     await expect(t.mutation(api.bundles.start, { projectId: "whatever" })).rejects.toThrow(
       GATE_MESSAGE,
     );
-    await expect(t.query(api.bundles.layerResolutions, { mapId: "whatever" })).rejects.toThrow(
-      GATE_MESSAGE,
-    );
   });
 });
 
@@ -269,7 +265,7 @@ describe("gate", () => {
 // ---------------------------------------------------------------------------
 
 describe("one press, one bundle (AC 1)", () => {
-  it("freezes deduped referenced datasets once each, promotes the collection, and links the map", async () => {
+  it("freezes each referenced dataset once, promotes the collection", async () => {
     const t = signedIn();
     const projectId = await createProject(t);
     const draftA = await createProjectDraft(
@@ -288,27 +284,10 @@ describe("one press, one bundle (AC 1)", () => {
       [{ data: { label: "Zone 1" } }],
       "IG zones",
     );
-    // A referenced THREE ways: membership, a collection layer, and its own
-    // dataset layer — the bundle freezes it once.
-    const workingSet = await t.mutation(api.collections.create, { name: "Working set" });
-    await t.mutation(api.collections.addSchemaToCollection, {
-      collectionId: workingSet,
-      schemaId: draftA,
-    });
-    const mapId = await t.mutation(api.maps.create, { name: "SMART 2024 map" });
-    await t.mutation(api.projects.addArtifact, {
-      artifactId: mapId,
-      artifactKind: "map",
-      projectId,
-    });
-    await t.mutation(api.maps.addLayer, { mapId, targetId: workingSet, targetType: "collection" });
-    await t.mutation(api.maps.addLayer, { mapId, targetId: draftA, targetType: "dataset" });
 
     const plan = await planOf(t, projectId);
     expect(plan.members.filter((member) => member.kind === "dataset")).toHaveLength(2);
     expect(plan.dropped).toStrictEqual([]);
-    const mapPlan = plan.members.find((member) => member.kind === "map");
-    expect(prop(mapPlan, "layerTargets")).toStrictEqual([draftA]);
 
     const before = (await t.query(api.schemas.listSummaries, { limit: 1000 })).length;
     const press = await driveBundlePress(t, projectId, {
@@ -330,9 +309,8 @@ describe("one press, one bundle (AC 1)", () => {
     const statuses = new Map(run.members.map((member) => [member.datasetKey, member.status]));
     expect(statuses.get(draftA)).toBe("published");
     expect(statuses.get(draftB)).toBe("published");
-    expect(statuses.get(mapId)).toBe("linked");
 
-    // Dedup: A referenced three ways → exactly ONE frozen row (v1).
+    // One press, one bundle: exactly ONE frozen row (v1) per member.
     expect(await versionsOf(t, draftA)).toHaveLength(1);
     expect(await versionsOf(t, draftB)).toHaveLength(1);
     // Exactly the bundle's datasets entered the catalog — one frozen row per
@@ -357,20 +335,6 @@ describe("one press, one bundle (AC 1)", () => {
     expect(filed).toContain(frozenA);
     expect(filed).toContain(frozenB);
 
-    // The map leg: one float reference per direct dataset layer target.
-    const edges = await t.run(async (ctx) =>
-      ctx.db
-        .query("consumerReferences")
-        .withIndex("by_consumer", (q) => q.eq("consumerId", mapId))
-        .collect(),
-    );
-    expect(edges).toHaveLength(1);
-    expect(edges[0]).toMatchObject({
-      consumerKind: "map",
-      mode: "float",
-      sourceDatasetId: draftA,
-    });
-
     // Drafts stay draft-side, untouched (publish is promotion of a COPY).
     expect(await lifecycleOf(t, draftA)).toBe("draft");
     expect(await lifecycleOf(t, draftB)).toBe("draft");
@@ -388,8 +352,6 @@ describe("one press, one bundle (AC 1)", () => {
     );
     const groupId = await t.mutation(api.groups.create, { name: "IG group" });
     await t.mutation(api.collections.setSchemaGroup, { groupId, schemaId: draftA });
-    const mapId = await t.mutation(api.maps.create, { name: "Group map" });
-    await t.mutation(api.maps.addLayer, { mapId, targetId: groupId, targetType: "group" });
 
     const press = await driveBundlePress(t, projectId, {
       [draftA]: {
@@ -593,7 +555,7 @@ describe("partial bundles and resume", () => {
     const started = await t.mutation(api.bundles.start, { projectId });
     const run = await runOf(t, started.runId);
     for (const member of run.members) {
-      if (member.kind === "map" || !member.publish || member.status === "published") {
+      if (!member.publish || member.status === "published") {
         continue;
       }
       const isBroken = member.datasetKey === draftB;
@@ -649,7 +611,6 @@ describe("partial bundles and resume", () => {
       });
     }
     await t.mutation(api.bundles.promoteCollection, { runId: started.runId });
-    await t.mutation(api.bundles.linkMapLayers, { runId: started.runId });
     const closed = await t.mutation(api.bundles.completeRun, { runId: started.runId });
     expect(closed.status).toBe("failed");
 
@@ -707,7 +668,6 @@ describe("partial bundles and resume", () => {
       status: "published",
     });
     await t.mutation(api.bundles.promoteCollection, { runId: started.runId });
-    await t.mutation(api.bundles.linkMapLayers, { runId: started.runId });
     const closed = await t.mutation(api.bundles.completeRun, { runId: started.runId });
     expect(closed.status).toBe("completed");
 
@@ -852,99 +812,6 @@ describe("fork-as-spec", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The map leg's resolution (the stale-id trap)
-// ---------------------------------------------------------------------------
-
-describe("layer resolutions", () => {
-  it("resolves a float layer to the chain's head and follows a new version", async () => {
-    const t = signedIn();
-    const projectId = await createProject(t);
-    const draftA = await createProjectDraft(
-      t,
-      projectId,
-      [{ data: { label: "A" }, geometry: { coordinates: [-89.6, 39.8], type: "Point" } }],
-      "IG points",
-      "Point",
-    );
-    const mapId = await t.mutation(api.maps.create, { name: "Map" });
-    await t.mutation(api.projects.addArtifact, {
-      artifactId: mapId,
-      artifactKind: "map",
-      projectId,
-    });
-    await t.mutation(api.maps.addLayer, { mapId, targetId: draftA, targetType: "dataset" });
-
-    // Before any press there is no chain — the layer renders itself (no
-    // resolution row minted yet).
-    expect(await t.query(api.bundles.layerResolutions, { mapId })).toStrictEqual([]);
-
-    const press = await driveBundlePress(t, projectId, {
-      [draftA]: {
-        chunks: [{ data: { label: "A" }, geometry: { coordinates: [-89.6, 39.8], type: "Point" } }],
-        geometryType: "Point",
-        kind: "geospatial",
-      },
-    });
-    const run = await runOf(t, press.runId);
-    const frozenV1 = prop(
-      run.members.find((member) => member.datasetKey === draftA),
-      "publishedSchemaId",
-    );
-
-    let resolutions = await t.query(api.bundles.layerResolutions, { mapId });
-    expect(resolutions).toStrictEqual([
-      { anchorId: draftA, mode: "float", resolvedSchemaId: frozenV1 },
-    ]);
-
-    // Republish the draft directly (its own page's flow): the float layer
-    // follows the new head.
-    const attempt = await t.mutation(api.publish.start, { datasetKey: draftA });
-    await t.mutation(api.publish.plan, {
-      attemptId: attempt.attemptId,
-      chunkCount: 1,
-      geometryType: "Point",
-      kind: "geospatial",
-      totalRows: 1,
-    });
-    const storageId = await t.action(components.jsonCms.host_support.storeTestBlob, {
-      bytes: new TextEncoder().encode(
-        JSON.stringify([
-          { data: { label: "A2" }, geometry: { coordinates: [-89.4, 39.7], type: "Point" } },
-        ]),
-      ).buffer,
-    });
-    const uploadId = await uploadToken(t, attempt.attemptId);
-    // oxlint-disable-next-line no-await-in-loop -- the registration rides its token.
-    await t.mutation(api.publish.registerChunk, {
-      attemptId: attempt.attemptId,
-      rowCount: 1,
-      storageId,
-      uploadId,
-    });
-    await t.mutation(api.publish.freeze, { attemptId: attempt.attemptId });
-    await drainScheduled(t);
-
-    resolutions = await t.query(api.bundles.layerResolutions, { mapId });
-    expect(prop(at(resolutions, 0), "resolvedSchemaId")).not.toBe(frozenV1);
-    const headAtPin = prop(at(resolutions, 0), "resolvedSchemaId");
-
-    // Pinning the reference freezes the layer to the row the pin names (the
-    // head at pin time — stage 6's semantics, unchanged for map consumers).
-    const referenceId = await t.run(async (ctx) => {
-      const edges = await ctx.db
-        .query("consumerReferences")
-        .withIndex("by_consumer", (q) => q.eq("consumerId", mapId))
-        .collect();
-      return prop(at(edges, 0), "_id") ?? "";
-    });
-    await t.mutation(api.consumption.setReferenceMode, { mode: "pin", referenceId });
-    const pinned = await t.query(api.bundles.layerResolutions, { mapId });
-    expect(prop(at(pinned, 0), "mode")).toBe("pin");
-    expect(prop(at(pinned, 0), "resolvedSchemaId")).toBe(headAtPin);
-  });
-});
-
 describe("review fixes", () => {
   it("refuses to press an empty project", async () => {
     const t = signedIn();
@@ -998,85 +865,6 @@ describe("review fixes", () => {
       .filter((member) => member.kind === "derived")
       .map((member) => member.datasetKey);
     expect(derivedKeys).toStrictEqual([forkA, forkB]);
-  });
-
-  it("drops a foreign draft that merely shares a layered collection", async () => {
-    const t = signedIn();
-    const projectId = await createProject(t);
-    const ownDraft = await createProjectDraft(t, projectId, [{ data: { label: "Mine" } }]);
-    const shared = await t.mutation(api.collections.create, { name: "Shared shelf" });
-    await t.mutation(api.collections.addSchemaToCollection, {
-      collectionId: shared,
-      schemaId: ownDraft,
-    });
-    // Another project's WIP, sharing the collection.
-    const otherProject = await createProject(t, "Other year");
-    const foreignDraft = await createProjectDraft(
-      t,
-      otherProject,
-      [{ data: { label: "Theirs" } }],
-      "Their WIP",
-    );
-    await t.mutation(api.collections.addSchemaToCollection, {
-      collectionId: shared,
-      schemaId: foreignDraft,
-    });
-    const mapId = await t.mutation(api.maps.create, { name: "Map" });
-    await t.mutation(api.projects.addArtifact, {
-      artifactId: mapId,
-      artifactKind: "map",
-      projectId,
-    });
-    await t.mutation(api.maps.addLayer, { mapId, targetId: shared, targetType: "collection" });
-
-    const plan = await planOf(t, projectId);
-    const keys = plan.members.map((member) => member.datasetKey);
-    expect(keys).toContain(ownDraft);
-    expect(keys).not.toContain(foreignDraft);
-    expect(plan.dropped.some((entry) => entry.id === foreignDraft)).toBe(true);
-  });
-
-  it("reconciles map edges with the map's CURRENT layers — a removed layer loses its edge on the next press", async () => {
-    const t = signedIn();
-    const projectId = await createProject(t);
-    const draftA = await createProjectDraft(t, projectId, [{ data: { label: "A" } }], "A");
-    const draftB = await createProjectDraft(t, projectId, [{ data: { label: "B" } }], "B");
-    const mapId = await t.mutation(api.maps.create, { name: "Map" });
-    await t.mutation(api.projects.addArtifact, {
-      artifactId: mapId,
-      artifactKind: "map",
-      projectId,
-    });
-    await t.mutation(api.maps.addLayer, { mapId, targetId: draftA, targetType: "dataset" });
-    const layerB = await t.mutation(api.maps.addLayer, {
-      mapId,
-      targetId: draftB,
-      targetType: "dataset",
-    });
-
-    const first = await driveBundlePress(t, projectId, {
-      [draftA]: { chunks: [{ data: { label: "A" } }] },
-      [draftB]: { chunks: [{ data: { label: "B" } }] },
-    });
-    const edgesOf = async () =>
-      t.run(async (ctx) =>
-        ctx.db
-          .query("consumerReferences")
-          .withIndex("by_consumer", (q) => q.eq("consumerId", mapId))
-          .collect(),
-      );
-    expect((await edgesOf()).map((edge) => edge.sourceDatasetId)).toStrictEqual([draftA, draftB]);
-
-    // The author removes B's layer; the next press's map leg reconciles.
-    await t.mutation(api.maps.removeLayer, { layerId: layerB ?? "" });
-    await driveBundlePress(t, projectId, {
-      [draftA]: { chunks: [{ data: { label: "A" } }] },
-      [draftB]: { chunks: [{ data: { label: "B" } }] },
-    });
-    const after = await edgesOf();
-    expect(after).toHaveLength(1);
-    expect(prop(at(after, 0), "sourceDatasetId")).toBe(draftA);
-    expect((await runOf(t, first.runId)).run.status).toBe("completed");
   });
 });
 

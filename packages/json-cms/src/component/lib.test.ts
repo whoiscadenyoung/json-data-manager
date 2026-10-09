@@ -840,47 +840,6 @@ describe("json-cms component", () => {
     });
   });
 
-  describe("listMapLayerOverridesForMap (issue #53)", () => {
-    it("returns one map's override rows, not every map's", async () => {
-      const t = initConvexTest(),
-        schemaId = await createTestSchema(t),
-        mapA = await t.mutation(api.lib.createMap, { name: "Map A" }),
-        mapB = await t.mutation(api.lib.createMap, { name: "Map B" });
-      // `addMapLayer` returns null when the layer already exists — fresh maps
-      // here, so each add must produce a layer.
-      const layerA = await t.mutation(api.lib.addMapLayer, {
-          mapId: mapA,
-          targetId: schemaId,
-          targetType: "dataset",
-        }),
-        layerB = await t.mutation(api.lib.addMapLayer, {
-          mapId: mapB,
-          targetId: schemaId,
-          targetType: "dataset",
-        });
-      assertDefined(layerA);
-      assertDefined(layerB);
-      await t.mutation(api.lib.setMapLayerOverride, {
-        childKey: `dataset:${schemaId}`,
-        layerId: layerA,
-        visible: false,
-      });
-      await t.mutation(api.lib.setMapLayerOverride, {
-        childKey: `dataset:${schemaId}`,
-        layerId: layerB,
-        visible: false,
-      });
-
-      const overridesA = await t.query(api.lib.listMapLayerOverridesForMap, { mapId: mapA });
-      expect(overridesA).toHaveLength(1);
-      expect(overridesA[0].layerId).toBe(layerA);
-
-      // A map with no overrides lists nothing — even though overrides exist elsewhere.
-      const mapC = await t.mutation(api.lib.createMap, { name: "Map C" });
-      expect(await t.query(api.lib.listMapLayerOverridesForMap, { mapId: mapC })).toHaveLength(0);
-    });
-  });
-
   describe("schema lineage (bound-dataset tag versions)", () => {
     const versionedSchema = {
         properties: { name: { type: "string" } },

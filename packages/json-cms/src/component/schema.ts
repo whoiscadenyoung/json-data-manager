@@ -58,8 +58,8 @@ export default defineSchema({
   }),
 
   // A tighter-coupled set of related datasets — e.g. "SMART Grant 2025"
-  // holding just that year's polygons + points datasets, which don't make
-  // sense on their own. Usually lives inside one `collections` doc, but may
+  // holding just that year's polygons + points datasets, which don't
+  // make sense on their own. Usually lives inside one `collections` doc, but may
   // also float standalone (no `collectionId`); never nests inside another
   // group.
   groups: defineTable({
@@ -67,76 +67,6 @@ export default defineSchema({
     description: v.optional(v.string()),
     name: v.string(),
   }).index("by_collection", ["collectionId"]),
-
-  // A saved, custom arrangement of layers rendered together on one map —
-  // e.g. one map per corridor study, mixing whole collections with individual
-  // datasets. Purely a view concern: a map references datasets through its
-  // layers but never reorganizes them.
-  maps: defineTable({
-    description: v.optional(v.string()),
-    name: v.string(),
-  }),
-
-  // One layer of a map: a pointer at a whole collection, a group, a single
-  // dataset, or a host-side derived dataset, plus its display state.
-  // `targetType` names what `targetId` points into. Collection/group layers
-  // expand to every geospatial dataset they currently contain at read time —
-  // membership changes flow through live, no denormalization. Deletion of a
-  // component target cascades to its layer rows (see
-  // deleteSchema/deleteGroup/deleteCollection), so a component layer never
-  // dangles. `order` is the draw/list position — written contiguously by
-  // addMapLayer, swapped by moveMapLayer, and may hold gaps after removals
-  // (only relative order matters; `by_map` indexes it so an index scan yields
-  // draw order directly).
-  //
-  // The "derived" target (roadmap 3a, #96; ADR 0005): `targetId` holds a
-  // HOST-side registry id (the app's derivedDatasets row — a plain string
-  // here, the datasetBindings precedent). The component cannot query host
-  // tables, so the schema only narrows the stored shape: the string branch is
-  // shape-checked by normalizeMapLayerTarget at write time, and existence is
-  // the HOST wrapper's job (api.maps.addDerivedLayer validates the registry
-  // row before calling addMapLayer). Cascade deletes deliberately do NOT
-  // cover host ids — deleting a derived dataset leaves its layer rows in
-  // place, and readers answer "deleted derived dataset" defensively, exactly
-  // like the other dangling-target cases they already handle. mapLayers /
-  // mapLayerOverrides are the structure stage 7b's bundle publish must
-  // preserve ("published shapes identical") — this widening adds a target
-  // kind without touching that structure.
-  mapLayers: defineTable({
-    mapId: v.id("maps"),
-    order: v.number(),
-    // The trailing string branch makes every id valid as a plain string; the
-    // per-targetType runtime checks in normalizeMapLayerTarget (plus the
-    // host wrapper for "derived") are what keep stored rows pointing at real
-    // targets.
-    targetId: v.union(v.id("collections"), v.id("groups"), v.id("schemas"), v.string()),
-    targetType: v.union(
-      v.literal("collection"),
-      v.literal("group"),
-      v.literal("dataset"),
-      v.literal("derived"),
-    ),
-    visible: v.boolean(),
-  })
-    .index("by_map", ["mapId", "order"])
-    .index("by_target", ["targetId"]),
-
-  // Per-child visibility overrides within one layer, keyed by `childKey` —
-  // `group:<id>` for a group inside a collection layer, `dataset:<id>` for a
-  // dataset (whether a direct member of the collection, a group member, or
-  // the layer's own single target). A child is visible when its layer is
-  // visible AND its override (if any) is true; overrides on a group child
-  // cascade down to its member datasets client-side (a dataset child of a
-  // hidden group child renders hidden regardless of its own override). One
-  // row per `{layerId, childKey}` — rows exist only for children the user
-  // has explicitly toggled, so membership changes flow through live like the
-  // layers themselves. Deleted with their layer (see removeMapLayer), so
-  // they never dangle.
-  mapLayerOverrides: defineTable({
-    childKey: v.string(),
-    layerId: v.id("mapLayers"),
-    visible: v.boolean(),
-  }).index("by_layer", ["layerId"]),
 
   // Many-to-many membership between datasets and collections — a dataset can
   // live in any number of collections, and a collection holds any number of

@@ -18,11 +18,11 @@ import {
   SheetTitle,
 } from "#/components/ui/sheet";
 import { errorMessage } from "#/lib/errors";
-import type { MembershipRow } from "#/lib/map-layers";
 import { api } from "#convex/_generated/api";
 
 type CollectionDoc = FunctionReturnType<typeof api.collections.list>[number];
 type GroupDoc = FunctionReturnType<typeof api.groups.list>[number];
+type MembershipRow = FunctionReturnType<typeof api.collections.listSchemaCollections>[number];
 
 /** True when `text`/`description` contains the (already normalized) search. */
 function matchesSearch(normalized: string, text: string, description?: string): boolean {

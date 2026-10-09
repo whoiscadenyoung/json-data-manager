@@ -12,7 +12,7 @@ const LIGHT_QUERY_NAMESPACES = [
   "collections",
   "entries",
   "groups",
-  "maps",
+  "projectMaps",
   "schemas",
   "tile_archives",
 ];

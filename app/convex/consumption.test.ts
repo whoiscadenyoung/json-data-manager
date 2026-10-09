@@ -452,12 +452,13 @@ describe("reference pin/float, sync, and revert (AC)", () => {
     expect(consumer.changed).toBe(false);
     expect(consumer.consumerKind).toBe("derived");
     expect(consumer.title).toBe("T");
-    // Stage 6 shipped the projection knowing "derived" only; 7b (#103) adds
-    // the fork and map kinds (projects.addArtifact's edge, the bundle press's
-    // layer edges).
+    // Stage 6 shipped the projection knowing "derived" only; 7b (#103) added
+    // the fork kind (projects.addArtifact's edge), and phase 3 of the
+    // project-workspace design (ADR 0012) retired the map kind with the
+    // standalone maps.
     expect(
       consumedByKnownKinds(await t.query(api.consumption.consumedBy, { datasetId: v1.schemaId })),
-    ).toStrictEqual(["derived", "fork", "map"]);
+    ).toStrictEqual(["derived", "fork"]);
   });
 
   it("pins to head, drifts when the source republishes, and sync repins to the new head", async () => {

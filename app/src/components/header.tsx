@@ -98,13 +98,6 @@ export function Header() {
               Collections
             </Link>
             <Link
-              to="/maps"
-              className="hover:text-foreground"
-              activeProps={{ className: "text-foreground" }}
-            >
-              Maps
-            </Link>
-            <Link
               to="/dashboard"
               className="hover:text-foreground"
               activeProps={{ className: "text-foreground" }}
