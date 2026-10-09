@@ -5,7 +5,7 @@ import { components } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { auth } from "./auth";
-import { LAYER_COLORS, resolveLayerMember } from "./layers";
+import { LAYER_COLORS, layerStyleValidator, narrowStyle, resolveLayerMember } from "./layers";
 import { projectRoleFor } from "./projectAccess";
 import { addDatasetMembership, insertMembership, projectForWrite } from "./projects";
 import { CATALOG_READ_LIMIT } from "./schemas";
@@ -37,6 +37,10 @@ import { CATALOG_READ_LIMIT } from "./schemas";
 
 const MAX_MAPS = 200;
 const MAX_PLACEMENTS = 500;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 function mapIdArg(ctx: { db: QueryCtx["db"] }, mapId: string): Id<"projectMaps"> | null {
   return ctx.db.normalizeId("projectMaps", mapId);
@@ -156,9 +160,17 @@ export const layers = query({
             layer: {
               datasetMemberId: resolved.layer.datasetMemberId,
               kind: resolved.layer.kind,
+              // The live layer row's id — the style panel's write target
+              // (layers.update) and the group-detail lookup key (phase 4).
+              layerId: resolved.layer._id,
               lifecycle: resolved.layer.lifecycle,
               name: resolved.layer.name,
               needsAttention: resolved.layer.needsAttention,
+              opacity: resolved.layer.opacity,
+              // The stored style rides the placement read — the editor draws
+              // (and the style panel edits) it without a per-layer get
+              // (phase 4).
+              style: resolved.layer.style,
             },
             layerMemberId: placement.layerMemberId,
             order: placement.order,
@@ -167,15 +179,14 @@ export const layers = query({
         }
         if (resolved.version !== null) {
           const definition = resolved.version.definition,
-            record = typeof definition === "object" && definition !== null ? definition : undefined,
+            record = isRecord(definition) ? definition : undefined,
             name =
-              record !== undefined && "name" in record && typeof record.name === "string"
+              record !== undefined && typeof record.name === "string"
                 ? record.name
                 : "Linked layer",
             kind =
-              record !== undefined && "kind" in record && record.kind === "group"
-                ? ("group" as const)
-                : ("data" as const);
+              record !== undefined && record.kind === "group" ? ("group" as const) : ("data" as const),
+            dataset = resolved.version.dataset;
           return {
             _creationTime: placement._creationTime,
             _id: placement._id,
@@ -183,6 +194,19 @@ export const layers = query({
             layer: {
               kind,
               name,
+              opacity:
+                record !== undefined && typeof record.opacity === "number"
+                  ? record.opacity
+                  : undefined,
+              // The frozen dataset pin (absent on group versions and on
+              // versions that never froze one) — what the editor's geometry
+              // subscription for this placement rides — plus the frozen
+              // style, which is what draws it.
+              pinnedSchemaId:
+                dataset !== undefined && dataset.pinnedSchemaId !== undefined
+                  ? dataset.pinnedSchemaId
+                  : undefined,
+              style: record === undefined ? undefined : narrowStyle(record.style),
               versionLabel: resolved.version.versionLabel,
             },
             layerMemberId: placement.layerMemberId,
@@ -201,10 +225,57 @@ export const layers = query({
       }),
     );
   },
-  // The three placement shapes carry different layer payloads — an open
-  // union validated at the envelope, payloads shapeless (the stored-spec
-  // precedent for anything the frozen definition carries).
-  returns: v.array(v.any()),
+  // The three placement shapes, typed at the envelope: OWNED carries the
+  // live layer projection (its row id — the style panel's write target —
+  // included), LINKED the pinned version's frozen render fields (the style
+  // blob stays shapeless, the stored-spec precedent), MISSING the defensive
+  // answer. The map editor's types key on this union.
+  returns: v.array(
+    v.union(
+      v.object({
+        _creationTime: v.number(),
+        _id: v.id("mapLayers"),
+        kind: v.literal("owned"),
+        layer: v.object({
+          datasetMemberId: v.optional(v.id("projectArtifacts")),
+          kind: v.union(v.literal("data"), v.literal("group")),
+          layerId: v.id("layers"),
+          lifecycle: v.union(v.literal("draft"), v.literal("published")),
+          name: v.string(),
+          needsAttention: v.optional(v.string()),
+          opacity: v.optional(v.number()),
+          style: v.optional(layerStyleValidator),
+        }),
+        layerMemberId: v.id("projectArtifacts"),
+        order: v.number(),
+        visible: v.boolean(),
+      }),
+      v.object({
+        _creationTime: v.number(),
+        _id: v.id("mapLayers"),
+        kind: v.literal("linked"),
+        layer: v.object({
+          kind: v.union(v.literal("data"), v.literal("group")),
+          name: v.string(),
+          opacity: v.optional(v.number()),
+          pinnedSchemaId: v.optional(v.string()),
+          style: v.optional(v.any()),
+          versionLabel: v.string(),
+        }),
+        layerMemberId: v.id("projectArtifacts"),
+        order: v.number(),
+        visible: v.boolean(),
+      }),
+      v.object({
+        _creationTime: v.number(),
+        _id: v.id("mapLayers"),
+        kind: v.literal("missing"),
+        layerMemberId: v.id("projectArtifacts"),
+        order: v.number(),
+        visible: v.boolean(),
+      }),
+    ),
+  ),
 });
 
 // ---------------------------------------------------------------------------

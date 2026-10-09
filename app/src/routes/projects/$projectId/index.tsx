@@ -1,6 +1,7 @@
+import { ConfirmDialog } from "@caden/json-cms/react/ui";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useConvexAuth, useMutation } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import {
@@ -15,21 +16,24 @@ import {
   ListPlus,
   Loader2,
   Map as MapIcon,
+  MapPin,
   Plus,
   RefreshCw,
   Rocket,
+  Route as RouteIcon,
   Trash2,
   Users,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { z } from "zod";
 
 import { DatasetTypeTags, DerivedDatasetBadge } from "#/components/dataset-type-tags";
 import { ProjectMembersDialog, ProjectRoleBadge } from "#/components/project-members-dialog";
 import { RouterButton } from "#/components/router-button";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
-import { Card } from "#/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
 import { Checkbox } from "#/components/ui/checkbox";
 import {
   Dialog,
@@ -46,37 +50,34 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "#/components/ui/empty";
+import { Input } from "#/components/ui/input";
+import { Label } from "#/components/ui/label";
+import { Tabs, TabsList, TabsTrigger } from "#/components/ui/tabs";
+import { Textarea } from "#/components/ui/textarea";
 import { publishProjectBundle } from "#/lib/bundle-publish";
 import { errorMessage } from "#/lib/errors";
+import type { ProjectLayerRow } from "#/lib/projects/map-layers";
+import { styleOrDefault } from "#/lib/projects/map-layers";
 
-import { api } from "../../../convex/_generated/api";
+import { api } from "../../../../convex/_generated/api";
 
 /**
  * The project workspace (roadmap 7a, #102; lifecycle doc §3): everything in
  * the project listed by kind, with the create/import entry points (which
  * land IN the project — the create page's `?projectId=` variant) and the
  * add-reference action ("fork = add-to-project": reuse adds a reference,
- * never a copy; 7b mints the fork's version-reference edge with it).
- * 7b (#103) adds the stage's own seam: the one-press BUNDLE PUBLISH through
- * the 5b machinery, with the press's progress and the promoted collection
- * link from `api.bundles.latestForProject`, plus "fork as transform" in the
- * add dialog (a saved identity spec over the published source — reuse with
- * transforms, no copy).
+ * never a copy; 7b mints the fork's version-reference edge with it). Phase 2
+ * gave every member row its role pair (owned/linked, the sync column); phase
+ * 3 (ADR 0012) made layers members and maps project-owned rows.
  *
- * Phase 2 of the project-workspace design gives every member row its role
- * pair: OWNED members (project drafts and forks — the "modify" side) badge
- * as owned; LINKED members (versioned rows the project references) badge as
- * linked and carry the sync column — the per-member "Keep in sync" checkbox
- * (`projects.setMemberSync`), the "Update available" badge, and Sync/Revert
- * through the stage-6 reference mutations. The add dialog offers the
- * keep-in-sync choice at add time (default pins the linked member at the
- * source chain's current head).
- *
- * Phase 3 of the project-workspace design (ADR 0012): LAYERS are members now
- * (their own section — owned drafts and linked pinned units, needsAttention
- * drift badges included), and the MAPS section reads the project-owned
- * `projectMaps` rows (the standalone component maps are retired; a map
- * exists only inside a project — the editor itself is phase 4).
+ * Phase 4 of the project-workspace design organizes the workspace into TABS
+ * — Datasets · Layers · Maps · Analysis · Publish — behind `?view=` (the
+ * datasets-page convention: the active tab survives reloads and is linkable;
+ * the default tab stays out of the URL, and navigations MERGE, never
+ * replace). Layers lists the project's live layer rows (stored style dot,
+ * visibility, removal); Maps is the launchpad into the in-project map editor
+ * at /projects/$projectId/maps/$mapId; Analysis holds the derived datasets;
+ * Publish carries the bundle press.
  *
  * The read is `projects.get` — member-scoped server-side (ADR 0011); null
  * renders the not-found card, so a project that hasn't been shared with the
@@ -86,13 +87,23 @@ import { api } from "../../../convex/_generated/api";
  * seat it names — visibly disabled with the reason for viewers, never a
  * silent no-op.
  */
-export const Route = createFileRoute("/projects/$projectId")({
+
+const projectSearchSchema = z.object({
+  // Active tab ("datasets" is the default and deliberately absent from the URL).
+  view: z.enum(["datasets", "layers", "maps", "analysis", "publish"]).optional(),
+});
+
+export const Route = createFileRoute("/projects/$projectId/")({
   component: ProjectWorkspacePage,
+  validateSearch: projectSearchSchema,
 });
 
 type Workspace = FunctionReturnType<typeof api.projects.get>;
 type WorkspaceData = NonNullable<Workspace>;
 type Artifact = WorkspaceData["artifacts"][number];
+type ProjectView = NonNullable<ReturnType<typeof projectSearchSchema.parse>["view"]>;
+
+type MapSummary = FunctionReturnType<typeof api.projectMaps.list>[number];
 
 /** The membership kinds the workspace renders sections for (phase 3 retired the map kind — a map is a projectMaps row now). */
 type WorkspaceKind = "dataset" | "derived" | "layer";
@@ -522,9 +533,10 @@ function DerivedRow({
 }
 
 /**
- * One layer member (phase 3, ADR 0012): the kind badge (data/group), the
- * Owned/Linked pair, the drift flag when a dataset sync changed the layer's
- * fields, and — for a linked member — the pinned version it renders.
+ * One layer member (phase 3, ADR 0012) rendered from its membership — the
+ * kind badge (data/group), the Owned/Linked pair, and the drift or pinned-
+ * version badges. The Layers TAB renders this row for linked members; owned
+ * members get their live-row management row (LayerManageRow) above.
  */
 function LayerRow({
   artifact,
@@ -617,6 +629,122 @@ function MissingRow({
   );
 }
 
+/** The owned layer row's badge line: kind, lifecycle, group membership, drift. */
+function LayerBadges({ layer }: { layer: ProjectLayerRow }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Badge variant="default">{layer.kind === "group" ? "Group layer" : "Layer"}</Badge>
+      {layer.lifecycle === "draft" && (
+        <Badge
+          variant="outline"
+          title="A working definition — publishing it (phase 5) freezes a version others can link or clone."
+        >
+          Draft
+        </Badge>
+      )}
+      {layer.parentGroupId !== undefined && (
+        <Badge variant="secondary" title="This layer sits inside a group layer.">
+          grouped
+        </Badge>
+      )}
+      {layer.needsAttention !== undefined && (
+        <Badge variant="destructive" title={layer.needsAttention}>
+          Needs attention
+        </Badge>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One owned layer's management row on the Layers tab (phase 4): the stored
+ * style dot, kind/lifecycle/drift badges, the layer-wide eye toggle
+ * (`layers.setVisible` — each map carries its own placement eye on top), and
+ * removal (`layers.remove` — an owned layer's deletion takes its versions
+ * and map placements with it, so it confirms first). Styling happens in the
+ * map editor; the tab's note points there.
+ */
+function LayerManageRow({
+  layer,
+  canWrite,
+  onRemove,
+}: {
+  layer: ProjectLayerRow;
+  canWrite: boolean;
+  onRemove: (layer: ProjectLayerRow) => void;
+}) {
+  const setVisible = useMutation(api.layers.setVisible),
+    style = styleOrDefault(layer.style);
+  return (
+    <Card className="flex-row items-center gap-4 px-4 transition-shadow hover:shadow-md">
+      <span
+        className="inline-block h-3 w-3 shrink-0 rounded-full border border-border"
+        style={{ backgroundColor: style.color }}
+        title={`Stored style — stroke ${style.color}`}
+      />
+      <div className="flex min-w-0 flex-1 flex-col gap-1 py-0">
+        <LayerBadges layer={layer} />
+        <p className="truncate text-sm font-medium">{layer.name}</p>
+        {layer.needsAttention !== undefined && (
+          <p className="truncate text-xs text-destructive">{layer.needsAttention}</p>
+        )}
+      </div>
+      <span className="shrink-0 text-xs text-muted-foreground">
+        {layer.visible ? "visible" : "hidden"}
+      </span>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="shrink-0"
+        aria-label={layer.visible ? `Hide ${layer.name}` : `Show ${layer.name}`}
+        title={canWrite ? "The layer-wide default — each map carries its own eye" : VIEWER_HINT}
+        disabled={!canWrite}
+        onClick={() => {
+          const run = async () => {
+            try {
+              await setVisible({ layerId: layer._id, visible: !layer.visible });
+            } catch (error) {
+              toast.error(errorMessage(error, "Failed to toggle the layer."));
+            }
+          };
+          void run();
+        }}
+      >
+        {layer.visible ? (
+          <MapPin className="h-4 w-4" />
+        ) : (
+          <MapPin className="h-4 w-4 opacity-40" />
+        )}
+      </Button>
+      {canWrite ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="shrink-0 text-muted-foreground hover:text-destructive"
+          title="Delete this layer — its versions and map placements go with it (the datasets behind it stay)."
+          aria-label={`Delete ${layer.name}`}
+          onClick={() => {
+            onRemove(layer);
+          }}
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      ) : (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="shrink-0 text-muted-foreground"
+          disabled
+          title={VIEWER_HINT}
+          aria-label="Deleting layers requires editor access"
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      )}
+    </Card>
+  );
+}
+
 /**
  * The add-reference candidates for one kind: published datasets plus the
  * VIEWER'S OWN drafts (the drafts read is the viewer-scoped 5a read — a
@@ -659,14 +787,17 @@ function buildCandidates(
  * current head; checked, the member floats live ("auto"). Editor-and-up
  * only: the page never mounts it for a viewer (their write buttons are
  * disabled with the reason, so the dialog never opens into a wall of server
- * denials).
+ * denials). `initialKind` opens on the calling tab's kind (Datasets →
+ * datasets, Analysis → derived).
  */
 function AddReferenceDialog({
+  initialKind,
   projectId,
   existingIds,
   open,
   onOpenChange,
 }: {
+  initialKind: "dataset" | "derived";
   projectId: string;
   existingIds: Set<string>;
   open: boolean;
@@ -674,7 +805,7 @@ function AddReferenceDialog({
 }) {
   const add = useMutation(api.projects.addArtifact),
     fork = useMutation(api.projects.forkAsSpec),
-    [kind, setKind] = useState<"dataset" | "derived">("dataset"),
+    [kind, setKind] = useState<"dataset" | "derived">(initialKind),
     [pendingId, setPendingId] = useState<string | undefined>(),
     [keepInSync, setKeepInSync] = useState(false),
     datasets = useQuery({
@@ -893,7 +1024,7 @@ function FailedMemberList({ bundle }: { bundle: LatestBundle }) {
   );
 }
 
-/** The workspace's bundle status under the header (7b): the live press (with progress), an interrupted one, the failures, or the promoted collection link. Staleness reads the mount-time clock (react/purity) — the page remounts on return, which is exactly when an abandoned press should announce itself; the press action never gates on it. */
+/** The workspace's bundle status under the Publish tab (7b): the live press (with progress), an interrupted one, the failures, or the promoted collection link. Staleness reads the mount-time clock (react/purity) — the page remounts on return, which is exactly when an abandoned press should announce itself; the press action never gates on it. */
 function BundleStatusLine({ bundle }: { bundle: LatestBundle }) {
   const [now] = useState(() => Date.now()),
     stale = pressLooksStale(bundle, now);
@@ -942,29 +1073,489 @@ function BundleStatusLine({ bundle }: { bundle: LatestBundle }) {
   );
 }
 
-// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
+/** The tab's artifact list with its empty state, shared by the Datasets and Analysis tabs. */
+function ArtifactSection({
+  artifacts,
+  emptyDescription,
+  emptyTitle,
+  render,
+}: {
+  artifacts: Artifact[];
+  emptyDescription: string;
+  emptyTitle: string;
+  render: (artifact: Artifact) => React.ReactNode;
+}) {
+  if (artifacts.length === 0) {
+    return (
+      <Empty className="min-h-40 border">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <Database />
+          </EmptyMedia>
+          <EmptyTitle>{emptyTitle}</EmptyTitle>
+          <EmptyDescription>{emptyDescription}</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      {artifacts.map((artifact) => (
+        <div key={artifact._id}>{render(artifact)}</div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The Layers tab (phase 4): the project's live layer rows — stored style
+ * dot, kind/lifecycle/drift badges, the layer-wide eye, removal with the
+ * honest destructive copy — above the LINKED layer members (pinned units
+ * from other projects, read-only). Styling happens in the map editor; the
+ * tab's note points there.
+ */
+function LayersTab({
+  canWrite,
+  layerArtifacts,
+  projectId,
+}: {
+  canWrite: boolean;
+  layerArtifacts: Artifact[];
+  projectId: string;
+}) {
+  const layers = useQuery({ ...convexQuery(api.layers.list, { projectId }) }).data,
+    removeLayer = useMutation(api.layers.remove),
+    [pendingRemove, setPendingRemove] = useState<ProjectLayerRow | undefined>(undefined),
+    linkedArtifacts = layerArtifacts.filter(
+      (artifact) => artifact.role === "linked" || artifact.state.kind === "missing",
+    );
+  const runRemove = async (layer: ProjectLayerRow): Promise<void> => {
+    try {
+      await removeLayer({ layerId: layer._id });
+      toast.success(`Deleted "${layer.name}" — its map placements went with it.`);
+    } catch (error) {
+      toast.error(errorMessage(error, "Failed to delete the layer."));
+    }
+  };
+  return (
+    <div className="flex flex-col gap-6">
+      <section>
+        <h2 className="mb-2 text-sm font-semibold text-muted-foreground">
+          Your layers{" "}
+          <span className="font-normal">
+            (
+            {layers === undefined
+              ? "…"
+              : `${layers.length} ${layers.length === 1 ? "layer" : "layers"}`}
+            )
+          </span>
+        </h2>
+        <p className="mb-3 text-xs text-muted-foreground">
+          Styling lives on the maps — open a map and select a layer to restyle it. Publishing
+          layers (freezing versions other projects can link or clone) arrives with the project
+          bundle.
+        </p>
+        {layers === undefined ? (
+          <div className="flex justify-center py-8">
+            <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-primary" />
+          </div>
+        ) : layers.length === 0 ? (
+          <Empty className="min-h-40 border">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <RouteIcon />
+              </EmptyMedia>
+              <EmptyTitle>No layers yet</EmptyTitle>
+              <EmptyDescription>
+                Layers are born when a dataset is added to one of this project's maps — open the
+                Maps tab, create a map, and add a dataset to it.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {layers.map((layer) => (
+              <LayerManageRow
+                key={layer._id}
+                layer={layer}
+                canWrite={canWrite}
+                onRemove={(row) => {
+                  setPendingRemove(row);
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+      {linkedArtifacts.length > 0 && (
+        <section>
+          <h2 className="mb-2 text-sm font-semibold text-muted-foreground">
+            Linked from other projects{" "}
+            <span className="font-normal">
+              ({linkedArtifacts.length} {linkedArtifacts.length === 1 ? "layer" : "layers"})
+            </span>
+          </h2>
+          <div className="flex flex-col gap-3">
+            {linkedArtifacts.map((artifact) => (
+              <LayerRow
+                key={artifact._id}
+                artifact={artifact}
+                canWrite={canWrite}
+                projectId={projectId}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+      <ConfirmDialog
+        open={pendingRemove !== undefined}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingRemove(undefined);
+          }
+        }}
+        title={`Delete "${pendingRemove === undefined ? "" : pendingRemove.name}"?`}
+        description="The layer, its version chain, and every map placement go with it. The datasets behind it stay put."
+        confirmLabel="Delete layer"
+        destructive
+        onConfirm={() => {
+          if (pendingRemove !== undefined) {
+            void runRemove(pendingRemove);
+          }
+          setPendingRemove(undefined);
+        }}
+      />
+    </div>
+  );
+}
+
+/** The new-map card (the title is the only required field — the button is live and the blank name is the server's friendly refusal, surfaced in the toast). Creating navigates straight into the editor. */
+function NewMapCard({ canWrite, projectId }: { canWrite: boolean; projectId: string }) {
+  const createMap = useMutation(api.projectMaps.create),
+    navigate = useNavigate(),
+    [name, setName] = useState(""),
+    [description, setDescription] = useState(""),
+    [creating, setCreating] = useState(false);
+  const handleCreate = async (): Promise<void> => {
+    setCreating(true);
+    try {
+      const mapId = await createMap({
+        description: description.trim() === "" ? undefined : description.trim(),
+        name: name.trim(),
+        projectId,
+      });
+      toast.success("Map created.");
+      await navigate({
+        params: { mapId, projectId },
+        search: {},
+        to: "/projects/$projectId/maps/$mapId",
+      });
+    } catch (error) {
+      toast.error(errorMessage(error, "Failed to create the map."));
+    } finally {
+      setCreating(false);
+    }
+  };
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">New map</CardTitle>
+        <CardDescription>
+          A canvas for the project's layers — name it, then place layers from the editor.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="new-map-name" className="text-xs">
+            Name
+          </Label>
+          <Input
+            id="new-map-name"
+            value={name}
+            disabled={creating || !canWrite}
+            onChange={(e) => {
+              setName(e.target.value);
+            }}
+            placeholder="Corridor study"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="new-map-description" className="text-xs">
+            Description (optional)
+          </Label>
+          <Textarea
+            id="new-map-description"
+            value={description}
+            rows={2}
+            disabled={creating || !canWrite}
+            onChange={(e) => {
+              setDescription(e.target.value);
+            }}
+            placeholder="What this map shows"
+          />
+        </div>
+        <div>
+          <Button
+            type="button"
+            disabled={creating || !canWrite}
+            title={canWrite ? undefined : VIEWER_HINT}
+            onClick={() => {
+              void handleCreate();
+            }}
+          >
+            {creating ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Creating…
+              </>
+            ) : (
+              <>
+                <Plus className="mr-2 h-4 w-4" />
+                Create map
+              </>
+            )}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** The Maps tab (phase 4): the project-owned maps, each launching the in-project editor, with create / reorder / delete for editors and the reasons on a viewer's disabled controls. */
+function MapsTab({
+  canWrite,
+  maps,
+  projectId,
+}: {
+  canWrite: boolean;
+  maps: MapSummary[] | undefined;
+  projectId: string;
+}) {
+  const moveMap = useMutation(api.projectMaps.move),
+    deleteMap = useMutation(api.projectMaps.remove),
+    [pendingDelete, setPendingDelete] = useState<MapSummary | undefined>(undefined);
+  const runDelete = async (map: MapSummary): Promise<void> => {
+    try {
+      await deleteMap({ mapId: map._id });
+      toast.success(`Deleted "${map.name}".`);
+    } catch (error) {
+      toast.error(errorMessage(error, "Failed to delete the map."));
+    }
+  };
+  const runMove = async (mapId: string, direction: "up" | "down"): Promise<void> => {
+    try {
+      await moveMap({ direction, mapId });
+    } catch (error) {
+      toast.error(errorMessage(error, "Failed to move the map."));
+    }
+  };
+  if (maps === undefined) {
+    return (
+      <div className="flex justify-center py-8">
+        <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-primary" />
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-6">
+      {canWrite && <NewMapCard canWrite={canWrite} projectId={projectId} />}
+      <section>
+        <h2 className="mb-2 text-sm font-semibold text-muted-foreground">
+          This project's maps{" "}
+          <span className="font-normal">
+            ({maps.length} {maps.length === 1 ? "map" : "maps"})
+          </span>
+        </h2>
+        {maps.length === 0 ? (
+          <Empty className="min-h-40 border">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <MapIcon />
+              </EmptyMedia>
+              <EmptyTitle>No maps yet</EmptyTitle>
+              <EmptyDescription>
+                {canWrite
+                  ? "Create the project's first map above."
+                  : "This project's editors haven't created a map yet."}
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {maps.map((map, index) => (
+              <Card key={map._id} className="flex-row items-center gap-4 px-4">
+                <MapIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <Link
+                  to="/projects/$projectId/maps/$mapId"
+                  params={{ mapId: map._id, projectId }}
+                  className="flex min-w-0 flex-1 flex-col gap-1 py-0"
+                >
+                  <p className="truncate text-sm font-medium">{map.name}</p>
+                  {map.description !== undefined && (
+                    <p className="truncate text-xs text-muted-foreground">{map.description}</p>
+                  )}
+                </Link>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {map.layerCount} {map.layerCount === 1 ? "layer" : "layers"}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="shrink-0"
+                  aria-label={`Move ${map.name} up`}
+                  title={canWrite ? undefined : VIEWER_HINT}
+                  disabled={!canWrite || index === 0}
+                  onClick={() => {
+                    void runMove(map._id, "up");
+                  }}
+                >
+                  <ArrowLeft className="h-4 w-4 -rotate-90" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="shrink-0"
+                  aria-label={`Move ${map.name} down`}
+                  title={canWrite ? undefined : VIEWER_HINT}
+                  disabled={!canWrite || index === maps.length - 1}
+                  onClick={() => {
+                    void runMove(map._id, "down");
+                  }}
+                >
+                  <ArrowLeft className="h-4 w-4 rotate-90" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="shrink-0 text-muted-foreground hover:text-destructive"
+                  aria-label={`Delete ${map.name}`}
+                  title={canWrite ? undefined : VIEWER_HINT}
+                  disabled={!canWrite}
+                  onClick={() => {
+                    setPendingDelete(map);
+                  }}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </Card>
+            ))}
+          </div>
+        )}
+      </section>
+      <ConfirmDialog
+        open={pendingDelete !== undefined}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingDelete(undefined);
+          }
+        }}
+        title={`Delete "${pendingDelete === undefined ? "" : pendingDelete.name}"?`}
+        description="The map and its placements will be removed. The layers themselves stay in the project."
+        confirmLabel="Delete map"
+        destructive
+        onConfirm={() => {
+          if (pendingDelete !== undefined) {
+            void runDelete(pendingDelete);
+          }
+          setPendingDelete(undefined);
+        }}
+      />
+    </div>
+  );
+}
+
+/** The Publish tab (phase 4): the one-press bundle publish with its status line and what-it-freezes copy. */
+function PublishTab({
+  bundle,
+  canWrite,
+  empty,
+  projectId,
+}: {
+  bundle: LatestBundle | null | undefined;
+  canWrite: boolean;
+  empty: boolean;
+  projectId: string;
+}) {
+  const { press, pressing } = usePressBundle(projectId);
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Rocket className="h-4 w-4 text-primary" />
+          Publish bundle
+        </CardTitle>
+        <CardDescription>
+          One press publishes the project: every dataset and derived spec gets a frozen version and
+          the collection is promoted. Members already published keep their versions — a re-press
+          republishes into NEW versions, never mutating prior ones.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <div>
+          <Button
+            type="button"
+            onClick={() => {
+              void press();
+            }}
+            disabled={!canWrite || pressing || empty}
+            title={
+              !canWrite
+                ? "Viewers have read-only access — an editor or owner can publish."
+                : empty
+                  ? "Nothing to publish yet — add a dataset or a transform first."
+                  : undefined
+            }
+          >
+            {pressing ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Publishing…
+              </>
+            ) : (
+              <>
+                <Rocket className="h-4 w-4 mr-2" />
+                Publish bundle
+              </>
+            )}
+          </Button>
+        </div>
+        {bundle !== undefined && bundle !== null && <BundleStatusLine bundle={bundle} />}
+        {bundle === null && (
+          <p className="text-sm text-muted-foreground">This project has never been published.</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// oxlint-disable-next-line eslint/complexity -- the workspace composes the header, the five tabs, and the dialogs; each tab's body is its own component.
 function ProjectWorkspacePage() {
   const { projectId } = Route.useParams(),
+    search = Route.useSearch(),
+    navigate = Route.useNavigate(),
     // The auth gate renders BEFORE the query state: anonymous callers' query
     // throws, and without this branch that shows as an infinite spinner.
     { isAuthenticated, isLoading: authLoading } = useConvexAuth(),
-    workspace = useQuery({ ...convexQuery(api.projects.get, { projectId }) }).data,
-    // This project's newest press (7b): drives the publish button's state
-    // and the status line. undefined until it loads; null before any press.
-    latestBundle = useQuery({ ...convexQuery(api.bundles.latestForProject, { projectId }) }).data,
-    // The project-owned maps (phase 3, ADR 0012): listed read-only in the
-    // Maps section — the map editor under /projects/... is the next phase's
-    // deliverable. Mounted UNCONDITIONALLY beside the other hooks (Rules of
-    // Hooks — an early return above here would flip the hook count between
-    // renders); the `enabled` flag keeps it idle until the auth gate and,
-    // for a project the viewer can't see, the read answers empty anyway.
+    workspace = useQuery({
+      ...convexQuery(api.projects.get, { projectId }),
+      enabled: !authLoading && isAuthenticated,
+    }).data,
+    // The project-owned maps (phase 3, ADR 0012) — the Maps tab's rows and
+    // the tab bar's count. Mounted UNCONDITIONALLY beside the other hooks
+    // (Rules of Hooks — an early return below would flip the hook count);
+    // `enabled` keeps it idle until the auth gate, and for a project the
+    // viewer can't see the read answers empty anyway.
     maps = useQuery({
       ...convexQuery(api.projectMaps.list, { projectId }),
       enabled: !authLoading && isAuthenticated,
     }).data,
+    latestBundle = useQuery({
+      ...convexQuery(api.bundles.latestForProject, { projectId }),
+      enabled: !authLoading && isAuthenticated,
+    }).data,
     [addOpen, setAddOpen] = useState(false),
-    [membersOpen, setMembersOpen] = useState(false),
-    { press, pressing } = usePressBundle(projectId);
+    [addKind, setAddKind] = useState<"dataset" | "derived">("dataset"),
+    [membersOpen, setMembersOpen] = useState(false);
 
   if (authLoading) {
     return (
@@ -1020,7 +1611,30 @@ function ProjectWorkspacePage() {
     canWrite = project.role === "owner" || project.role === "editor",
     grouped = groupByKind(artifacts),
     existingIds = new Set(artifacts.map((artifact) => artifact.artifactId)),
-    empty = artifacts.length === 0;
+    view = search.view ?? "datasets",
+    openAddDialog = (kind: "dataset" | "derived") => {
+      setAddKind(kind);
+      setAddOpen(true);
+    },
+    // Tab switches write `?view=` so the active tab survives reloads and is
+    // linkable; "datasets" is the default and stays out of the URL. The
+    // merge form never drops unrelated params.
+    setView = async (next: ProjectView): Promise<void> => {
+      await navigate({
+        search: (prev) => ({ ...prev, view: next === "datasets" ? undefined : next }),
+      });
+    },
+    handleTabChange = (value: unknown) => {
+      if (
+        value === "datasets" ||
+        value === "layers" ||
+        value === "maps" ||
+        value === "analysis" ||
+        value === "publish"
+      ) {
+        void setView(value);
+      }
+    };
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-8">
@@ -1059,195 +1673,110 @@ function ProjectWorkspacePage() {
             {project.description !== undefined && (
               <p className="mt-1 text-muted-foreground">{project.description}</p>
             )}
-            {latestBundle !== undefined && latestBundle !== null && (
-              <BundleStatusLine bundle={latestBundle} />
-            )}
           </div>
-          <div className="flex gap-2">
-            {/* The 7b seam: one press publishes the bundle — collection +
-                maps + referenced datasets — through the existing 5b publish
-                machinery (bundle-publish.ts drives it client-side). Disabled
-                on the LOCAL press only: a run left "running" by a killed
-                browser is re-pressed INTO (start joins it, that IS the
-                resume), and an empty project is refused server-side too.
-                Viewers see the reason on the disabled control (their seat is
-                read-only, ADR 0011). */}
-            <Button
-              type="button"
-              onClick={() => {
-                void press();
-              }}
-              disabled={!canWrite || pressing || empty}
-              title={
-                !canWrite
-                  ? "Viewers have read-only access — an editor or owner can publish."
-                  : empty
-                    ? "Nothing to publish yet — add a dataset or a transform first."
-                    : undefined
-              }
-            >
-              <Rocket className="h-4 w-4 mr-2" />
-              {pressing ? "Publishing…" : "Publish bundle"}
-            </Button>
-            {/* The in-project create/import entry point: the create page's
-                ?projectId= variant lands the draft + membership atomically.
-                RouterButton has no disabled state — viewers get the ghost
-                button with the reason instead of a dead link. */}
-            {canWrite ? (
+          {canWrite && (
+            <div className="flex gap-2">
+              {/* The in-project create/import entry points, on the tab that
+                  uses them (derived adds live on the Analysis tab). The
+                  create page's `?projectId=` variant lands the draft +
+                  membership atomically. */}
               <RouterButton to="/datasets/create" search={{ projectId }}>
                 <Plus className="h-4 w-4 mr-2" />
                 New dataset
               </RouterButton>
-            ) : (
               <Button
                 type="button"
                 variant="outline"
-                disabled
-                title="Viewers have read-only access — an editor or owner can create datasets."
+                onClick={() => {
+                  openAddDialog("dataset");
+                }}
               >
-                <Plus className="h-4 w-4 mr-2" />
-                New dataset
+                <ListPlus className="h-4 w-4 mr-2" />
+                Add existing
               </Button>
-            )}
-            <Button
-              type="button"
-              variant="outline"
-              disabled={!canWrite}
-              title={
-                canWrite
-                  ? undefined
-                  : "Viewers have read-only access — an editor or owner can add artifacts."
-              }
-              onClick={() => {
-                setAddOpen(true);
-              }}
-            >
-              <ListPlus className="h-4 w-4 mr-2" />
-              Add existing
-            </Button>
-          </div>
+            </div>
+          )}
         </div>
       </div>
 
-      {empty ? (
-        <Empty className="min-h-80 border">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <Database />
-            </EmptyMedia>
-            <EmptyTitle>This project is empty</EmptyTitle>
-            <EmptyDescription>
-              {canWrite
-                ? "Create a dataset in the project, or add an existing one by reference."
-                : "Nothing has been added to this project yet — its editors and owner fill it in."}
-            </EmptyDescription>
-          </EmptyHeader>
-          {canWrite && (
-            <EmptyContent>
-              <div className="flex gap-2">
-                <RouterButton to="/datasets/create" search={{ projectId }}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  New dataset
-                </RouterButton>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    setAddOpen(true);
-                  }}
-                >
-                  <ListPlus className="h-4 w-4 mr-2" />
-                  Add existing
-                </Button>
-              </div>
-            </EmptyContent>
+      <Tabs value={view} onValueChange={handleTabChange}>
+        <TabsList className="mb-6">
+          <TabsTrigger value="datasets">Datasets ({grouped.datasets.length})</TabsTrigger>
+          <TabsTrigger value="layers">Layers ({grouped.layers.length})</TabsTrigger>
+          <TabsTrigger value="maps">Maps ({maps === undefined ? 0 : maps.length})</TabsTrigger>
+          <TabsTrigger value="analysis">Analysis ({grouped.derived.length})</TabsTrigger>
+          <TabsTrigger value="publish">Publish</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      {view === "datasets" && (
+        <ArtifactSection
+          artifacts={grouped.datasets}
+          emptyTitle="No datasets in this project yet"
+          emptyDescription={
+            canWrite
+              ? "Create a dataset in the project (button above), or add an existing one by reference."
+              : "Nothing has been added to this project yet — its editors and owner fill it in."
+          }
+          render={(artifact) => (
+            <DatasetRow artifact={artifact} canWrite={canWrite} projectId={projectId} />
           )}
-        </Empty>
-      ) : (
-        <div className="flex flex-col gap-6">
-          {(
-            [
-              ["Datasets", grouped.datasets.length, "datasets"],
-              ["Derived", grouped.derived.length, "derived"],
-              ["Layers", grouped.layers.length, "layers"],
-            ] as const
-          ).map(([heading, count, kind]) =>
-            count === 0 ? null : (
-              <section key={kind}>
-                <h2 className="mb-2 text-sm font-semibold text-muted-foreground">
-                  {heading}{" "}
-                  <span className="font-normal">
-                    ({count} {count === 1 ? "artifact" : "artifacts"})
-                  </span>
-                </h2>
-                <div className="flex flex-col gap-3">
-                  {kind === "datasets" &&
-                    grouped.datasets.map((artifact) => (
-                      <DatasetRow
-                        key={artifact._id}
-                        artifact={artifact}
-                        canWrite={canWrite}
-                        projectId={projectId}
-                      />
-                    ))}
-                  {kind === "derived" &&
-                    grouped.derived.map((artifact) => (
-                      <DerivedRow
-                        key={artifact._id}
-                        artifact={artifact}
-                        canWrite={canWrite}
-                        projectId={projectId}
-                      />
-                    ))}
-                  {kind === "layers" &&
-                    grouped.layers.map((artifact) => (
-                      <LayerRow
-                        key={artifact._id}
-                        artifact={artifact}
-                        canWrite={canWrite}
-                        projectId={projectId}
-                      />
-                    ))}
-                </div>
-              </section>
-            ),
-          )}
-          {maps !== undefined && maps.length > 0 && (
-            <section>
-              <h2 className="mb-2 text-sm font-semibold text-muted-foreground">
-                Maps{" "}
-                <span className="font-normal">
-                  ({maps.length} {maps.length === 1 ? "map" : "maps"})
-                </span>
-              </h2>
-              <div className="flex flex-col gap-3">
-                {maps.map((map) => (
-                  <Card key={map._id} className="flex-row items-center gap-4 px-4">
-                    <div className="flex min-w-0 flex-1 flex-col gap-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant="default">
-                          <MapIcon />
-                          Map
-                        </Badge>
-                      </div>
-                      <p className="truncate text-sm font-medium">{map.name}</p>
-                      {map.description !== undefined && (
-                        <p className="truncate text-xs text-muted-foreground">{map.description}</p>
-                      )}
-                    </div>
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      {map.layerCount} {map.layerCount === 1 ? "layer" : "layers"}
-                    </span>
-                  </Card>
-                ))}
-              </div>
-            </section>
-          )}
+        />
+      )}
+
+      {view === "layers" && (
+        <LayersTab canWrite={canWrite} layerArtifacts={grouped.layers} projectId={projectId} />
+      )}
+
+      {view === "maps" && <MapsTab canWrite={canWrite} maps={maps} projectId={projectId} />}
+
+      {view === "analysis" && (
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-muted-foreground">
+              Derived datasets — the analysis tier. A transform reads source datasets and computes
+              a new table; fork one in from the Datasets tab's add dialog ("Fork").
+            </p>
+            {canWrite && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  openAddDialog("derived");
+                }}
+              >
+                <ListPlus className="h-4 w-4 mr-2" />
+                Add derived
+              </Button>
+            )}
+          </div>
+          <ArtifactSection
+            artifacts={grouped.derived}
+            emptyTitle="No derived datasets yet"
+            emptyDescription={
+              canWrite
+                ? "Fork a dataset as a transform from the Datasets tab's add dialog, or add a saved derived spec."
+                : "This project's editors haven't derived anything yet."
+            }
+            render={(artifact) => (
+              <DerivedRow artifact={artifact} canWrite={canWrite} projectId={projectId} />
+            )}
+          />
         </div>
+      )}
+
+      {view === "publish" && (
+        <PublishTab
+          bundle={latestBundle}
+          canWrite={canWrite}
+          empty={artifacts.length === 0}
+          projectId={projectId}
+        />
       )}
 
       {canWrite && (
         <AddReferenceDialog
+          initialKind={addKind}
           projectId={projectId}
           existingIds={existingIds}
           open={addOpen}

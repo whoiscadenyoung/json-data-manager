@@ -69,6 +69,16 @@ export const LAYER_COLORS = [
 /** The default style an auto-created layer carries (the palette's first color — visible on every basemap). */
 const DEFAULT_STYLE = { color: LAYER_COLORS[0] };
 
+/** The stored style's shape, shared by the create/update args, the list/get returns, and the drift stamps. */
+export const layerStyleValidator = v.object({
+  color: v.optional(v.string()),
+  fillColor: v.optional(v.string()),
+  fillOpacity: v.optional(v.number()),
+  opacity: v.optional(v.number()),
+  radius: v.optional(v.number()),
+  weight: v.optional(v.number()),
+});
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -187,25 +197,64 @@ function definitionKindOf(definition: unknown): "data" | "group" {
   return isRecord(definition) && definition.kind === "group" ? "group" : "data";
 }
 
+/**
+ * Narrows a frozen definition's `style` blob to the stored-style shape,
+ * field by field — the no-cast rule's answer for shapeless stored specs
+ * (unknown fields drop, present ones keep their value). Exported for
+ * projectMaps.ts's linked-placement projection, which draws the same frozen
+ * definitions.
+ */
+export function narrowStyle(value: unknown): Doc<"layers">["style"] {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  return {
+    color: typeof value.color === "string" ? value.color : undefined,
+    fillColor: typeof value.fillColor === "string" ? value.fillColor : undefined,
+    fillOpacity: typeof value.fillOpacity === "number" ? value.fillOpacity : undefined,
+    opacity: typeof value.opacity === "number" ? value.opacity : undefined,
+    radius: typeof value.radius === "number" ? value.radius : undefined,
+    weight: typeof value.weight === "number" ? value.weight : undefined,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------------------
 
-/** One tree child resolved for reads: owned children answer from their live rows, linked children from their pinned versions — a deleted answer reads as missing, never crashes. */
+/**
+ * One tree child resolved for reads: owned children answer from their live
+ * rows, linked children from their pinned versions — a deleted answer reads
+ * as missing, never crashes. The render fields (dataset ref, style, opacity,
+ * visibility) ride along because the map editor draws group children straight
+ * from this projection (phase 4): a linked child's dataset is its pinned
+ * version's frozen dataset pin, its style the frozen definition's.
+ */
 type ResolvedChild =
   | {
       child: {
+        datasetMemberId?: Id<"projectArtifacts">;
         kind: "data" | "group";
         lifecycle: "draft" | "published";
         name: string;
         needsAttention?: string;
+        opacity?: number;
+        style?: Doc<"layers">["style"];
+        visible: boolean;
       };
       childKind: "owned";
       childLayerId: string;
       order: number;
     }
   | {
-      child: { kind: "data" | "group"; name: string; versionLabel: string };
+      child: {
+        datasetPinnedSchemaId?: string;
+        kind: "data" | "group";
+        name: string;
+        opacity?: number;
+        style?: Doc<"layers">["style"];
+        versionLabel: string;
+      };
       childKind: "linked";
       childLayerId: string;
       order: number;
@@ -224,10 +273,17 @@ async function resolveChild(ctx: QueryCtx, row: Doc<"layerChildren">): Promise<R
         order: row.order,
       };
     }
+    const definition = isRecord(version.definition) ? version.definition : {};
     return {
       child: {
+        datasetPinnedSchemaId:
+          isRecord(version.dataset) && typeof version.dataset.pinnedSchemaId === "string"
+            ? version.dataset.pinnedSchemaId
+            : undefined,
         kind: definitionKindOf(version.definition),
         name: definitionNameOf(version.definition, "Linked layer"),
+        opacity: typeof definition.opacity === "number" ? definition.opacity : undefined,
+        style: narrowStyle(definition.style),
         versionLabel: version.versionLabel,
       },
       childKind: "linked",
@@ -247,10 +303,14 @@ async function resolveChild(ctx: QueryCtx, row: Doc<"layerChildren">): Promise<R
   }
   return {
     child: {
+      datasetMemberId: layer.datasetMemberId,
       kind: layer.kind,
       lifecycle: layer.lifecycle,
       name: layer.name,
       needsAttention: layer.needsAttention,
+      opacity: layer.opacity,
+      style: layer.style,
+      visible: layer.visible,
     },
     childKind: "owned",
     childLayerId: row.childLayerId,
@@ -283,6 +343,10 @@ export const list = query({
         return {
           _creationTime: layer._creationTime,
           _id: layer._id,
+          // This layer's position within its parent group (undefined at the
+          // root) — the map editor draws group children in childOrder without
+          // a per-group layers.get round trip.
+          childOrder: parentRow === null ? undefined : parentRow.order,
           datasetMemberId: layer.datasetMemberId,
           kind: layer.kind,
           lifecycle: layer.lifecycle,
@@ -291,6 +355,9 @@ export const list = query({
           needsAttention: layer.needsAttention,
           opacity: layer.opacity,
           parentGroupId: parentRow === null ? undefined : parentRow.groupId,
+          // The stored style (phase 4's editor draws and edits it — the
+          // client-only assignDatasetColors is gone).
+          style: layer.style,
           visible: layer.visible,
         };
       }),
@@ -300,6 +367,7 @@ export const list = query({
     v.object({
       _creationTime: v.number(),
       _id: v.id("layers"),
+      childOrder: v.optional(v.number()),
       datasetMemberId: v.optional(v.id("projectArtifacts")),
       kind: v.union(v.literal("data"), v.literal("group")),
       lifecycle: v.union(v.literal("draft"), v.literal("published")),
@@ -308,6 +376,7 @@ export const list = query({
       needsAttention: v.optional(v.string()),
       opacity: v.optional(v.number()),
       parentGroupId: v.optional(v.id("layers")),
+      style: v.optional(layerStyleValidator),
       visible: v.boolean(),
     }),
   ),
@@ -439,16 +508,7 @@ export const create = mutation({
     opacity: v.optional(v.number()),
     popup: v.optional(v.any()),
     projectId: v.string(),
-    style: v.optional(
-      v.object({
-        color: v.optional(v.string()),
-        fillColor: v.optional(v.string()),
-        fillOpacity: v.optional(v.number()),
-        opacity: v.optional(v.number()),
-        radius: v.optional(v.number()),
-        weight: v.optional(v.number()),
-      }),
-    ),
+    style: v.optional(layerStyleValidator),
     visible: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
@@ -518,16 +578,7 @@ export const update = mutation({
     name: v.optional(v.string()),
     opacity: v.optional(v.number()),
     popup: v.optional(v.any()),
-    style: v.optional(
-      v.object({
-        color: v.optional(v.string()),
-        fillColor: v.optional(v.string()),
-        fillOpacity: v.optional(v.number()),
-        opacity: v.optional(v.number()),
-        radius: v.optional(v.number()),
-        weight: v.optional(v.number()),
-      }),
-    ),
+    style: v.optional(layerStyleValidator),
   },
   handler: async (ctx, args) => {
     const actorId = await auth(ctx),
