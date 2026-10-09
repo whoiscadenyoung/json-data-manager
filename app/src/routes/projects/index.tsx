@@ -7,6 +7,7 @@ import { Calendar, ChevronRight, FolderKanban, Plus } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { ProjectRoleBadge } from "#/components/project-members-dialog";
 import { RouterButton } from "#/components/router-button";
 import { Button } from "#/components/ui/button";
 import { Card } from "#/components/ui/card";
@@ -34,12 +35,15 @@ import { errorMessage } from "#/lib/errors";
 import { api } from "../../../convex/_generated/api";
 
 /**
- * The project browser (roadmap 7a, #102; lifecycle doc §3): the working
+ * The project browser (roadmap 7a, #102; lifecycle doc §3; collaborative
+ * since phase 1 of the project-workspace design, ADR 0011): the working
  * layer's front door. Projects are the draft-side containers where
  * import/create lands; the datasets browser remains the materialized
- * catalog. The read is creator-scoped server-side (`projects.list` returns
- * the signed-in caller's own projects — other users' projects never enter
- * the payload), through the same light-query bridge the other browsers use.
+ * catalog. The read is member-scoped server-side (`projects.list` returns
+ * every project the signed-in caller belongs to, each with the caller's own
+ * role — other users' unshared projects never enter the payload), through
+ * the same light-query bridge the other browsers use; each card badges the
+ * seat it names.
  */
 export const Route = createFileRoute("/projects/")({
   component: ProjectsPage,
@@ -151,6 +155,7 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
         className="flex min-w-0 flex-1 flex-col gap-2 py-0"
       >
         <div className="flex flex-wrap items-center gap-2">
+          <ProjectRoleBadge role={project.role} />
           <span className="text-xs text-muted-foreground">
             {project.artifactCount} {project.artifactCount === 1 ? "artifact" : "artifacts"}
           </span>
@@ -192,7 +197,9 @@ function ProjectsPage() {
               <FolderKanban />
             </EmptyMedia>
             <EmptyTitle>Sign in to continue</EmptyTitle>
-            <EmptyDescription>Projects are per-creator — sign in to see yours.</EmptyDescription>
+            <EmptyDescription>
+              Projects are shared workspaces — sign in to see the ones you belong to.
+            </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
             <RouterButton to="/signin">Sign in</RouterButton>
@@ -215,7 +222,8 @@ function ProjectsPage() {
         <div>
           <h1 className="text-3xl font-bold text-primary mb-1">Projects</h1>
           <p className="text-muted-foreground">
-            Your working containers — import and draft here, publish to the catalog when ready
+            Working containers you own or belong to — import and draft here, publish to the catalog
+            when ready
           </p>
         </div>
         <Button

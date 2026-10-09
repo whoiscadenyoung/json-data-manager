@@ -15,11 +15,13 @@ import {
   Plus,
   Rocket,
   Trash2,
+  Users,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { DatasetTypeTags, DerivedDatasetBadge } from "#/components/dataset-type-tags";
+import { ProjectMembersDialog, ProjectRoleBadge } from "#/components/project-members-dialog";
 import { RouterButton } from "#/components/router-button";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
@@ -57,9 +59,13 @@ import { api } from "../../../convex/_generated/api";
  * dialog (a saved identity spec over the published source — reuse with
  * transforms, no copy).
  *
- * The read is `projects.get` — creator-scoped server-side; null renders the
- * not-found card, so another user's project (and the drafts it carries) is
- * indistinguishable from a missing one.
+ * The read is `projects.get` — member-scoped server-side (ADR 0011); null
+ * renders the not-found card, so a project that hasn't been shared with the
+ * viewer (and the drafts it carries) is indistinguishable from a missing
+ * one. The page badges the viewer's own role beside the title, opens the
+ * members dialog from the header line, and gates every write control on the
+ * seat it names — visibly disabled with the reason for viewers, never a
+ * silent no-op.
  */
 export const Route = createFileRoute("/projects/$projectId")({
   component: ProjectWorkspacePage,
@@ -134,15 +140,34 @@ function SignInPrompt({ subject }: { subject: string }) {
 }
 
 function RemoveButton({
+  canWrite,
   projectId,
   artifactId,
   artifactKind,
 }: {
+  canWrite: boolean;
   projectId: string;
   artifactId: string;
   artifactKind: "dataset" | "derived" | "map";
 }) {
   const remove = useMutation(api.projects.removeArtifact);
+  // A viewer's read-only seat is surfaced on the control, never hidden:
+  // the button stays visible, disabled, and says why (the UI-polish rule —
+  // no silent no-ops).
+  if (!canWrite) {
+    return (
+      <Button
+        variant="ghost"
+        size="icon"
+        className="shrink-0 text-muted-foreground"
+        disabled
+        title="Viewers have read-only access — an editor or owner can remove artifacts."
+        aria-label="Removing artifacts requires editor access"
+      >
+        <Trash2 className="h-4 w-4" />
+      </Button>
+    );
+  }
   return (
     <Button
       variant="ghost"
@@ -167,9 +192,17 @@ function RemoveButton({
   );
 }
 
-function DatasetRow({ artifact, projectId }: { artifact: Artifact; projectId: string }) {
+function DatasetRow({
+  artifact,
+  canWrite,
+  projectId,
+}: {
+  artifact: Artifact;
+  canWrite: boolean;
+  projectId: string;
+}) {
   if (artifact.state.kind !== "dataset") {
-    return <MissingRow artifact={artifact} projectId={projectId} />;
+    return <MissingRow artifact={artifact} canWrite={canWrite} projectId={projectId} />;
   }
   const summary = artifact.state.summary;
   return (
@@ -198,15 +231,24 @@ function DatasetRow({ artifact, projectId }: { artifact: Artifact; projectId: st
       <RemoveButton
         artifactId={artifact.artifactId}
         artifactKind={artifact.artifactKind}
+        canWrite={canWrite}
         projectId={projectId}
       />
     </Card>
   );
 }
 
-function DerivedRow({ artifact, projectId }: { artifact: Artifact; projectId: string }) {
+function DerivedRow({
+  artifact,
+  canWrite,
+  projectId,
+}: {
+  artifact: Artifact;
+  canWrite: boolean;
+  projectId: string;
+}) {
   if (artifact.state.kind !== "derived") {
-    return <MissingRow artifact={artifact} projectId={projectId} />;
+    return <MissingRow artifact={artifact} canWrite={canWrite} projectId={projectId} />;
   }
   const row = artifact.state.row;
   const body = (
@@ -249,15 +291,24 @@ function DerivedRow({ artifact, projectId }: { artifact: Artifact; projectId: st
       <RemoveButton
         artifactId={artifact.artifactId}
         artifactKind={artifact.artifactKind}
+        canWrite={canWrite}
         projectId={projectId}
       />
     </Card>
   );
 }
 
-function MapRow({ artifact, projectId }: { artifact: Artifact; projectId: string }) {
+function MapRow({
+  artifact,
+  canWrite,
+  projectId,
+}: {
+  artifact: Artifact;
+  canWrite: boolean;
+  projectId: string;
+}) {
   if (artifact.state.kind !== "map") {
-    return <MissingRow artifact={artifact} projectId={projectId} />;
+    return <MissingRow artifact={artifact} canWrite={canWrite} projectId={projectId} />;
   }
   const map = artifact.state.map;
   return (
@@ -281,13 +332,22 @@ function MapRow({ artifact, projectId }: { artifact: Artifact; projectId: string
       <RemoveButton
         artifactId={artifact.artifactId}
         artifactKind={artifact.artifactKind}
+        canWrite={canWrite}
         projectId={projectId}
       />
     </Card>
   );
 }
 
-function MissingRow({ artifact, projectId }: { artifact: Artifact; projectId: string }) {
+function MissingRow({
+  artifact,
+  canWrite,
+  projectId,
+}: {
+  artifact: Artifact;
+  canWrite: boolean;
+  projectId: string;
+}) {
   return (
     <Card className="flex-row items-center gap-4 px-4">
       <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -301,6 +361,7 @@ function MissingRow({ artifact, projectId }: { artifact: Artifact; projectId: st
       <RemoveButton
         artifactId={artifact.artifactId}
         artifactKind={artifact.artifactKind}
+        canWrite={canWrite}
         projectId={projectId}
       />
     </Card>
@@ -309,13 +370,13 @@ function MissingRow({ artifact, projectId }: { artifact: Artifact; projectId: st
 
 /**
  * The add-reference candidates for one kind: published datasets plus the
- * project owner's drafts (the drafts read is the all-users 5a read; the
- * workspace never widens it), saved derived specs, or maps — already-added
- * ids excluded. Module-level so the dialog stays under the complexity budget.
+ * VIEWER'S OWN drafts (the drafts read is the viewer-scoped 5a read — a
+ * member's candidates are their own drafts; project-held drafts are already
+ * members), saved derived specs, or maps — already-added ids excluded.
+ * Module-level so the dialog stays under the complexity budget.
  */
 function buildCandidates(
   kind: "dataset" | "derived" | "map",
-  ownerAuthId: string,
   existingIds: Set<string>,
   lists: {
     datasets?: FunctionReturnType<typeof api.schemas.listSummaries>;
@@ -326,8 +387,7 @@ function buildCandidates(
 ): { id: string; label: string; hint?: string }[] {
   const candidates: { id: string; label: string; hint?: string }[] = [];
   if (kind === "dataset") {
-    const ownedDrafts = (lists.drafts ?? []).filter((row) => row.createdBy === ownerAuthId);
-    for (const row of [...(lists.datasets ?? []), ...ownedDrafts]) {
+    for (const row of [...(lists.datasets ?? []), ...(lists.drafts ?? [])]) {
       candidates.push({ hint: row.description, id: row._id, label: row.title });
     }
   } else if (kind === "derived") {
@@ -348,17 +408,17 @@ function buildCandidates(
  * membership row and nothing else — no catalog row, no copy ("fork =
  * add-to-project"). Dataset candidates also offer "fork as transform" (7b):
  * a SAVED identity spec over the source, born a project member — reuse with
- * transforms, publishable day one.
+ * transforms, publishable day one. Editor-and-up only: the page never mounts
+ * it for a viewer (their write buttons are disabled with the reason, so the
+ * dialog never opens into a wall of server denials).
  */
 function AddReferenceDialog({
   projectId,
-  ownerAuthId,
   existingIds,
   open,
   onOpenChange,
 }: {
   projectId: string;
-  ownerAuthId: string;
   existingIds: Set<string>;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -377,7 +437,7 @@ function AddReferenceDialog({
     }).data,
     derived = useQuery({ ...convexQuery(api.derivedDatasets.summaries, {}), enabled: open }).data,
     maps = useQuery({ ...convexQuery(api.maps.list, { limit: 500 }), enabled: open }).data,
-    available = buildCandidates(kind, ownerAuthId, existingIds, {
+    available = buildCandidates(kind, existingIds, {
       datasets,
       drafts,
       derived,
@@ -616,6 +676,7 @@ function ProjectWorkspacePage() {
     // and the status line. undefined until it loads; null before any press.
     latestBundle = useQuery({ ...convexQuery(api.bundles.latestForProject, { projectId }) }).data,
     [addOpen, setAddOpen] = useState(false),
+    [membersOpen, setMembersOpen] = useState(false),
     { press, pressing } = usePressBundle(projectId);
 
   if (authLoading) {
@@ -628,7 +689,7 @@ function ProjectWorkspacePage() {
   if (!isAuthenticated) {
     return (
       <main className="mx-auto max-w-3xl px-4 py-8">
-        <SignInPrompt subject="Projects are per-creator — sign in to see yours." />
+        <SignInPrompt subject="Projects are shared workspaces — sign in to see yours." />
       </main>
     );
   }
@@ -650,7 +711,7 @@ function ProjectWorkspacePage() {
             </EmptyMedia>
             <EmptyTitle>Project not found</EmptyTitle>
             <EmptyDescription>
-              It may have been deleted — or it belongs to another user.
+              It may have been deleted — or it hasn't been shared with you.
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
@@ -665,6 +726,11 @@ function ProjectWorkspacePage() {
   }
 
   const { project, artifacts } = workspace,
+    // The viewer's seat in this project (ADR 0011): owners and editors may
+    // write the workspace's content; viewers read it. Every write control
+    // below gates on this — visibly, with the reason on the disabled
+    // control, never as a silent no-op.
+    canWrite = project.role === "owner" || project.role === "editor",
     grouped = groupByKind(artifacts),
     existingIds = new Set(artifacts.map((artifact) => artifact.artifactId)),
     empty = artifacts.length === 0;
@@ -678,7 +744,12 @@ function ProjectWorkspacePage() {
         </RouterButton>
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-primary mb-1">{project.title}</h1>
+            <div className="mb-1 flex flex-wrap items-center gap-2">
+              <h1 className="text-3xl font-bold text-primary">{project.title}</h1>
+              {/* The viewer's own seat (ADR 0011's UI line): what you can do
+                  here, answered on sight. */}
+              <ProjectRoleBadge role={project.role} />
+            </div>
             <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
               <span className="flex items-center">
                 <Calendar className="mr-1.5 h-3.5 w-3.5" />
@@ -687,6 +758,16 @@ function ProjectWorkspacePage() {
               <span>
                 {artifacts.length} {artifacts.length === 1 ? "artifact" : "artifacts"}
               </span>
+              <button
+                type="button"
+                className="flex items-center text-primary underline-offset-2 hover:underline"
+                onClick={() => {
+                  setMembersOpen(true);
+                }}
+              >
+                <Users className="mr-1.5 h-3.5 w-3.5" />
+                Members
+              </button>
             </div>
             {project.description !== undefined && (
               <p className="mt-1 text-muted-foreground">{project.description}</p>
@@ -701,31 +782,55 @@ function ProjectWorkspacePage() {
                 machinery (bundle-publish.ts drives it client-side). Disabled
                 on the LOCAL press only: a run left "running" by a killed
                 browser is re-pressed INTO (start joins it, that IS the
-                resume), and an empty project is refused server-side too. */}
+                resume), and an empty project is refused server-side too.
+                Viewers see the reason on the disabled control (their seat is
+                read-only, ADR 0011). */}
             <Button
               type="button"
               onClick={() => {
                 void press();
               }}
-              disabled={pressing || empty}
+              disabled={!canWrite || pressing || empty}
               title={
-                empty
-                  ? "Nothing to publish yet — add a dataset or a map with layers first."
-                  : undefined
+                !canWrite
+                  ? "Viewers have read-only access — an editor or owner can publish."
+                  : empty
+                    ? "Nothing to publish yet — add a dataset or a map with layers first."
+                    : undefined
               }
             >
               <Rocket className="h-4 w-4 mr-2" />
               {pressing ? "Publishing…" : "Publish bundle"}
             </Button>
             {/* The in-project create/import entry point: the create page's
-                ?projectId= variant lands the draft + membership atomically. */}
-            <RouterButton to="/datasets/create" search={{ projectId }}>
-              <Plus className="h-4 w-4 mr-2" />
-              New dataset
-            </RouterButton>
+                ?projectId= variant lands the draft + membership atomically.
+                RouterButton has no disabled state — viewers get the ghost
+                button with the reason instead of a dead link. */}
+            {canWrite ? (
+              <RouterButton to="/datasets/create" search={{ projectId }}>
+                <Plus className="h-4 w-4 mr-2" />
+                New dataset
+              </RouterButton>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                disabled
+                title="Viewers have read-only access — an editor or owner can create datasets."
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                New dataset
+              </Button>
+            )}
             <Button
               type="button"
               variant="outline"
+              disabled={!canWrite}
+              title={
+                canWrite
+                  ? undefined
+                  : "Viewers have read-only access — an editor or owner can add artifacts."
+              }
               onClick={() => {
                 setAddOpen(true);
               }}
@@ -745,27 +850,31 @@ function ProjectWorkspacePage() {
             </EmptyMedia>
             <EmptyTitle>This project is empty</EmptyTitle>
             <EmptyDescription>
-              Create a dataset in the project, or add an existing one by reference.
+              {canWrite
+                ? "Create a dataset in the project, or add an existing one by reference."
+                : "Nothing has been added to this project yet — its editors and owner fill it in."}
             </EmptyDescription>
           </EmptyHeader>
-          <EmptyContent>
-            <div className="flex gap-2">
-              <RouterButton to="/datasets/create" search={{ projectId }}>
-                <Plus className="h-4 w-4 mr-2" />
-                New dataset
-              </RouterButton>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setAddOpen(true);
-                }}
-              >
-                <ListPlus className="h-4 w-4 mr-2" />
-                Add existing
-              </Button>
-            </div>
-          </EmptyContent>
+          {canWrite && (
+            <EmptyContent>
+              <div className="flex gap-2">
+                <RouterButton to="/datasets/create" search={{ projectId }}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  New dataset
+                </RouterButton>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setAddOpen(true);
+                  }}
+                >
+                  <ListPlus className="h-4 w-4 mr-2" />
+                  Add existing
+                </Button>
+              </div>
+            </EmptyContent>
+          )}
         </Empty>
       ) : (
         <div className="flex flex-col gap-6">
@@ -787,15 +896,30 @@ function ProjectWorkspacePage() {
                 <div className="flex flex-col gap-3">
                   {kind === "datasets" &&
                     grouped.datasets.map((artifact) => (
-                      <DatasetRow key={artifact._id} artifact={artifact} projectId={projectId} />
+                      <DatasetRow
+                        key={artifact._id}
+                        artifact={artifact}
+                        canWrite={canWrite}
+                        projectId={projectId}
+                      />
                     ))}
                   {kind === "derived" &&
                     grouped.derived.map((artifact) => (
-                      <DerivedRow key={artifact._id} artifact={artifact} projectId={projectId} />
+                      <DerivedRow
+                        key={artifact._id}
+                        artifact={artifact}
+                        canWrite={canWrite}
+                        projectId={projectId}
+                      />
                     ))}
                   {kind === "maps" &&
                     grouped.maps.map((artifact) => (
-                      <MapRow key={artifact._id} artifact={artifact} projectId={projectId} />
+                      <MapRow
+                        key={artifact._id}
+                        artifact={artifact}
+                        canWrite={canWrite}
+                        projectId={projectId}
+                      />
                     ))}
                 </div>
               </section>
@@ -804,12 +928,20 @@ function ProjectWorkspacePage() {
         </div>
       )}
 
-      <AddReferenceDialog
+      {canWrite && (
+        <AddReferenceDialog
+          projectId={projectId}
+          existingIds={existingIds}
+          open={addOpen}
+          onOpenChange={setAddOpen}
+        />
+      )}
+      <ProjectMembersDialog
+        creatorId={project.createdBy}
+        myRole={project.role}
+        onOpenChange={setMembersOpen}
+        open={membersOpen}
         projectId={projectId}
-        ownerAuthId={project.createdBy}
-        existingIds={existingIds}
-        open={addOpen}
-        onOpenChange={setAddOpen}
       />
     </main>
   );
