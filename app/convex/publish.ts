@@ -192,9 +192,12 @@ async function tryGetSchema(
  * members of a project holding it (an editor pressing the bundle publishes
  * the project's drafts, not just their own — locked drafts stay
  * creator-only per ADR 0010, every write); a saved registry row in a
- * project answers to its creator AND that project's editors. A row the
- * caller can't reach this way reads as absent, and every denial keeps the
- * not-found shape — an id's existence never leaks through a publish.
+ * project answers to its creator AND that project's editors. Every row the
+ * caller does not own — foreign draft, foreign published, foreign
+ * autosave — denies with the not-found shape, whatever they could see
+ * elsewhere; the one non-not-found answer ("Only a draft dataset can be
+ * published here…") stays the creator's own, for a row whose existence
+ * they already know.
  */
 async function resolvePublishTarget(
   ctx: MutationCtx,
@@ -257,10 +260,17 @@ async function resolveRegistryTarget(
 
 /**
  * The draft leg: what `datasetKey` publishes when it names a component
- * dataset, or null when it names none. ADR 0010: a locked draft answers
- * every write to its creator alone. ADR 0011: an open draft is writable by
- * owner/editor members of a project holding it — the press's publish leg
- * rides the same rule the choke point runs for every other draft write.
+ * dataset, or null when it names none. The lifecycle gate runs FIRST and
+ * the routing answer stays the creator's: this path publishes DRAFTS, so a
+ * row that is not one is refused — with the routing message for its
+ * creator, and as ABSENT for everyone else (the seat widening below is
+ * draft-only and must never answer for a row the caller cannot see — a
+ * foreign published row reads as not-found, never as "only a draft",
+ * whose wording would disclose the id names a real dataset). Within
+ * drafts: ADR 0010 — a locked draft answers every write to its creator
+ * alone; ADR 0011 — an open draft is writable by owner/editor members of a
+ * project holding it, the press's publish leg riding the same rule the
+ * choke point runs for every other draft write.
  */
 async function resolveDraftTarget(
   ctx: MutationCtx,
@@ -271,17 +281,20 @@ async function resolveDraftTarget(
   if (draft === null) {
     return null;
   }
+  if (draft.lifecycle !== "draft") {
+    if (draft.createdBy !== actorId) {
+      throw new ConvexError("Nothing to publish was found at that id.");
+    }
+    throw new ConvexError(
+      "Only a draft dataset can be published here — already-published datasets go through their own version flows.",
+    );
+  }
   if (draft.createdBy !== actorId) {
     const writable =
       draft.editPolicy !== "locked" && (await datasetWritableBy(ctx, datasetKey, draft, actorId));
     if (!writable) {
       throw new ConvexError("Nothing to publish was found at that id.");
     }
-  }
-  if (draft.lifecycle !== "draft") {
-    throw new ConvexError(
-      "Only a draft dataset can be published here — already-published datasets go through their own version flows.",
-    );
   }
   // The draft's publishedVisibility is re-resolved at freeze (the draft may
   // still be flipped while the attempt uploads) — it never rides the attempt.

@@ -769,6 +769,49 @@ describe("projects: collaboration — the role access matrix (ADR 0011)", () => 
       outsider.mutation(api.publish.start, { datasetKey: ownerDraftId }),
     ).rejects.toThrow(/Nothing to publish/);
 
+    // The draft leg's leak stays closed (ADR 0011 review, finding 3): a
+    // foreign row that is NOT a draft denies with the not-found shape —
+    // whoever asks, however visible or shared the row is. First the exact
+    // probe the review ran: an OUTSIDER against an ordinary published row
+    // that the same outsider's schemas.get denies as absent…
+    await expect(outsider.mutation(api.publish.start, { datasetKey: publishedId })).rejects.toThrow(
+      /Nothing to publish/,
+    );
+    // …then its author-restricted twin.
+    const restrictedId = await createPublishedDataset(owner, "Restricted");
+    await owner.mutation(api.schemas.setVisibility, {
+      schemaId: restrictedId,
+      visibility: "author",
+    });
+    await expect(
+      outsider.mutation(api.publish.start, { datasetKey: restrictedId }),
+    ).rejects.toThrow(/Nothing to publish/);
+    // Shared into the project, an already-published member is still not
+    // re-publishable through this path — and still reads as absent to the
+    // editor's seat check. The routing message ("Only a draft dataset…")
+    // stays the creator's alone.
+    await editor.mutation(api.projects.addArtifact, {
+      artifactId: publishedId,
+      artifactKind: "dataset",
+      projectId,
+    });
+    await expect(editor.mutation(api.publish.start, { datasetKey: publishedId })).rejects.toThrow(
+      /Nothing to publish/,
+    );
+    await expect(owner.mutation(api.publish.start, { datasetKey: publishedId })).rejects.toThrow(
+      /Only a draft dataset can be published/,
+    );
+    // The registry leg's shape, pinned too: a foreign builder autosave
+    // (never saved, never shared) reads as absent.
+    const autosaveId = await editor.mutation(api.derivedDatasets.save, {
+      spec: { operations: [], sourceDatasetId: publishedId },
+      status: "draft",
+      title: "Editor autosave",
+    });
+    await expect(outsider.mutation(api.publish.start, { datasetKey: autosaveId })).rejects.toThrow(
+      /Nothing to publish/,
+    );
+
     // And ADR 0010 rides through the press path unchanged: a locked draft
     // answers every write — publish included — to its creator alone.
     await owner.mutation(api.schemas.setEditPolicy, {
