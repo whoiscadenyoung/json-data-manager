@@ -11,6 +11,7 @@ import {
   layersMapShouldMount,
   narrowStoredStyle,
   orderedChildrenOf,
+  paintsForStyle,
   renderIdsByDatasetIdOf,
   styleOrDefault,
   withArrivedTileSchema,
@@ -177,6 +178,37 @@ describe("styleOrDefault", () => {
     expect(style.fillColor).toBe("#22c55e");
     expect(style.fillOpacity).toBe(0.2);
     expect(style.radius).toBe(9);
+  });
+});
+
+describe("paintsForStyle", () => {
+  it("maps every style field to paint — including the opacities a group scales", () => {
+    const paints = paintsForStyle({
+      color: "#ef4444",
+      fillColor: "#f59e0b",
+      fillOpacity: 0.1,
+      opacity: 0.5,
+      radius: 7,
+      weight: 3,
+    });
+    expect(paints.fillPaint).toStrictEqual({ "fill-color": "#f59e0b", "fill-opacity": 0.1 });
+    expect(paints.linePaint).toStrictEqual({
+      "line-color": "#ef4444",
+      "line-opacity": 0.5,
+      "line-width": 3,
+    });
+    expect(paints.circlePaint).toStrictEqual({
+      "circle-color": "#ef4444",
+      "circle-opacity": 0.5,
+      "circle-radius": 7,
+    });
+  });
+
+  it("renders the defaults when nothing was styled", () => {
+    const paints = paintsForStyle(styleOrDefault(undefined));
+    expect(paints.linePaint["line-opacity"]).toBe(1);
+    expect(paints.circlePaint["circle-radius"]).toBe(5);
+    expect(paints.fillPaint["fill-opacity"]).toBe(0.2);
   });
 });
 

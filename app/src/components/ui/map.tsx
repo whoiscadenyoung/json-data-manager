@@ -2209,6 +2209,14 @@ type MapClusterLayerProps<P extends GeoJSON.GeoJsonProperties = GeoJSON.GeoJsonP
   clusterThresholds?: [number, number];
   /** Color for unclustered individual points (default: "#3b82f6") */
   pointColor?: string;
+  /**
+   * Opacity for unclustered individual points, 0-1 (default: 1). The style
+   * panel's group transparency dims data points through this — cluster
+   * bubbles are aggregation UI and keep their own look.
+   */
+  pointOpacity?: number;
+  /** Radius for unclustered individual points in pixels (default: 5) */
+  pointRadius?: number;
   /** Callback when an unclustered point is clicked */
   onPointClick?: (
     feature: GeoJSON.Feature<GeoJSON.Point, P>,
@@ -2229,6 +2237,8 @@ function MapClusterLayer<P extends GeoJSON.GeoJsonProperties = GeoJSON.GeoJsonPr
   clusterColors = DEFAULT_CLUSTER_COLORS,
   clusterThresholds = DEFAULT_CLUSTER_THRESHOLDS,
   pointColor = "#3b82f6",
+  pointOpacity = 1,
+  pointRadius = 5,
   onPointClick,
   onClusterClick,
 }: MapClusterLayerProps<P>) {
@@ -2243,6 +2253,8 @@ function MapClusterLayer<P extends GeoJSON.GeoJsonProperties = GeoJSON.GeoJsonPr
     clusterColors,
     clusterThresholds,
     pointColor,
+    pointOpacity,
+    pointRadius,
   });
 
   // Add source and layers on mount. In the default non-clustered mode a
@@ -2314,7 +2326,8 @@ function MapClusterLayer<P extends GeoJSON.GeoJsonProperties = GeoJSON.GeoJsonPr
       ...(cluster ? { filter: ["!", ["has", "point_count"]] } : {}),
       paint: {
         "circle-color": pointColor,
-        "circle-radius": 5,
+        "circle-opacity": pointOpacity,
+        "circle-radius": pointRadius,
         "circle-stroke-width": 2,
         "circle-stroke-color": "#fff",
       },
@@ -2343,10 +2356,12 @@ function MapClusterLayer<P extends GeoJSON.GeoJsonProperties = GeoJSON.GeoJsonPr
     }
   }, [isLoaded, map, data, sourceId]);
 
-  // Update layer styles when props change (cluster layers only exist in
-  // clustered mode; the point layer color applies to both modes).
+  // Update layer styles when props change. The cluster bubbles only exist
+  // in clustered mode (guarded per-layer below), but the point layer's
+  // color/opacity/radius apply to BOTH modes — the canvas restyles
+  // unclustered points live when the style panel saves.
   useEffect(() => {
-    if (!isLoaded || !map || !cluster) return;
+    if (!isLoaded || !map) return;
 
     const prev = stylePropsRef.current;
     const colorsChanged =
@@ -2374,12 +2389,26 @@ function MapClusterLayer<P extends GeoJSON.GeoJsonProperties = GeoJSON.GeoJsonPr
       ]);
     }
 
-    // Update unclustered point layer color
-    if (map.getLayer(unclusteredLayerId) && prev.pointColor !== pointColor) {
-      map.setPaintProperty(unclusteredLayerId, "circle-color", pointColor);
+    // Update unclustered point layer color and appearance
+    if (map.getLayer(unclusteredLayerId)) {
+      if (prev.pointColor !== pointColor) {
+        map.setPaintProperty(unclusteredLayerId, "circle-color", pointColor);
+      }
+      if (prev.pointOpacity !== pointOpacity) {
+        map.setPaintProperty(unclusteredLayerId, "circle-opacity", pointOpacity);
+      }
+      if (prev.pointRadius !== pointRadius) {
+        map.setPaintProperty(unclusteredLayerId, "circle-radius", pointRadius);
+      }
     }
 
-    stylePropsRef.current = { clusterColors, clusterThresholds, pointColor };
+    stylePropsRef.current = {
+      clusterColors,
+      clusterThresholds,
+      pointColor,
+      pointOpacity,
+      pointRadius,
+    };
   }, [
     isLoaded,
     map,
@@ -2388,6 +2417,8 @@ function MapClusterLayer<P extends GeoJSON.GeoJsonProperties = GeoJSON.GeoJsonPr
     clusterColors,
     clusterThresholds,
     pointColor,
+    pointOpacity,
+    pointRadius,
   ]);
 
   // Handle click events

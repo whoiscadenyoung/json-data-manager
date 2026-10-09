@@ -96,6 +96,38 @@ export function styleOrDefault(style: StoredStyle | undefined): LayerStyle {
   };
 }
 
+/**
+ * The MapLibre paint sets one render layer draws with — the SINGLE mapping
+ * from a (possibly group-scaled) style to paint, so nothing the style panel
+ * edits can silently stop rendering: fill carries fill-color/fill-opacity,
+ * strokes carry line-color/line-width AND line-opacity, and points carry
+ * circle-color/circle-opacity/circle-radius (the shared stroke/point
+ * opacity, the same sharing the panel's labels state). Cluster bubbles are
+ * aggregation UI, not data ink — they keep their own look and do not dim.
+ */
+export function paintsForStyle(style: LayerStyle): {
+  circlePaint: { "circle-color": string; "circle-opacity": number; "circle-radius": number };
+  fillPaint: { "fill-color": string; "fill-opacity": number };
+  linePaint: { "line-color": string; "line-opacity": number; "line-width": number };
+} {
+  return {
+    circlePaint: {
+      "circle-color": style.color,
+      "circle-opacity": style.opacity,
+      "circle-radius": style.radius,
+    },
+    fillPaint: {
+      "fill-color": style.fillColor,
+      "fill-opacity": style.fillOpacity,
+    },
+    linePaint: {
+      "line-color": style.color,
+      "line-opacity": style.opacity,
+      "line-width": style.weight,
+    },
+  };
+}
+
 /** Strips to the stored shape, so a style patch writes only what the panel edited. */
 export function storedStyleOf(style: LayerStyle): StoredStyle {
   return {

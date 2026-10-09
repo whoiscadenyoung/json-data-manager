@@ -16,7 +16,7 @@ import {
   splitPointLikeGeometries,
 } from "#/lib/point-geometry";
 import type { RenderLayer } from "#/lib/projects/map-layers";
-import { toFeatureRow } from "#/lib/projects/map-layers";
+import { paintsForStyle, toFeatureRow } from "#/lib/projects/map-layers";
 
 /** A geometry row re-keyed to its render layer (`sourceSchemaId` is the entry's real home dataset). */
 type KeyedGeometryEntry = DatasetGeometryRow & { sourceSchemaId?: string };
@@ -177,8 +177,12 @@ const NO_TILE_RENDER_LAYERS: TileRenderLayer[] = [];
  * through the same `{entryId, schemaId}` pair, with `schemaId` resolved to
  * the entry's real home dataset via `datasetIdByRenderId`.
  *
- * Entry properties load on demand (issue #52) and enrich through the popup
- * executor (issue #97) — subscriptions live only while the popup is open.
+ * Every paint a layer draws comes from `paintsForStyle(layer.style)` — the
+ * one style→paint mapping, so opacity (a group's transparency scaling) is
+ * visible on fills, strokes, AND points (clusters are aggregation UI and
+ * keep their own look). Entry properties load on demand (issue #52) and
+ * enrich through the popup executor (issue #97) — subscriptions live only
+ * while the popup is open.
  *
  * The viewport fits exactly once at mount from the layers' datasets' stored
  * `boundingBox` extents — UNLESS the map carries a saved camera
@@ -259,6 +263,7 @@ export function ProjectMapCanvas({
         {renderLayers.map((layer) => {
           const tile = tileByRenderId.get(layer.renderId);
           if (tile !== undefined) {
+            const paints = paintsForStyle(layer.style);
             return (
               <MapVectorTiles<{ entryId: string }>
                 key={layer.renderId}
@@ -266,18 +271,9 @@ export function ProjectMapCanvas({
                 url={tile.url}
                 visible={layer.visible}
                 interactive
-                fillPaint={{
-                  "fill-color": layer.style.fillColor,
-                  "fill-opacity": layer.style.fillOpacity,
-                }}
-                linePaint={{
-                  "line-color": layer.style.color,
-                  "line-width": layer.style.weight,
-                }}
-                circlePaint={{
-                  "circle-color": layer.style.color,
-                  "circle-radius": layer.style.radius,
-                }}
+                fillPaint={paints.fillPaint}
+                linePaint={paints.linePaint}
+                circlePaint={paints.circlePaint}
                 fillHoverPaint={{ "fill-opacity": Math.min(1, layer.style.fillOpacity + 0.15) }}
                 onIdle={() => {
                   if (onTileSourceIdle !== undefined) {
@@ -302,6 +298,7 @@ export function ProjectMapCanvas({
           // `MapGeoJSON` renders `fill`/`line` layers, which draw nothing for
           // Point/MultiPoint geometries — those go to `MapClusterLayer`.
           const { pointRows, otherRows } = splitPointLikeGeometries(rows),
+            paints = paintsForStyle(layer.style),
             withResolved = (items: KeyedGeometryEntry[]) =>
               items.flatMap((g) => {
                 const resolved = resolvedGeometries.get(g._id);
@@ -317,14 +314,8 @@ export function ProjectMapCanvas({
                 <MapGeoJSON<FeatureProperties>
                   data={otherCollection}
                   interactive
-                  fillPaint={{
-                    "fill-color": layer.style.fillColor,
-                    "fill-opacity": layer.style.fillOpacity,
-                  }}
-                  linePaint={{
-                    "line-color": layer.style.color,
-                    "line-width": layer.style.weight,
-                  }}
+                  fillPaint={paints.fillPaint}
+                  linePaint={paints.linePaint}
                   fillHoverPaint={{ "fill-opacity": Math.min(1, layer.style.fillOpacity + 0.15) }}
                   onClick={(e) => {
                     handleFeatureSelect(e.feature.properties);
@@ -335,6 +326,8 @@ export function ProjectMapCanvas({
                 <MapClusterLayer<FeatureProperties>
                   data={pointCollection}
                   pointColor={layer.style.color}
+                  pointOpacity={layer.style.opacity}
+                  pointRadius={layer.style.radius}
                   onPointClick={(feature) => {
                     handleFeatureSelect(feature.properties);
                   }}
