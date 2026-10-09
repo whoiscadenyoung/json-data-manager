@@ -88,10 +88,12 @@ import { CATALOG_READ_LIMIT } from "./schemas";
  * 0011): the press answers to the project's ROLE, not one creator — `start`
  * and every leg mutation (via `runningRun`) write through
  * `projects.projectForWrite`'s editor-and-up check, a viewer or outsider's
- * runId reads as "no longer exists", and the closure reads take the project
- * CREATOR as the component reads' `viewerId` (the plan may name the
- * creator's drafts — which a member pressing is trusted with, since a
- * project-held draft is member-visible by design). Reads stay split
+ * runId reads as "no longer exists", and the closure is complete over every
+ * PROJECT-HELD row (ADR 0011: `collectClosureInput` resolves the memberships
+ * by id past the identity-scoped pre-pass, so a member's press plans and
+ * publishes drafts any member created, not just their own — and `plan` and
+ * `start` pass the same viewer identity, so a preview and the press it
+ * started can never disagree). Reads stay split
  * deliberately: the project-scoped ones (`plan`, `run`, `latestForProject`)
  * are member-scoped like `projects.get`, while `layerResolutions` still
  * answers to any signed-in MAP viewer — maps are shared catalog artifacts
@@ -454,16 +456,19 @@ async function collectLayersByMap(
 
 /**
  * Resolves everything the pure closure core reads, from the project's
- * membership rows plus four light component reads (the same summaries pair
- * `projects.get` pays — merged so drafts and published rows answer alike —
- * plus the raw membership rows, which include the drafts the consumer
- * `listSchemasByCollection` filters out, and the groups list). The
- * `viewerId` is the project's creator (every caller has already checked
- * ownership): the summaries pair is identity-scoped, so a foreign draft or
- * author-only row never enters a plan — the walk answers "no longer exists"
- * for it, the same answer the isolation rules give everywhere else. The
- * registry reads also capture each saved row's `dependsOn` edges, so derived
- * members can be ordered sources-before-forks.
+ * membership rows plus light component reads: the identity-scoped summaries
+ * pair `projects.get` pays (the pre-pass), plus the raw membership rows,
+ * which include the drafts the consumer `listSchemasByCollection` filters
+ * out, and the groups list. Phase 1 of the project-workspace design (ADR
+ * 0011): the identity-scoped pair can never return one member another
+ * member's draft, so the pass below resolves the REST of this project's
+ * dataset memberships by id through the host-flow by-ids read — the closure
+ * is complete over every project-held row, whatever member created it (the
+ * role guard every caller runs is what authorizes the payload).
+ * `viewerId` only seeds the pre-pass, so `plan` and `start` pass the same
+ * identity (the project's creator) and can never disagree about what a
+ * press would do. The registry reads also capture each saved row's
+ * `dependsOn` edges, so derived members can be ordered sources-before-forks.
  */
 async function collectClosureInput(
   ctx: QueryCtx,
@@ -486,10 +491,29 @@ async function collectClosureInput(
     ctx.runQuery(components.jsonCms.lib.listSchemaCollections, { limit: CATALOG_READ_LIMIT }),
     ctx.runQuery(components.jsonCms.lib.listGroups, { limit: CATALOG_READ_LIMIT }),
   ]);
+  // The member-held rows the identity-scoped pair can never return: resolved
+  // by id from THIS project's membership rows only. Junk ids (a membership
+  // row can name any string) simply come back absent — the walk answers "no
+  // longer exists", exactly as for a deleted artifact. The slice is the
+  // component read's id cap (500); past it — never reached at project scale —
+  // the walk drops the remainder, the same display-bound behavior the
+  // workspace read documents.
+  const resolvedIds = new Set([...summaries, ...drafts].map((row) => row._id));
+  const unresolved = memberships
+    .filter((membership) => membership.artifactKind === "dataset")
+    .map((membership) => membership.artifactId)
+    .filter((artifactId) => !resolvedIds.has(artifactId))
+    .slice(0, 500);
+  const memberDrafts =
+    unresolved.length === 0
+      ? []
+      : await ctx.runQuery(components.jsonCms.lib.getSchemaSummaries, {
+          schemaIds: unresolved,
+        });
 
   const lifecycleByDataset = new Map<string, "draft" | "published">(),
     groupIdByDataset = new Map<string, string>();
-  for (const row of [...summaries, ...drafts]) {
+  for (const row of [...summaries, ...drafts, ...memberDrafts]) {
     lifecycleByDataset.set(row._id, row.lifecycle === "draft" ? "draft" : "published");
     if (row.groupId !== undefined) {
       groupIdByDataset.set(row._id, row.groupId);
@@ -565,8 +589,9 @@ async function projectForRead(
 
 /**
  * What one press of this project WOULD do — the press's preview and the
- * tests' plan assertion. null when the project doesn't exist or belongs to
- * another user (creator-scoped: the plan names drafts).
+ * tests' plan assertion. null when the project doesn't exist or the caller
+ * holds no role in it (member-scoped: the plan names the project's drafts,
+ * ADR 0011).
  */
 export const plan = query({
   args: { projectId: v.string() },
@@ -878,10 +903,11 @@ export const start = mutation({
       await ctx.db.patch(latest._id, { lastProgressAt: Date.now() });
       return { joined: true, runId: latest._id };
     }
-    // The closure walks with the PROJECT CREATOR as the component reads'
+    // The closure walks with the PROJECT CREATOR as the component pre-pass's
     // viewerId — the same identity `plan` uses, so an editor's press and the
-    // preview it pressed from can never disagree (the plan may name the
-    // creator's drafts, which ADR 0011 makes member-visible anyway).
+    // preview it pressed from can never disagree. The pre-pass identity no
+    // longer bounds the plan: collectClosureInput resolves every
+    // project-held row by id past it (ADR 0011), whatever member created it.
     const { members } = bundleClosure(await collectClosureInput(ctx, projectId, project.createdBy));
     if (members.length === 0) {
       // The server-side gate behind the workspace's disabled control: an

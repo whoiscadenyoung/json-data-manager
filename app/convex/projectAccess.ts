@@ -66,17 +66,19 @@ type SchemaVisibilityDoc = {
 };
 
 /**
- * The ids of the projects holding one dataset artifact, bounded at
- * MAX_HOLDERS (a membership row is the only thing that makes a foreign draft
- * project-visible — no row, no grant).
+ * The ids of the projects holding one artifact — a component dataset or a
+ * derivedDatasets registry row (the two kinds a press or a write can
+ * reach), bounded at MAX_HOLDERS (a membership row is the only thing that
+ * makes a foreign row project-visible — no row, no grant).
  */
 async function projectsHolding(
   ctx: Pick<QueryCtx, "db">,
-  schemaId: string,
+  kind: "dataset" | "derived",
+  artifactId: string,
 ): Promise<Id<"projects">[]> {
   const holders = await ctx.db
     .query("projectArtifacts")
-    .withIndex("by_artifact", (q) => q.eq("artifactKind", "dataset").eq("artifactId", schemaId))
+    .withIndex("by_artifact", (q) => q.eq("artifactKind", kind).eq("artifactId", artifactId))
     .take(MAX_HOLDERS);
   return holders.map((row) => row.projectId);
 }
@@ -102,7 +104,7 @@ export async function datasetVisibleTo(
   if (doc.createdBy === actorId) {
     return true;
   }
-  for (const projectId of await projectsHolding(ctx, schemaId)) {
+  for (const projectId of await projectsHolding(ctx, "dataset", schemaId)) {
     // oxlint-disable-next-line no-await-in-loop -- short-circuit: any single hit grants visibility, so the sequential early return IS the fast path.
     if ((await projectRoleFor(ctx, projectId, actorId)) !== null) {
       return true;
@@ -128,7 +130,32 @@ export async function datasetWritableBy(
   if (doc.lifecycle !== "draft" || doc.createdBy === actorId) {
     return true;
   }
-  for (const projectId of await projectsHolding(ctx, schemaId)) {
+  for (const projectId of await projectsHolding(ctx, "dataset", schemaId)) {
+    // oxlint-disable-next-line no-await-in-loop -- short-circuit: any single editor-or-owner hit grants the write, so the sequential early return IS the fast path.
+    const role = await projectRoleFor(ctx, projectId, actorId);
+    if (role !== null && roleAtLeast(role, "editor")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The registry-row write rule of ADR 0011 (the derivedDatasets twin of
+ * `datasetWritableBy`'s draft leg): a SAVED registry row in a project is
+ * publishable by that project's owner/editor members, not its creator
+ * alone — an editor pressing the bundle publishes the project's forks, not
+ * just their own. Draft (builder-autosave) rows are refused nowhere here:
+ * the caller's status check answers first, and a builder autosave is not a
+ * project artifact in any meaningful sense (ADR 0011's registry-draft
+ * boundary).
+ */
+export async function registryRowWritableBy(
+  ctx: Pick<QueryCtx, "db">,
+  rowId: string,
+  actorId: string,
+): Promise<boolean> {
+  for (const projectId of await projectsHolding(ctx, "derived", rowId)) {
     // oxlint-disable-next-line no-await-in-loop -- short-circuit: any single editor-or-owner hit grants the write, so the sequential early return IS the fast path.
     const role = await projectRoleFor(ctx, projectId, actorId);
     if (role !== null && roleAtLeast(role, "editor")) {

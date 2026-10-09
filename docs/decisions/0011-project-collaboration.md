@@ -118,10 +118,22 @@ anywhere outside the project that holds it).
   outsider blind, catalog still excludes), cascade deletion, and the
   editor-presses-the-bundle flow.
 - bundles.ts's project-scoped reads (`plan`, `run`, `latestForProject`)
-  are member-scoped; its press writes are editor-and-up; an editor's press
-  walks the closure with the project CREATOR as the component reads'
-  `viewerId` — the same identity `plan` uses, so the preview and the press
-  it started can never disagree about which drafts are in.
+  are member-scoped; its press writes are editor-and-up; and the press
+  closure is complete over every project-held row — `collectClosureInput`
+  resolves the memberships by id past the identity-scoped pre-pass, so a
+  member's own drafts (invisible to the creator-keyed component reads) plan
+  and publish like any other held row, and `plan` and `start` pass the same
+  viewer identity (the project's creator), so the preview and the press it
+  started can never disagree about which drafts are in.
+- The publish path answers to the seat, not the creator stamp:
+  `publish.start`'s target resolution accepts a project-held draft or saved
+  fork from that project's owner/editor members (locked drafts stay
+  creator-only per ADR 0010 — every write), so an editor pressing the
+  bundle publishes members they did not create personally instead of
+  failing each one. A draft's frozen row still carries the DRAFT author's
+  identity (with the visibility choice it inherits), so an author-restricted
+  v1 stays visible to its author whoever pressed; the attempt row
+  attributes the act to the presser.
 - Trust still rests on controlled sign-in (ADR 0009 addendum): inviting by
   email assumes emails resolve to real, admin-created accounts. The invite
   dialog offers raw user ids for exactly the case the mirror can't resolve.

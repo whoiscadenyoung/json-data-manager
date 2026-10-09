@@ -729,4 +729,54 @@ describe("projects: collaboration — the role access matrix (ADR 0011)", () => 
       /no longer exists/i,
     );
   });
+
+  it("plans every held draft from the editor's seat and answers publish.start to the seat, not the creator stamp", async () => {
+    const { projectId, owner, editor, viewer, outsider } = await matrix();
+    const publishedId = await createPublishedDataset(owner);
+    await owner.mutation(api.entries.create, { data: { label: "S-1" }, schemaId: publishedId });
+    const ownerDraftId = await createProjectDraft(owner, projectId, "Owner draft");
+    const forkId = await owner.mutation(api.projects.forkAsSpec, {
+      projectId,
+      sourceDatasetId: publishedId,
+      title: "Owner fork",
+    });
+    const editorDraftId = await editor.mutation(api.projects.createDraftDataset, {
+      projectId,
+      schema: { properties: { label: { type: "string" } }, title: "Editor draft", type: "object" },
+    });
+
+    // The editor's plan resolves every held draft — the editor-created one
+    // never entered the identity-scoped reads (they run with the project
+    // creator's viewerId) and used to drop out as "no longer exists".
+    const plan = await editor.query(api.bundles.plan, { projectId });
+    const keys = plan === null ? [] : plan.members.map((member) => member.datasetKey);
+    expect(keys).toContain(ownerDraftId);
+    expect(keys).toContain(editorDraftId);
+    expect(keys).toContain(forkId);
+
+    // publish.start answers to the seat: the editor can start the publish
+    // for members they did not create personally — the exact failure the
+    // old creator-only resolution caused for every non-editor-created
+    // member of an editor's press.
+    await editor.mutation(api.publish.start, { datasetKey: ownerDraftId });
+    await editor.mutation(api.publish.start, { datasetKey: forkId });
+
+    // Everyone below editor still reads the held draft as absent here.
+    await expect(viewer.mutation(api.publish.start, { datasetKey: ownerDraftId })).rejects.toThrow(
+      /Nothing to publish/,
+    );
+    await expect(
+      outsider.mutation(api.publish.start, { datasetKey: ownerDraftId }),
+    ).rejects.toThrow(/Nothing to publish/);
+
+    // And ADR 0010 rides through the press path unchanged: a locked draft
+    // answers every write — publish included — to its creator alone.
+    await owner.mutation(api.schemas.setEditPolicy, {
+      editPolicy: "locked",
+      schemaId: ownerDraftId,
+    });
+    await expect(editor.mutation(api.publish.start, { datasetKey: ownerDraftId })).rejects.toThrow(
+      /Nothing to publish/,
+    );
+  });
 });

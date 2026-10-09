@@ -15,6 +15,7 @@ import { auth } from "./auth";
 import { newestCompletedAttempt } from "./consumption";
 import { resolveDataset } from "./derivedDatasets";
 import { specDependencies, specStatus } from "./derivedSpec";
+import { datasetWritableBy, registryRowWritableBy } from "./projectAccess";
 import { deleteDatasetCascading } from "./schemas";
 import { alreadyFrozenByRef, createFrozenVersion, type SchemaGeometryType } from "./versioning";
 
@@ -183,42 +184,108 @@ async function tryGetSchema(
 // Start: resolve the target, join-or-revive the active attempt, mint the key
 // ---------------------------------------------------------------------------
 
-/** Resolves what `datasetKey` publishes: a saved registry row or a lifecycle-draft component dataset — the CALLER'S own (stage 8: ownership is part of resolution; a foreign row reads as absent). */
+/**
+ * Resolves what `datasetKey` publishes: a saved registry row or a
+ * lifecycle-draft component dataset. Stage 8 made ownership part of
+ * resolution; phase 1 of the project-workspace design (ADR 0011) widens it
+ * to the project seat: a draft answers to its creator AND to owner/editor
+ * members of a project holding it (an editor pressing the bundle publishes
+ * the project's drafts, not just their own — locked drafts stay
+ * creator-only per ADR 0010, every write); a saved registry row in a
+ * project answers to its creator AND that project's editors. A row the
+ * caller can't reach this way reads as absent, and every denial keeps the
+ * not-found shape — an id's existence never leaks through a publish.
+ */
 async function resolvePublishTarget(
   ctx: MutationCtx,
   actorId: string,
   datasetKey: string,
 ): Promise<{ description?: string; kind: "derived" | "draft"; spec?: unknown; title: string }> {
-  const registryId = ctx.db.normalizeId("derivedDatasets", datasetKey);
-  if (registryId !== null) {
-    const row = await ctx.db.get(registryId);
-    if (row !== null) {
-      if (row.createdBy !== actorId) {
-        throw new ConvexError("Nothing to publish was found at that id.");
-      }
-      if (row.status !== "saved") {
-        throw new ConvexError(
-          "Save this transform before publishing it — a builder autosave can't publish.",
-        );
-      }
-      return { description: row.description, kind: "derived", spec: row.spec, title: row.title };
-    }
+  const registry = await resolveRegistryTarget(ctx, actorId, datasetKey);
+  if (registry !== null) {
+    return registry;
   }
-  const draft = await tryGetSchema(ctx, datasetKey);
+  const draft = await resolveDraftTarget(ctx, actorId, datasetKey);
   if (draft !== null) {
-    if (draft.createdBy !== actorId) {
-      throw new ConvexError("Nothing to publish was found at that id.");
-    }
-    if (draft.lifecycle !== "draft") {
-      throw new ConvexError(
-        "Only a draft dataset can be published here — already-published datasets go through their own version flows.",
-      );
-    }
-    // The draft's publishedVisibility is re-resolved at freeze (the draft may
-    // still be flipped while the attempt uploads) — it never rides the attempt.
-    return { description: draft.description, kind: "draft", title: draft.title };
+    return draft;
   }
   throw new ConvexError("Nothing to publish was found at that id.");
+}
+
+/** The publish target's shape, either leg. */
+type PublishTarget = {
+  description?: string;
+  kind: "derived" | "draft";
+  spec?: unknown;
+  title: string;
+};
+
+/**
+ * The registry leg: what `datasetKey` publishes when it names a
+ * derivedDatasets row, or null when it names none. A saved row answers to
+ * its creator AND (ADR 0011) to owner/editor members of a project holding
+ * it — an editor's press publishes the project's forks. A builder autosave
+ * keeps the not-found answer for everyone but its creator (no status leak),
+ * then the save-first hint for its own.
+ */
+async function resolveRegistryTarget(
+  ctx: MutationCtx,
+  actorId: string,
+  datasetKey: string,
+): Promise<PublishTarget | null> {
+  const registryId = ctx.db.normalizeId("derivedDatasets", datasetKey);
+  if (registryId === null) {
+    return null;
+  }
+  const row = await ctx.db.get(registryId);
+  if (row === null) {
+    return null;
+  }
+  if (
+    row.createdBy !== actorId &&
+    !(row.status === "saved" && (await registryRowWritableBy(ctx, datasetKey, actorId)))
+  ) {
+    throw new ConvexError("Nothing to publish was found at that id.");
+  }
+  if (row.status !== "saved") {
+    throw new ConvexError(
+      "Save this transform before publishing it — a builder autosave can't publish.",
+    );
+  }
+  return { description: row.description, kind: "derived", spec: row.spec, title: row.title };
+}
+
+/**
+ * The draft leg: what `datasetKey` publishes when it names a component
+ * dataset, or null when it names none. ADR 0010: a locked draft answers
+ * every write to its creator alone. ADR 0011: an open draft is writable by
+ * owner/editor members of a project holding it — the press's publish leg
+ * rides the same rule the choke point runs for every other draft write.
+ */
+async function resolveDraftTarget(
+  ctx: MutationCtx,
+  actorId: string,
+  datasetKey: string,
+): Promise<PublishTarget | null> {
+  const draft = await tryGetSchema(ctx, datasetKey);
+  if (draft === null) {
+    return null;
+  }
+  if (draft.createdBy !== actorId) {
+    const writable =
+      draft.editPolicy !== "locked" && (await datasetWritableBy(ctx, datasetKey, draft, actorId));
+    if (!writable) {
+      throw new ConvexError("Nothing to publish was found at that id.");
+    }
+  }
+  if (draft.lifecycle !== "draft") {
+    throw new ConvexError(
+      "Only a draft dataset can be published here — already-published datasets go through their own version flows.",
+    );
+  }
+  // The draft's publishedVisibility is re-resolved at freeze (the draft may
+  // still be flipped while the attempt uploads) — it never rides the attempt.
+  return { description: draft.description, kind: "draft", title: draft.title };
 }
 
 /** ~62 bits of randomness for idempotency keys (the tags.ts ref mint, widened). */
@@ -639,9 +706,12 @@ export const freeze = mutation({
     const { importId, schemaId } = await createFrozenVersion(ctx, {
       // The author rides with the visibility choice (stage 8): an
       // author-restricted frozen row must carry the author's identity or it
-      // would be invisible to everyone, its author included. The freeze
-      // checked ownership above, so the caller IS the attempt's creator.
-      actorId,
+      // would be invisible to everyone, its author included. On a draft
+      // publish that author is the DRAFT's creator — the attempt's creator
+      // (the pressing member, ADR 0011) may not be; a derived publish has no
+      // visibility coupling and keeps the presser (the attempt row records
+      // them either way).
+      actorId: built.author ?? actorId,
       boundWrite: "publish",
       chunkStorageIds: attempt.chunkStorageIds,
       collectionsSourceSchemaId: attempt.datasetKind === "draft" ? attempt.datasetKey : undefined,
@@ -681,6 +751,8 @@ type AttemptDoc = {
 };
 
 type FreezeInputs = {
+  /** The author the frozen row must carry: the DRAFT's creator on a draft publish — the attempt's creator (the pressing member, ADR 0011) may not be the author, and an author-restricted frozen row attributed to anyone else would be invisible to its author. Absent (derived publishes) leaves the presser's identity. */
+  author?: string;
   geometryType?: SchemaGeometryType;
   kind?: "geospatial" | "standard";
   lineage: {
@@ -719,6 +791,9 @@ async function draftFreezeInputs(
     );
   }
   return {
+    // The author rides with the visibility choice: an author-restricted v1
+    // must carry its author, whoever pressed the publish (ADR 0011).
+    author: draft.createdBy,
     geometryType: draft.geometryType,
     kind: draft.kind,
     lineage: {

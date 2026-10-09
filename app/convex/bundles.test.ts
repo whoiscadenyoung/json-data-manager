@@ -1079,3 +1079,95 @@ describe("review fixes", () => {
     expect((await runOf(t, first.runId)).run.status).toBe("completed");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Collaborative presses (phase 1 of the project-workspace design, ADR 0011)
+// ---------------------------------------------------------------------------
+
+describe("collaborative presses (ADR 0011)", () => {
+  it("an editor's press plans and publishes every held member, whatever member created it — and the author rides onto the frozen row", async () => {
+    const owner = signedIn("owner-1");
+    const projectId = await createProject(owner);
+    // The editor seat: the users-mirror row the invite lookup answers
+    // through, then the owner-only invite.
+    await owner.run(async (ctx) => {
+      await ctx.db.insert("users", {
+        authId: "editor-1",
+        email: "editor@example.com",
+        emailVerified: true,
+      });
+    });
+    await owner.mutation(api.projects.addMember, { projectId, role: "editor", user: "editor-1" });
+    const editor = owner.withIdentity({ subject: "editor-1" });
+
+    // Three authorship seats in one project: the owner's draft, the owner's
+    // saved fork, and the EDITOR's draft.
+    const ownerDraft = await createProjectDraft(
+      owner,
+      projectId,
+      [{ data: { label: "Downtown" }, geometry: { coordinates: [-89.6, 39.8], type: "Point" } }],
+      "Owner draft",
+      "Point",
+    );
+    const publishedId = await createPublishedDataset(owner, "Shared source");
+    await owner.mutation(api.entries.create, { data: { label: "S-1" }, schemaId: publishedId });
+    const forkSpec = { operations: [], sourceDatasetId: publishedId };
+    const forkId = await owner.mutation(api.projects.forkAsSpec, {
+      projectId,
+      sourceDatasetId: publishedId,
+      title: "Owner fork",
+    });
+    const editorDraft = await createProjectDraft(
+      editor,
+      projectId,
+      [{ data: { label: "Zone 1" } }],
+      "Editor draft",
+    );
+
+    // The EDITOR's plan resolves all three. The editor-created draft never
+    // enters the identity-scoped reads (they run with the project creator's
+    // viewerId) — the by-ids pass is what makes the closure complete, and it
+    // is what kept a member's own draft from being silently dropped as "no
+    // longer exists". plan and start share one closure, so the press below
+    // publishes exactly this.
+    const plan = await planOf(editor, projectId);
+    const planKeys = plan.members.map((member) => member.datasetKey);
+    expect(planKeys).toContain(ownerDraft);
+    expect(planKeys).toContain(editorDraft);
+    expect(planKeys).toContain(forkId);
+    expect(plan.dropped).toStrictEqual([]);
+
+    const press = await driveBundlePress(editor, projectId, {
+      [editorDraft]: { chunks: [{ data: { label: "Zone 1" } }] },
+      [forkId]: {
+        chunks: [{ data: { label: "S-1" } }],
+        kind: "standard",
+        schema: { properties: { label: { type: "string" } }, title: "Owner fork", type: "object" },
+        spec: forkSpec,
+      },
+      [ownerDraft]: {
+        chunks: [
+          { data: { label: "Downtown" }, geometry: { coordinates: [-89.6, 39.8], type: "Point" } },
+        ],
+        geometryType: "Point",
+        kind: "geospatial",
+      },
+    });
+    expect(press.status).toBe("completed");
+    const run = await runOf(editor, press.runId);
+    const statuses = new Map(run.members.map((member) => [member.datasetKey, member.status]));
+    expect(statuses.get(ownerDraft)).toBe("published");
+    expect(statuses.get(editorDraft)).toBe("published");
+    expect(statuses.get(forkId)).toBe("published");
+
+    // The author, not the pressing editor, is who the frozen draft row
+    // carries — an author-restricted v1 must stay visible to its author
+    // (stage 8's D2, held across the collaborative press). The attempt row
+    // still attributes the act to the editor.
+    const frozenId = prop(at(await versionsOf(editor, ownerDraft), 0), "_id") ?? "";
+    const frozen = await editor.run(async (ctx) =>
+      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: frozenId }),
+    );
+    expect(prop(frozen, "createdBy")).toBe("owner-1");
+  });
+});
