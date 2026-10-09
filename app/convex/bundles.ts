@@ -7,7 +7,8 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { assertDatasetWritable, auth } from "./auth";
 import { createChainMemo, resolveSourceHead } from "./consumption";
-import { projectForWrite } from "./projects";
+import { projectRoleFor, roleAtLeast } from "./projectAccess";
+import { projectForRead as projectsProjectForRead, projectForWrite } from "./projects";
 import { CATALOG_READ_LIMIT } from "./schemas";
 
 /**
@@ -83,18 +84,21 @@ import { CATALOG_READ_LIMIT } from "./schemas";
  *   fork's freeze records the source's FRESH head in lineage — provenance
  *   matches the rows the client actually computed over.
  *
- * Stage 8 (#104): the press is creator-private — `start` writes only through
- * `projects.projectForWrite`'s ownership check (any leg mutation rides the
- * same check via `runningRun`: a run's project answers to its creator, and a
- * foreign runId reads as "no longer exists"), and the closure reads take the
- * creator as the component reads' `viewerId` (the plan names drafts — a
- * foreign draft can never enter a plan). Reads stay split deliberately: the
- * project-scoped ones (`plan`, `run`, `latestForProject`) are creator-scoped
- * like `projects.get`, while `layerResolutions` still answers to any
- * signed-in MAP viewer — maps are shared catalog artifacts (the recorded D1
- * boundary: the component's maps table carries no creator stamp; adding one
- * is the recorded follow-up), and the read exposes only the anchor ids and
- * modes the map's own layer rows already show. A draft target resolves to no
+ * Stage 8 (#104), amended by phase 1 of the project-workspace design (ADR
+ * 0011): the press answers to the project's ROLE, not one creator — `start`
+ * and every leg mutation (via `runningRun`) write through
+ * `projects.projectForWrite`'s editor-and-up check, a viewer or outsider's
+ * runId reads as "no longer exists", and the closure reads take the project
+ * CREATOR as the component reads' `viewerId` (the plan may name the
+ * creator's drafts — which a member pressing is trusted with, since a
+ * project-held draft is member-visible by design). Reads stay split
+ * deliberately: the project-scoped ones (`plan`, `run`, `latestForProject`)
+ * are member-scoped like `projects.get`, while `layerResolutions` still
+ * answers to any signed-in MAP viewer — maps are shared catalog artifacts
+ * (the recorded D1 boundary: the component's maps table carries no creator
+ * stamp; adding one is the recorded follow-up), and the read exposes only
+ * the anchor ids and modes the map's own layer rows already show. A draft
+ * target resolves to no
  * chain either way, so it leaks nothing.
  */
 
@@ -546,7 +550,7 @@ const memberPlanValidator = v.object({
   publish: v.boolean(),
 });
 
-/** The project row a project-scoped read answers for, or null when it doesn't exist or belongs to someone else — the `projects.get` scoping, since the plan names drafts (see the module doc's read-scope split). */
+/** The project row a project-scoped read answers for, or null when it doesn't exist or the caller holds no role in it — the `projects.get` scoping (ADR 0011: any member, viewer included), since the plan names drafts. */
 async function projectForRead(
   ctx: { auth: QueryCtx["auth"]; db: QueryCtx["db"] },
   projectId: string,
@@ -556,11 +560,7 @@ async function projectForRead(
   if (projectId_ === null) {
     return null;
   }
-  const project = await ctx.db.get(projectId_);
-  if (project === null || project.createdBy !== viewer) {
-    return null;
-  }
-  return project;
+  return projectsProjectForRead(ctx, viewer, projectId_);
 }
 
 /**
@@ -608,7 +608,7 @@ const runMemberValidator = v.object({
   status: memberStatusValidator,
 });
 
-/** One press's progress: the run row plus every member row, in press order. Creator-scoped like the rest of the project surface (member rows name drafts). */
+/** One press's progress: the run row plus every member row, in press order. Member-scoped like the rest of the project surface (ADR 0011 — the run's project answers to any of its members; member rows name drafts, but a member may see the project's drafts by design). */
 export const run = query({
   args: { runId: v.id("bundleRuns") },
   handler: async (ctx, args) => {
@@ -618,7 +618,7 @@ export const run = query({
       return null;
     }
     const project = await ctx.db.get(runRow.projectId);
-    if (project === null || project.createdBy !== viewer) {
+    if (project === null || (await projectRoleFor(ctx, project._id, viewer)) === null) {
       return null;
     }
     const members = await ctx.db
@@ -823,7 +823,15 @@ async function tryGetSchemaOrNull(
 async function runningRun(ctx: MutationCtx, actorId: string, runId: Id<"bundleRuns">) {
   const runRow = await ctx.db.get(runId);
   const project = runRow === null ? null : await ctx.db.get(runRow.projectId);
-  if (runRow === null || project === null || project.createdBy !== actorId) {
+  if (runRow === null || project === null) {
+    throw new ConvexError("This bundle run no longer exists.");
+  }
+  // The press writes ride the project's ROLE guard (ADR 0011): editor-and-up
+  // may press and checkpoint, a viewer or outsider gets the same
+  // "no longer exists" answer a missing project gives (an existence leak
+  // through a write the caller could never see).
+  const role = await projectRoleFor(ctx, runRow.projectId, actorId);
+  if (role === null || !roleAtLeast(role, "editor")) {
     throw new ConvexError("This bundle run no longer exists.");
   }
   if (runRow.status !== "running") {
@@ -843,9 +851,10 @@ function projectIdFor(ctx: { db: MutationCtx["db"] }, projectId: string): Id<"pr
  * member rows from the closure walk, in WRITE order. A run already running is
  * JOINED (the syncRuns/publish.start pattern — the client-driven revival is
  * just the progress touch); a completed or failed run is never reopened, a
- * re-press starts fresh (the recorded republish semantics). Creator-only
- * since stage 8 (#104): the press writes through `projectForWrite`'s
- * ownership check, and a non-creator gets the same "no longer exists"
+ * re-press starts fresh (the recorded republish semantics). Role-guarded
+ * since phase 1 (ADR 0011): the press writes through `projectForWrite`'s
+ * editor-and-up check — any member who may write the project's content may
+ * press it — and a viewer or outsider gets the same "no longer exists"
  * answer a missing project gives.
  */
 export const start = mutation({
@@ -857,8 +866,8 @@ export const start = mutation({
     if (projectId === null) {
       throw new ConvexError("This project no longer exists — it may have been deleted.");
     }
-    // Stage 8: existence AND ownership in one guard — the press belongs to
-    // the project's creator (decision D1).
+    // Phase 1 (ADR 0011): existence AND role in one guard — the press
+    // belongs to the project's editors and owners.
     const project = await projectForWrite(ctx, createdBy, projectId);
     const latest = await ctx.db
       .query("bundleRuns")
@@ -869,7 +878,11 @@ export const start = mutation({
       await ctx.db.patch(latest._id, { lastProgressAt: Date.now() });
       return { joined: true, runId: latest._id };
     }
-    const { members } = bundleClosure(await collectClosureInput(ctx, projectId, createdBy));
+    // The closure walks with the PROJECT CREATOR as the component reads'
+    // viewerId — the same identity `plan` uses, so an editor's press and the
+    // preview it pressed from can never disagree (the plan may name the
+    // creator's drafts, which ADR 0011 makes member-visible anyway).
+    const { members } = bundleClosure(await collectClosureInput(ctx, projectId, project.createdBy));
     if (members.length === 0) {
       // The server-side gate behind the workspace's disabled control: an
       // empty press would mint an empty promoted collection and nothing else.

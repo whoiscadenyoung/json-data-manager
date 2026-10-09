@@ -388,15 +388,18 @@ export default defineSchema({
   // existing 5b state machine), never a project state flip (lifecycle §3's
   // state model runs over datasets, not containers).
   //
-  // `createdBy` is attribution (ADR 0007) and, since stage 8 (#104, the
-  // recorded D1 decision: projects are per-creator private), the OWNERSHIP
-  // key: every write goes through projects.projectForWrite's creator check
-  // (bundles.ts's press rides the same guard), and every read is
-  // creator-scoped — `projects.list` returns the caller's own rows and
-  // `projects.get` answers null to anyone else — which is what keeps the
-  // issue's "other users' and anonymous views never show the drafts" true
-  // for everything this stage introduces. Anonymous callers never get this
-  // far (rejected at the auth choke point, auth.ts).
+  // `createdBy` is attribution (ADR 0007) and the guaranteed-owner anchor
+  // (the creator's `projectMembers` row is born with the project and its role
+  // can never be changed or removed — at least one owner always exists).
+  // Since phase 1 of the project-workspace design (ADR 0011) ownership is
+  // carried by the `projectMembers` rows, not by this stamp alone: every
+  // write goes through projects.projectForWrite's ROLE check, and every read
+  // is member-scoped — `projects.list` returns projects the caller belongs to
+  // (the by_user index on projectMembers) and `projects.get` answers null to
+  // non-members — which is what keeps the issue's "other users' and anonymous
+  // views never show the drafts" true for everything this stage introduces.
+  // Anonymous callers never get this far (rejected at the auth choke point,
+  // auth.ts).
   projects: defineTable({
     // The auth() hook's identity.subject — the Better Auth user id, the same
     // string schemas.createdBy holds.
@@ -445,6 +448,33 @@ export default defineSchema({
     .index("by_project", ["projectId"])
     // The reverse lookup ("which projects hold this artifact") and cleanup.
     .index("by_artifact", ["artifactKind", "artifactId"]),
+
+  // One member of one project (phase 1 of the project-workspace design, ADR
+  // 0011): the role row that superseded the per-creator privacy decision
+  // (stage 8's D1) — a project is a thin COLLABORATIVE workspace, and this
+  // row is the whole grant. `userId` is the auth() hook's identity.subject
+  // (the Better Auth user id, the same string schemas.createdBy holds).
+  //
+  // Roles: "owner" (manage members, delete the project, full write), "editor"
+  // (write everything in the project — artifacts, drafts, presses, project
+  // title/description), "viewer" (read the workspace and the project-held
+  // drafts, never write). The role order is total: owner > editor > viewer;
+  // access checks ask "at least" one of them.
+  //
+  // The creator's owner row is inserted in the SAME transaction as the
+  // project (projects.create), and setRole/removeMember refuse to touch it —
+  // exactly one invariant, "a project always has its creator as an owner",
+  // with no last-owner election logic. NOT an array on the project doc: the
+  // same membership-rows-not-an-array rule as projectArtifacts (guidelines).
+  projectMembers: defineTable({
+    projectId: v.id("projects"),
+    role: v.union(v.literal("owner"), v.literal("editor"), v.literal("viewer")),
+    userId: v.string(),
+  })
+    // The workspace/member checks: a project's membership.
+    .index("by_project", ["projectId"])
+    // The browser read: every project the caller belongs to.
+    .index("by_user", ["userId"]),
 
   // One bundle press (roadmap 7b, #103; lifecycle doc §2/§5-§6, ADR 0008):
   // the syncRuns/publishAttempts-pattern durability row at the BUNDLE level —

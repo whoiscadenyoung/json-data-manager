@@ -47,6 +47,25 @@ async function createProject(t: TestConvex, title = "SMART 2024"): Promise<Id<"p
   return t.mutation(api.projects.create, { title });
 }
 
+/** Inserts bare users-mirror rows so the invite lookup (by id or email) has something to answer with — the app-side table, exactly as the auth triggers would maintain it. */
+async function seedUsers(t: TestConvex, entries: { authId: string; email: string }[]) {
+  await t.run(async (ctx) => {
+    for (const user of entries) {
+      await ctx.db.insert("users", { authId: user.authId, email: user.email, emailVerified: true });
+    }
+  });
+}
+
+/** Invites `userId` into `projectId` with `role` — the owner-driven path the tests share. */
+async function addMember(
+  t: TestConvex,
+  projectId: string,
+  userId: string,
+  role: "owner" | "editor" | "viewer",
+): Promise<Id<"projectMembers">> {
+  return t.mutation(api.projects.addMember, { projectId, role, user: userId });
+}
+
 /** Creates a lifecycle-draft component dataset IN a project — the host-only path, through the new mutation. */
 async function createProjectDraft(
   t: TestConvex,
@@ -90,7 +109,7 @@ function firstArtifact(workspace: Workspace): Artifact {
 
 describe("projects: the working container (roadmap 7a, #102)", () => {
   it("rejects anonymous callers on every function and scopes the browser/workspace reads to the creator", async () => {
-    // All six functions ride the same auth choke point as their first line —
+    // All functions ride the same auth choke point as their first line —
     // pinned per function, since each is its own public surface.
     const anonymous = initTest();
     await expect(anonymous.mutation(api.projects.create, { title: "Nope" })).rejects.toThrow(
@@ -98,6 +117,9 @@ describe("projects: the working container (roadmap 7a, #102)", () => {
     );
     await expect(anonymous.query(api.projects.list, {})).rejects.toThrow(GATE_MESSAGE);
     await expect(anonymous.query(api.projects.get, { projectId: "whatever" })).rejects.toThrow(
+      GATE_MESSAGE,
+    );
+    await expect(anonymous.query(api.projects.members, { projectId: "whatever" })).rejects.toThrow(
       GATE_MESSAGE,
     );
     await expect(
@@ -119,6 +141,29 @@ describe("projects: the working container (roadmap 7a, #102)", () => {
         artifactKind: "dataset",
         projectId: "whatever",
       }),
+    ).rejects.toThrow(GATE_MESSAGE);
+    await expect(
+      anonymous.mutation(api.projects.update, { projectId: "whatever", title: "Nope" }),
+    ).rejects.toThrow(GATE_MESSAGE);
+    await expect(
+      anonymous.mutation(api.projects.remove, { projectId: "whatever" }),
+    ).rejects.toThrow(GATE_MESSAGE);
+    await expect(
+      anonymous.mutation(api.projects.addMember, {
+        projectId: "whatever",
+        role: "viewer",
+        user: "user-2",
+      }),
+    ).rejects.toThrow(GATE_MESSAGE);
+    await expect(
+      anonymous.mutation(api.projects.setRole, {
+        projectId: "whatever",
+        role: "editor",
+        userId: "u",
+      }),
+    ).rejects.toThrow(GATE_MESSAGE);
+    await expect(
+      anonymous.mutation(api.projects.removeMember, { projectId: "whatever", userId: "u" }),
     ).rejects.toThrow(GATE_MESSAGE);
 
     const mine = signedIn();
@@ -324,5 +369,364 @@ describe("projects: the working container (roadmap 7a, #102)", () => {
     const workspace = await workspaceOf(t, projectId);
     expect(workspace.artifacts).toHaveLength(1);
     expect(firstArtifact(workspace).state.kind).toBe("missing");
+  });
+});
+
+const NO_ACCESS = /doesn't exist or you don't have access/i;
+const GONE = /no longer exists/i;
+const VIEW_ONLY = /view-only/i;
+
+/**
+ * The role access matrix (phase 1 of the project-workspace design, ADR 0011):
+ * one project, four callers — owner (its creator), editor, viewer, and an
+ * outsider who holds no row. Reads answer to every member; content writes
+ * answer to editor-and-up; member management and deletion answer to the
+ * owner alone; and the outsider's world is exactly the missing-project
+ * answer everywhere, so an id's existence never leaks.
+ */
+describe("projects: collaboration — the role access matrix (ADR 0011)", () => {
+  /** One backend, one project, one member per role — the matrix's fixture. */
+  async function matrix() {
+    const owner = signedIn("owner-1");
+    const projectId = await owner.mutation(api.projects.create, { title: "Shared project" });
+    // The users-mirror rows the invite lookup (id or email) answers through.
+    await seedUsers(owner, [
+      { authId: "editor-1", email: "editor@example.com" },
+      { authId: "viewer-1", email: "viewer@example.com" },
+    ]);
+    await addMember(owner, projectId, "editor-1", "editor");
+    await addMember(owner, projectId, "viewer-1", "viewer");
+    return {
+      projectId,
+      owner,
+      editor: owner.withIdentity({ subject: "editor-1" }),
+      viewer: owner.withIdentity({ subject: "viewer-1" }),
+      outsider: owner.withIdentity({ subject: "outsider-1" }),
+    };
+  }
+
+  it("seats the creator as owner at create and answers the read matrix (owner/editor/viewer in, outsider out)", async () => {
+    const t = signedIn();
+    const projectId = await createProject(t);
+    // The owner row is born WITH the project — one transaction produced both.
+    const rows = await t.run(async (ctx) =>
+      ctx.db
+        .query("projectMembers")
+        .withIndex("by_project", (q) => q.eq("projectId", projectId))
+        .collect(),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0] === undefined ? undefined : rows[0].role).toBe("owner");
+
+    await seedUsers(t, [
+      { authId: "user-2", email: "two@example.com" },
+      { authId: "user-3", email: "three@example.com" },
+    ]);
+    await addMember(t, projectId, "user-2", "editor");
+    await addMember(t, projectId, "user-3", "viewer");
+
+    // `list` walks the caller's by_user membership rows and carries the
+    // caller's own role: one project, three roles, three answers.
+    const ownList = await t.query(api.projects.list, {});
+    expect(ownList.map((row) => row.role)).toEqual(["owner"]);
+    expect(
+      (await t.withIdentity({ subject: "user-2" }).query(api.projects.list, {})).map((r) => r.role),
+    ).toEqual(["editor"]);
+    expect(
+      (await t.withIdentity({ subject: "user-3" }).query(api.projects.list, {})).map((r) => r.role),
+    ).toEqual(["viewer"]);
+    expect(await t.withIdentity({ subject: "user-4" }).query(api.projects.list, {})).toHaveLength(
+      0,
+    );
+
+    // The workspace read answers to every member and null to the outsider.
+    expect(await t.query(api.projects.get, { projectId })).not.toBeNull();
+    for (const subject of ["user-2", "user-3"]) {
+      expect(
+        await t.withIdentity({ subject }).query(api.projects.get, { projectId }),
+      ).not.toBeNull();
+    }
+    expect(
+      await t.withIdentity({ subject: "user-4" }).query(api.projects.get, { projectId }),
+    ).toBeNull();
+    // ...and the members read answers empty, not an error, to the outsider
+    // (the read-null-vs-write-throw split, list-shaped).
+    expect(
+      await t.withIdentity({ subject: "user-4" }).query(api.projects.members, { projectId }),
+    ).toEqual([]);
+  });
+
+  it("gates content writes at editor-and-up; viewer and outsider get the gone answer", async () => {
+    const { projectId, owner, editor, viewer, outsider } = await matrix();
+
+    // Owner and editor write content: drafts, references, project fields.
+    const draftId = await editor.mutation(api.projects.createDraftDataset, {
+      projectId,
+      schema: { properties: { label: { type: "string" } }, title: "Editor draft", type: "object" },
+    });
+    expect(draftId).toBeTruthy();
+    const publishedId = await owner.mutation(api.schemas.create, {
+      schema: { properties: { label: { type: "string" } }, title: "Published", type: "object" },
+    });
+    await editor.mutation(api.projects.addArtifact, {
+      artifactId: publishedId,
+      artifactKind: "dataset",
+      projectId,
+    });
+    await editor.mutation(api.projects.update, {
+      description: "Reshaped by its editor",
+      projectId,
+    });
+    expect((await workspaceOf(editor, projectId)).project.description).toBe(
+      "Reshaped by its editor",
+    );
+
+    // Viewer and outsider: every content write is the same gone answer —
+    // a project's existence never leaks through a denied write.
+    for (const caller of [viewer, outsider]) {
+      await expect(
+        caller.mutation(api.projects.createDraftDataset, {
+          projectId,
+          schema: { title: "Nope", type: "object" },
+        }),
+      ).rejects.toThrow(GONE);
+      await expect(
+        caller.mutation(api.projects.addArtifact, {
+          artifactId: publishedId,
+          artifactKind: "dataset",
+          projectId,
+        }),
+      ).rejects.toThrow(GONE);
+      await expect(
+        caller.mutation(api.projects.update, { projectId, title: "Nope" }),
+      ).rejects.toThrow(GONE);
+    }
+    // The fork-as-spec leg rides the same guard.
+    await expect(
+      viewer.mutation(api.projects.forkAsSpec, {
+        projectId,
+        sourceDatasetId: publishedId,
+        title: "Nope",
+      }),
+    ).rejects.toThrow(GONE);
+  });
+
+  it("answers member management to the owner alone, by id or by email, and never unseats the creator", async () => {
+    const { projectId, owner, editor, viewer, outsider } = await matrix();
+    await seedUsers(outsider, [
+      { authId: "newcomer-1", email: "new@example.com" },
+      { authId: "newcomer-2", email: "second@example.com" },
+    ]);
+
+    // Owner-only: editor, viewer, and outsider are all refused (the gone
+    // answer — membership management is not a content write).
+    for (const caller of [editor, viewer, outsider]) {
+      await expect(
+        caller.mutation(api.projects.addMember, {
+          projectId,
+          role: "editor",
+          user: "newcomer-1",
+        }),
+      ).rejects.toThrow(GONE);
+      await expect(
+        caller.mutation(api.projects.setRole, { projectId, role: "viewer", userId: "editor-1" }),
+      ).rejects.toThrow(GONE);
+      await expect(
+        caller.mutation(api.projects.removeMember, { projectId, userId: "viewer-1" }),
+      ).rejects.toThrow(GONE);
+    }
+
+    // The invite resolves by Better Auth user id AND by email — one table,
+    // two keys (users.ts's mirror-row lookup).
+    const byEmail = await owner.mutation(api.projects.addMember, {
+      projectId,
+      role: "editor",
+      user: "new@example.com",
+    });
+    const byId = await owner.mutation(api.projects.addMember, {
+      projectId,
+      role: "viewer",
+      user: "newcomer-2",
+    });
+    expect(byEmail).not.toBeNull();
+    expect(byId).not.toBeNull();
+    // Unknown ids/emails are refused plainly.
+    await expect(
+      owner.mutation(api.projects.addMember, {
+        projectId,
+        role: "viewer",
+        user: "ghost@example.com",
+      }),
+    ).rejects.toThrow(/No account was found/);
+    // Duplicates land once — and the email invite already counts as the
+    // same membership the id would name (one account, one row).
+    await expect(
+      owner.mutation(api.projects.addMember, {
+        projectId,
+        role: "viewer",
+        user: "newcomer-1",
+      }),
+    ).rejects.toThrow(/already a member/);
+
+    // Role changes apply — and the creator's row is refused for everything,
+    // which is what keeps "a project always has an owner" true.
+    await owner.mutation(api.projects.setRole, { projectId, role: "viewer", userId: "editor-1" });
+    const members = await owner.query(api.projects.members, { projectId });
+    const editorRow = members.find((row) => row.userId === "editor-1");
+    expect(editorRow === undefined ? undefined : editorRow.role).toBe("viewer");
+    await owner.mutation(api.projects.setRole, { projectId, role: "editor", userId: "editor-1" });
+    await expect(
+      owner.mutation(api.projects.setRole, { projectId, role: "viewer", userId: "owner-1" }),
+    ).rejects.toThrow(/creator/);
+    await expect(
+      owner.mutation(api.projects.removeMember, { projectId, userId: "owner-1" }),
+    ).rejects.toThrow(/creator/);
+    // Removing a member who isn't one reads plainly, and removal revokes the
+    // grant: the removed member's reads go outsider-shaped.
+    await expect(
+      owner.mutation(api.projects.removeMember, { projectId, userId: "stranger-1" }),
+    ).rejects.toThrow(/isn't a member/);
+    await owner.mutation(api.projects.removeMember, { projectId, userId: "newcomer-1" });
+    expect(
+      await owner.withIdentity({ subject: "newcomer-1" }).query(api.projects.list, {}),
+    ).toHaveLength(0);
+  });
+
+  it("makes project-held drafts member-visible and member-editable — viewer read-only, outsider blind, catalog still excludes them", async () => {
+    const { projectId, owner, editor, viewer, outsider } = await matrix();
+    // The OWNER creates a draft in the project and puts a row in it.
+    const draftId = await createProjectDraft(owner, projectId);
+    await owner.mutation(api.entries.create, { data: { label: "IG-1" }, schemaId: draftId });
+
+    // The workspace read resolves another member's draft (the by-ids pass —
+    // not "missing").
+    const editorView = await workspaceOf(editor, projectId);
+    const draftArtifact = editorView.artifacts.find((row) => row.artifactId === draftId);
+    expect(draftArtifact === undefined ? undefined : draftArtifact.state.kind).toBe("dataset");
+
+    // Editor WRITES the project-held draft through the ordinary wrapper —
+    // the choke point's project rule.
+    await editor.mutation(api.entries.create, { data: { label: "IG-2" }, schemaId: draftId });
+    const editorPage = await editor.query(api.entries.listPage, {
+      paginationOpts: { cursor: null, numItems: 10 },
+      schemaId: draftId,
+    });
+    expect(editorPage.page).toHaveLength(2);
+
+    // Viewer READS the draft (by-id surfaces pass the visibility rule) and
+    // never writes it (the view-only denial — the matrix's whole point).
+    const viewerPage = await viewer.query(api.entries.listPage, {
+      paginationOpts: { cursor: null, numItems: 10 },
+      schemaId: draftId,
+    });
+    expect(viewerPage.page).toHaveLength(2);
+    await expect(
+      viewer.mutation(api.entries.create, { data: { label: "Nope" }, schemaId: draftId }),
+    ).rejects.toThrow(VIEW_ONLY);
+
+    // Outsider: blind everywhere — by-id reads deny like a missing row, and
+    // the workspace read is null.
+    await expect(outsider.query(api.schemas.get, { schemaId: draftId })).rejects.toThrow(NO_ACCESS);
+    await expect(
+      outsider.mutation(api.entries.create, { data: { label: "Nope" }, schemaId: draftId }),
+    ).rejects.toThrow(NO_ACCESS);
+
+    // The catalog never widens: enumeration reads stay component-scoped by
+    // viewerId, so the owner's draft appears in NO member's catalog or
+    // drafts toggle — only in the workspace.
+    for (const caller of [editor, viewer]) {
+      expect(
+        (await caller.query(api.schemas.list, { limit: 1000 })).map((row) => row._id),
+      ).not.toContain(draftId);
+      expect(
+        (await caller.query(api.schemas.listSummaries, { limit: 1000 })).map((row) => row._id),
+      ).not.toContain(draftId);
+      expect(
+        (await caller.query(api.schemas.listDraftSummaries, { limit: 1000 })).map((row) => row._id),
+      ).not.toContain(draftId);
+    }
+    expect(
+      (await owner.query(api.schemas.listDraftSummaries, { limit: 1000 })).map((row) => row._id),
+    ).toContain(draftId);
+  });
+
+  it("deletes owner-only and cascades the grants and reference edges — never the artifacts", async () => {
+    const { projectId, owner, editor } = await matrix();
+    const publishedId = await createPublishedDataset(owner);
+    await editor.mutation(api.projects.addArtifact, {
+      artifactId: publishedId,
+      artifactKind: "dataset",
+      projectId,
+    });
+
+    // Owner-only.
+    await expect(editor.mutation(api.projects.remove, { projectId })).rejects.toThrow(GONE);
+    await owner.mutation(api.projects.remove, { projectId });
+
+    // The membership rows, the member rows, and the fork's reference edge
+    // are gone — one transaction, no orphans.
+    expect(await owner.query(api.projects.list, {})).toHaveLength(0);
+    expect(await editor.query(api.projects.list, {})).toHaveLength(0);
+    expect(await owner.query(api.projects.get, { projectId })).toBeNull();
+    const leftovers = await owner.run(async (ctx) => ({
+      memberships: await ctx.db
+        .query("projectArtifacts")
+        .withIndex("by_project", (q) => q.eq("projectId", projectId))
+        .collect(),
+      members: await ctx.db
+        .query("projectMembers")
+        .withIndex("by_project", (q) => q.eq("projectId", projectId))
+        .collect(),
+      edges: await ctx.db
+        .query("consumerReferences")
+        .withIndex("by_source", (q) => q.eq("sourceDatasetId", publishedId))
+        .collect(),
+    }));
+    expect(leftovers.memberships).toHaveLength(0);
+    expect(leftovers.members).toHaveLength(0);
+    expect(leftovers.edges).toHaveLength(0);
+
+    // References, not containment: the referenced dataset is untouched.
+    expect(
+      (await owner.query(api.schemas.listSummaries, { limit: 1000 })).map((row) => row._id),
+    ).toContain(publishedId);
+  });
+
+  it("lets an editor press the project's bundle and read its plan — viewer and outsider get the gone answer", async () => {
+    const { projectId, owner, editor, viewer, outsider } = await matrix();
+    // A map with one dataset layer, so the press has something to publish —
+    // the bundles.test.ts shape, kept minimal.
+    const publishedId = await createPublishedDataset(owner);
+    const mapId = await owner.mutation(api.maps.create, { name: "Shared map" });
+    await owner.mutation(api.maps.addLayer, {
+      mapId,
+      targetId: publishedId,
+      targetType: "dataset",
+    });
+    await editor.mutation(api.projects.addArtifact, {
+      artifactId: mapId,
+      artifactKind: "map",
+      projectId,
+    });
+    await editor.mutation(api.projects.addArtifact, {
+      artifactId: publishedId,
+      artifactKind: "dataset",
+      projectId,
+    });
+
+    // Reads answer to every member (the plan names the drafts).
+    expect(await editor.query(api.bundles.plan, { projectId })).not.toBeNull();
+    expect(await viewer.query(api.bundles.plan, { projectId })).not.toBeNull();
+    expect(await outsider.query(api.bundles.plan, { projectId })).toBeNull();
+
+    // Writes answer to editor-and-up.
+    const started = await editor.mutation(api.bundles.start, { projectId });
+    expect(started.joined).toBe(false);
+    await expect(viewer.mutation(api.bundles.start, { projectId })).rejects.toThrow(
+      /no longer exists/i,
+    );
+    await expect(outsider.mutation(api.bundles.start, { projectId })).rejects.toThrow(
+      /no longer exists/i,
+    );
   });
 });

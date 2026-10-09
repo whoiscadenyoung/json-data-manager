@@ -410,6 +410,50 @@ export const getSchema = query({
   returns: v.union(v.null(), publicSchemaViewValidator),
 });
 
+/** Upper bound on one by-ids summaries read — the workspace read resolves at
+ * most its own membership rows, so this is a sanity cap (the
+ * `LIST_ENTRIES_FOR_IDS_MAX` pattern), not a real window. */
+const GET_SCHEMA_SUMMARIES_MAX = 500;
+
+/**
+ * Summaries by id — the project workspace's member-visible drafts leg (phase
+ * 1 of the project-workspace design): the component's identity-scoped reads
+ * (`listSchemaSummaries`/`listDraftSchemaSummaries`) can never return one
+ * member another member's draft, but a project-held draft IS visible to
+ * every project member, so the host resolves exactly the ids its own
+ * membership rows authorize and reads the same light projection here. Missing,
+ * deleted, and not-even-well-formed ids are simply absent — the host renders
+ * them as a missing artifact. Public-in-component but UNEXPOSED (never in
+ * exposeApi — the
+ * `listEntriesForSchemaBounded`/`getImportSchemaId` pattern: host-flow-only,
+ * unreachable by clients); the scoping duty stays with every host caller,
+ * which must derive the id list from rows the requesting viewer may see.
+ */
+export const getSchemaSummaries = query({
+  // Plain strings, normalized here — the host passes ids across the
+  // component boundary as opaque strings (the datasetBindings precedent) and
+  // cannot well-formedness-check component ids host-side; a junk id is
+  // simply absent, like a deleted one.
+  args: { schemaIds: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    if (args.schemaIds.length > GET_SCHEMA_SUMMARIES_MAX) {
+      throw new ConvexError(`schemaIds exceeds ${GET_SCHEMA_SUMMARIES_MAX} items`);
+    }
+    const ids = new Set<Id<"schemas">>();
+    for (const schemaId of args.schemaIds) {
+      const normalized = ctx.db.normalizeId("schemas", schemaId);
+      if (normalized !== null) {
+        ids.add(normalized);
+      }
+    }
+    const docs = (
+      await Promise.all([...ids].map(async (schemaId) => await ctx.db.get(schemaId)))
+    ).filter((doc): doc is NonNullable<typeof doc> => doc !== null);
+    return docs.map(toSchemaSummary);
+  },
+  returns: v.array(schemaSummaryValidator),
+});
+
 /**
  * One dataset's entries, bounded — the HOST version-diff read (`versionRows`
  * in the app's versioning.ts): internal host flows (tag ingest, freeze diffs,

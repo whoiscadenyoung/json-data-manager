@@ -2,9 +2,32 @@ import { v } from "convex/values";
 
 import { components } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
-import { query } from "./_generated/server";
+import { query, type QueryCtx } from "./_generated/server";
 import { auth, authComponent } from "./auth";
 import { CATALOG_READ_LIMIT } from "./schemas";
+
+/**
+ * Resolves a member-invite string to an account id (phase 1 of the
+ * project-workspace design, ADR 0011): the Better Auth user id
+ * (`users.authId`) or the account email (`by_email`) — the invite dialog
+ * accepts either. null when neither answers; the caller shapes the denial
+ * (projects.addMember says "no account was found for that user id or
+ * email").
+ */
+export async function authIdForUser(ctx: QueryCtx, user: string): Promise<string | null> {
+  const byId = await ctx.db
+    .query("users")
+    .withIndex("by_authId", (q) => q.eq("authId", user))
+    .first();
+  if (byId !== null) {
+    return byId.authId;
+  }
+  const byEmail = await ctx.db
+    .query("users")
+    .withIndex("by_email", (q) => q.eq("email", user))
+    .first();
+  return byEmail === null ? null : byEmail.authId;
+}
 
 /**
  * The public profile projection — everything one signed-in collaborator may

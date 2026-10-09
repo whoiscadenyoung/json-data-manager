@@ -9,6 +9,7 @@ import { components, internal } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
 import { internalMutation, type MutationCtx } from "./_generated/server";
 import authConfig from "./auth.config";
+import { datasetVisibleTo, datasetWritableBy } from "./projectAccess";
 
 /**
  * The localhost fallback for local dev — the only place a missing SITE_URL
@@ -262,6 +263,19 @@ async function appUserForAuthId(ctx: MutationCtx, authId: string) {
  * path's creator rules (`tags.retireVersion`,
  * `assertChainAnchorWritable`) already answer only to the creator for every
  * row a policy could lock.
+ *
+ * The project-collaboration rule (phase 1 of the project-workspace design,
+ * ADR 0011): a row a project HOLDS (a `projectArtifacts` membership row
+ * names it) is visible to every member of that project, and a held draft is
+ * writable by its owner/editor members — the workspace is collaborative, so
+ * a row stops being creator-private the moment it has a membership row
+ * (adding a row to a shared project IS the sharing act; the
+ * `publishedVisibility: "author"` flag keeps its full force on every row
+ * NOT in a shared project). The catalog enumeration reads stay
+ * component-scoped by viewerId, so held rows reach members through the
+ * project workspace and by-id reads, never the catalog. The shared
+ * predicates live in projectAccess.ts — one implementation for this choke
+ * point and projects.ts, so the two surfaces can never disagree.
  */
 export async function auth(ctx: { auth: Auth }, operation?: ExposeApiOperation): Promise<string> {
   // The Better Auth session token's subject is the Better Auth user id —
@@ -351,11 +365,17 @@ async function datasetIdsForOperation(
 }
 
 /**
- * The stage-8 isolation policy itself: every dataset the operation names
- * must be visible to the caller — a draft or `publishedVisibility: "author"`
- * row only to its creator. Denials are indistinguishable from a missing
- * dataset (the same friendly message `getSchema`'s callers see for unknown
- * ids), so probing ids discloses nothing.
+ * The stage-8 isolation policy itself, extended by phase 1 of the
+ * project-workspace design (ADR 0011): every dataset the operation names
+ * must be visible to the caller. A draft or `publishedVisibility: "author"`
+ * row answers to its creator — except that a PROJECT-HELD draft (a
+ * `projectArtifacts` membership row names it) is visible to every member of
+ * that project, any role: the draft was born into (or added to) a
+ * collaborative workspace, and membership is the grant. The shared rule
+ * lives in projectAccess.datasetVisibleTo, so this choke point and
+ * projects.ts answer identically. Denials are indistinguishable from a
+ * missing dataset (the same friendly message `getSchema`'s callers see for
+ * unknown ids), so probing ids discloses nothing.
  */
 async function assertDatasetsVisible(
   ctx: MutationCtx,
@@ -365,11 +385,7 @@ async function assertDatasetsVisible(
   await Promise.all(
     [...(await datasetIdsForOperation(ctx, operation))].map(async (schemaId) => {
       const doc = await tryGetSchemaForPolicy(ctx, schemaId);
-      if (
-        doc !== null &&
-        (doc.lifecycle === "draft" || doc.publishedVisibility === "author") &&
-        doc.createdBy !== actorId
-      ) {
+      if (doc !== null && !(await datasetVisibleTo(ctx, schemaId, doc, actorId))) {
         throw new ConvexError("That dataset doesn't exist or you don't have access to it.");
       }
     }),
@@ -377,14 +393,20 @@ async function assertDatasetsVisible(
 }
 
 /**
- * The one edit-policy denial (issue #124, ADR 0010), shared by the choke
- * point's operation loop and the host flows that bypass the wrappers. A
- * `"locked"` dataset answers every write to its creator alone; `"open"` —
- * and absent, so every pre-field row — is refused for nobody. The message
- * keeps today's denial shapes: a plain read-only-shaped `ConvexError`
- * (visibility is checked first by every caller, so an invisible row still
- * reads as "not found", and existence is public for published rows, so a
- * lock denial leaks nothing).
+ * The write-side denials, shared by the choke point's operation loop and the
+ * host flows that bypass the wrappers. Two rules, in visibility's wake:
+ *
+ * - The edit-policy denial (issue #124, ADR 0010): a `"locked"` dataset
+ *   answers every write to its creator alone; `"open"` — and absent, so
+ *   every pre-field row — is refused for nobody.
+ *
+ * - The project-role denial (phase 1 of the project-workspace design, ADR
+ *   0011): a PROJECT-HELD draft is writable by its creator and by
+ *   owner/editor members of a holding project — a viewer-role member reads
+ *   the workspace's drafts and never writes them (the role matrix's whole
+ *   point). The denial fires only for callers who can SEE the draft (the
+ *   visibility check ran first in every flow that reaches here), so the
+ *   honest view-only message never leaks a row's existence to an outsider.
  */
 export async function assertDatasetWritable(
   ctx: MutationCtx,
@@ -392,20 +414,35 @@ export async function assertDatasetWritable(
   schemaId: string,
 ): Promise<void> {
   const doc = await tryGetSchemaForPolicy(ctx, schemaId);
-  if (doc !== null && doc.editPolicy === "locked" && doc.createdBy !== actorId) {
+  if (doc === null) {
+    return;
+  }
+  if (doc.editPolicy === "locked" && doc.createdBy !== actorId) {
     throw new ConvexError(
       "This dataset is locked by its creator — only they can make changes to it.",
+    );
+  }
+  if (
+    !(await datasetWritableBy(ctx, schemaId, doc, actorId)) &&
+    (await datasetVisibleTo(ctx, schemaId, doc, actorId))
+  ) {
+    throw new ConvexError(
+      "You have view-only access to this dataset — an editor or owner of its project can make changes.",
     );
   }
 }
 
 /**
- * The edit-policy gate over one write operation (issue #124): every dataset
- * the operation names — the same resolution the visibility check uses — must
- * be open for the caller to write. Runs for EVERY write `type`: on a locked
- * dataset the creator-only rule covers data writes, schema writes, and the
- * organization ops the read-only gate below deliberately allows, with no
- * carve-outs. Only the creator (and later, per ADR 0010, team admins) passes.
+ * The edit-policy gate over one write operation (issue #124), plus the
+ * project-role gate (ADR 0011) — every dataset the operation names — the
+ * same resolution the visibility check uses — must be open for the caller to
+ * write. Runs for EVERY write `type`: on a locked dataset the creator-only
+ * rule covers data writes, schema writes, and the organization ops the
+ * read-only gate below deliberately allows, with no carve-outs; on a
+ * project-held draft the creator and the project's owner/editor members
+ * pass, and a viewer-role member gets the view-only denial
+ * (assertDatasetWritable). The creator (and later, per ADR 0010, team
+ * admins) always passes both.
  */
 async function assertDatasetsWritable(
   ctx: MutationCtx,

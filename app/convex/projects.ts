@@ -6,16 +6,26 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { auth } from "./auth";
 import { syncRegistryReferenceEdges } from "./consumption";
+import {
+  datasetVisibleTo,
+  projectRoleFor,
+  projectRoleValidator,
+  roleAtLeast,
+  type ProjectRole,
+} from "./projectAccess";
 import { CATALOG_READ_LIMIT } from "./schemas";
+import { authIdForUser } from "./users";
 
 /**
- * Projects — the working container (roadmap stage 7a, #102; lifecycle doc
- * §3-§4, ADR 0008). A project is the virtual working layer: imports and
- * drafts land IN it, and its artifacts are REFERENCES to real datasets /
- * derived specs / maps, never copies ("fork = add-to-project" — reuse-as-is
- * adds a reference; "references, not containment"). The component never
- * learns projects exist: everything here is app-side tables
- * (schema.ts `projects`/`projectArtifacts`) plus host-side component calls.
+ * Projects — the collaborative working container (roadmap stage 7a, #102;
+ * lifecycle doc §3-§4, ADR 0008; collaborative since phase 1 of the
+ * project-workspace design, ADR 0011). A project is the virtual working
+ * layer: imports and drafts land IN it, and its artifacts are REFERENCES to
+ * real datasets / derived specs / maps, never copies ("fork = add-to-project"
+ * — reuse-as-is adds a reference; "references, not containment"). The
+ * component never learns projects exist: everything here is app-side tables
+ * (schema.ts `projects`/`projectArtifacts`/`projectMembers`) plus host-side
+ * component calls.
  *
  * The one flow that creates data, `createDraftDataset`, does three things in
  * ONE transaction: `auth(ctx)`, the component's `createSchema` with the
@@ -32,20 +42,25 @@ import { CATALOG_READ_LIMIT } from "./schemas";
  * dataset's, and invisible to catalog reads via the 5a server-side filter
  * (`isCatalogVisible`), which projects never touch.
  *
- * Reads are creator-scoped (`list` by the by_createdBy index, `get` answers
- * null to anyone but the creator) and — since stage 8 (#104) — WRITES are
- * too: `projectForWrite` verifies the caller IS the creator (the recorded
- * D1 decision: projects are per-creator private, no share grants), turning
- * the stamps into checks. The component-side global drafts toggle is
- * creator-scoped at the component read (`viewerId`) since stage 8; the
- * workspace's own reads pass the creator through.
+ * Access is ROLE-based (ADR 0011, superseding stage 8's per-creator D1
+ * decision): a `projectMembers` row — owner | editor | viewer — is the whole
+ * grant, born with the project (the creator's owner row inserts in the same
+ * transaction as the project row and can never be demoted or removed, so a
+ * project always has an owner). Reads answer to any member (`list` walks the
+ * caller's by_user membership rows; `get` answers null to non-members —
+ * the membership carries drafts, so this query is where "other users' views
+ * never show the drafts" is enforced for the workspace), writes answer to
+ * editor-and-up (`projectForWrite`), member management and deletion answer
+ * to the owner alone. The component-side global drafts toggle stays
+ * creator-scoped at the component read (`viewerId`); the workspace's own
+ * read widens draft RESOLUTION by membership instead (see `get`).
  *
  * 7b (#103) grows this module by the two fork legs and nothing else: the
  * fork-as-reference edge (`addArtifact` mints one float consumerReferences
  * row per dataset membership; `removeArtifact` deletes it with the row) and
  * fork-as-spec (`forkAsSpec` — a saved identity transform over the published
  * source, born a project member). The bundle press itself lives in
- * bundles.ts; it only READS membership rows.
+ * bundles.ts; it only READS membership rows and rides the same role guard.
  */
 
 /** Upper bounds per read — a project/workspace read stays bounded no matter the catalog. */
@@ -97,28 +112,12 @@ async function tryGetMap(
 }
 
 /**
- * The catalog visibility rule (decision D2), as a predicate: a draft or
- * author-only row is readable only by its creator. Shared by the artifact
- * and fork authoring checks.
- */
-function datasetVisibleTo(
-  doc: {
-    createdBy?: string;
-    lifecycle?: "draft" | "published";
-    publishedVisibility?: "author" | "everyone";
-  },
-  actorId: string,
-): boolean {
-  if (doc.lifecycle === "draft" || doc.publishedVisibility === "author") {
-    return doc.createdBy === actorId;
-  }
-  return true;
-}
-
-/**
  * The registry's draft/saved line as a predicate (the derivedDatasets.get
  * precedent): another user's builder autosave is invisible; saved rows are
- * the registry's catalog-visible side.
+ * the registry's catalog-visible side. The COMPONENT dataset rule it once
+ * sat beside (`datasetVisibleTo`) left for projectAccess.ts in phase 1 of
+ * the project-workspace design — it is now the shared member-aware rule both
+ * this module and the auth choke point run (ADR 0011).
  */
 function registryRowVisibleTo(
   row: { createdBy: string; status: "draft" | "saved" },
@@ -129,14 +128,16 @@ function registryRowVisibleTo(
 
 /**
  * Throws unless `artifactId` names a real artifact of `kind` — and, since
- * stage 8 (#104), one VISIBLE to the caller (the project's creator): a
- * foreign builder autosave (a draft registry row) and a foreign draft or
- * author-visibility dataset read exactly as missing, so an invisible id can
- * never be written into a membership row (its existence would leak through
- * every later read of the project). A reference may still point at ANY
- * lifecycle state the caller can see (their own draft is exactly what lands
- * in a project; published datasets and frozen versions are what "fork =
- * add-to-project" references).
+ * stage 8 (#104), one VISIBLE to the caller: a foreign builder autosave (a
+ * draft registry row) and a foreign draft or author-visibility dataset read
+ * exactly as missing, so an invisible id can never be written into a
+ * membership row (its existence would leak through every later read of the
+ * project). Since phase 1 (ADR 0011) the dataset rule is the shared
+ * member-aware one: a project-held draft is visible to the project's
+ * members, not its creator alone (projectAccess.datasetVisibleTo). A
+ * reference may still point at ANY lifecycle state the caller can see (their
+ * own draft is exactly what lands in a project; published datasets and
+ * frozen versions are what "fork = add-to-project" references).
  */
 async function assertArtifactExists(
   ctx: MutationCtx,
@@ -154,7 +155,7 @@ async function assertArtifactExists(
   }
   if (kind === "dataset") {
     const dataset = await tryGetSchema(ctx, artifactId);
-    if (dataset !== null && datasetVisibleTo(dataset, actorId)) {
+    if (dataset !== null && (await datasetVisibleTo(ctx, artifactId, dataset, actorId))) {
       return;
     }
     throw new ConvexError("No dataset was found at that id — it may have been deleted.");
@@ -186,7 +187,7 @@ async function assertForkSourceVisible(
     throw new ConvexError("No dataset was found at that id — it may have been deleted.");
   }
   const dataset = await tryGetSchema(ctx, sourceDatasetId);
-  if (dataset !== null && datasetVisibleTo(dataset, actorId)) {
+  if (dataset !== null && (await datasetVisibleTo(ctx, sourceDatasetId, dataset, actorId))) {
     return;
   }
   throw new ConvexError("No dataset was found at that id — it may have been deleted.");
@@ -213,31 +214,57 @@ async function insertMembership(
 }
 
 /**
- * The project row a membership mutation writes into, or the friendly
- * gone-error. Since stage 8 (#104, decision D1) this is the OWNERSHIP check:
- * only the project's creator may write into it — membership rows, drafts,
- * forks, presses all ride this one guard (the choke-point principle, one
- * code path for read-null vs write-throw: reads answer null via
- * `projects.get`, writes throw here). Shared with bundles.ts (whose press
- * writes into the same rows). Callers pass the client-sent id through
- * `projectIdArg` first — public functions take project ids as PLAIN
- * STRINGS (the derivedDatasets get/remove and maps.addDerivedLayer pattern:
- * router params are strings on the client, and `normalizeId` + the
- * existence check below validate), while the typed Id travels
- * in-transaction from here on.
+ * The project row a write mutation writes into, or the friendly gone-error.
+ * Since phase 1 of the project-workspace design (ADR 0011) this is the ROLE
+ * check: the caller must hold AT LEAST `minRole` in the project (editor —
+ * the default — for everything that writes content; owner for member
+ * management and deletion), where stage 8 (#104, decision D1) had checked
+ * the creator stamp alone. One code path for read-null vs write-throw: reads
+ * answer null via `projects.get`/`projectForRead`, writes throw here, and a
+ * non-member gets the SAME answer a missing project gives — an id's
+ * existence never leaks to an outsider (a viewer-role member DOES get the
+ * honest write denial, since the workspace read already told them they
+ * belong). Shared with bundles.ts (whose press writes into the same rows).
+ * Callers pass the client-sent id through `projectIdArg` first — public
+ * functions take project ids as PLAIN STRINGS (the derivedDatasets
+ * get/remove and maps.addDerivedLayer pattern: router params are strings on
+ * the client, and `normalizeId` + the existence check below validate), while
+ * the typed Id travels in-transaction from here on.
  */
 export async function projectForWrite(
   ctx: MutationCtx,
   actorId: string,
   projectId: Id<"projects">,
+  minRole: ProjectRole = "editor",
 ): Promise<Doc<"projects">> {
   const project = await ctx.db.get(projectId);
-  // The foreign and missing cases share one answer — an id's existence
-  // never leaks to a non-creator.
-  if (project === null || project.createdBy !== actorId) {
+  if (project === null) {
+    throw new ConvexError("This project no longer exists — it may have been deleted.");
+  }
+  const role = await projectRoleFor(ctx, projectId, actorId);
+  if (role === null || !roleAtLeast(role, minRole)) {
     throw new ConvexError("This project no longer exists — it may have been deleted.");
   }
   return project;
+}
+
+/**
+ * The project row a member-scoped read answers for, or null when the caller
+ * holds no role in it — the read twin of `projectForWrite` (any role,
+ * viewer included, is enough to READ; the workspace carries drafts, so this
+ * null is also where "other users' views never show the drafts" holds for
+ * the container surfaces). bundles.ts's project-scoped reads ride this too.
+ */
+export async function projectForRead(
+  ctx: Pick<QueryCtx, "db">,
+  viewerId: string,
+  projectId: Id<"projects">,
+): Promise<Doc<"projects"> | null> {
+  const project = await ctx.db.get(projectId);
+  if (project === null) {
+    return null;
+  }
+  return (await projectRoleFor(ctx, projectId, viewerId)) === null ? null : project;
 }
 
 /** Decodes a client-sent project id; null when the string isn't a project id at all (same answer as a missing row). */
@@ -256,12 +283,20 @@ export const create = mutation({
     if (args.description !== undefined && args.description.trim() === "") {
       throw new ConvexError("Leave the description empty instead of blank.");
     }
-    return ctx.db.insert("projects", {
+    // The creator's owner row is born WITH the project, in the same
+    // transaction (the draft+membership pattern): the membership rows are
+    // the whole grant (ADR 0011), so a project and its first grant cannot
+    // exist apart. setRole/removeMember refuse to touch this row, which is
+    // what keeps "a project always has an owner" true without any
+    // last-owner election logic.
+    const projectId = await ctx.db.insert("projects", {
       artifactCount: 0,
       createdBy,
       description: args.description,
       title,
     });
+    await ctx.db.insert("projectMembers", { projectId, role: "owner", userId: createdBy });
+    return projectId;
   },
   returns: v.id("projects"),
 });
@@ -496,26 +531,45 @@ export const forkAsSpec = mutation({
 });
 
 /**
- * The project browser's read: the signed-in caller's own projects, newest
- * first (creator-scoped by the by_createdBy index — another user's projects
- * never enter this payload, the acceptance line for the container surface).
+ * The project browser's read: every project the signed-in caller BELONGS to,
+ * newest first (ADR 0011 — the by_user index on projectMembers answers; the
+ * old by_createdBy scan answered only to creators). Each row carries the
+ * caller's own role so the browser can badge Owner/Editor/Viewer without a
+ * second query. Dangling membership rows (a project deleted under a member —
+ * `remove` cascades, so this needs a crash or a future bug to exist) are
+ * skipped, not crashed on.
  */
 export const list = query({
   args: {},
   handler: async (ctx) => {
     const viewer = await auth(ctx);
-    const rows = await ctx.db
-      .query("projects")
-      .withIndex("by_createdBy", (q) => q.eq("createdBy", viewer))
-      .order("desc")
+    const memberships = await ctx.db
+      .query("projectMembers")
+      .withIndex("by_user", (q) => q.eq("userId", viewer))
       .take(MAX_PROJECTS);
-    return rows.map((row) => ({
-      _creationTime: row._creationTime,
-      _id: row._id,
-      artifactCount: row.artifactCount,
-      description: row.description,
-      title: row.title,
-    }));
+    const rows = (
+      await Promise.all(
+        memberships.map(async (membership) => ({
+          membership,
+          project: await ctx.db.get(membership.projectId),
+        })),
+      )
+    ).filter((row): row is { membership: Doc<"projectMembers">; project: Doc<"projects"> } => {
+      return row.project !== null;
+    });
+    return (
+      rows
+        // oxlint-disable-next-line unicorn/no-array-sort -- freshly built throwaway array; .toSorted() isn't in the lib app/convex typechecks against (the projects.test.ts note).
+        .sort((a, b) => b.project._creationTime - a.project._creationTime)
+        .map((row) => ({
+          _creationTime: row.project._creationTime,
+          _id: row.project._id,
+          artifactCount: row.project.artifactCount,
+          description: row.project.description,
+          role: row.membership.role,
+          title: row.project.title,
+        }))
+    );
   },
   returns: v.array(
     v.object({
@@ -523,6 +577,7 @@ export const list = query({
       _id: v.id("projects"),
       artifactCount: v.number(),
       description: v.optional(v.string()),
+      role: projectRoleValidator,
       title: v.string(),
     }),
   ),
@@ -628,10 +683,16 @@ async function resolveArtifact(
 
 /**
  * One workspace read: the project (title/description) plus every membership
- * row resolved to its artifact. null when the project doesn't exist OR
- * belongs to someone else — the creator-scoped read (see the module doc and
- * the schema comment): the membership carries drafts, so this query is where
- * "other users' views never show the drafts" is enforced for the workspace.
+ * row resolved to its artifact, and the caller's own role. null when the
+ * project doesn't exist OR the caller holds no role in it — the member-scoped
+ * read (see the module doc and the schema comment): the membership carries
+ * drafts, so this query is where "other users' views never show the drafts"
+ * is enforced for the workspace. Since phase 1 (ADR 0011) draft RESOLUTION is
+ * membership-scoped rather than identity-scoped: a project-held draft was
+ * born (or added) into this project, so every member may see it — the two
+ * identity-scoped component reads cover the caller's own rows, and the rest
+ * resolve through the by-ids host read, fed ONLY this project's membership
+ * ids (the role check above is what authorizes the whole payload).
  *
  * No `returns` validator: the resolved dataset artifacts embed the
  * component's own summary projection, and re-declaring that shape host-side
@@ -647,7 +708,8 @@ export const get = query({
       return null;
     }
     const project = await ctx.db.get(projectId);
-    if (project === null || project.createdBy !== viewer) {
+    const role = project === null ? null : await projectRoleFor(ctx, projectId, viewer);
+    if (project === null || role === null) {
       return null;
     }
     // The workspace DISPLAY read — bounded at MAX_ARTIFACTS. Correctness
@@ -659,12 +721,12 @@ export const get = query({
       .query("projectArtifacts")
       .withIndex("by_project", (q) => q.eq("projectId", projectId))
       .take(MAX_ARTIFACTS);
-    // Three catalog reads total (the same light reads list surfaces already
-    // pay on every load), joined in-memory by id — never one component hop
-    // per artifact. The creator's identity scopes them: a draft or
-    // author-visibility row resolved here is the creator's own (stage 8 —
-    // the workspace never sees another user's drafts, even by a stale
-    // membership row pointing at one).
+    // Three identity-scoped catalog reads (the same light reads list
+    // surfaces already pay on every load), joined in-memory by id — never
+    // one component hop per artifact. The caller's identity scopes them: a
+    // draft or author-visibility row resolved here is the caller's own —
+    // until the by-ids pass below adds the project-held rows other members
+    // created, which ADR 0011 makes workspace-visible by design.
     const [summaries, draftSummaries, maps] = await Promise.all([
       ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, {
         limit: CATALOG_READ_LIMIT,
@@ -683,6 +745,23 @@ export const get = query({
     for (const row of draftSummaries) {
       datasetById.set(row._id, row);
     }
+    // The member-visible drafts the identity-scoped reads can never return:
+    // resolved by id from THIS project's membership rows only. Junk ids
+    // (a membership row can name any string) simply come back absent —
+    // resolveArtifact answers "missing", exactly as for a deleted artifact.
+    const unresolved = memberships
+      .filter((membership) => membership.artifactKind === "dataset")
+      .map((membership) => membership.artifactId)
+      .filter((artifactId) => !datasetById.has(artifactId))
+      .slice(0, MAX_ARTIFACTS);
+    if (unresolved.length > 0) {
+      const memberDrafts = await ctx.runQuery(components.jsonCms.lib.getSchemaSummaries, {
+        schemaIds: unresolved,
+      });
+      for (const row of memberDrafts) {
+        datasetById.set(row._id, row);
+      }
+    }
     const mapById = new Map<string, ComponentMap>();
     for (const row of maps) {
       mapById.set(row._id, row);
@@ -700,8 +779,267 @@ export const get = query({
         artifactCount: project.artifactCount,
         createdBy: project.createdBy,
         description: project.description,
+        // The caller's own role — the page badges it and gates its controls
+        // on it (Owner/Editor/Viewer), so no second query is needed.
+        role,
         title: project.title,
       },
     };
   },
+});
+
+// ---------------------------------------------------------------------------
+// Collaboration (phase 1 of the project-workspace design, ADR 0011):
+// edit the project, delete it, manage its members.
+// ---------------------------------------------------------------------------
+
+/** The gone-error every project-scoped mutation shares (the `projectIdArg` answer). */
+function goneProject(): ConvexError<string> {
+  return new ConvexError("This project no longer exists — it may have been deleted.");
+}
+
+/** The member row one (project, user) pair answers with, or null — the exact by-ref lookup the membership mutations re-check (Convex has no unique indexes; the addArtifact precedent). */
+async function memberRowFor(
+  ctx: MutationCtx,
+  projectId: Id<"projects">,
+  userId: string,
+): Promise<Doc<"projectMembers"> | null> {
+  return ctx.db
+    .query("projectMembers")
+    .withIndex("by_project", (q) => q.eq("projectId", projectId))
+    .filter((q) => q.eq(q.field("userId"), userId))
+    .first();
+}
+
+/**
+ * Edits the project's own fields — title and/or description. Editor-and-up
+ * (ADR 0011: shaping the workspace is a content write, not member
+ * management). Same blank-field rules as `create` — the title is the only
+ * required field, and blank is refused rather than silently trimmed away
+ * (the UI-polish rule).
+ */
+export const update = mutation({
+  args: {
+    description: v.optional(v.string()),
+    projectId: v.string(),
+    title: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const actorId = await auth(ctx);
+    const projectId = projectIdArg(ctx, args.projectId);
+    if (projectId === null) {
+      throw goneProject();
+    }
+    const project = await projectForWrite(ctx, actorId, projectId);
+    const patch: { description?: string; title?: string } = {};
+    if (args.title !== undefined) {
+      const title = args.title.trim();
+      if (title === "") {
+        throw new ConvexError("Give the project a title.");
+      }
+      patch.title = title;
+    }
+    if (args.description !== undefined) {
+      if (args.description.trim() === "") {
+        throw new ConvexError("Leave the description empty instead of blank.");
+      }
+      patch.description = args.description;
+    }
+    if (patch.title !== undefined || patch.description !== undefined) {
+      await ctx.db.patch(project._id, patch);
+    }
+    return null;
+  },
+  returns: v.null(),
+});
+
+/**
+ * Deletes the project — owner-only. The cascade is the MEMBERSHIP side:
+ * every projectArtifacts row, every projectMembers row, and the fork
+ * reference edges minted with dataset memberships go with the project, in
+ * one transaction. Deliberately NOT the artifacts — references, not
+ * containment (the removeArtifact rule, unchanged): a draft created in the
+ * project survives as its creator's draft (visible in their drafts toggle,
+ * publishable on its own), and published rows never even notice. The UI's
+ * confirm dialog says exactly this, because it is destructive only to the
+ * collaboration, never to the data.
+ */
+export const remove = mutation({
+  args: { projectId: v.string() },
+  handler: async (ctx, args) => {
+    const actorId = await auth(ctx);
+    const projectId = projectIdArg(ctx, args.projectId);
+    if (projectId === null) {
+      throw goneProject();
+    }
+    const project = await projectForWrite(ctx, actorId, projectId, "owner");
+    // Exact reads on purpose — a deletion that stops at a display cap would
+    // orphan membership rows (and their edges) forever. Projects and their
+    // memberships are human-scale; the unbounded walk is the honest shape
+    // for a one-transaction teardown.
+    const memberships = await ctx.db
+      .query("projectArtifacts")
+      .withIndex("by_project", (q) => q.eq("projectId", projectId))
+      .collect();
+    for (const membership of memberships) {
+      // oxlint-disable-next-line no-await-in-loop -- one membership per loop, ordered and small (the removeArtifact shape).
+      const edges = await ctx.db
+        .query("consumerReferences")
+        .withIndex("by_consumer", (q) => q.eq("consumerId", membership._id))
+        .collect();
+      for (const edge of edges) {
+        // oxlint-disable-next-line no-await-in-loop -- one edge per membership, ordered and small (the removeArtifact shape).
+        await ctx.db.delete(edge._id);
+      }
+      // oxlint-disable-next-line no-await-in-loop -- one membership per loop, ordered and small (the removeArtifact shape).
+      await ctx.db.delete(membership._id);
+    }
+    const members = await ctx.db
+      .query("projectMembers")
+      .withIndex("by_project", (q) => q.eq("projectId", projectId))
+      .collect();
+    for (const member of members) {
+      // oxlint-disable-next-line no-await-in-loop -- one member per loop, ordered and small.
+      await ctx.db.delete(member._id);
+    }
+    await ctx.db.delete(project._id);
+    return null;
+  },
+  returns: v.null(),
+});
+
+/**
+ * The members dialog's read: the project's membership rows joined with the
+ * users mirror (name/image; the email only when the viewer IS that user —
+ * the same PII line users.ts draws, ADR 0009 addendum). Answers to any
+ * member — a viewer sees who they share the project with — and to nobody
+ * else (a non-member's read answers empty: the same read-null-vs-write-throw
+ * split, list-shaped). Members added through a host flow with no mirror row
+ * (a deleted account) render with their id and no profile fields.
+ */
+export const members = query({
+  args: { projectId: v.string() },
+  handler: async (ctx, args) => {
+    const viewer = await auth(ctx);
+    const projectId = projectIdArg(ctx, args.projectId);
+    if (projectId === null || (await projectRoleFor(ctx, projectId, viewer)) === null) {
+      return [];
+    }
+    const rows = await ctx.db
+      .query("projectMembers")
+      .withIndex("by_project", (q) => q.eq("projectId", projectId))
+      .take(MAX_ARTIFACTS);
+    return Promise.all(
+      rows.map(async (row) => {
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_authId", (q) => q.eq("authId", row.userId))
+          .first();
+        return {
+          _creationTime: row._creationTime,
+          email: user !== null && user.authId === viewer ? user.email : undefined,
+          image: user === null ? undefined : user.image,
+          name: user === null ? undefined : user.name,
+          role: row.role,
+          userId: row.userId,
+        };
+      }),
+    );
+  },
+  returns: v.array(
+    v.object({
+      _creationTime: v.number(),
+      email: v.optional(v.string()),
+      image: v.optional(v.string()),
+      name: v.optional(v.string()),
+      role: projectRoleValidator,
+      userId: v.string(),
+    }),
+  ),
+});
+
+/**
+ * Adds one member — owner-only (ADR 0011's member-management line). `user`
+ * names an account by Better Auth user id OR by email (resolved through
+ * users.ts's mirror-row lookup — the invite dialog accepts either). Role is
+ * explicit (the dialog carries a picker); duplicates land once via the
+ * in-transaction re-check. Inviting the creator re-answers "already a
+ * member" — their owner row predates every invite.
+ */
+export const addMember = mutation({
+  args: { projectId: v.string(), role: projectRoleValidator, user: v.string() },
+  handler: async (ctx, args) => {
+    const actorId = await auth(ctx);
+    const projectId = projectIdArg(ctx, args.projectId);
+    if (projectId === null) {
+      throw goneProject();
+    }
+    await projectForWrite(ctx, actorId, projectId, "owner");
+    const authId = await authIdForUser(ctx, args.user);
+    if (authId === null) {
+      throw new ConvexError("No account was found for that user id or email.");
+    }
+    if ((await memberRowFor(ctx, projectId, authId)) !== null) {
+      throw new ConvexError("That person is already a member of this project.");
+    }
+    return ctx.db.insert("projectMembers", { projectId, role: args.role, userId: authId });
+  },
+  returns: v.id("projectMembers"),
+});
+
+/**
+ * Changes one member's role — owner-only. The creator's row is refused for
+ * EVERY change (even owner→owner): it is the invariant that keeps "a
+ * project always has an owner" true with no election logic, so it doesn't
+ * participate in role changes at all.
+ */
+export const setRole = mutation({
+  args: { projectId: v.string(), role: projectRoleValidator, userId: v.string() },
+  handler: async (ctx, args) => {
+    const actorId = await auth(ctx);
+    const projectId = projectIdArg(ctx, args.projectId);
+    if (projectId === null) {
+      throw goneProject();
+    }
+    const project = await projectForWrite(ctx, actorId, projectId, "owner");
+    const row = await memberRowFor(ctx, projectId, args.userId);
+    if (row === null) {
+      throw new ConvexError("That person isn't a member of this project.");
+    }
+    if (args.userId === project.createdBy) {
+      throw new ConvexError("The project's creator always stays the owner.");
+    }
+    await ctx.db.patch(row._id, { role: args.role });
+    return null;
+  },
+  returns: v.null(),
+});
+
+/**
+ * Removes one member — owner-only, same creator carve-out as `setRole`
+ * (the creator can leave by deleting the project, not by demoting
+ * themself). Nothing else is touched: a removed member's drafts stay their
+ * own; the project simply stops being visible to them (the membership row
+ * was the whole grant).
+ */
+export const removeMember = mutation({
+  args: { projectId: v.string(), userId: v.string() },
+  handler: async (ctx, args) => {
+    const actorId = await auth(ctx);
+    const projectId = projectIdArg(ctx, args.projectId);
+    if (projectId === null) {
+      throw goneProject();
+    }
+    const project = await projectForWrite(ctx, actorId, projectId, "owner");
+    const row = await memberRowFor(ctx, projectId, args.userId);
+    if (row === null) {
+      throw new ConvexError("That person isn't a member of this project.");
+    }
+    if (args.userId === project.createdBy) {
+      throw new ConvexError("The project's creator can't be removed.");
+    }
+    await ctx.db.delete(row._id);
+    return null;
+  },
+  returns: v.null(),
 });

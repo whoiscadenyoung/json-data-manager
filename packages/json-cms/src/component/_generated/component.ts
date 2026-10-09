@@ -372,6 +372,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           };
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
+          mapTileArchiveFormat?: number;
           mapTileArchiveMaxZoom?: number;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
@@ -383,6 +384,54 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           title: string;
           uiSchema?: any;
         },
+        Name
+      >;
+      getSchemaSummaries: FunctionReference<
+        "query",
+        "internal",
+        { schemaIds: Array<string> },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          boundingBox?: Array<number>;
+          createdBy?: string;
+          description?: string;
+          editPolicy?: "open" | "locked";
+          entryCount?: number;
+          featureCount?: number;
+          fieldCount: number;
+          geometryType?:
+            | "Point"
+            | "MultiPoint"
+            | "LineString"
+            | "MultiLineString"
+            | "Polygon"
+            | "MultiPolygon";
+          groupId?: string;
+          kind?: "standard" | "geospatial";
+          lifecycle?: "draft" | "published";
+          lineage?: {
+            frozenAt: number;
+            recipe?: any;
+            snapshotRef?: string;
+            sourceKey?: string;
+            sourceSchemaId?: string;
+            sourceVersions?: Array<{
+              datasetId: string;
+              frozenAt?: number;
+              ref?: string;
+            }>;
+            versionLabel: string;
+          };
+          mapTileArchiveBuiltVersion?: number;
+          mapTileArchiveBytes?: number;
+          mapTileArchiveFormatCurrent: boolean;
+          mapTileArchiveMaxZoom?: number;
+          mapTileCacheVersion?: number;
+          publishedVisibility?: "author" | "everyone";
+          source?: { name: string };
+          title: string;
+        }>,
         Name
       >;
       getSchemaVersionBySnapshotRef: FunctionReference<
@@ -424,6 +473,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           };
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
+          mapTileArchiveFormat?: number;
           mapTileArchiveMaxZoom?: number;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
@@ -507,6 +557,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           };
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
+          mapTileArchiveFormatCurrent: boolean;
           mapTileArchiveMaxZoom?: number;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
@@ -832,6 +883,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           };
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
+          mapTileArchiveFormat?: number;
           mapTileArchiveMaxZoom?: number;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
@@ -884,6 +936,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           };
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
+          mapTileArchiveFormat?: number;
           mapTileArchiveMaxZoom?: number;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
@@ -936,6 +989,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           };
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
+          mapTileArchiveFormatCurrent: boolean;
           mapTileArchiveMaxZoom?: number;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
@@ -983,6 +1037,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           };
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
+          mapTileArchiveFormat?: number;
           mapTileArchiveMaxZoom?: number;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
