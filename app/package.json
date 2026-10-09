@@ -10,7 +10,8 @@
     "dev": "bunx convex dev --start 'vite dev'",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "x": "bunx"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
