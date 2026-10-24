@@ -18,7 +18,8 @@ import type { ReactNode } from "react";
  */
 export function AuthGate({ children }: { children: ReactNode }) {
   const { isAuthenticated, isLoading } = useConvexAuth(),
-    pathname = useLocation().pathname;
+    location = useLocation(),
+    pathname = location.pathname;
 
   if (pathname === "/signin") {
     return <>{children}</>;
@@ -31,7 +32,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
     );
   }
   if (!isAuthenticated) {
-    return <Navigate to="/signin" replace />;
+    // Remember where the visitor was headed (a shared app link, a dataset
+    // URL) so signing in lands them there instead of on the home page.
+    return (
+      <Navigate to="/signin" search={pathname === "/" ? {} : { redirect: location.href }} replace />
+    );
   }
   return <>{children}</>;
 }
