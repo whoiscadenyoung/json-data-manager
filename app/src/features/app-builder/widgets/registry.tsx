@@ -47,21 +47,21 @@ export interface WidgetKindInfo {
 
 export const WIDGET_KINDS: readonly WidgetKindInfo[] = [
   {
-    description: "Plot geospatial datasets as layers",
+    description: "Geospatial layers",
     icon: MapIcon,
     kind: "map",
     label: "Map",
     needsData: true,
   },
   {
-    description: "Bar, line, area, or donut from a field",
+    description: "Bar, line, area, donut",
     icon: BarChart3,
     kind: "chart",
     label: "Chart",
     needsData: true,
   },
   {
-    description: "Browse a dataset's rows",
+    description: "Searchable rows",
     icon: Table2,
     kind: "table",
     label: "Table",

@@ -20,17 +20,10 @@ import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 
 import { AppCanvasView } from "../components/app-canvas";
+import { PageLoading } from "../components/page-loading";
 import { copyShareUrl, ShareDialog } from "../components/share-dialog";
 import { AppDatasetsProvider } from "../data";
 import type { AppDoc } from "../use-app-editor";
-
-function Spinner() {
-  return (
-    <div className="flex min-h-100 items-center justify-center">
-      <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-    </div>
-  );
-}
 
 /** Not found and not shared read the same — an id's existence never leaks. */
 function AppNotFound() {
@@ -68,11 +61,11 @@ function ViewerActions({ app }: { app: AppDoc }) {
             setSharing(true);
           }}
         >
-          <Share2 />
+          <Share2 data-icon="inline-start" />
           Share
         </Button>
         <RouterButton to="/apps/$appId/edit" params={{ appId: app._id }}>
-          <Pencil />
+          <Pencil data-icon="inline-start" />
           Edit app
         </RouterButton>
         <ShareDialog
@@ -93,7 +86,7 @@ function ViewerActions({ app }: { app: AppDoc }) {
           void copyShareUrl(app._id);
         }}
       >
-        <Link2 />
+        <Link2 data-icon="inline-start" />
         Copy link
       </Button>
       <Button
@@ -111,7 +104,7 @@ function ViewerActions({ app }: { app: AppDoc }) {
           })();
         }}
       >
-        <Copy />
+        <Copy data-icon="inline-start" />
         Make a copy
       </Button>
     </>
@@ -125,7 +118,7 @@ function ViewerActions({ app }: { app: AppDoc }) {
 export function AppViewPage({ appId }: { appId: string }) {
   const app = useQuery({ ...convexQuery(api.appBuilder.apps.get, { appId }) }).data;
   if (app === undefined) {
-    return <Spinner />;
+    return <PageLoading />;
   }
   if (app === null) {
     return <AppNotFound />;
@@ -163,7 +156,7 @@ export function AppViewPage({ appId }: { appId: string }) {
           {app.canEdit && (
             <EmptyContent>
               <RouterButton to="/apps/$appId/edit" params={{ appId: app._id }}>
-                <Pencil />
+                <Pencil data-icon="inline-start" />
                 Open the builder
               </RouterButton>
             </EmptyContent>

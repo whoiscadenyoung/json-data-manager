@@ -11,14 +11,27 @@ import {
   LineChart,
   Pie,
   PieChart,
-  ResponsiveContainer,
-  Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
 
 import { Button } from "#/components/ui/button";
-import { useColorScheme } from "#/hooks/use-color-scheme";
+import {
+  ChartContainer,
+  ChartLegend,
+  ChartLegendContent,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from "#/components/ui/chart";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "#/components/ui/table";
 
 import { useDatasetRecords } from "../data";
 import {
@@ -46,19 +59,19 @@ import {
 
 /**
  * Charts over one dataset: rows grouped by a field and aggregated
- * client-side (`groupRows`), drawn with Recharts. Loaded lazily by the
- * registry, so Recharts never weighs on pages without a chart.
+ * client-side (`groupRows`), drawn with the shadcn `Chart` kit
+ * (`ChartContainer` over Recharts). Loaded lazily by the registry, so
+ * Recharts never weighs on pages without a chart.
  *
- * Mark specs follow the dataviz method: one series → one color (no legend;
- * the title names it), thin marks with 4px rounded data-ends, 2px lines,
- * recessive horizontal grid, text in text tokens, hover tooltips on every
+ * Colors ride `ChartConfig` themes — the container emits `--color-<key>`
+ * for light and dark from the dataviz palette's own steps, so marks never
+ * read the color scheme themselves. Mark specs follow the dataviz method:
+ * one series → one color (no legend; the title names it), 4px rounded
+ * data-ends, 2px lines, a recessive horizontal grid, hover tooltips on every
  * mark, and a table view of the same numbers one click away.
  */
 
-type Scheme = "light" | "dark";
-
-const AXIS_TICK = { fill: "var(--muted-foreground)", fontSize: 11 },
-  GRID_STROKE = "var(--border)";
+const MARGIN = { bottom: 4, left: 4, right: 16, top: 8 };
 
 function measureLabel(widget: WidgetOf<"chart">): string {
   return widget.aggregate === "count"
@@ -66,53 +79,10 @@ function measureLabel(widget: WidgetOf<"chart">): string {
     : `${AGGREGATE_LABELS[widget.aggregate]} of ${widget.valueField ?? "—"}`;
 }
 
-function ChartTooltip({
-  active,
-  label,
-  value,
-  measure,
-}: {
-  active: boolean;
-  label: string | undefined;
-  value: number | undefined;
-  measure: string;
-}) {
-  if (!active || value === undefined) {
-    return null;
-  }
-  return (
-    <div className="rounded-md border border-border bg-popover px-2.5 py-1.5 text-xs text-popover-foreground shadow-md">
-      <div className="font-medium">{label}</div>
-      <div className="text-muted-foreground">
-        {measure}: <span className="text-foreground tabular-nums">{formatNumberFull(value)}</span>
-      </div>
-    </div>
-  );
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-/** Reads the hovered point (one `ChartGroup`) out of Recharts' loosely typed tooltip payload. */
-function hoveredPoint(payload: unknown): { label?: string; value?: number } {
-  const first: unknown = Array.isArray(payload) ? payload[0] : undefined,
-    point: unknown = isObject(first) ? first.payload : undefined;
-  if (!isObject(point)) {
-    return {};
-  }
+/** The single-series config: one `--color-value` from palette slot 1, stepped per theme. */
+function seriesConfig(measure: string): ChartConfig {
   return {
-    label: typeof point.label === "string" ? point.label : undefined,
-    value: typeof point.value === "number" ? point.value : undefined,
-  };
-}
-
-function tooltipFor(measure: string) {
-  return (props: { active?: boolean; payload?: unknown }) => {
-    const { label, value } = hoveredPoint(props.payload);
-    return (
-      <ChartTooltip active={props.active === true} label={label} value={value} measure={measure} />
-    );
+    value: { label: measure, theme: { dark: CATEGORICAL.dark[0], light: CATEGORICAL.light[0] } },
   };
 }
 
@@ -125,44 +95,25 @@ function truncateLabel(label: string, max: number): string {
   return label.length > max ? `${label.slice(0, max - 1)}…` : label;
 }
 
-function BarView({
-  groups,
-  color,
-  measure,
-}: {
-  groups: ChartGroup[];
-  color: string;
-  measure: string;
-}) {
+function BarView({ groups, measure }: { groups: ChartGroup[]; measure: string }) {
   const horizontal = prefersHorizontal(groups);
   return (
-    <ResponsiveContainer width="100%" height="100%">
+    <ChartContainer config={seriesConfig(measure)} className="aspect-auto size-full">
       <BarChart
         data={groups}
         layout={horizontal ? "vertical" : "horizontal"}
-        margin={{ bottom: 4, left: 4, right: 16, top: 8 }}
+        margin={MARGIN}
         barCategoryGap={2}
+        accessibilityLayer
       >
-        <CartesianGrid
-          stroke={GRID_STROKE}
-          strokeDasharray="0"
-          horizontal={!horizontal}
-          vertical={horizontal}
-        />
+        <CartesianGrid horizontal={!horizontal} vertical={horizontal} />
         {horizontal ? (
           <>
-            <XAxis
-              type="number"
-              tick={AXIS_TICK}
-              tickFormatter={formatNumber}
-              axisLine={false}
-              tickLine={false}
-            />
+            <XAxis type="number" tickFormatter={formatNumber} axisLine={false} tickLine={false} />
             <YAxis
               type="category"
               dataKey="label"
               width={120}
-              tick={AXIS_TICK}
               tickFormatter={(label: string) => truncateLabel(label, 18)}
               axisLine={false}
               tickLine={false}
@@ -171,152 +122,138 @@ function BarView({
           </>
         ) : (
           <>
-            <XAxis
-              dataKey="label"
-              tick={AXIS_TICK}
-              axisLine={false}
-              tickLine={false}
-              interval={0}
-            />
-            <YAxis
-              tick={AXIS_TICK}
-              tickFormatter={formatNumber}
-              axisLine={false}
-              tickLine={false}
-              width={48}
-            />
+            <XAxis dataKey="label" axisLine={false} tickLine={false} interval={0} />
+            <YAxis tickFormatter={formatNumber} axisLine={false} tickLine={false} width={48} />
           </>
         )}
-        <Tooltip cursor={{ fill: "var(--muted)", opacity: 0.5 }} content={tooltipFor(measure)} />
+        <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
         <Bar
           dataKey="value"
-          fill={color}
+          fill="var(--color-value)"
           radius={horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]}
           maxBarSize={48}
           isAnimationActive={false}
         />
       </BarChart>
-    </ResponsiveContainer>
+    </ChartContainer>
   );
 }
 
 function SeriesView({
   groups,
-  color,
   measure,
   area,
 }: {
   groups: ChartGroup[];
-  color: string;
   measure: string;
   area: boolean;
 }) {
   const axes = (
-    <>
-      <CartesianGrid stroke={GRID_STROKE} vertical={false} />
-      <XAxis dataKey="label" tick={AXIS_TICK} axisLine={false} tickLine={false} minTickGap={16} />
-      <YAxis
-        tick={AXIS_TICK}
-        tickFormatter={formatNumber}
-        axisLine={false}
-        tickLine={false}
-        width={48}
-      />
-      <Tooltip
-        cursor={{ stroke: "var(--muted-foreground)", strokeWidth: 1 }}
-        content={tooltipFor(measure)}
-      />
-    </>
-  );
-  const margin = { bottom: 4, left: 4, right: 16, top: 8 },
+      <>
+        <CartesianGrid vertical={false} />
+        <XAxis dataKey="label" axisLine={false} tickLine={false} minTickGap={16} />
+        <YAxis tickFormatter={formatNumber} axisLine={false} tickLine={false} width={48} />
+        <ChartTooltip content={<ChartTooltipContent indicator="line" />} />
+      </>
+    ),
     dot =
-      groups.length <= 24 ? { fill: color, r: 4, stroke: "var(--card)", strokeWidth: 2 } : false;
+      groups.length <= 24
+        ? { fill: "var(--color-value)", r: 4, stroke: "var(--card)", strokeWidth: 2 }
+        : false;
   return (
-    <ResponsiveContainer width="100%" height="100%">
+    <ChartContainer config={seriesConfig(measure)} className="aspect-auto size-full">
       {area ? (
-        <AreaChart data={groups} margin={margin}>
+        <AreaChart data={groups} margin={MARGIN} accessibilityLayer>
           {axes}
           <Area
             dataKey="value"
-            stroke={color}
+            stroke="var(--color-value)"
             strokeWidth={2}
-            fill={color}
+            fill="var(--color-value)"
             fillOpacity={0.15}
             dot={dot}
             isAnimationActive={false}
           />
         </AreaChart>
       ) : (
-        <LineChart data={groups} margin={margin}>
+        <LineChart data={groups} margin={MARGIN} accessibilityLayer>
           {axes}
           <Line
             dataKey="value"
-            stroke={color}
+            stroke="var(--color-value)"
             strokeWidth={2}
             dot={dot}
             isAnimationActive={false}
           />
         </LineChart>
       )}
-    </ResponsiveContainer>
+    </ChartContainer>
   );
 }
 
-function sliceColor(label: string, index: number, scheme: Scheme): string {
-  return label === OTHER_LABEL ? OTHER_COLOR[scheme] : CATEGORICAL[scheme][index];
+/** A slice's config key: palette slots in fixed order, "other" for the fold. */
+function sliceKey(group: ChartGroup, index: number): string {
+  return group.label === OTHER_LABEL ? "other" : `slice${index}`;
 }
 
-function DonutView({
-  groups,
-  scheme,
-  measure,
-}: {
-  groups: ChartGroup[];
-  scheme: Scheme;
-  measure: string;
-}) {
+/** A slice's share of the whole, for its legend label. */
+function shareLabel(value: number, total: number): string {
+  return total > 0 ? `${Math.round((value / total) * 100)}%` : "—";
+}
+
+/**
+ * One config entry per slice — `--color-<key>` per theme, and a label that
+ * carries the share so the legend direct-labels every slice (identity is
+ * never color alone).
+ */
+function donutConfig(groups: readonly ChartGroup[]): ChartConfig {
   const total = groups.reduce((sum, group) => sum + group.value, 0);
+  return Object.fromEntries(
+    groups.map((group, index) => [
+      sliceKey(group, index),
+      {
+        label: `${group.label} · ${shareLabel(group.value, total)}`,
+        theme:
+          group.label === OTHER_LABEL
+            ? OTHER_COLOR
+            : { dark: CATEGORICAL.dark[index], light: CATEGORICAL.light[index] },
+      },
+    ]),
+  );
+}
+
+function DonutView({ groups }: { groups: ChartGroup[] }) {
+  const slices = groups.map((group, index) => ({
+    ...group,
+    fill: `var(--color-${sliceKey(group, index)})`,
+    key: sliceKey(group, index),
+  }));
   return (
-    <div className="flex h-full items-center gap-4 px-3">
-      <div className="h-full min-w-0 flex-1">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Tooltip content={tooltipFor(measure)} />
-            <Pie
-              data={groups}
-              dataKey="value"
-              nameKey="label"
-              innerRadius="58%"
-              outerRadius="88%"
-              stroke="var(--card)"
-              strokeWidth={2}
-              isAnimationActive={false}
-            >
-              {groups.map((group, index) => (
-                <Cell key={group.label} fill={sliceColor(group.label, index, scheme)} />
-              ))}
-            </Pie>
-          </PieChart>
-        </ResponsiveContainer>
-      </div>
-      {/* Legend + direct labels: identity is never color alone. */}
-      <ul className="flex max-h-full w-2/5 min-w-32 flex-col gap-1 overflow-y-auto text-xs">
-        {groups.map((group, index) => (
-          <li key={group.label} className="flex items-center gap-2">
-            <span
-              className="size-2.5 shrink-0 rounded-full"
-              style={{ backgroundColor: sliceColor(group.label, index, scheme) }}
-            />
-            <span className="min-w-0 flex-1 truncate" title={group.label}>
-              {group.label}
-            </span>
-            <span className="text-muted-foreground tabular-nums">
-              {total > 0 ? `${Math.round((group.value / total) * 100)}%` : "—"}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </div>
+    <ChartContainer config={donutConfig(groups)} className="aspect-auto size-full">
+      <PieChart accessibilityLayer>
+        <ChartTooltip content={<ChartTooltipContent nameKey="key" hideLabel />} />
+        <Pie
+          data={slices}
+          dataKey="value"
+          nameKey="key"
+          innerRadius="58%"
+          outerRadius="88%"
+          stroke="var(--card)"
+          strokeWidth={2}
+          isAnimationActive={false}
+        >
+          {slices.map((slice) => (
+            <Cell key={slice.key} fill={slice.fill} />
+          ))}
+        </Pie>
+        <ChartLegend
+          layout="vertical"
+          align="right"
+          verticalAlign="middle"
+          content={<ChartLegendContent nameKey="key" className="flex-col items-start gap-1 pt-0" />}
+        />
+      </PieChart>
+    </ChartContainer>
   );
 }
 
@@ -330,23 +267,25 @@ function DataTableView({
   measure: string;
 }) {
   return (
-    <div className="h-full overflow-auto px-4 pt-7 pb-3">
-      <table className="w-full text-xs">
-        <thead className="sticky top-0 bg-card text-left text-muted-foreground">
-          <tr>
-            <th className="py-1.5 font-medium">{groupBy}</th>
-            <th className="py-1.5 text-right font-medium">{measure}</th>
-          </tr>
-        </thead>
-        <tbody>
+    <div className="h-full overflow-auto px-4 pb-3">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>{groupBy}</TableHead>
+            <TableHead className="text-right">{measure}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {groups.map((group) => (
-            <tr key={group.label} className="border-t border-border">
-              <td className="py-1.5">{group.label}</td>
-              <td className="py-1.5 text-right tabular-nums">{formatNumberFull(group.value)}</td>
-            </tr>
+            <TableRow key={group.label}>
+              <TableCell>{group.label}</TableCell>
+              <TableCell className="text-right tabular-nums">
+                {formatNumberFull(group.value)}
+              </TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }
@@ -355,38 +294,27 @@ function DataTableView({
 function ChartMarks({
   widget,
   groups,
-  scheme,
   measure,
 }: {
   widget: WidgetOf<"chart">;
   groups: ChartGroup[];
-  scheme: Scheme;
   measure: string;
 }) {
-  const color = CATEGORICAL[scheme][0];
   switch (widget.chartType) {
     case "bar": {
-      return <BarView groups={groups} color={color} measure={measure} />;
+      return <BarView groups={groups} measure={measure} />;
     }
     case "donut": {
-      return <DonutView groups={groups} scheme={scheme} measure={measure} />;
+      return <DonutView groups={groups} />;
     }
     default: {
-      return (
-        <SeriesView
-          groups={groups}
-          color={color}
-          measure={measure}
-          area={widget.chartType === "area"}
-        />
-      );
+      return <SeriesView groups={groups} measure={measure} area={widget.chartType === "area"} />;
     }
   }
 }
 
 function ChartBody({ widget, groupBy }: { widget: WidgetOf<"chart">; groupBy: string }) {
   const { records, complete } = useDatasetRecords(widget.datasetId),
-    scheme = useColorScheme(),
     [showTable, setShowTable] = useState(false);
   if (!complete) {
     return <WidgetMessage loading>Loading {records.length.toLocaleString()} rows…</WidgetMessage>;
@@ -405,27 +333,30 @@ function ChartBody({ widget, groupBy }: { widget: WidgetOf<"chart">; groupBy: st
     return <WidgetMessage>No values to chart yet.</WidgetMessage>;
   }
   return (
-    <div className="relative h-full">
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-sm"
-        className="absolute top-0 right-2 z-10 text-muted-foreground"
-        aria-label={showTable ? "Show chart" : "Show data table"}
-        title={showTable ? "Show chart" : "Show data table"}
-        onClick={() => {
-          setShowTable((prev) => !prev);
-        }}
-      >
-        {showTable ? <BarChart3 /> : <Table2 />}
-      </Button>
-      {showTable ? (
-        <DataTableView groups={groups} groupBy={groupBy} measure={measure} />
-      ) : (
-        <div className="h-full pt-7 pr-2 pb-2">
-          <ChartMarks widget={widget} groups={groups} scheme={scheme} measure={measure} />
-        </div>
-      )}
+    <div className="flex h-full flex-col">
+      <div className="flex justify-end px-2">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={showTable ? "Show chart" : "Show data table"}
+          title={showTable ? "Show chart" : "Show data table"}
+          onClick={() => {
+            setShowTable((prev) => !prev);
+          }}
+        >
+          {showTable ? <BarChart3 /> : <Table2 />}
+        </Button>
+      </div>
+      <div className="min-h-0 flex-1">
+        {showTable ? (
+          <DataTableView groups={groups} groupBy={groupBy} measure={measure} />
+        ) : (
+          <div className="h-full pr-2 pb-2">
+            <ChartMarks widget={widget} groups={groups} measure={measure} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

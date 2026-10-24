@@ -13,7 +13,7 @@ import {
 import type { DataTableColumnDef } from "#/components/niko-table/types";
 import { Button } from "#/components/ui/button";
 import { Checkbox } from "#/components/ui/checkbox";
-import { Label } from "#/components/ui/label";
+import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "#/components/ui/field";
 import { entryDataRecord, type DatasetEntryRow } from "#/lib/dataset-rows";
 import { useDatasetEntryPages } from "#/lib/dataset-rows-react";
 import { formatPropertyValue } from "#/lib/format";
@@ -174,22 +174,28 @@ export function TableWidgetSettings({
         }}
       />
       {fields.length > 0 && (
-        <fieldset className="flex flex-col gap-1.5">
-          <legend className="mb-1.5 text-sm font-medium">Columns</legend>
-          <div className="flex max-h-56 flex-col gap-1.5 overflow-y-auto rounded-md border border-border p-2">
-            {fields.map((field) => (
-              <Label key={field.name} className="flex items-center gap-2 font-normal">
-                <Checkbox
-                  checked={shown.has(field.name)}
-                  onCheckedChange={(checked) => {
-                    toggle(field.name, checked);
-                  }}
-                />
-                <span className="truncate">{field.name}</span>
-              </Label>
-            ))}
-          </div>
-        </fieldset>
+        <FieldSet>
+          <FieldLegend variant="label">Columns</FieldLegend>
+          <FieldGroup className="max-h-56 gap-2 overflow-y-auto">
+            {fields.map((field) => {
+              const id = `table-column-${widget.id}-${field.name}`;
+              return (
+                <Field key={field.name} orientation="horizontal">
+                  <Checkbox
+                    id={id}
+                    checked={shown.has(field.name)}
+                    onCheckedChange={(checked) => {
+                      toggle(field.name, checked);
+                    }}
+                  />
+                  <FieldLabel htmlFor={id} className="truncate font-normal">
+                    {field.name}
+                  </FieldLabel>
+                </Field>
+              );
+            })}
+          </FieldGroup>
+        </FieldSet>
       )}
     </>
   );

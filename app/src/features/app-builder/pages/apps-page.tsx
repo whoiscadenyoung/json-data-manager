@@ -6,7 +6,14 @@ import { useState } from "react";
 
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
-import { Card } from "#/components/ui/card";
+import {
+  Card,
+  CardAction,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "#/components/ui/card";
 import {
   Empty,
   EmptyContent,
@@ -18,6 +25,7 @@ import {
 import { api } from "#convex/_generated/api";
 
 import { AppDetailsDialog } from "../components/app-details-dialog";
+import { PageLoading } from "../components/page-loading";
 
 /** The creator's apps (/apps). */
 export function AppsPage() {
@@ -26,11 +34,7 @@ export function AppsPage() {
     [creating, setCreating] = useState(false);
 
   if (apps === undefined) {
-    return (
-      <div className="flex min-h-100 items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-      </div>
-    );
+    return <PageLoading />;
   }
 
   const openNew = () => {
@@ -47,7 +51,7 @@ export function AppsPage() {
           </p>
         </div>
         <Button type="button" onClick={openNew}>
-          <Plus className="mr-2 h-4 w-4" />
+          <Plus data-icon="inline-start" />
           New app
         </Button>
       </div>
@@ -65,7 +69,7 @@ export function AppsPage() {
           </EmptyHeader>
           <EmptyContent>
             <Button type="button" onClick={openNew}>
-              <Plus className="mr-2 h-4 w-4" />
+              <Plus data-icon="inline-start" />
               Create your first app
             </Button>
           </EmptyContent>
@@ -73,44 +77,42 @@ export function AppsPage() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {apps.map((app) => (
-            <Card
-              key={app._id}
-              className="relative flex flex-col gap-3 p-5 transition-colors hover:border-primary/50"
-            >
-              <div className="flex items-center gap-2">
-                {app.sharing === "link" ? (
-                  <Badge variant="secondary">
-                    <Globe />
-                    Shared by link
-                  </Badge>
-                ) : (
-                  <Badge variant="outline">
-                    <Lock />
-                    Private
-                  </Badge>
-                )}
-              </div>
-              <div className="min-w-0 flex-1">
-                <Link
-                  to="/apps/$appId"
-                  params={{ appId: app._id }}
-                  className="text-base font-semibold after:absolute after:inset-0 hover:underline"
-                >
-                  {app.title}
-                </Link>
+            <Card key={app._id} className="relative transition-shadow hover:ring-primary/40">
+              <CardHeader>
+                <CardTitle>
+                  {/* The stretched link makes the whole card the click target. */}
+                  <Link
+                    to="/apps/$appId"
+                    params={{ appId: app._id }}
+                    className="after:absolute after:inset-0 hover:underline"
+                  >
+                    {app.title}
+                  </Link>
+                </CardTitle>
                 {app.description !== undefined && (
-                  <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-                    {app.description}
-                  </p>
+                  <CardDescription className="line-clamp-2">{app.description}</CardDescription>
                 )}
-              </div>
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <CardAction>
+                  {app.sharing === "link" ? (
+                    <Badge variant="secondary">
+                      <Globe data-icon="inline-start" />
+                      Shared by link
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline">
+                      <Lock data-icon="inline-start" />
+                      Private
+                    </Badge>
+                  )}
+                </CardAction>
+              </CardHeader>
+              <CardFooter className="mt-auto justify-between text-muted-foreground">
                 <span>
                   {app.widgetCount} {app.widgetCount === 1 ? "widget" : "widgets"} ·{" "}
                   {app.datasetCount} {app.datasetCount === 1 ? "dataset" : "datasets"}
                 </span>
                 <span>Updated {new Date(app.updatedAt).toLocaleDateString()}</span>
-              </div>
+              </CardFooter>
             </Card>
           ))}
         </div>

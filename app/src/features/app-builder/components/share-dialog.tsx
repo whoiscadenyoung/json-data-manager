@@ -3,7 +3,6 @@ import { Check, Copy, Globe, Lock } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { Button } from "#/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -11,9 +10,24 @@ import {
   DialogHeader,
   DialogTitle,
 } from "#/components/ui/dialog";
-import { Input } from "#/components/ui/input";
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+  FieldTitle,
+} from "#/components/ui/field";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+} from "#/components/ui/input-group";
+import { RadioGroup, RadioGroupItem } from "#/components/ui/radio-group";
 import { errorMessage } from "#/lib/errors";
-import { cn } from "#/lib/utils";
 import { api } from "#convex/_generated/api";
 import type { Sharing } from "#convex/appBuilder/validators";
 
@@ -88,73 +102,72 @@ export function ShareDialog({
             Choose who can open this app's link. Only you can edit it.
           </DialogDescription>
         </DialogHeader>
-        <fieldset className="flex flex-col gap-2" disabled={pending !== undefined}>
-          <legend className="sr-only">Who can open this app</legend>
-          {OPTIONS.map((option) => {
-            const Icon = option.icon,
-              active = (pending ?? sharing) === option.value;
-            return (
-              <label
-                key={option.value}
-                className={cn(
-                  "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors has-focus-visible:ring-2 has-focus-visible:ring-ring/50",
-                  active ? "border-primary bg-primary/5" : "border-border hover:border-primary/50",
-                )}
-              >
-                <input
-                  type="radio"
-                  name="app-sharing"
-                  value={option.value}
-                  checked={active}
-                  className="sr-only"
-                  onChange={() => {
-                    void setSharing(option.value);
-                  }}
-                />
-                <Icon
-                  className={cn("mt-0.5 size-4", active ? "text-primary" : "text-muted-foreground")}
-                />
-                <span className="flex flex-col gap-0.5">
-                  <span className="text-sm font-medium">{option.label}</span>
-                  <span className="text-xs text-muted-foreground">{option.description}</span>
-                </span>
-              </label>
-            );
-          })}
-        </fieldset>
-        <div className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium">Link</span>
-          <div className="flex gap-2">
-            <Input
-              readOnly
-              value={shareUrlFor(appId)}
-              aria-label="Share link"
-              onFocus={(event) => {
-                event.target.select();
-              }}
-            />
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                void copyShareUrl(appId).then(() => {
-                  setCopied(true);
-                  return setTimeout(() => {
-                    setCopied(false);
-                  }, 1500);
-                });
+        <FieldGroup>
+          <FieldSet>
+            <FieldLegend className="sr-only">Who can open this app</FieldLegend>
+            <RadioGroup
+              value={pending ?? sharing}
+              disabled={pending !== undefined}
+              onValueChange={(value) => {
+                const next = OPTIONS.find((option) => option.value === value);
+                if (next !== undefined) {
+                  void setSharing(next.value);
+                }
               }}
             >
-              {copied ? <Check /> : <Copy />}
-              Copy
-            </Button>
-          </div>
-          {sharing === "private" && pending === undefined && (
-            <p className="text-xs text-muted-foreground">
-              The link only works for you while the app is private.
-            </p>
-          )}
-        </div>
+              {OPTIONS.map((option) => {
+                const Icon = option.icon,
+                  id = `app-sharing-${option.value}`;
+                return (
+                  <FieldLabel key={option.value} htmlFor={id}>
+                    <Field orientation="horizontal">
+                      <Icon />
+                      <FieldContent>
+                        <FieldTitle>{option.label}</FieldTitle>
+                        <FieldDescription>{option.description}</FieldDescription>
+                      </FieldContent>
+                      <RadioGroupItem id={id} value={option.value} />
+                    </Field>
+                  </FieldLabel>
+                );
+              })}
+            </RadioGroup>
+          </FieldSet>
+          <Field>
+            <FieldLabel htmlFor="app-share-link">Link</FieldLabel>
+            <InputGroup>
+              <InputGroupInput
+                id="app-share-link"
+                readOnly
+                value={shareUrlFor(appId)}
+                onFocus={(event) => {
+                  event.target.select();
+                }}
+              />
+              <InputGroupAddon align="inline-end">
+                <InputGroupButton
+                  size="sm"
+                  onClick={() => {
+                    void copyShareUrl(appId).then(() => {
+                      setCopied(true);
+                      return setTimeout(() => {
+                        setCopied(false);
+                      }, 1500);
+                    });
+                  }}
+                >
+                  {copied ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
+                  Copy
+                </InputGroupButton>
+              </InputGroupAddon>
+            </InputGroup>
+            {sharing === "private" && pending === undefined && (
+              <FieldDescription>
+                The link only works for you while the app is private.
+              </FieldDescription>
+            )}
+          </Field>
+        </FieldGroup>
       </DialogContent>
     </Dialog>
   );

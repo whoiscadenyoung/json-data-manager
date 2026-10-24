@@ -1,14 +1,16 @@
-import { Loader2 } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { Label } from "#/components/ui/label";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia } from "#/components/ui/empty";
+import { Field, FieldLabel } from "#/components/ui/field";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "#/components/ui/select";
+import { Spinner } from "#/components/ui/spinner";
 import type { Aggregate, Widget, WidgetKind } from "#convex/appBuilder/validators";
 
 import { useAppDataset, useAppDatasets, datasetTitle, type DatasetState } from "../data";
@@ -31,7 +33,7 @@ export interface WidgetSettingsProps<K extends WidgetKind> {
   onChange: (next: WidgetOf<K>) => void;
 }
 
-/** A centered, quiet message filling a widget body — empty, loading, and error states. */
+/** A widget body's empty, loading, and error states — the shadcn `Empty`, sized to fill the widget. */
 export function WidgetMessage({
   children,
   loading = false,
@@ -40,10 +42,16 @@ export function WidgetMessage({
   loading?: boolean;
 }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center text-sm text-muted-foreground">
-      {loading && <Loader2 className="size-4 animate-spin text-primary" />}
-      {children}
-    </div>
+    <Empty className="h-full gap-2 p-4">
+      <EmptyHeader>
+        {loading && (
+          <EmptyMedia>
+            <Spinner />
+          </EmptyMedia>
+        )}
+        <EmptyDescription>{children}</EmptyDescription>
+      </EmptyHeader>
+    </Empty>
   );
 }
 
@@ -90,8 +98,8 @@ export function SettingsSelect({
   disabled?: boolean;
 }) {
   return (
-    <div className="flex flex-col gap-1.5">
-      <Label htmlFor={id}>{label}</Label>
+    <Field>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
       <Select
         disabled={disabled || options.length === 0}
         value={value === NONE ? null : value}
@@ -104,14 +112,16 @@ export function SettingsSelect({
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>
         <SelectContent>
-          {options.map((option) => (
-            <SelectItem key={option.value} value={option.value}>
-              {option.label}
-            </SelectItem>
-          ))}
+          <SelectGroup>
+            {options.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
         </SelectContent>
       </Select>
-    </div>
+    </Field>
   );
 }
 

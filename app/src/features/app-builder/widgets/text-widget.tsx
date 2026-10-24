@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 
-import { Label } from "#/components/ui/label";
+import { Field, FieldDescription, FieldLabel } from "#/components/ui/field";
 import { Textarea } from "#/components/ui/textarea";
 
-import type { WidgetSettingsProps, WidgetViewProps } from "./shared";
+import { WidgetMessage, type WidgetSettingsProps, type WidgetViewProps } from "./shared";
 
 /**
  * Text blocks: headings, intros, and notes between data widgets. A tiny,
@@ -80,7 +80,7 @@ function renderBlock(block: Block, index: number): ReactNode {
     }
     case "list": {
       return (
-        <ul key={index} className="list-disc space-y-1 pl-5">
+        <ul key={index} className="flex list-disc flex-col gap-1 pl-5">
           {block.items.map((item, itemIndex) => (
             // oxlint-disable-next-line react/no-array-index-key -- list items have no identity beyond their position in the text.
             <li key={itemIndex}>{item}</li>
@@ -101,14 +101,10 @@ function renderBlock(block: Block, index: number): ReactNode {
 export function TextWidgetView({ widget }: WidgetViewProps<"text">) {
   const blocks = parseTextBlocks(widget.body);
   if (blocks.length === 0) {
-    return (
-      <div className="flex h-full items-center px-4 text-sm text-muted-foreground italic">
-        Empty text block
-      </div>
-    );
+    return <WidgetMessage>Empty text block — add text in the Widget panel.</WidgetMessage>;
   }
   return (
-    <div className="h-full space-y-2 overflow-y-auto px-4 py-3 text-sm">
+    <div className="flex h-full flex-col gap-2 overflow-y-auto px-4 py-3 text-sm">
       {blocks.map(renderBlock)}
     </div>
   );
@@ -116,8 +112,8 @@ export function TextWidgetView({ widget }: WidgetViewProps<"text">) {
 
 export function TextWidgetSettings({ widget, onChange }: WidgetSettingsProps<"text">) {
   return (
-    <div className="flex flex-col gap-1.5">
-      <Label htmlFor={`text-body-${widget.id}`}>Text</Label>
+    <Field>
+      <FieldLabel htmlFor={`text-body-${widget.id}`}>Text</FieldLabel>
       <Textarea
         id={`text-body-${widget.id}`}
         rows={8}
@@ -126,9 +122,9 @@ export function TextWidgetSettings({ widget, onChange }: WidgetSettingsProps<"te
           onChange({ ...widget, body: event.target.value });
         }}
       />
-      <p className="text-xs text-muted-foreground">
+      <FieldDescription>
         Start a line with # for a heading or - for a bullet. Leave a blank line between paragraphs.
-      </p>
-    </div>
+      </FieldDescription>
+    </Field>
   );
 }

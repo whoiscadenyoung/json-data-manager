@@ -11,12 +11,36 @@ import {
   DialogHeader,
   DialogTitle,
 } from "#/components/ui/dialog";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "#/components/ui/field";
 import { Input } from "#/components/ui/input";
-import { Label } from "#/components/ui/label";
+import { Spinner } from "#/components/ui/spinner";
 import { Textarea } from "#/components/ui/textarea";
 import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 import { APP_LIMITS } from "#convex/appBuilder/validators";
+
+/** The required title — invalid (and saying so) while empty. */
+function TitleField({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const missing = value.trim() === "";
+  return (
+    <Field data-invalid={missing ? true : undefined}>
+      <FieldLabel htmlFor="app-title">
+        Title <span className="text-destructive">*</span>
+      </FieldLabel>
+      <Input
+        id="app-title"
+        value={value}
+        maxLength={APP_LIMITS.title}
+        placeholder="Safe Streets awards explorer"
+        aria-invalid={missing ? true : undefined}
+        onChange={(event) => {
+          onChange(event.target.value);
+        }}
+      />
+      {missing && <FieldDescription>A title is required.</FieldDescription>}
+    </Field>
+  );
+}
 
 /**
  * Title + description, for both "New app" (no `appId`: creates, then hands
@@ -86,55 +110,43 @@ export function AppDetailsDialog({
           </DialogDescription>
         </DialogHeader>
         <form
-          className="flex flex-col gap-4 py-2"
           onSubmit={(event) => {
             event.preventDefault();
             void submit();
           }}
         >
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="app-title">
-              Title <span className="text-destructive">*</span>
-            </Label>
-            <Input
-              id="app-title"
-              value={title}
-              maxLength={APP_LIMITS.title}
-              placeholder="Safe Streets awards explorer"
-              onChange={(event) => {
-                setTitle(event.target.value);
-              }}
-            />
-            {titleMissing && <p className="text-xs text-muted-foreground">A title is required.</p>}
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="app-description">Description</Label>
-            <Textarea
-              id="app-description"
-              value={description}
-              maxLength={APP_LIMITS.description}
-              rows={3}
-              placeholder="Optional — shown under the title for viewers"
-              onChange={(event) => {
-                setDescription(event.target.value);
-              }}
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={submitting}
-              onClick={() => {
-                onOpenChange(false);
-              }}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={submitting || titleMissing}>
-              {submitting ? "Saving…" : appId === undefined ? "Create app" : "Save"}
-            </Button>
-          </DialogFooter>
+          <FieldGroup>
+            <TitleField value={title} onChange={setTitle} />
+            <Field>
+              <FieldLabel htmlFor="app-description">Description</FieldLabel>
+              <Textarea
+                id="app-description"
+                value={description}
+                maxLength={APP_LIMITS.description}
+                rows={3}
+                placeholder="Optional — shown under the title for viewers"
+                onChange={(event) => {
+                  setDescription(event.target.value);
+                }}
+              />
+            </Field>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={submitting}
+                onClick={() => {
+                  onOpenChange(false);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={submitting || titleMissing}>
+                {submitting && <Spinner data-icon="inline-start" />}
+                {appId === undefined ? "Create app" : "Save"}
+              </Button>
+            </DialogFooter>
+          </FieldGroup>
         </form>
       </DialogContent>
     </Dialog>

@@ -23,6 +23,8 @@ import {
 } from "react";
 
 import { Button } from "#/components/ui/button";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
+import { Tooltip, TooltipContent, TooltipTrigger } from "#/components/ui/tooltip";
 import { cn } from "#/lib/utils";
 import type { Widget } from "#convex/appBuilder/validators";
 
@@ -68,40 +70,59 @@ function trackSizes(grid: HTMLElement | null): { column: number; row: number } {
   };
 }
 
-function WidgetHeader({ widget, editing }: { widget: Widget; editing: boolean }) {
-  const info = widgetKindInfo(widget.kind),
-    Icon = info.icon;
-  if (widget.title === undefined || widget.title === "") {
-    return editing ? (
-      <div className="flex h-10 shrink-0 items-center gap-2 px-4 text-xs text-muted-foreground">
-        <Icon className="size-3.5" />
-        {info.label}
-      </div>
-    ) : null;
-  }
+/** A tooltip-labelled icon button (the canvas's quick actions and handles). */
+function IconAction({
+  label,
+  children,
+  className,
+  ...props
+}: React.ComponentProps<typeof Button> & { label: string }) {
   return (
-    <div className="flex h-10 shrink-0 items-center px-4">
-      <h2 className="truncate text-sm font-semibold">{widget.title}</h2>
-    </div>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={label}
+            className={className}
+            {...props}
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }
 
-function hasHeader(widget: Widget, editing: boolean): boolean {
-  return editing || (widget.title !== undefined && widget.title !== "");
+function hasTitle(widget: Widget): boolean {
+  return widget.title !== undefined && widget.title !== "";
 }
 
 /** Read-only widget card (the viewer). */
 function ViewWidget({ widget }: { widget: Widget }) {
-  const body = frameHeight(widget.h) - (hasHeader(widget, false) ? TITLE_BAR : 0);
+  const body = frameHeight(widget.h) - (hasTitle(widget) ? TITLE_BAR : 0);
   return (
     <section
+      aria-label={hasTitle(widget) ? widget.title : widgetKindInfo(widget.kind).label}
       style={gridStyle(widget)}
-      className="col-span-1 flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-border bg-card md:[grid-column:span_var(--w)/span_var(--w)]"
+      className={GRID_ITEM_CLASS}
     >
-      <WidgetHeader widget={widget} editing={false} />
-      <div className="min-h-0 flex-1">
-        <WidgetView widget={widget} height={body} />
-      </div>
+      <Card className="size-full gap-0 py-0">
+        {hasTitle(widget) && (
+          <CardHeader className="flex h-10 shrink-0 items-center">
+            <CardTitle className="truncate font-semibold">
+              <h2>{widget.title}</h2>
+            </CardTitle>
+          </CardHeader>
+        )}
+        <CardContent className="min-h-0 flex-1 px-0">
+          <WidgetView widget={widget} height={body} />
+        </CardContent>
+      </Card>
     </section>
   );
 }
@@ -170,91 +191,98 @@ function EditWidget({
     selected = actions.selectedId === widget.id,
     startResize = useResizeDrag(widget, gridRef, actions.onResize),
     body = frameHeight(widget.h) - TITLE_BAR;
+  const info = widgetKindInfo(widget.kind),
+    Icon = info.icon;
   return (
     <section
       ref={setNodeRef}
       style={{ ...gridStyle(widget), transform: CSS.Translate.toString(transform), transition }}
-      aria-label={`${widgetKindInfo(widget.kind).label} widget${widget.title === undefined ? "" : `: ${widget.title}`}`}
+      aria-label={`${info.label} widget${hasTitle(widget) ? `: ${widget.title}` : ""}`}
       onPointerDownCapture={() => {
         actions.onSelect(widget.id);
       }}
       onFocusCapture={() => {
         actions.onSelect(widget.id);
       }}
-      className={cn(
-        "group/widget relative col-span-1 flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border bg-card transition-shadow md:[grid-column:span_var(--w)/span_var(--w)]",
-        selected
-          ? "border-primary ring-2 ring-primary/30"
-          : "border-border hover:border-primary/50",
-        isDragging && "z-20 opacity-80 shadow-xl",
-      )}
+      className={cn("group/widget relative", GRID_ITEM_CLASS, isDragging && "z-20 opacity-80")}
     >
-      <div className="flex shrink-0 items-center">
-        <button
-          type="button"
-          ref={setActivatorNodeRef}
-          {...attributes}
-          {...listeners}
-          aria-label="Drag to reorder"
-          className="flex h-10 cursor-grab items-center pl-2 text-muted-foreground hover:text-foreground active:cursor-grabbing"
-        >
-          <GripVertical className="size-4" />
-        </button>
-        <div className="min-w-0 flex-1 [&>div]:pl-1">
-          <WidgetHeader widget={widget} editing />
-        </div>
-        <div
-          className={cn(
-            "flex items-center gap-0.5 pr-2 transition-opacity",
-            selected
-              ? "opacity-100"
-              : "opacity-0 group-hover/widget:opacity-100 focus-within:opacity-100",
-          )}
-        >
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Duplicate widget"
-            title="Duplicate"
-            onClick={() => {
-              actions.onDuplicate(widget.id);
-            }}
-          >
-            <Copy />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Remove widget"
-            title="Remove"
-            onClick={() => {
-              actions.onRemove(widget.id);
-            }}
-          >
-            <Trash2 />
-          </Button>
-        </div>
-      </div>
-      <div className="min-h-0 flex-1">
-        <WidgetView widget={widget} height={body} />
-      </div>
-      <button
-        type="button"
-        aria-label="Drag to resize"
-        title="Drag to resize"
-        onPointerDown={startResize}
+      <Card
         className={cn(
-          "absolute right-0.5 bottom-0.5 z-20 flex size-6 cursor-nwse-resize items-center justify-center rounded-md bg-card/90 text-muted-foreground shadow-sm transition-opacity hover:text-primary",
-          selected ? "opacity-100" : "opacity-0 group-hover/widget:opacity-100",
+          "size-full gap-0 py-0",
+          selected ? "ring-2 ring-primary" : "group-hover/widget:ring-primary/40",
+          isDragging && "shadow-xl",
         )}
       >
-        <MoveDiagonal2 className="size-3.5" />
-      </button>
+        <CardHeader className="flex h-10 shrink-0 items-center gap-1 px-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            ref={setActivatorNodeRef}
+            {...attributes}
+            {...listeners}
+            aria-label="Drag to reorder"
+            className="cursor-grab text-muted-foreground active:cursor-grabbing"
+          >
+            <GripVertical />
+          </Button>
+          <CardTitle className="min-w-0 flex-1 truncate">
+            {hasTitle(widget) ? (
+              <h2 className="truncate font-semibold">{widget.title}</h2>
+            ) : (
+              <span className="flex items-center gap-2 font-normal text-muted-foreground">
+                <Icon className="size-3.5" />
+                {info.label}
+              </span>
+            )}
+          </CardTitle>
+          <CardAction
+            className={cn(
+              "flex items-center gap-0.5 self-center transition-opacity",
+              selected
+                ? "opacity-100"
+                : "opacity-0 group-hover/widget:opacity-100 focus-within:opacity-100",
+            )}
+          >
+            <IconAction
+              label="Duplicate widget"
+              onClick={() => {
+                actions.onDuplicate(widget.id);
+              }}
+            >
+              <Copy />
+            </IconAction>
+            <IconAction
+              label="Remove widget"
+              onClick={() => {
+                actions.onRemove(widget.id);
+              }}
+            >
+              <Trash2 />
+            </IconAction>
+          </CardAction>
+        </CardHeader>
+        <CardContent className="min-h-0 flex-1 px-0">
+          <WidgetView widget={widget} height={body} />
+        </CardContent>
+        <IconAction
+          label="Drag to resize"
+          onPointerDown={startResize}
+          className={cn(
+            "absolute right-0.5 bottom-0.5 z-20 cursor-nwse-resize bg-card text-muted-foreground shadow-sm transition-opacity",
+            selected ? "opacity-100" : "opacity-0 group-hover/widget:opacity-100",
+          )}
+        >
+          <MoveDiagonal2 />
+        </IconAction>
+      </Card>
     </section>
   );
 }
+
+/** One grid cell: full-width on phones, its own column span from `md` up. */
+const GRID_ITEM_CLASS =
+  "col-span-1 flex min-h-0 min-w-0 md:[grid-column:span_var(--w)/span_var(--w)]";
 
 const GRID_CLASS = "grid grid-flow-row-dense grid-cols-1 gap-4 md:grid-cols-12";
 const GRID_STYLE: CSSProperties = { gridAutoRows: `${ROW_HEIGHT}px` };

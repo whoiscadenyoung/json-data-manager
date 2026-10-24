@@ -1,16 +1,61 @@
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Database, EyeOff, Minus, Plus, Trash2, Upload } from "lucide-react";
+import {
+  Database,
+  EyeOff,
+  Info,
+  Minus,
+  MousePointerClick,
+  Plus,
+  Trash2,
+  Upload,
+} from "lucide-react";
 import { useState } from "react";
 
 import { DatasetPickerSheet } from "#/components/dataset-picker-sheet";
+import { Alert, AlertDescription } from "#/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "#/components/ui/alert-dialog";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
+import { ButtonGroup, ButtonGroupText } from "#/components/ui/button-group";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "#/components/ui/empty";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "#/components/ui/field";
 import { Input } from "#/components/ui/input";
-import { Label } from "#/components/ui/label";
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemMedia,
+  ItemTitle,
+} from "#/components/ui/item";
+import { Separator } from "#/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "#/components/ui/tabs";
-import { cn } from "#/lib/utils";
+import { ToggleGroup, ToggleGroupItem } from "#/components/ui/toggle-group";
 import { api } from "#convex/_generated/api";
 import {
   APP_LIMITS,
@@ -26,8 +71,10 @@ import { createWidget, WIDGET_KINDS, widgetKindInfo, WidgetSettings } from "../w
 
 /**
  * The builder's side panel: Add (widget palette), Data (the app's sources),
- * and Widget (the selected widget's inspector). Every disabled control says
- * why (the "no silent disabled buttons" rule, docs/memory).
+ * and Widget (the selected widget's inspector) — composed from the shadcn
+ * base-ui kit (Item, Field, ToggleGroup, ButtonGroup, Empty, AlertDialog).
+ * Every disabled control says why (the "no silent disabled buttons" rule,
+ * docs/memory).
  */
 
 export type PanelTab = "add" | "data" | "widget";
@@ -44,36 +91,53 @@ function AddPanel({
   return (
     <div className="flex flex-col gap-3">
       {full && (
-        <p className="text-xs text-muted-foreground">
-          This app has the maximum of {APP_LIMITS.widgets} widgets — remove one to add another.
-        </p>
+        <Alert>
+          <Info />
+          <AlertDescription>
+            This app has the maximum of {APP_LIMITS.widgets} widgets — remove one to add another.
+          </AlertDescription>
+        </Alert>
       )}
-      <div className="grid grid-cols-2 gap-2">
+      <ItemGroup className="grid grid-cols-2 gap-2">
         {WIDGET_KINDS.map((info) => {
           const Icon = info.icon,
             disabled = full || (info.needsData && !hasData);
           return (
-            <button
+            <Item
               key={info.kind}
-              type="button"
-              disabled={disabled}
-              onClick={() => {
-                onAdd(info.kind);
-              }}
-              className="flex flex-col items-start gap-1.5 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-primary hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border disabled:hover:bg-card"
+              variant="outline"
+              className="items-start hover:bg-muted aria-disabled:pointer-events-none aria-disabled:opacity-50"
+              render={
+                <button
+                  type="button"
+                  aria-label={`Add ${info.label}: ${info.description}`}
+                  disabled={disabled}
+                  aria-disabled={disabled}
+                  onClick={() => {
+                    onAdd(info.kind);
+                  }}
+                />
+              }
             >
-              <Icon className="size-4 text-primary" />
-              <span className="text-sm font-medium">{info.label}</span>
-              <span className="text-xs text-muted-foreground">{info.description}</span>
-            </button>
+              <ItemMedia variant="icon">
+                <Icon />
+              </ItemMedia>
+              <ItemContent className="text-left">
+                <ItemTitle>{info.label}</ItemTitle>
+                <ItemDescription>{info.description}</ItemDescription>
+              </ItemContent>
+            </Item>
           );
         })}
-      </div>
+      </ItemGroup>
       {!hasData && (
-        <p className="text-xs text-muted-foreground">
-          Maps, charts, tables and numbers read from the app's datasets — add one on the Data tab
-          first.
-        </p>
+        <Alert>
+          <Info />
+          <AlertDescription>
+            Maps, charts, tables and numbers read from the app's datasets — add one on the Data tab
+            first.
+          </AlertDescription>
+        </Alert>
       )}
     </div>
   );
@@ -97,6 +161,41 @@ function sizeLabel(state: DatasetState): string | undefined {
   return `${count.toLocaleString()} ${state.doc.kind === "geospatial" ? "features" : "rows"}`;
 }
 
+/** Confirms removing a dataset that widgets still use (they go with it). */
+function RemoveDatasetDialog({
+  title,
+  usedBy,
+  open,
+  onOpenChange,
+  onConfirm,
+}: {
+  title: string;
+  usedBy: number;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Remove {title} from the app?</AlertDialogTitle>
+          <AlertDialogDescription>
+            {usedBy} {usedBy === 1 ? "widget uses" : "widgets use"} this dataset and will be removed
+            with it (maps just lose the layer). The dataset itself isn't affected.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" onClick={onConfirm}>
+            Remove
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 function DatasetRow({
   datasetId,
   state,
@@ -111,40 +210,48 @@ function DatasetRow({
   const [confirming, setConfirming] = useState(false),
     restricted = state.status === "ready" && state.doc.publishedVisibility === "author",
     kind = kindLabel(state),
-    size = sizeLabel(state);
+    size = sizeLabel(state),
+    title = datasetTitle(state);
   return (
-    <li className="flex flex-col gap-1.5 rounded-lg border border-border bg-card p-3">
-      <div className="flex items-start gap-2">
-        <div className="min-w-0 flex-1">
+    <Item variant="outline">
+      <ItemContent>
+        {(kind !== undefined || restricted) && (
           <div className="flex flex-wrap items-center gap-1">
             {kind !== undefined && <Badge variant="secondary">{kind}</Badge>}
             {restricted && (
-              <Badge variant="outline" title="Only you can see this dataset">
-                <EyeOff />
+              <Badge variant="outline">
+                <EyeOff data-icon="inline-start" />
                 Only you
               </Badge>
             )}
           </div>
+        )}
+        <ItemTitle>
           {state.status === "ready" ? (
             <Link
               to="/datasets/$schemaId"
               params={{ schemaId: datasetId }}
-              className="mt-1 block truncate text-sm font-medium hover:underline"
+              className="hover:underline"
             >
-              {state.doc.title}
+              {title}
             </Link>
           ) : (
-            <p className="mt-1 truncate text-sm font-medium text-muted-foreground">
-              {datasetTitle(state)}
-            </p>
+            title
           )}
-          {size !== undefined && <p className="text-xs text-muted-foreground">{size}</p>}
-        </div>
+        </ItemTitle>
+        {size !== undefined && <ItemDescription>{size}</ItemDescription>}
+        {restricted && (
+          <ItemDescription>
+            People you share this app with won't see this dataset's widgets.
+          </ItemDescription>
+        )}
+      </ItemContent>
+      <ItemActions>
         <Button
           type="button"
           variant="ghost"
           size="icon-sm"
-          aria-label={`Remove ${datasetTitle(state)} from the app`}
+          aria-label={`Remove ${title} from the app`}
           title="Remove from app"
           onClick={() => {
             if (usedBy === 0) {
@@ -156,36 +263,15 @@ function DatasetRow({
         >
           <Trash2 />
         </Button>
-      </div>
-      {restricted && (
-        <p className="text-xs text-muted-foreground">
-          People you share this app with won't see this dataset's widgets.
-        </p>
-      )}
-      {confirming && (
-        <div className="flex flex-col gap-2 rounded-md bg-muted/60 p-2 text-xs">
-          <span>
-            {usedBy} {usedBy === 1 ? "widget uses" : "widgets use"} this dataset and will be removed
-            (maps just lose the layer).
-          </span>
-          <div className="flex gap-2">
-            <Button type="button" size="xs" variant="destructive" onClick={onRemove}>
-              Remove
-            </Button>
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost"
-              onClick={() => {
-                setConfirming(false);
-              }}
-            >
-              Cancel
-            </Button>
-          </div>
-        </div>
-      )}
-    </li>
+      </ItemActions>
+      <RemoveDatasetDialog
+        title={title}
+        usedBy={usedBy}
+        open={confirming}
+        onOpenChange={setConfirming}
+        onConfirm={onRemove}
+      />
+    </Item>
   );
 }
 
@@ -211,15 +297,17 @@ function DataPanel({
         they could open it themselves.
       </p>
       {content.datasetIds.length === 0 ? (
-        <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border p-6 text-center">
-          <Database className="size-5 text-muted-foreground" />
-          <p className="text-sm font-medium">No datasets yet</p>
-          <p className="text-xs text-muted-foreground">
-            Add one from the catalog to start building.
-          </p>
-        </div>
+        <Empty className="border">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <Database />
+            </EmptyMedia>
+            <EmptyTitle>No datasets yet</EmptyTitle>
+            <EmptyDescription>Add one from the catalog to start building.</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       ) : (
-        <ul className="flex flex-col gap-2">
+        <ItemGroup className="gap-2">
           {content.datasetIds.map((datasetId) => (
             <DatasetRow
               key={datasetId}
@@ -234,7 +322,7 @@ function DataPanel({
               }}
             />
           ))}
-        </ul>
+        </ItemGroup>
       )}
       <Button
         type="button"
@@ -243,7 +331,7 @@ function DataPanel({
           setPickerOpen(true);
         }}
       >
-        <Plus />
+        <Plus data-icon="inline-start" />
         {summaries === undefined ? "Loading catalog…" : "Add dataset"}
       </Button>
       {full && (
@@ -251,13 +339,10 @@ function DataPanel({
           An app holds up to {APP_LIMITS.datasets} datasets.
         </p>
       )}
-      <Link
-        to="/datasets/create"
-        className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-      >
-        <Upload className="size-3.5" />
+      <Button variant="link" size="sm" render={<Link to="/datasets/create" />}>
+        <Upload data-icon="inline-start" />
         Import new data into the catalog
-      </Link>
+      </Button>
       <DatasetPickerSheet
         title="Add a dataset"
         description="Pick a catalog dataset for this app's widgets to use."
@@ -274,33 +359,37 @@ function DataPanel({
 
 function SizeControls({ widget, onChange }: { widget: Widget; onChange: (next: Widget) => void }) {
   return (
-    <div className="flex flex-col gap-3">
-      <fieldset className="flex flex-col gap-1.5">
-        <legend className="mb-1.5 text-sm font-medium">Width</legend>
-        <div className="grid grid-cols-6 gap-1">
+    <FieldGroup>
+      <FieldSet>
+        <FieldLegend variant="label">Width</FieldLegend>
+        <ToggleGroup
+          variant="outline"
+          size="sm"
+          spacing={0}
+          className="w-full"
+          value={[String(widget.w)]}
+          onValueChange={(values) => {
+            const w = Number(values.at(0));
+            if (Number.isInteger(w)) {
+              onChange({ ...widget, w });
+            }
+          }}
+        >
           {WIDTH_PRESETS.map((preset) => (
-            <button
+            <ToggleGroupItem
               key={preset.w}
-              type="button"
-              aria-pressed={widget.w === preset.w}
-              onClick={() => {
-                onChange({ ...widget, w: preset.w });
-              }}
-              className={cn(
-                "h-7 rounded-md border text-xs transition-colors",
-                widget.w === preset.w
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border hover:border-primary",
-              )}
+              value={String(preset.w)}
+              aria-label={`Width ${preset.label}`}
+              className="flex-1"
             >
               {preset.label}
-            </button>
+            </ToggleGroupItem>
           ))}
-        </div>
-      </fieldset>
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-medium">Height</span>
-        <div className="flex items-center gap-1">
+        </ToggleGroup>
+      </FieldSet>
+      <Field orientation="horizontal" className="justify-between">
+        <FieldLabel>Height</FieldLabel>
+        <ButtonGroup>
           <Button
             type="button"
             variant="outline"
@@ -313,7 +402,9 @@ function SizeControls({ widget, onChange }: { widget: Widget; onChange: (next: W
           >
             <Minus />
           </Button>
-          <span className="w-16 text-center text-xs tabular-nums">{widget.h} rows</span>
+          <ButtonGroupText className="h-6 w-16 justify-center tabular-nums">
+            {widget.h} rows
+          </ButtonGroupText>
           <Button
             type="button"
             variant="outline"
@@ -326,12 +417,12 @@ function SizeControls({ widget, onChange }: { widget: Widget; onChange: (next: W
           >
             <Plus />
           </Button>
-        </div>
-      </div>
-      <p className="text-xs text-muted-foreground">
+        </ButtonGroup>
+      </Field>
+      <FieldDescription>
         Or drag a widget's corner on the canvas. Drag its handle to reorder.
-      </p>
-    </div>
+      </FieldDescription>
+    </FieldGroup>
   );
 }
 
@@ -346,21 +437,27 @@ function WidgetPanel({
 }) {
   if (widget === undefined) {
     return (
-      <p className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-        Select a widget on the canvas to edit it.
-      </p>
+      <Empty className="border">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <MousePointerClick />
+          </EmptyMedia>
+          <EmptyTitle>No widget selected</EmptyTitle>
+          <EmptyDescription>Select a widget on the canvas to edit it.</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
     );
   }
   const info = widgetKindInfo(widget.kind),
     Icon = info.icon;
   return (
-    <div className="flex flex-col gap-4">
+    <FieldGroup>
       <div className="flex items-center gap-2 text-sm font-semibold">
-        <Icon className="size-4 text-primary" />
+        <Icon className="text-primary" />
         {info.label}
       </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor={`widget-title-${widget.id}`}>Title</Label>
+      <Field>
+        <FieldLabel htmlFor={`widget-title-${widget.id}`}>Title</FieldLabel>
         <Input
           id={`widget-title-${widget.id}`}
           value={widget.title ?? ""}
@@ -371,12 +468,11 @@ function WidgetPanel({
             onChange({ ...widget, title: title === "" ? undefined : title });
           }}
         />
-      </div>
+      </Field>
       <WidgetSettings widget={widget} datasetIds={datasetIds} onChange={onChange} />
-      <div className="border-t border-border pt-4">
-        <SizeControls widget={widget} onChange={onChange} />
-      </div>
-    </div>
+      <Separator />
+      <SizeControls widget={widget} onChange={onChange} />
+    </FieldGroup>
   );
 }
 

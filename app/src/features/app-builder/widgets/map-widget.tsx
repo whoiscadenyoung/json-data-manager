@@ -1,9 +1,18 @@
-import { Loader2 } from "lucide-react";
 import { useState } from "react";
 
 import { LayersMap } from "#/components/layers-map";
+import { Badge } from "#/components/ui/badge";
 import { Checkbox } from "#/components/ui/checkbox";
-import { Label } from "#/components/ui/label";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "#/components/ui/field";
+import { Skeleton } from "#/components/ui/skeleton";
+import { Spinner } from "#/components/ui/spinner";
 import { useGeometriesBySchemas } from "#/lib/dataset-rows-react";
 import { splitSchemaIdsByDecision, useTileArchiveSources } from "#/lib/layer-source";
 import { colorForIndex } from "#/lib/map-layers";
@@ -63,13 +72,13 @@ function LayersBody({ docs, layerOrder }: { docs: DatasetDoc[]; layerOrder: read
           }}
         />
       ) : (
-        <div className="h-full w-full animate-pulse bg-muted" />
+        <Skeleton className="size-full rounded-none" />
       )}
       {!complete && (
-        <div className="absolute top-3 left-3 z-10 flex items-center gap-2 rounded-full border border-border bg-card/95 px-3 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur-sm">
-          <Loader2 className="size-3.5 animate-spin text-primary" />
+        <Badge variant="outline" className="absolute top-3 left-3 z-10 bg-card shadow-sm">
+          <Spinner data-icon="inline-start" />
           Loading features…
-        </div>
+        </Badge>
       )}
     </div>
   );
@@ -109,45 +118,44 @@ export function MapWidgetSettings({ widget, datasetIds, onChange }: WidgetSettin
     full = widget.datasetIds.length >= APP_LIMITS.mapDatasets;
   if (candidates.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">
-        Add a geospatial dataset to the app to put it on a map.
-      </p>
+      <FieldDescription>Add a geospatial dataset to the app to put it on a map.</FieldDescription>
     );
   }
   return (
-    <fieldset className="flex flex-col gap-1.5">
-      <legend className="mb-1.5 text-sm font-medium">Layers</legend>
-      {candidates.map((id) => (
-        <Label key={id} className="flex items-center gap-2 font-normal">
-          <Checkbox
-            checked={selected.has(id)}
-            disabled={!selected.has(id) && full}
-            onCheckedChange={(checked) => {
-              // Keep the app's dataset order as the layer order.
-              const next = candidates.filter((candidate) =>
-                candidate === id ? checked : selected.has(candidate),
-              );
-              onChange({ ...widget, datasetIds: next });
-            }}
-          />
-          <span
-            className="size-2.5 shrink-0 rounded-full border border-border"
-            style={{
-              backgroundColor: selected.has(id)
-                ? colorForIndex(widget.datasetIds.indexOf(id))
-                : "transparent",
-            }}
-          />
-          <span className="truncate">
-            {datasetTitle(states.get(id) ?? { status: "unavailable" })}
-          </span>
-        </Label>
-      ))}
+    <FieldSet>
+      <FieldLegend variant="label">Layers</FieldLegend>
+      <FieldGroup className="gap-2">
+        {candidates.map((id) => (
+          <Field key={id} orientation="horizontal">
+            <Checkbox
+              id={`map-layer-${widget.id}-${id}`}
+              checked={selected.has(id)}
+              disabled={!selected.has(id) && full}
+              onCheckedChange={(checked) => {
+                // Keep the app's dataset order as the layer order.
+                const next = candidates.filter((candidate) =>
+                  candidate === id ? checked : selected.has(candidate),
+                );
+                onChange({ ...widget, datasetIds: next });
+              }}
+            />
+            <span
+              className="size-2.5 shrink-0 rounded-full border border-border"
+              style={{
+                backgroundColor: selected.has(id)
+                  ? colorForIndex(widget.datasetIds.indexOf(id))
+                  : "transparent",
+              }}
+            />
+            <FieldLabel htmlFor={`map-layer-${widget.id}-${id}`} className="truncate font-normal">
+              {datasetTitle(states.get(id) ?? { status: "unavailable" })}
+            </FieldLabel>
+          </Field>
+        ))}
+      </FieldGroup>
       {full && (
-        <p className="text-xs text-muted-foreground">
-          A map shows up to {APP_LIMITS.mapDatasets} datasets.
-        </p>
+        <FieldDescription>A map shows up to {APP_LIMITS.mapDatasets} datasets.</FieldDescription>
       )}
-    </fieldset>
+    </FieldSet>
   );
 }
