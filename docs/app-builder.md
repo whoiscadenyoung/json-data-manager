@@ -86,6 +86,31 @@ Key choices (the reasoning is in ADR 0011):
   at 7 named slices with a neutral _Other_, hover tooltips, and a
   one-click data-table view of every chart.
 
+### UI components (shadcn base-ui registry)
+
+The module builds its UI from the project's shadcn kit (`app/src/components/ui`, style
+`base-mira` on Base UI) rather than custom markup, so restyling or upgrading the kit
+restyles the builder too:
+
+| Need                                    | Component                                                                                   |
+| --------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Widget frames, app cards                | `Card` (+ `CardHeader`/`CardTitle`/`CardAction`/`CardContent`/`CardFooter`)                 |
+| Charts                                  | `Chart` (`ChartContainer`, `ChartTooltip`, `ChartLegend`, themed `ChartConfig`)             |
+| Chart data view                         | `Table`                                                                                     |
+| Settings forms                          | `Field`, `FieldGroup`, `FieldSet`, `FieldLegend`, `Select`, `Checkbox`, `Input`, `Textarea` |
+| Width presets / height stepper          | `ToggleGroup`, `ButtonGroup`                                                                |
+| Sharing choice and link                 | `RadioGroup` (Field choice cards), `InputGroup`                                             |
+| Widget palette, data sources            | `Item`, `ItemGroup`                                                                         |
+| Empty / loading / notices               | `Empty`, `Spinner`, `Skeleton`, `Alert`, `Badge`                                            |
+| Confirmations, menus, navigation, hints | `AlertDialog`, `Dialog`, `DropdownMenu`, `Breadcrumb`, `Tabs`, `Tooltip`, `Sheet`           |
+
+`alert-dialog`, `button-group`, `chart`, `field`, `item`, `radio-group`, `spinner`,
+`toggle` and `toggle-group` were added to the kit for this feature. They are general
+components and stay if the builder is removed. One local adaptation: `Spinner` omits
+the SVG `strokeWidth` prop, because `HugeiconsIcon` takes a number. The remaining custom
+pieces are app-specific: the grid canvas and its drag/resize handles (dnd-kit), the map
+(`LayersMap`), and the data table (the vendored niko-table).
+
 ### Integration points outside the module
 
 | File                                                    | Change                                                                                                          |

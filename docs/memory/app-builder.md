@@ -36,4 +36,19 @@ Learned while building it:
   `CONVEX_AGENT_MODE=anonymous bunx convex dev` from `app/`; reset a table with
   `bunx convex import --table apps --replace -y empty.jsonl`.
 
+- shadcn components without ui.shadcn.com (the cloud sandbox's network policy
+  blocks it, so `shadcn add` fails with "Proxy refused to open a tunnel"): the
+  registry SOURCE is on raw.githubusercontent.com at
+  `shadcn-ui/ui/main/apps/v4/registry/bases/base/ui/<name>.tsx`. Those files carry `cn-*`
+  style tokens; `apps/v4/registry/styles/style-mira.css` maps each one to Tailwind via
+  `@apply`. Reproducing `shadcn add` means: inline the tokens (dedupe), replace
+  `<IconPlaceholder hugeicons="X" …/>` with `<HugeiconsIcon icon={X} strokeWidth={2} …/>`,
+  rewrite `cn`/`@/registry/bases/base/ui/*` imports to `#/lib/utils`/`#/components/ui/*`, then
+  oxfmt. Verified byte-equivalent (class sets) against the installed button/select.
+  Prefer the real CLI whenever ui.shadcn.com is reachable.
+- Composition gotchas: `ChartConfig` theme colors exist only INSIDE `ChartContainer`
+  (`--color-<key>` is scoped to `[data-chart]`), so legends must use
+  `ChartLegend`/`ChartLegendContent`. `AlertDialogAction` is a plain Button, so close the dialog
+  yourself. `Item` rendered as `<button>` needs its own `aria-label` (the jsx-a11y lint).
+
 Related: [[demo-recording-recipe]], [[ui-polish-expectations]], [[local-dev-verification]]
