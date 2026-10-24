@@ -1,6 +1,6 @@
 ---
 name: demo-video
-description: 'Record a polished product demo video of a web app: a scripted Playwright walkthrough captured to video, then ffmpeg post-production (intro/outro cards, per-section lower-third labels, subtle speedup). Use when asked to create a demo video, screen recording, or video walkthrough of an app and its features.'
+description: "Record a polished product demo video of a web app: a scripted Playwright walkthrough captured to video, then ffmpeg post-production (intro/outro cards, per-section lower-third labels, subtle speedup). Use when asked to create a demo video, screen recording, or video walkthrough of an app and its features."
 ---
 
 # Demo Video Walkthrough Recorder
@@ -33,7 +33,7 @@ the final take cost the whole re-record.
   CLI or seed script) — a clean state makes the narrative deterministic and
   lets "empty → first import" be part of the story.
 - `bun` (or node + typescript runner) and `ffmpeg` (`ffmpeg -filters | grep
-  overlay` — this pipeline uses `overlay`, not `drawtext`, which many ffmpeg
+overlay` — this pipeline uses `overlay`, not `drawtext`, which many ffmpeg
   builds lack).
 - A Chromium for Playwright: either `playwright` (auto-manages browsers) or
   `playwright-core` + an explicit `executablePath` (a cached browser or
@@ -112,7 +112,9 @@ async function step(name: string, label: string, fn: () => Promise<void>) {
   }
   steps.push({ name, label, start, end: Date.now() - t0 });
   if (DRY) await page.screenshot({ path: `${OUT}/step-${name}.png` }).catch(() => {});
-  console.log(`ok ${name} [${(start / 1000).toFixed(1)}s -> ${((Date.now() - t0) / 1000).toFixed(1)}s]`);
+  console.log(
+    `ok ${name} [${(start / 1000).toFixed(1)}s -> ${((Date.now() - t0) / 1000).toFixed(1)}s]`,
+  );
 }
 
 const browser = await chromium.launch({
@@ -222,7 +224,9 @@ const browser = await chromium.launch({ executablePath: EXE, headless: true });
 const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
 await page.setContent(card("Product demo", "My App", "feature · feature · feature", "footnote"));
 await page.screenshot({ path: "/tmp/demo-rec/intro.png" });
-await page.setContent(card("My App", "Closing headline", "import → organize → analyze", "stack line"));
+await page.setContent(
+  card("My App", "Closing headline", "import → organize → analyze", "stack line"),
+);
 await page.screenshot({ path: "/tmp/demo-rec/outro.png" });
 await browser.close();
 ```
@@ -239,7 +243,10 @@ const steps = JSON.parse(readFileSync(`${OUT}/steps.json`, "utf8"));
 rmSync(`${OUT}/labels`, { recursive: true, force: true });
 mkdirSync(`${OUT}/labels`, { recursive: true });
 const browser = await chromium.launch({ executablePath: EXE, headless: true });
-const page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1 });
+const page = await browser.newPage({
+  viewport: { width: 1600, height: 1000 },
+  deviceScaleFactor: 1,
+});
 for (const step of steps.filter((s) => s.name !== "outro")) {
   await page.setContent(`<!doctype html><html><head><style>
     * { margin:0; } body { width:1600px; height:1000px; background:transparent; position:relative;
@@ -262,17 +269,20 @@ const OUT = "/tmp/demo-rec";
 const steps = JSON.parse(readFileSync(`${OUT}/steps.json`, "utf8"));
 const video = `${OUT}/raw/${readdirSync(`${OUT}/raw`).find((f) => f.endsWith(".webm"))}`;
 
-const INTRO = 3.5, OUTRO = 5;
+const INTRO = 3.5,
+  OUTRO = 5;
 const SPEED = 1.3; // pick from the rehearsal length: ~8 min raw -> 1.25-1.3; >11 min raw -> 1.35
 // If the take ends on stray UI (e.g. an open menu), stop before it:
 const outroEnd = steps.find((s) => s.name === "outro")?.end ?? 0;
 const MAIN_CUT = Math.max(10, (outroEnd - 3500) / 1000);
 
-const labelFiles = steps.filter((s) => s.name !== "outro").map((s) => ({
-  file: `${OUT}/labels/${s.name}.png`,
-  show: INTRO + s.start / 1000 / SPEED,
-  hide: INTRO + Math.max(s.end / 1000 / SPEED, s.start / 1000 / SPEED + 1) - 0.15,
-}));
+const labelFiles = steps
+  .filter((s) => s.name !== "outro")
+  .map((s) => ({
+    file: `${OUT}/labels/${s.name}.png`,
+    show: INTRO + s.start / 1000 / SPEED,
+    hide: INTRO + Math.max(s.end / 1000 / SPEED, s.start / 1000 / SPEED + 1) - 0.15,
+  }));
 
 const inputs = [
   "ffmpeg -y",
@@ -294,12 +304,15 @@ chain += `[${prev}]format=yuv420p[v1];
 [2:v]scale=1600:1000:flags=lanczos,setsar=1,fps=30,format=yuv420p,fade=t=in:st=0.5:d=0.6,fade=t=out:st=${OUTRO - 0.7}:d=0.7[v2];
 [v0][v1][v2]concat=n=3:v=1:a=0,format=yuv420p[vout]`;
 
-writeFileSync(`${OUT}/assemble.sh`, [
-  inputs,
-  `-filter_complex "${chain.replaceAll("\n", " ").replaceAll(/ {2,}/g, " ")}"`,
-  '-map "[vout]" -an -c:v libx264 -crf 19 -preset medium -movflags +faststart',
-  `${OUT}/demo.mp4`,
-].join(" "));
+writeFileSync(
+  `${OUT}/assemble.sh`,
+  [
+    inputs,
+    `-filter_complex "${chain.replaceAll("\n", " ").replaceAll(/ {2,}/g, " ")}"`,
+    '-map "[vout]" -an -c:v libx264 -crf 19 -preset medium -movflags +faststart',
+    `${OUT}/demo.mp4`,
+  ].join(" "),
+);
 ```
 
 Then: `bash assemble.sh` (~2–4 min for a 10-minute video).
