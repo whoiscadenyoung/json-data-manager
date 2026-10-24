@@ -25,6 +25,9 @@ type GeometryEntry = DatasetGeometryRow;
 
 type FeatureProperties = { entryId: string; schemaId: string };
 
+/** The dataset fields LayersMap reads (titles + stored extents) — any schema-row shape carrying them works. */
+type LayersMapDataset = Pick<DatasetSummary, "_id" | "boundingBox" | "title">;
+
 function FeatureDetailsPanel({
   entry,
   entryId,
@@ -134,7 +137,7 @@ function MapLegend({
 
 /** Falls back to `fallback` when neither title map has the id — avoids an optional-chained `?.title`. */
 function getDatasetTitle(
-  datasetById: globalThis.Map<string, DatasetSummary>,
+  datasetById: globalThis.Map<string, LayersMapDataset>,
   titlesById: globalThis.Map<string, string> | undefined,
   schemaId: string,
   fallback: string,
@@ -256,7 +259,7 @@ export function LayersMap({
   sourcesPending = false,
   onTileSourceIdle,
 }: {
-  datasets: DatasetSummary[];
+  datasets: LayersMapDataset[];
   /** Derived layers on this map: render id → the bottom source dataset its geometry rides. */
   derivedLayers?: Array<{ derivedId: string; sourceSchemaId: string }>;
   /**

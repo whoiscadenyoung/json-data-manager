@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as SigninRouteImport } from './routes/signin'
+import { Route as AppsIndexRouteImport } from './routes/apps/index'
 import { Route as CollectionsIndexRouteImport } from './routes/collections/index'
 import { Route as DatasetsIndexRouteImport } from './routes/datasets/index'
 import { Route as DatasetsCreateRouteImport } from './routes/datasets/create'
@@ -22,6 +23,8 @@ import { Route as ProjectsIndexRouteImport } from './routes/projects/index'
 import { Route as ProjectsProjectIdRouteImport } from './routes/projects/$projectId'
 import { Route as UsersUserIdRouteImport } from './routes/users/$userId'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as AppsAppIdIndexRouteImport } from './routes/apps/$appId/index'
+import { Route as AppsAppIdEditRouteImport } from './routes/apps/$appId/edit'
 import { Route as CollectionsCollectionIdIndexRouteImport } from './routes/collections/$collectionId/index'
 import { Route as DatasetsSchemaIdIndexRouteImport } from './routes/datasets/$schemaId/index'
 import { Route as DatasetsSchemaIdEntryIdRouteImport } from './routes/datasets/$schemaId/$entryId'
@@ -41,6 +44,11 @@ const DashboardRoute = DashboardRouteImport.update({
 const SigninRoute = SigninRouteImport.update({
   id: '/signin',
   path: '/signin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppsIndexRoute = AppsIndexRouteImport.update({
+  id: '/apps/',
+  path: '/apps/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CollectionsIndexRoute = CollectionsIndexRouteImport.update({
@@ -93,6 +101,16 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppsAppIdIndexRoute = AppsAppIdIndexRouteImport.update({
+  id: '/apps/$appId/',
+  path: '/apps/$appId/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppsAppIdEditRoute = AppsAppIdEditRouteImport.update({
+  id: '/apps/$appId/edit',
+  path: '/apps/$appId/edit',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CollectionsCollectionIdIndexRoute =
   CollectionsCollectionIdIndexRouteImport.update({
     id: '/collections/$collectionId/',
@@ -130,14 +148,17 @@ export interface FileRoutesByFullPath {
   '/maps/$mapId': typeof MapsMapIdRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/users/$userId': typeof UsersUserIdRoute
+  '/apps/': typeof AppsIndexRoute
   '/collections/': typeof CollectionsIndexRoute
   '/datasets/': typeof DatasetsIndexRoute
   '/maps/': typeof MapsIndexRoute
   '/projects/': typeof ProjectsIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/apps/$appId/edit': typeof AppsAppIdEditRoute
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
   '/datasets/$schemaId/bulk-upload': typeof DatasetsSchemaIdBulkUploadRoute
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
+  '/apps/$appId/': typeof AppsAppIdIndexRoute
   '/collections/$collectionId/': typeof CollectionsCollectionIdIndexRoute
   '/datasets/$schemaId/': typeof DatasetsSchemaIdIndexRoute
 }
@@ -150,14 +171,17 @@ export interface FileRoutesByTo {
   '/maps/$mapId': typeof MapsMapIdRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/users/$userId': typeof UsersUserIdRoute
+  '/apps': typeof AppsIndexRoute
   '/collections': typeof CollectionsIndexRoute
   '/datasets': typeof DatasetsIndexRoute
   '/maps': typeof MapsIndexRoute
   '/projects': typeof ProjectsIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/apps/$appId/edit': typeof AppsAppIdEditRoute
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
   '/datasets/$schemaId/bulk-upload': typeof DatasetsSchemaIdBulkUploadRoute
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
+  '/apps/$appId': typeof AppsAppIdIndexRoute
   '/collections/$collectionId': typeof CollectionsCollectionIdIndexRoute
   '/datasets/$schemaId': typeof DatasetsSchemaIdIndexRoute
 }
@@ -171,14 +195,17 @@ export interface FileRoutesById {
   '/maps/$mapId': typeof MapsMapIdRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/users/$userId': typeof UsersUserIdRoute
+  '/apps/': typeof AppsIndexRoute
   '/collections/': typeof CollectionsIndexRoute
   '/datasets/': typeof DatasetsIndexRoute
   '/maps/': typeof MapsIndexRoute
   '/projects/': typeof ProjectsIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/apps/$appId/edit': typeof AppsAppIdEditRoute
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
   '/datasets/$schemaId/bulk-upload': typeof DatasetsSchemaIdBulkUploadRoute
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
+  '/apps/$appId/': typeof AppsAppIdIndexRoute
   '/collections/$collectionId/': typeof CollectionsCollectionIdIndexRoute
   '/datasets/$schemaId/': typeof DatasetsSchemaIdIndexRoute
 }
@@ -193,14 +220,17 @@ export interface FileRouteTypes {
     | '/maps/$mapId'
     | '/projects/$projectId'
     | '/users/$userId'
+    | '/apps/'
     | '/collections/'
     | '/datasets/'
     | '/maps/'
     | '/projects/'
     | '/api/auth/$'
+    | '/apps/$appId/edit'
     | '/datasets/$schemaId/$entryId'
     | '/datasets/$schemaId/bulk-upload'
     | '/datasets/$schemaId/edit'
+    | '/apps/$appId/'
     | '/collections/$collectionId/'
     | '/datasets/$schemaId/'
   fileRoutesByTo: FileRoutesByTo
@@ -213,14 +243,17 @@ export interface FileRouteTypes {
     | '/maps/$mapId'
     | '/projects/$projectId'
     | '/users/$userId'
+    | '/apps'
     | '/collections'
     | '/datasets'
     | '/maps'
     | '/projects'
     | '/api/auth/$'
+    | '/apps/$appId/edit'
     | '/datasets/$schemaId/$entryId'
     | '/datasets/$schemaId/bulk-upload'
     | '/datasets/$schemaId/edit'
+    | '/apps/$appId'
     | '/collections/$collectionId'
     | '/datasets/$schemaId'
   id:
@@ -233,14 +266,17 @@ export interface FileRouteTypes {
     | '/maps/$mapId'
     | '/projects/$projectId'
     | '/users/$userId'
+    | '/apps/'
     | '/collections/'
     | '/datasets/'
     | '/maps/'
     | '/projects/'
     | '/api/auth/$'
+    | '/apps/$appId/edit'
     | '/datasets/$schemaId/$entryId'
     | '/datasets/$schemaId/bulk-upload'
     | '/datasets/$schemaId/edit'
+    | '/apps/$appId/'
     | '/collections/$collectionId/'
     | '/datasets/$schemaId/'
   fileRoutesById: FileRoutesById
@@ -254,14 +290,17 @@ export interface RootRouteChildren {
   MapsMapIdRoute: typeof MapsMapIdRoute
   ProjectsProjectIdRoute: typeof ProjectsProjectIdRoute
   UsersUserIdRoute: typeof UsersUserIdRoute
+  AppsIndexRoute: typeof AppsIndexRoute
   CollectionsIndexRoute: typeof CollectionsIndexRoute
   DatasetsIndexRoute: typeof DatasetsIndexRoute
   MapsIndexRoute: typeof MapsIndexRoute
   ProjectsIndexRoute: typeof ProjectsIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  AppsAppIdEditRoute: typeof AppsAppIdEditRoute
   DatasetsSchemaIdEntryIdRoute: typeof DatasetsSchemaIdEntryIdRoute
   DatasetsSchemaIdBulkUploadRoute: typeof DatasetsSchemaIdBulkUploadRoute
   DatasetsSchemaIdEditRoute: typeof DatasetsSchemaIdEditRoute
+  AppsAppIdIndexRoute: typeof AppsAppIdIndexRoute
   CollectionsCollectionIdIndexRoute: typeof CollectionsCollectionIdIndexRoute
   DatasetsSchemaIdIndexRoute: typeof DatasetsSchemaIdIndexRoute
 }
@@ -287,6 +326,13 @@ declare module '@tanstack/react-router' {
       path: '/signin'
       fullPath: '/signin'
       preLoaderRoute: typeof SigninRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/apps/': {
+      id: '/apps/'
+      path: '/apps'
+      fullPath: '/apps/'
+      preLoaderRoute: typeof AppsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/collections/': {
@@ -359,6 +405,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/apps/$appId/': {
+      id: '/apps/$appId/'
+      path: '/apps/$appId'
+      fullPath: '/apps/$appId/'
+      preLoaderRoute: typeof AppsAppIdIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/apps/$appId/edit': {
+      id: '/apps/$appId/edit'
+      path: '/apps/$appId/edit'
+      fullPath: '/apps/$appId/edit'
+      preLoaderRoute: typeof AppsAppIdEditRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/collections/$collectionId/': {
       id: '/collections/$collectionId/'
       path: '/collections/$collectionId'
@@ -406,14 +466,17 @@ const rootRouteChildren: RootRouteChildren = {
   MapsMapIdRoute: MapsMapIdRoute,
   ProjectsProjectIdRoute: ProjectsProjectIdRoute,
   UsersUserIdRoute: UsersUserIdRoute,
+  AppsIndexRoute: AppsIndexRoute,
   CollectionsIndexRoute: CollectionsIndexRoute,
   DatasetsIndexRoute: DatasetsIndexRoute,
   MapsIndexRoute: MapsIndexRoute,
   ProjectsIndexRoute: ProjectsIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  AppsAppIdEditRoute: AppsAppIdEditRoute,
   DatasetsSchemaIdEntryIdRoute: DatasetsSchemaIdEntryIdRoute,
   DatasetsSchemaIdBulkUploadRoute: DatasetsSchemaIdBulkUploadRoute,
   DatasetsSchemaIdEditRoute: DatasetsSchemaIdEditRoute,
+  AppsAppIdIndexRoute: AppsAppIdIndexRoute,
   CollectionsCollectionIdIndexRoute: CollectionsCollectionIdIndexRoute,
   DatasetsSchemaIdIndexRoute: DatasetsSchemaIdIndexRoute,
 }

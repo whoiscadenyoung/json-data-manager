@@ -1,6 +1,8 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+import { appBuilderTables } from "./appBuilder/tables";
+
 // App-specific tables coexist with the @caden/json-cms component's own
 // tables (which stay namespaced inside the component — nothing here touches
 // them). These three model a stand-in for the "foreign" app's preexisting
@@ -10,6 +12,10 @@ import { v } from "convex/values";
 // expected to take. `datasetBindings` is the first cut of the design's
 // binding registry: it points a json-cms dataset at one of these sources.
 export default defineSchema({
+  // The app builder (docs/app-builder.md) — its own table(s), spread in so the
+  // feature stays removable with this one line.
+  ...appBuilderTables,
+
   // The app-side user profile, one row per Better Auth user. `authId` is the
   // Better Auth user id (the `user._id` inside the @convex-dev/better-auth
   // component — Better Auth's user/session/account tables stay namespaced in
