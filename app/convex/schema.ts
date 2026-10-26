@@ -2,6 +2,7 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 import { appBuilderTables } from "./appBuilder/tables";
+import { layerStyleTables } from "./layerStyles/tables";
 
 // App-specific tables coexist with the @caden/json-cms component's own
 // tables (which stay namespaced inside the component — nothing here touches
@@ -15,6 +16,9 @@ export default defineSchema({
   // The app builder (docs/app-builder.md) — its own table(s), spread in so the
   // feature stays removable with this one line.
   ...appBuilderTables,
+  // Map layer styles (docs/layer-styles.md) — optional module, removable
+  // with this one line plus its folder.
+  ...layerStyleTables,
 
   // The app-side user profile, one row per Better Auth user. `authId` is the
   // Better Auth user id (the `user._id` inside the @convex-dev/better-auth

@@ -3,6 +3,7 @@ import type { BoundingBox, Geometry } from "@caden/json-cms/react";
 import { Link } from "@tanstack/react-router";
 import { ChevronRight, Loader2, X } from "lucide-react";
 import { Fragment, useState } from "react";
+import type { ReactNode } from "react";
 
 import { Button } from "#/components/ui/button";
 import { Map, MapClusterLayer, MapGeoJSON, MapVectorTiles } from "#/components/ui/map";
@@ -24,6 +25,45 @@ type EntryDoc = DatasetEntryRow;
 type GeometryEntry = DatasetGeometryRow;
 
 type FeatureProperties = { entryId: string; schemaId: string };
+
+/** One legend class row an extension contributes for a styled dataset. */
+export interface LayersMapLegendClass {
+  color: string;
+  label: string;
+}
+
+/**
+ * What LayersMap hands an extension for one dataset it is about to draw
+ * (`LayersMapExtension.renderLayer`): the dataset's render id and assigned
+ * color, its visibility, its geometry source (row-path features or a tile
+ * archive URL), and the callbacks the default renderer would have wired.
+ */
+export interface LayersMapLayerArgs {
+  renderId: string;
+  /** The map's assigned color for this render id. */
+  color: string;
+  visible: boolean;
+  source:
+    | { kind: "rows"; data: GeoJSON.FeatureCollection<GeoJSON.Geometry, FeatureProperties> }
+    | { kind: "tiles"; url: string };
+  /** Opens the feature popup; `schemaId` defaults to the render id (tile features carry only `entryId`). */
+  onSelect: (selection: { entryId: string; schemaId?: string }) => void;
+  /** Report the tile source's first post-load `idle` (the loading chip's completeness signal). */
+  onTileIdle: () => void;
+}
+
+/**
+ * An optional rendering extension (the map-styling module, ADR 0012, plugs
+ * in here). LayersMap imports nothing from any extension: without one — or
+ * when `renderLayer` answers `undefined` for a dataset — the dataset draws
+ * exactly as it always has.
+ */
+export interface LayersMapExtension {
+  /** A node that draws this dataset instead of the default renderer, or `undefined` to keep the default. */
+  renderLayer: (args: LayersMapLayerArgs) => ReactNode | undefined;
+  /** Legend classes for a dataset (shown under its title), or `undefined` for the plain swatch. */
+  legendFor: (renderId: string) => LayersMapLegendClass[] | undefined;
+}
 
 /** The dataset fields LayersMap reads (titles + stored extents) — any schema-row shape carrying them works. */
 type LayersMapDataset = Pick<DatasetSummary, "_id" | "boundingBox" | "title">;
@@ -108,31 +148,78 @@ function FeatureDetailsPanel({
   );
 }
 
-/** One color-coded legend swatch per dataset that actually has geometry on the map. */
-function MapLegend({
-  datasets,
+type LegendDataset = {
+  schemaId: string;
+  title: string;
+  color: string;
+  /** Styled datasets' classes (an extension's `legendFor`), listed under the title. */
+  classes?: LayersMapLegendClass[];
+};
+
+/** A styled dataset's legend block: its title, then one swatch per class. */
+function LegendClasses({
+  dataset,
+  classes,
 }: {
-  datasets: { schemaId: string; title: string; color: string }[];
+  dataset: LegendDataset;
+  classes: LayersMapLegendClass[];
 }) {
-  if (datasets.length < 2) {
+  return (
+    <div className="flex min-w-0 basis-full flex-col gap-0.5 text-xs text-muted-foreground">
+      <span className="max-w-60 truncate font-medium text-foreground">{dataset.title}</span>
+      <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+        {classes.map((item) => (
+          <span key={`${item.label}:${item.color}`} className="flex items-center gap-1.5">
+            <span
+              className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm"
+              style={{ backgroundColor: item.color }}
+            />
+            <span className="max-w-32 truncate">{item.label}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One color-coded legend swatch per dataset that actually has geometry on the
+ * map — or, for a dataset an extension styled with classes, its class list.
+ * A single plain dataset needs no legend; any classed dataset does.
+ */
+function MapLegend({ datasets }: { datasets: LegendDataset[] }) {
+  const hasClasses = datasets.some((dataset) => dataset.classes !== undefined);
+  if (datasets.length < 2 && !hasClasses) {
     return null;
   }
   return (
-    <div className="bg-card/90 absolute bottom-3 left-3 z-10 flex max-w-[calc(100%-1.5rem)] flex-wrap gap-x-3 gap-y-1 rounded-lg border border-border p-2 shadow-sm backdrop-blur-sm">
-      {datasets.map((dataset) => (
-        <div
-          key={dataset.schemaId}
-          className="flex items-center gap-1.5 text-xs text-muted-foreground"
-        >
-          <span
-            className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-            style={{ backgroundColor: dataset.color }}
-          />
-          <span className="max-w-40 truncate">{dataset.title}</span>
-        </div>
-      ))}
+    <div className="bg-card/90 absolute bottom-3 left-3 z-10 flex max-h-[45%] max-w-[calc(100%-1.5rem)] flex-wrap gap-x-3 gap-y-1 overflow-y-auto rounded-lg border border-border p-2 shadow-sm backdrop-blur-sm">
+      {datasets.map((dataset) =>
+        dataset.classes === undefined ? (
+          <div
+            key={dataset.schemaId}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground"
+          >
+            <span
+              className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+              style={{ backgroundColor: dataset.color }}
+            />
+            <span className="max-w-40 truncate">{dataset.title}</span>
+          </div>
+        ) : (
+          <LegendClasses key={dataset.schemaId} dataset={dataset} classes={dataset.classes} />
+        ),
+      )}
     </div>
   );
+}
+
+/** The extension's legend classes for a render id, if any (no extension → none). */
+function legendClassesFor(
+  extension: LayersMapExtension | undefined,
+  renderId: string,
+): LayersMapLegendClass[] | undefined {
+  return extension === undefined ? undefined : extension.legendFor(renderId);
 }
 
 /** Falls back to `fallback` when neither title map has the id — avoids an optional-chained `?.title`. */
@@ -150,6 +237,16 @@ function getDatasetTitle(
   }
   const dataset = datasetById.get(schemaId);
   return dataset ? dataset.title : fallback;
+}
+
+function noop() {}
+
+/** The extension's node for one dataset, or `undefined` to draw it by default (also when there is no extension). */
+function extensionLayer(
+  extension: LayersMapExtension | undefined,
+  args: LayersMapLayerArgs,
+): ReactNode | undefined {
+  return extension === undefined ? undefined : extension.renderLayer(args);
 }
 
 /** The stable empty list behind LayersMap's `derivedLayers` default (the default-prop rule). */
@@ -258,6 +355,7 @@ export function LayersMap({
   tileSources,
   sourcesPending = false,
   onTileSourceIdle,
+  extension,
 }: {
   datasets: LayersMapDataset[];
   /** Derived layers on this map: render id → the bottom source dataset its geometry rides. */
@@ -281,6 +379,8 @@ export function LayersMap({
   sourcesPending?: boolean;
   /** Fired once per tile source, after it loaded and the map reached `idle`. */
   onTileSourceIdle?: (schemaId: string) => void;
+  /** Optional rendering extension (the map-styling module) — absent, every dataset draws by default. */
+  extension?: LayersMapExtension;
 }) {
   const datasetById = new globalThis.Map(datasets.map((dataset) => [dataset._id, dataset])),
     resolvedGeometries = useResolvedGeometries(geometries),
@@ -348,10 +448,21 @@ export function LayersMap({
         schemaId,
         title: getDatasetTitle(datasetById, titlesById, schemaId, "Untitled dataset"),
         color: colorBySchema.get(schemaId) ?? "#3b82f6",
+        classes: legendClassesFor(extension, schemaId),
       })),
     visibleTileSources = tileSources.filter((source) =>
       visibleSchemaIds.has(source.schemaId),
-    ).length;
+    ).length,
+    reportTileIdle = (schemaId: string) => {
+      if (onTileSourceIdle !== undefined) {
+        onTileSourceIdle(schemaId);
+      }
+    },
+    // The extension's popup callback: tile features carry only `entryId`, so
+    // the render id stands in for the dataset when the feature names none.
+    selectFrom = (schemaId: string) => (selection: { entryId: string; schemaId?: string }) => {
+      setSelected({ entryId: selection.entryId, schemaId: selection.schemaId ?? schemaId });
+    };
 
   return (
     <div className="relative h-full w-full">
@@ -360,6 +471,19 @@ export function LayersMap({
           const color = colorBySchema.get(schemaId) ?? "#3b82f6",
             tileSource = tileSources.find((source) => source.schemaId === schemaId);
           if (tileSource !== undefined) {
+            const styled = extensionLayer(extension, {
+              color,
+              onSelect: selectFrom(schemaId),
+              onTileIdle: () => {
+                reportTileIdle(schemaId);
+              },
+              renderId: schemaId,
+              source: { kind: "tiles", url: tileSource.url },
+              visible: visibleSchemaIds.has(schemaId),
+            });
+            if (styled !== undefined) {
+              return <Fragment key={schemaId}>{styled}</Fragment>;
+            }
             return (
               <MapVectorTiles<{ entryId: string }>
                 key={schemaId}
@@ -371,9 +495,7 @@ export function LayersMap({
                 linePaint={{ "line-color": color, "line-width": 2 }}
                 fillHoverPaint={{ "fill-opacity": 0.35 }}
                 onIdle={() => {
-                  if (onTileSourceIdle !== undefined) {
-                    onTileSourceIdle(schemaId);
-                  }
+                  reportTileIdle(schemaId);
                 }}
                 onClick={(e) => {
                   // Tiles carry id-only properties — the entry id is the join
@@ -399,7 +521,26 @@ export function LayersMap({
             ),
             handleFeatureSelect = (properties: FeatureProperties) => {
               setSelected(properties);
-            };
+            },
+            styled = extensionLayer(extension, {
+              color,
+              onSelect: selectFrom(schemaId),
+              onTileIdle: noop,
+              renderId: schemaId,
+              // One collection for every geometry type — an extension's
+              // layers filter by geometry type themselves.
+              source: {
+                data: {
+                  features: [...otherCollection.features, ...pointCollection.features],
+                  type: "FeatureCollection",
+                },
+                kind: "rows",
+              },
+              visible: true,
+            });
+          if (styled !== undefined) {
+            return <Fragment key={schemaId}>{styled}</Fragment>;
+          }
           return (
             <Fragment key={schemaId}>
               {otherCollection.features.length > 0 && (
