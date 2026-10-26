@@ -46,6 +46,10 @@ remove or rework later, and shareable by URL. The design is in
   that without a new permission path. They read published sample datasets that
   are locked in json-cms. An internal `seed` mutation that can be re-run creates
   them.
+- **Published apps render standalone (amended 2026-10-26).** The share URL
+  and the builder's preview hide the product header through a generic route
+  flag (`staticData.hideHeader`) and draw only the app's own bar, so a shared
+  app reads as its own app. The builder keeps the product chrome.
 - **Widget kinds are a registry:** a Convex validator plus a View/Settings
   module per kind. Heavy kinds (map, chart) are lazy-loaded. Charts use
   Recharts (new dependency, used only by this module).

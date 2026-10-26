@@ -63,6 +63,11 @@ export function pagesWithoutDataset(pages: readonly AppPage[], datasetId: string
 }
 
 /** The page to show for a requested id: that page when it exists, else the first. */
+/** The `?page=` search param shared by the viewer, preview and builder routes. */
+export function pageSearch(search: Record<string, unknown>): { page?: string } {
+  return typeof search.page === "string" && search.page !== "" ? { page: search.page } : {};
+}
+
 export function resolvePage(pages: readonly AppPage[], pageId: string | undefined): AppPage {
   return pages.find((page) => page.id === pageId) ?? pages[0];
 }

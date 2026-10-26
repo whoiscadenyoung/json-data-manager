@@ -23,4 +23,11 @@ declare module "@tanstack/react-router" {
   interface Register {
     router: ReturnType<typeof getRouter>;
   }
+  interface StaticDataRouteOption {
+    /**
+     * Render the route without the global `Header`: it draws its own chrome
+     * (the published app viewer and its preview, docs/app-builder.md).
+     */
+    hideHeader?: boolean;
+  }
 }

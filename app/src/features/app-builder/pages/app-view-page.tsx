@@ -2,12 +2,31 @@ import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useMutation } from "convex/react";
-import { Copy, Link2, LayoutDashboard, Pencil, Share2 } from "lucide-react";
+import {
+  Copy,
+  Eye,
+  LayoutDashboard,
+  LayoutGrid,
+  Link2,
+  MoreHorizontal,
+  Pencil,
+  Share2,
+  X,
+} from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { RouterButton } from "#/components/router-button";
+import { ThemeToggle } from "#/components/theme-toggle";
 import { Button } from "#/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "#/components/ui/dropdown-menu";
 import {
   Empty,
   EmptyContent,
@@ -50,74 +69,96 @@ function AppNotFound() {
   );
 }
 
-function ViewerActions({ app }: { app: AppDoc }) {
+/**
+ * The app's own overflow menu — the only product actions on a published app,
+ * so it reads as a standalone app rather than a page inside the catalog.
+ */
+function AppMenu({ app }: { app: AppDoc }) {
   const navigate = useNavigate(),
     duplicate = useMutation(api.appBuilder.apps.duplicate),
-    [sharing, setSharing] = useState(false);
-  if (app.canEdit) {
-    return (
-      <>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => {
-            setSharing(true);
-          }}
+    [sharing, setSharing] = useState(false),
+    makeCopy = async () => {
+      try {
+        const copyId = await duplicate({ appId: app._id });
+        toast.success("Copied to your apps");
+        await navigate({ params: { appId: copyId }, to: "/apps/$appId/edit" });
+      } catch (error) {
+        toast.error(errorMessage(error, "Couldn't copy the app."));
+      }
+    };
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={<Button type="button" variant="ghost" size="icon" aria-label="App options" />}
         >
-          <Share2 data-icon="inline-start" />
-          Share
-        </Button>
-        <RouterButton to="/apps/$appId/edit" params={{ appId: app._id }}>
-          <Pencil data-icon="inline-start" />
-          Edit app
-        </RouterButton>
+          <MoreHorizontal />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-48">
+          <DropdownMenuGroup>
+            <DropdownMenuItem
+              onClick={() => {
+                void copyShareUrl(app._id);
+              }}
+            >
+              <Link2 data-icon="inline-start" />
+              Copy link
+            </DropdownMenuItem>
+            {app.canEdit ? (
+              <>
+                <DropdownMenuItem
+                  onClick={() => {
+                    setSharing(true);
+                  }}
+                >
+                  <Share2 data-icon="inline-start" />
+                  Share…
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    void navigate({ params: { appId: app._id }, to: "/apps/$appId/edit" });
+                  }}
+                >
+                  <Pencil data-icon="inline-start" />
+                  Edit app
+                </DropdownMenuItem>
+              </>
+            ) : (
+              <DropdownMenuItem
+                onClick={() => {
+                  void makeCopy();
+                }}
+              >
+                <Copy data-icon="inline-start" />
+                Make a copy
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            <DropdownMenuItem
+              onClick={() => {
+                void navigate({ to: "/apps" });
+              }}
+            >
+              <LayoutGrid data-icon="inline-start" />
+              Go to your apps
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {app.canEdit && (
         <ShareDialog
           appId={app._id}
           sharing={app.sharing}
           open={sharing}
           onOpenChange={setSharing}
         />
-      </>
-    );
-  }
-  return (
-    <>
-      <Button
-        type="button"
-        variant="outline"
-        onClick={() => {
-          void copyShareUrl(app._id);
-        }}
-      >
-        <Link2 data-icon="inline-start" />
-        Copy link
-      </Button>
-      <Button
-        type="button"
-        variant="outline"
-        onClick={() => {
-          void (async () => {
-            try {
-              const copyId = await duplicate({ appId: app._id });
-              toast.success("Copied to your apps");
-              await navigate({ params: { appId: copyId }, to: "/apps/$appId/edit" });
-            } catch (error) {
-              toast.error(errorMessage(error, "Couldn't copy the app."));
-            }
-          })();
-        }}
-      >
-        <Copy data-icon="inline-start" />
-        Make a copy
-      </Button>
+      )}
     </>
   );
 }
 
-/**
- * The shared app (/apps/$appId) — what a share link opens. Read-only for
- * everyone; the creator also gets Edit and Share.
- */
 function EmptyPage({ app }: { app: AppDoc }) {
   return (
     <Empty className="min-h-80 border">
@@ -152,78 +193,97 @@ function PageCanvas({ app, page }: { app: AppDoc; page: AppPage }) {
   );
 }
 
-function Byline({ app }: { app: AppDoc }) {
+/**
+ * Preview mode's toolbar: sits above the app, outside it, and says so. The X
+ * returns to the builder.
+ */
+function PreviewBar({ app, onExit }: { app: AppDoc; onExit: () => void }) {
   return (
-    <p className="text-xs text-muted-foreground">
-      {app.example ? "Example app · " : ""}
-      {app.ownerName === undefined ? "" : `By ${app.ownerName} · `}Updated{" "}
-      {new Date(app.updatedAt).toLocaleDateString()}
-    </p>
+    <div className="flex h-10 shrink-0 items-center justify-between gap-3 border-b border-border bg-muted px-3 text-sm">
+      <div className="flex min-w-0 items-center gap-2">
+        <Eye className="size-4 shrink-0 text-muted-foreground" />
+        <span className="font-medium">Preview</span>
+        <span className="truncate text-muted-foreground">
+          {app.sharing === "link"
+            ? "This is what people with the link see."
+            : "This is what people will see once you share it."}
+        </span>
+      </div>
+      <Button type="button" variant="ghost" size="sm" onClick={onExit} aria-label="Exit preview">
+        <X data-icon="inline-start" />
+        <span className="max-sm:sr-only">Exit preview</span>
+      </Button>
+    </div>
   );
 }
 
-/**
- * A full-screen page: one compact bar (title, tabs, actions), then the canvas
- * filling the rest of the viewport edge to edge.
- */
-function FullscreenPage({ app, page, tabs }: { app: AppDoc; page: AppPage; tabs: ReactNode }) {
+/** The app's own top bar: its title, its pages, and a small menu — no product navigation. */
+function AppBar({ app, tabs, menu }: { app: AppDoc; tabs: ReactNode; menu: boolean }) {
   return (
-    <main className="flex h-[calc(100dvh-3.5rem)] flex-col">
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-border px-4 py-1.5">
-        <div className="flex min-w-0 items-center gap-4">
-          <h1 className="truncate text-sm font-semibold" title={app.description}>
-            {app.title}
-          </h1>
-          {tabs}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <ViewerActions app={app} />
-        </div>
+    <div className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-1 border-b border-border bg-background px-4 py-2">
+      <h1 className="min-w-0 truncate text-base font-semibold" title={app.description}>
+        {app.title}
+      </h1>
+      {tabs !== null && (
+        // Phones: title and menu share the first row, the tabs take the next.
+        <div className="order-last basis-full sm:order-none sm:basis-auto">{tabs}</div>
+      )}
+      <div className="ml-auto flex shrink-0 items-center gap-1">
+        <ThemeToggle />
+        {menu && <AppMenu app={app} />}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+    </div>
+  );
+}
+
+/** A full-screen page: the bars, then the canvas filling the rest of the viewport edge to edge. */
+function FullscreenPage({ app, page, bars }: { app: AppDoc; page: AppPage; bars: ReactNode }) {
+  return (
+    <div className="flex h-dvh flex-col">
+      {bars}
+      <main className="min-h-0 flex-1 overflow-y-auto p-2">
         <div className="md:h-full">
           <PageCanvas app={app} page={page} />
         </div>
-      </div>
-    </main>
+      </main>
+    </div>
   );
 }
 
-/** A contained page: the app's title block, the tabs, then a centered canvas. */
-function ContainedPage({ app, page, tabs }: { app: AppDoc; page: AppPage; tabs: ReactNode }) {
+/** A contained page: sticky bars, then a centered canvas that scrolls like a document. */
+function ContainedPage({ app, page, bars }: { app: AppDoc; page: AppPage; bars: ReactNode }) {
   return (
-    <main className="mx-auto max-w-7xl px-4 py-6">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
-        <div className="flex min-w-0 flex-col gap-1">
-          <h1 className="text-2xl font-bold tracking-tight">{app.title}</h1>
-          {app.description !== undefined && (
-            <p className="max-w-3xl text-muted-foreground">{app.description}</p>
-          )}
-          <Byline app={app} />
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <ViewerActions app={app} />
-        </div>
-      </div>
-      {tabs !== null && <div className="mb-4 border-b border-border pb-1">{tabs}</div>}
-      <PageCanvas app={app} page={page} />
-    </main>
+    <div className="flex min-h-dvh flex-col">
+      <div className="sticky top-0 z-40">{bars}</div>
+      <main className="mx-auto w-full max-w-7xl px-4 py-6">
+        {app.description !== undefined && (
+          <p className="mb-4 max-w-3xl text-muted-foreground">{app.description}</p>
+        )}
+        <PageCanvas app={app} page={page} />
+      </main>
+    </div>
   );
 }
 
 /**
- * The shared app (/apps/$appId) — what a share link opens. Read-only for
- * everyone; the creator also gets Edit and Share. Each page renders in its
- * own layout (contained or full screen); `pageId` is the `?page=` param.
+ * A published app (/apps/$appId, what a share link opens) or the builder's
+ * preview of it (/apps/$appId/preview). Both draw the app standalone — the
+ * routes hide the product header — and each page in its own layout (contained
+ * or full screen); `pageId` is the `?page=` param. Preview adds a toolbar with
+ * an exit; it falls back to the published view for anyone who can't edit.
  */
 export function AppViewPage({
   appId,
+  mode,
   pageId,
   onPageChange,
+  onExit,
 }: {
   appId: string;
+  mode: "published" | "preview";
   pageId: string | undefined;
   onPageChange: (pageId: string | undefined) => void;
+  onExit?: () => void;
 }) {
   const app = useQuery({ ...convexQuery(api.appBuilder.apps.get, { appId }) }).data;
   if (app === undefined) {
@@ -233,6 +293,7 @@ export function AppViewPage({
     return <AppNotFound />;
   }
   const page = resolvePage(app.pages, pageId),
+    previewing = mode === "preview" && app.canEdit && onExit !== undefined,
     tabs =
       app.pages.length > 1 ? (
         <PageTabs
@@ -243,13 +304,19 @@ export function AppViewPage({
             onPageChange(next === app.pages[0].id ? undefined : next);
           }}
         />
-      ) : null;
+      ) : null,
+    bars = (
+      <>
+        {previewing && <PreviewBar app={app} onExit={onExit} />}
+        <AppBar app={app} tabs={tabs} menu={!previewing} />
+      </>
+    );
   return (
     <AppDatasetsProvider datasetIds={app.datasetIds}>
       {page.layout === "fullscreen" ? (
-        <FullscreenPage app={app} page={page} tabs={tabs} />
+        <FullscreenPage app={app} page={page} bars={bars} />
       ) : (
-        <ContainedPage app={app} page={page} tabs={tabs} />
+        <ContainedPage app={app} page={page} bars={bars} />
       )}
     </AppDatasetsProvider>
   );

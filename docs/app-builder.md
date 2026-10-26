@@ -11,19 +11,20 @@ from catalog datasets, lay each page out on a grid, and share it by URL.
 
 ## What a user can do
 
-| Step                  | How                                                                                                                                                                                                                                                                                                        |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Create an app         | **Apps** in the header → **New app** (title required, description optional) → the builder opens.                                                                                                                                                                                                           |
-| Add datasets          | Builder → **Data** tab → **Add dataset** (any catalog dataset you can see, up to 20). Removing a dataset removes the widgets that use it (maps just lose the layer), after a confirmation.                                                                                                                 |
-| Add widgets           | **Add** tab: **Map** (geospatial datasets as colored layers, click a feature for its properties), **Chart** (bar / line / area / donut over a grouped field), **Table** (searchable, sortable rows, choose columns), **Number** (count / sum / avg / min / max), **Text** (headings, bullets, paragraphs). |
-| Configure             | Click a widget → **Widget** tab: title, dataset, fields, measure, chart type, order, columns, size.                                                                                                                                                                                                        |
-| Lay out               | Drag a widget's grip to reorder; drag its corner to resize (snaps to the 12-column grid and 64px rows), or use the width presets (¼ … Full) and height buttons. Widgets flow left-to-right, top-to-bottom; on phones every widget stacks full-width.                                                       |
-| Pages                 | The tab strip above the canvas lists the app's pages; **Add page** appends one (up to 12). The **Page** tab sets its title, layout, and order, and deletes it (confirmed when the page has widgets; an app always keeps one page).                                                                         |
-| Layout per page       | **Contained**: a centered, max-width grid with the app title and description above it, scrolling like a document. **Full screen**: edge to edge under a compact title bar, with rows stretching to fill the window, so a 12-row map fills the screen. On phones both stack like a normal page.             |
-| Save                  | Automatic. The header shows _Saving…_ / _Saved_; a save that conflicts with another open tab is refused with a reload prompt instead of overwriting.                                                                                                                                                       |
-| Share                 | **Share** → _Private_ (default) or _Anyone with the link_, then **Copy**. The URL is `/apps/<id>`; other pages add `?page=<page id>`.                                                                                                                                                                      |
-| Start from an example | **Apps** → **Examples**: seeded, read-only apps on locked sample datasets. Open one, then **Make a copy** to get your own editable copy.                                                                                                                                                                   |
-| Open a share link     | The read-only viewer. Signed-out visitors are sent to sign-in and land back on the app. Viewers can **Copy link** or **Make a copy** (a private, editable copy of their own).                                                                                                                              |
+| Step                  | How                                                                                                                                                                                                                                                                                                                      |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Create an app         | **Apps** in the header → **New app** (title required, description optional) → the builder opens.                                                                                                                                                                                                                         |
+| Add datasets          | Builder → **Data** tab → **Add dataset** (any catalog dataset you can see, up to 20). Removing a dataset removes the widgets that use it (maps just lose the layer), after a confirmation.                                                                                                                               |
+| Add widgets           | **Add** tab: **Map** (geospatial datasets as colored layers, click a feature for its properties), **Chart** (bar / line / area / donut over a grouped field), **Table** (searchable, sortable rows, choose columns), **Number** (count / sum / avg / min / max), **Text** (headings, bullets, paragraphs).               |
+| Configure             | Click a widget → **Widget** tab: title, dataset, fields, measure, chart type, order, columns, size.                                                                                                                                                                                                                      |
+| Lay out               | Drag a widget's grip to reorder; drag its corner to resize (snaps to the 12-column grid and 64px rows), or use the width presets (¼ … Full) and height buttons. Widgets flow left-to-right, top-to-bottom; on phones every widget stacks full-width.                                                                     |
+| Pages                 | The tab strip above the canvas lists the app's pages; **Add page** appends one (up to 12). The **Page** tab sets its title, layout, and order, and deletes it (confirmed when the page has widgets; an app always keeps one page).                                                                                       |
+| Layout per page       | **Contained**: a centered, max-width grid with the app description above it, scrolling like a document. **Full screen**: edge to edge under the app bar, with rows stretching to fill the window, so a 12-row map fills the screen. On phones both stack like a normal page.                                             |
+| Preview               | **Preview** in the builder opens `/apps/<id>/preview`: the app full page, exactly as viewers see it, under a toolbar whose **X** returns to the builder on the same page.                                                                                                                                                |
+| Save                  | Automatic. The header shows _Saving…_ / _Saved_; a save that conflicts with another open tab is refused with a reload prompt instead of overwriting.                                                                                                                                                                     |
+| Share                 | **Share** → _Private_ (default) or _Anyone with the link_, then **Copy**. The URL is `/apps/<id>`; other pages add `?page=<page id>`.                                                                                                                                                                                    |
+| Start from an example | **Apps** → **Examples**: seeded, read-only apps on locked sample datasets. Open one, then **Make a copy** to get your own editable copy.                                                                                                                                                                                 |
+| Open a share link     | The published app, drawn **standalone**: no JSON Data Manager header, just the app's own bar (title, page tabs, theme, and a **⋯** menu with **Copy link**, **Make a copy** or, for the creator, **Share…** / **Edit app**, plus **Go to your apps**). Signed-out visitors are sent to sign-in and land back on the app. |
 
 ## Example apps
 
@@ -86,7 +87,7 @@ app/src/features/app-builder/   frontend
   widgets/                      registry.tsx + one module per widget kind (View + Settings)
   components/                   canvas (view + edit), page tabs, builder panel, share + details dialogs
   pages/                        apps list, viewer, builder
-app/src/routes/apps/            thin route shells: /apps, /apps/$appId, /apps/$appId/edit
+app/src/routes/apps/            thin route shells: /apps, /apps/$appId, /apps/$appId/preview, /apps/$appId/edit
 ```
 
 Key choices (the reasoning is in ADR 0011):
@@ -151,7 +152,8 @@ pieces are app-specific: the grid canvas and its drag/resize handles (dnd-kit), 
 | File                                                    | Change                                                                                                          |
 | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | `app/convex/schema.ts`                                  | `...appBuilderTables` (one line + import).                                                                      |
-| `app/src/components/header.tsx`                         | The **Apps** nav link.                                                                                          |
+| `app/src/components/header.tsx`                         | The **Apps** nav link, and it renders nothing on routes with `staticData: { hideHeader: true }`.                |
+| `app/src/router.tsx`                                    | Declares the `hideHeader` route static-data flag. General-purpose; the viewer and preview routes set it.        |
 | `app/src/components/layers-map.tsx`                     | `datasets` prop narrowed to the three fields it reads (`_id`, `title`, `boundingBox`), so any schema row works. |
 | `app/src/components/auth-gate.tsx`, `routes/signin.tsx` | Return-to-URL after sign-in (`/signin?redirect=…`, in-app paths only). General-purpose; share links rely on it. |
 | `app/package.json`                                      | `recharts`.                                                                                                     |
@@ -170,8 +172,8 @@ pieces are app-specific: the grid canvas and its drag/resize handles (dnd-kit), 
 5. Deploy. Convex drops the now-undeclared `apps` table's schema; delete its
    documents from the dashboard if you want the data gone too.
 
-The `LayersMap` prop narrowing and the sign-in redirect are improvements
-that stand on their own; leave them.
+The `LayersMap` prop narrowing, the sign-in redirect and the `hideHeader` route
+flag are improvements that stand on their own; leave them.
 
 ## Limits and known gaps
 

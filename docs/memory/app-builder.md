@@ -47,6 +47,14 @@ Learned while building it:
   Wait for widget cards to exist and settle ~800ms after a tab switch before
   checking for loaders, or the check passes against the previous page.
 
+- Demo post-production (`post.mjs`) must take the NEWEST raw webm. It took the first
+  one in the directory, so every re-take silently re-used the first recording.
+  After `reset.sh` re-seeds the examples, wait about 1 minute before recording, and warm the
+  dev server (visit the map/chart pages once) after a restart, or the first
+  visits stall on film.
+- Published apps hide the global header via route `staticData: { hideHeader: true }`
+  (declared in `src/router.tsx`, read in `header.tsx`); preview lives at `/apps/$appId/preview`.
+
 - shadcn components without ui.shadcn.com (the cloud sandbox's network policy
   blocks it, so `shadcn add` fails with "Proxy refused to open a tunnel"): the
   registry SOURCE is on raw.githubusercontent.com at

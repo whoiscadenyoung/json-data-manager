@@ -5,6 +5,7 @@ import { useMutation } from "convex/react";
 import {
   AlertCircle,
   Check,
+  ExternalLink,
   Eye,
   LayoutDashboard,
   MoreHorizontal,
@@ -155,6 +156,14 @@ function BuilderMenu({ app }: { app: AppDoc }) {
               <Pencil data-icon="inline-start" />
               Edit title & description
             </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => {
+                void navigate({ params: { appId: app._id }, to: "/apps/$appId" });
+              }}
+            >
+              <ExternalLink data-icon="inline-start" />
+              Open published app
+            </DropdownMenuItem>
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
           <DropdownMenuGroup>
@@ -213,10 +222,10 @@ function BuilderMenu({ app }: { app: AppDoc }) {
   );
 }
 
-function Builder({ app }: { app: AppDoc }) {
+function Builder({ app, initialPageId }: { app: AppDoc; initialPageId: string | undefined }) {
   const editor = useAppEditor(app),
     { content, update } = editor,
-    [pageId, setPageId] = useState(() => app.pages[0].id),
+    [pageId, setPageId] = useState(() => resolvePage(app.pages, initialPageId).id),
     [selectedId, setSelectedId] = useState<string | undefined>(),
     [tab, setTab] = useState<PanelTab>(app.datasetIds.length === 0 ? "data" : "add"),
     [sharing, setSharing] = useState(false),
@@ -258,13 +267,13 @@ function Builder({ app }: { app: AppDoc }) {
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <RouterButton
-              to="/apps/$appId"
+              to="/apps/$appId/preview"
               params={{ appId: app._id }}
               search={{ page: page.id === content.pages[0].id ? undefined : page.id }}
               variant="outline"
             >
               <Eye data-icon="inline-start" />
-              View app
+              Preview
             </RouterButton>
             <Button
               type="button"
@@ -380,7 +389,13 @@ function Builder({ app }: { app: AppDoc }) {
 }
 
 /** The builder (/apps/$appId/edit) — creator only; anyone else is sent to the viewer. */
-export function AppBuilderPage({ appId }: { appId: string }) {
+export function AppBuilderPage({
+  appId,
+  initialPageId,
+}: {
+  appId: string;
+  initialPageId: string | undefined;
+}) {
   const app = useQuery({ ...convexQuery(api.appBuilder.apps.get, { appId }) }).data;
   if (app === undefined) {
     return <PageLoading />;
@@ -409,5 +424,5 @@ export function AppBuilderPage({ appId }: { appId: string }) {
     );
   }
   // Keyed by id: the editor's working copy initializes once per app.
-  return <Builder key={app._id} app={app} />;
+  return <Builder key={app._id} app={app} initialPageId={initialPageId} />;
 }

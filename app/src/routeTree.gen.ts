@@ -25,6 +25,7 @@ import { Route as UsersUserIdRouteImport } from './routes/users/$userId'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as AppsAppIdIndexRouteImport } from './routes/apps/$appId/index'
 import { Route as AppsAppIdEditRouteImport } from './routes/apps/$appId/edit'
+import { Route as AppsAppIdPreviewRouteImport } from './routes/apps/$appId/preview'
 import { Route as CollectionsCollectionIdIndexRouteImport } from './routes/collections/$collectionId/index'
 import { Route as DatasetsSchemaIdIndexRouteImport } from './routes/datasets/$schemaId/index'
 import { Route as DatasetsSchemaIdEntryIdRouteImport } from './routes/datasets/$schemaId/$entryId'
@@ -111,6 +112,11 @@ const AppsAppIdEditRoute = AppsAppIdEditRouteImport.update({
   path: '/apps/$appId/edit',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppsAppIdPreviewRoute = AppsAppIdPreviewRouteImport.update({
+  id: '/apps/$appId/preview',
+  path: '/apps/$appId/preview',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CollectionsCollectionIdIndexRoute =
   CollectionsCollectionIdIndexRouteImport.update({
     id: '/collections/$collectionId/',
@@ -155,6 +161,7 @@ export interface FileRoutesByFullPath {
   '/projects/': typeof ProjectsIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/apps/$appId/edit': typeof AppsAppIdEditRoute
+  '/apps/$appId/preview': typeof AppsAppIdPreviewRoute
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
   '/datasets/$schemaId/bulk-upload': typeof DatasetsSchemaIdBulkUploadRoute
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
@@ -178,6 +185,7 @@ export interface FileRoutesByTo {
   '/projects': typeof ProjectsIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/apps/$appId/edit': typeof AppsAppIdEditRoute
+  '/apps/$appId/preview': typeof AppsAppIdPreviewRoute
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
   '/datasets/$schemaId/bulk-upload': typeof DatasetsSchemaIdBulkUploadRoute
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
@@ -202,6 +210,7 @@ export interface FileRoutesById {
   '/projects/': typeof ProjectsIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/apps/$appId/edit': typeof AppsAppIdEditRoute
+  '/apps/$appId/preview': typeof AppsAppIdPreviewRoute
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
   '/datasets/$schemaId/bulk-upload': typeof DatasetsSchemaIdBulkUploadRoute
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
@@ -227,6 +236,7 @@ export interface FileRouteTypes {
     | '/projects/'
     | '/api/auth/$'
     | '/apps/$appId/edit'
+    | '/apps/$appId/preview'
     | '/datasets/$schemaId/$entryId'
     | '/datasets/$schemaId/bulk-upload'
     | '/datasets/$schemaId/edit'
@@ -250,6 +260,7 @@ export interface FileRouteTypes {
     | '/projects'
     | '/api/auth/$'
     | '/apps/$appId/edit'
+    | '/apps/$appId/preview'
     | '/datasets/$schemaId/$entryId'
     | '/datasets/$schemaId/bulk-upload'
     | '/datasets/$schemaId/edit'
@@ -273,6 +284,7 @@ export interface FileRouteTypes {
     | '/projects/'
     | '/api/auth/$'
     | '/apps/$appId/edit'
+    | '/apps/$appId/preview'
     | '/datasets/$schemaId/$entryId'
     | '/datasets/$schemaId/bulk-upload'
     | '/datasets/$schemaId/edit'
@@ -297,6 +309,7 @@ export interface RootRouteChildren {
   ProjectsIndexRoute: typeof ProjectsIndexRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   AppsAppIdEditRoute: typeof AppsAppIdEditRoute
+  AppsAppIdPreviewRoute: typeof AppsAppIdPreviewRoute
   DatasetsSchemaIdEntryIdRoute: typeof DatasetsSchemaIdEntryIdRoute
   DatasetsSchemaIdBulkUploadRoute: typeof DatasetsSchemaIdBulkUploadRoute
   DatasetsSchemaIdEditRoute: typeof DatasetsSchemaIdEditRoute
@@ -419,6 +432,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppsAppIdEditRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/apps/$appId/preview': {
+      id: '/apps/$appId/preview'
+      path: '/apps/$appId/preview'
+      fullPath: '/apps/$appId/preview'
+      preLoaderRoute: typeof AppsAppIdPreviewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/collections/$collectionId/': {
       id: '/collections/$collectionId/'
       path: '/collections/$collectionId'
@@ -473,6 +493,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProjectsIndexRoute: ProjectsIndexRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   AppsAppIdEditRoute: AppsAppIdEditRoute,
+  AppsAppIdPreviewRoute: AppsAppIdPreviewRoute,
   DatasetsSchemaIdEntryIdRoute: DatasetsSchemaIdEntryIdRoute,
   DatasetsSchemaIdBulkUploadRoute: DatasetsSchemaIdBulkUploadRoute,
   DatasetsSchemaIdEditRoute: DatasetsSchemaIdEditRoute,
