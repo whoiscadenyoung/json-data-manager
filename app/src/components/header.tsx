@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useMatches } from "@tanstack/react-router";
 import { useConvexAuth, useQuery } from "convex/react";
 
 import { Button } from "#/components/ui/button";
@@ -68,6 +68,13 @@ function UserMenu() {
 }
 
 export function Header() {
+  // A route opts out with `staticData: { hideHeader: true }` (router.tsx).
+  const hidden = useMatches({
+    select: (matches) => matches.some((match) => match.staticData.hideHeader === true),
+  });
+  if (hidden) {
+    return null;
+  }
   return (
     <header className="sticky top-0 z-50 border-b bg-background/80 px-6 backdrop-blur-lg">
       <div className="flex h-14 items-center justify-between">
@@ -96,6 +103,13 @@ export function Header() {
               activeProps={{ className: "text-foreground" }}
             >
               Collections
+            </Link>
+            <Link
+              to="/apps"
+              className="hover:text-foreground"
+              activeProps={{ className: "text-foreground" }}
+            >
+              Apps
             </Link>
             <Link
               to="/maps"

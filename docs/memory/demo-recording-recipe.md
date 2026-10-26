@@ -23,7 +23,7 @@ re-buildable from this recipe):
 - **Harness**: `/tmp/demo-rec/record.ts` (bun + playwright-core@1.59.1,
   executablePath = the cached
   `~/Library/Caches/ms-playwright/chromium-1243/.../Google Chrome for
-  Testing`), viewport 1600x1000 @ dsf 2, `recordVideo` per context, launch
+Testing`), viewport 1600x1000 @ dsf 2, `recordVideo` per context, launch
   args `--use-angle=swiftshader --enable-unsafe-swiftshader` (WebGL works;
   MapLibre + CARTO basemap render fine headless). Steps log ms offsets to
   steps.json → `post.ts` emits an ffmpeg drawtext lower-third per section
@@ -53,14 +53,14 @@ re-buildable from this recipe):
   `app/node_modules/.vite/deps` cleared.
 - **Demo data**: `.input/funding/ss4a-awards/geojson/fy24_implementation_grant_awards.geojson`
   (70 polygons), `.input/funding/tiger_build_raise-awards/TIGER 2009 - BUILD
-  2026 Awards.xlsx` (1512 rows, Latitude/Longitude columns → geospatial
+2026 Awards.xlsx` (1512 rows, Latitude/Longitude columns → geospatial
   coordinate-picker flow), plus a scratch `state-priorities.csv` (16 states)
   that the project publishes as "FY26 State Priorities" so the TRANSFORM
   section can lookup-join it onto SS4A by State ("SS4A awards with state
   priorities"; the payoff shot is the editor preview + catalog Derived badge —
   derived cards link back to the source's Transform tab, first-class derived
   pages are stage 3). Analysis SQL: `SELECT "State", count(*) AS awards FROM
-  source GROUP BY "State" ORDER BY awards DESC`.
+source GROUP BY "State" ORDER BY awards DESC`.
   v2 gotchas: the transform editor opens from the tab's list ("New transform")
   but a prior autosaved draft AUTO-RESUMES past the list; operations start
   EMPTY ("Add lookup step" first); keys are selects `#transform-base-key-0` /

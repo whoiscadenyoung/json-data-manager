@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useConvexAuth } from "convex/react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "#/components/ui/button";
@@ -8,7 +9,23 @@ import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { authClient } from "#/lib/auth-client";
 
-export const Route = createFileRoute("/signin")({ component: SignInPage });
+/**
+ * Where to go after signing in: an in-app path only (a leading single "/"),
+ * so the parameter can never bounce a user to another origin.
+ */
+function safeRedirect(value: unknown): string | undefined {
+  return typeof value === "string" && value.startsWith("/") && !value.startsWith("//")
+    ? value
+    : undefined;
+}
+
+export const Route = createFileRoute("/signin")({
+  component: SignInPage,
+  validateSearch: (search: Record<string, unknown>): { redirect?: string } => {
+    const redirect = safeRedirect(search.redirect);
+    return redirect === undefined ? {} : { redirect };
+  },
+});
 
 /**
  * Email + password sign-in (emailAndPassword is enabled server-side in
@@ -20,7 +37,18 @@ export const Route = createFileRoute("/signin")({ component: SignInPage });
  * session up reactively — navigating home is enough.
  */
 function SignInPage() {
-  const navigate = useNavigate();
+  const navigate = useNavigate(),
+    { redirect } = Route.useSearch(),
+    { isAuthenticated } = useConvexAuth();
+
+  // Already signed in — or the session went live just after a sign-in whose
+  // navigation raced it (the gate bounced the visitor back here): go on to
+  // where they were headed.
+  useEffect(() => {
+    if (isAuthenticated) {
+      void navigate({ href: redirect ?? "/", replace: true });
+    }
+  }, [isAuthenticated, navigate, redirect]);
   const [busy, setBusy] = useState(false);
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -40,7 +68,7 @@ function SignInPage() {
         toast.error(result.error.message ?? "That didn't work — try again.");
         return;
       }
-      await navigate({ to: "/" });
+      await (redirect === undefined ? navigate({ to: "/" }) : navigate({ href: redirect }));
     } finally {
       // A thrown call (offline, server down) must not leave the button stuck
       // in its busy state (issue #135, defect 5).
