@@ -13,6 +13,11 @@ into schema.ts), frontend `app/src/features/app-builder/`, routes `/apps`,
 `/apps/$appId` (share URL), `/apps/$appId/edit`. Removal checklist is in the doc.
 Keep new app-builder code inside those folders.
 
+2026-10-26 additions: apps have `pages` (title + `contained`/`fullscreen` layout,
+`?page=` in the viewer); legacy `widgets`-only docs are read via `appPages()`. Seeded
+examples (`bunx convex run appBuilder/examples:seed`, `'{"replace": true}'` to rebuild)
+are owned by `system:examples`, so the owner check makes them read-only. Users copy them.
+
 Learned while building it:
 
 - convex-test from a NESTED test file: glob modules ROOT-relative
@@ -35,6 +40,12 @@ Learned while building it:
   `backdrop-filter: none` for recordings. Anonymous local backend:
   `CONVEX_AGENT_MODE=anonymous bunx convex dev` from `app/`; reset a table with
   `bunx convex import --table apps --replace -y empty.jsonl`.
+
+- Recording WebGL maps: Playwright's screencast only captures frames on repaint,
+  so a static map that painted late never reaches the video. Sweep the mouse
+  (`hold()` in the demo recorder) for a few seconds after the map loads.
+  Wait for widget cards to exist and settle ~800ms after a tab switch before
+  checking for loaders, or the check passes against the previous page.
 
 - shadcn components without ui.shadcn.com (the cloud sandbox's network policy
   blocks it, so `shadcn add` fails with "Proxy refused to open a tunnel"): the

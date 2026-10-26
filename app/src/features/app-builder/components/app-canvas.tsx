@@ -16,7 +16,9 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { Copy, GripVertical, MoveDiagonal2, Trash2 } from "lucide-react";
 import {
+  useEffect,
   useRef,
+  useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
@@ -26,13 +28,13 @@ import { Button } from "#/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "#/components/ui/tooltip";
 import { cn } from "#/lib/utils";
-import type { Widget } from "#convex/appBuilder/validators";
+import type { PageLayout, Widget } from "#convex/appBuilder/validators";
 
 import {
   GRID_COLUMNS,
   GRID_GAP,
   MAX_HEIGHT,
-  moveWidget,
+  moveItem,
   ROW_HEIGHT,
   spanFromDrag,
 } from "../lib/layout";
@@ -44,13 +46,48 @@ import { widgetKindInfo, WidgetView } from "../widgets/registry";
  * builder — `editing` only adds chrome (selection, drag handle, resize
  * handle, quick actions) — so what an author lays out is exactly what
  * viewers get. Below the `md` breakpoint every widget stacks full-width.
+ *
+ * Two page layouts share the grid (see `PageLayout`): `contained` rows are a
+ * fixed `ROW_HEIGHT`, so a page scrolls like a document; `fullscreen` rows
+ * stretch (`1fr`, never below `MIN_STRETCH_ROW`) so the page's widgets fill
+ * the height the canvas is given — a 12-row map fills the screen. Widget
+ * bodies measure their own height, so both layouts size widgets the same way.
  */
 
-/** Title bar height, px — subtracted from a widget's footprint to size its body. */
-const TITLE_BAR = 40;
+/** The smallest a stretched (full-screen) row may get before the page scrolls instead. */
+const MIN_STRETCH_ROW = 40;
 
-function frameHeight(h: number): number {
-  return h * ROW_HEIGHT + (h - 1) * GRID_GAP;
+/** The rendered height of an element, live (ResizeObserver). */
+function useElementHeight<T extends HTMLElement>(): [RefObject<T | null>, number] {
+  const ref = useRef<T>(null),
+    [height, setHeight] = useState(0);
+  useEffect(() => {
+    const element = ref.current;
+    if (element === null) {
+      return undefined;
+    }
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries.at(0);
+      if (entry !== undefined) {
+        setHeight(Math.round(entry.contentRect.height));
+      }
+    });
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+  return [ref, height];
+}
+
+/** A widget's body, sized by whatever space its card gives it. */
+function WidgetBody({ widget }: { widget: Widget }) {
+  const [ref, height] = useElementHeight<HTMLDivElement>();
+  return (
+    <CardContent ref={ref} className="min-h-0 flex-1 px-0">
+      <WidgetView widget={widget} height={height} />
+    </CardContent>
+  );
 }
 
 function gridStyle(widget: Widget): CSSProperties {
@@ -61,12 +98,20 @@ function gridStyle(widget: Widget): CSSProperties {
   };
 }
 
+/** The first row track's rendered height — fixed on contained pages, stretched on full-screen ones. */
+function rowHeight(grid: HTMLElement): number {
+  const first = Number.parseFloat(getComputedStyle(grid).gridTemplateRows.split(" ")[0]);
+  return Number.isFinite(first) && first > 0 ? first : ROW_HEIGHT;
+}
+
 /** The grid's column and row tracks in px (cell + gap), for pointer-drag resizing. */
 function trackSizes(grid: HTMLElement | null): { column: number; row: number } {
-  const width = grid === null ? 0 : grid.clientWidth;
+  if (grid === null) {
+    return { column: 0, row: ROW_HEIGHT + GRID_GAP };
+  }
   return {
-    column: (width - GRID_GAP * (GRID_COLUMNS - 1)) / GRID_COLUMNS + GRID_GAP,
-    row: ROW_HEIGHT + GRID_GAP,
+    column: (grid.clientWidth - GRID_GAP * (GRID_COLUMNS - 1)) / GRID_COLUMNS + GRID_GAP,
+    row: rowHeight(grid) + GRID_GAP,
   };
 }
 
@@ -104,7 +149,6 @@ function hasTitle(widget: Widget): boolean {
 
 /** Read-only widget card (the viewer). */
 function ViewWidget({ widget }: { widget: Widget }) {
-  const body = frameHeight(widget.h) - (hasTitle(widget) ? TITLE_BAR : 0);
   return (
     <section
       aria-label={hasTitle(widget) ? widget.title : widgetKindInfo(widget.kind).label}
@@ -119,9 +163,7 @@ function ViewWidget({ widget }: { widget: Widget }) {
             </CardTitle>
           </CardHeader>
         )}
-        <CardContent className="min-h-0 flex-1 px-0">
-          <WidgetView widget={widget} height={body} />
-        </CardContent>
+        <WidgetBody widget={widget} />
       </Card>
     </section>
   );
@@ -189,8 +231,7 @@ function EditWidget({
       isDragging,
     } = useSortable({ id: widget.id }),
     selected = actions.selectedId === widget.id,
-    startResize = useResizeDrag(widget, gridRef, actions.onResize),
-    body = frameHeight(widget.h) - TITLE_BAR;
+    startResize = useResizeDrag(widget, gridRef, actions.onResize);
   const info = widgetKindInfo(widget.kind),
     Icon = info.icon;
   return (
@@ -262,9 +303,7 @@ function EditWidget({
             </IconAction>
           </CardAction>
         </CardHeader>
-        <CardContent className="min-h-0 flex-1 px-0">
-          <WidgetView widget={widget} height={body} />
-        </CardContent>
+        <WidgetBody widget={widget} />
         <IconAction
           label="Drag to resize"
           onPointerDown={startResize}
@@ -285,11 +324,34 @@ const GRID_ITEM_CLASS =
   "col-span-1 flex min-h-0 min-w-0 md:[grid-column:span_var(--w)/span_var(--w)]";
 
 const GRID_CLASS = "grid grid-flow-row-dense grid-cols-1 gap-4 md:grid-cols-12";
-const GRID_STYLE: CSSProperties = { gridAutoRows: `${ROW_HEIGHT}px` };
 
-export function AppCanvasView({ widgets }: { widgets: readonly Widget[] }) {
+/**
+ * The grid for a page layout. Phones always use fixed rows (a stretched
+ * single column would squash every widget); from `md` up a full-screen page
+ * fills its container's height and stretches its rows.
+ */
+function gridProps(layout: PageLayout): { className: string; style: CSSProperties } {
+  if (layout === "fullscreen") {
+    return {
+      className: cn(GRID_CLASS, "md:h-full md:[grid-auto-rows:minmax(var(--min-row),1fr)]"),
+      style: {
+        ["--min-row" as string]: `${MIN_STRETCH_ROW}px`,
+        gridAutoRows: `${ROW_HEIGHT}px`,
+      },
+    };
+  }
+  return { className: GRID_CLASS, style: { gridAutoRows: `${ROW_HEIGHT}px` } };
+}
+
+export function AppCanvasView({
+  widgets,
+  layout,
+}: {
+  widgets: readonly Widget[];
+  layout: PageLayout;
+}) {
   return (
-    <div className={GRID_CLASS} style={GRID_STYLE}>
+    <div {...gridProps(layout)}>
       {widgets.map((widget) => (
         <ViewWidget key={widget.id} widget={widget} />
       ))}
@@ -299,10 +361,12 @@ export function AppCanvasView({ widgets }: { widgets: readonly Widget[] }) {
 
 export function AppCanvasEditor({
   widgets,
+  layout,
   onReorder,
   ...actions
 }: EditActions & {
   widgets: readonly Widget[];
+  layout: PageLayout;
   onReorder: (next: Widget[]) => void;
 }) {
   const gridRef = useRef<HTMLDivElement>(null),
@@ -317,12 +381,12 @@ export function AppCanvasEditor({
       }
       const from = widgets.findIndex((widget) => widget.id === active.id),
         to = widgets.findIndex((widget) => widget.id === over.id);
-      onReorder(moveWidget(widgets, from, to));
+      onReorder(moveItem(widgets, from, to));
     };
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
       <SortableContext items={widgets.map((widget) => widget.id)} strategy={rectSortingStrategy}>
-        <div ref={gridRef} className={GRID_CLASS} style={GRID_STYLE}>
+        <div ref={gridRef} {...gridProps(layout)}>
           {widgets.map((widget) => (
             <EditWidget key={widget.id} widget={widget} gridRef={gridRef} actions={actions} />
           ))}

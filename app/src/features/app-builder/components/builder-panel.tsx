@@ -2,11 +2,15 @@ import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
+  ArrowLeft,
+  ArrowRight,
   Database,
   EyeOff,
   Info,
+  Maximize2,
   Minus,
   MousePointerClick,
+  PanelTop,
   Plus,
   Trash2,
   Upload,
@@ -61,12 +65,15 @@ import {
   APP_LIMITS,
   widgetDatasetIds,
   type AppContent,
+  type AppPage,
+  type PageLayout,
   type Widget,
   type WidgetKind,
 } from "#convex/appBuilder/validators";
 
 import { datasetTitle, useAppDatasets, type DatasetState } from "../data";
-import { MAX_HEIGHT, WIDTH_PRESETS, withoutDataset } from "../lib/layout";
+import { MAX_HEIGHT, WIDTH_PRESETS } from "../lib/layout";
+import { allWidgets, pagesWithoutDataset, removePage, shiftPage, updatePage } from "../lib/pages";
 import { createWidget, WIDGET_KINDS, widgetKindInfo, WidgetSettings } from "../widgets/registry";
 
 /**
@@ -77,7 +84,7 @@ import { createWidget, WIDGET_KINDS, widgetKindInfo, WidgetSettings } from "../w
  * docs/memory).
  */
 
-export type PanelTab = "add" | "data" | "widget";
+export type PanelTab = "add" | "data" | "widget" | "page";
 
 function AddPanel({
   hasData,
@@ -94,7 +101,8 @@ function AddPanel({
         <Alert>
           <Info />
           <AlertDescription>
-            This app has the maximum of {APP_LIMITS.widgets} widgets — remove one to add another.
+            This page (or the app) has the most widgets it can hold — remove one, or add it to
+            another page.
           </AlertDescription>
         </Alert>
       )}
@@ -314,8 +322,9 @@ function DataPanel({
               datasetId={datasetId}
               state={states.get(datasetId) ?? { status: "loading" }}
               usedBy={
-                content.widgets.filter((widget) => widgetDatasetIds(widget).includes(datasetId))
-                  .length
+                allWidgets(content.pages).filter((widget) =>
+                  widgetDatasetIds(widget).includes(datasetId),
+                ).length
               }
               onRemove={() => {
                 onRemoveDataset(datasetId);
@@ -476,28 +485,196 @@ function WidgetPanel({
   );
 }
 
+const LAYOUTS: ReadonlyArray<{
+  value: PageLayout;
+  label: string;
+  description: string;
+  icon: typeof PanelTop;
+}> = [
+  {
+    description: "A centered column with fixed-height rows — scrolls like a report.",
+    icon: PanelTop,
+    label: "Contained",
+    value: "contained",
+  },
+  {
+    description: "Edge to edge; rows stretch to fill the screen — a 12-row map fills it.",
+    icon: Maximize2,
+    label: "Full screen",
+    value: "fullscreen",
+  },
+];
+
+/** The active page's settings: title, layout mode, order, and delete. */
+function PagePanel({
+  page,
+  pages,
+  onChange,
+  onShift,
+  onRemove,
+}: {
+  page: AppPage;
+  pages: readonly AppPage[];
+  onChange: (next: AppPage) => void;
+  onShift: (delta: -1 | 1) => void;
+  onRemove: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false),
+    index = pages.findIndex((candidate) => candidate.id === page.id),
+    layout = LAYOUTS.find((option) => option.value === page.layout) ?? LAYOUTS[0],
+    untitled = page.title.trim() === "";
+  return (
+    <FieldGroup>
+      <Field data-invalid={untitled ? true : undefined}>
+        <FieldLabel htmlFor={`page-title-${page.id}`}>Page title</FieldLabel>
+        <Input
+          id={`page-title-${page.id}`}
+          value={page.title}
+          maxLength={APP_LIMITS.pageTitle}
+          aria-invalid={untitled ? true : undefined}
+          onChange={(event) => {
+            onChange({ ...page, title: event.target.value });
+          }}
+        />
+        {untitled && (
+          <FieldDescription>A page needs a title before the app can save.</FieldDescription>
+        )}
+      </Field>
+      <FieldSet>
+        <FieldLegend variant="label">Layout</FieldLegend>
+        <ToggleGroup
+          variant="outline"
+          spacing={0}
+          className="w-full"
+          value={[page.layout]}
+          onValueChange={(values) => {
+            const next = LAYOUTS.find((option) => option.value === values.at(0));
+            if (next !== undefined) {
+              onChange({ ...page, layout: next.value });
+            }
+          }}
+        >
+          {LAYOUTS.map((option) => {
+            const Icon = option.icon;
+            return (
+              <ToggleGroupItem key={option.value} value={option.value} className="flex-1">
+                <Icon data-icon="inline-start" />
+                {option.label}
+              </ToggleGroupItem>
+            );
+          })}
+        </ToggleGroup>
+        <FieldDescription>{layout.description}</FieldDescription>
+      </FieldSet>
+      <Field orientation="horizontal" className="justify-between">
+        <FieldLabel>Order</FieldLabel>
+        <ButtonGroup>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={index <= 0}
+            onClick={() => {
+              onShift(-1);
+            }}
+          >
+            <ArrowLeft data-icon="inline-start" />
+            Earlier
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={index >= pages.length - 1}
+            onClick={() => {
+              onShift(1);
+            }}
+          >
+            Later
+            <ArrowRight data-icon="inline-end" />
+          </Button>
+        </ButtonGroup>
+      </Field>
+      <Separator />
+      <Button
+        type="button"
+        variant="destructive"
+        disabled={pages.length <= 1}
+        onClick={() => {
+          if (page.widgets.length === 0) {
+            onRemove();
+          } else {
+            setConfirming(true);
+          }
+        }}
+      >
+        <Trash2 data-icon="inline-start" />
+        Delete page
+      </Button>
+      {pages.length <= 1 && <FieldDescription>An app needs at least one page.</FieldDescription>}
+      <AlertDialog open={confirming} onOpenChange={setConfirming}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete “{page.title}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Its {page.widgets.length} {page.widgets.length === 1 ? "widget" : "widgets"} will be
+              deleted with it. The app's datasets aren't affected.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                setConfirming(false);
+                onRemove();
+              }}
+            >
+              Delete page
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </FieldGroup>
+  );
+}
+
+const PANEL_TABS: readonly PanelTab[] = ["add", "data", "widget", "page"];
+
 export function BuilderPanel({
   tab,
   onTabChange,
   content,
+  page,
   selected,
   onUpdate,
   onSelect,
+  onSelectPage,
 }: {
   tab: PanelTab;
   onTabChange: (tab: PanelTab) => void;
   content: AppContent;
+  /** The page the canvas is showing — widgets are added to and edited on it. */
+  page: AppPage;
   selected: Widget | undefined;
   onUpdate: (change: (prev: AppContent) => AppContent) => void;
   onSelect: (id: string | undefined) => void;
+  onSelectPage: (pageId: string) => void;
 }) {
-  const states = useAppDatasets();
+  const states = useAppDatasets(),
+    updateThisPage = (change: (current: AppPage) => AppPage) => {
+      onUpdate((prev) => ({ ...prev, pages: updatePage(prev.pages, page.id, change) }));
+    },
+    full =
+      page.widgets.length >= APP_LIMITS.widgets ||
+      allWidgets(content.pages).length >= APP_LIMITS.totalWidgets;
   return (
     <Tabs
       value={tab}
       onValueChange={(value) => {
-        if (value === "add" || value === "data" || value === "widget") {
-          onTabChange(value);
+        const next = PANEL_TABS.find((candidate) => candidate === value);
+        if (next !== undefined) {
+          onTabChange(next);
         }
       }}
       className="flex h-full flex-col"
@@ -506,15 +683,16 @@ export function BuilderPanel({
         <TabsTrigger value="add">Add</TabsTrigger>
         <TabsTrigger value="data">Data ({content.datasetIds.length})</TabsTrigger>
         <TabsTrigger value="widget">Widget</TabsTrigger>
+        <TabsTrigger value="page">Page</TabsTrigger>
       </TabsList>
       <div className="min-h-0 flex-1 overflow-y-auto pt-4">
         <TabsContent value="add">
           <AddPanel
             hasData={content.datasetIds.length > 0}
-            full={content.widgets.length >= APP_LIMITS.widgets}
+            full={full}
             onAdd={(kind) => {
               const widget = createWidget(kind, content.datasetIds, states);
-              onUpdate((prev) => ({ ...prev, widgets: [...prev.widgets, widget] }));
+              updateThisPage((current) => ({ ...current, widgets: [...current.widgets, widget] }));
               onSelect(widget.id);
               onTabChange("widget");
             }}
@@ -529,7 +707,7 @@ export function BuilderPanel({
             onRemoveDataset={(datasetId) => {
               onUpdate((prev) => ({
                 datasetIds: prev.datasetIds.filter((id) => id !== datasetId),
-                widgets: withoutDataset(prev.widgets, datasetId),
+                pages: pagesWithoutDataset(prev.pages, datasetId),
               }));
             }}
           />
@@ -539,10 +717,28 @@ export function BuilderPanel({
             widget={selected}
             datasetIds={content.datasetIds}
             onChange={(next) => {
-              onUpdate((prev) => ({
-                ...prev,
-                widgets: prev.widgets.map((widget) => (widget.id === next.id ? next : widget)),
+              updateThisPage((current) => ({
+                ...current,
+                widgets: current.widgets.map((widget) => (widget.id === next.id ? next : widget)),
               }));
+            }}
+          />
+        </TabsContent>
+        <TabsContent value="page">
+          <PagePanel
+            key={page.id}
+            page={page}
+            pages={content.pages}
+            onChange={(next) => {
+              updateThisPage(() => next);
+            }}
+            onShift={(delta) => {
+              onUpdate((prev) => ({ ...prev, pages: shiftPage(prev.pages, page.id, delta) }));
+            }}
+            onRemove={() => {
+              const remaining = removePage(content.pages, page.id);
+              onUpdate((prev) => ({ ...prev, pages: removePage(prev.pages, page.id) }));
+              onSelectPage(remaining[0].id);
             }}
           />
         </TabsContent>

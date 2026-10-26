@@ -10,7 +10,7 @@ import { register as registerJsonCms } from "@caden/json-cms/test";
 import { convexTest } from "convex-test";
 import { describe, expect, it } from "vitest";
 
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import schema from "../schema";
 import type { Widget } from "./validators";
 
@@ -35,6 +35,14 @@ async function createDataset(t: Caller, title = "Parks"): Promise<string> {
   return t.mutation(api.schemas.create, {
     schema: { properties: { name: { type: "string" } }, title, type: "object" },
   });
+}
+
+/** One contained page holding `widgets` — the shape most tests save. */
+function onePage(datasetIds: string[], widgets: Widget[]) {
+  return {
+    datasetIds,
+    pages: [{ id: "p1", layout: "contained" as const, title: "Page 1", widgets }],
+  };
 }
 
 function chart(datasetId: string, id = "w-chart"): Widget {
@@ -97,7 +105,7 @@ describe("app builder content", () => {
 
     const revision = await owner.mutation(api.appBuilder.apps.saveContent, {
       appId,
-      content: { datasetIds: [datasetId], widgets: [chart(datasetId)] },
+      content: onePage([datasetId], [chart(datasetId)]),
       expectedRevision: 0,
     });
     expect(revision).toBe(1);
@@ -108,7 +116,7 @@ describe("app builder content", () => {
     await expect(
       owner.mutation(api.appBuilder.apps.saveContent, {
         appId,
-        content: { datasetIds: [], widgets: [] },
+        content: onePage([], []),
         expectedRevision: 0,
       }),
     ).rejects.toThrow(/another tab/i);
@@ -123,14 +131,14 @@ describe("app builder content", () => {
     await expect(
       owner.mutation(api.appBuilder.apps.saveContent, {
         appId,
-        content: { datasetIds: [], widgets: [chart(datasetId)] },
+        content: onePage([], [chart(datasetId)]),
         expectedRevision: 0,
       }),
     ).rejects.toThrow(/isn't in this app/i);
     await expect(
       owner.mutation(api.appBuilder.apps.saveContent, {
         appId,
-        content: { datasetIds: [datasetId], widgets: [{ ...chart(datasetId), w: 13 }] },
+        content: onePage([datasetId], [{ ...chart(datasetId), w: 13 }]),
         expectedRevision: 0,
       }),
     ).rejects.toThrow(/width/i);
@@ -149,14 +157,14 @@ describe("app builder content", () => {
     await expect(
       owner.mutation(api.appBuilder.apps.saveContent, {
         appId,
-        content: { datasetIds: [privateId], widgets: [] },
+        content: onePage([privateId], []),
         expectedRevision: 0,
       }),
     ).rejects.toThrow(/not found/i);
     await expect(
       owner.mutation(api.appBuilder.apps.saveContent, {
         appId,
-        content: { datasetIds: ["junk"], widgets: [] },
+        content: onePage(["junk"], []),
         expectedRevision: 0,
       }),
     ).rejects.toThrow(/not found/i);
@@ -170,7 +178,7 @@ describe("app builder content", () => {
       appId = await owner.mutation(api.appBuilder.apps.create, { title: "Parks" });
     await owner.mutation(api.appBuilder.apps.saveContent, {
       appId,
-      content: { datasetIds: [datasetId], widgets: [chart(datasetId)] },
+      content: onePage([datasetId], [chart(datasetId)]),
       expectedRevision: 0,
     });
     await expect(other.mutation(api.appBuilder.apps.duplicate, { appId })).rejects.toThrow(
@@ -186,6 +194,135 @@ describe("app builder content", () => {
       sharing: "private",
       title: "Parks (copy)",
     });
-    expect(copy === null ? 0 : copy.widgets.length).toBe(1);
+    expect(copy === null ? 0 : copy.pages[0].widgets.length).toBe(1);
+  });
+});
+
+describe("app builder pages", () => {
+  it("saves several pages with their own layouts", async () => {
+    const t = initTest(),
+      owner = as(t, "owner"),
+      datasetId = await createDataset(owner),
+      appId = await owner.mutation(api.appBuilder.apps.create, { title: "Atlas" });
+    const created = await owner.query(api.appBuilder.apps.get, { appId });
+    expect(created === null ? [] : created.pages.map((page) => page.title)).toEqual(["Page 1"]);
+
+    await owner.mutation(api.appBuilder.apps.saveContent, {
+      appId,
+      content: {
+        datasetIds: [datasetId],
+        pages: [
+          {
+            id: "map",
+            layout: "fullscreen",
+            title: "Map",
+            widgets: [{ datasetIds: [datasetId], h: 12, id: "m", kind: "map", w: 12 }],
+          },
+          { id: "dash", layout: "contained", title: "Dashboard", widgets: [chart(datasetId)] },
+        ],
+      },
+      expectedRevision: 0,
+    });
+    const app = await owner.query(api.appBuilder.apps.get, { appId });
+    expect(app === null ? [] : app.pages.map((page) => [page.title, page.layout])).toEqual([
+      ["Map", "fullscreen"],
+      ["Dashboard", "contained"],
+    ]);
+  });
+
+  it("refuses an app with no pages, duplicate ids, or blank page titles", async () => {
+    const t = initTest(),
+      owner = as(t, "owner"),
+      datasetId = await createDataset(owner),
+      appId = await owner.mutation(api.appBuilder.apps.create, { title: "Atlas" }),
+      save = async (pages: ReturnType<typeof onePage>["pages"]) =>
+        owner.mutation(api.appBuilder.apps.saveContent, {
+          appId,
+          content: { datasetIds: [datasetId], pages },
+          expectedRevision: 0,
+        });
+    await expect(save([])).rejects.toThrow(/1 to/i);
+    const page = onePage([datasetId], [chart(datasetId)]).pages[0];
+    await expect(save([page, { ...page, widgets: [] }])).rejects.toThrow(/two pages/i);
+    await expect(save([page, { ...page, id: "p2", widgets: [chart(datasetId)] }])).rejects.toThrow(
+      /two widgets/i,
+    );
+    await expect(save([{ ...page, title: "  " }])).rejects.toThrow(/title/i);
+  });
+
+  it("reads a pre-pages app as one contained page", async () => {
+    const t = initTest(),
+      owner = as(t, "owner"),
+      appId = await t.run(async (ctx) =>
+        ctx.db.insert("apps", {
+          createdBy: "owner",
+          datasetIds: [],
+          revision: 0,
+          sharing: "private",
+          title: "Legacy",
+          updatedAt: 0,
+          widgets: [{ body: "# Hi", h: 2, id: "t", kind: "text", w: 12 }],
+        }),
+      );
+    const app = await owner.query(api.appBuilder.apps.get, { appId });
+    expect(app === null ? undefined : app.pages).toEqual([
+      {
+        id: "page-1",
+        layout: "contained",
+        title: "Page 1",
+        widgets: [{ body: "# Hi", h: 2, id: "t", kind: "text", w: 12 }],
+      },
+    ]);
+  });
+});
+
+describe("example apps", () => {
+  it("seeds once, opens to everyone, edits for no one, and copies", async () => {
+    const t = initTest(),
+      viewer = as(t, "viewer");
+    const first = await t.mutation(internal.appBuilder.examples.seed, {});
+    expect(first.created).toBe(true);
+    expect(first.examples).toHaveLength(2);
+    expect((await t.mutation(internal.appBuilder.examples.seed, {})).created).toBe(false);
+    // A replace rebuilds the apps on the same sample datasets.
+    const replaced = await t.mutation(internal.appBuilder.examples.seed, { replace: true });
+    expect(replaced.created).toBe(true);
+    const datasetsAfter = await t.run(async (ctx) =>
+      Promise.all(
+        replaced.examples.map(async (id) => {
+          const app = await ctx.db.get("apps", id);
+          return app === null ? undefined : app.datasetIds;
+        }),
+      ),
+    );
+    expect(datasetsAfter[0]).toEqual(datasetsAfter[1]);
+
+    const examples = await viewer.query(api.appBuilder.apps.listExamples, {});
+    expect(examples.map((app) => app.title)).toEqual([
+      "National Parks Explorer",
+      "Park Visits Atlas",
+    ]);
+    const atlasId = replaced.examples[1],
+      atlas = await viewer.query(api.appBuilder.apps.get, { appId: atlasId });
+    expect(atlas).toMatchObject({ canEdit: false, example: true });
+    expect(atlas === null ? [] : atlas.pages.map((page) => page.layout)).toEqual([
+      "fullscreen",
+      "contained",
+    ]);
+    // Examples are not anyone's own apps, and nobody edits them.
+    expect(await viewer.query(api.appBuilder.apps.list, {})).toEqual([]);
+    await expect(
+      viewer.mutation(api.appBuilder.apps.updateDetails, { appId: atlasId, title: "Mine" }),
+    ).rejects.toThrow(/not found/i);
+
+    // The sample datasets are catalog-visible and locked.
+    const datasetIds = atlas === null ? [] : atlas.datasetIds;
+    const parks = await viewer.query(api.schemas.get, { schemaId: datasetIds[0] });
+    expect(parks).toMatchObject({ editPolicy: "locked", entryCount: 28 });
+
+    const copyId = await viewer.mutation(api.appBuilder.apps.duplicate, { appId: atlasId }),
+      copy = await viewer.query(api.appBuilder.apps.get, { appId: copyId });
+    expect(copy).toMatchObject({ canEdit: true, example: false, sharing: "private" });
+    expect(copy === null ? 0 : copy.pages.length).toBe(2);
   });
 });

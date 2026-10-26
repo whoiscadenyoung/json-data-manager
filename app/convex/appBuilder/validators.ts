@@ -24,7 +24,13 @@ export const APP_LIMITS = {
   tableColumns: 50,
   text: 10_000,
   title: 120,
+  /** Pages (tabs) per app. */
+  pages: 12,
+  pageTitle: 60,
+  /** Widgets on one page. */
   widgets: 40,
+  /** Widgets across every page — keeps the one app document small. */
+  totalWidgets: 80,
 } as const;
 
 /** Who may open an app's share URL besides its creator. */
@@ -103,14 +109,32 @@ export const widgetValidator = v.union(
   mapWidgetValidator,
 );
 
-/** The builder's saved content: the app's data sources and its laid-out widgets. */
+/**
+ * How a page uses the screen. `contained`: a centered, max-width column under
+ * the app's title, rows of fixed height, scrolling like a document — a
+ * dashboard or report. `fullscreen`: edge to edge, and the grid's rows stretch
+ * to fill the viewport — one map widget becomes a full-screen map.
+ */
+export const pageLayoutValidator = v.union(v.literal("contained"), v.literal("fullscreen"));
+
+/** One tab of an app: its own title, layout mode, and laid-out widgets. */
+export const pageValidator = v.object({
+  id: v.string(),
+  title: v.string(),
+  layout: pageLayoutValidator,
+  widgets: v.array(widgetValidator),
+});
+
+/** The builder's saved content: the app's data sources (shared by every page) and its pages. */
 export const appContentValidator = v.object({
   datasetIds: v.array(v.string()),
-  widgets: v.array(widgetValidator),
+  pages: v.array(pageValidator),
 });
 
 export type Widget = Infer<typeof widgetValidator>;
 export type WidgetKind = Widget["kind"];
+export type AppPage = Infer<typeof pageValidator>;
+export type PageLayout = Infer<typeof pageLayoutValidator>;
 export type AppContent = Infer<typeof appContentValidator>;
 export type Aggregate = Infer<typeof aggregateValidator>;
 export type Sharing = Infer<typeof sharingValidator>;
@@ -128,4 +152,19 @@ export function widgetDatasetIds(widget: Widget): string[] {
       return [widget.datasetId];
     }
   }
+}
+
+/** The id of the single page a pre-pages app document is read as. */
+export const LEGACY_PAGE_ID = "page-1";
+
+/**
+ * An app document's pages. Apps saved before pages existed carry a flat
+ * `widgets` array instead; they read as one contained page, and their next
+ * save writes `pages` (and drops `widgets`), so no migration is needed.
+ */
+export function appPages(doc: { pages?: AppPage[]; widgets?: Widget[] }): AppPage[] {
+  if (doc.pages !== undefined) {
+    return doc.pages;
+  }
+  return [{ id: LEGACY_PAGE_ID, layout: "contained", title: "Page 1", widgets: doc.widgets ?? [] }];
 }

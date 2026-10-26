@@ -9,6 +9,8 @@
  */
 
 import type * as appBuilder_apps from "../appBuilder/apps.js";
+import type * as appBuilder_exampleData from "../appBuilder/exampleData.js";
+import type * as appBuilder_examples from "../appBuilder/examples.js";
 import type * as appBuilder_tables from "../appBuilder/tables.js";
 import type * as appBuilder_validators from "../appBuilder/validators.js";
 import type * as auth from "../auth.js";
@@ -46,6 +48,8 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   "appBuilder/apps": typeof appBuilder_apps;
+  "appBuilder/exampleData": typeof appBuilder_exampleData;
+  "appBuilder/examples": typeof appBuilder_examples;
   "appBuilder/tables": typeof appBuilder_tables;
   "appBuilder/validators": typeof appBuilder_validators;
   auth: typeof auth;

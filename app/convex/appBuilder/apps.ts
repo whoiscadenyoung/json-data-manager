@@ -6,9 +6,11 @@ import { mutation, query, type MutationCtx, type QueryCtx } from "../_generated/
 import { auth } from "../auth";
 import {
   appContentValidator,
+  appPages,
   APP_LIMITS,
   sharingValidator,
   widgetDatasetIds,
+  type AppPage,
   type Widget,
 } from "./validators";
 
@@ -24,8 +26,10 @@ import {
  * - Every call rides the app-wide sign-in gate (`auth(ctx)`).
  * - Writes answer only to the app's creator (`createdBy`).
  * - Reads: the creator always; anyone signed in when `sharing === "link"`
- *   (the share URL). Everyone else gets `null` — indistinguishable from a
- *   missing app, so an id's existence never leaks.
+ *   (the share URL) or when the app is a seeded example (`example`, see
+ *   examples.ts — owned by no user, so nobody edits it; everyone can copy
+ *   it). Everyone else gets `null` — indistinguishable from a missing app,
+ *   so an id's existence never leaks.
  * - An app stores dataset REFERENCES, never data or grants: every viewer's
  *   widget reads go through the normal dataset APIs and their visibility
  *   rules, so sharing an app never widens who can see a dataset.
@@ -33,6 +37,16 @@ import {
 
 /** Display bound for the creator's app list. */
 const MAX_APPS = 200;
+
+/** Whether a signed-in caller may open an app (its share URL). */
+function canRead(app: Doc<"apps">, actorId: string): boolean {
+  return app.createdBy === actorId || app.sharing === "link" || app.example === true;
+}
+
+/** The page a brand-new app starts with. */
+function firstPage(): AppPage {
+  return { id: "page-1", layout: "contained", title: "Page 1", widgets: [] };
+}
 
 /** The id from a URL, or null when it isn't an `apps` id at all (share links are user-typed). */
 function normalizeAppId(ctx: QueryCtx, appId: string): Id<"apps"> | null {
@@ -114,32 +128,93 @@ function assertWidgetBounds(widget: Widget) {
   }
 }
 
-/** Shape rules the validators can't express: bounds, unique ids, and dataset references closed over the app's sources. */
-function assertContentShape(datasetIds: string[], widgets: Widget[]) {
+function assertWidget(widget: Widget, sources: ReadonlySet<string>) {
+  assertInteger(widget.w, 1, APP_LIMITS.columns, "A widget's width");
+  assertInteger(widget.h, 1, APP_LIMITS.maxHeight, "A widget's height");
+  if (widget.title !== undefined && widget.title.length > APP_LIMITS.title) {
+    throw new ConvexError(`Keep widget titles under ${APP_LIMITS.title} characters.`);
+  }
+  assertWidgetBounds(widget);
+  if (widgetDatasetIds(widget).some((id) => !sources.has(id))) {
+    throw new ConvexError("A widget uses a dataset that isn't in this app — add it first.");
+  }
+}
+
+function assertPage(page: AppPage) {
+  const title = page.title.trim();
+  if (title === "" || title.length > APP_LIMITS.pageTitle) {
+    throw new ConvexError(`Give every page a title of up to ${APP_LIMITS.pageTitle} characters.`);
+  }
+  if (page.widgets.length > APP_LIMITS.widgets) {
+    throw new ConvexError(`A page holds at most ${APP_LIMITS.widgets} widgets.`);
+  }
+}
+
+function assertUnique(ids: readonly string[], message: string) {
+  if (new Set(ids).size !== ids.length) {
+    throw new ConvexError(message);
+  }
+}
+
+/**
+ * Shape rules the validators can't express: bounds, unique ids (pages, and
+ * widgets across the whole app), and dataset references closed over the
+ * app's sources.
+ */
+function assertContentShape(datasetIds: string[], pages: AppPage[]) {
   if (datasetIds.length > APP_LIMITS.datasets) {
     throw new ConvexError(`An app holds at most ${APP_LIMITS.datasets} datasets.`);
   }
-  if (new Set(datasetIds).size !== datasetIds.length) {
-    throw new ConvexError("A dataset is listed twice.");
+  assertUnique(datasetIds, "A dataset is listed twice.");
+  if (pages.length === 0 || pages.length > APP_LIMITS.pages) {
+    throw new ConvexError(`An app has 1 to ${APP_LIMITS.pages} pages.`);
   }
-  if (widgets.length > APP_LIMITS.widgets) {
-    throw new ConvexError(`An app holds at most ${APP_LIMITS.widgets} widgets.`);
+  assertUnique(
+    pages.map((page) => page.id),
+    "Two pages share an id.",
+  );
+  const widgets = pages.flatMap((page) => page.widgets);
+  if (widgets.length > APP_LIMITS.totalWidgets) {
+    throw new ConvexError(`An app holds at most ${APP_LIMITS.totalWidgets} widgets in all.`);
   }
-  if (new Set(widgets.map((widget) => widget.id)).size !== widgets.length) {
-    throw new ConvexError("Two widgets share an id.");
-  }
+  assertUnique(
+    widgets.map((widget) => widget.id),
+    "Two widgets share an id.",
+  );
   const sources = new Set(datasetIds);
-  for (const widget of widgets) {
-    assertInteger(widget.w, 1, APP_LIMITS.columns, "A widget's width");
-    assertInteger(widget.h, 1, APP_LIMITS.maxHeight, "A widget's height");
-    if (widget.title !== undefined && widget.title.length > APP_LIMITS.title) {
-      throw new ConvexError(`Keep widget titles under ${APP_LIMITS.title} characters.`);
-    }
-    assertWidgetBounds(widget);
-    if (widgetDatasetIds(widget).some((id) => !sources.has(id))) {
-      throw new ConvexError("A widget uses a dataset that isn't in this app — add it first.");
-    }
+  for (const page of pages) {
+    assertPage(page);
   }
+  for (const widget of widgets) {
+    assertWidget(widget, sources);
+  }
+}
+
+/** A widget list with every reference outside `kept` dropped (maps lose the layer; others go). */
+function keepReferenced(widgets: readonly Widget[], kept: ReadonlySet<string>): Widget[] {
+  return widgets.flatMap((widget): Widget[] => {
+    if (widget.kind === "map") {
+      return [{ ...widget, datasetIds: widget.datasetIds.filter((d) => kept.has(d)) }];
+    }
+    return widgetDatasetIds(widget).every((d) => kept.has(d)) ? [widget] : [];
+  });
+}
+
+/** The light list-card shape shared by the caller's apps and the examples gallery. */
+function toSummary(app: Doc<"apps">) {
+  const pages = appPages(app);
+  return {
+    _creationTime: app._creationTime,
+    _id: app._id,
+    datasetCount: app.datasetIds.length,
+    description: app.description,
+    example: app.example === true,
+    pageCount: pages.length,
+    sharing: app.sharing,
+    title: app.title,
+    updatedAt: app.updatedAt,
+    widgetCount: pages.reduce((sum, page) => sum + page.widgets.length, 0),
+  };
 }
 
 /** The caller's own apps, newest first — the /apps browser. */
@@ -152,16 +227,20 @@ export const list = query({
         .withIndex("by_createdBy", (q) => q.eq("createdBy", actorId))
         .order("desc")
         .take(MAX_APPS);
-    return apps.map((app) => ({
-      _creationTime: app._creationTime,
-      _id: app._id,
-      datasetCount: app.datasetIds.length,
-      description: app.description,
-      sharing: app.sharing,
-      title: app.title,
-      updatedAt: app.updatedAt,
-      widgetCount: app.widgets.length,
-    }));
+    return apps.map(toSummary);
+  },
+});
+
+/** The seeded example apps (examples.ts), oldest first — the /apps gallery. */
+export const listExamples = query({
+  args: {},
+  handler: async (ctx) => {
+    await auth(ctx);
+    const apps = await ctx.db
+      .query("apps")
+      .withIndex("by_example", (q) => q.eq("example", true))
+      .take(MAX_APPS);
+    return apps.map(toSummary);
   },
 });
 
@@ -179,8 +258,7 @@ export const get = query({
     if (app === null) {
       return null;
     }
-    const isOwner = app.createdBy === actorId;
-    if (!isOwner && app.sharing !== "link") {
+    if (!canRead(app, actorId)) {
       return null;
     }
     const owner = await ctx.db
@@ -188,9 +266,18 @@ export const get = query({
       .withIndex("by_authId", (q) => q.eq("authId", app.createdBy))
       .unique();
     return {
-      ...app,
-      canEdit: isOwner,
+      _creationTime: app._creationTime,
+      _id: app._id,
+      canEdit: app.createdBy === actorId && app.example !== true,
+      datasetIds: app.datasetIds,
+      description: app.description,
+      example: app.example === true,
       ownerName: owner === null ? undefined : (owner.name ?? owner.email),
+      pages: appPages(app),
+      revision: app.revision,
+      sharing: app.sharing,
+      title: app.title,
+      updatedAt: app.updatedAt,
     };
   },
 });
@@ -205,9 +292,9 @@ export const create = mutation({
       description: cleanDescription(args.description),
       revision: 0,
       sharing: "private",
+      pages: [firstPage()],
       title: assertTitle(args.title),
       updatedAt: Date.now(),
-      widgets: [],
     });
   },
 });
@@ -235,8 +322,8 @@ export const updateDetails = mutation({
 });
 
 /**
- * The builder's autosave: replaces the app's data sources and widgets in one
- * write. `expectedRevision` is the revision the editor loaded; a mismatch
+ * The builder's autosave: replaces the app's data sources and pages in one
+ * write (and retires a legacy `widgets` field, now carried by the pages). `expectedRevision` is the revision the editor loaded; a mismatch
  * means another tab saved first, and the save is refused rather than
  * silently overwriting it. Newly added datasets must be visible to the
  * creator (an invisible id must never be written into shareable state —
@@ -256,8 +343,8 @@ export const saveContent = mutation({
         "This app was changed in another tab or window — reload to get the latest version.",
       );
     }
-    const { datasetIds, widgets } = args.content;
-    assertContentShape(datasetIds, widgets);
+    const { datasetIds, pages } = args.content;
+    assertContentShape(datasetIds, pages);
     const existing = new Set(app.datasetIds),
       added = datasetIds.filter((datasetId) => !existing.has(datasetId)),
       visible = await Promise.all(
@@ -267,19 +354,25 @@ export const saveContent = mutation({
       throw new ConvexError("Dataset not found.");
     }
     const revision = app.revision + 1;
-    await ctx.db.patch("apps", app._id, { datasetIds, revision, updatedAt: Date.now(), widgets });
+    await ctx.db.patch("apps", app._id, {
+      datasetIds,
+      pages,
+      revision,
+      updatedAt: Date.now(),
+      widgets: undefined,
+    });
     return revision;
   },
 });
 
-/** "Make a copy": any app the caller can open becomes a new private app they own. */
+/** "Make a copy": any app the caller can open (examples included) becomes a new private app they own. */
 export const duplicate = mutation({
   args: { appId: v.string() },
   handler: async (ctx, args) => {
     const actorId = await auth(ctx),
       id = normalizeAppId(ctx, args.appId),
       app = id === null ? null : await ctx.db.get("apps", id);
-    if (app === null || (app.createdBy !== actorId && app.sharing !== "link")) {
+    if (app === null || !canRead(app, actorId)) {
       throw new ConvexError("App not found.");
     }
     // A copy may only keep the datasets its new owner can see.
@@ -288,21 +381,19 @@ export const duplicate = mutation({
       ),
       datasetIds = app.datasetIds.filter((_, index) => visible[index]),
       kept = new Set(datasetIds),
-      widgets = app.widgets.flatMap((widget): Widget[] => {
-        if (widget.kind === "map") {
-          return [{ ...widget, datasetIds: widget.datasetIds.filter((d) => kept.has(d)) }];
-        }
-        return widgetDatasetIds(widget).every((d) => kept.has(d)) ? [widget] : [];
-      });
+      pages = appPages(app).map((page) => ({
+        ...page,
+        widgets: keepReferenced(page.widgets, kept),
+      }));
     return ctx.db.insert("apps", {
       createdBy: actorId,
       datasetIds,
       description: app.description,
       revision: 0,
       sharing: "private",
+      pages,
       title: `${app.title} (copy)`.slice(0, APP_LIMITS.title),
       updatedAt: Date.now(),
-      widgets,
     });
   },
 });

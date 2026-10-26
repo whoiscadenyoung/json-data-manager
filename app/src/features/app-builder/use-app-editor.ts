@@ -9,7 +9,12 @@ import type { AppContent } from "#convex/appBuilder/validators";
 
 export type AppDoc = NonNullable<FunctionReturnType<typeof api.appBuilder.apps.get>>;
 
-export type SaveStatus = "saved" | "pending" | "saving" | "error";
+export type SaveStatus = "saved" | "pending" | "saving" | "error" | "invalid";
+
+/** Content the server would refuse for a reason the user is mid-way through fixing (a blank page title). */
+function heldBack(content: AppContent): boolean {
+  return content.pages.some((page) => page.title.trim() === "");
+}
 
 /** Quiet period after the last edit before an autosave goes out. */
 const AUTOSAVE_MS = 700;
@@ -28,7 +33,7 @@ export function useAppEditor(app: AppDoc) {
   const saveContent = useMutation(api.appBuilder.apps.saveContent),
     [content, setContent] = useState<AppContent>(() => ({
       datasetIds: app.datasetIds,
-      widgets: app.widgets,
+      pages: app.pages,
     })),
     [status, setStatus] = useState<SaveStatus>("saved"),
     latest = useRef(content),
@@ -39,6 +44,10 @@ export function useAppEditor(app: AppDoc) {
 
   const flush = async (): Promise<void> => {
     if (inFlight.current || !dirty.current) {
+      return;
+    }
+    if (heldBack(latest.current)) {
+      setStatus("invalid");
       return;
     }
     inFlight.current = true;

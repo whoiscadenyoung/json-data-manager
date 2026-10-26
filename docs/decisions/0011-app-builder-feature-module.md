@@ -33,6 +33,19 @@ remove or rework later, and shareable by URL. The design is in
   `revision`; positions are list order on a 12-column dense CSS grid with
   per-widget column/row spans. We chose this over a free-form x/y grid
   library (react-grid-layout) and over a child `widgets` table.
+- **Pages, each with a layout (amended 2026-10-26).** An app holds 1–12
+  pages (≤ 40 widgets each, ≤ 80 in total) on the same row, each with a title
+  and a `contained` or `fullscreen` layout. Full screen reuses the same
+  order + span grid and only stretches its rows, so it adds no second layout
+  model. Legacy single-page documents are read as one contained page and
+  rewritten on their next save, so no migration is needed. The viewer keeps the
+  current page in `?page=`.
+- **Seeded examples are ordinary apps with a system owner.** They are owned by
+  `system:examples` and marked `example: true`. Every signed-in user can read
+  them, and no one can write them, because the existing owner check covers
+  that without a new permission path. They read published sample datasets that
+  are locked in json-cms. An internal `seed` mutation that can be re-run creates
+  them.
 - **Widget kinds are a registry:** a Convex validator plus a View/Settings
   module per kind. Heavy kinds (map, chart) are lazy-loaded. Charts use
   Recharts (new dependency, used only by this module).

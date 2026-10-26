@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   MoreHorizontal,
   Pencil,
+  Plus,
   Share2,
   Trash2,
 } from "lucide-react";
@@ -53,6 +54,7 @@ import {
 } from "#/components/ui/empty";
 import { Spinner } from "#/components/ui/spinner";
 import { errorMessage } from "#/lib/errors";
+import { cn } from "#/lib/utils";
 import { api } from "#convex/_generated/api";
 import type { Widget } from "#convex/appBuilder/validators";
 
@@ -60,9 +62,11 @@ import { AppCanvasEditor } from "../components/app-canvas";
 import { AppDetailsDialog } from "../components/app-details-dialog";
 import { BuilderPanel, type PanelTab } from "../components/builder-panel";
 import { PageLoading } from "../components/page-loading";
+import { PageTabs } from "../components/page-tabs";
 import { ShareDialog } from "../components/share-dialog";
 import { AppDatasetsProvider } from "../data";
 import { newWidgetId, resizeWidget } from "../lib/layout";
+import { canAddPage, newPage, resolvePage, updatePage } from "../lib/pages";
 import { useAppEditor, type AppDoc, type SaveStatus } from "../use-app-editor";
 
 function SaveIndicator({ status, onRetry }: { status: SaveStatus; onRetry: () => void }) {
@@ -72,6 +76,14 @@ function SaveIndicator({ status, onRetry }: { status: SaveStatus; onRetry: () =>
         <AlertCircle data-icon="inline-start" />
         Not saved — retry
       </Button>
+    );
+  }
+  if (status === "invalid") {
+    return (
+      <span className="flex items-center gap-1.5 text-xs text-destructive">
+        <AlertCircle className="size-3.5" />
+        Not saved — give every page a title
+      </span>
     );
   }
   if (status === "saved") {
@@ -204,12 +216,24 @@ function BuilderMenu({ app }: { app: AppDoc }) {
 function Builder({ app }: { app: AppDoc }) {
   const editor = useAppEditor(app),
     { content, update } = editor,
+    [pageId, setPageId] = useState(() => app.pages[0].id),
     [selectedId, setSelectedId] = useState<string | undefined>(),
     [tab, setTab] = useState<PanelTab>(app.datasetIds.length === 0 ? "data" : "add"),
     [sharing, setSharing] = useState(false),
-    selected = content.widgets.find((widget) => widget.id === selectedId),
+    page = resolvePage(content.pages, pageId),
+    selected = page.widgets.find((widget) => widget.id === selectedId),
     setWidgets = (change: (widgets: Widget[]) => Widget[]) => {
-      update((prev) => ({ ...prev, widgets: change(prev.widgets) }));
+      update((prev) => ({
+        ...prev,
+        pages: updatePage(prev.pages, page.id, (current) => ({
+          ...current,
+          widgets: change(current.widgets),
+        })),
+      }));
+    },
+    showPage = (nextId: string) => {
+      setPageId(nextId);
+      setSelectedId(undefined);
     };
 
   return (
@@ -233,7 +257,12 @@ function Builder({ app }: { app: AppDoc }) {
             <SaveIndicator status={editor.status} onRetry={editor.retry} />
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <RouterButton to="/apps/$appId" params={{ appId: app._id }} variant="outline">
+            <RouterButton
+              to="/apps/$appId"
+              params={{ appId: app._id }}
+              search={{ page: page.id === content.pages[0].id ? undefined : page.id }}
+              variant="outline"
+            >
               <Eye data-icon="inline-start" />
               View app
             </RouterButton>
@@ -250,61 +279,92 @@ function Builder({ app }: { app: AppDoc }) {
           </div>
         </div>
         <div className="flex min-h-0 flex-1">
-          <div
-            role="presentation"
-            className="min-w-0 flex-1 overflow-y-auto bg-muted/40 p-6"
-            onClick={(event) => {
-              // A click on the canvas background (not a widget) clears the selection.
-              if (event.target === event.currentTarget) {
-                setSelectedId(undefined);
-              }
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                setSelectedId(undefined);
-              }
-            }}
-          >
-            {content.widgets.length === 0 ? (
-              <EmptyCanvas hasData={content.datasetIds.length > 0} onStart={setTab} />
-            ) : (
-              <AppCanvasEditor
-                widgets={content.widgets}
-                selectedId={selectedId}
-                onSelect={(id) => {
-                  setSelectedId(id);
-                  setTab("widget");
-                }}
-                onReorder={(next) => {
-                  setWidgets(() => next);
-                }}
-                onResize={(id, size) => {
-                  setWidgets((widgets) => resizeWidget(widgets, id, size));
-                }}
-                onDuplicate={(id) => {
-                  const copy = { id: newWidgetId() };
-                  setWidgets((widgets) =>
-                    widgets.flatMap((widget) =>
-                      widget.id === id ? [widget, { ...widget, ...copy }] : [widget],
-                    ),
-                  );
-                  setSelectedId(copy.id);
-                }}
-                onRemove={(id) => {
-                  setWidgets((widgets) => widgets.filter((widget) => widget.id !== id));
+          <div className="flex min-w-0 flex-1 flex-col bg-muted/40">
+            <div className="flex shrink-0 items-center border-b border-border bg-background px-4 py-1.5">
+              <PageTabs pages={content.pages} activeId={page.id} onChange={showPage}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={!canAddPage(content.pages)}
+                  title={canAddPage(content.pages) ? undefined : "An app holds up to 12 pages"}
+                  onClick={() => {
+                    const added = newPage(content.pages);
+                    update((prev) => ({ ...prev, pages: [...prev.pages, added] }));
+                    showPage(added.id);
+                    setTab("page");
+                  }}
+                >
+                  <Plus data-icon="inline-start" />
+                  Add page
+                </Button>
+              </PageTabs>
+            </div>
+            <div
+              role="presentation"
+              className={cn(
+                "min-h-0 flex-1 overflow-y-auto",
+                page.layout === "fullscreen" ? "p-2" : "p-6",
+              )}
+              onClick={(event) => {
+                // A click on the canvas background (not a widget) clears the selection.
+                if (event.target === event.currentTarget) {
                   setSelectedId(undefined);
-                }}
-              />
-            )}
+                }
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setSelectedId(undefined);
+                }
+              }}
+            >
+              <div className={cn(page.layout === "fullscreen" ? "h-full" : "mx-auto max-w-7xl")}>
+                {page.widgets.length === 0 ? (
+                  <EmptyCanvas hasData={content.datasetIds.length > 0} onStart={setTab} />
+                ) : (
+                  <AppCanvasEditor
+                    key={page.id}
+                    widgets={page.widgets}
+                    layout={page.layout}
+                    selectedId={selectedId}
+                    onSelect={(id) => {
+                      setSelectedId(id);
+                      setTab("widget");
+                    }}
+                    onReorder={(next) => {
+                      setWidgets(() => next);
+                    }}
+                    onResize={(id, size) => {
+                      setWidgets((widgets) => resizeWidget(widgets, id, size));
+                    }}
+                    onDuplicate={(id) => {
+                      const copy = { id: newWidgetId() };
+                      setWidgets((widgets) =>
+                        widgets.flatMap((widget) =>
+                          widget.id === id ? [widget, { ...widget, ...copy }] : [widget],
+                        ),
+                      );
+                      setSelectedId(copy.id);
+                    }}
+                    onRemove={(id) => {
+                      setWidgets((widgets) => widgets.filter((widget) => widget.id !== id));
+                      setSelectedId(undefined);
+                    }}
+                  />
+                )}
+              </div>
+            </div>
           </div>
           <aside className="w-[340px] shrink-0 border-l border-border bg-background p-4">
             <BuilderPanel
               tab={tab}
               onTabChange={setTab}
               content={content}
+              page={page}
               selected={selected}
               onUpdate={update}
               onSelect={setSelectedId}
+              onSelectPage={showPage}
             />
           </aside>
         </div>

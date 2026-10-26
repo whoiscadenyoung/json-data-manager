@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import type { Widget } from "#convex/appBuilder/validators";
 
-import { moveWidget, resizeWidget, spanFromDrag, withoutDataset } from "./layout";
+import { moveItem, resizeWidget, spanFromDrag, withoutDataset } from "./layout";
 
 const text = (id: string): Widget => ({ body: "", h: 2, id, kind: "text", w: 12 });
 
 describe("layout", () => {
   it("moves widgets within the list", () => {
-    const moved = moveWidget([text("a"), text("b"), text("c")], 0, 2);
+    const moved = moveItem([text("a"), text("b"), text("c")], 0, 2);
     expect(moved.map((widget) => widget.id)).toEqual(["b", "c", "a"]);
   });
 

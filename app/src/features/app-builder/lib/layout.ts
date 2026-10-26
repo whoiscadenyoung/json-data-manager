@@ -51,9 +51,9 @@ export function newWidgetId(): string {
   return `w-${crypto.randomUUID().slice(0, 8)}`;
 }
 
-/** Moves the widget at `from` to index `to` (both clamped), returning a new list. */
-export function moveWidget(widgets: readonly Widget[], from: number, to: number): Widget[] {
-  const next = [...widgets];
+/** Moves the item at `from` to index `to` (both clamped), returning a new list — widgets and pages alike. */
+export function moveItem<T>(items: readonly T[], from: number, to: number): T[] {
+  const next = [...items];
   if (from < 0 || from >= next.length) {
     return next;
   }
