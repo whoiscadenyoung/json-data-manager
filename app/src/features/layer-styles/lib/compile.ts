@@ -131,7 +131,7 @@ export function compileStyle(editor: StyleEditor): LayerStyle {
 /**
  * The settings that reproduce a dataset's unstyled look (layers-map.tsx's
  * default paints: 20% fill, 2px outline in the dataset color, 5px points) —
- * where a fresh Style sheet starts, so opening it changes nothing.
+ * where a fresh Style panel starts, so opening it changes nothing.
  */
 export function defaultEditor(color: string): StyleEditor {
   return {

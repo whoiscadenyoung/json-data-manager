@@ -9,7 +9,7 @@ import { v, type Infer } from "convex/values";
  * fragments (`type`, `paint`, `layout`, `filter`, `minzoom`, `maxzoom`) — the
  * same objects GeoLibre, Maputnik, and any MapLibre/Mapbox app read — minus
  * the `id`/`source`/`source-layer` wiring the renderer supplies per map.
- * `editor` optionally remembers the simple editor's settings so the sheet can
+ * `editor` optionally remembers the simple editor's settings so the panel can
  * reopen them; a hand-edited (Advanced JSON) style carries no `editor`.
  */
 
@@ -86,7 +86,7 @@ export const labelValidator = v.object({
   haloColor: v.string(),
 });
 
-/** The simple editor's settings — what the Style sheet edits; `layers` is compiled from it. */
+/** The simple editor's settings — what the Style panel edits; `layers` is compiled from it. */
 export const styleEditorValidator = v.object({
   renderer: rendererValidator,
   /** Fill opacity for polygons (0–1). */
