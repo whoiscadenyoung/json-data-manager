@@ -476,7 +476,8 @@ can fold saved transform specs in as extra columns.
 - **Routes** (TanStack file-based routing): `/datasets` (+ per-dataset
   detail/edit/bulk-upload/entry; detail tabs Overview, Entries, History
   (bound only), Structure, Transform, Analyze), `/collections`, `/groups`,
-  `/maps`, `/projects` (+ `$projectId`), `/apps` (+ `$appId`, `$appId/edit`
+  `/maps` (optional per-dataset styling via the `features/layer-styles/`
+  module — see [`layer-styles.md`](./layer-styles.md)), `/projects` (+ `$projectId`), `/apps` (+ `$appId`, `$appId/edit`
   — the app builder, a self-contained module in `features/app-builder/`,
   see [`app-builder.md`](./app-builder.md)), `/users/$userId`, `/signin`,
   `/dashboard` (the foreign-domain CRUD surface), `/api/auth/$` (Better Auth
@@ -536,7 +537,8 @@ ages fast.
 | [`map-performance-audit-2026-09-16.md`](./map-performance-audit-2026-09-16.md) | historical record     | The audit that produced #48–#55; method + measurements still cited by the geometry path.                                               |
 | [`gis-geometry-transport-survey.md`](./gis-geometry-transport-survey.md)       | research (2026-09-17) | Survey of how major GIS platforms transport geometry; rationale companion to the tile path.                                            |
 | [`app-builder.md`](./app-builder.md)                                           | implemented           | App builder: shareable map/chart/table apps; module layout, sharing model, removal checklist; ADR 0011.                                |
-| [`decisions/`](./decisions/)                                                   | living log            | Numbered decision records (ADR-style), 0001–0011.                                                                                      |
+| [`layer-styles.md`](./layer-styles.md)                                         | implemented           | Layer styles: optional MapLibre-style-spec cartography for saved maps; extension slots, removal checklist; ADR 0012.                   |
+| [`decisions/`](./decisions/)                                                   | living log            | Numbered decision records (ADR-style), 0001–0012.                                                                                      |
 | [`memory/`](./memory/MEMORY.md)                                                | living log            | Project memory: durable lessons, verification gotchas, per-initiative records. Policy in the repo `AGENTS.md`.                         |
 
 ## Known gaps

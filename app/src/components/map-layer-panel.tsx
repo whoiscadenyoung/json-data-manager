@@ -10,6 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { useState } from "react";
+import type { ReactElement } from "react";
 
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
@@ -58,6 +59,29 @@ function LayerDatasetDots({ colors }: { colors: string[] }) {
 }
 
 type ToggleChild = (layerId: string, childKey: string, currentlyVisible: boolean) => void;
+
+/**
+ * An optional per-dataset actions slot (the map-styling module's `⋯` menu
+ * plugs in here): given a dataset row's render id and title, it returns the
+ * control to show beside the row's eye, or nothing. Without it, rows render
+ * exactly as before.
+ */
+export type DatasetActionsSlot = (target: {
+  renderId: string;
+  title: string;
+}) => ReactElement | null;
+
+function DatasetActions({
+  slot,
+  renderId,
+  title,
+}: {
+  slot: DatasetActionsSlot | undefined;
+  renderId: string;
+  title: string;
+}): ReactElement | null {
+  return slot === undefined ? null : slot({ renderId, title });
+}
 
 function ChildEyeButton({
   label,
@@ -121,6 +145,8 @@ function DatasetChildRow({
   visible,
   disabled,
   onToggleChild,
+  renderId,
+  datasetActions,
 }: {
   layerId: string;
   childKey: string;
@@ -129,6 +155,8 @@ function DatasetChildRow({
   visible: boolean;
   disabled: boolean;
   onToggleChild: ToggleChild;
+  renderId: string;
+  datasetActions?: DatasetActionsSlot;
 }) {
   return (
     <li
@@ -145,6 +173,7 @@ function DatasetChildRow({
         />
       )}
       <p className="min-w-0 flex-1 truncate text-xs font-medium">{title}</p>
+      <DatasetActions slot={datasetActions} renderId={renderId} title={title} />
       <ChildEyeButton
         label={`"${title}"`}
         visible={visible}
@@ -165,6 +194,7 @@ function GroupChildRow({
   collapsedKeys,
   onToggleCollapsed,
   onToggleChild,
+  datasetActions,
 }: {
   layer: MapLayerDoc;
   child: Extract<LayerChild, { kind: "group" }>;
@@ -172,6 +202,7 @@ function GroupChildRow({
   collapsedKeys: Set<string>;
   onToggleCollapsed: (key: string) => void;
   onToggleChild: ToggleChild;
+  datasetActions?: DatasetActionsSlot;
 }) {
   const layerVisible = layer.visible,
     visible = isChildEffectivelyVisible(layer, child, overridesByLayer),
@@ -218,6 +249,8 @@ function GroupChildRow({
               visible={isDatasetChildVisible(layer, entry.dataset, overridesByLayer)}
               disabled={!visible || !layerVisible}
               onToggleChild={onToggleChild}
+              renderId={entry.dataset._id}
+              datasetActions={datasetActions}
             />
           ))}
         </ul>
@@ -242,6 +275,7 @@ function LayerRow({
   onToggleVisibility,
   onRemove,
   onToggleChild,
+  datasetActions,
 }: {
   layer: MapLayerDoc;
   index: number;
@@ -257,8 +291,13 @@ function LayerRow({
   onToggleVisibility: () => void;
   onRemove: () => void;
   onToggleChild: ToggleChild;
+  datasetActions?: DatasetActionsSlot;
 }) {
   const Icon = LAYER_ICONS[layer.targetType],
+    // A dataset or derived layer IS one render id; collection/group layers
+    // offer the slot on each dataset child instead.
+    rowSlot =
+      layer.targetType === "dataset" || layer.targetType === "derived" ? datasetActions : undefined,
     expandable = childItems.length > 0,
     expanded = !collapsedKeys.has(layer._id);
   return (
@@ -290,6 +329,7 @@ function LayerRow({
           </div>
         </div>
         <div className="flex shrink-0 items-center">
+          <DatasetActions slot={rowSlot} renderId={layer.targetId} title={name} />
           <Button
             variant="ghost"
             size="icon"
@@ -339,6 +379,7 @@ function LayerRow({
                 collapsedKeys={collapsedKeys}
                 onToggleCollapsed={onToggleCollapsed}
                 onToggleChild={onToggleChild}
+                datasetActions={datasetActions}
               />
             ) : (
               <DatasetChildRow
@@ -350,6 +391,8 @@ function LayerRow({
                 visible={isDatasetChildVisible(layer, child.dataset, overridesByLayer)}
                 disabled={!layer.visible}
                 onToggleChild={onToggleChild}
+                renderId={child.dataset._id}
+                datasetActions={datasetActions}
               />
             ),
           )}
@@ -377,6 +420,7 @@ export function MapLayerPanel({
   onToggleVisibility,
   onRemove,
   onToggleChild,
+  datasetActions,
 }: {
   layers: MapLayerDoc[];
   childrenByLayer: globalThis.Map<string, LayerChild[]>;
@@ -387,6 +431,8 @@ export function MapLayerPanel({
   onToggleVisibility: (layer: MapLayerDoc) => void;
   onRemove: (layer: MapLayerDoc) => void;
   onToggleChild: ToggleChild;
+  /** Optional per-dataset actions (e.g. the styling module's `⋯` menu). */
+  datasetActions?: DatasetActionsSlot;
 }) {
   // Expansion is inverted ("collapsed" set) so layers and children added
   // later default to expanded — matching how the map itself shows
@@ -439,6 +485,7 @@ export function MapLayerPanel({
                 onRemove(layer);
               }}
               onToggleChild={onToggleChild}
+              datasetActions={datasetActions}
             />
           ))}
         </ul>

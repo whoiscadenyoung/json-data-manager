@@ -27,6 +27,10 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "#/components/ui/empty";
+// Optional styling module (docs/layer-styles.md): remove this import, the
+// `useLayerStyles` call, and the `extension`/`datasetActions`/panel/loaders
+// uses below to take styling out — maps then draw in their assigned colors.
+import { useLayerStyles } from "#/features/layer-styles/use-layer-styles";
 import { useGeometriesBySchemas } from "#/lib/dataset-rows-react";
 import { errorMessage } from "#/lib/errors";
 import type { LayerSourceSplit } from "#/lib/layer-source";
@@ -75,6 +79,27 @@ function isLayersWorkspaceComplete(
 /** The map mounts on the first served rows OR any tile source — before that only the chip shows. */
 function layersMapShouldMount(geometries: unknown, split: LayerSourceSplit): boolean {
   return geometries !== undefined || split.tileSources.length > 0;
+}
+
+const NO_COLORS = new globalThis.Map<string, string>();
+
+/**
+ * The dataset whose entries carry a render id's field values: a derived
+ * layer's bottom source, a chain-resolved anchor's frozen row, else itself
+ * (the same re-keying the geometry subscriptions use).
+ */
+function entrySourceOf(
+  renderId: string,
+  renderableDerived: globalThis.Map<string, string> | undefined,
+  chainSources: globalThis.Map<string, string> | undefined,
+): string {
+  const derivedSource =
+    renderableDerived === undefined ? undefined : renderableDerived.get(renderId);
+  if (derivedSource !== undefined) {
+    return derivedSource;
+  }
+  const chainSource = chainSources === undefined ? undefined : chainSources.get(renderId);
+  return chainSource ?? renderId;
 }
 
 export const Route = createFileRoute("/maps/$mapId")({
@@ -305,7 +330,21 @@ function MapDetailPage() {
     // pending decision would otherwise flash an empty map with the chip
     // hidden — the empty row fan-out resolves immediately while the tile
     // metadata is still in flight).
-    geometriesComplete = isLayersWorkspaceComplete(geometries, split, arrivedTileSchemaIds);
+    geometriesComplete = isLayersWorkspaceComplete(geometries, split, arrivedTileSchemaIds),
+    layerStyles = useLayerStyles({
+      colorBySchema: colorBySchema ?? NO_COLORS,
+      entrySourceFor: (renderId) =>
+        entrySourceOf(
+          renderId,
+          renderableDerived,
+          chain === undefined ? undefined : chain.sourceByRenderId,
+        ),
+      mapId,
+      renderIds: schemaIds,
+      tileRenderIds: new Set(tileSources.map((source) => source.schemaId)),
+    }),
+    // Assigned colors with single-symbol styles applied (panel dots, legend).
+    styledColorBySchema = layerStyles.colorBySchema;
 
   if (
     map === undefined ||
@@ -399,11 +438,13 @@ function MapDetailPage() {
       aliasedDatasets,
       memberships,
       groups,
-      colorBySchema,
+      styledColorBySchema,
     ),
     visibleSchemaIds = resolveVisibleSchemaIds(layers, aliasedDatasets, expanded, overridesByLayer),
     datasetColorsByLayer = (layer: MapLayerDoc) =>
-      (expanded.get(layer._id) ?? []).map((schemaId) => colorBySchema.get(schemaId) ?? "#3b82f6"),
+      (expanded.get(layer._id) ?? []).map(
+        (schemaId) => styledColorBySchema.get(schemaId) ?? "#3b82f6",
+      ),
     // Titles for the render ids that aren't component datasets (3a): the
     // legend and popup header resolve derived ids through the registry.
     derivedTitlesById = new globalThis.Map(
@@ -514,8 +555,9 @@ function MapDetailPage() {
                 geometries={withEmptyRows(servedGeometries)}
                 titlesById={derivedTitlesById}
                 visibleSchemaIds={visibleSchemaIds}
-                colorBySchema={colorBySchema}
+                colorBySchema={styledColorBySchema}
                 tileSources={tileSources}
+                extension={layerStyles.extension}
                 sourcesPending={sourcesPending}
                 onTileSourceIdle={(schemaId) => {
                   setArrivedTileSchemaIds((prev) => withArrivedTileSchema(prev, schemaId));
@@ -533,25 +575,30 @@ function MapDetailPage() {
               </div>
             )}
           </div>
-          <MapLayerPanel
-            layers={layers}
-            childrenByLayer={childrenByLayer}
-            overridesByLayer={overridesByLayer}
-            datasetColorsByLayer={datasetColorsByLayer}
-            nameForLayer={layerName}
-            onMove={(layer, direction) => {
-              void handleMoveLayer(layer, direction);
-            }}
-            onToggleVisibility={(layer) => {
-              void handleToggleVisibility(layer);
-            }}
-            onRemove={(layer) => {
-              setPendingRemoveLayer(layer);
-            }}
-            onToggleChild={(layerId, childKey, currentlyVisible) => {
-              void handleToggleChild(layerId, childKey, currentlyVisible);
-            }}
-          />
+          <div className="flex min-w-0 flex-col gap-4">
+            {layerStyles.panel}
+            <MapLayerPanel
+              layers={layers}
+              childrenByLayer={childrenByLayer}
+              overridesByLayer={overridesByLayer}
+              datasetColorsByLayer={datasetColorsByLayer}
+              nameForLayer={layerName}
+              onMove={(layer, direction) => {
+                void handleMoveLayer(layer, direction);
+              }}
+              onToggleVisibility={(layer) => {
+                void handleToggleVisibility(layer);
+              }}
+              onRemove={(layer) => {
+                setPendingRemoveLayer(layer);
+              }}
+              onToggleChild={(layerId, childKey, currentlyVisible) => {
+                void handleToggleChild(layerId, childKey, currentlyVisible);
+              }}
+              datasetActions={layerStyles.datasetActions}
+            />
+          </div>
+          {layerStyles.loaders}
         </div>
       )}
 
