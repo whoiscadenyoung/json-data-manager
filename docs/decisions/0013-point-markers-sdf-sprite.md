@@ -93,6 +93,9 @@ exports must work in other MapLibre tools.
   the base size, until the category field is in the tile archive (the same
   `includeProperties` follow-up as labels and filters in #159). The panel
   says so.
+  Options to close this gap (one symbol layer per icon chosen by
+  feature-state opacity, or styled fields in the archive) are in #169 and in
+  `docs/layer-styles.md` "Follow-ups".
 - Uploads are shared and deletable by every signed-in collaborator, matching
   the rest of the catalog. A stricter owner-only rule would be a later
   policy change, not a format change.

@@ -166,6 +166,47 @@ its fields and values.
 maps themselves (ADR 0009), and upload, use and delete marker icons. `set` refuses unknown maps and render ids the
 writer can't see (stage 8). Rows for removed maps or datasets are inert.
 
+## Follow-ups
+
+Tracked in [#169](https://github.com/whoiscadenyoung/json-data-manager/issues/169).
+
+**Data-driven markers on tile-path datasets.** Tile features carry only
+`entryId`, so style values arrive as feature-state, which MapLibre allows in
+paint only. `icon-image` and `icon-size` are layout properties, so on tiles
+per-category icons fall back to the marker's icon and graduated class sizes
+to the base size. Options, cheapest first:
+
+1. **One symbol layer per icon (or size class), chosen by opacity.** At render
+   time, the tile path splits the marker layer into one layer per distinct
+   icon with a fixed `icon-image`, each showing only its own features through
+   `"icon-opacity": ["match", ["feature-state", field], …, 1, 0]` (paint, so
+   feature-state is allowed). Class sizes work the same way. The expanded
+   layers ignore placement so invisible copies don't collide. Stored and
+   exported JSON stay one layer. Recommended first step.
+2. **Styled fields in the tile archive** (`includeProperties`, also the
+   labels/filters follow-up from #159). `["get", field]` then works natively,
+   for icons, sizes, labels and filters alike. Costs an archive rebuild when
+   the styled fields change, plus bigger tiles. This is the long-term fix.
+3. **Client-side tiling**, GeoLibre's approach: it cuts vector tiles in the
+   browser with every property kept, and never styles through feature-state.
+   It's a poor fit here, because our tile path exists for geometry too large
+   to load.
+
+For comparison, RustGIS draws with its own renderer and computes a symbol
+per feature row, so the restriction doesn't apply to it. Its markers are five
+shapes plus font glyphs.
+
+**Hardening:**
+
+- Register icons through MapLibre's missing-image resolver (GeoLibre's
+  pattern) so they regenerate on their own after any `setStyle`.
+- Deleted uploads: refuse deleting an icon a saved style uses, or soft-delete
+  it, instead of the current fall back to circles.
+- Sprite weight: about 740 KB at 2x. Try a better PNG encoder, or split the
+  sprite per family.
+- `convex dev`'s own typecheck is red on `main` (layer-style tests import
+  `src/` code that uses the `#convex/*` alias).
+
 ## Removing layer styles
 
 1. Delete `app/convex/layerStyles/`, `app/src/features/layer-styles/` and
