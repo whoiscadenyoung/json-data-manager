@@ -96,7 +96,7 @@ type ProjectionPage = {
 /** One page of the projection, through the paging internal query (#127). */
 async function projectionPage(t: TestConvex, pageCursor: string | null): Promise<ProjectionPage> {
   return t.run(async (ctx) =>
-    ctx.runQuery(internal.tags.collectProjectionRowsQuery, { cursor: pageCursor }),
+    ctx.runQuery(internal.demoSources.snapshots.collectProjectionRowsQuery, { cursor: pageCursor }),
   );
 }
 
@@ -149,7 +149,7 @@ async function registerSnapshot(
     ctx.storage.store(new Blob([bytes], { type: "application/jsonl" })),
   );
   return t.run(async (ctx) =>
-    ctx.runMutation(internal.tags.registerSnapshot, {
+    ctx.runMutation(internal.demoSources.snapshots.registerSnapshot, {
       fileStorageId,
       label,
       rowCount: rows.length,
@@ -169,14 +169,18 @@ describe("createRestaurantSnapshot (the foreign app's snapshot push)", () => {
   it("serializes the live projection to a registered JSONL file and lists newest first", async () => {
     const t = signedIn();
     await bindSource(t, 2);
-    const first = await t.action(api.tags.createRestaurantSnapshot, { label: "  FY22  " });
+    const first = await t.action(api.demoSources.snapshots.createRestaurantSnapshot, {
+      label: "  FY22  ",
+    });
     expect(first.label).toBe("FY22");
     expect(first.rowCount).toBe(2);
     expect(first.ref.startsWith("snap_")).toBe(true);
     vi.advanceTimersByTime(1000);
-    const second = await t.action(api.tags.createRestaurantSnapshot, { label: "FY23" });
+    const second = await t.action(api.demoSources.snapshots.createRestaurantSnapshot, {
+      label: "FY23",
+    });
     expect(second.ref).not.toBe(first.ref);
-    const snapshots = await t.query(api.tags.listSnapshots, {});
+    const snapshots = await t.query(api.demoSources.snapshots.listSnapshots, {});
     // Newest first, and every snapshot keeps its registered row count.
     expect(snapshots.map((snapshot) => snapshot.ref)).toStrictEqual([second.ref, first.ref]);
     expect(at(snapshots, 1).rowCount).toBe(2);
@@ -185,9 +189,9 @@ describe("createRestaurantSnapshot (the foreign app's snapshot push)", () => {
   it("refuses an empty label", async () => {
     const t = signedIn();
     await bindSource(t, 1);
-    await expect(t.action(api.tags.createRestaurantSnapshot, { label: "   " })).rejects.toThrow(
-      /label is required/,
-    );
+    await expect(
+      t.action(api.demoSources.snapshots.createRestaurantSnapshot, { label: "   " }),
+    ).rejects.toThrow(/label is required/);
   });
 });
 

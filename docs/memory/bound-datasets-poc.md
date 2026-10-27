@@ -155,8 +155,8 @@ the engine's new invariants:**
 **Working PoC shipped** (verified end-to-end on local dev): `app/convex/schema.ts`
 adds foreign-domain host tables (`restaurants`, `locations` lat/lng,
 `restaurantLocations` many-to-many, `datasetBindings` registry) cohabiting
-with the component's tables; `app/convex/seed.ts` `seedRestaurants`
-(idempotent internalMutation; run `bunx convex run seed:seedRestaurants` from
+with the component's tables; `app/convex/demoSources/seed.ts` `seedRestaurants`
+(idempotent internalMutation; run `bunx convex run demoSources/seed:seedRestaurants` from
 `app/` — 5 restaurants / 16 locations / 16 links, Hampton Roads + Richmond
 synthetic coords); `app/convex/bindings.ts` `syncRestaurantLocations` (public
 mutation) find-or-creates the "External demo" collection + geospatial Point
@@ -274,7 +274,7 @@ VITE_CONVEX_URL=http://127.0.0.1:3212 on another port.
 
 **Dashboard CRUD shipped** (second iteration, same day): `/dashboard` route +
 `app/src/components/dashboard/*` panels do CRUD over the three source tables;
-`app/convex/dashboard.ts` holds the mutations. Every source write stamps
+`app/convex/demoSources/dashboard.ts` holds the mutations. Every source write stamps
 `datasetBindings.sourceUpdatedAt`, and the dashboard's sync card flips to
 "Source changed" until "Sync now" runs `bindings.syncRestaurantLocations`
 (verified full loop: add location+link → stale badge → sync → 17 points on

@@ -30,11 +30,11 @@ type Restaurant = Doc<"restaurants">;
 
 /** Restaurants tab — CRUD over the `restaurants` table. Deleting cascades to the restaurant's links. */
 export function RestaurantsPanel() {
-  const restaurants = useQuery(api.dashboard.listRestaurants),
-    links = useQuery(api.dashboard.listLinks),
-    createRestaurant = useMutation(api.dashboard.createRestaurant),
-    updateRestaurant = useMutation(api.dashboard.updateRestaurant),
-    deleteRestaurant = useMutation(api.dashboard.deleteRestaurant),
+  const restaurants = useQuery(api.demoSources.dashboard.listRestaurants),
+    links = useQuery(api.demoSources.dashboard.listLinks),
+    createRestaurant = useMutation(api.demoSources.dashboard.createRestaurant),
+    updateRestaurant = useMutation(api.demoSources.dashboard.updateRestaurant),
+    deleteRestaurant = useMutation(api.demoSources.dashboard.deleteRestaurant),
     [sheetOpen, setSheetOpen] = useState(false),
     [editing, setEditing] = useState<Restaurant | undefined>(undefined),
     [name, setName] = useState(""),

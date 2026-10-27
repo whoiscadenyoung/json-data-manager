@@ -154,7 +154,8 @@ they pull in opposite directions.
 
 ## 9. Proof of concept (shipped in this repo)
 
-`app/convex/schema.ts` models the foreign domain as first-class host tables
+`app/convex/demoSources/tables.ts` (spread into `schema.ts`) models the
+foreign domain as first-class host tables
 cohabiting with the component's tables — the cohabitation itself is the
 first thing the PoC proves:
 
@@ -162,10 +163,10 @@ first thing the PoC proves:
   `restaurantLocations` (many-to-many; Red Lobster → 3 locations is the
   running example), and `datasetBindings` (the binding registry, app-side
   for now).
-- `app/convex/seed.ts` — `seedRestaurants`, idempotent internalMutation
+- `app/convex/demoSources/seed.ts` — `seedRestaurants`, idempotent internalMutation
   (upserts by natural keys; 5 restaurants / 16 locations / 16 links across
   Hampton Roads + Richmond). Runs on any deployment:
-  `bunx convex run seed:seedRestaurants` (from `app/`).
+  `bunx convex run demoSources/seed:seedRestaurants` (from `app/`).
 - `app/convex/bindings.ts` — `syncRestaurantLocations` finds-or-creates the
   "External demo" collection, the geospatial Point dataset, and the binding
   row, then rebuilds the projection (v1 clear-then-reload) via direct
@@ -225,7 +226,7 @@ re-freezable), both with dataset-page UI.
 
 **Tag ingest + lineage (phase 3, shipped 2026-09-19):** the foreign app's
 snapshot timeline is modeled by the `restaurantSnapshots` table. Taking a
-snapshot (`tags:createRestaurantSnapshot`) serializes the joined tables to a
+snapshot (`demoSources/snapshots:createRestaurantSnapshot`) serializes the joined tables to a
 JSONL file of `{data, geometry}` rows in file storage and registers the tag —
 the snapshot file is the point-in-time truth, so freezes never re-read the
 live tables. `tags:ingestSnapshots` is the design's pull reconcile: it
@@ -245,6 +246,30 @@ failed ingest deletes its half-built version so the ref stays retryable).
 Remaining from this phase: deltas computed at ingest (deferred to phase 4 —
 the commits ops shape and the compare view that renders them land together)
 and version retention (pin/unpin or keep-N; versions accumulate until then).
+
+### Removing the demo sources
+
+The demo foreign app lives in `app/convex/demoSources/`; core sync,
+versioning, and tag-ingest code only knows the `BoundSource`/`LocalSource`
+adapter interface in `app/convex/sources.ts`. To remove the demo:
+
+1. Delete `app/convex/demoSources/`.
+2. Remove the `...demoSourceTables` spread (and its import) from
+   `app/convex/schema.ts`.
+3. Remove the `...DEMO_SOURCES` entry (and its import) from `SOURCES` in
+   `app/convex/sources.ts`.
+4. Delete the `/dashboard` route and `app/src/components/dashboard/`, which
+   call `api.demoSources.*`.
+5. Rewrite or drop the tests that seed demo rows as their fixture source:
+   `auth.test.ts`, `bindings.test.ts`, `sources.test.ts`, `sync.test.ts`,
+   `tags.test.ts`.
+
+With steps 1–3 done, the Convex host code (everything except those tests)
+still typechecks; this was checked when the folder was split out.
+`bindings.status` then returns null (no co-deployed source) and tag ingest
+reports that no registered source takes snapshots. The `commits` and
+`tagDeltas` tables are core (the applied-commit mirror and version deltas)
+and stay.
 
 ## 10. Phased roadmap (candidate sub-issues, in order)
 
