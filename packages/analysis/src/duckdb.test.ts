@@ -12,8 +12,8 @@ import {
   DuckDbEngine,
   ENGINE_LOCKDOWN_STATEMENTS,
   normalizeArrowValue,
-} from "./analysis-duckdb";
-import type { LockdownConnection } from "./analysis-duckdb";
+} from "./duckdb";
+import type { LockdownConnection } from "./duckdb";
 
 /**
  * A failed engine load must not be remembered (#133 item 4): the mock makes

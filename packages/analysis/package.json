@@ -1,0 +1,26 @@
+{
+  "name": "@caden/analysis",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Backend-free analysis engine: the lazy single-threaded DuckDB-WASM SQL engine and the analysis row caps. Source-only workspace package (ADR 0014).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@caden/data-core": "workspace:*",
+    "@duckdb/duckdb-wasm": "1.33.1-dev57.0",
+    "apache-arrow": "17.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "vitest": "^3.2.7"
+  }
+}

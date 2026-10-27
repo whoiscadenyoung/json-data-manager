@@ -1,3 +1,4 @@
+import { ANALYSIS_PREVIEW_ROWS, MAX_ANALYSIS_RESULT_ROWS } from "@caden/analysis/caps";
 import { ConfirmDialog } from "@caden/json-cms/react/ui";
 import { Badge } from "@caden/ui/components/badge";
 import { Button } from "@caden/ui/components/button";
@@ -38,7 +39,6 @@ import { toast } from "sonner";
 import { DatasetPickerSheet } from "#/components/dataset-picker-sheet";
 import { DerivedHealthBadges } from "#/components/dataset-type-tags";
 import { publishDataset } from "#/features/publishing";
-import { ANALYSIS_PREVIEW_ROWS, MAX_ANALYSIS_RESULT_ROWS } from "#/lib/analysis-caps";
 import { sharedClient } from "#/lib/dataset-rows";
 import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";

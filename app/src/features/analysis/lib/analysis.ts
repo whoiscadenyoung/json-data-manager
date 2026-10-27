@@ -1,4 +1,5 @@
-import { ANALYSIS_RUN_TIMEOUT_MS } from "#/lib/analysis-caps";
+import { ANALYSIS_RUN_TIMEOUT_MS } from "@caden/analysis/caps";
+
 /**
  * The analysis layer's main-thread half (roadmap stage 9, #105): the typed
  * message protocol with {@link ./analysis.worker.ts} and the run manager —

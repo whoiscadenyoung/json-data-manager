@@ -1,3 +1,9 @@
+import {
+  MAX_ANALYSIS_RESULT_ROWS,
+  MAX_ANALYSIS_SOURCE_ROWS,
+  sourceRowCapError,
+} from "@caden/analysis/caps";
+import { analysisSqlEngine } from "@caden/analysis/duckdb";
 /**
  * The analysis worker (roadmap stage 9, #105; docs/analysis-layer-design.md
  * §2) — one "analyze" message per run: page every table target's rows to
@@ -32,12 +38,6 @@ import type { SqlColumnSpec, SqlOperation, SqlSideTable } from "@caden/data-core
 import { ConvexClient } from "convex/browser";
 
 import { env } from "#/env";
-import {
-  MAX_ANALYSIS_RESULT_ROWS,
-  MAX_ANALYSIS_SOURCE_ROWS,
-  sourceRowCapError,
-} from "#/lib/analysis-caps";
-import { analysisSqlEngine } from "#/lib/analysis-duckdb";
 import { setAuthReasserting } from "#/lib/convex-auth-token";
 import { entryDataRecord, forEachDatasetEntryPage } from "#/lib/dataset-rows";
 import { api } from "#convex/_generated/api";
