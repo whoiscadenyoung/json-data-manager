@@ -46,7 +46,19 @@ Gotchas:
 - `api.d.ts` can be hand-edited when no deployment exists (codegen is
   alphabetical and deterministic; verified identical later).
 
-**#168 point markers (2026-10-27, ADR 0013):** shapes / curated Lucide /
+**#168 point markers — MERGED 2026-10-27 (PR #170), ADR 0013.** Follow-ups
+in #169 (tile-path per-category icons/class sizes: per-icon layers chosen by
+feature-state `icon-opacity` first, styled fields in the tile archive later;
+missing-image resolver; deleted-upload policy; sprite weight; the `convex dev`
+typecheck). Comparison done the same day: GeoLibre keeps every property in
+client-cut geojson-vt tiles and bakes colored canvas markers (no SDF, no
+feature-state); RustGIS has its own renderer that computes a symbol per row.
+**Next in the train: #160**, split as proposed in a comment on that issue
+(#160a = Shapefile/KML/GPX/CSV-WKT + proj4js and an EPSG prompt; #160b =
+GPKG/FlatGeobuf/GeoParquet and exports through DuckDB spatial, landing with the
+first step of #161).
+
+Details: shapes / curated Lucide /
 all of Maki ship as one committed SDF sprite in
 `app/public/sprites/layer-styles/` (built by hand with
 `bun src/features/layer-styles/sprite/build.ts`: resvg + our own EDT in
