@@ -30,7 +30,7 @@ import {
 // Optional styling module (docs/layer-styles.md): remove this import, the
 // `useLayerStyles` call, and the `extension`/`datasetActions`/panel/loaders
 // uses below to take styling out — maps then draw in their assigned colors.
-import { useLayerStyles } from "#/features/layer-styles/use-layer-styles";
+import { useLayerStyles } from "#/features/layer-styles";
 import { useGeometriesBySchemas } from "#/lib/dataset-rows-react";
 import { errorMessage } from "#/lib/errors";
 import type { LayerSourceSplit } from "#/lib/layer-source";

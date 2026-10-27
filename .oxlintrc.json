@@ -56,7 +56,19 @@
     "promise/spec-only": "error",
     "react/syntax": "error",
     "react/unsupported-syntax": "warn",
-    "typescript/use-unknown-in-catch-callback-variable": "error"
+    "typescript/use-unknown-in-catch-callback-variable": "error",
+    // Feature modules expose a public API from their index.ts (ADR 0014).
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "regex": "^#/features/[^/]+/.+",
+            "message": "Import a feature through its public API (#/features/<name>), not its internals (ADR 0014)."
+          }
+        ]
+      }
+    ]
   },
   "settings": {
     "jsx-a11y": {
@@ -107,6 +119,24 @@
       "files": ["**/*.tsx"],
       "rules": {
         "import/no-default-export": "error"
+      }
+    },
+    {
+      // Inside a feature: relative imports for its own files, and no imports of
+      // other features — core exposes extension slots instead (ADR 0012, 0014).
+      "files": ["app/src/features/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^#/features/",
+                "message": "Features never import other features; use relative imports within a feature and extension slots across features (ADR 0014)."
+              }
+            ]
+          }
+        ]
       }
     }
   ]
