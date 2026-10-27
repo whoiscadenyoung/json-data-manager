@@ -263,7 +263,7 @@ export const retireVersion = mutation({
   args: { schemaId: v.string() },
   handler: async (ctx, args) => {
     const actorId = await auth(ctx);
-    const schema = await ctx.runQuery(components.jsonCms.lib.getSchema, {
+    const schema = await ctx.runQuery(components.jsonCms.schemas.getSchema, {
       schemaId: args.schemaId,
     });
     if (schema === null) {
@@ -351,7 +351,7 @@ export const listVersions = query({
   args: { sourceSchemaId: v.string() },
   handler: async (ctx, args) => {
     await auth(ctx);
-    const versions = await ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+    const versions = await ctx.runQuery(components.jsonCms.schemas.listSchemaVersions, {
       limit: CATALOG_READ_LIMIT,
       sourceSchemaId: args.sourceSchemaId,
     });
@@ -396,9 +396,12 @@ export const ingestPlan = internalQuery({
       pending: PendingSnapshot[] = [];
     for (const snapshot of snapshots) {
       // oxlint-disable-next-line no-await-in-loop -- keeps the plan loop readable; the listing is dashboard-bounded.
-      const existing = await ctx.runQuery(components.jsonCms.lib.getSchemaVersionBySnapshotRef, {
-        snapshotRef: snapshot.ref,
-      });
+      const existing = await ctx.runQuery(
+        components.jsonCms.schemas.getSchemaVersionBySnapshotRef,
+        {
+          snapshotRef: snapshot.ref,
+        },
+      );
       if (existing === null) {
         pending.push({
           fileStorageId: snapshot.fileStorageId,
@@ -447,7 +450,7 @@ async function uploadChunkBlobs(
   const chunkStorageIds: string[] = [];
   for (const chunk of chunkRows(rows)) {
     // oxlint-disable-next-line no-await-in-loop -- chunks upload sequentially, mirroring the browser importer.
-    const { storageUrl } = await ctx.runMutation(components.jsonCms.lib.generateUploadUrl, {});
+    const { storageUrl } = await ctx.runMutation(components.jsonCms.imports.generateUploadUrl, {});
     // oxlint-disable-next-line no-await-in-loop
     const upload = await fetch(storageUrl, {
       body: JSON.stringify(chunk),
@@ -486,7 +489,7 @@ async function waitForImport(
     // oxlint-disable-next-line no-await-in-loop -- polling is inherently sequential.
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
     // oxlint-disable-next-line no-await-in-loop
-    const status = await ctx.runQuery(components.jsonCms.lib.getImportStatus, {
+    const status = await ctx.runQuery(components.jsonCms.imports.getImportStatus, {
       importId,
     });
     if (status === null) {
@@ -497,7 +500,7 @@ async function waitForImport(
     }
     if (status.status === "completed") {
       // oxlint-disable-next-line no-await-in-loop
-      const version = await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId });
+      const version = await ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId });
       return version === null ? fallbackCount : (version.entryCount ?? fallbackCount);
     }
   }
@@ -510,11 +513,11 @@ async function cleanupPartialVersion(
   ref: string,
 ): Promise<void> {
   try {
-    const partial = await ctx.runQuery(components.jsonCms.lib.getSchemaVersionBySnapshotRef, {
+    const partial = await ctx.runQuery(components.jsonCms.schemas.getSchemaVersionBySnapshotRef, {
       snapshotRef: ref,
     });
     if (partial !== null) {
-      await ctx.runMutation(components.jsonCms.lib.deleteSchema, {
+      await ctx.runMutation(components.jsonCms.deletes.deleteSchema, {
         boundWrite: "retire",
         schemaId: partial._id,
       });
@@ -684,7 +687,7 @@ export const setVersionPinned = mutation({
   args: { pinned: v.boolean(), schemaId: v.string() },
   handler: async (ctx, args) => {
     const actorId = await auth(ctx);
-    const schema = await ctx.runQuery(components.jsonCms.lib.getSchema, {
+    const schema = await ctx.runQuery(components.jsonCms.schemas.getSchema, {
       schemaId: args.schemaId,
     });
     if (schema === null || schema.lineage === undefined) {

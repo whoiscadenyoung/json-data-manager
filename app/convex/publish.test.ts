@@ -78,7 +78,7 @@ async function storeChunk(
       bytes: bytes.buffer,
     }),
     { uploadId } = await t.run(async (ctx) =>
-      ctx.runMutation(components.jsonCms.lib.generateUploadUrl, { scope: attemptId }),
+      ctx.runMutation(components.jsonCms.imports.generateUploadUrl, { scope: attemptId }),
     );
   return { storageId, uploadId };
 }
@@ -99,7 +99,7 @@ async function createDraftDataset(
   },
 ): Promise<string> {
   return t.run(async (ctx) =>
-    ctx.runMutation(components.jsonCms.lib.createSchema, {
+    ctx.runMutation(components.jsonCms.schemas.createSchema, {
       // The suite's identity is stamped as creator — since stage 8 (#104) a
       // draft is invisible to every other identity, so the fixture carries one.
       actorId: "user-1",
@@ -131,7 +131,7 @@ async function addEntries(t: TestConvex, schemaId: string, rows: PointRow[]): Pr
 /** The draft's entry count, read back through the component. */
 async function entryCountOf(t: TestConvex, schemaId: string): Promise<number | undefined> {
   return t.run(async (ctx) => {
-    const doc = await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId });
+    const doc = await ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId });
     return doc === null ? undefined : doc.entryCount;
   });
 }
@@ -233,7 +233,7 @@ describe("publishing an imported draft (AC 1: a real frozen row; sources unchang
 
     // The published row is a real, catalog-visible dataset with exact counts.
     const published = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId }),
     );
     if (published === null) {
       throw new Error("the published row vanished");
@@ -252,7 +252,7 @@ describe("publishing an imported draft (AC 1: a real frozen row; sources unchang
 
     // Sources unchanged: the draft keeps its rows, its flag, and its counts.
     const draft = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: draftId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId: draftId }),
     );
     expect(draft === null ? undefined : draft.lifecycle).toBe("draft");
     expect(draft === null ? undefined : draft.entryCount).toBe(draftCount);
@@ -296,7 +296,7 @@ describe("publishing an imported draft (AC 1: a real frozen row; sources unchang
 
     expect(v2.schemaId).not.toBe(v1.schemaId);
     const versions = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+      ctx.runQuery(components.jsonCms.schemas.listSchemaVersions, {
         limit: CATALOG_READ_LIMIT,
         sourceSchemaId: draftId,
       }),
@@ -309,11 +309,11 @@ describe("publishing an imported draft (AC 1: a real frozen row; sources unchang
     expect(labels).toStrictEqual(["v1", "v2"]);
     // Each version's own counts, untouched by the later publish.
     const v1Doc = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: v1.schemaId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId: v1.schemaId }),
     );
     expect(v1Doc === null ? undefined : v1Doc.entryCount).toBe(1);
     const v2Doc = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: v2.schemaId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId: v2.schemaId }),
     );
     expect(v2Doc === null ? undefined : v2Doc.entryCount).toBe(2);
   });
@@ -328,7 +328,7 @@ describe("publishing an imported draft (AC 1: a real frozen row; sources unchang
       totalRows: 0,
     });
     const published = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId }),
     );
     expect(published === null ? undefined : published.entryCount).toBe(0);
     const attempt = await attemptById(t, started.attemptId);
@@ -395,7 +395,7 @@ describe("freeze idempotency by publish key (AC 4's keyed half)", () => {
 
     await drainScheduled(t);
     const versions = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+      ctx.runQuery(components.jsonCms.schemas.listSchemaVersions, {
         limit: CATALOG_READ_LIMIT,
         sourceSchemaId: draftId,
       }),
@@ -466,7 +466,7 @@ describe("chunk registration (the freeze's checkpoint contract)", () => {
     const schemaId = frozen.schemaId;
     await drainScheduled(t);
     const published = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId }),
     );
     expect(published === null ? undefined : published.entryCount).toBe(1);
   });
@@ -596,7 +596,7 @@ describe("interruption resume (AC 4: no duplicate or lost rows)", () => {
     await drainScheduled(t);
     // Exactly the planned rows: no duplicate, no loss.
     const published = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId }),
     );
     expect(published === null ? undefined : published.entryCount).toBe(2);
     const page = await t.query(api.entries.listPage, {
@@ -638,7 +638,7 @@ describe("interruption resume (AC 4: no duplicate or lost rows)", () => {
       totalRows: 1,
     });
     const published = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId }),
     );
     expect(published === null ? undefined : published.entryCount).toBe(1);
   });
@@ -684,7 +684,7 @@ describe("plan content hash + registered row total (issue #130)", () => {
     const doc = await t.run(async (ctx) => ctx.db.get(started.attemptId));
     expect(doc === null ? undefined : doc.registeredRowCount).toBe(2);
     const published = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId }),
     );
     expect(published === null ? undefined : published.entryCount).toBe(2);
   });
@@ -786,7 +786,7 @@ describe("publishing a saved transform (AC 5: lineage + geometrySource)", () => 
     ]);
     // The join side: a standard dataset joined on label → locations.label.
     const rlId = await t.run(async (ctx) =>
-      ctx.runMutation(components.jsonCms.lib.createSchema, {
+      ctx.runMutation(components.jsonCms.schemas.createSchema, {
         actorId: "user-1",
         lifecycle: "draft",
         schema: {
@@ -864,7 +864,7 @@ describe("publishing a saved transform (AC 5: lineage + geometrySource)", () => 
     });
 
     const published = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId }),
     );
     if (published === null) {
       throw new Error("the published row vanished");
@@ -960,7 +960,7 @@ describe("failed imports keep the key retryable", () => {
     const startedAgain = await t.mutation(api.publish.start, { datasetKey: draftId });
     expect(startedAgain.attemptId).not.toBe(started.attemptId);
     const versions = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+      ctx.runQuery(components.jsonCms.schemas.listSchemaVersions, {
         limit: CATALOG_READ_LIMIT,
         sourceSchemaId: draftId,
       }),
@@ -1006,7 +1006,7 @@ describe("stale-attempt revival", () => {
     expect(attempt.status).toBe("completed");
     // Unmentioned internal invariant: the import completed exactly once.
     const versions = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+      ctx.runQuery(components.jsonCms.schemas.listSchemaVersions, {
         limit: CATALOG_READ_LIMIT,
         sourceSchemaId: draftId,
       }),

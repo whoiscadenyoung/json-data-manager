@@ -10,7 +10,7 @@ const http = httpRouter();
 // "author"` rows are scoped to their creator even on raw HTTP paths.
 http.route({
   handler: httpActionGeneric(async (ctx, _request) => {
-    const schemas = await ctx.runQuery(components.jsonCms.lib.listSchemas, {
+    const schemas = await ctx.runQuery(components.jsonCms.schemas.listSchemas, {
       limit: 500,
       viewerId: "example-http-viewer",
     });
@@ -29,7 +29,10 @@ http.route({
   handler: httpActionGeneric(async (ctx, request) => {
     const segments = new URL(request.url).pathname.split("/"),
       schemaId = segments[2] ?? "",
-      entries = await ctx.runQuery(components.jsonCms.lib.listEntries, { limit: 500, schemaId });
+      entries = await ctx.runQuery(components.jsonCms.entries.listEntries, {
+        limit: 500,
+        schemaId,
+      });
     return new Response(JSON.stringify(entries), {
       headers: { "Content-Type": "application/json" },
       status: 200,

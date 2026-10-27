@@ -25,11 +25,11 @@ type RunMutation = MutationCtx["runMutation"];
 
 /** One component chain version doc, as `listSchemaVersions` returns it. */
 type ComponentVersionDoc = FunctionReturnType<
-  typeof components.jsonCms.lib.listSchemaVersions
+  typeof components.jsonCms.schemas.listSchemaVersions
 >[number];
 
 /** One component schema doc, as `getSchema` returns it (null when gone). */
-type ComponentSchemaDoc = FunctionReturnType<typeof components.jsonCms.lib.getSchema>;
+type ComponentSchemaDoc = FunctionReturnType<typeof components.jsonCms.schemas.getSchema>;
 
 /**
  * Per-call resolution memo (issue #128): the consumption queries resolve the
@@ -319,7 +319,7 @@ async function tryGetSchema(
   }
   let doc: ComponentSchemaDoc;
   try {
-    doc = await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId });
+    doc = await ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId });
   } catch {
     doc = null;
   }
@@ -346,7 +346,7 @@ async function componentChainVersions(
     // The fold ceiling (schemas.ts): chain resolution AND retention math must
     // see the whole chain — keep-N retention bounds chain length in practice,
     // so the ceiling is headroom, not a behavior change (issue #128).
-    versions = await ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+    versions = await ctx.runQuery(components.jsonCms.schemas.listSchemaVersions, {
       limit: CATALOG_READ_LIMIT,
       sourceSchemaId: anchorId,
     });
@@ -825,7 +825,7 @@ async function badgesForDatasetRow(
     let recordedRow: ComponentSchemaDoc = null;
     if (source.ref !== undefined) {
       // oxlint-disable-next-line no-await-in-loop -- see above.
-      recordedRow = await ctx.runQuery(components.jsonCms.lib.getSchemaVersionBySnapshotRef, {
+      recordedRow = await ctx.runQuery(components.jsonCms.schemas.getSchemaVersionBySnapshotRef, {
         snapshotRef: source.ref,
       });
     }
@@ -1060,7 +1060,7 @@ async function consumerTitleFor(
     return forkConsumerTitle(ctx, ref.consumerId, viewerId);
   }
   try {
-    const map = await ctx.runQuery(components.jsonCms.lib.getMap, { mapId: ref.consumerId });
+    const map = await ctx.runQuery(components.jsonCms.maps.getMap, { mapId: ref.consumerId });
     return map === null ? null : map.name;
   } catch {
     // A consumerId that isn't a well-formed component map id — the
@@ -1439,7 +1439,7 @@ export const setChainVersionPinned = mutation({
   args: { pinned: v.boolean(), schemaId: v.string() },
   handler: async (ctx, args) => {
     const actorId = await auth(ctx);
-    const schema = await ctx.runQuery(components.jsonCms.lib.getSchema, {
+    const schema = await ctx.runQuery(components.jsonCms.schemas.getSchema, {
       schemaId: args.schemaId,
     });
     if (schema === null || schema.lineage === undefined) {
@@ -1561,7 +1561,7 @@ export const revertReference = mutation({
     }
     // The full by-ref read (not a light {_id} lookup): revert needs the
     // pinned row's lineage for its chain anchor and freeze time.
-    const pinnedRow = await ctx.runQuery(components.jsonCms.lib.getSchemaVersionBySnapshotRef, {
+    const pinnedRow = await ctx.runQuery(components.jsonCms.schemas.getSchemaVersionBySnapshotRef, {
       snapshotRef: ref.pinnedRef,
     });
     if (pinnedRow === null || pinnedRow.lineage === undefined) {

@@ -114,7 +114,7 @@ async function resolveDatasetUncached(ctx: QueryCtx, id: string): Promise<Refere
     }
   }
   try {
-    const dataset = await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: id });
+    const dataset = await ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId: id });
     if (dataset !== null) {
       return {
         kind: "component",
@@ -220,9 +220,9 @@ async function assertSpecDependenciesVisible(
         }
         return;
       }
-      let doc: FunctionReturnType<typeof components.jsonCms.lib.getSchema> = null;
+      let doc: FunctionReturnType<typeof components.jsonCms.schemas.getSchema> = null;
       try {
-        doc = await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: datasetId });
+        doc = await ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId: datasetId });
       } catch {
         // Not a well-formed component id — the unknown-id tolerance above.
         return;

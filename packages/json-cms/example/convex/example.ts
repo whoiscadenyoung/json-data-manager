@@ -17,7 +17,7 @@ async function getAuthUserId(ctx: { auth: Auth }) {
 export const createSchema = mutation({
   args: { schema: v.any() },
   handler: async (ctx, args) =>
-    ctx.runMutation(components.jsonCms.lib.createSchema, {
+    ctx.runMutation(components.jsonCms.schemas.createSchema, {
       schema: args.schema,
     }),
 });
@@ -25,7 +25,7 @@ export const createSchema = mutation({
 export const listSchemas = query({
   args: { limit: v.number() },
   handler: async (ctx, args) =>
-    ctx.runQuery(components.jsonCms.lib.listSchemas, {
+    ctx.runQuery(components.jsonCms.schemas.listSchemas, {
       limit: args.limit,
       viewerId: "example-viewer",
     }),
@@ -34,19 +34,19 @@ export const listSchemas = query({
 export const getSchema = query({
   args: { schemaId: v.id("schemas") },
   handler: async (ctx, args) =>
-    ctx.runQuery(components.jsonCms.lib.getSchema, {
+    ctx.runQuery(components.jsonCms.schemas.getSchema, {
       schemaId: args.schemaId,
     }),
 });
 
 export const createEntry = mutation({
   args: { data: v.any(), schemaId: v.id("schemas") },
-  handler: async (ctx, args) => ctx.runMutation(components.jsonCms.lib.createEntry, args),
+  handler: async (ctx, args) => ctx.runMutation(components.jsonCms.entries.createEntry, args),
 });
 
 export const listEntries = query({
   args: { limit: v.number(), schemaId: v.id("schemas") },
-  handler: async (ctx, args) => ctx.runQuery(components.jsonCms.lib.listEntries, args),
+  handler: async (ctx, args) => ctx.runQuery(components.jsonCms.entries.listEntries, args),
 });
 
 // Alternative: Using the exposeApi helper for a complete authenticated API

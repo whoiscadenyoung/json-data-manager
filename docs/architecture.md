@@ -108,6 +108,26 @@ wrappers deliberately omit them:
 | `publishedVisibility`   | `"everyone"` (default) or `"author"`; narrows catalog reads to the creator. Set by `schemas.setVisibility` (creator-only).                                                                                                                                                                                        |
 | `lineage` (generalized) | Frozen-version marker: `versionLabel`, `frozenAt`, `snapshotRef` (global "a ref never freezes twice" key), `sourceSchemaId` (draft/bound chain anchor) **or** `sourceKey` (host registry-row chain anchor), `recipe` (the executed spec), `sourceVersions` (`{datasetId, ref?, frozenAt?}` per source at freeze). |
 
+### Component modules (`packages/json-cms/src/component/`)
+
+Component functions are split by domain; a function's path is
+`<module>.<name>` (`components.jsonCms.entries.listEntriesPage`,
+`internal.imports.importWorkflow`). The `exposeApi` names in `src/client`
+are independent of these paths.
+
+| Module            | Contents                                                                                                                                                      |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schemas.ts`      | Dataset (schema) queries/mutations, version lookups, tile-archive meta/install, lifecycle                                                                     |
+| `collections.ts`  | Collections and dataset↔collection membership                                                                                                                 |
+| `groups.ts`       | Groups, dataset→group and group→collection assignment                                                                                                         |
+| `maps.ts`         | Maps, map layers, and per-map layer overrides                                                                                                                 |
+| `entries.ts`      | Entry/geometry reads, entry mutations, internal entry functions, dataset-summary backfill                                                                     |
+| `imports.ts`      | Batched, monitored import workflow (upload URLs, chunk insertion, progress/completion)                                                                        |
+| `deletes.ts`      | Budget-aware batched dataset delete/clear (issue #128)                                                                                                        |
+| `geospatial.ts`   | Geospatial conversion and simplify-geometry workflows                                                                                                         |
+| `host_support.ts` | Host-only storage helpers (upload claims, blob deletes, sweeps)                                                                                               |
+| `internal/*.ts`   | Shared non-function helpers (validators, list-read bounds, delete budget, geometry paging, …). Registers no functions, so each function has exactly one path. |
+
 ### Host tables (`app/convex/schema.ts`)
 
 Three concerns, currently one schema (segmentation is tracked in #82):
