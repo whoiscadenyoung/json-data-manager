@@ -324,7 +324,7 @@ export function EntriesTable({
     // label-id query — exactly the referenced entries, not whole datasets.
     referencedIds = collectReferencedIds(entries, referenceFields),
     candidateEntries = useQuery(
-      api.entries.listForIds,
+      api.cms.entries.listForIds,
       referencedIds.length > 0 ? { entryIds: referencedIds } : "skip",
     ),
     labelsByField = buildLabelsByField(referenceFields, candidateEntries ?? []),

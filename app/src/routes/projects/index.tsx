@@ -45,7 +45,7 @@ export const Route = createFileRoute("/projects/")({
   component: ProjectsPage,
 });
 
-type ProjectSummary = FunctionReturnType<typeof api.projects.list>[number];
+type ProjectSummary = FunctionReturnType<typeof api.publishing.projects.list>[number];
 
 function NewProjectDialog({
   open,
@@ -54,7 +54,7 @@ function NewProjectDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const create = useMutation(api.projects.create),
+  const create = useMutation(api.publishing.projects.create),
     navigate = Route.useNavigate(),
     [title, setTitle] = useState(""),
     [description, setDescription] = useState(""),
@@ -173,7 +173,7 @@ function ProjectsPage() {
   // The auth gate renders BEFORE the query state: anonymous callers' query
   // throws, and without this branch that shows as an infinite spinner.
   const { isAuthenticated, isLoading: authLoading } = useConvexAuth(),
-    projects = useQuery({ ...convexQuery(api.projects.list, {}) }).data,
+    projects = useQuery({ ...convexQuery(api.publishing.projects.list, {}) }).data,
     [formOpen, setFormOpen] = useState(false);
 
   if (authLoading) {

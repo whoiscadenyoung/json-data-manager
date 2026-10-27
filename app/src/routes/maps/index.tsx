@@ -26,7 +26,7 @@ import { MapFormPanel } from "#/features/maps";
 import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 
-type MapDoc = FunctionReturnType<typeof api.maps.list>[number];
+type MapDoc = FunctionReturnType<typeof api.cms.maps.list>[number];
 
 function MapCard({
   map,
@@ -88,7 +88,7 @@ function MapCard({
 }
 
 function countByMap(
-  layers: FunctionReturnType<typeof api.maps.listLayers> | undefined,
+  layers: FunctionReturnType<typeof api.cms.maps.listLayers> | undefined,
   mapId: string,
 ): number {
   if (layers === undefined) {
@@ -98,9 +98,9 @@ function countByMap(
 }
 
 function MapsPage() {
-  const maps = useQuery(api.maps.list, { limit: 500 }),
-    layers = useQuery(api.maps.listLayers, { limit: 500 }),
-    deleteMap = useMutation(api.maps.remove),
+  const maps = useQuery(api.cms.maps.list, { limit: 500 }),
+    layers = useQuery(api.cms.maps.listLayers, { limit: 500 }),
+    deleteMap = useMutation(api.cms.maps.remove),
     [formOpen, setFormOpen] = useState(false),
     [editing, setEditing] = useState<MapDoc | undefined>(),
     [pendingDelete, setPendingDelete] = useState<MapDoc | undefined>(),

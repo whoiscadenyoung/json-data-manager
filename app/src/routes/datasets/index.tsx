@@ -31,7 +31,7 @@ import { api } from "../../../convex/_generated/api";
 
 /** One per-source drift badge row, as `consumption.sourceBadges` returns it (stage 6, #101). */
 type SourceBadge = FunctionReturnType<
-  typeof api.consumption.sourceBadges
+  typeof api.versions.consumption.sourceBadges
 >["bySchemaId"][string][number];
 
 export const Route = createFileRoute("/datasets/")({
@@ -54,9 +54,9 @@ const TYPE_OPTIONS: { value: TypeFilter; label: string }[] = [
   { label: "Regular", value: "regular" },
 ];
 
-type DatasetSummary = FunctionReturnType<typeof api.schemas.listSummaries>[number];
-type DerivedSummary = FunctionReturnType<typeof api.derivedDatasets.summaries>[number];
-type GroupSummary = FunctionReturnType<typeof api.groups.list>[number];
+type DatasetSummary = FunctionReturnType<typeof api.cms.schemas.listSummaries>[number];
+type DerivedSummary = FunctionReturnType<typeof api.versions.derivedDatasets.summaries>[number];
+type GroupSummary = FunctionReturnType<typeof api.cms.groups.list>[number];
 type UserProfile = FunctionReturnType<typeof api.users.listProfiles>[number];
 
 /**
@@ -484,17 +484,17 @@ function filterBrowserItems(
  */
 function useBrowserLightQueries(showDrafts: boolean) {
   return {
-    collections: useQuery({ ...convexQuery(api.collections.list) }).data,
-    datasets: useQuery({ ...convexQuery(api.schemas.listSummaries, { limit: 1000 }) }).data,
+    collections: useQuery({ ...convexQuery(api.cms.collections.list) }).data,
+    datasets: useQuery({ ...convexQuery(api.cms.schemas.listSummaries, { limit: 1000 }) }).data,
     // The opt-in drafts read (roadmap 5a, #99): the server-side default
     // (`listSummaries`) never returns drafts, so the drafts toggle is what
     // subscribes — disabled means no payload and no subscription.
     drafts: useQuery({
-      ...convexQuery(api.schemas.listDraftSummaries, { limit: 1000 }),
+      ...convexQuery(api.cms.schemas.listDraftSummaries, { limit: 1000 }),
       enabled: showDrafts,
     }).data,
-    derived: useQuery({ ...convexQuery(api.derivedDatasets.summaries, {}) }).data,
-    groups: useQuery({ ...convexQuery(api.groups.list, { limit: 500 }) }).data,
+    derived: useQuery({ ...convexQuery(api.versions.derivedDatasets.summaries, {}) }).data,
+    groups: useQuery({ ...convexQuery(api.cms.groups.list, { limit: 500 }) }).data,
     // authId → display profile, for the cards' creator chips.
     profiles: useQuery({ ...convexQuery(api.users.listProfiles) }).data,
   };
@@ -537,7 +537,7 @@ function DatasetsPage() {
     )
     .map((dataset) => dataset._id);
   const driftBadges = useQuery({
-    ...convexQuery(api.consumption.sourceBadges, {
+    ...convexQuery(api.versions.consumption.sourceBadges, {
       registryIds: (derived ?? []).map((row) => row._id),
       schemaIds: versionRowIds,
     }),

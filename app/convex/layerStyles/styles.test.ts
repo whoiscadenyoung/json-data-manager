@@ -33,10 +33,10 @@ type Caller = ReturnType<typeof as>;
 
 async function setup(t: Backend) {
   const owner = as(t, "owner"),
-    datasetId = await owner.mutation(api.schemas.create, {
+    datasetId = await owner.mutation(api.cms.schemas.create, {
       schema: { properties: { kind: { type: "string" } }, title: "Parks", type: "object" },
     }),
-    mapId = await owner.mutation(api.maps.create, { name: "Parks map" });
+    mapId = await owner.mutation(api.cms.maps.create, { name: "Parks map" });
   return { datasetId, mapId, owner };
 }
 
@@ -71,7 +71,7 @@ describe("layer styles", () => {
   it("keeps styles per map", async () => {
     const t = initTest(),
       { datasetId, mapId, owner } = await setup(t),
-      otherMapId = await owner.mutation(api.maps.create, { name: "Other map" });
+      otherMapId = await owner.mutation(api.cms.maps.create, { name: "Other map" });
     await save(owner, mapId, datasetId);
     expect(await owner.query(api.layerStyles.styles.listForMap, { mapId: otherMapId })).toEqual([]);
   });
@@ -95,10 +95,10 @@ describe("layer styles", () => {
     const t = initTest(),
       { mapId, owner } = await setup(t),
       other = as(t, "other"),
-      privateId = await other.mutation(api.schemas.create, {
+      privateId = await other.mutation(api.cms.schemas.create, {
         schema: { properties: {}, title: "Private", type: "object" },
       });
-    await other.mutation(api.schemas.setVisibility, {
+    await other.mutation(api.cms.schemas.setVisibility, {
       schemaId: privateId,
       visibility: "author",
     });

@@ -22,7 +22,7 @@ import { api } from "#convex/_generated/api";
  * `tile-archive.ts`.
  */
 export function TileArchiveCacheManager(): null {
-  const schemas = useQuery(api.schemas.listSummaries, { limit: 1000 });
+  const schemas = useQuery(api.cms.schemas.listSummaries, { limit: 1000 });
   const geospatialIds = useMemo(
     () =>
       (schemas ?? [])
@@ -31,7 +31,7 @@ export function TileArchiveCacheManager(): null {
     [schemas],
   );
   const metas = useQuery(
-    api.tile_archives.metas,
+    api.cms.tile_archives.metas,
     geospatialIds.length > 0 ? { schemaIds: geospatialIds } : "skip",
   );
   useEffect(() => {

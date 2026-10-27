@@ -18,7 +18,7 @@ import { isSyncStale } from "#/features/versions";
 import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 
-type BindingRow = FunctionReturnType<typeof api.bindings.list>[number];
+type BindingRow = FunctionReturnType<typeof api.sources.bindings.list>[number];
 
 /**
  * One bound source: its projection's sync state, a live progress row for the
@@ -28,8 +28,8 @@ type BindingRow = FunctionReturnType<typeof api.bindings.list>[number];
  */
 // oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 function SourceRow({ binding }: { binding: BindingRow }) {
-  const run = useQuery(api.sync.latestRun, { source: binding.source }),
-    startRun = useMutation(api.sync.startRun),
+  const run = useQuery(api.sources.sync.latestRun, { source: binding.source }),
+    startRun = useMutation(api.sources.sync.startRun),
     [isStarting, setIsStarting] = useState<"reconcile" | "sync" | undefined>(),
     kickoff = async (mode: "reconcile" | "sync") => {
       setIsStarting(mode);
@@ -136,10 +136,10 @@ function SourceRow({ binding }: { binding: BindingRow }) {
  */
 export function SyncStatusCard() {
   // Remote sources (#78) list in their own card with Check/Sync controls.
-  const allBindings = useQuery(api.bindings.list),
+  const allBindings = useQuery(api.sources.bindings.list),
     bindings =
       allBindings === undefined ? undefined : allBindings.filter((binding) => !binding.remote),
-    startRun = useMutation(api.sync.startRun),
+    startRun = useMutation(api.sources.sync.startRun),
     [isStarting, setIsStarting] = useState(false),
     createFirstDataset = async () => {
       setIsStarting(true);

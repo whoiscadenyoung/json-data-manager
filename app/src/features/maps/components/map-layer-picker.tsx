@@ -16,9 +16,9 @@ import { api } from "#convex/_generated/api";
 
 import type { LayerTargetType, MembershipRow } from "../lib/map-layers";
 
-type CollectionDoc = FunctionReturnType<typeof api.collections.list>[number];
-type GroupDoc = FunctionReturnType<typeof api.groups.list>[number];
-type DatasetSummary = FunctionReturnType<typeof api.schemas.listSummaries>[number];
+type CollectionDoc = FunctionReturnType<typeof api.cms.collections.list>[number];
+type GroupDoc = FunctionReturnType<typeof api.cms.groups.list>[number];
+type DatasetSummary = FunctionReturnType<typeof api.cms.schemas.listSummaries>[number];
 
 export type LayerTarget = { targetId: string; targetType: LayerTargetType };
 

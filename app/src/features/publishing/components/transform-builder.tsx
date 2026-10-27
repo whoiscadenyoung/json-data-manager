@@ -45,7 +45,7 @@ import { TransformEditor } from "./transform-editor";
  * this surface never paginates datasets on its own.
  */
 
-type RegistryRow = FunctionReturnType<typeof api.derivedDatasets.listBySource>[number];
+type RegistryRow = FunctionReturnType<typeof api.versions.derivedDatasets.listBySource>[number];
 
 /** What the user explicitly opened: an existing row, or a brand-new transform. */
 type EditingTarget = { id: string } | { isNew: true };
@@ -172,7 +172,7 @@ export function TransformBuilder({
   schemaId: string;
 }) {
   const rows = useQuery({
-      ...convexQuery(api.derivedDatasets.listBySource, { sourceDatasetId: schemaId }),
+      ...convexQuery(api.versions.derivedDatasets.listBySource, { sourceDatasetId: schemaId }),
     }).data,
     me = useQuery({ ...convexQuery(api.users.me, {}) }).data,
     myAuthId = me === null || me === undefined ? undefined : me.authId,

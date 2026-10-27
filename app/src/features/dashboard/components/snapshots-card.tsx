@@ -19,7 +19,7 @@ import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 
 type Snapshot = FunctionReturnType<typeof api.demoSources.snapshots.listSnapshots>[number];
-type Version = FunctionReturnType<typeof api.tags.listVersions>[number];
+type Version = FunctionReturnType<typeof api.versions.tags.listVersions>[number];
 
 /**
  * The foreign app's snapshot timeline and the ingest that mirrors it into
@@ -31,7 +31,7 @@ type Version = FunctionReturnType<typeof api.tags.listVersions>[number];
  * safe to mash.
  */
 export function SnapshotsCard() {
-  const status = useQuery(api.bindings.status);
+  const status = useQuery(api.sources.bindings.status);
 
   if (status === undefined) {
     return (
@@ -65,9 +65,9 @@ export function SnapshotsCard() {
  */
 function SnapshotsPanel({ liveSchemaId }: { liveSchemaId: string }) {
   const snapshots = useQuery(api.demoSources.snapshots.listSnapshots),
-    versions = useQuery(api.tags.listVersions, { sourceSchemaId: liveSchemaId }),
+    versions = useQuery(api.versions.tags.listVersions, { sourceSchemaId: liveSchemaId }),
     createSnapshot = useAction(api.demoSources.snapshots.createRestaurantSnapshot),
-    ingest = useAction(api.tags.ingestSnapshots),
+    ingest = useAction(api.versions.tags.ingestSnapshots),
     [label, setLabel] = useState(""),
     [isBusy, setIsBusy] = useState(false),
     suggestedLabel = snapshots === undefined ? "" : `v${snapshots.length + 1}`,

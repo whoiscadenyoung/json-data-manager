@@ -26,7 +26,7 @@ import { CollectionFormPanel } from "#/features/catalog";
 import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 
-type Collection = FunctionReturnType<typeof api.collections.list>[number];
+type Collection = FunctionReturnType<typeof api.cms.collections.list>[number];
 
 function CollectionCard({
   collection,
@@ -93,9 +93,9 @@ function CollectionCard({
  * its members, so the card count reads the same as the collection page.
  */
 function countByCollection(
-  memberships: FunctionReturnType<typeof api.collections.listSchemaCollections>,
-  datasets: FunctionReturnType<typeof api.schemas.listSummaries>,
-  groups: FunctionReturnType<typeof api.groups.list>,
+  memberships: FunctionReturnType<typeof api.cms.collections.listSchemaCollections>,
+  datasets: FunctionReturnType<typeof api.cms.schemas.listSummaries>,
+  groups: FunctionReturnType<typeof api.cms.groups.list>,
   collectionId: string,
 ): number {
   const memberGroupIds = new Set(
@@ -112,11 +112,11 @@ function countByCollection(
 }
 
 function CollectionsPage() {
-  const collections = useQuery(api.collections.list),
-    memberships = useQuery(api.collections.listSchemaCollections, { limit: 1000 }),
-    datasets = useQuery(api.schemas.listSummaries, { limit: 1000 }),
-    groups = useQuery(api.groups.list, { limit: 500 }),
-    deleteCollection = useMutation(api.collections.remove),
+  const collections = useQuery(api.cms.collections.list),
+    memberships = useQuery(api.cms.collections.listSchemaCollections, { limit: 1000 }),
+    datasets = useQuery(api.cms.schemas.listSummaries, { limit: 1000 }),
+    groups = useQuery(api.cms.groups.list, { limit: 500 }),
+    deleteCollection = useMutation(api.cms.collections.remove),
     [formOpen, setFormOpen] = useState(false),
     [editing, setEditing] = useState<Collection | undefined>(),
     [pendingDelete, setPendingDelete] = useState<Collection | undefined>(),

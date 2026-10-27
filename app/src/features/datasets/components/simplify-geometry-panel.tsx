@@ -117,8 +117,8 @@ export function SimplifyGeometryPanel({
 }) {
   const [importId, setImportId] = useState<string | undefined>(undefined),
     [isSubmitting, setIsSubmitting] = useState(false),
-    startSimplification = useMutation(api.imports.startSimplification),
-    status = useQuery(api.imports.getImportStatus, importId ? { importId } : "skip"),
+    startSimplification = useMutation(api.cms.imports.startSimplification),
+    status = useQuery(api.cms.imports.getImportStatus, importId ? { importId } : "skip"),
     // One completion notification per run started by this panel.
     notifiedCompleteRef = useRef(false),
     handleSubmit = async () => {

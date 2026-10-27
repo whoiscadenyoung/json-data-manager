@@ -130,7 +130,7 @@ export const Route = createFileRoute("/datasets/$schemaId/")({
   validateSearch: entryPanelSearchSchema,
 });
 
-type Schema = NonNullable<FunctionReturnType<typeof api.schemas.get>>;
+type Schema = NonNullable<FunctionReturnType<typeof api.cms.schemas.get>>;
 // Row shapes come from the row-resolution seam (`lib/dataset-rows.ts`): the
 // page items of `geometries.list` and `entries.listPage` respectively.
 type Geometry = DatasetGeometryRow;
@@ -386,17 +386,17 @@ function SchemaDetailBody() {
     // cold start; the live WebSocket subscriptions update the same entries.
     // `isError` is read below: a stage-8 denial errors this query and must
     // land on the not-found card, not the spinner.
-    schemaQuery = useQuery({ ...convexQuery(api.schemas.get, { schemaId }) }),
+    schemaQuery = useQuery({ ...convexQuery(api.cms.schemas.get, { schemaId }) }),
     schema = schemaQuery.data,
     // The signed-in caller's profile — the creator gate for the
     // published-visibility control (stage 8, decision D2). null signed out
     // (the root document's AuthGate redirects that case before this page
     // mounts — issue #135); never throws.
     me = useConvexQuery(api.users.me),
-    setVisibility = useMutation(api.schemas.setVisibility),
+    setVisibility = useMutation(api.cms.schemas.setVisibility),
     // The edit-policy control's mutation (issue #124) — hoisted beside
     // setVisibility so every hook stays above the page's early returns.
-    setEditPolicy = useMutation(api.schemas.setEditPolicy),
+    setEditPolicy = useMutation(api.cms.schemas.setEditPolicy),
     // Entries stream in through the row-resolution seam as server-side pages
     // (issue #54) — one `entries.listPage` query per cursor instead of one
     // unbounded collect of every row, so a 20k-row import can't hit the
@@ -424,7 +424,7 @@ function SchemaDetailBody() {
     // a dangling groupId whose group was deleted).
     group = useQuery({
       ...convexQuery(
-        api.groups.get,
+        api.cms.groups.get,
         schema !== null && schema !== undefined && schema.groupId !== undefined
           ? { groupId: schema.groupId }
           : "skip",
@@ -489,13 +489,13 @@ function SchemaDetailBody() {
     // Sync state of the bound dataset — last-synced time, staleness, and the
     // History tab all read from the binding (undefined while loading, null
     // for ordinary datasets).
-    binding = useQuery({ ...convexQuery(api.bindings.getBySchema, { schemaId }) }).data,
+    binding = useQuery({ ...convexQuery(api.sources.bindings.getBySchema, { schemaId }) }).data,
     activeView = view === "history" && !isBoundToSource ? "overview" : view,
     // The retained original import file — menu action hidden until the
     // dataset actually has one.
     sourceFileUrl = useQuery({
       ...convexQuery(
-        api.schemas.getSourceFileUrl,
+        api.cms.schemas.getSourceFileUrl,
         schema !== undefined && schema !== null && schema.hasSourceFile ? { schemaId } : "skip",
       ),
     }).data,
@@ -548,7 +548,7 @@ function SchemaDetailBody() {
     // business; a mid-edit autosave must never back the export toggle).
     convex = useConvex(),
     savedTransforms = useQuery({
-      ...convexQuery(api.derivedDatasets.listBySource, { sourceDatasetId: schemaId }),
+      ...convexQuery(api.versions.derivedDatasets.listBySource, { sourceDatasetId: schemaId }),
     }).data,
     readyTransforms =
       savedTransforms === undefined

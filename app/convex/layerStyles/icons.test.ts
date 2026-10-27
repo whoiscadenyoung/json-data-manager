@@ -150,10 +150,10 @@ describe("marker styles", () => {
   async function setup() {
     const t = initTest(),
       owner = t.withIdentity({ subject: "owner" }),
-      datasetId = await owner.mutation(api.schemas.create, {
+      datasetId = await owner.mutation(api.cms.schemas.create, {
         schema: { properties: { kind: { type: "string" } }, title: "Clinics", type: "object" },
       }),
-      mapId = await owner.mutation(api.maps.create, { name: "Clinics map" });
+      mapId = await owner.mutation(api.cms.maps.create, { name: "Clinics map" });
     return { datasetId, mapId, owner };
   }
 

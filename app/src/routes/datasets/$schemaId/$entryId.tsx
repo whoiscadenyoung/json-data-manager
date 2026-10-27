@@ -42,7 +42,7 @@ export const Route = createFileRoute("/datasets/$schemaId/$entryId")({
   component: EntryDetailPage,
 });
 
-type ReferencingEntry = FunctionReturnType<typeof api.entries.listReferencingEntries>[number];
+type ReferencingEntry = FunctionReturnType<typeof api.cms.entries.listReferencingEntries>[number];
 // The entry's own row and geometry row resolve through the seam's point reads.
 type GeometryRowDoc = DatasetGeometryRow;
 
@@ -319,9 +319,9 @@ function EntryDetailBody() {
     // reads, not row resolution.
     entry = useDatasetEntryRow(entryId),
     geometryRow = useDatasetEntryGeometryRow(entryId),
-    schema = useQuery(api.schemas.get, { schemaId }),
-    allSchemas = useQuery(api.schemas.listSummaries, { limit: 1000 }),
-    referencingEntries = useQuery(api.entries.listReferencingEntries, { entryId }),
+    schema = useQuery(api.cms.schemas.get, { schemaId }),
+    allSchemas = useQuery(api.cms.schemas.listSummaries, { limit: 1000 }),
+    referencingEntries = useQuery(api.cms.entries.listReferencingEntries, { entryId }),
     // Resolves the row's payload — inline `geometryJson` synchronously, a
     // storage-backed `geometryUrl` via fetch (see the hook's doc).
     resolvedGeometries = useResolvedGeometries(geometryRow ? [geometryRow] : []),
@@ -332,7 +332,7 @@ function EntryDetailBody() {
     referenceFields = schema ? getReferenceFields(schema.schema) : [],
     targetSchemaIds = [...new Set(referenceFields.map((f) => f.meta.datasetId))],
     referenceCandidates = useQuery(
-      api.entries.listEntriesForSchemas,
+      api.cms.entries.listEntriesForSchemas,
       targetSchemaIds.length > 0 ? { limit: 200, schemaIds: targetSchemaIds } : "skip",
     ),
     labelsByField = buildLabelsByField(referenceFields, referenceCandidates ?? []),

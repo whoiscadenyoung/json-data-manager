@@ -30,8 +30,8 @@ export function MapFormPanel({
   onOpenChange: (open: boolean) => void;
 }) {
   const isEditing = map !== undefined,
-    createMap = useMutation(api.maps.create),
-    updateMap = useMutation(api.maps.update),
+    createMap = useMutation(api.cms.maps.create),
+    updateMap = useMutation(api.cms.maps.update),
     [name, setName] = useState(isEditing ? map.name : ""),
     [description, setDescription] = useState(isEditing ? (map.description ?? "") : ""),
     [isSubmitting, setIsSubmitting] = useState(false),

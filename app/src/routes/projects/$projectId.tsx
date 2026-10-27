@@ -53,7 +53,7 @@ import { api } from "../../../convex/_generated/api";
  * 7b (#103) adds the stage's own seam: the one-press BUNDLE PUBLISH —
  * collection + maps + referenced datasets through the 5b machinery — with
  * the press's progress and the promoted collection link from
- * `api.bundles.latestForProject`, plus "fork as transform" in the add
+ * `api.publishing.bundles.latestForProject`, plus "fork as transform" in the add
  * dialog (a saved identity spec over the published source — reuse with
  * transforms, no copy).
  *
@@ -65,7 +65,7 @@ export const Route = createFileRoute("/projects/$projectId")({
   component: ProjectWorkspacePage,
 });
 
-type Workspace = FunctionReturnType<typeof api.projects.get>;
+type Workspace = FunctionReturnType<typeof api.publishing.projects.get>;
 type WorkspaceData = NonNullable<Workspace>;
 type Artifact = WorkspaceData["artifacts"][number];
 
@@ -142,7 +142,7 @@ function RemoveButton({
   artifactId: string;
   artifactKind: "dataset" | "derived" | "map";
 }) {
-  const remove = useMutation(api.projects.removeArtifact);
+  const remove = useMutation(api.publishing.projects.removeArtifact);
   return (
     <Button
       variant="ghost"
@@ -318,10 +318,10 @@ function buildCandidates(
   ownerAuthId: string,
   existingIds: Set<string>,
   lists: {
-    datasets?: FunctionReturnType<typeof api.schemas.listSummaries>;
-    drafts?: FunctionReturnType<typeof api.schemas.listDraftSummaries>;
-    derived?: FunctionReturnType<typeof api.derivedDatasets.summaries>;
-    maps?: FunctionReturnType<typeof api.maps.list>;
+    datasets?: FunctionReturnType<typeof api.cms.schemas.listSummaries>;
+    drafts?: FunctionReturnType<typeof api.cms.schemas.listDraftSummaries>;
+    derived?: FunctionReturnType<typeof api.versions.derivedDatasets.summaries>;
+    maps?: FunctionReturnType<typeof api.cms.maps.list>;
   },
 ): { id: string; label: string; hint?: string }[] {
   const candidates: { id: string; label: string; hint?: string }[] = [];
@@ -363,20 +363,23 @@ function AddReferenceDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const add = useMutation(api.projects.addArtifact),
-    fork = useMutation(api.projects.forkAsSpec),
+  const add = useMutation(api.publishing.projects.addArtifact),
+    fork = useMutation(api.publishing.projects.forkAsSpec),
     [kind, setKind] = useState<"dataset" | "derived" | "map">("dataset"),
     [pendingId, setPendingId] = useState<string | undefined>(),
     datasets = useQuery({
-      ...convexQuery(api.schemas.listSummaries, { limit: 1000 }),
+      ...convexQuery(api.cms.schemas.listSummaries, { limit: 1000 }),
       enabled: open,
     }).data,
     drafts = useQuery({
-      ...convexQuery(api.schemas.listDraftSummaries, { limit: 1000 }),
+      ...convexQuery(api.cms.schemas.listDraftSummaries, { limit: 1000 }),
       enabled: open,
     }).data,
-    derived = useQuery({ ...convexQuery(api.derivedDatasets.summaries, {}), enabled: open }).data,
-    maps = useQuery({ ...convexQuery(api.maps.list, { limit: 500 }), enabled: open }).data,
+    derived = useQuery({
+      ...convexQuery(api.versions.derivedDatasets.summaries, {}),
+      enabled: open,
+    }).data,
+    maps = useQuery({ ...convexQuery(api.cms.maps.list, { limit: 500 }), enabled: open }).data,
     available = buildCandidates(kind, ownerAuthId, existingIds, {
       datasets,
       drafts,
@@ -505,7 +508,7 @@ function AddReferenceDialog({
 /** The stale-run threshold, the syncRuns/publishAttempts value: a press whose checkpoint hasn't moved for this long was abandoned by its browser, and pressing again RESUMES it (start joins running runs). */
 const STALE_PRESS_MS = 2 * 60 * 1000;
 
-type LatestBundle = NonNullable<FunctionReturnType<typeof api.bundles.latestForProject>>;
+type LatestBundle = NonNullable<FunctionReturnType<typeof api.publishing.bundles.latestForProject>>;
 
 /** True when the newest run says "running" but its checkpoint has been idle past the stale window — a killed browser's press, safe to re-press into (start joins it). */
 function pressLooksStale(bundle: LatestBundle, now: number): boolean {
@@ -611,10 +614,12 @@ function ProjectWorkspacePage() {
     // The auth gate renders BEFORE the query state: anonymous callers' query
     // throws, and without this branch that shows as an infinite spinner.
     { isAuthenticated, isLoading: authLoading } = useConvexAuth(),
-    workspace = useQuery({ ...convexQuery(api.projects.get, { projectId }) }).data,
+    workspace = useQuery({ ...convexQuery(api.publishing.projects.get, { projectId }) }).data,
     // This project's newest press (7b): drives the publish button's state
     // and the status line. undefined until it loads; null before any press.
-    latestBundle = useQuery({ ...convexQuery(api.bundles.latestForProject, { projectId }) }).data,
+    latestBundle = useQuery({
+      ...convexQuery(api.publishing.bundles.latestForProject, { projectId }),
+    }).data,
     [addOpen, setAddOpen] = useState(false),
     { press, pressing } = usePressBundle(projectId);
 

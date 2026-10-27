@@ -16,9 +16,9 @@ import { api } from "#convex/_generated/api";
 
 import { DiffOverlayMap, type DiffPoint, type DiffPointStatus } from "./diff-overlay-map";
 
-type Binding = NonNullable<FunctionReturnType<typeof api.bindings.getBySchema>>;
-type Activity = FunctionReturnType<typeof api.bindings.history>[number];
-type Commit = FunctionReturnType<typeof api.sync.listCommits>[number];
+type Binding = NonNullable<FunctionReturnType<typeof api.sources.bindings.getBySchema>>;
+type Activity = FunctionReturnType<typeof api.sources.bindings.history>[number];
+type Commit = FunctionReturnType<typeof api.sources.sync.listCommits>[number];
 
 const OP_LABELS = {
   add: "Added",
@@ -41,9 +41,9 @@ const COMMIT_OP_LABELS = {
  */
 // oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 export function DatasetHistoryPanel({ binding }: { binding: Binding }) {
-  const commits = useQuery(api.sync.listCommits, { bindingId: binding._id }),
-    features = useQuery(api.sync.commitFeatureMap, { bindingId: binding._id }),
-    activity = useQuery(api.bindings.history, { bindingId: binding._id }),
+  const commits = useQuery(api.sources.sync.listCommits, { bindingId: binding._id }),
+    features = useQuery(api.sources.sync.commitFeatureMap, { bindingId: binding._id }),
+    activity = useQuery(api.sources.bindings.history, { bindingId: binding._id }),
     [selectedCommitId, setSelectedCommitId] = useState<string | undefined>();
 
   // Commit ops name entries by foreign key; the feature map resolves each

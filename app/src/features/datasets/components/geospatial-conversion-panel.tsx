@@ -219,8 +219,8 @@ export function GeospatialConversionPanel({
     [lonField, setLonField] = useState(guess === undefined ? NONE : guess.lonField),
     [importId, setImportId] = useState<string | undefined>(undefined),
     [isSubmitting, setIsSubmitting] = useState(false),
-    startGeospatialConversion = useMutation(api.imports.startGeospatialConversion),
-    status = useQuery(api.imports.getImportStatus, importId ? { importId } : "skip"),
+    startGeospatialConversion = useMutation(api.cms.imports.startGeospatialConversion),
+    status = useQuery(api.cms.imports.getImportStatus, importId ? { importId } : "skip"),
     // One completion notification per conversion started by this panel —
     // reset when the form is reused for a new conversion.
     notifiedCompleteRef = useRef(false),

@@ -59,7 +59,7 @@ import { TransformPreview } from "./transform-preview";
 
 const AUTOSAVE_DELAY_MS = 800;
 
-type DatasetSummary = FunctionReturnType<typeof api.schemas.listSummaries>[number];
+type DatasetSummary = FunctionReturnType<typeof api.cms.schemas.listSummaries>[number];
 
 interface InitialDraft {
   description: string;
@@ -155,7 +155,7 @@ function LookupStep({
     isComponentDataset = chosen !== undefined,
     lookupSchema = useQuery({
       ...convexQuery(
-        api.schemas.get,
+        api.cms.schemas.get,
         isComponentDataset ? { schemaId: operation.lookupDatasetId } : "skip",
       ),
     }).data,
@@ -574,9 +574,9 @@ function TransformEditorForm({
   onClose: () => void;
   schemaId: string;
 }) {
-  const save = useMutation(api.derivedDatasets.save),
-    remove = useMutation(api.derivedDatasets.remove),
-    candidates = useQuery({ ...convexQuery(api.schemas.listSummaries, { limit: 500 }) }).data,
+  const save = useMutation(api.versions.derivedDatasets.save),
+    remove = useMutation(api.versions.derivedDatasets.remove),
+    candidates = useQuery({ ...convexQuery(api.cms.schemas.listSummaries, { limit: 500 }) }).data,
     componentIds = new Set((candidates ?? []).map((entry) => entry._id)),
     [title, setTitle] = useState(initial.title),
     [description, setDescription] = useState(initial.description),
@@ -977,7 +977,7 @@ export function TransformEditor({
   schemaId: string;
 }) {
   const doc = useQuery({
-    ...convexQuery(api.derivedDatasets.get, docId === undefined ? "skip" : { id: docId }),
+    ...convexQuery(api.versions.derivedDatasets.get, docId === undefined ? "skip" : { id: docId }),
   }).data;
 
   if (docId !== undefined && doc === undefined) {

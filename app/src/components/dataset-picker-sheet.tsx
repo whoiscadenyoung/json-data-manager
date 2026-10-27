@@ -14,7 +14,7 @@ import { useState } from "react";
 
 import { api } from "#convex/_generated/api";
 
-type DatasetSummary = FunctionReturnType<typeof api.schemas.listSummaries>[number];
+type DatasetSummary = FunctionReturnType<typeof api.cms.schemas.listSummaries>[number];
 
 /** Side panel listing `candidates` (datasets not already assigned) so the user can pick one to add. */
 export function DatasetPickerSheet({

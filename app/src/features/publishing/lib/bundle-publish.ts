@@ -8,7 +8,7 @@
  * there is no server-side re-run path to reuse).
  *
  * The press is a LOOP over the host-side run's member rows
- * (`api.bundles.start` → per-member `publishDataset` → `recordMember` →
+ * (`api.publishing.bundles.start` → per-member `publishDataset` → `recordMember` →
  * collection leg → map leg → `completeRun`). Every leg is idempotent and
  * every outcome is checkpointed on the run, so a killed browser re-presses
  * into the SAME run (`start` joins it) and resumes only the members that
@@ -68,8 +68,8 @@ export async function publishProjectBundle(options: {
   projectId: string;
 }): Promise<BundlePressOutcome> {
   const convex = options.convex === undefined ? sharedClient() : options.convex,
-    started = await convex.mutation(api.bundles.start, { projectId: options.projectId }),
-    run = await convex.query(api.bundles.run, { runId: started.runId });
+    started = await convex.mutation(api.publishing.bundles.start, { projectId: options.projectId }),
+    run = await convex.query(api.publishing.bundles.run, { runId: started.runId });
   if (run === null) {
     throw new Error("The bundle run disappeared before the press could drive it.");
   }
@@ -78,7 +78,7 @@ export async function publishProjectBundle(options: {
   for (const member of publishableMembers(run.members)) {
     try {
       // oxlint-disable-next-line no-await-in-loop -- members publish in press order; each checkpoint depends on the previous one landing.
-      await convex.mutation(api.bundles.recordMember, {
+      await convex.mutation(api.publishing.bundles.recordMember, {
         datasetKey: member.datasetKey,
         runId: started.runId,
         status: "publishing",
@@ -91,7 +91,7 @@ export async function publishProjectBundle(options: {
         );
       }
       // oxlint-disable-next-line no-await-in-loop -- the outcome record is the member's checkpoint; ordering keeps the run honest.
-      await convex.mutation(api.bundles.recordMember, {
+      await convex.mutation(api.publishing.bundles.recordMember, {
         attemptId: outcome.attemptId,
         datasetKey: member.datasetKey,
         publishedSchemaId: outcome.schemaId,
@@ -102,7 +102,7 @@ export async function publishProjectBundle(options: {
       const message = errorMessage(error, "The publish failed for an unknown reason.");
       failedKeys.push(member.datasetKey);
       // oxlint-disable-next-line no-await-in-loop -- see above.
-      await convex.mutation(api.bundles.recordMember, {
+      await convex.mutation(api.publishing.bundles.recordMember, {
         datasetKey: member.datasetKey,
         error: message,
         runId: started.runId,
@@ -111,9 +111,11 @@ export async function publishProjectBundle(options: {
     }
   }
 
-  await convex.mutation(api.bundles.promoteCollection, { runId: started.runId });
-  await convex.mutation(api.bundles.linkMapLayers, { runId: started.runId });
-  const closed = await convex.mutation(api.bundles.completeRun, { runId: started.runId });
+  await convex.mutation(api.publishing.bundles.promoteCollection, { runId: started.runId });
+  await convex.mutation(api.publishing.bundles.linkMapLayers, { runId: started.runId });
+  const closed = await convex.mutation(api.publishing.bundles.completeRun, {
+    runId: started.runId,
+  });
   return {
     collectionId: closed.collectionId,
     failedKeys,

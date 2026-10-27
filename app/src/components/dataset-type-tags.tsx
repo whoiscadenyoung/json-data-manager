@@ -15,11 +15,11 @@ import {
 
 import { api } from "#convex/_generated/api";
 
-export type DatasetSummary = FunctionReturnType<typeof api.schemas.listSummaries>[number];
+export type DatasetSummary = FunctionReturnType<typeof api.cms.schemas.listSummaries>[number];
 
 /** One per-source drift badge row, as `consumption.sourceBadges` returns it. */
 export type SourceBadge = FunctionReturnType<
-  typeof api.consumption.sourceBadges
+  typeof api.versions.consumption.sourceBadges
 >["bySchemaId"][string][number];
 
 /**

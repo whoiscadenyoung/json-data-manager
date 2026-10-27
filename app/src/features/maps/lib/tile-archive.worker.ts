@@ -166,7 +166,7 @@ async function uploadArchive(
   schemaId: string,
   archive: Uint8Array,
 ): Promise<{ storageId: string; uploadId: string }> {
-  const { storageUrl, uploadId } = await convex.mutation(api.imports.generateUploadUrl, {
+  const { storageUrl, uploadId } = await convex.mutation(api.cms.imports.generateUploadUrl, {
     scope: schemaId,
   });
   // The archive is one fresh buffer from `assembleArchive`, so an
@@ -207,7 +207,7 @@ async function buildAndInstall(
   const { storageId, uploadId } = await uploadArchive(convex, schemaId, archive);
 
   postPhase(schemaId, "installing");
-  const outcome = await convex.mutation(api.tile_archives.install, {
+  const outcome = await convex.mutation(api.cms.tile_archives.install, {
     bytes: archive.byteLength,
     expectedVersion,
     maxZoom: DEFAULT_MAX_ZOOM,
@@ -234,7 +234,7 @@ async function runBuild(schemaId: string): Promise<void> {
   try {
     const convex = convexClient();
     postPhase(schemaId, "fetching");
-    const schema = await convex.query(api.schemas.get, { schemaId });
+    const schema = await convex.query(api.cms.schemas.get, { schemaId });
     if (schema === null || schema.kind !== "geospatial" || schema.geometryType === undefined) {
       post({ reason: "not-geospatial", schemaId, type: "skipped", version: 0 });
       return;

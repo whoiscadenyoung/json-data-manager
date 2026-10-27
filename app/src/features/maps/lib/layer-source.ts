@@ -24,7 +24,7 @@
  * derived render ids explicitly and files them under `derivedRowIds` (the
  * pre-3a behavior silently dropped any id without a decision); the tile
  * REBUILD side is structurally out too — the rebuild manager subscribes
- * `api.schemas.listSummaries`, which derived ids never appear in.
+ * `api.cms.schemas.listSummaries`, which derived ids never appear in.
  */
 import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
@@ -33,7 +33,7 @@ import { api } from "#convex/_generated/api";
 
 import type { DatasetSummary } from "./map-layers";
 
-/** One schema doc's tile-relevant fields, as `api.schemas.listSummaries`/`api.schemas.get` return them. */
+/** One schema doc's tile-relevant fields, as `api.cms.schemas.listSummaries`/`api.cms.schemas.get` return them. */
 export interface TileSourceSchemaRow {
   _id: string;
   geometryType?: string;
@@ -43,7 +43,7 @@ export interface TileSourceSchemaRow {
 }
 
 /** A dataset's tile-archive metadata, or `null` with no current archive. */
-export type TileArchiveMeta = FunctionReturnType<typeof api.tile_archives.metas>[number];
+export type TileArchiveMeta = FunctionReturnType<typeof api.cms.tile_archives.metas>[number];
 
 /** How one dataset's layers are served right now. */
 export type TileSourceDecision =
@@ -92,7 +92,7 @@ export function selectLayerSource(
 
 /**
  * Decisions for a list of dataset docs, keyed by schema id. Subscribes to ONE
- * `api.tile_archives.metas` query covering every geospatial dataset — the
+ * `api.cms.tile_archives.metas` query covering every geospatial dataset — the
  * hook-rules-safe fan-out (one reactive subscription for N datasets, instead
  * of an illegal per-id `useQuery` loop). `undefined`/empty lists subscribe to
  * nothing and return an empty map.
@@ -113,7 +113,7 @@ export function useTileArchiveSources(
       .filter((schema) => schema.kind === "geospatial" && schema.geometryType !== undefined)
       .map((schema) => schema._id),
     metas = useQuery(
-      api.tile_archives.metas,
+      api.cms.tile_archives.metas,
       geospatialIds.length > 0 ? { schemaIds: geospatialIds } : "skip",
     ),
     metaBySchemaId = new globalThis.Map<string, TileArchiveMeta>();

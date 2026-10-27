@@ -16,8 +16,8 @@ import { MoreHorizontal, Trash2, Ungroup } from "lucide-react";
 import { DatasetTypeTags } from "#/components/dataset-type-tags";
 import { api } from "#convex/_generated/api";
 
-export type GroupDoc = FunctionReturnType<typeof api.groups.list>[number];
-export type Dataset = FunctionReturnType<typeof api.schemas.listSummaries>[number];
+export type GroupDoc = FunctionReturnType<typeof api.cms.groups.list>[number];
+export type Dataset = FunctionReturnType<typeof api.cms.schemas.listSummaries>[number];
 
 /** Row/feature count shown next to a dataset's tags, or undefined when unknown. Geospatial datasets carry an exactly-maintained feature count on the schema doc itself; regular datasets count rows, which only some host pages have fetched. */
 function datasetCountLabel(

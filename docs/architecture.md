@@ -138,7 +138,7 @@ are independent of these paths.
 
 ### Host tables (`app/convex/schema.ts`)
 
-Three concerns, currently one schema (segmentation is tracked in #82):
+`schema.ts` spreads each domain's `tables.ts` (`cms/`, `sources/`, `versions/`, `publishing/`, plus the optional `appBuilder/`, `layerStyles/` and `demoSources/` modules); only `users` is declared in `schema.ts` itself. Grouped by concern:
 
 **Identity and data platform**
 
@@ -242,29 +242,39 @@ appear in either schema.
 
 ## Backend layout (`app/convex/`)
 
-- **API shims** — `schemas.ts`, `entries.ts`, `collections.ts`, `groups.ts`,
+Host functions are grouped by domain folder (ADR 0014, restructure step B3);
+function paths follow the folder (`api.cms.entries.listPage`,
+`internal.sources.sync.reconcileAll`). Each domain owns its tables in a
+`tables.ts` that `schema.ts` spreads in with one line.
+
+- **`cms/` — API shims** — `schemas.ts`, `entries.ts`, `collections.ts`, `groups.ts`,
   `maps.ts`, `geometries.ts`, `imports.ts` are thin `exposeApi` re-exports of
-  component functions under short names (`api.entries.listPage`, …). The
+  component functions under short names (`api.cms.entries.listPage`, …). The
   module/function names are load-bearing: client call sites, the TanStack
-  Query persist allowlist (`app/src/integrations/tanstack-query/light-namespaces.ts`),
-  and saved query hashes all key on them. Every shim passes the host `auth`.
+  Query persist allowlist (`app/src/integrations/tanstack-query/light-namespaces.ts`,
+  `cms/*` namespaces) and saved query hashes all key on them, so a move bumps
+  the persist key (`light-query-cache-v2` after B3). Every shim passes the host `auth`.
   `schemas.ts` also adds `listDraftSummaries` (opt-in creator-scoped drafts
   read), `setVisibility`, `setEditPolicy` (the creator's lock control, ADR
-  0010), and `maxTileCacheVersion`.
-- **Identity** — `auth.ts`, `auth.config.ts`, `http.ts`, `users.ts` (above).
-- **Platform layer** — `derivedDatasets.ts`/`derivedSpec.ts` (registry),
-  `projects.ts`, `publish.ts`, `bundles.ts`, `consumption.ts`,
-  `versioning.ts` (sections below).
-- **Bound-datasets layer** — `sources.ts` (the `BoundSource` descriptor
+  0010), and `maxTileCacheVersion`. `uploads.ts` (abandoned-upload sweep) and
+  `tile_archives.ts` (below) live here too; `tables.ts` holds `datasetActivity`.
+- **Identity (top level)** — `auth.ts`, `auth.config.ts`, `http.ts`, `users.ts` (above), plus
+  `schema.ts`, `crons.ts` and `convex.config.ts`.
+- **`versions/` and `publishing/` — platform layer** — `versions/`:
+  `derivedDatasets.ts`/`derivedSpec.ts` (registry), `consumption.ts` (with its
+  pure chain-selection cores in `chain.ts`), `versioning.ts`, `tags.ts`;
+  `publishing/`: `projects.ts`, `publish.ts`, `bundles.ts` (sections below).
+- **`sources/` — bound-datasets layer** — `registry.ts` (the `BoundSource` descriptor
   interface + registry: adding a source = one entry; snapshot-taking
   sources implement `listSnapshots`), `sourcePaging.ts` (the #127 page-size
   contract readers share), `sync.ts` (durable
   engine: collect → chunked apply, keyed and idempotent via `bindingEntries`;
   commit-tail is the primary path, full pass falls back or reconciles),
-  `tags.ts` (snapshot ingest: freeze foreign snapshots into read-only
-  lineage datasets via `versioning.ts`, version compare, keep-N/pin
-  retention), `bindings.ts` (binding status/unbind queries for the UI).
-  Weekly reconcile cron in `crons.ts`.
+  `remoteSources.ts`/`remoteClient.ts` (HTTP remote sources),
+  `bindings.ts` (binding status/unbind queries for the UI). Snapshot ingest
+  (`versions/tags.ts`) freezes foreign snapshots into read-only lineage
+  datasets via `versions/versioning.ts`, with version compare and keep-N/pin
+  retention. Weekly reconcile cron in `crons.ts`.
 - **Demo foreign app** — `demoSources/` (removable; see
   [bound-datasets-design §9](./bound-datasets-design.md#removing-the-demo-sources)):
   `tables.ts`, `sources.ts` (the two co-deployed `LocalSource` adapters),
@@ -275,7 +285,7 @@ appear in either schema.
   export: `install` is a host wrapper around the component's
   `setMapTileArchive` so only the rebuild worker (standalone ConvexClient)
   can install archives; the expectedVersion guard makes an edit-raced
-  rebuild self-discard. `schemas.maxTileCacheVersion` is the one-number cache
+  rebuild self-discard. `cms.schemas.maxTileCacheVersion` is the one-number cache
   buster for persisted client state.
 
 ## Projects and the draft layer

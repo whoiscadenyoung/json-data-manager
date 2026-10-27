@@ -58,11 +58,11 @@ import { api } from "#convex/_generated/api";
 
 import { fieldCount } from "../lib/json-schema";
 
-type CollectionDoc = FunctionReturnType<typeof api.collections.list>[number];
-type GroupDoc = FunctionReturnType<typeof api.groups.list>[number];
-type DatasetDoc = FunctionReturnType<typeof api.schemas.list>[number];
-type BindingDoc = NonNullable<FunctionReturnType<typeof api.bindings.getBySchema>>;
-type VersionDoc = FunctionReturnType<typeof api.tags.listVersions>[number];
+type CollectionDoc = FunctionReturnType<typeof api.cms.collections.list>[number];
+type GroupDoc = FunctionReturnType<typeof api.cms.groups.list>[number];
+type DatasetDoc = FunctionReturnType<typeof api.cms.schemas.list>[number];
+type BindingDoc = NonNullable<FunctionReturnType<typeof api.sources.bindings.getBySchema>>;
+type VersionDoc = FunctionReturnType<typeof api.versions.tags.listVersions>[number];
 
 const NO_PARENT = "none";
 
@@ -186,7 +186,7 @@ function EditingRow({ editPolicy }: { editPolicy?: "open" | "locked" }) {
 function DetailsCard({ binding, schema }: { binding?: BindingDoc; schema: DatasetDoc }) {
   const fields = fieldCount(schema.schema),
     navigate = useNavigate(),
-    unbind = useMutation(api.bindings.unbind),
+    unbind = useMutation(api.sources.bindings.unbind),
     [unbindTarget, setUnbindTarget] = useState<string | undefined>(),
     [isUnbinding, setIsUnbinding] = useState(false),
     handleUnbind = async () => {
@@ -515,12 +515,12 @@ function SectionActions({
 
 /** Many-to-many collection memberships for this dataset, managed inline. On a locked dataset (issue #124) the membership mutations stay visible but disabled with the reason — the collection rows themselves remain editable by anyone. */
 function CollectionsSection({ schemaId, lockedHint }: { schemaId: string; lockedHint?: string }) {
-  const allCollections = useQuery(api.collections.list),
-    memberCollections = useQuery(api.collections.listCollectionsBySchema, { schemaId }),
-    addSchemaToCollection = useMutation(api.collections.addSchemaToCollection),
-    removeSchemaFromCollection = useMutation(api.collections.removeSchemaFromCollection),
-    createCollection = useMutation(api.collections.create),
-    updateCollection = useMutation(api.collections.update),
+  const allCollections = useQuery(api.cms.collections.list),
+    memberCollections = useQuery(api.cms.collections.listCollectionsBySchema, { schemaId }),
+    addSchemaToCollection = useMutation(api.cms.collections.addSchemaToCollection),
+    removeSchemaFromCollection = useMutation(api.cms.collections.removeSchemaFromCollection),
+    createCollection = useMutation(api.cms.collections.create),
+    updateCollection = useMutation(api.cms.collections.update),
     [pickOpen, setPickOpen] = useState(false),
     [createOpen, setCreateOpen] = useState(false),
     [editingId, setEditingId] = useState<string | undefined>(),
@@ -692,11 +692,11 @@ function GroupSection({
   groupId?: string;
   lockedHint?: string;
 }) {
-  const allGroups = useQuery(api.groups.list, { limit: 500 }),
-    allCollections = useQuery(api.collections.list),
-    setSchemaGroup = useMutation(api.collections.setSchemaGroup),
-    createGroup = useMutation(api.groups.create),
-    updateGroup = useMutation(api.groups.update),
+  const allGroups = useQuery(api.cms.groups.list, { limit: 500 }),
+    allCollections = useQuery(api.cms.collections.list),
+    setSchemaGroup = useMutation(api.cms.collections.setSchemaGroup),
+    createGroup = useMutation(api.cms.groups.create),
+    updateGroup = useMutation(api.cms.groups.update),
     [pickOpen, setPickOpen] = useState(false),
     [createOpen, setCreateOpen] = useState(false),
     [editing, setEditing] = useState(false),
@@ -897,9 +897,9 @@ function GroupSection({
  */
 // oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 function VersionsCard({ sourceSchemaId }: { sourceSchemaId: string }) {
-  const versions = useQuery(api.tags.listVersions, { sourceSchemaId }),
-    retention = useQuery(api.tags.retentionSettings, { sourceSchemaId }),
-    setKeepVersions = useMutation(api.tags.setKeepVersions),
+  const versions = useQuery(api.versions.tags.listVersions, { sourceSchemaId }),
+    retention = useQuery(api.versions.tags.retentionSettings, { sourceSchemaId }),
+    setKeepVersions = useMutation(api.versions.tags.setKeepVersions),
     [keepInput, setKeepInput] = useState<string>(),
     [compareOpen, setCompareOpen] = useState(false),
     handleKeepSave = async () => {
@@ -999,10 +999,10 @@ function VersionRow({ version }: { version: VersionDoc }) {
   // id — the tag-path retention UI doesn't apply to it (its chain anchor is
   // host-side), so the row skips the retention query.
   const sourceSchemaId = version.lineage === undefined ? undefined : version.lineage.sourceSchemaId;
-  const retire = useMutation(api.tags.retireVersion),
-    setPinned = useMutation(api.tags.setVersionPinned),
+  const retire = useMutation(api.versions.tags.retireVersion),
+    setPinned = useMutation(api.versions.tags.setVersionPinned),
     retention = useQuery(
-      api.tags.retentionSettings,
+      api.versions.tags.retentionSettings,
       sourceSchemaId === undefined ? "skip" : { sourceSchemaId },
     ),
     [retireTarget, setRetireTarget] = useState<string | undefined>(),

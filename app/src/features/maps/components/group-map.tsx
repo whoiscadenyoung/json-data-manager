@@ -24,8 +24,8 @@ import {
 
 // This page's entry docs are the group summary read (`listEntriesForSchemas`);
 // its geometry rows come from the row-resolution seam's fan-out.
-type EntryDoc = FunctionReturnType<typeof api.entries.listEntriesForSchemas>[number];
-type Dataset = FunctionReturnType<typeof api.schemas.listSummaries>[number];
+type EntryDoc = FunctionReturnType<typeof api.cms.entries.listEntriesForSchemas>[number];
+type Dataset = FunctionReturnType<typeof api.cms.schemas.listSummaries>[number];
 type GeometryEntry = DatasetGeometryRow;
 
 import { api } from "#convex/_generated/api";

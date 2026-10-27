@@ -65,7 +65,7 @@ async function fetchSchemasById(
   datasets: Dataset[],
 ): Promise<globalThis.Map<string, unknown>> {
   const schemaDocs = await Promise.all(
-    datasets.map(async (dataset) => convex.query(api.schemas.get, { schemaId: dataset._id })),
+    datasets.map(async (dataset) => convex.query(api.cms.schemas.get, { schemaId: dataset._id })),
   );
   return new globalThis.Map(
     datasets.flatMap((dataset, index) => {
@@ -149,13 +149,13 @@ function GroupDetailPage() {
   const { groupId } = Route.useParams(),
     navigate = useNavigate(),
     convex = useConvex(),
-    group = useQuery(api.groups.get, { groupId }),
+    group = useQuery(api.cms.groups.get, { groupId }),
     parentCollection = useQuery(
-      api.collections.get,
+      api.cms.collections.get,
       group && group.collectionId !== undefined ? { collectionId: group.collectionId } : "skip",
     ),
-    groups = useQuery(api.groups.list, { limit: 500 }),
-    allDatasets = useQuery(api.schemas.listSummaries, { limit: 1000 }),
+    groups = useQuery(api.cms.groups.list, { limit: 500 }),
+    allDatasets = useQuery(api.cms.schemas.listSummaries, { limit: 1000 }),
     datasets = (allDatasets ?? []).filter((dataset) => dataset.groupId === groupId),
     addCandidates = (allDatasets ?? []).filter((dataset) => dataset.groupId !== groupId),
     memberSchemaIds = datasets.map((dataset) => dataset._id),
@@ -176,13 +176,13 @@ function GroupDetailPage() {
     // its row-streams materialize through the 0.2 seam per dataset instead of
     // this one unpaginated collect.
     entries = useQuery(
-      api.entries.listEntriesForSchemas,
+      api.cms.entries.listEntriesForSchemas,
       memberSchemaIds.length > 0 ? { limit: 1000, schemaIds: memberSchemaIds } : "skip",
     ),
     // The saved transforms authored over this group's members (read-time
     // health included) — the summaries projection is stage 3's designated
     // merge point. Only "ready" rows back the export toggle.
-    savedTransforms = useQuery(api.derivedDatasets.summaries),
+    savedTransforms = useQuery(api.versions.derivedDatasets.summaries),
     readyTransforms =
       savedTransforms === undefined
         ? undefined
@@ -207,8 +207,8 @@ function GroupDetailPage() {
           new Map(),
         )
       : undefined,
-    setSchemaGroup = useMutation(api.collections.setSchemaGroup),
-    deleteGroup = useMutation(api.groups.remove),
+    setSchemaGroup = useMutation(api.cms.collections.setSchemaGroup),
+    deleteGroup = useMutation(api.cms.groups.remove),
     [editingGroup, setEditingGroup] = useState(false),
     [addDatasetOpen, setAddDatasetOpen] = useState(false),
     [addToMapOpen, setAddToMapOpen] = useState(false),

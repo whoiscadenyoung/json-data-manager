@@ -18,7 +18,7 @@ import { api } from "#convex/_generated/api";
 import { DiffOverlayMap, type DiffPoint, type DiffPointStatus } from "./diff-overlay-map";
 
 type VersionOption = { label: string; schemaId: string; title: string };
-type VersionDelta = FunctionReturnType<typeof api.tags.getVersionDelta>;
+type VersionDelta = FunctionReturnType<typeof api.versions.tags.getVersionDelta>;
 
 /**
  * The truncation notice (#126): a delta whose sides sat at the server's
@@ -88,7 +88,7 @@ export function VersionCompare({
   // on-demand read. The query stays mounted either way ("skip" keeps it
   // unsubscribed while the prop serves) — hooks can't be conditional.
   const fallbackDelta = useQuery(
-      api.tags.getVersionDelta,
+      api.versions.tags.getVersionDelta,
       deltaProp === undefined || deltaProp === null
         ? aSchemaId !== undefined && bSchemaId !== undefined && aSchemaId !== bSchemaId
           ? { aSchemaId, bSchemaId }
@@ -103,11 +103,11 @@ export function VersionCompare({
     // shipped server read. The queries stay mounted either way ("skip" keeps
     // them unsubscribed while `rows` serves) — hooks can't be conditional.
     aServerEntries = useQuery(
-      api.tags.versionEntries,
+      api.versions.tags.versionEntries,
       rows !== undefined || aSchemaId === undefined ? "skip" : { schemaId: aSchemaId },
     ),
     bServerEntries = useQuery(
-      api.tags.versionEntries,
+      api.versions.tags.versionEntries,
       rows !== undefined || bSchemaId === undefined ? "skip" : { schemaId: bSchemaId },
     ),
     aEntries = rows === undefined ? aServerEntries : rows.get(aSchemaId ?? ""),

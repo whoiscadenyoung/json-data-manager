@@ -3,13 +3,13 @@ import { ConvexError, v } from "convex/values";
 import { internal } from "../_generated/api";
 import { action, internalMutation, internalQuery, query } from "../_generated/server";
 import { auth } from "../auth";
-import { getLocalSource } from "../sources";
+import { getLocalSource } from "../sources/registry";
 import { SOURCE_KEY } from "./sources";
 
 /**
  * The demo foreign app's snapshot side (docs/bound-datasets-design.md §6/
  * §8.3): it serializes its current state to a JSONL file and registers the
- * tag in `restaurantSnapshots`. Core tag ingest (../tags.ts) reads that
+ * tag in `restaurantSnapshots`. Core tag ingest (../versions/tags.ts) reads that
  * registry only through the source's `listSnapshots` adapter.
  */
 
