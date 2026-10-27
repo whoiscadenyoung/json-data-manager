@@ -28,6 +28,7 @@ function dataset(id: string, kind: "geospatial" | "standard", groupId?: string):
     fieldCount: 0,
     groupId,
     kind,
+    mapTileArchiveFormatCurrent: true,
     title: `ds-${id}`,
   };
 }

@@ -133,6 +133,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           };
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
+          mapTileArchiveFormat?: number;
           mapTileArchiveMaxZoom?: number;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
@@ -841,6 +842,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           };
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
+          mapTileArchiveFormat?: number;
           mapTileArchiveMaxZoom?: number;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
@@ -893,6 +895,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           };
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
+          mapTileArchiveFormat?: number;
           mapTileArchiveMaxZoom?: number;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
@@ -952,6 +955,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           };
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
+          mapTileArchiveFormatCurrent: boolean;
           mapTileArchiveMaxZoom?: number;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
@@ -977,6 +981,59 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "Polygon"
             | "MultiPolygon";
           schemaId: string;
+        }>,
+        Name
+      >;
+      listSchemas: FunctionReference<
+        "query",
+        "internal",
+        { limit: number; viewerId: string },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          boundingBox?: Array<number>;
+          createdBy?: string;
+          description?: string;
+          editPolicy?: "open" | "locked";
+          entryCount?: number;
+          featureCount?: number;
+          geometryType?:
+            | "Point"
+            | "MultiPoint"
+            | "LineString"
+            | "MultiLineString"
+            | "Polygon"
+            | "MultiPolygon";
+          groupId?: string;
+          hasSourceFile: boolean;
+          kind?: "standard" | "geospatial";
+          lifecycle?: "draft" | "published";
+          lineage?: {
+            frozenAt: number;
+            recipe?: any;
+            snapshotRef?: string;
+            sourceKey?: string;
+            sourceSchemaId?: string;
+            sourceVersions?: Array<{
+              datasetId: string;
+              frozenAt?: number;
+              ref?: string;
+            }>;
+            versionLabel: string;
+          };
+          mapTileArchiveBuiltVersion?: number;
+          mapTileArchiveBytes?: number;
+          mapTileArchiveFormat?: number;
+          mapTileArchiveMaxZoom?: number;
+          mapTileCacheVersion?: number;
+          publishedVisibility?: "author" | "everyone";
+          schema: any;
+          simplifyGeometry?: boolean;
+          source?: { name: string };
+          sourceFileName?: string;
+          sourceFileSize?: number;
+          title: string;
+          uiSchema?: any;
         }>,
         Name
       >;
@@ -1019,6 +1076,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           };
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
+          mapTileArchiveFormatCurrent: boolean;
           mapTileArchiveMaxZoom?: number;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
@@ -1066,58 +1124,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           };
           mapTileArchiveBuiltVersion?: number;
           mapTileArchiveBytes?: number;
-          mapTileArchiveMaxZoom?: number;
-          mapTileCacheVersion?: number;
-          publishedVisibility?: "author" | "everyone";
-          schema: any;
-          simplifyGeometry?: boolean;
-          source?: { name: string };
-          sourceFileName?: string;
-          sourceFileSize?: number;
-          title: string;
-          uiSchema?: any;
-        }>,
-        Name
-      >;
-      listSchemas: FunctionReference<
-        "query",
-        "internal",
-        { limit: number; viewerId: string },
-        Array<{
-          _creationTime: number;
-          _id: string;
-          boundingBox?: Array<number>;
-          createdBy?: string;
-          description?: string;
-          editPolicy?: "open" | "locked";
-          entryCount?: number;
-          featureCount?: number;
-          geometryType?:
-            | "Point"
-            | "MultiPoint"
-            | "LineString"
-            | "MultiLineString"
-            | "Polygon"
-            | "MultiPolygon";
-          groupId?: string;
-          hasSourceFile: boolean;
-          kind?: "standard" | "geospatial";
-          lifecycle?: "draft" | "published";
-          lineage?: {
-            frozenAt: number;
-            recipe?: any;
-            snapshotRef?: string;
-            sourceKey?: string;
-            sourceSchemaId?: string;
-            sourceVersions?: Array<{
-              datasetId: string;
-              frozenAt?: number;
-              ref?: string;
-            }>;
-            versionLabel: string;
-          };
-          mapTileArchiveBuiltVersion?: number;
-          mapTileArchiveBytes?: number;
+          mapTileArchiveFormat?: number;
           mapTileArchiveMaxZoom?: number;
           mapTileCacheVersion?: number;
           publishedVisibility?: "author" | "everyone";
