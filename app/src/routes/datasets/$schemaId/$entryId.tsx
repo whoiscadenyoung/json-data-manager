@@ -28,14 +28,13 @@ import type { FunctionReturnType } from "convex/server";
 import { ArrowLeft, Calendar, ChevronDown, Code2, FileJson, MapPinned } from "lucide-react";
 import { useState } from "react";
 
+import { buildLabelsByField, isRecord, referencedEntryIds } from "#/features/datasets";
+import { bboxFeature, buildPointFeatureCollection } from "#/features/maps";
 import { QueryErrorBoundary } from "@/components/query-error-boundary";
 import { RouterButton } from "@/components/router-button";
 import type { DatasetGeometryRow } from "@/lib/dataset-rows";
 import { useDatasetEntryGeometryRow, useDatasetEntryRow } from "@/lib/dataset-rows-react";
 import { formatBytes, formatPropertyValue } from "@/lib/format";
-import { buildPointFeatureCollection } from "@/lib/point-geometry";
-import { bboxFeature } from "@/lib/point-geometry";
-import { buildLabelsByField, isRecord, referencedEntryIds } from "@/lib/reference-labels";
 
 import { api } from "../../../../convex/_generated/api";
 

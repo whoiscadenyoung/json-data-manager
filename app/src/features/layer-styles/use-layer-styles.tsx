@@ -3,8 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
 
-import type { LayersMapExtension, LayersMapLayerArgs } from "#/components/layers-map";
-import type { DatasetActionsSlot } from "#/components/map-layer-panel";
+import type { DatasetActionsSlot, LayersMapExtension, LayersMapLayerArgs } from "#/features/maps";
 import type { DatasetEntryRow } from "#/lib/dataset-rows";
 import { useEntryRowsBySchemas } from "#/lib/dataset-rows-react";
 import { errorMessage } from "#/lib/errors";

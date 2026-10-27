@@ -22,7 +22,7 @@ import { MapIcon, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { MapFormPanel } from "#/components/map-form-panel";
+import { MapFormPanel } from "#/features/maps";
 import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 

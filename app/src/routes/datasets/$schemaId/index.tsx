@@ -67,22 +67,39 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 
-import { AddToMapSheet } from "@/components/add-to-map-sheet";
-import { AnalysisPanel } from "@/components/analysis-panel";
-import { DatasetHistoryPanel } from "@/components/dataset-history-panel";
-import { DatasetOverview } from "@/components/dataset-overview";
-import { EntriesMap } from "@/components/entries-map";
-import { EntriesTable } from "@/components/entries-table";
-import { EntryFormPanel } from "@/components/entry-form-panel";
-import { ExportDialog } from "@/components/export-dialog";
-import type { ExportFormat, ExportFormatOption } from "@/components/export-dialog";
-import { GeospatialConversionPanel } from "@/components/geospatial-conversion-panel";
+import { AnalysisPanel } from "#/features/analysis";
+import {
+  applyJoinedFields,
+  buildGeoJsonCollection,
+  buildJsonPayload,
+  DatasetOverview,
+  downloadBlob,
+  downloadText,
+  EntriesTable,
+  EntryFormPanel,
+  entryRows,
+  ExportDialog,
+  exportExcelWorkbook,
+  type ExportFormat,
+  type ExportFormatOption,
+  GeospatialConversionPanel,
+  isLockedForViewer,
+  LOCKED_DATASET_HINT,
+  SchemaVisualizer,
+  SimplifyGeometryPanel,
+  slugify,
+} from "#/features/datasets";
+import {
+  AddToMapSheet,
+  EntriesMap,
+  layerSourceKind,
+  TileBuildStatus,
+  useTileArchiveSource,
+} from "#/features/maps";
+import { TransformBuilder } from "#/features/publishing";
+import { DatasetHistoryPanel, isSyncStale } from "#/features/versions";
 import { QueryErrorBoundary } from "@/components/query-error-boundary";
 import { RouterButton } from "@/components/router-button";
-import { SchemaVisualizer } from "@/components/schema-visualizer";
-import { SimplifyGeometryPanel } from "@/components/simplify-geometry-panel";
-import { TileBuildStatus } from "@/components/tile-build-status";
-import { TransformBuilder } from "@/components/transform-builder";
 import {
   fetchDatasetEntryRows,
   fetchDatasetGeometryRows,
@@ -96,20 +113,7 @@ import {
   useDatasetEntryRow,
   useDatasetGeometryRows,
 } from "@/lib/dataset-rows-react";
-import { LOCKED_DATASET_HINT, isLockedForViewer } from "@/lib/edit-policy";
 import { errorMessage } from "@/lib/errors";
-import {
-  applyJoinedFields,
-  buildGeoJsonCollection,
-  buildJsonPayload,
-  downloadBlob,
-  downloadText,
-  entryRows,
-  exportExcelWorkbook,
-  slugify,
-} from "@/lib/export";
-import { layerSourceKind, useTileArchiveSource } from "@/lib/layer-source";
-import { isSyncStale } from "@/lib/sync-staleness";
 
 import { api } from "../../../../convex/_generated/api";
 

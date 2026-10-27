@@ -28,14 +28,10 @@ import { FolderOpen, Layers, MapIcon, MoreHorizontal, Pencil, Plus, Trash2 } fro
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import { AddToMapSheet } from "#/components/add-to-map-sheet";
-import { CollectionAddSheet } from "#/components/collection-add-sheet";
-import { CollectionFormPanel } from "#/components/collection-form-panel";
-import { DatasetList } from "#/components/dataset-list";
-import type { Dataset, GroupDoc } from "#/components/dataset-list";
 import { DatasetPickerSheet } from "#/components/dataset-picker-sheet";
-import { CollectionExtentMap } from "#/components/datasets-map";
-import { GroupFormPanel } from "#/components/group-form-panel";
+import { CollectionAddSheet, CollectionFormPanel, GroupFormPanel } from "#/features/catalog";
+import { type Dataset, DatasetList, type GroupDoc } from "#/features/datasets";
+import { AddToMapSheet, CollectionExtentMap } from "#/features/maps";
 import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 

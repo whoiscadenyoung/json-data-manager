@@ -23,32 +23,31 @@ import { Layers as LayersIcon, Loader2, MapIcon, Pencil, Plus, Trash2 } from "lu
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { LayersMap } from "#/components/layers-map";
-import { MapFormPanel } from "#/components/map-form-panel";
-import { MapLayerPanel } from "#/components/map-layer-panel";
-import { MapLayerPickerSheet } from "#/components/map-layer-picker";
 // Optional styling module (docs/layer-styles.md): remove this import, the
 // `useLayerStyles` call, and the `extension`/`datasetActions`/panel/loaders
 // uses below to take styling out — maps then draw in their assigned colors.
 import { useLayerStyles } from "#/features/layer-styles";
-import { useGeometriesBySchemas } from "#/lib/dataset-rows-react";
-import { errorMessage } from "#/lib/errors";
-import type { LayerSourceSplit } from "#/lib/layer-source";
-import {
-  geospatialDatasetsFor,
-  splitSchemaIdsByDecision,
-  useTileArchiveSources,
-} from "#/lib/layer-source";
 import {
   assignDatasetColors,
   buildLayerChildren,
   chainViewOf,
+  type DerivedDatasetSummary,
   expandLayerDatasets,
+  geospatialDatasetsFor,
+  LayersMap,
+  type LayerSourceSplit,
+  MapFormPanel,
+  type MapLayerDoc,
+  MapLayerPanel,
+  MapLayerPickerSheet,
   overridesByLayerId,
   renderTargetsForDerivedLayers,
   resolveVisibleSchemaIds,
-} from "#/lib/map-layers";
-import type { DerivedDatasetSummary, MapLayerDoc } from "#/lib/map-layers";
+  splitSchemaIdsByDecision,
+  useTileArchiveSources,
+} from "#/features/maps";
+import { useGeometriesBySchemas } from "#/lib/dataset-rows-react";
+import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 
 /** The arrived-set update for one tile source's `idle` report (bails out of the state update when already present). */

@@ -41,8 +41,8 @@ import { AlertTriangle, ArrowLeft, CheckCircle, FileJson, Upload, X, XCircle } f
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { uploadChunkBlob } from "#/features/datasets";
 import { errorMessage } from "#/lib/errors";
-import { uploadChunkBlob } from "#/lib/upload";
 import { QueryErrorBoundary } from "@/components/query-error-boundary";
 import { RouterButton } from "@/components/router-button";
 

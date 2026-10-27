@@ -25,7 +25,7 @@ import {
 } from "#/components/dataset-type-tags";
 import { RouterButton } from "#/components/router-button";
 import { UserAvatar } from "#/components/user-avatar";
-import { withDrafts } from "#/lib/dataset-drafts";
+import { withDrafts } from "#/features/datasets";
 
 import { api } from "../../../convex/_generated/api";
 

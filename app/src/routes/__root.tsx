@@ -6,11 +6,10 @@ import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 
 import { AuthGate, SignedInOnly } from "#/components/auth-gate";
 import { Header } from "#/components/header";
+import { TileArchiveCacheManager, TileArchiveManager } from "#/features/maps/tiles";
 import { AppConvexProvider } from "#/integrations/convex/provider";
 import { tanStackQueryDevtools } from "#/integrations/tanstack-query/devtools";
 import { TanStackQueryProvider } from "#/integrations/tanstack-query/root-provider";
-import { TileArchiveManager } from "#/lib/tile-archive";
-import { TileArchiveCacheManager } from "#/lib/tile-archive-cache";
 
 import appCss from "#/styles.css?url";
 

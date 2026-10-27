@@ -22,7 +22,7 @@ import { FolderOpen, Layers, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { CollectionFormPanel } from "#/components/collection-form-panel";
+import { CollectionFormPanel } from "#/features/catalog";
 import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 
