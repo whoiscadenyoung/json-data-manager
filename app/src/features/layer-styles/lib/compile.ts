@@ -1,4 +1,10 @@
-import type { LayerStyle, Renderer, StyleEditor, StyleLayer } from "#convex/layerStyles/validators";
+import type {
+  LayerStyle,
+  Marker,
+  Renderer,
+  StyleEditor,
+  StyleLayer,
+} from "#convex/layerStyles/validators";
 
 import { NO_DATA_COLOR } from "./palettes";
 
@@ -20,6 +26,15 @@ export const LABEL_FONT = [
   "HanWangHeiLight Regular",
   "NanumBarunGothic Regular",
 ];
+
+/**
+ * Glyph size in pixels at `icon-size: 1` — the layer-styles sprite's glyph
+ * box (`sprite/build.ts` `GLYPH_PX`) and the size uploads are normalized to.
+ */
+export const ICON_GLYPH_PX = 24;
+
+/** Where a fresh Shape / Icon marker starts (Lucide is the default icon family). */
+export const DEFAULT_MARKER_ICON = { icon: "lucide-map-pin", shape: "shape-square" } as const;
 
 const POLYGONS: Expression = ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]];
 const LINES: Expression = ["in", ["geometry-type"], ["literal", ["LineString", "MultiLineString"]]];
@@ -58,6 +73,105 @@ export function colorExpression(renderer: Renderer): Expression {
     NO_DATA_COLOR,
     stops.length === 0 ? colors[0] : ["step", ["to-number", value, 0], colors[0], ...stops],
   ];
+}
+
+/**
+ * A point size as an expression: `base`, or — for a graduated style whose
+ * marker grows by class — a `step` from `base` up to `base * sizeScale`
+ * (features with no value keep `base`).
+ */
+export function sizeExpression(renderer: Renderer, base: number, marker: Marker | undefined) {
+  const scale = marker === undefined ? undefined : marker.sizeScale;
+  if (renderer.kind !== "graduated" || scale === undefined || renderer.breaks.length === 0) {
+    return base;
+  }
+  const { breaks } = renderer,
+    sizeAt = (index: number) =>
+      Math.round(base * (1 + ((scale - 1) * index) / breaks.length) * 1000) / 1000,
+    stops = breaks.flatMap((threshold, index) => [threshold, sizeAt(index + 1)]),
+    value = ["get", renderer.field];
+  return [
+    "case",
+    ["==", value, null],
+    base,
+    ["step", ["to-number", value, 0], sizeAt(0), ...stops],
+  ];
+}
+
+/** The class sizes `sizeExpression` steps through (for the legend and editor preview), lowest class first. */
+export function classSizeFactors(renderer: Renderer, marker: Marker | undefined): number[] {
+  if (renderer.kind !== "graduated" || marker === undefined || marker.sizeScale === undefined) {
+    return [];
+  }
+  const { breaks } = renderer,
+    scale = marker.sizeScale;
+  return renderer.colors.map((_, index) =>
+    breaks.length === 0 ? 1 : 1 + ((scale - 1) * index) / breaks.length,
+  );
+}
+
+/** Whether points draw as sprite images (a `symbol` layer) rather than MapLibre circles. */
+export function usesIcons(marker: Marker | undefined): marker is Marker {
+  return marker !== undefined && marker.kind !== "circle";
+}
+
+/**
+ * The marker's `icon-image`: its icon, or — when a categories style gives
+ * classes their own icons — a `match` on the same `to-string` key the colors
+ * use, falling back to the marker's icon.
+ */
+export function iconExpression(renderer: Renderer, marker: Marker): Expression {
+  if (renderer.kind !== "categorical") {
+    return marker.icon;
+  }
+  const seen = new Set<string>(),
+    arms: string[] = [];
+  for (const category of renderer.categories) {
+    const key = String(category.value);
+    if (!seen.has(key)) {
+      seen.add(key);
+      if (category.icon !== undefined && category.icon !== marker.icon) {
+        arms.push(key, category.icon);
+      }
+    }
+  }
+  if (arms.length === 0) {
+    return marker.icon;
+  }
+  return ["match", ["to-string", ["get", renderer.field]], ...arms, marker.icon];
+}
+
+function pointLayer(editor: StyleEditor, color: Expression): StyleLayer {
+  const { marker, renderer } = editor;
+  if (!usesIcons(marker)) {
+    return {
+      filter: POINTS,
+      paint: {
+        "circle-color": color,
+        "circle-radius": sizeExpression(renderer, editor.radius, marker),
+        "circle-stroke-color": "#ffffff",
+        "circle-stroke-width": 1.5,
+      },
+      type: "circle",
+    };
+  }
+  return {
+    filter: POINTS,
+    layout: {
+      "icon-image": iconExpression(renderer, marker),
+      "icon-size": sizeExpression(renderer, marker.size / ICON_GLYPH_PX, marker),
+      ...(marker.rotation === 0 ? {} : { "icon-rotate": marker.rotation }),
+      ...(marker.icon === "shape-pin" ? { "icon-anchor": "bottom" } : {}),
+      "icon-allow-overlap": marker.allowOverlap,
+      "icon-ignore-placement": marker.allowOverlap,
+    },
+    paint: {
+      "icon-color": color,
+      "icon-halo-color": "#ffffff",
+      "icon-halo-width": 1,
+    },
+    type: "symbol",
+  };
 }
 
 function withZoom(layer: StyleLayer, editor: StyleEditor): StyleLayer {
@@ -113,16 +227,7 @@ export function compileStyle(editor: StyleEditor): LayerStyle {
         paint: { "line-color": color, "line-width": editor.lineWidth },
         type: "line",
       },
-      {
-        filter: POINTS,
-        paint: {
-          "circle-color": color,
-          "circle-radius": editor.radius,
-          "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 1.5,
-        },
-        type: "circle",
-      },
+      pointLayer(editor, color),
       ...labelLayer(editor),
     ];
   return { editor, layers: layers.map((layer) => withZoom(layer, editor)), version: 1 };

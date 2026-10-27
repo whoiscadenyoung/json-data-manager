@@ -1,4 +1,4 @@
-import { Copy, Download } from "lucide-react";
+import { Copy, Download, PackageOpen } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -7,10 +7,18 @@ import { Textarea } from "#/components/ui/textarea";
 import type { LayerStyle } from "#convex/layerStyles/validators";
 
 import { exportStyleJson, importStyleJson, slugify } from "../lib/exchange";
+import { loadCatalog } from "../lib/icon-images";
+import { iconNamesOfStyle } from "../lib/icons";
+import { buildSpriteZip } from "../lib/sprite-export";
 import { Section } from "./controls";
+import type { MarkerIcons } from "./marker-section";
 
 function downloadJson(text: string, filename: string) {
-  const url = URL.createObjectURL(new Blob([text], { type: "application/json" })),
+  downloadBlob(new Blob([text], { type: "application/json" }), filename);
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob),
     anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = filename;
@@ -37,17 +45,51 @@ async function copyText(text: string) {
 export function AdvancedSection({
   style,
   title,
+  icons,
   onApply,
 }: {
   style: LayerStyle;
   title: string;
+  icons: MarkerIcons;
   onApply: (style: LayerStyle) => void;
 }) {
   const exported = exportStyleJson(style, title),
     // `null` = showing the current style; a string = the person's unapplied edit.
     [draft, setDraft] = useState<string | null>(null),
     [errors, setErrors] = useState<string[]>([]),
+    [packing, setPacking] = useState(false),
+    usedIcons = iconNamesOfStyle(style),
     text = draft ?? exported;
+
+  const apply = async () => {
+    let builtIn: Set<string>;
+    try {
+      builtIn = new Set((await loadCatalog()).map((entry) => entry.name));
+    } catch {
+      setErrors(["Couldn't load the icon list to check this style's icons. Try again."]);
+      return;
+    }
+    const result = importStyleJson(text, (name) => builtIn.has(name) || icons.uploads.has(name));
+    if (result.ok) {
+      onApply(result.style);
+      setDraft(null);
+      toast.success("Custom style applied.");
+    } else {
+      setErrors(result.errors);
+    }
+  };
+
+  const downloadSprite = async () => {
+    setPacking(true);
+    try {
+      const zip = await buildSpriteZip(style, title, icons.uploads);
+      downloadBlob(zip.blob, zip.filename);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't build the sprite.");
+    } finally {
+      setPacking(false);
+    }
+  };
   return (
     <Section title="Advanced" description="MapLibre style JSON — copy, download, or paste">
       <p className="text-xs text-muted-foreground">
@@ -78,14 +120,7 @@ export function AdvancedSection({
           size="sm"
           disabled={draft === null}
           onClick={() => {
-            const result = importStyleJson(text);
-            if (result.ok) {
-              onApply(result.style);
-              setDraft(null);
-              toast.success("Custom style applied.");
-            } else {
-              setErrors(result.errors);
-            }
+            void apply();
           }}
         >
           Apply JSON
@@ -122,7 +157,27 @@ export function AdvancedSection({
           <Download className="mr-1.5 size-3.5" />
           Download
         </Button>
+        {usedIcons.length > 0 && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={packing}
+            onClick={() => {
+              void downloadSprite();
+            }}
+          >
+            <PackageOpen className="mr-1.5 size-3.5" />
+            {packing ? "Packing…" : "Download sprite"}
+          </Button>
+        )}
       </div>
+      {usedIcons.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          This style uses {usedIcons.length} icon{usedIcons.length === 1 ? "" : "s"}.{" "}
+          <span className="font-medium">Download sprite</span> zips them as a MapLibre sprite (1x
+          and 2x) with the layers, so the pair draws the same in another MapLibre app.
+        </p>
+      )}
     </Section>
   );
 }

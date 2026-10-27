@@ -3,7 +3,14 @@ import { ConvexError, v } from "convex/values";
 import { components } from "../_generated/api";
 import { mutation, query, type MutationCtx, type QueryCtx } from "../_generated/server";
 import { auth } from "../auth";
-import { layerStyleValidator, STYLE_LIMITS, type LayerStyle, type StyleEditor } from "./validators";
+import {
+  ICON_NAME_PATTERN,
+  layerStyleValidator,
+  STYLE_LIMITS,
+  type LayerStyle,
+  type Marker,
+  type StyleEditor,
+} from "./validators";
 
 /**
  * The layer-styles backend (docs/layer-styles.md, ADR 0012): a removable
@@ -100,11 +107,33 @@ function assertZoomRange(minzoom: number | undefined, maxzoom: number | undefine
   }
 }
 
+function assertIconName(name: string) {
+  if (name.length > STYLE_LIMITS.icon || !ICON_NAME_PATTERN.test(name)) {
+    throw new ConvexError(`"${name}" isn't an icon name this app knows.`);
+  }
+}
+
+function assertMarker(marker: Marker) {
+  if (marker.kind !== "circle") {
+    assertIconName(marker.icon);
+  }
+  assertRange(marker.size, 4, 96, "Marker size");
+  assertRange(marker.rotation, -360, 360, "Marker rotation");
+  if (marker.sizeScale !== undefined) {
+    assertRange(marker.sizeScale, 1, 5, "Largest class size");
+  }
+}
+
 function assertRenderer(renderer: StyleEditor["renderer"]) {
   if (renderer.kind === "categorical") {
     assertField(renderer.field);
     if (renderer.categories.length > STYLE_LIMITS.categories) {
       throw new ConvexError(`Keep categories to ${STYLE_LIMITS.categories} or fewer.`);
+    }
+    for (const category of renderer.categories) {
+      if (category.icon !== undefined) {
+        assertIconName(category.icon);
+      }
     }
   } else if (renderer.kind === "graduated") {
     assertField(renderer.field);
@@ -126,6 +155,9 @@ function assertEditor(editor: StyleEditor) {
   assertRange(editor.strokeWidth, 0, 20, "Outline width");
   assertRange(editor.lineWidth, 0, 20, "Line width");
   assertRange(editor.radius, 0, 50, "Point size");
+  if (editor.marker !== undefined) {
+    assertMarker(editor.marker);
+  }
   if (editor.label !== undefined) {
     assertField(editor.label.field);
     assertRange(editor.label.size, 6, 48, "Label size");

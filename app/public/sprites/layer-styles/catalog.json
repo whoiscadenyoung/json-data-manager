@@ -1,0 +1,2327 @@
+{
+  "glyphPx": 24,
+  "icons": [
+    { "family": "shape", "keywords": ["shape"], "label": "Circle", "name": "shape-circle" },
+    { "family": "shape", "keywords": ["shape"], "label": "Square", "name": "shape-square" },
+    { "family": "shape", "keywords": ["shape"], "label": "Triangle", "name": "shape-triangle" },
+    { "family": "shape", "keywords": ["shape"], "label": "Diamond", "name": "shape-diamond" },
+    { "family": "shape", "keywords": ["shape"], "label": "Star", "name": "shape-star" },
+    { "family": "shape", "keywords": ["shape"], "label": "Cross", "name": "shape-cross" },
+    { "family": "shape", "keywords": ["shape"], "label": "Pin", "name": "shape-pin" },
+    {
+      "family": "lucide",
+      "keywords": ["location", "waypoint", "marker", "drop"],
+      "label": "Map pin",
+      "name": "lucide-map-pin"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["location", "waypoint", "marker", "drop"],
+      "label": "Map pinned",
+      "name": "lucide-map-pinned"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "report",
+        "marker",
+        "notification",
+        "warning",
+        "milestone",
+        "goal",
+        "notice",
+        "signal",
+        "attention",
+        "banner"
+      ],
+      "label": "Flag",
+      "name": "lucide-flag"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["report", "timeline", "marker", "pin"],
+      "label": "Flag triangle right",
+      "name": "lucide-flag-triangle-right"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["location", "travel"],
+      "label": "Navigation",
+      "name": "lucide-navigation"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["direction", "north", "east", "south", "west", "browser"],
+      "label": "Compass",
+      "name": "lucide-compass"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["map", "gps", "location", "cross"],
+      "label": "Locate",
+      "name": "lucide-locate"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["map", "gps", "location", "cross"],
+      "label": "Locate fixed",
+      "name": "lucide-locate-fixed"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["aim", "target"],
+      "label": "Crosshair",
+      "name": "lucide-crosshair"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["logo", "bullseye", "deadline", "projects", "overview", "work", "productivity"],
+      "label": "Target",
+      "name": "lucide-target"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "signpost",
+        "direction",
+        "right",
+        "east",
+        "forward",
+        "version control",
+        "waypoint"
+      ],
+      "label": "Milestone",
+      "name": "lucide-milestone"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "navigation",
+        "direction",
+        "arrow",
+        "wayfinding",
+        "guide",
+        "location",
+        "pointer",
+        "route",
+        "indicator",
+        "marker",
+        "bidirectional",
+        "left",
+        "right",
+        "east",
+        "west"
+      ],
+      "label": "Signpost",
+      "name": "lucide-signpost"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["path", "journey", "planner", "points", "stops", "stations"],
+      "label": "Route",
+      "name": "lucide-route"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["climb", "hike", "rock"],
+      "label": "Mountain",
+      "name": "lucide-mountain"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["alpine", "climb", "snow"],
+      "label": "Mountain snow",
+      "name": "lucide-mountain-snow"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["tree", "pine", "forest", "park", "nature"],
+      "label": "Tree pine",
+      "name": "lucide-tree-pine"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["tree", "forest", "park", "nature"],
+      "label": "Tree deciduous",
+      "name": "lucide-tree-deciduous"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["tree", "forest", "park", "nature"],
+      "label": "Trees",
+      "name": "lucide-trees"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["sustainability", "nature", "energy", "plant", "autumn"],
+      "label": "Leaf",
+      "name": "lucide-leaf"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["sustainability", "nature", "plant", "spring"],
+      "label": "Flower",
+      "name": "lucide-flower"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["sustainability", "nature", "plant"],
+      "label": "Flower 2",
+      "name": "lucide-flower-2"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "eco",
+        "green",
+        "growth",
+        "leaf",
+        "nature",
+        "plant",
+        "seed",
+        "spring",
+        "sustainability"
+      ],
+      "label": "Sprout",
+      "name": "lucide-sprout"
+    },
+    { "family": "lucide", "keywords": [], "label": "Palmtree", "name": "lucide-palmtree" },
+    {
+      "family": "lucide",
+      "keywords": [
+        "tipi",
+        "teepee",
+        "wigwam",
+        "lodge",
+        "camping",
+        "campsite",
+        "holiday",
+        "retreat",
+        "nomadic",
+        "native american",
+        "indian",
+        "wilderness",
+        "outdoors"
+      ],
+      "label": "Tent",
+      "name": "lucide-tent"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "camping",
+        "campsite",
+        "holiday",
+        "retreat",
+        "nomadic",
+        "wilderness",
+        "outdoors"
+      ],
+      "label": "Tent tree",
+      "name": "lucide-tent-tree"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["dish", "restaurant", "course", "meal", "seafood", "pet", "sea", "marine"],
+      "label": "Fish",
+      "name": "lucide-fish"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["peace", "freedom", "wing", "avian", "tweet"],
+      "label": "Bird",
+      "name": "lucide-bird"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["animal", "pet", "puppy", "hound", "canine"],
+      "label": "Dog",
+      "name": "lucide-dog"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["animal", "pet", "kitten", "feline"],
+      "label": "Cat",
+      "name": "lucide-cat"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "issue",
+        "error",
+        "defect",
+        "testing",
+        "troubleshoot",
+        "problem",
+        "report",
+        "debug",
+        "code",
+        "insect",
+        "beetle"
+      ],
+      "label": "Bug",
+      "name": "lucide-bug"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["animal", "rodent", "pet", "pest", "bunny", "hare", "fast", "speed", "hop"],
+      "label": "Rabbit",
+      "name": "lucide-rabbit"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "animal",
+        "rodent",
+        "pet",
+        "pest",
+        "nuts",
+        "retrieve",
+        "updates",
+        "storage",
+        "stash"
+      ],
+      "label": "Squirrel",
+      "name": "lucide-squirrel"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["pets", "vets", "veterinarian", "domesticated", "cat", "dog", "bear"],
+      "label": "Paw print",
+      "name": "lucide-paw-print"
+    },
+    { "family": "lucide", "keywords": [], "label": "Waves", "name": "lucide-waves" },
+    {
+      "family": "lucide",
+      "keywords": [
+        "water",
+        "weather",
+        "liquid",
+        "fluid",
+        "wet",
+        "moisture",
+        "damp",
+        "bead",
+        "globule"
+      ],
+      "label": "Droplet",
+      "name": "lucide-droplet"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "water",
+        "weather",
+        "liquid",
+        "fluid",
+        "wet",
+        "moisture",
+        "damp",
+        "bead",
+        "globule"
+      ],
+      "label": "Droplets",
+      "name": "lucide-droplets"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "water",
+        "weather",
+        "liquid",
+        "fluid",
+        "wet",
+        "moisture",
+        "damp",
+        "bead",
+        "globule"
+      ],
+      "label": "Droplet off",
+      "name": "lucide-droplet-off"
+    },
+    { "family": "lucide", "keywords": ["weather"], "label": "Cloud", "name": "lucide-cloud" },
+    {
+      "family": "lucide",
+      "keywords": ["weather", "rainfall"],
+      "label": "Cloud rain",
+      "name": "lucide-cloud-rain"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["weather", "blizzard"],
+      "label": "Cloud snow",
+      "name": "lucide-cloud-snow"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["cold", "weather", "freeze", "snow", "winter"],
+      "label": "Snowflake",
+      "name": "lucide-snowflake"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["brightness", "weather", "light", "summer"],
+      "label": "Sun",
+      "name": "lucide-sun"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["weather", "time", "morning", "day"],
+      "label": "Sunrise",
+      "name": "lucide-sunrise"
+    },
+    { "family": "lucide", "keywords": ["dark", "night"], "label": "Moon", "name": "lucide-moon" },
+    {
+      "family": "lucide",
+      "keywords": ["weather", "air", "blow"],
+      "label": "Wind",
+      "name": "lucide-wind"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["temperature", "celsius", "fahrenheit", "weather"],
+      "label": "Thermometer",
+      "name": "lucide-thermometer"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["flash", "camera", "lightning", "electricity", "energy", "power", "quick"],
+      "label": "Zap",
+      "name": "lucide-zap"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "heat",
+        "burn",
+        "light",
+        "glow",
+        "ignite",
+        "passion",
+        "ember",
+        "fire",
+        "lit",
+        "burning",
+        "spark",
+        "embers",
+        "smoke",
+        "firefighter",
+        "fireman",
+        "department",
+        "brigade",
+        "station",
+        "emergency"
+      ],
+      "label": "Flame",
+      "name": "lucide-flame"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["rain", "weather"],
+      "label": "Umbrella",
+      "name": "lucide-umbrella"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["home", "living", "building", "residence", "architecture"],
+      "label": "House",
+      "name": "lucide-house"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "home",
+        "living",
+        "medical",
+        "new",
+        "addition",
+        "building",
+        "residence",
+        "architecture"
+      ],
+      "label": "House plus",
+      "name": "lucide-house-plus"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["organisation", "organization"],
+      "label": "Building",
+      "name": "lucide-building"
+    },
+    { "family": "lucide", "keywords": [], "label": "Building 2", "name": "lucide-building-2" },
+    {
+      "family": "lucide",
+      "keywords": [
+        "building",
+        "education",
+        "childhood",
+        "university",
+        "learning",
+        "campus",
+        "scholar",
+        "student",
+        "lecture",
+        "degree",
+        "course",
+        "academia",
+        "study",
+        "knowledge",
+        "classroom",
+        "research",
+        "diploma",
+        "graduation",
+        "professor",
+        "tutorial",
+        "homework",
+        "assignment",
+        "exam"
+      ],
+      "label": "School",
+      "name": "lucide-school"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "building",
+        "education",
+        "childhood",
+        "school",
+        "college",
+        "academy",
+        "institute"
+      ],
+      "label": "University",
+      "name": "lucide-university"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "infirmary",
+        "sanatorium",
+        "healthcare",
+        "doctor",
+        "hospice",
+        "clinic",
+        "emergency room",
+        "ward",
+        "building",
+        "medical",
+        "vet"
+      ],
+      "label": "Hospital",
+      "name": "lucide-hospital"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["temple", "building"],
+      "label": "Church",
+      "name": "lucide-church"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "bank",
+        "building",
+        "capitol",
+        "finance",
+        "money",
+        "museum",
+        "art gallery",
+        "hall",
+        "institute",
+        "pediment",
+        "portico",
+        "doric",
+        "columns",
+        "pillars",
+        "classical",
+        "architecture",
+        "government",
+        "institution",
+        "monument",
+        "site",
+        "history",
+        "historic",
+        "library",
+        "temple",
+        "ancient",
+        "structure"
+      ],
+      "label": "Landmark",
+      "name": "lucide-landmark"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["fortress", "stronghold", "palace", "chateau", "building"],
+      "label": "Castle",
+      "name": "lucide-castle"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["building", "business", "energy", "industry", "manufacture", "sector"],
+      "label": "Factory",
+      "name": "lucide-factory"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "storage",
+        "storehouse",
+        "depot",
+        "depository",
+        "repository",
+        "stockroom",
+        "logistics",
+        "building"
+      ],
+      "label": "Warehouse",
+      "name": "lucide-warehouse"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["shop", "supermarket", "stand", "boutique", "building"],
+      "label": "Store",
+      "name": "lucide-store"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["building", "hostel", "motel", "inn"],
+      "label": "Hotel",
+      "name": "lucide-hotel"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["sleep", "hotel", "furniture"],
+      "label": "Bed double",
+      "name": "lucide-bed-double"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "books",
+        "reading",
+        "written",
+        "authors",
+        "stories",
+        "fiction",
+        "novels",
+        "information",
+        "knowledge",
+        "education",
+        "high school",
+        "university",
+        "college",
+        "academy",
+        "learning",
+        "study",
+        "research",
+        "collection",
+        "vinyl",
+        "records",
+        "albums",
+        "music",
+        "package"
+      ],
+      "label": "Library",
+      "name": "lucide-library"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "picket",
+        "panels",
+        "woodwork",
+        "diy",
+        "materials",
+        "suburban",
+        "garden",
+        "property",
+        "territory"
+      ],
+      "label": "Fence",
+      "name": "lucide-fence"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "trolley",
+        "cart",
+        "basket",
+        "e-commerce",
+        "store",
+        "purchase",
+        "products",
+        "items",
+        "ingredients"
+      ],
+      "label": "Shopping cart",
+      "name": "lucide-shopping-cart"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["ecommerce", "cart", "purchase", "store"],
+      "label": "Shopping bag",
+      "name": "lucide-shopping-bag"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "fork",
+        "knife",
+        "cutlery",
+        "flatware",
+        "tableware",
+        "silverware",
+        "food",
+        "restaurant",
+        "meal",
+        "breakfast",
+        "dinner",
+        "supper"
+      ],
+      "label": "Utensils",
+      "name": "lucide-utensils"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "fork",
+        "knife",
+        "cutlery",
+        "flatware",
+        "tableware",
+        "silverware",
+        "food",
+        "restaurant",
+        "meal",
+        "breakfast",
+        "dinner",
+        "supper"
+      ],
+      "label": "Utensils crossed",
+      "name": "lucide-utensils-crossed"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["drink", "cup", "mug", "tea", "cafe", "hot", "beverage"],
+      "label": "Coffee",
+      "name": "lucide-coffee"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["alcohol", "bar", "beverage", "brewery", "drink"],
+      "label": "Beer",
+      "name": "lucide-beer"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "alcohol",
+        "beverage",
+        "bar",
+        "drink",
+        "glass",
+        "sommelier",
+        "vineyard",
+        "winery"
+      ],
+      "label": "Wine",
+      "name": "lucide-wine"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["pie", "quiche", "food"],
+      "label": "Pizza",
+      "name": "lucide-pizza"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["gelato", "food"],
+      "label": "Ice cream cone",
+      "name": "lucide-ice-cream-cone"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "birthday",
+        "birthdate",
+        "celebration",
+        "party",
+        "surprise",
+        "gateaux",
+        "dessert",
+        "candles",
+        "wish",
+        "fondant",
+        "icing sugar",
+        "sweet",
+        "baking"
+      ],
+      "label": "Cake slice",
+      "name": "lucide-cake-slice"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["food", "snack", "dish", "restaurant", "lunch", "meal"],
+      "label": "Sandwich",
+      "name": "lucide-sandwich"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["food", "dish", "restaurant", "course", "meal", "bowl", "starter"],
+      "label": "Soup",
+      "name": "lucide-soup"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "food",
+        "vegetarian",
+        "dish",
+        "restaurant",
+        "course",
+        "meal",
+        "side",
+        "vegetables",
+        "health"
+      ],
+      "label": "Salad",
+      "name": "lucide-salad"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["food", "dish", "restaurant", "course", "meal", "meat", "bbq", "steak"],
+      "label": "Beef",
+      "name": "lucide-beef"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "fruit",
+        "food",
+        "healthy",
+        "snack",
+        "nutrition",
+        "fresh",
+        "produce",
+        "grocery",
+        "organic",
+        "harvest",
+        "vitamin",
+        "red",
+        "green",
+        "juicy",
+        "sweet",
+        "tart",
+        "bite",
+        "orchard",
+        "plant",
+        "core",
+        "raw",
+        "diet"
+      ],
+      "label": "Apple",
+      "name": "lucide-apple"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["fruit", "wine", "food"],
+      "label": "Grape",
+      "name": "lucide-grape"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "orange",
+        "healthy",
+        "nature",
+        "fresh",
+        "root",
+        "produce",
+        "organic",
+        "nutrition",
+        "vegetable",
+        "food",
+        "eat"
+      ],
+      "label": "Carrot",
+      "name": "lucide-carrot"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "bird",
+        "chicken",
+        "nest",
+        "hatch",
+        "shell",
+        "incubate",
+        "soft boiled",
+        "hard",
+        "breakfast",
+        "brunch",
+        "morning",
+        "easter"
+      ],
+      "label": "Egg",
+      "name": "lucide-egg"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["lactose", "bottle", "beverage", "drink", "water", "diet"],
+      "label": "Milk",
+      "name": "lucide-milk"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["corn", "cereal", "grain", "gluten"],
+      "label": "Wheat",
+      "name": "lucide-wheat"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["vehicle", "drive", "trip", "journey"],
+      "label": "Car",
+      "name": "lucide-car"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["vehicle", "drive", "trip", "journey"],
+      "label": "Car front",
+      "name": "lucide-car-front"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["bus", "vehicle", "transport", "trip"],
+      "label": "Bus",
+      "name": "lucide-bus"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["coach", "vehicle", "trip", "road"],
+      "label": "Bus front",
+      "name": "lucide-bus-front"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "railway",
+        "metro",
+        "subway",
+        "underground",
+        "high-speed",
+        "bullet",
+        "fast",
+        "track",
+        "line"
+      ],
+      "label": "Train front",
+      "name": "lucide-train-front"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["railway", "line"],
+      "label": "Train track",
+      "name": "lucide-train-track"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["railway", "metro", "subway", "underground", "track", "line", "tourism"],
+      "label": "Tram front",
+      "name": "lucide-tram-front"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["plane", "trip", "airplane"],
+      "label": "Plane",
+      "name": "lucide-plane"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["departure", "plane", "trip", "airplane", "takeoff"],
+      "label": "Plane takeoff",
+      "name": "lucide-plane-takeoff"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "boat",
+        "knots",
+        "nautical mile",
+        "maritime",
+        "sailing",
+        "yacht",
+        "cruise",
+        "ocean liner",
+        "tanker",
+        "vessel",
+        "navy",
+        "trip",
+        "releases"
+      ],
+      "label": "Ship",
+      "name": "lucide-ship"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["ship", "boat", "harbor", "harbour", "dock"],
+      "label": "Sailboat",
+      "name": "lucide-sailboat"
+    },
+    { "family": "lucide", "keywords": ["ship"], "label": "Anchor", "name": "lucide-anchor" },
+    {
+      "family": "lucide",
+      "keywords": ["bicycle", "transport", "trip"],
+      "label": "Bike",
+      "name": "lucide-bike"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["steps", "walking", "foot", "feet", "trail", "shoe"],
+      "label": "Footprints",
+      "name": "lucide-footprints"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["disability", "disabled", "dda", "wheelchair"],
+      "label": "Accessibility",
+      "name": "lucide-accessibility"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["driving", "car park", "pay", "sidewalk", "pavement"],
+      "label": "Parking meter",
+      "name": "lucide-parking-meter"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["filling-station", "gas", "petrol", "tank"],
+      "label": "Fuel",
+      "name": "lucide-fuel"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "electricity",
+        "energy",
+        "electronics",
+        "charge",
+        "charging",
+        "battery",
+        "connect"
+      ],
+      "label": "Plug zap",
+      "name": "lucide-plug-zap"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["power", "electricity", "energy", "accumulator", "charge"],
+      "label": "Battery charging",
+      "name": "lucide-battery-charging"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["delivery", "van", "shipping", "haulage", "lorry"],
+      "label": "Truck",
+      "name": "lucide-truck"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["farming", "farmer", "ranch", "harvest", "equipment", "vehicle"],
+      "label": "Tractor",
+      "name": "lucide-tractor"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["roadworks", "tarmac", "safety", "block"],
+      "label": "Traffic cone",
+      "name": "lucide-traffic-cone"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["roadwork", "maintenance", "blockade", "barricade"],
+      "label": "Construction",
+      "name": "lucide-construction"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["helmet", "construction", "safety"],
+      "label": "Hard hat",
+      "name": "lucide-hard-hat"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["mallet", "nails", "diy", "toolbox", "build", "construction"],
+      "label": "Hammer",
+      "name": "lucide-hammer"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["account", "settings", "spanner", "diy", "toolbox", "build", "construction"],
+      "label": "Wrench",
+      "name": "lucide-wrench"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "flames",
+        "smoke",
+        "foam",
+        "water",
+        "spray",
+        "hose",
+        "firefighter",
+        "fireman",
+        "department",
+        "brigade",
+        "station",
+        "emergency",
+        "suppress",
+        "compressed",
+        "tank",
+        "cylinder",
+        "safety",
+        "equipment",
+        "amenities"
+      ],
+      "label": "Fire extinguisher",
+      "name": "lucide-fire-extinguisher"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["police", "ambulance", "emergency", "security", "alert", "alarm", "light"],
+      "label": "Siren",
+      "name": "lucide-siren"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "cybersecurity",
+        "secure",
+        "safety",
+        "protection",
+        "guardian",
+        "armored",
+        "armoured",
+        "defense",
+        "defence",
+        "defender",
+        "block",
+        "threat",
+        "prevention",
+        "antivirus",
+        "vigilance",
+        "vigilant",
+        "detection",
+        "scan",
+        "find",
+        "strength",
+        "strong",
+        "tough",
+        "invincible",
+        "invincibility",
+        "invulnerable",
+        "undamaged",
+        "audit",
+        "admin",
+        "verification",
+        "crest",
+        "bravery",
+        "knight",
+        "foot soldier",
+        "infantry",
+        "trooper",
+        "pawn",
+        "battle",
+        "war",
+        "military",
+        "army",
+        "cadet",
+        "scout"
+      ],
+      "label": "Shield",
+      "name": "lucide-shield"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "unshielded",
+        "cybersecurity",
+        "insecure",
+        "unsecured",
+        "safety",
+        "unsafe",
+        "protection",
+        "unprotected",
+        "guardian",
+        "unguarded",
+        "unarmored",
+        "unarmoured",
+        "defenseless",
+        "defenceless",
+        "undefended",
+        "defender",
+        "blocked",
+        "stopped",
+        "intercepted",
+        "interception",
+        "saved",
+        "thwarted",
+        "threat",
+        "prevention",
+        "unprevented",
+        "antivirus",
+        "vigilance",
+        "vigilant",
+        "detection",
+        "detected",
+        "scanned",
+        "found",
+        "exploit",
+        "vulnerability",
+        "vulnerable",
+        "weakness",
+        "infection",
+        "infected",
+        "compromised",
+        "data leak",
+        "audited",
+        "admin",
+        "verification",
+        "unverified",
+        "uncertified",
+        "warning",
+        "emergency",
+        "attention",
+        "urgent",
+        "alarm",
+        "crest",
+        "bravery",
+        "strength",
+        "tough",
+        "attacked",
+        "damaged",
+        "injured",
+        "hit",
+        "expired",
+        "disabled",
+        "inactive",
+        "error",
+        "exclamation mark",
+        "!"
+      ],
+      "label": "Shield alert",
+      "name": "lucide-shield-alert"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "cybersecurity",
+        "secured",
+        "safety",
+        "protection",
+        "protected",
+        "guardian",
+        "guarded",
+        "armored",
+        "armoured",
+        "defense",
+        "defence",
+        "defended",
+        "blocked",
+        "threat",
+        "prevention",
+        "prevented",
+        "antivirus",
+        "vigilance",
+        "vigilant",
+        "active",
+        "activated",
+        "enabled",
+        "detection",
+        "scanned",
+        "found",
+        "strength",
+        "strong",
+        "tough",
+        "invincible",
+        "invincibility",
+        "invulnerable",
+        "undamaged",
+        "audited",
+        "admin",
+        "verification",
+        "verified",
+        "certification",
+        "certified",
+        "tested",
+        "passed",
+        "qualified",
+        "cleared",
+        "cleaned",
+        "disinfected",
+        "uninfected",
+        "task",
+        "completed",
+        "todo",
+        "done",
+        "ticked",
+        "checked",
+        "crest",
+        "bravery"
+      ],
+      "label": "Shield check",
+      "name": "lucide-shield-check"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["check", "verified", "unverified", "security", "safety", "issue"],
+      "label": "Badge alert",
+      "name": "lucide-badge-alert"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["warning", "alert", "danger", "exclamation mark", "linter"],
+      "label": "Triangle alert",
+      "name": "lucide-triangle-alert"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["warning", "alert", "danger", "exclamation mark"],
+      "label": "Octagon alert",
+      "name": "lucide-octagon-alert"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["warning", "alert", "danger", "exclamation mark"],
+      "label": "Circle alert",
+      "name": "lucide-circle-alert"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "about",
+        "advice",
+        "clue",
+        "details",
+        "help",
+        "hint",
+        "indicator",
+        "information",
+        "knowledge",
+        "notice",
+        "status",
+        "support",
+        "tooltip"
+      ],
+      "label": "Info",
+      "name": "lucide-info"
+    },
+    { "family": "lucide", "keywords": [], "label": "Circle help", "name": "lucide-circle-help" },
+    {
+      "family": "lucide",
+      "keywords": [
+        "cancel",
+        "no",
+        "stop",
+        "forbidden",
+        "prohibited",
+        "error",
+        "incorrect",
+        "mistake",
+        "wrong",
+        "failure",
+        "circle",
+        "slash",
+        "null",
+        "void"
+      ],
+      "label": "Ban",
+      "name": "lucide-ban"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["done", "todo", "tick", "complete", "task"],
+      "label": "Circle check",
+      "name": "lucide-circle-check"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "cancel",
+        "close",
+        "cross",
+        "delete",
+        "remove",
+        "times",
+        "clear",
+        "error",
+        "incorrect",
+        "wrong",
+        "mistake",
+        "failure",
+        "linter",
+        "multiply",
+        "multiplication"
+      ],
+      "label": "Circle x",
+      "name": "lucide-circle-x"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["phonendoscope", "medical", "heart", "lungs", "sound"],
+      "label": "Stethoscope",
+      "name": "lucide-stethoscope"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["medicine", "medication", "drug", "prescription", "tablet", "pharmacy"],
+      "label": "Pill",
+      "name": "lucide-pill"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["medicine", "medical", "needle", "pump", "plunger", "nozzle", "blood"],
+      "label": "Syringe",
+      "name": "lucide-syringe"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "heartbeat",
+        "pulse",
+        "health",
+        "medical",
+        "blood pressure",
+        "cardiac",
+        "systole",
+        "diastole"
+      ],
+      "label": "Heart pulse",
+      "name": "lucide-heart-pulse"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["healthcare", "first aid"],
+      "label": "Cross",
+      "name": "lucide-cross"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "ambulance",
+        "emergency",
+        "medical",
+        "vehicle",
+        "siren",
+        "healthcare",
+        "transportation",
+        "rescue",
+        "urgent",
+        "first aid"
+      ],
+      "label": "Ambulance",
+      "name": "lucide-ambulance"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "pulse",
+        "action",
+        "motion",
+        "movement",
+        "exercise",
+        "fitness",
+        "healthcare",
+        "heart rate monitor",
+        "vital signs",
+        "vitals",
+        "emergency room",
+        "er",
+        "intensive care",
+        "hospital",
+        "defibrillator",
+        "earthquake",
+        "seismic",
+        "magnitude",
+        "richter scale",
+        "aftershock",
+        "tremor",
+        "shockwave",
+        "audio",
+        "waveform",
+        "synthesizer",
+        "synthesiser",
+        "music"
+      ],
+      "label": "Activity",
+      "name": "lucide-activity"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["bookmark", "favorite", "like", "review", "rating"],
+      "label": "Star",
+      "name": "lucide-star"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["like", "love", "emotion", "suit", "playing", "cards"],
+      "label": "Heart",
+      "name": "lucide-heart"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["like", "good", "emotion"],
+      "label": "Thumbs up",
+      "name": "lucide-thumbs-up"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["achievement", "badge", "rosette", "prize", "winner"],
+      "label": "Award",
+      "name": "lucide-award"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "prize",
+        "sports",
+        "winner",
+        "achievement",
+        "award",
+        "champion",
+        "celebration",
+        "victory",
+        "competition",
+        "tournament",
+        "leaderboard",
+        "ranking",
+        "success",
+        "reward",
+        "cup",
+        "first",
+        "gold"
+      ],
+      "label": "Trophy",
+      "name": "lucide-trophy"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["prize", "sports", "winner", "trophy", "award", "achievement"],
+      "label": "Medal",
+      "name": "lucide-medal"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "diamond",
+        "crystal",
+        "ruby",
+        "jewellery",
+        "price",
+        "special",
+        "present",
+        "gift",
+        "ring",
+        "wedding",
+        "proposal",
+        "marriage",
+        "rubygems"
+      ],
+      "label": "Gem",
+      "name": "lucide-gem"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["diadem", "tiara", "circlet", "corona", "king", "ruler", "winner", "favourite"],
+      "label": "Crown",
+      "name": "lucide-crown"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["stars", "effect", "filter", "night", "magic"],
+      "label": "Sparkles",
+      "name": "lucide-sparkles"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["idea", "bright", "lights"],
+      "label": "Lightbulb",
+      "name": "lucide-lightbulb"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "photography",
+        "lens",
+        "focus",
+        "capture",
+        "shot",
+        "visual",
+        "image",
+        "device",
+        "equipment",
+        "photo",
+        "webcam",
+        "video"
+      ],
+      "label": "Camera",
+      "name": "lucide-camera"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["photo", "webcam", "video"],
+      "label": "Camera off",
+      "name": "lucide-camera-off"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["camera", "movie", "film", "recording", "motion picture", "camcorder", "reel"],
+      "label": "Video",
+      "name": "lucide-video"
+    },
+    { "family": "lucide", "keywords": [], "label": "Music", "name": "lucide-music" },
+    {
+      "family": "lucide",
+      "keywords": ["theater", "theatre", "entertainment", "podium", "stage", "musical"],
+      "label": "Theater",
+      "name": "lucide-theater"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["movie", "video", "reel", "camera", "cinema", "entertainment"],
+      "label": "Film",
+      "name": "lucide-film"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["entry", "pass", "voucher", "event", "concert", "show", "perforated", "dashed"],
+      "label": "Ticket",
+      "name": "lucide-ticket"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["console"],
+      "label": "Gamepad 2",
+      "name": "lucide-gamepad-2"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["barbell", "weight", "workout", "gym"],
+      "label": "Dumbbell",
+      "name": "lucide-dumbbell"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "beach",
+        "sand",
+        "net",
+        "holiday",
+        "vacation",
+        "summer",
+        "soccer",
+        "football",
+        "futbol",
+        "kick",
+        "pitch",
+        "goal",
+        "score",
+        "bounce",
+        "leather",
+        "wool",
+        "yarn",
+        "knitting",
+        "sewing",
+        "thread",
+        "embroidery",
+        "textile"
+      ],
+      "label": "Volleyball",
+      "name": "lucide-volleyball"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["child", "childproof", "children"],
+      "label": "Baby",
+      "name": "lucide-baby"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["group", "people"],
+      "label": "Users",
+      "name": "lucide-users"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["person", "account", "contact"],
+      "label": "User",
+      "name": "lucide-user"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "school",
+        "university",
+        "learn",
+        "study",
+        "mortarboard",
+        "education",
+        "ceremony",
+        "academic",
+        "hat",
+        "diploma",
+        "bachelor's",
+        "master's",
+        "doctorate"
+      ],
+      "label": "Graduation cap",
+      "name": "lucide-graduation-cap"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "reading",
+        "pages",
+        "booklet",
+        "magazine",
+        "leaflet",
+        "pamphlet",
+        "library",
+        "writing",
+        "written",
+        "writer",
+        "author",
+        "story",
+        "script",
+        "screenplay",
+        "fiction",
+        "novel",
+        "information",
+        "knowledge",
+        "education",
+        "high school",
+        "university",
+        "college",
+        "academy",
+        "student",
+        "study",
+        "learning",
+        "homework",
+        "research",
+        "documentation",
+        "revealed",
+        "blank",
+        "plain"
+      ],
+      "label": "Book open",
+      "name": "lucide-book-open"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["work", "bag", "baggage", "folder"],
+      "label": "Briefcase",
+      "name": "lucide-briefcase"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["currency", "money", "payment"],
+      "label": "Banknote",
+      "name": "lucide-banknote"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["currency", "money", "payment"],
+      "label": "Dollar sign",
+      "name": "lucide-dollar-sign"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["money", "finance", "pocket"],
+      "label": "Wallet",
+      "name": "lucide-wallet"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["money", "savings"],
+      "label": "Piggy bank",
+      "name": "lucide-piggy-bank"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "balance",
+        "legal",
+        "license",
+        "right",
+        "rule",
+        "law",
+        "justice",
+        "weight",
+        "measure",
+        "compare",
+        "judge",
+        "fair",
+        "ethics",
+        "decision"
+      ],
+      "label": "Scale",
+      "name": "lucide-scale"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "justice",
+        "law",
+        "court",
+        "judgment",
+        "legal",
+        "hands",
+        "penalty",
+        "decision",
+        "authority",
+        "hammer",
+        "mallet"
+      ],
+      "label": "Gavel",
+      "name": "lucide-gavel"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["vote", "poll", "ballot", "political", "social", "check", "tick"],
+      "label": "Vote",
+      "name": "lucide-vote"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "advertisement",
+        "announcement",
+        "attention",
+        "alert",
+        "loudspeaker",
+        "megaphone",
+        "notification"
+      ],
+      "label": "Megaphone",
+      "name": "lucide-megaphone"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["alarm", "notification", "sound", "reminder"],
+      "label": "Bell",
+      "name": "lucide-bell"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["time", "watch", "alarm"],
+      "label": "Clock",
+      "name": "lucide-clock"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["date", "month", "year", "event", "birthday", "birthdate"],
+      "label": "Calendar",
+      "name": "lucide-calendar"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "view",
+        "watch",
+        "see",
+        "show",
+        "expose",
+        "reveal",
+        "display",
+        "visible",
+        "visibility",
+        "vision",
+        "preview",
+        "read"
+      ],
+      "label": "Eye",
+      "name": "lucide-eye"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["security", "password", "secure", "admin"],
+      "label": "Lock",
+      "name": "lucide-lock"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "password",
+        "login",
+        "authentication",
+        "secure",
+        "unlock",
+        "keychain",
+        "key ring",
+        "fob"
+      ],
+      "label": "Key",
+      "name": "lucide-key"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "entrance",
+        "entry",
+        "exit",
+        "ingress",
+        "egress",
+        "gate",
+        "gateway",
+        "emergency exit"
+      ],
+      "label": "Door open",
+      "name": "lucide-door-open"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["toilet", "potty", "bathroom", "washroom"],
+      "label": "Toilet",
+      "name": "lucide-toilet"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["shower", "bath", "bathroom", "amenities", "services"],
+      "label": "Shower head",
+      "name": "lucide-shower-head"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["amenities", "services", "bathroom", "shower"],
+      "label": "Bath",
+      "name": "lucide-bath"
+    },
+    { "family": "lucide", "keywords": ["call"], "label": "Phone", "name": "lucide-phone" },
+    {
+      "family": "lucide",
+      "keywords": [
+        "phone",
+        "cellphone",
+        "device",
+        "mobile",
+        "screen",
+        "display",
+        "touchscreen",
+        "portable",
+        "responsive"
+      ],
+      "label": "Smartphone",
+      "name": "lucide-smartphone"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["connection", "signal", "wireless"],
+      "label": "Wifi",
+      "name": "lucide-wifi"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["signal", "broadcast", "connectivity", "live", "frequency"],
+      "label": "Radio",
+      "name": "lucide-radio"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["signal", "broadcast", "connectivity", "live", "frequency"],
+      "label": "Radio tower",
+      "name": "lucide-radio-tower"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "antenna",
+        "receiver",
+        "dish aerial",
+        "saucer",
+        "communication",
+        "broadcast",
+        "signal"
+      ],
+      "label": "Satellite dish",
+      "name": "lucide-satellite-dish"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "signal",
+        "connection",
+        "connectivity",
+        "tv",
+        "television",
+        "broadcast",
+        "live",
+        "frequency",
+        "tune",
+        "scan",
+        "channels",
+        "aerial",
+        "receiver",
+        "transmission",
+        "transducer",
+        "terrestrial",
+        "satellite",
+        "cable"
+      ],
+      "label": "Antenna",
+      "name": "lucide-antenna"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["email", "message", "letter", "unread"],
+      "label": "Mail",
+      "name": "lucide-mail"
+    },
+    {
+      "family": "lucide",
+      "keywords": [
+        "box",
+        "container",
+        "storage",
+        "sealed",
+        "delivery",
+        "undelivered",
+        "unopened",
+        "packed",
+        "archive",
+        "zip",
+        "module"
+      ],
+      "label": "Package",
+      "name": "lucide-package"
+    },
+    {
+      "family": "lucide",
+      "keywords": ["sustainability", "salvage", "arrows"],
+      "label": "Recycle",
+      "name": "lucide-recycle"
+    },
+    { "family": "lucide", "keywords": [], "label": "Trash 2", "name": "lucide-trash-2" },
+    { "family": "maki", "keywords": [], "label": "Aerialway", "name": "maki-aerialway" },
+    { "family": "maki", "keywords": [], "label": "Airfield", "name": "maki-airfield" },
+    { "family": "maki", "keywords": [], "label": "Airport", "name": "maki-airport" },
+    { "family": "maki", "keywords": [], "label": "Alcohol shop", "name": "maki-alcohol-shop" },
+    {
+      "family": "maki",
+      "keywords": [],
+      "label": "American football",
+      "name": "maki-american-football"
+    },
+    { "family": "maki", "keywords": [], "label": "Amusement park", "name": "maki-amusement-park" },
+    { "family": "maki", "keywords": [], "label": "Animal shelter", "name": "maki-animal-shelter" },
+    { "family": "maki", "keywords": [], "label": "Aquarium", "name": "maki-aquarium" },
+    { "family": "maki", "keywords": [], "label": "Arrow", "name": "maki-arrow" },
+    { "family": "maki", "keywords": [], "label": "Art gallery", "name": "maki-art-gallery" },
+    { "family": "maki", "keywords": [], "label": "Attraction", "name": "maki-attraction" },
+    { "family": "maki", "keywords": [], "label": "Bakery", "name": "maki-bakery" },
+    { "family": "maki", "keywords": [], "label": "Bank", "name": "maki-bank" },
+    { "family": "maki", "keywords": [], "label": "Bank JP", "name": "maki-bank-jp" },
+    { "family": "maki", "keywords": [], "label": "Bar", "name": "maki-bar" },
+    { "family": "maki", "keywords": [], "label": "Barrier", "name": "maki-barrier" },
+    { "family": "maki", "keywords": [], "label": "Baseball", "name": "maki-baseball" },
+    { "family": "maki", "keywords": [], "label": "Basketball", "name": "maki-basketball" },
+    { "family": "maki", "keywords": [], "label": "Bbq", "name": "maki-bbq" },
+    { "family": "maki", "keywords": [], "label": "Beach", "name": "maki-beach" },
+    { "family": "maki", "keywords": [], "label": "Beer", "name": "maki-beer" },
+    { "family": "maki", "keywords": [], "label": "Bicycle", "name": "maki-bicycle" },
+    { "family": "maki", "keywords": [], "label": "Bicycle share", "name": "maki-bicycle-share" },
+    { "family": "maki", "keywords": [], "label": "Blood bank", "name": "maki-blood-bank" },
+    { "family": "maki", "keywords": [], "label": "Bowling alley", "name": "maki-bowling-alley" },
+    { "family": "maki", "keywords": [], "label": "Bridge", "name": "maki-bridge" },
+    { "family": "maki", "keywords": [], "label": "Building", "name": "maki-building" },
+    { "family": "maki", "keywords": [], "label": "Building alt1", "name": "maki-building-alt1" },
+    { "family": "maki", "keywords": [], "label": "Bus", "name": "maki-bus" },
+    { "family": "maki", "keywords": [], "label": "Cafe", "name": "maki-cafe" },
+    { "family": "maki", "keywords": [], "label": "Campsite", "name": "maki-campsite" },
+    { "family": "maki", "keywords": [], "label": "Car", "name": "maki-car" },
+    { "family": "maki", "keywords": [], "label": "Car rental", "name": "maki-car-rental" },
+    { "family": "maki", "keywords": [], "label": "Car repair", "name": "maki-car-repair" },
+    { "family": "maki", "keywords": [], "label": "Casino", "name": "maki-casino" },
+    { "family": "maki", "keywords": [], "label": "Castle", "name": "maki-castle" },
+    { "family": "maki", "keywords": [], "label": "Castle JP", "name": "maki-castle-jp" },
+    { "family": "maki", "keywords": [], "label": "Caution", "name": "maki-caution" },
+    { "family": "maki", "keywords": [], "label": "Cemetery", "name": "maki-cemetery" },
+    { "family": "maki", "keywords": [], "label": "Cemetery JP", "name": "maki-cemetery-jp" },
+    {
+      "family": "maki",
+      "keywords": [],
+      "label": "Charging station",
+      "name": "maki-charging-station"
+    },
+    { "family": "maki", "keywords": [], "label": "Cinema", "name": "maki-cinema" },
+    { "family": "maki", "keywords": [], "label": "Circle", "name": "maki-circle" },
+    { "family": "maki", "keywords": [], "label": "Circle stroked", "name": "maki-circle-stroked" },
+    { "family": "maki", "keywords": [], "label": "City", "name": "maki-city" },
+    { "family": "maki", "keywords": [], "label": "Clothing store", "name": "maki-clothing-store" },
+    { "family": "maki", "keywords": [], "label": "College", "name": "maki-college" },
+    { "family": "maki", "keywords": [], "label": "College JP", "name": "maki-college-jp" },
+    { "family": "maki", "keywords": [], "label": "Commercial", "name": "maki-commercial" },
+    {
+      "family": "maki",
+      "keywords": [],
+      "label": "Communications tower",
+      "name": "maki-communications-tower"
+    },
+    { "family": "maki", "keywords": [], "label": "Confectionery", "name": "maki-confectionery" },
+    { "family": "maki", "keywords": [], "label": "Construction", "name": "maki-construction" },
+    { "family": "maki", "keywords": [], "label": "Convenience", "name": "maki-convenience" },
+    { "family": "maki", "keywords": [], "label": "Cricket", "name": "maki-cricket" },
+    { "family": "maki", "keywords": [], "label": "Cross", "name": "maki-cross" },
+    { "family": "maki", "keywords": [], "label": "Dam", "name": "maki-dam" },
+    { "family": "maki", "keywords": [], "label": "Danger", "name": "maki-danger" },
+    { "family": "maki", "keywords": [], "label": "Defibrillator", "name": "maki-defibrillator" },
+    { "family": "maki", "keywords": [], "label": "Dentist", "name": "maki-dentist" },
+    { "family": "maki", "keywords": [], "label": "Diamond", "name": "maki-diamond" },
+    { "family": "maki", "keywords": [], "label": "Doctor", "name": "maki-doctor" },
+    { "family": "maki", "keywords": [], "label": "Dog park", "name": "maki-dog-park" },
+    { "family": "maki", "keywords": [], "label": "Drinking water", "name": "maki-drinking-water" },
+    { "family": "maki", "keywords": [], "label": "Elevator", "name": "maki-elevator" },
+    { "family": "maki", "keywords": [], "label": "Embassy", "name": "maki-embassy" },
+    {
+      "family": "maki",
+      "keywords": [],
+      "label": "Emergency phone",
+      "name": "maki-emergency-phone"
+    },
+    { "family": "maki", "keywords": [], "label": "Entrance", "name": "maki-entrance" },
+    { "family": "maki", "keywords": [], "label": "Entrance alt1", "name": "maki-entrance-alt1" },
+    { "family": "maki", "keywords": [], "label": "Farm", "name": "maki-farm" },
+    { "family": "maki", "keywords": [], "label": "Fast food", "name": "maki-fast-food" },
+    { "family": "maki", "keywords": [], "label": "Fence", "name": "maki-fence" },
+    { "family": "maki", "keywords": [], "label": "Ferry", "name": "maki-ferry" },
+    { "family": "maki", "keywords": [], "label": "Ferry JP", "name": "maki-ferry-jp" },
+    { "family": "maki", "keywords": [], "label": "Fire station", "name": "maki-fire-station" },
+    {
+      "family": "maki",
+      "keywords": [],
+      "label": "Fire station JP",
+      "name": "maki-fire-station-jp"
+    },
+    { "family": "maki", "keywords": [], "label": "Fitness centre", "name": "maki-fitness-centre" },
+    { "family": "maki", "keywords": [], "label": "Florist", "name": "maki-florist" },
+    { "family": "maki", "keywords": [], "label": "Fuel", "name": "maki-fuel" },
+    { "family": "maki", "keywords": [], "label": "Furniture", "name": "maki-furniture" },
+    { "family": "maki", "keywords": [], "label": "Gaming", "name": "maki-gaming" },
+    { "family": "maki", "keywords": [], "label": "Garden", "name": "maki-garden" },
+    { "family": "maki", "keywords": [], "label": "Garden centre", "name": "maki-garden-centre" },
+    { "family": "maki", "keywords": [], "label": "Gate", "name": "maki-gate" },
+    { "family": "maki", "keywords": [], "label": "Gift", "name": "maki-gift" },
+    { "family": "maki", "keywords": [], "label": "Globe", "name": "maki-globe" },
+    { "family": "maki", "keywords": [], "label": "Golf", "name": "maki-golf" },
+    { "family": "maki", "keywords": [], "label": "Grocery", "name": "maki-grocery" },
+    { "family": "maki", "keywords": [], "label": "Hairdresser", "name": "maki-hairdresser" },
+    { "family": "maki", "keywords": [], "label": "Harbor", "name": "maki-harbor" },
+    { "family": "maki", "keywords": [], "label": "Hardware", "name": "maki-hardware" },
+    { "family": "maki", "keywords": [], "label": "Heart", "name": "maki-heart" },
+    { "family": "maki", "keywords": [], "label": "Heliport", "name": "maki-heliport" },
+    {
+      "family": "maki",
+      "keywords": [],
+      "label": "Highway rest area",
+      "name": "maki-highway-rest-area"
+    },
+    { "family": "maki", "keywords": [], "label": "Historic", "name": "maki-historic" },
+    { "family": "maki", "keywords": [], "label": "Home", "name": "maki-home" },
+    { "family": "maki", "keywords": [], "label": "Horse riding", "name": "maki-horse-riding" },
+    { "family": "maki", "keywords": [], "label": "Hospital", "name": "maki-hospital" },
+    { "family": "maki", "keywords": [], "label": "Hospital JP", "name": "maki-hospital-jp" },
+    { "family": "maki", "keywords": [], "label": "Hot spring", "name": "maki-hot-spring" },
+    { "family": "maki", "keywords": [], "label": "Ice cream", "name": "maki-ice-cream" },
+    { "family": "maki", "keywords": [], "label": "Industry", "name": "maki-industry" },
+    { "family": "maki", "keywords": [], "label": "Information", "name": "maki-information" },
+    { "family": "maki", "keywords": [], "label": "Jewelry store", "name": "maki-jewelry-store" },
+    { "family": "maki", "keywords": [], "label": "Karaoke", "name": "maki-karaoke" },
+    { "family": "maki", "keywords": [], "label": "Landmark", "name": "maki-landmark" },
+    { "family": "maki", "keywords": [], "label": "Landmark JP", "name": "maki-landmark-jp" },
+    { "family": "maki", "keywords": [], "label": "Landuse", "name": "maki-landuse" },
+    { "family": "maki", "keywords": [], "label": "Laundry", "name": "maki-laundry" },
+    { "family": "maki", "keywords": [], "label": "Library", "name": "maki-library" },
+    { "family": "maki", "keywords": [], "label": "Lift gate", "name": "maki-lift-gate" },
+    { "family": "maki", "keywords": [], "label": "Lighthouse", "name": "maki-lighthouse" },
+    { "family": "maki", "keywords": [], "label": "Lighthouse JP", "name": "maki-lighthouse-jp" },
+    { "family": "maki", "keywords": [], "label": "Lodging", "name": "maki-lodging" },
+    { "family": "maki", "keywords": [], "label": "Logging", "name": "maki-logging" },
+    { "family": "maki", "keywords": [], "label": "Marae", "name": "maki-marae" },
+    { "family": "maki", "keywords": [], "label": "Marker", "name": "maki-marker" },
+    { "family": "maki", "keywords": [], "label": "Marker stroked", "name": "maki-marker-stroked" },
+    { "family": "maki", "keywords": [], "label": "Mobile phone", "name": "maki-mobile-phone" },
+    { "family": "maki", "keywords": [], "label": "Monument", "name": "maki-monument" },
+    { "family": "maki", "keywords": [], "label": "Monument JP", "name": "maki-monument-jp" },
+    { "family": "maki", "keywords": [], "label": "Mountain", "name": "maki-mountain" },
+    { "family": "maki", "keywords": [], "label": "Museum", "name": "maki-museum" },
+    { "family": "maki", "keywords": [], "label": "Music", "name": "maki-music" },
+    { "family": "maki", "keywords": [], "label": "Natural", "name": "maki-natural" },
+    { "family": "maki", "keywords": [], "label": "Nightclub", "name": "maki-nightclub" },
+    {
+      "family": "maki",
+      "keywords": [],
+      "label": "Observation tower",
+      "name": "maki-observation-tower"
+    },
+    { "family": "maki", "keywords": [], "label": "Optician", "name": "maki-optician" },
+    { "family": "maki", "keywords": [], "label": "Paint", "name": "maki-paint" },
+    { "family": "maki", "keywords": [], "label": "Park", "name": "maki-park" },
+    { "family": "maki", "keywords": [], "label": "Park alt1", "name": "maki-park-alt1" },
+    { "family": "maki", "keywords": [], "label": "Parking", "name": "maki-parking" },
+    { "family": "maki", "keywords": [], "label": "Parking garage", "name": "maki-parking-garage" },
+    { "family": "maki", "keywords": [], "label": "Parking paid", "name": "maki-parking-paid" },
+    { "family": "maki", "keywords": [], "label": "Pharmacy", "name": "maki-pharmacy" },
+    { "family": "maki", "keywords": [], "label": "Picnic site", "name": "maki-picnic-site" },
+    { "family": "maki", "keywords": [], "label": "Pitch", "name": "maki-pitch" },
+    {
+      "family": "maki",
+      "keywords": [],
+      "label": "Place of worship",
+      "name": "maki-place-of-worship"
+    },
+    { "family": "maki", "keywords": [], "label": "Playground", "name": "maki-playground" },
+    { "family": "maki", "keywords": [], "label": "Police", "name": "maki-police" },
+    { "family": "maki", "keywords": [], "label": "Police JP", "name": "maki-police-jp" },
+    { "family": "maki", "keywords": [], "label": "Post", "name": "maki-post" },
+    { "family": "maki", "keywords": [], "label": "Post JP", "name": "maki-post-jp" },
+    { "family": "maki", "keywords": [], "label": "Prison", "name": "maki-prison" },
+    { "family": "maki", "keywords": [], "label": "Racetrack", "name": "maki-racetrack" },
+    { "family": "maki", "keywords": [], "label": "Racetrack boat", "name": "maki-racetrack-boat" },
+    {
+      "family": "maki",
+      "keywords": [],
+      "label": "Racetrack cycling",
+      "name": "maki-racetrack-cycling"
+    },
+    {
+      "family": "maki",
+      "keywords": [],
+      "label": "Racetrack horse",
+      "name": "maki-racetrack-horse"
+    },
+    { "family": "maki", "keywords": [], "label": "Rail", "name": "maki-rail" },
+    { "family": "maki", "keywords": [], "label": "Rail light", "name": "maki-rail-light" },
+    { "family": "maki", "keywords": [], "label": "Rail metro", "name": "maki-rail-metro" },
+    { "family": "maki", "keywords": [], "label": "Ranger station", "name": "maki-ranger-station" },
+    { "family": "maki", "keywords": [], "label": "Recycling", "name": "maki-recycling" },
+    {
+      "family": "maki",
+      "keywords": [],
+      "label": "Religious buddhist",
+      "name": "maki-religious-buddhist"
+    },
+    {
+      "family": "maki",
+      "keywords": [],
+      "label": "Religious christian",
+      "name": "maki-religious-christian"
+    },
+    {
+      "family": "maki",
+      "keywords": [],
+      "label": "Religious jewish",
+      "name": "maki-religious-jewish"
+    },
+    {
+      "family": "maki",
+      "keywords": [],
+      "label": "Religious muslim",
+      "name": "maki-religious-muslim"
+    },
+    {
+      "family": "maki",
+      "keywords": [],
+      "label": "Religious shinto",
+      "name": "maki-religious-shinto"
+    },
+    {
+      "family": "maki",
+      "keywords": [],
+      "label": "Residential community",
+      "name": "maki-residential-community"
+    },
+    { "family": "maki", "keywords": [], "label": "Restaurant", "name": "maki-restaurant" },
+    { "family": "maki", "keywords": [], "label": "Restaurant bbq", "name": "maki-restaurant-bbq" },
+    {
+      "family": "maki",
+      "keywords": [],
+      "label": "Restaurant noodle",
+      "name": "maki-restaurant-noodle"
+    },
+    {
+      "family": "maki",
+      "keywords": [],
+      "label": "Restaurant pizza",
+      "name": "maki-restaurant-pizza"
+    },
+    {
+      "family": "maki",
+      "keywords": [],
+      "label": "Restaurant seafood",
+      "name": "maki-restaurant-seafood"
+    },
+    {
+      "family": "maki",
+      "keywords": [],
+      "label": "Restaurant sushi",
+      "name": "maki-restaurant-sushi"
+    },
+    { "family": "maki", "keywords": [], "label": "Road accident", "name": "maki-road-accident" },
+    { "family": "maki", "keywords": [], "label": "Roadblock", "name": "maki-roadblock" },
+    { "family": "maki", "keywords": [], "label": "Rocket", "name": "maki-rocket" },
+    { "family": "maki", "keywords": [], "label": "School", "name": "maki-school" },
+    { "family": "maki", "keywords": [], "label": "School JP", "name": "maki-school-jp" },
+    { "family": "maki", "keywords": [], "label": "Scooter", "name": "maki-scooter" },
+    { "family": "maki", "keywords": [], "label": "Shelter", "name": "maki-shelter" },
+    { "family": "maki", "keywords": [], "label": "Shoe", "name": "maki-shoe" },
+    { "family": "maki", "keywords": [], "label": "Shop", "name": "maki-shop" },
+    { "family": "maki", "keywords": [], "label": "Skateboard", "name": "maki-skateboard" },
+    { "family": "maki", "keywords": [], "label": "Skiing", "name": "maki-skiing" },
+    { "family": "maki", "keywords": [], "label": "Slaughterhouse", "name": "maki-slaughterhouse" },
+    { "family": "maki", "keywords": [], "label": "Slipway", "name": "maki-slipway" },
+    { "family": "maki", "keywords": [], "label": "Snowmobile", "name": "maki-snowmobile" },
+    { "family": "maki", "keywords": [], "label": "Soccer", "name": "maki-soccer" },
+    { "family": "maki", "keywords": [], "label": "Square", "name": "maki-square" },
+    { "family": "maki", "keywords": [], "label": "Square stroked", "name": "maki-square-stroked" },
+    { "family": "maki", "keywords": [], "label": "Stadium", "name": "maki-stadium" },
+    { "family": "maki", "keywords": [], "label": "Star", "name": "maki-star" },
+    { "family": "maki", "keywords": [], "label": "Star stroked", "name": "maki-star-stroked" },
+    { "family": "maki", "keywords": [], "label": "Suitcase", "name": "maki-suitcase" },
+    { "family": "maki", "keywords": [], "label": "Swimming", "name": "maki-swimming" },
+    { "family": "maki", "keywords": [], "label": "Table tennis", "name": "maki-table-tennis" },
+    { "family": "maki", "keywords": [], "label": "Taxi", "name": "maki-taxi" },
+    { "family": "maki", "keywords": [], "label": "Teahouse", "name": "maki-teahouse" },
+    { "family": "maki", "keywords": [], "label": "Telephone", "name": "maki-telephone" },
+    { "family": "maki", "keywords": [], "label": "Tennis", "name": "maki-tennis" },
+    { "family": "maki", "keywords": [], "label": "Terminal", "name": "maki-terminal" },
+    { "family": "maki", "keywords": [], "label": "Theatre", "name": "maki-theatre" },
+    { "family": "maki", "keywords": [], "label": "Toilet", "name": "maki-toilet" },
+    { "family": "maki", "keywords": [], "label": "Toll", "name": "maki-toll" },
+    { "family": "maki", "keywords": [], "label": "Town", "name": "maki-town" },
+    { "family": "maki", "keywords": [], "label": "Town hall", "name": "maki-town-hall" },
+    { "family": "maki", "keywords": [], "label": "Triangle", "name": "maki-triangle" },
+    {
+      "family": "maki",
+      "keywords": [],
+      "label": "Triangle stroked",
+      "name": "maki-triangle-stroked"
+    },
+    { "family": "maki", "keywords": [], "label": "Tunnel", "name": "maki-tunnel" },
+    { "family": "maki", "keywords": [], "label": "Veterinary", "name": "maki-veterinary" },
+    { "family": "maki", "keywords": [], "label": "Viewpoint", "name": "maki-viewpoint" },
+    { "family": "maki", "keywords": [], "label": "Village", "name": "maki-village" },
+    { "family": "maki", "keywords": [], "label": "Volcano", "name": "maki-volcano" },
+    { "family": "maki", "keywords": [], "label": "Volleyball", "name": "maki-volleyball" },
+    { "family": "maki", "keywords": [], "label": "Warehouse", "name": "maki-warehouse" },
+    { "family": "maki", "keywords": [], "label": "Waste basket", "name": "maki-waste-basket" },
+    { "family": "maki", "keywords": [], "label": "Watch", "name": "maki-watch" },
+    { "family": "maki", "keywords": [], "label": "Water", "name": "maki-water" },
+    { "family": "maki", "keywords": [], "label": "Waterfall", "name": "maki-waterfall" },
+    { "family": "maki", "keywords": [], "label": "Watermill", "name": "maki-watermill" },
+    { "family": "maki", "keywords": [], "label": "Wetland", "name": "maki-wetland" },
+    { "family": "maki", "keywords": [], "label": "Wheelchair", "name": "maki-wheelchair" },
+    { "family": "maki", "keywords": [], "label": "Windmill", "name": "maki-windmill" },
+    { "family": "maki", "keywords": [], "label": "Zoo", "name": "maki-zoo" }
+  ],
+  "sdf": { "buffer": 3, "radius": 8 }
+}

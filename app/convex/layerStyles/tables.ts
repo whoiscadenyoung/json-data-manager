@@ -25,4 +25,26 @@ export const layerStyleTables = {
     updatedBy: v.string(),
     updatedAt: v.number(),
   }).index("by_mapId_and_renderId", ["mapId", "renderId"]),
+  /**
+   * Uploaded point-marker icons (docs/layer-styles.md "Uploaded icons"),
+   * shared by every map like the styles themselves (ADR 0009). The stored
+   * file is always a PNG the uploader's browser rasterized — SVG markup is
+   * never stored or served. A style names an icon `user-<_id>`.
+   */
+  layerStyleIcons: defineTable({
+    /** Display name (the file name without its extension). */
+    label: v.string(),
+    storageId: v.id("_storage"),
+    /** A tintable single-color glyph stored as an SDF (`icon-color` applies); else full color. */
+    sdf: v.boolean(),
+    /** Stored image size in device pixels. */
+    width: v.number(),
+    height: v.number(),
+    pixelRatio: v.number(),
+    /** Better Auth user id (`users.authId`) of the uploader. */
+    uploadedBy: v.string(),
+    uploadedAt: v.number(),
+  })
+    .index("by_uploadedAt", ["uploadedAt"])
+    .index("by_storageId", ["storageId"]),
 };

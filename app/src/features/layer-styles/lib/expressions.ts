@@ -68,43 +68,94 @@ function toFeatureState(node: unknown): unknown {
 
 export interface TileLayersResult {
   layers: StyleLayer[];
-  /** True when a layer had to be dropped (labels or a data filter), so the editor can say why. */
+  /** True when a layer had to be dropped or simplified (labels, data filters, per-class icons/sizes), so the editor can say why. */
   dropped: boolean;
 }
 
+function readsData(node: unknown): boolean {
+  const fields = new Set<string>();
+  collectFields(node, fields);
+  return fields.size > 0;
+}
+
 /**
- * The tile path's version of a style. Tile features carry only `entryId`,
- * so field values ride MapLibre feature-state instead of properties —
- * which MapLibre allows in `paint` only. Paint reads are rewritten onto
- * feature-state; a layer whose `layout` or `filter` reads data (labels,
- * attribute filters) can't render from tiles and is dropped (geometry-type
- * filters read no data and stay).
+ * A data-free stand-in for a data-driven layout value: a `match`/`case`'s
+ * fallback or a `step`'s first output (the "Other" icon, the base size), or
+ * `undefined` when there is none (a label's text).
  */
-export function tileLayers(style: LayerStyle): TileLayersResult {
+function staticFallback(node: unknown): unknown {
+  if (!readsData(node)) {
+    return node;
+  }
+  if (!Array.isArray(node)) {
+    return undefined;
+  }
+  const [op] = node;
+  if (op === "match" || op === "case") {
+    return staticFallback(node.at(-1));
+  }
+  if (op === "step") {
+    return staticFallback(node[2]);
+  }
+  return undefined;
+}
+
+/** The layout with every data read replaced by its static fallback, or `undefined` if one has none. */
+function staticLayout(
+  layout: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (layout === undefined) {
+    return undefined;
+  }
+  const next: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(layout)) {
+    const fallback = staticFallback(value);
+    if (fallback === undefined) {
+      return undefined;
+    }
+    next[key] = fallback;
+  }
+  return next;
+}
+
+/**
+ * The tile path's version of a style's layers. Tile features carry only
+ * `entryId`, so field values ride MapLibre feature-state instead of
+ * properties — which MapLibre allows in `paint` only. Paint reads are
+ * rewritten onto feature-state. A data-driven `layout` value falls back to
+ * its static default (a per-category icon to the marker's own icon, a class
+ * size to the base size); a layer with no such default (labels) or a data
+ * filter can't render from tiles and is dropped (geometry-type filters read
+ * no data and stay).
+ */
+export function tileLayers(source: readonly StyleLayer[]): TileLayersResult {
   let dropped = false;
   const layers: StyleLayer[] = [];
-  for (const layer of style.layers) {
-    const dataInLayout = fieldsOfLayers([{ layout: layer.layout, type: layer.type }]).length > 0,
-      dataInFilter = fieldsOfLayers([{ filter: layer.filter, type: layer.type }]).length > 0;
-    if (dataInLayout || dataInFilter) {
+  for (const layer of source) {
+    const layout = staticLayout(layer.layout);
+    if (readsData(layer.filter) || (layer.layout !== undefined && layout === undefined)) {
       dropped = true;
       continue;
     }
-    layers.push(
-      layer.paint === undefined
-        ? layer
+    if (readsData(layer.layout)) {
+      dropped = true;
+    }
+    layers.push({
+      ...layer,
+      ...(layout === undefined ? {} : { layout }),
+      ...(layer.paint === undefined
+        ? {}
         : {
-            ...layer,
             paint: Object.fromEntries(
               Object.entries(layer.paint).map(([key, value]) => [key, toFeatureState(value)]),
             ),
-          },
-    );
+          }),
+    });
   }
   return { dropped, layers };
 }
 
-/** Whether any layer of the style can't render from tiles (see `tileLayers`). */
+/** Whether any layer of the style can't render as-is from tiles (see `tileLayers`). */
 export function hasTileLimitations(style: LayerStyle): boolean {
-  return tileLayers(style).dropped;
+  return tileLayers(style.layers).dropped;
 }

@@ -130,7 +130,7 @@ describe("tile path", () => {
         }),
         label: { color: "#111111", field: "name", haloColor: "#ffffff", size: 12 },
       }),
-      result = tileLayers(style);
+      result = tileLayers(style.layers);
     expect(result.dropped).toBe(true);
     expect(result.layers.map((layer) => layer.type)).toEqual(["fill", "line", "line", "circle"]);
     expect(result.layers[0].paint).toMatchObject({
