@@ -1,7 +1,6 @@
-import type { Renderer } from "#convex/layerStyles/validators";
-
 import { classBreaks, distinctValues, numericValues } from "./classify";
 import { categoryColor, OTHER_COLOR, rampColors, type RampName } from "./palettes";
+import type { Renderer } from "./validators";
 
 /** Classes the editor generates for a categories style (the rest fall into "Other"). */
 export const MAX_GENERATED_CATEGORIES = 12;

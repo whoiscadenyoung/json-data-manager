@@ -1,13 +1,13 @@
+import { iconNamesOfLayer, iconNamesOfLayers } from "@caden/layer-styles/icons";
+import type { StyleLayer } from "@caden/layer-styles/validators";
 import { useMap } from "@caden/ui/components/map";
 import type * as MapLibreGL from "maplibre-gl";
 import { useEffect, useMemo, useRef } from "react";
 
 import type { DatasetEntryRow } from "#/lib/dataset-rows";
 import { entryDataRecord } from "#/lib/dataset-rows";
-import type { StyleLayer } from "#convex/layerStyles/validators";
 
 import { ensureMapImages, type UploadedIcon } from "../lib/icon-images";
-import { iconNamesOfLayer, iconNamesOfLayers } from "../lib/icons";
 
 /** The MVT source layer our tile writer emits (`MapVectorTiles`' default). */
 const TILE_SOURCE_LAYER = "geojson";

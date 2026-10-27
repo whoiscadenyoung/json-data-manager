@@ -1,8 +1,3 @@
-import { ConvexError, v } from "convex/values";
-
-import { components } from "../_generated/api";
-import { mutation, query, type MutationCtx, type QueryCtx } from "../_generated/server";
-import { auth } from "../auth";
 import {
   ICON_NAME_PATTERN,
   layerStyleValidator,
@@ -10,7 +5,12 @@ import {
   type LayerStyle,
   type Marker,
   type StyleEditor,
-} from "./validators";
+} from "@caden/layer-styles/validators";
+import { ConvexError, v } from "convex/values";
+
+import { components } from "../_generated/api";
+import { mutation, query, type MutationCtx, type QueryCtx } from "../_generated/server";
+import { auth } from "../auth";
 
 /**
  * The layer-styles backend (docs/layer-styles.md, ADR 0012): a removable

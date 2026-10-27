@@ -1,7 +1,6 @@
+import { layerStyleValidator } from "@caden/layer-styles/validators";
 import { defineTable } from "convex/server";
 import { v } from "convex/values";
-
-import { layerStyleValidator } from "./validators";
 
 /**
  * The layer-styles module's table, spread into `convex/schema.ts` with one

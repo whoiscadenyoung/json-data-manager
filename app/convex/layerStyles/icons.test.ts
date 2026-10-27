@@ -7,14 +7,14 @@
  * deletion — plus the style-side marker validation in `styles.set`.
  */
 import { register as registerJsonCms } from "@caden/json-cms/test";
+import { compileStyle, defaultEditor } from "@caden/layer-styles/compile";
+import { ICON_LIMITS, type Marker } from "@caden/layer-styles/validators";
 import { convexTest } from "convex-test";
 import { describe, expect, it } from "vitest";
 
-import { compileStyle, defaultEditor } from "../../src/features/layer-styles/lib/compile";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
-import { ICON_LIMITS, type Marker } from "./validators";
 
 const modules = import.meta.glob("/convex/**/*.ts");
 

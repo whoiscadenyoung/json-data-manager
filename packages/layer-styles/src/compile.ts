@@ -1,12 +1,5 @@
-import type {
-  LayerStyle,
-  Marker,
-  Renderer,
-  StyleEditor,
-  StyleLayer,
-} from "#convex/layerStyles/validators";
-
 import { NO_DATA_COLOR } from "./palettes";
+import type { LayerStyle, Marker, Renderer, StyleEditor, StyleLayer } from "./validators";
 
 /**
  * Compiles the simple editor's settings into MapLibre style-spec layer

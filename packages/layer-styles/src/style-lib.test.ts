@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import type { StyleEditor } from "#convex/layerStyles/validators";
-
 import { classBreaks, distinctValues, numericValues } from "./classify";
 import { colorExpression, compileStyle, defaultEditor } from "./compile";
 import { exportStyleJson, importStyleJson, validateLayers } from "./exchange";
@@ -9,6 +7,7 @@ import { fieldsOfStyle, tileLayers } from "./expressions";
 import { legendClasses } from "./legend";
 import { NO_DATA_COLOR, rampColors } from "./palettes";
 import { bestCategoryField, graduatedRenderer } from "./renderers";
+import type { StyleEditor } from "./validators";
 
 function editorWith(renderer: StyleEditor["renderer"]): StyleEditor {
   return { ...defaultEditor("#3b82f6"), renderer };

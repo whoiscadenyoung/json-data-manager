@@ -1,3 +1,16 @@
+import { compileStyle, defaultEditor, usesIcons } from "@caden/layer-styles/compile";
+import { hasTileLimitations } from "@caden/layer-styles/expressions";
+import { legendClasses } from "@caden/layer-styles/legend";
+import { isRampName, RAMP_NAMES, rampColors, type RampName } from "@caden/layer-styles/palettes";
+import {
+  bestCategoryField,
+  categoricalRenderer,
+  fieldNames,
+  graduatedRenderer,
+  numericFieldNames,
+  overflowCount,
+} from "@caden/layer-styles/renderers";
+import type { LayerStyle, Renderer, StyleEditor } from "@caden/layer-styles/validators";
 import { Button } from "@caden/ui/components/button";
 import {
   Card,
@@ -13,20 +26,7 @@ import { Info, RotateCcw, X } from "lucide-react";
 
 import type { DatasetEntryRow } from "#/lib/dataset-rows";
 import { entryDataRecord } from "#/lib/dataset-rows";
-import type { LayerStyle, Renderer, StyleEditor } from "#convex/layerStyles/validators";
 
-import { compileStyle, defaultEditor, usesIcons } from "../lib/compile";
-import { hasTileLimitations } from "../lib/expressions";
-import { legendClasses } from "../lib/legend";
-import { isRampName, RAMP_NAMES, rampColors, type RampName } from "../lib/palettes";
-import {
-  bestCategoryField,
-  categoricalRenderer,
-  fieldNames,
-  graduatedRenderer,
-  numericFieldNames,
-  overflowCount,
-} from "../lib/renderers";
 import { AdvancedSection } from "./advanced-section";
 import { ColorField, RangeField, Section, SelectField, SwatchList } from "./controls";
 import {

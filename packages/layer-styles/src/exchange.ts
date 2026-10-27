@@ -1,14 +1,13 @@
 import { validateStyleMin } from "@maplibre/maplibre-gl-style-spec";
 
+import { iconNamesOfLayers } from "./icons";
 import {
   STYLE_LAYER_TYPES,
   STYLE_LIMITS,
   type LayerStyle,
   type StyleLayer,
   type StyleLayerType,
-} from "#convex/layerStyles/validators";
-
-import { iconNamesOfLayers } from "./icons";
+} from "./validators";
 
 /**
  * Moving styles in and out as MapLibre style-spec JSON (the transferability

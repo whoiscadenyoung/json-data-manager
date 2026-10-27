@@ -1,35 +1,34 @@
 import { readFileSync } from "node:fs";
 
-import { PNG } from "pngjs";
-import { describe, expect, it } from "vitest";
-
-import {
-  ICON_LIMITS,
-  ICON_NAME_PATTERN,
-  type Marker,
-  type StyleEditor,
-} from "#convex/layerStyles/validators";
-
 import {
   colorExpression,
   compileStyle,
   defaultEditor,
   ICON_GLYPH_PX,
   sizeExpression,
-} from "./compile";
-import { importStyleJson, validateLayers } from "./exchange";
-import { tileLayers } from "./expressions";
-import { iconNamesOfLayers, iconNamesOfStyle, withIconFallback } from "./icons";
-import { legendClasses, singleMarkerIcon } from "./legend";
-import { SDF_EDGE, sdfFromAlpha, sdfImage, sdfParams } from "./sdf";
-import { packSprite, spriteReadme } from "./sprite-export";
+} from "@caden/layer-styles/compile";
+import { importStyleJson, validateLayers } from "@caden/layer-styles/exchange";
+import { tileLayers } from "@caden/layer-styles/expressions";
+import { iconNamesOfLayers, iconNamesOfStyle, withIconFallback } from "@caden/layer-styles/icons";
+import { legendClasses, singleMarkerIcon } from "@caden/layer-styles/legend";
+import { SDF_EDGE, sdfFromAlpha, sdfImage, sdfParams } from "@caden/layer-styles/sdf";
 import {
   checkPngSize,
   checkUploadFile,
   fitWithin,
   iconLabelFromFileName,
   inspectSvg,
-} from "./uploads";
+} from "@caden/layer-styles/uploads";
+import {
+  ICON_LIMITS,
+  ICON_NAME_PATTERN,
+  type Marker,
+  type StyleEditor,
+} from "@caden/layer-styles/validators";
+import { PNG } from "pngjs";
+import { describe, expect, it } from "vitest";
+
+import { packSprite, spriteReadme } from "./sprite-export";
 
 const ICON: Marker = {
   allowOverlap: true,

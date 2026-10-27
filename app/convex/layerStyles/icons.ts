@@ -1,9 +1,9 @@
+import { ICON_LIMITS } from "@caden/layer-styles/validators";
 import { ConvexError, v } from "convex/values";
 
 import type { Id } from "../_generated/dataModel";
 import { mutation, query } from "../_generated/server";
 import { auth } from "../auth";
-import { ICON_LIMITS } from "./validators";
 
 /**
  * Uploaded point-marker icons (docs/layer-styles.md "Uploaded icons"), part

@@ -1,11 +1,10 @@
+import { exportStyleJson, slugify } from "@caden/layer-styles/exchange";
+import { iconNamesOfStyle } from "@caden/layer-styles/icons";
+import type { LayerStyle } from "@caden/layer-styles/validators";
 import { strToU8, zipSync } from "fflate";
 import potpack from "potpack";
 
-import type { LayerStyle } from "#convex/layerStyles/validators";
-
-import { exportStyleJson, slugify } from "./exchange";
 import { iconImage, type IconImage, type UploadedIcon } from "./icon-images";
-import { iconNamesOfStyle } from "./icons";
 
 /**
  * "Download sprite": a standard MapLibre sprite (`sprite.json`/`.png` and
