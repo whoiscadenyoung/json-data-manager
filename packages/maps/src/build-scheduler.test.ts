@@ -6,7 +6,7 @@ import {
   isTileArchiveStale,
   rememberBelowThresholdSkip,
   type TileArchiveBuildOutcome,
-} from "./tile-archive";
+} from "./build-scheduler";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

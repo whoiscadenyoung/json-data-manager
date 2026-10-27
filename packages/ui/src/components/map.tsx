@@ -1,9 +1,10 @@
 "use client";
 
+import { pmtilesProtocol } from "@caden/maps/pmtiles-protocol";
 import type * as GeoJSON from "geojson";
-import { X, Minus, Plus, Locate, Maximize, Loader2 } from "lucide-react";
 
 import "maplibre-gl/dist/maplibre-gl.css";
+import { X, Minus, Plus, Locate, Maximize, Loader2 } from "lucide-react";
 import * as MapLibreGL from "maplibre-gl";
 import type { PopupOptions, MarkerOptions } from "maplibre-gl";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
@@ -24,7 +25,6 @@ import { createPortal } from "react-dom";
 
 import darkMatterStyleJson from "../assets/basemaps/dark-matter-gl-style.json?raw";
 import positronStyleJson from "../assets/basemaps/positron-gl-style.json?raw";
-import { pmtilesProtocol } from "../lib/pmtiles-protocol";
 import { cn } from "../lib/utils";
 
 // Same-origin module worker, bundled by vite (`?worker&url`). The previous
@@ -71,7 +71,7 @@ if (typeof window !== "undefined") {
 // writer is ours; its roundtrip tests pin the two sides together). One module
 // instance serves every map on the page; the handler's internal caches are
 // keyed by archive URL and are shared across maps for free. The instance is
-// created in `../lib/pmtiles-protocol.ts` so the OPFS pin (part 5) can
+// created in `@caden/maps/pmtiles-protocol` so the OPFS pin (part 5) can
 // pre-register locally-served archives on the same handler.
 
 // MapLibre keeps protocols in a module-level map and `addProtocol` overwrites,

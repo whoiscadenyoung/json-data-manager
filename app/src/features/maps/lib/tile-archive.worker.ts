@@ -18,25 +18,22 @@ import {
   buildGeometryArchive,
   DEFAULT_MAX_ZOOM,
   type GeoJSONFeature,
-  type GeoJSONGeometry,
 } from "@caden/geometry-archive";
+import { BoundedPool } from "@caden/maps/bounded-pool";
+import type { TileArchiveBuildPhase } from "@caden/maps/build-scheduler";
+import { feature, resolveRow, type ResolvedGeometryRow } from "@caden/maps/geometry-features";
 import { ConvexClient } from "convex/browser";
 
 import { env } from "#/env";
-import { BoundedPool } from "#/lib/bounded-pool";
-import { forEachDatasetGeometryPage, type DatasetGeometryRow } from "#/lib/dataset-rows";
+import { forEachDatasetGeometryPage } from "#/lib/dataset-rows";
 import { api } from "#convex/_generated/api";
 
-import type {
-  TileArchiveBuildPhase,
-  TileArchiveWorkerInbound,
-  TileArchiveWorkerOutbound,
-} from "./tile-archive";
+import type { TileArchiveWorkerInbound, TileArchiveWorkerOutbound } from "./tile-archive";
 
 /**
  * Minimum geometry-payload bytes an archive is worth building for — keep in
  * sync with `MAP_TILE_ARCHIVE_MIN_BYTES` in the component's `lib.ts` (and its
- * mirror in `./tile-archive`). Applied here, after assembly, on the exact
+ * mirror in `@caden/maps/build-scheduler`). Applied here, after assembly, on the exact
  * payload size: a small dataset skips upload/install entirely and reports
  * `skipped`.
  */
@@ -118,76 +115,6 @@ self.addEventListener("message", (event: MessageEvent<TileArchiveWorkerInbound>)
   convexClient().setAuth(fetchTokenFromMain);
   buildQueue = buildQueue.then(async () => runBuild(schemaId)).catch(() => undefined); // runBuild reports its own error message; the queue keeps draining.
 });
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-const GEOMETRY_TYPES_WITH_COORDINATES = new Set([
-  "MultiPoint",
-  "MultiLineString",
-  "MultiPolygon",
-  "Point",
-  "LineString",
-  "Polygon",
-]);
-
-function isGeometry(value: unknown): value is GeoJSONGeometry {
-  if (!isRecord(value) || typeof value.type !== "string") return false;
-  if (value.type === "GeometryCollection") return "geometries" in value;
-  return GEOMETRY_TYPES_WITH_COORDINATES.has(value.type) && "coordinates" in value;
-}
-
-function parseGeometry(json: string, source: string): GeoJSONGeometry {
-  const value: unknown = JSON.parse(json);
-  if (!isGeometry(value)) {
-    throw new Error(`${source} did not parse to a GeoJSON geometry object.`);
-  }
-  return value;
-}
-
-async function fetchGeometry(url: string): Promise<{ bytes: number; geometry: GeoJSONGeometry }> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Geometry payload fetch failed with HTTP ${response.status}`);
-  }
-  // Count real bytes off the wire — `text.length` counts UTF-16 code units,
-  // which undercounts multi-byte payloads (issue #134).
-  const buffer = await response.arrayBuffer();
-  const text = new TextDecoder().decode(buffer);
-  return { bytes: buffer.byteLength, geometry: parseGeometry(text, `Geometry payload ${url}`) };
-}
-
-/** UTF-8 byte length of an inline payload — `text.length` counts UTF-16 code
- * units, not bytes (issue #134). */
-function utf8ByteLength(text: string): number {
-  return new TextEncoder().encode(text).byteLength;
-}
-
-function feature(entryId: string, geometry: GeoJSONGeometry): GeoJSONFeature {
-  // `_id` is the archive lib's app convention: it becomes the tile feature's
-  // `entryId` property — the join key part 4 maps a tile click back through.
-  return { _id: entryId, geometry, properties: null, type: "Feature" };
-}
-
-interface ResolvedGeometryRow {
-  bytes: number;
-  entryId: string;
-  geometry: GeoJSONGeometry;
-}
-
-async function resolveRow(row: DatasetGeometryRow): Promise<ResolvedGeometryRow | null> {
-  if (row.geometryJson !== undefined) {
-    return {
-      bytes: utf8ByteLength(row.geometryJson),
-      entryId: row.entryId,
-      geometry: parseGeometry(row.geometryJson, `Geometry row ${row.entryId}`),
-    };
-  }
-  if (row.geometryUrl === undefined) return null;
-  const fetched = await fetchGeometry(row.geometryUrl);
-  return { bytes: fetched.bytes, entryId: row.entryId, geometry: fetched.geometry };
-}
 
 /**
  * Pages the dataset to exhaustion (`isDone`) and accumulates its features —

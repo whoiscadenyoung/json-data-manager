@@ -1,0 +1,24 @@
+{
+  "name": "@caden/maps",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Backend-free map engine: the shared PMTiles protocol, the OPFS tile-archive cache, rebuild scheduling and geometry-row parsing. Source-only workspace package (ADR 0014).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@caden/geometry-archive": "workspace:*",
+    "pmtiles": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "typescript": "^7.0.2",
+    "vitest": "^3.2.7"
+  }
+}

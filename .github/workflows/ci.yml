@@ -81,6 +81,9 @@ jobs:
       - name: Typecheck (@caden/ui)
         run: bun --filter=@caden/ui run typecheck
 
+      - name: Typecheck (@caden/maps)
+        run: bun --filter=@caden/maps run typecheck
+
       - name: Typecheck (@caden/data-export)
         run: bun --filter=@caden/data-export run typecheck
 
@@ -95,6 +98,9 @@ jobs:
 
       - name: Test (@caden/geometry-archive)
         run: bun --filter=@caden/geometry-archive run test
+
+      - name: Test (@caden/maps)
+        run: bun --filter=@caden/maps run test
 
       - name: Test (app)
         run: bun --filter=app run test
