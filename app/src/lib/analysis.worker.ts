@@ -27,8 +27,8 @@
  * - One run at a time: the CPU-bound WASM query serializes on the
  *   promise-chained queue (the tile-archive pattern).
  */
-import { applySql, declaredColumnTypes } from "@caden/json-cms/transform";
-import type { SqlColumnSpec, SqlOperation, SqlSideTable } from "@caden/json-cms/transform";
+import { applySql, declaredColumnTypes } from "@caden/data-core/transform";
+import type { SqlColumnSpec, SqlOperation, SqlSideTable } from "@caden/data-core/transform";
 import { ConvexClient } from "convex/browser";
 
 import { env } from "#/env";

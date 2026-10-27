@@ -1,0 +1,54 @@
+{
+  "name": "@caden/data-core",
+  "version": "0.1.0",
+  "description": "Backend-free data primitives shared by json-cms and the app: GeoJSON types and helpers, value coercion, reference fields, coordinate-column detection, and the transform engine.",
+  "license": "Apache-2.0",
+  "repository": "github:whoiscadenyoung/json-data-manager",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    "./coercion": {
+      "types": "./dist/coercion.d.ts",
+      "default": "./dist/coercion.js"
+    },
+    "./coordinate-columns": {
+      "types": "./dist/coordinate-columns.d.ts",
+      "default": "./dist/coordinate-columns.js"
+    },
+    "./geojson": {
+      "types": "./dist/geojson/index.d.ts",
+      "default": "./dist/geojson/index.js"
+    },
+    "./reference": {
+      "types": "./dist/reference.d.ts",
+      "default": "./dist/reference.js"
+    },
+    "./transform": {
+      "types": "./dist/transform/index.d.ts",
+      "default": "./dist/transform/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project ./tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepare": "bun run build"
+  },
+  "dependencies": {
+    "@turf/bbox": "^7.4.0",
+    "@types/geojson": "^7946.0.16",
+    "geojson": "^0.5.0"
+  },
+  "devDependencies": {
+    "convex": "1.45.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  },
+  "peerDependencies": {
+    "convex": "^1.45.0"
+  }
+}

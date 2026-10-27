@@ -1,7 +1,7 @@
-import { getReferenceFields } from "../../shared/reference.js";
-import type { ReferenceCandidate } from "../../shared/reference.js";
+import { getReferenceFields } from "@caden/data-core/reference";
+import type { ReferenceCandidate } from "@caden/data-core/reference";
 
-export type { ReferenceCandidate } from "../../shared/reference.js";
+export type { ReferenceCandidate } from "@caden/data-core/reference";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

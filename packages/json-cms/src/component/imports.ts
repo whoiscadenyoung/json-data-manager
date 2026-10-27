@@ -1,10 +1,10 @@
+import { isGeometryCompatibleWithDatasetType } from "@caden/data-core/geojson";
+import { GeoParseError, GeometryError } from "@caden/data-core/geojson";
+import type { Geometry } from "@caden/data-core/geojson";
+import { geometryTypeValidator } from "@caden/data-core/geojson";
+import type { GeometryTypeArg } from "@caden/data-core/geojson";
 import { ConvexError, v } from "convex/values";
 
-import { isGeometryCompatibleWithDatasetType } from "../shared/geojson/coalesce.js";
-import { GeoParseError, GeometryError } from "../shared/geojson/error.js";
-import type { Geometry } from "../shared/geojson/types.js";
-import { geometryTypeValidator } from "../shared/geojson/validators.js";
-import type { GeometryTypeArg } from "../shared/geojson/validators.js";
 import { internal } from "./_generated/api.js";
 import type { Id } from "./_generated/dataModel.js";
 import {

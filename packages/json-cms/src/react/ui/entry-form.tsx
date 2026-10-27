@@ -1,11 +1,11 @@
 "use client";
 
+import type { ReferenceCandidate } from "@caden/data-core/reference";
 import type { IChangeEvent } from "@rjsf/core";
 import RjsfForm from "@rjsf/shadcn";
 import type { UiSchema } from "@rjsf/utils";
 import validator from "@rjsf/validator-ajv8";
 
-import type { ReferenceCandidate } from "../../shared/reference.js";
 import { buildReferenceUiSchema } from "../lib/reference-ui-schema.js";
 import { ReferenceWidget } from "./reference-widget.js";
 

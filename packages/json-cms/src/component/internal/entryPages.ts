@@ -1,4 +1,5 @@
-import type { GeometryTypeArg } from "../../shared/geojson/validators.js";
+import type { GeometryTypeArg } from "@caden/data-core/geojson";
+
 import type { Id } from "../_generated/dataModel.js";
 import type { QueryCtx } from "../_generated/server.js";
 import { parseCreationTimeCursor } from "./geometryPages.js";

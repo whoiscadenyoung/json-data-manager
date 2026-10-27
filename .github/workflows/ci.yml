@@ -50,10 +50,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      # app consumes @caden/json-cms and @caden/geometry-archive only through
-      # their built dist (each package's exports point at ./dist/...), and every
-      # dist is gitignored (root .gitignore: `dist`) — so CI must rebuild both
-      # before anything resolves those imports (type-aware lint, app typecheck).
+      # app consumes @caden/json-cms, @caden/data-core, @caden/importers and
+      # @caden/geometry-archive only through their built dist (each package's
+      # exports point at ./dist/...), and every dist is gitignored (root
+      # .gitignore: `dist`) — so CI must rebuild them before anything resolves
+      # those imports (type-aware lint, app typecheck). data-core and importers
+      # build first: json-cms compiles against their dists.
       # data-export's example typecheck does the same through its own exports
       # map, and `bun install` does not run workspace `prepare` scripts, so its
       # dist is rebuilt here too (plain tsc; its _generated dir is committed).
@@ -61,6 +63,8 @@ jobs:
       # are committed, so typecheck does not depend on regenerating.
       - name: Build workspace dists
         run: |
+          bun --filter=@caden/data-core run build
+          bun --filter=@caden/importers run build
           bun --filter=@caden/json-cms run build
           bun --filter=@caden/geometry-archive run build
           bun --filter=@caden/data-export run build
@@ -70,6 +74,12 @@ jobs:
 
       - name: Lint
         run: bun run lint
+
+      - name: Typecheck (@caden/data-core)
+        run: bun --filter=@caden/data-core run typecheck
+
+      - name: Typecheck (@caden/importers)
+        run: bun --filter=@caden/importers run typecheck
 
       - name: Typecheck (@caden/json-cms)
         run: bun --filter=@caden/json-cms run typecheck
@@ -85,6 +95,12 @@ jobs:
       - name: Typecheck (app)
         run: bunx tsc --noEmit
         working-directory: app
+
+      - name: Test (@caden/data-core)
+        run: bun --filter=@caden/data-core run test
+
+      - name: Test (@caden/importers)
+        run: bun --filter=@caden/importers run test
 
       - name: Test (@caden/json-cms)
         run: bun --filter=@caden/json-cms run test

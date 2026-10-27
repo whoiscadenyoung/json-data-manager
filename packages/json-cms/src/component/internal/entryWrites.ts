@@ -1,16 +1,16 @@
-import { ConvexError } from "convex/values";
-
-import { isGeometryCompatibleWithDatasetType } from "../../shared/geojson/coalesce.js";
-import { GeoParseError, GeometryError } from "../../shared/geojson/error.js";
+import { isGeometryCompatibleWithDatasetType } from "@caden/data-core/geojson";
+import { GeoParseError, GeometryError } from "@caden/data-core/geojson";
 import {
   GEOMETRY_SIMPLIFY_DECIMAL_PLACES,
   roundGeometryCoordinates,
   unionBbox,
-} from "../../shared/geojson/geometry.js";
-import type { BoundingBox } from "../../shared/geojson/geometry.js";
-import type { Geometry } from "../../shared/geojson/types.js";
-import type { GeometryTypeArg } from "../../shared/geojson/validators.js";
-import { extractReferences } from "../../shared/reference.js";
+} from "@caden/data-core/geojson";
+import type { BoundingBox } from "@caden/data-core/geojson";
+import type { Geometry } from "@caden/data-core/geojson";
+import type { GeometryTypeArg } from "@caden/data-core/geojson";
+import { extractReferences } from "@caden/data-core/reference";
+import { ConvexError } from "convex/values";
+
 import type { Id } from "../_generated/dataModel.js";
 import type { MutationCtx } from "../_generated/server.js";
 import {

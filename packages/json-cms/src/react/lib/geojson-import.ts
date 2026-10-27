@@ -13,9 +13,9 @@
  * Only a single `FeatureCollection` document or a bare `Feature` array are
  * supported.
  */
-import { coalesceGeometryTypes } from "../../shared/geojson/coalesce.js";
-import { assertGeometry } from "../../shared/geojson/geometry.js";
-import type { Geometry, GeometryType } from "../../shared/geojson/types.js";
+import { coalesceGeometryTypes } from "@caden/data-core/geojson";
+import { assertGeometry } from "@caden/data-core/geojson";
+import type { Geometry, GeometryType } from "@caden/data-core/geojson";
 
 export interface GeoJsonRow {
   /** The Feature's `properties` (or `{}` if absent/null). */
