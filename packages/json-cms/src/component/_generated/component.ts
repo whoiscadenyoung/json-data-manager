@@ -23,55 +23,7 @@ import type { FunctionReference } from "convex/server";
  */
 export type ComponentApi<Name extends string | undefined = string | undefined> =
   {
-    host_support: {
-      claimUpload: FunctionReference<
-        "mutation",
-        "internal",
-        { scope: string; uploadId: string },
-        null,
-        Name
-      >;
-      deleteStorageBlobs: FunctionReference<
-        "mutation",
-        "internal",
-        { storageIds: Array<string> },
-        number,
-        Name
-      >;
-      hasStorageBlob: FunctionReference<
-        "query",
-        "internal",
-        { storageId: string },
-        boolean,
-        Name
-      >;
-      storeTestBlob: FunctionReference<
-        "action",
-        "internal",
-        { bytes: ArrayBuffer },
-        string,
-        Name
-      >;
-      sweepAbandonedUploads: FunctionReference<
-        "mutation",
-        "internal",
-        { olderThanMs?: number },
-        number,
-        Name
-      >;
-    };
-    lib: {
-      addMapLayer: FunctionReference<
-        "mutation",
-        "internal",
-        {
-          mapId: string;
-          targetId: string;
-          targetType: "collection" | "group" | "dataset" | "derived";
-        },
-        string | null,
-        Name
-      >;
+    collections: {
       addSchemaToCollection: FunctionReference<
         "mutation",
         "internal",
@@ -79,18 +31,151 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         any,
         Name
       >;
-      backfillDatasetSummaries: FunctionReference<
-        "mutation",
-        "internal",
-        {},
-        { membershipsPatched: number; schemasPatched: number },
-        Name
-      >;
       createCollection: FunctionReference<
         "mutation",
         "internal",
         { description?: string; name: string },
         string,
+        Name
+      >;
+      deleteCollection: FunctionReference<
+        "mutation",
+        "internal",
+        { collectionId: string },
+        any,
+        Name
+      >;
+      getCollection: FunctionReference<
+        "query",
+        "internal",
+        { collectionId: string },
+        null | {
+          _creationTime: number;
+          _id: string;
+          description?: string;
+          name: string;
+        },
+        Name
+      >;
+      listCollections: FunctionReference<
+        "query",
+        "internal",
+        {},
+        Array<{
+          _creationTime: number;
+          _id: string;
+          description?: string;
+          name: string;
+        }>,
+        Name
+      >;
+      listCollectionsBySchema: FunctionReference<
+        "query",
+        "internal",
+        { schemaId: string },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          description?: string;
+          name: string;
+        }>,
+        Name
+      >;
+      listSchemaCollections: FunctionReference<
+        "query",
+        "internal",
+        { limit: number },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          collectionId: string;
+          kind?: "standard" | "geospatial";
+          schemaId: string;
+        }>,
+        Name
+      >;
+      listSchemasByCollection: FunctionReference<
+        "query",
+        "internal",
+        { collectionId: string; viewerId: string },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          boundingBox?: Array<number>;
+          createdBy?: string;
+          description?: string;
+          editPolicy?: "open" | "locked";
+          entryCount?: number;
+          featureCount?: number;
+          geometryType?:
+            | "Point"
+            | "MultiPoint"
+            | "LineString"
+            | "MultiLineString"
+            | "Polygon"
+            | "MultiPolygon";
+          groupId?: string;
+          hasSourceFile: boolean;
+          kind?: "standard" | "geospatial";
+          lifecycle?: "draft" | "published";
+          lineage?: {
+            frozenAt: number;
+            recipe?: any;
+            snapshotRef?: string;
+            sourceKey?: string;
+            sourceSchemaId?: string;
+            sourceVersions?: Array<{
+              datasetId: string;
+              frozenAt?: number;
+              ref?: string;
+            }>;
+            versionLabel: string;
+          };
+          mapTileArchiveBuiltVersion?: number;
+          mapTileArchiveBytes?: number;
+          mapTileArchiveMaxZoom?: number;
+          mapTileCacheVersion?: number;
+          publishedVisibility?: "author" | "everyone";
+          schema: any;
+          simplifyGeometry?: boolean;
+          source?: { name: string };
+          sourceFileName?: string;
+          sourceFileSize?: number;
+          title: string;
+          uiSchema?: any;
+        }>,
+        Name
+      >;
+      removeSchemaFromCollection: FunctionReference<
+        "mutation",
+        "internal",
+        { collectionId: string; schemaId: string },
+        any,
+        Name
+      >;
+      updateCollection: FunctionReference<
+        "mutation",
+        "internal",
+        { collectionId: string; description?: string; name?: string },
+        any,
+        Name
+      >;
+    };
+    deletes: {
+      deleteSchema: FunctionReference<
+        "mutation",
+        "internal",
+        { boundWrite?: string; schemaId: string },
+        any,
+        Name
+      >;
+    };
+    entries: {
+      backfillDatasetSummaries: FunctionReference<
+        "mutation",
+        "internal",
+        {},
+        { membershipsPatched: number; schemasPatched: number },
         Name
       >;
       createEntriesBulk: FunctionReference<
@@ -111,63 +196,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         string,
         Name
       >;
-      createGroup: FunctionReference<
-        "mutation",
-        "internal",
-        { collectionId?: string; description?: string; name: string },
-        string,
-        Name
-      >;
-      createMap: FunctionReference<
-        "mutation",
-        "internal",
-        { description?: string; name: string },
-        string,
-        Name
-      >;
-      createSchema: FunctionReference<
-        "mutation",
-        "internal",
-        {
-          actorId?: string;
-          geometryType?:
-            | "Point"
-            | "MultiPoint"
-            | "LineString"
-            | "MultiLineString"
-            | "Polygon"
-            | "MultiPolygon";
-          kind?: "standard" | "geospatial";
-          lifecycle?: "draft" | "published";
-          lineage?: {
-            frozenAt: number;
-            recipe?: any;
-            snapshotRef?: string;
-            sourceKey?: string;
-            sourceSchemaId?: string;
-            sourceVersions?: Array<{
-              datasetId: string;
-              frozenAt?: number;
-              ref?: string;
-            }>;
-            versionLabel: string;
-          };
-          publishedVisibility?: "author" | "everyone";
-          schema: any;
-          simplifyGeometry?: boolean;
-          source?: { name: string };
-          uiSchema?: any;
-        },
-        string,
-        Name
-      >;
-      deleteCollection: FunctionReference<
-        "mutation",
-        "internal",
-        { collectionId: string },
-        any,
-        Name
-      >;
       deleteEntriesBySchema: FunctionReference<
         "mutation",
         "internal",
@@ -180,46 +208,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "internal",
         { boundWrite?: string; entryId: string },
         any,
-        Name
-      >;
-      deleteGroup: FunctionReference<
-        "mutation",
-        "internal",
-        { groupId: string },
-        any,
-        Name
-      >;
-      deleteMap: FunctionReference<
-        "mutation",
-        "internal",
-        { mapId: string },
-        any,
-        Name
-      >;
-      deleteSchema: FunctionReference<
-        "mutation",
-        "internal",
-        { boundWrite?: string; schemaId: string },
-        any,
-        Name
-      >;
-      generateUploadUrl: FunctionReference<
-        "mutation",
-        "internal",
-        { scope?: string },
-        { storageUrl: string; uploadId: string },
-        Name
-      >;
-      getCollection: FunctionReference<
-        "query",
-        "internal",
-        { collectionId: string },
-        null | {
-          _creationTime: number;
-          _id: string;
-          description?: string;
-          name: string;
-        },
         Name
       >;
       getEntry: FunctionReference<
@@ -264,6 +252,235 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         },
         Name
       >;
+      listEntries: FunctionReference<
+        "query",
+        "internal",
+        { limit: number; schemaId: string },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          data: any;
+          geometryId?: string;
+          geometryType?:
+            | "Point"
+            | "MultiPoint"
+            | "LineString"
+            | "MultiLineString"
+            | "Polygon"
+            | "MultiPolygon";
+          schemaId: string;
+        }>,
+        Name
+      >;
+      listEntriesByCollection: FunctionReference<
+        "query",
+        "internal",
+        { collectionId: string; limit: number; viewerId: string },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          data: any;
+          geometryId?: string;
+          geometryType?:
+            | "Point"
+            | "MultiPoint"
+            | "LineString"
+            | "MultiLineString"
+            | "Polygon"
+            | "MultiPolygon";
+          schemaId: string;
+        }>,
+        Name
+      >;
+      listEntriesForIds: FunctionReference<
+        "query",
+        "internal",
+        { entryIds: Array<string>; viewerId: string },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          data: any;
+          geometryId?: string;
+          geometryType?:
+            | "Point"
+            | "MultiPoint"
+            | "LineString"
+            | "MultiLineString"
+            | "Polygon"
+            | "MultiPolygon";
+          schemaId: string;
+        }>,
+        Name
+      >;
+      listEntriesForSchemas: FunctionReference<
+        "query",
+        "internal",
+        { limit: number; schemaIds: Array<string>; viewerId: string },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          data: any;
+          geometryId?: string;
+          geometryType?:
+            | "Point"
+            | "MultiPoint"
+            | "LineString"
+            | "MultiLineString"
+            | "Polygon"
+            | "MultiPolygon";
+          schemaId: string;
+        }>,
+        Name
+      >;
+      listEntriesPage: FunctionReference<
+        "query",
+        "internal",
+        {
+          order?: "asc" | "desc";
+          paginationOpts: {
+            cursor: string | null;
+            endCursor?: string | null;
+            id?: number;
+            maximumBytesRead?: number;
+            maximumRowsRead?: number;
+            numItems: number;
+          };
+          schemaId: string;
+        },
+        {
+          continueCursor: string;
+          isDone: boolean;
+          page: Array<{
+            _creationTime: number;
+            _id: string;
+            data: any;
+            geometryId?: string;
+            geometryType?:
+              | "Point"
+              | "MultiPoint"
+              | "LineString"
+              | "MultiLineString"
+              | "Polygon"
+              | "MultiPolygon";
+            schemaId: string;
+          }>;
+          pageStatus?: "SplitRecommended" | "SplitRequired" | null;
+          splitCursor?: string | null;
+        },
+        Name
+      >;
+      listGeometries: FunctionReference<
+        "query",
+        "internal",
+        {
+          paginationOpts: {
+            cursor: string | null;
+            endCursor?: string | null;
+            id?: number;
+            maximumBytesRead?: number;
+            maximumRowsRead?: number;
+            numItems: number;
+          };
+          schemaId: string;
+        },
+        {
+          continueCursor: string;
+          isDone: boolean;
+          page: Array<{
+            _creationTime: number;
+            _id: string;
+            bbox?: Array<number>;
+            entryId: string;
+            geometryJson?: string;
+            geometryUrl?: string;
+            schemaId: string;
+            type:
+              | "Point"
+              | "MultiPoint"
+              | "LineString"
+              | "MultiLineString"
+              | "Polygon"
+              | "MultiPolygon";
+          }>;
+          pageStatus?: "SplitRecommended" | "SplitRequired" | null;
+          splitCursor?: string | null;
+        },
+        Name
+      >;
+      listReferencingEntries: FunctionReference<
+        "query",
+        "internal",
+        { entryId: string; viewerId: string },
+        Array<{
+          fieldName: string;
+          sourceEntry: {
+            _creationTime: number;
+            _id: string;
+            data: any;
+            geometryId?: string;
+            geometryType?:
+              | "Point"
+              | "MultiPoint"
+              | "LineString"
+              | "MultiLineString"
+              | "Polygon"
+              | "MultiPolygon";
+            schemaId: string;
+          };
+          sourceSchemaId: string;
+        }>,
+        Name
+      >;
+      updateEntry: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          boundWrite?: string;
+          data: any;
+          entryId: string;
+          geometry?: string | null;
+        },
+        any,
+        Name
+      >;
+    };
+    geospatial: {
+      startGeospatialConversion: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          boundWrite?: string;
+          latField: string;
+          lonField: string;
+          schemaId: string;
+          total: number;
+        },
+        string,
+        Name
+      >;
+      startSimplification: FunctionReference<
+        "mutation",
+        "internal",
+        { boundWrite?: string; schemaId: string; total: number },
+        string,
+        Name
+      >;
+    };
+    groups: {
+      createGroup: FunctionReference<
+        "mutation",
+        "internal",
+        { collectionId?: string; description?: string; name: string },
+        string,
+        Name
+      >;
+      deleteGroup: FunctionReference<
+        "mutation",
+        "internal",
+        { groupId: string },
+        any,
+        Name
+      >;
       getGroup: FunctionReference<
         "query",
         "internal",
@@ -277,11 +494,84 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         },
         Name
       >;
-      getImportSchemaId: FunctionReference<
+      listGroups: FunctionReference<
         "query",
         "internal",
-        { importId: string },
-        null | string,
+        { collectionId?: string; limit: number },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          collectionId?: string;
+          description?: string;
+          name: string;
+        }>,
+        Name
+      >;
+      setGroupCollection: FunctionReference<
+        "mutation",
+        "internal",
+        { collectionId: string | null; groupId: string },
+        any,
+        Name
+      >;
+      setSchemaGroup: FunctionReference<
+        "mutation",
+        "internal",
+        { groupId: string | null; schemaId: string },
+        any,
+        Name
+      >;
+      updateGroup: FunctionReference<
+        "mutation",
+        "internal",
+        { description?: string; groupId: string; name?: string },
+        any,
+        Name
+      >;
+    };
+    host_support: {
+      claimUpload: FunctionReference<
+        "mutation",
+        "internal",
+        { scope: string; uploadId: string },
+        null,
+        Name
+      >;
+      deleteStorageBlobs: FunctionReference<
+        "mutation",
+        "internal",
+        { storageIds: Array<string> },
+        number,
+        Name
+      >;
+      hasStorageBlob: FunctionReference<
+        "query",
+        "internal",
+        { storageId: string },
+        boolean,
+        Name
+      >;
+      storeTestBlob: FunctionReference<
+        "action",
+        "internal",
+        { bytes: ArrayBuffer },
+        string,
+        Name
+      >;
+      sweepAbandonedUploads: FunctionReference<
+        "mutation",
+        "internal",
+        { olderThanMs?: number },
+        number,
+        Name
+      >;
+    };
+    imports: {
+      generateUploadUrl: FunctionReference<
+        "mutation",
+        "internal",
+        { scope?: string },
+        { storageUrl: string; uploadId: string },
         Name
       >;
       getImportStatus: FunctionReference<
@@ -302,6 +592,52 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         } | null,
         Name
       >;
+      startImport: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          boundWrite?: string;
+          chunks?: Array<{ storageId: string; uploadId: string }>;
+          schemaId: string;
+          sourceFile?: {
+            name: string;
+            size: number;
+            storageId: string;
+            uploadId: string;
+          };
+          storageIds?: Array<string>;
+          total: number;
+        },
+        string,
+        Name
+      >;
+    };
+    maps: {
+      addMapLayer: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          mapId: string;
+          targetId: string;
+          targetType: "collection" | "group" | "dataset" | "derived";
+        },
+        string | null,
+        Name
+      >;
+      createMap: FunctionReference<
+        "mutation",
+        "internal",
+        { description?: string; name: string },
+        string,
+        Name
+      >;
+      deleteMap: FunctionReference<
+        "mutation",
+        "internal",
+        { mapId: string },
+        any,
+        Name
+      >;
       getMap: FunctionReference<
         "query",
         "internal",
@@ -312,6 +648,139 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           description?: string;
           name: string;
         },
+        Name
+      >;
+      listMapLayerOverrides: FunctionReference<
+        "query",
+        "internal",
+        { layerId: string },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          childKey: string;
+          layerId: string;
+          visible: boolean;
+        }>,
+        Name
+      >;
+      listMapLayerOverridesForMap: FunctionReference<
+        "query",
+        "internal",
+        { mapId: string },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          childKey: string;
+          layerId: string;
+          visible: boolean;
+        }>,
+        Name
+      >;
+      listMapLayers: FunctionReference<
+        "query",
+        "internal",
+        { limit: number; mapId?: string },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          mapId: string;
+          order: number;
+          targetId: string | string | string | string;
+          targetType: "collection" | "group" | "dataset" | "derived";
+          visible: boolean;
+        }>,
+        Name
+      >;
+      listMaps: FunctionReference<
+        "query",
+        "internal",
+        { limit: number },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          description?: string;
+          name: string;
+        }>,
+        Name
+      >;
+      moveMapLayer: FunctionReference<
+        "mutation",
+        "internal",
+        { direction: "up" | "down"; layerId: string },
+        any,
+        Name
+      >;
+      removeMapLayer: FunctionReference<
+        "mutation",
+        "internal",
+        { layerId: string },
+        any,
+        Name
+      >;
+      setMapLayerOverride: FunctionReference<
+        "mutation",
+        "internal",
+        { childKey: string; layerId: string; visible?: boolean },
+        any,
+        Name
+      >;
+      setMapLayerVisibility: FunctionReference<
+        "mutation",
+        "internal",
+        { layerId: string; visible: boolean },
+        any,
+        Name
+      >;
+      updateMap: FunctionReference<
+        "mutation",
+        "internal",
+        { description?: string; mapId: string; name?: string },
+        any,
+        Name
+      >;
+    };
+    schemas: {
+      createSchema: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          actorId?: string;
+          geometryType?:
+            | "Point"
+            | "MultiPoint"
+            | "LineString"
+            | "MultiLineString"
+            | "Polygon"
+            | "MultiPolygon";
+          kind?: "standard" | "geospatial";
+          lifecycle?: "draft" | "published";
+          lineage?: {
+            frozenAt: number;
+            recipe?: any;
+            snapshotRef?: string;
+            sourceKey?: string;
+            sourceSchemaId?: string;
+            sourceVersions?: Array<{
+              datasetId: string;
+              frozenAt?: number;
+              ref?: string;
+            }>;
+            versionLabel: string;
+          };
+          publishedVisibility?: "author" | "everyone";
+          schema: any;
+          simplifyGeometry?: boolean;
+          source?: { name: string };
+          uiSchema?: any;
+        },
+        string,
+        Name
+      >;
+      getImportSchemaId: FunctionReference<
+        "query",
+        "internal",
+        { importId: string },
+        null | string,
         Name
       >;
       getMapLayerMapId: FunctionReference<
@@ -444,30 +913,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         null | string,
         Name
       >;
-      listCollections: FunctionReference<
-        "query",
-        "internal",
-        {},
-        Array<{
-          _creationTime: number;
-          _id: string;
-          description?: string;
-          name: string;
-        }>,
-        Name
-      >;
-      listCollectionsBySchema: FunctionReference<
-        "query",
-        "internal",
-        { schemaId: string },
-        Array<{
-          _creationTime: number;
-          _id: string;
-          description?: string;
-          name: string;
-        }>,
-        Name
-      >;
       listDraftSchemaSummaries: FunctionReference<
         "query",
         "internal",
@@ -515,66 +960,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         }>,
         Name
       >;
-      listEntries: FunctionReference<
-        "query",
-        "internal",
-        { limit: number; schemaId: string },
-        Array<{
-          _creationTime: number;
-          _id: string;
-          data: any;
-          geometryId?: string;
-          geometryType?:
-            | "Point"
-            | "MultiPoint"
-            | "LineString"
-            | "MultiLineString"
-            | "Polygon"
-            | "MultiPolygon";
-          schemaId: string;
-        }>,
-        Name
-      >;
-      listEntriesByCollection: FunctionReference<
-        "query",
-        "internal",
-        { collectionId: string; limit: number; viewerId: string },
-        Array<{
-          _creationTime: number;
-          _id: string;
-          data: any;
-          geometryId?: string;
-          geometryType?:
-            | "Point"
-            | "MultiPoint"
-            | "LineString"
-            | "MultiLineString"
-            | "Polygon"
-            | "MultiPolygon";
-          schemaId: string;
-        }>,
-        Name
-      >;
-      listEntriesForIds: FunctionReference<
-        "query",
-        "internal",
-        { entryIds: Array<string>; viewerId: string },
-        Array<{
-          _creationTime: number;
-          _id: string;
-          data: any;
-          geometryId?: string;
-          geometryType?:
-            | "Point"
-            | "MultiPoint"
-            | "LineString"
-            | "MultiLineString"
-            | "Polygon"
-            | "MultiPolygon";
-          schemaId: string;
-        }>,
-        Name
-      >;
       listEntriesForSchemaBounded: FunctionReference<
         "query",
         "internal",
@@ -592,308 +977,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
             | "Polygon"
             | "MultiPolygon";
           schemaId: string;
-        }>,
-        Name
-      >;
-      listEntriesForSchemas: FunctionReference<
-        "query",
-        "internal",
-        { limit: number; schemaIds: Array<string>; viewerId: string },
-        Array<{
-          _creationTime: number;
-          _id: string;
-          data: any;
-          geometryId?: string;
-          geometryType?:
-            | "Point"
-            | "MultiPoint"
-            | "LineString"
-            | "MultiLineString"
-            | "Polygon"
-            | "MultiPolygon";
-          schemaId: string;
-        }>,
-        Name
-      >;
-      listEntriesPage: FunctionReference<
-        "query",
-        "internal",
-        {
-          order?: "asc" | "desc";
-          paginationOpts: {
-            cursor: string | null;
-            endCursor?: string | null;
-            id?: number;
-            maximumBytesRead?: number;
-            maximumRowsRead?: number;
-            numItems: number;
-          };
-          schemaId: string;
-        },
-        {
-          continueCursor: string;
-          isDone: boolean;
-          page: Array<{
-            _creationTime: number;
-            _id: string;
-            data: any;
-            geometryId?: string;
-            geometryType?:
-              | "Point"
-              | "MultiPoint"
-              | "LineString"
-              | "MultiLineString"
-              | "Polygon"
-              | "MultiPolygon";
-            schemaId: string;
-          }>;
-          pageStatus?: "SplitRecommended" | "SplitRequired" | null;
-          splitCursor?: string | null;
-        },
-        Name
-      >;
-      listGeometries: FunctionReference<
-        "query",
-        "internal",
-        {
-          paginationOpts: {
-            cursor: string | null;
-            endCursor?: string | null;
-            id?: number;
-            maximumBytesRead?: number;
-            maximumRowsRead?: number;
-            numItems: number;
-          };
-          schemaId: string;
-        },
-        {
-          continueCursor: string;
-          isDone: boolean;
-          page: Array<{
-            _creationTime: number;
-            _id: string;
-            bbox?: Array<number>;
-            entryId: string;
-            geometryJson?: string;
-            geometryUrl?: string;
-            schemaId: string;
-            type:
-              | "Point"
-              | "MultiPoint"
-              | "LineString"
-              | "MultiLineString"
-              | "Polygon"
-              | "MultiPolygon";
-          }>;
-          pageStatus?: "SplitRecommended" | "SplitRequired" | null;
-          splitCursor?: string | null;
-        },
-        Name
-      >;
-      listGroups: FunctionReference<
-        "query",
-        "internal",
-        { collectionId?: string; limit: number },
-        Array<{
-          _creationTime: number;
-          _id: string;
-          collectionId?: string;
-          description?: string;
-          name: string;
-        }>,
-        Name
-      >;
-      listMapLayerOverrides: FunctionReference<
-        "query",
-        "internal",
-        { layerId: string },
-        Array<{
-          _creationTime: number;
-          _id: string;
-          childKey: string;
-          layerId: string;
-          visible: boolean;
-        }>,
-        Name
-      >;
-      listMapLayerOverridesForMap: FunctionReference<
-        "query",
-        "internal",
-        { mapId: string },
-        Array<{
-          _creationTime: number;
-          _id: string;
-          childKey: string;
-          layerId: string;
-          visible: boolean;
-        }>,
-        Name
-      >;
-      listMapLayers: FunctionReference<
-        "query",
-        "internal",
-        { limit: number; mapId?: string },
-        Array<{
-          _creationTime: number;
-          _id: string;
-          mapId: string;
-          order: number;
-          targetId: string | string | string | string;
-          targetType: "collection" | "group" | "dataset" | "derived";
-          visible: boolean;
-        }>,
-        Name
-      >;
-      listMaps: FunctionReference<
-        "query",
-        "internal",
-        { limit: number },
-        Array<{
-          _creationTime: number;
-          _id: string;
-          description?: string;
-          name: string;
-        }>,
-        Name
-      >;
-      listReferencingEntries: FunctionReference<
-        "query",
-        "internal",
-        { entryId: string; viewerId: string },
-        Array<{
-          fieldName: string;
-          sourceEntry: {
-            _creationTime: number;
-            _id: string;
-            data: any;
-            geometryId?: string;
-            geometryType?:
-              | "Point"
-              | "MultiPoint"
-              | "LineString"
-              | "MultiLineString"
-              | "Polygon"
-              | "MultiPolygon";
-            schemaId: string;
-          };
-          sourceSchemaId: string;
-        }>,
-        Name
-      >;
-      listSchemaCollections: FunctionReference<
-        "query",
-        "internal",
-        { limit: number },
-        Array<{
-          _creationTime: number;
-          _id: string;
-          collectionId: string;
-          kind?: "standard" | "geospatial";
-          schemaId: string;
-        }>,
-        Name
-      >;
-      listSchemas: FunctionReference<
-        "query",
-        "internal",
-        { limit: number; viewerId: string },
-        Array<{
-          _creationTime: number;
-          _id: string;
-          boundingBox?: Array<number>;
-          createdBy?: string;
-          description?: string;
-          editPolicy?: "open" | "locked";
-          entryCount?: number;
-          featureCount?: number;
-          geometryType?:
-            | "Point"
-            | "MultiPoint"
-            | "LineString"
-            | "MultiLineString"
-            | "Polygon"
-            | "MultiPolygon";
-          groupId?: string;
-          hasSourceFile: boolean;
-          kind?: "standard" | "geospatial";
-          lifecycle?: "draft" | "published";
-          lineage?: {
-            frozenAt: number;
-            recipe?: any;
-            snapshotRef?: string;
-            sourceKey?: string;
-            sourceSchemaId?: string;
-            sourceVersions?: Array<{
-              datasetId: string;
-              frozenAt?: number;
-              ref?: string;
-            }>;
-            versionLabel: string;
-          };
-          mapTileArchiveBuiltVersion?: number;
-          mapTileArchiveBytes?: number;
-          mapTileArchiveMaxZoom?: number;
-          mapTileCacheVersion?: number;
-          publishedVisibility?: "author" | "everyone";
-          schema: any;
-          simplifyGeometry?: boolean;
-          source?: { name: string };
-          sourceFileName?: string;
-          sourceFileSize?: number;
-          title: string;
-          uiSchema?: any;
-        }>,
-        Name
-      >;
-      listSchemasByCollection: FunctionReference<
-        "query",
-        "internal",
-        { collectionId: string; viewerId: string },
-        Array<{
-          _creationTime: number;
-          _id: string;
-          boundingBox?: Array<number>;
-          createdBy?: string;
-          description?: string;
-          editPolicy?: "open" | "locked";
-          entryCount?: number;
-          featureCount?: number;
-          geometryType?:
-            | "Point"
-            | "MultiPoint"
-            | "LineString"
-            | "MultiLineString"
-            | "Polygon"
-            | "MultiPolygon";
-          groupId?: string;
-          hasSourceFile: boolean;
-          kind?: "standard" | "geospatial";
-          lifecycle?: "draft" | "published";
-          lineage?: {
-            frozenAt: number;
-            recipe?: any;
-            snapshotRef?: string;
-            sourceKey?: string;
-            sourceSchemaId?: string;
-            sourceVersions?: Array<{
-              datasetId: string;
-              frozenAt?: number;
-              ref?: string;
-            }>;
-            versionLabel: string;
-          };
-          mapTileArchiveBuiltVersion?: number;
-          mapTileArchiveBytes?: number;
-          mapTileArchiveMaxZoom?: number;
-          mapTileCacheVersion?: number;
-          publishedVisibility?: "author" | "everyone";
-          schema: any;
-          simplifyGeometry?: boolean;
-          source?: { name: string };
-          sourceFileName?: string;
-          sourceFileSize?: number;
-          title: string;
-          uiSchema?: any;
         }>,
         Name
       >;
@@ -996,25 +1079,56 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         }>,
         Name
       >;
-      moveMapLayer: FunctionReference<
-        "mutation",
+      listSchemas: FunctionReference<
+        "query",
         "internal",
-        { direction: "up" | "down"; layerId: string },
-        any,
-        Name
-      >;
-      removeMapLayer: FunctionReference<
-        "mutation",
-        "internal",
-        { layerId: string },
-        any,
-        Name
-      >;
-      removeSchemaFromCollection: FunctionReference<
-        "mutation",
-        "internal",
-        { collectionId: string; schemaId: string },
-        any,
+        { limit: number; viewerId: string },
+        Array<{
+          _creationTime: number;
+          _id: string;
+          boundingBox?: Array<number>;
+          createdBy?: string;
+          description?: string;
+          editPolicy?: "open" | "locked";
+          entryCount?: number;
+          featureCount?: number;
+          geometryType?:
+            | "Point"
+            | "MultiPoint"
+            | "LineString"
+            | "MultiLineString"
+            | "Polygon"
+            | "MultiPolygon";
+          groupId?: string;
+          hasSourceFile: boolean;
+          kind?: "standard" | "geospatial";
+          lifecycle?: "draft" | "published";
+          lineage?: {
+            frozenAt: number;
+            recipe?: any;
+            snapshotRef?: string;
+            sourceKey?: string;
+            sourceSchemaId?: string;
+            sourceVersions?: Array<{
+              datasetId: string;
+              frozenAt?: number;
+              ref?: string;
+            }>;
+            versionLabel: string;
+          };
+          mapTileArchiveBuiltVersion?: number;
+          mapTileArchiveBytes?: number;
+          mapTileArchiveMaxZoom?: number;
+          mapTileCacheVersion?: number;
+          publishedVisibility?: "author" | "everyone";
+          schema: any;
+          simplifyGeometry?: boolean;
+          source?: { name: string };
+          sourceFileName?: string;
+          sourceFileSize?: number;
+          title: string;
+          uiSchema?: any;
+        }>,
         Name
       >;
       setEditPolicy: FunctionReference<
@@ -1022,27 +1136,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "internal",
         { editPolicy: "open" | "locked"; schemaId: string },
         null,
-        Name
-      >;
-      setGroupCollection: FunctionReference<
-        "mutation",
-        "internal",
-        { collectionId: string | null; groupId: string },
-        any,
-        Name
-      >;
-      setMapLayerOverride: FunctionReference<
-        "mutation",
-        "internal",
-        { childKey: string; layerId: string; visible?: boolean },
-        any,
-        Name
-      >;
-      setMapLayerVisibility: FunctionReference<
-        "mutation",
-        "internal",
-        { layerId: string; visible: boolean },
-        any,
         Name
       >;
       setMapTileArchive: FunctionReference<
@@ -1058,13 +1151,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         any,
         Name
       >;
-      setSchemaGroup: FunctionReference<
-        "mutation",
-        "internal",
-        { groupId: string | null; schemaId: string },
-        any,
-        Name
-      >;
       setSchemaLifecycle: FunctionReference<
         "mutation",
         "internal",
@@ -1077,78 +1163,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "internal",
         { publishedVisibility: "author" | "everyone"; schemaId: string },
         null,
-        Name
-      >;
-      startGeospatialConversion: FunctionReference<
-        "mutation",
-        "internal",
-        {
-          boundWrite?: string;
-          latField: string;
-          lonField: string;
-          schemaId: string;
-          total: number;
-        },
-        string,
-        Name
-      >;
-      startImport: FunctionReference<
-        "mutation",
-        "internal",
-        {
-          boundWrite?: string;
-          chunks?: Array<{ storageId: string; uploadId: string }>;
-          schemaId: string;
-          sourceFile?: {
-            name: string;
-            size: number;
-            storageId: string;
-            uploadId: string;
-          };
-          storageIds?: Array<string>;
-          total: number;
-        },
-        string,
-        Name
-      >;
-      startSimplification: FunctionReference<
-        "mutation",
-        "internal",
-        { boundWrite?: string; schemaId: string; total: number },
-        string,
-        Name
-      >;
-      updateCollection: FunctionReference<
-        "mutation",
-        "internal",
-        { collectionId: string; description?: string; name?: string },
-        any,
-        Name
-      >;
-      updateEntry: FunctionReference<
-        "mutation",
-        "internal",
-        {
-          boundWrite?: string;
-          data: any;
-          entryId: string;
-          geometry?: string | null;
-        },
-        any,
-        Name
-      >;
-      updateGroup: FunctionReference<
-        "mutation",
-        "internal",
-        { description?: string; groupId: string; name?: string },
-        any,
-        Name
-      >;
-      updateMap: FunctionReference<
-        "mutation",
-        "internal",
-        { description?: string; mapId: string; name?: string },
-        any,
         Name
       >;
       updateSchema: FunctionReference<

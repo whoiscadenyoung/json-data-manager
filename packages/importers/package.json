@@ -1,0 +1,34 @@
+{
+  "name": "@caden/importers",
+  "version": "0.1.0",
+  "description": "Browser-side tabular import parsers (JSON/JSONL, CSV, Excel) behind a pluggable registry.",
+  "license": "Apache-2.0",
+  "repository": "github:whoiscadenyoung/json-data-manager",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "type": "module",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project ./tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepare": "bun run build"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  }
+}

@@ -11,7 +11,7 @@ import { auth } from "./auth";
  * rebuild raced by edits self-discards).
  *
  * Deliberately a THIN app-level wrapper around
- * `components.jsonCms.lib.setMapTileArchive` (issue #58 part 3): the
+ * `components.jsonCms.schemas.setMapTileArchive` (issue #58 part 3): the
  * component function is public (the generated ComponentApi only carries
  * public functions — a component-internal one would be invisible to this
  * host app entirely) but is NOT re-exported through `exposeApi`, so no
@@ -54,7 +54,7 @@ export const install = mutation({
       scope: args.schemaId,
       uploadId: args.uploadId,
     });
-    await ctx.runMutation(components.jsonCms.lib.setMapTileArchive, {
+    await ctx.runMutation(components.jsonCms.schemas.setMapTileArchive, {
       bytes: args.bytes,
       expectedVersion: args.expectedVersion,
       maxZoom: args.maxZoom,
@@ -90,7 +90,7 @@ export const metas = query({
     const unique = [...new Set(args.schemaIds)],
       resolved = await Promise.all(
         unique.map(async (schemaId) =>
-          ctx.runQuery(components.jsonCms.lib.getMapTileArchiveMeta, { schemaId }),
+          ctx.runQuery(components.jsonCms.schemas.getMapTileArchiveMeta, { schemaId }),
         ),
       ),
       bySchemaId = new Map(unique.map((schemaId, index) => [schemaId, resolved[index]]));

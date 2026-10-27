@@ -1,14 +1,15 @@
-import { GeoParseError, GeometryError } from "../shared/geojson/error.js";
-import { assertGeometry, computeBbox } from "../shared/geojson/geometry.js";
-import type { BoundingBox } from "../shared/geojson/geometry.js";
-import type { Geometry } from "../shared/geojson/types.js";
-import type { GeometryTypeArg } from "../shared/geojson/validators.js";
+import { GeoParseError, GeometryError } from "@caden/data-core/geojson";
+import { assertGeometry, computeBbox } from "@caden/data-core/geojson";
+import type { BoundingBox } from "@caden/data-core/geojson";
+import type { Geometry } from "@caden/data-core/geojson";
+import type { GeometryTypeArg } from "@caden/data-core/geojson";
+
 import type { Id } from "./_generated/dataModel.js";
 
 /**
  * Shared logic for how a geometry's coordinate payload is represented once
- * it leaves the wire (a JSON string, see `lib.ts`'s `geometry` mutation
- * args) and needs to be persisted. Used by both `lib.ts` (plain mutations —
+ * it leaves the wire (a JSON string, see `entries.ts`'s `geometry` mutation
+ * args) and needs to be persisted. Used by both `entries.ts` (plain mutations —
  * can only ever produce an inline `geometryJson`, since a `MutationCtx`
  * can't write to file storage) and `import_prep.ts` (the Node-runtime bulk
  * import action — can also produce a `geometryStorageId` for geometries too
@@ -85,7 +86,7 @@ export function inlineGeometryFieldsOrThrow(json: string, geometry: Geometry): R
   return { bbox: computeBbox(geometry), geometryJson: json, type: geometry.type };
 }
 
-/** Minimal shape of an action's `ctx.storage` this module needs — avoids importing a concrete `ActionCtx` type into a module shared with `lib.ts`. */
+/** Minimal shape of an action's `ctx.storage` this module needs — avoids importing a concrete `ActionCtx` type into a module shared with `entries.ts`. */
 export interface GeometryStorageWriter {
   store(blob: Blob, options?: { sha256?: string }): Promise<Id<"_storage">>;
 }

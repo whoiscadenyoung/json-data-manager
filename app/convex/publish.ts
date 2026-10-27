@@ -171,9 +171,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 async function tryGetSchema(
   ctx: { runQuery: QueryCtx["runQuery"] },
   schemaId: string,
-): Promise<FunctionReturnType<typeof components.jsonCms.lib.getSchema>> {
+): Promise<FunctionReturnType<typeof components.jsonCms.schemas.getSchema>> {
   try {
-    return await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId });
+    return await ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId });
   } catch {
     return null;
   }
@@ -977,7 +977,7 @@ export const pollImport = internalAction({
       // oxlint-disable-next-line no-await-in-loop -- polling is inherently sequential.
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
       // oxlint-disable-next-line no-await-in-loop
-      const status = await ctx.runQuery(components.jsonCms.lib.getImportStatus, {
+      const status = await ctx.runQuery(components.jsonCms.imports.getImportStatus, {
         importId: attempt.importId,
       });
       if (status === null) {

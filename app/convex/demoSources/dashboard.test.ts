@@ -14,11 +14,11 @@ import { register as registerJsonCms } from "@caden/json-cms/test";
 import { convexTest } from "convex-test";
 import { describe, expect, it } from "vitest";
 
-import { api } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
-import schema from "./schema";
+import { api } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
+import schema from "../schema";
 
-const modules = import.meta.glob("./**/*.ts");
+const modules = import.meta.glob("/convex/**/*.ts");
 
 /** A fresh test backend with the json-cms component mounted as in the app. */
 function initTest() {
@@ -98,36 +98,49 @@ async function bindingRow(t: TestConvex) {
 describe("restaurants", () => {
   it("lists by name ascending and refuses duplicates or blank fields", async () => {
     const t = signedIn();
-    await t.mutation(api.dashboard.createRestaurant, { cuisine: "Cafe", name: "Zeta" });
-    await t.mutation(api.dashboard.createRestaurant, { cuisine: "Bar", name: "Alpha" });
-    const rows = await t.query(api.dashboard.listRestaurants, {});
+    await t.mutation(api.demoSources.dashboard.createRestaurant, { cuisine: "Cafe", name: "Zeta" });
+    await t.mutation(api.demoSources.dashboard.createRestaurant, { cuisine: "Bar", name: "Alpha" });
+    const rows = await t.query(api.demoSources.dashboard.listRestaurants, {});
     expect(rows.map((row) => row.name)).toStrictEqual(["Alpha", "Zeta"]);
 
     await expect(
-      t.mutation(api.dashboard.createRestaurant, { cuisine: "Cafe", name: "Alpha" }),
+      t.mutation(api.demoSources.dashboard.createRestaurant, { cuisine: "Cafe", name: "Alpha" }),
     ).rejects.toThrow(/already exists/);
     await expect(
-      t.mutation(api.dashboard.createRestaurant, { cuisine: "  ", name: "Beta" }),
+      t.mutation(api.demoSources.dashboard.createRestaurant, { cuisine: "  ", name: "Beta" }),
     ).rejects.toThrow(/Name and cuisine are required/);
     // Names are trimmed on the way in.
-    await t.mutation(api.dashboard.createRestaurant, { cuisine: "Deli", name: "  Trimmed  " });
-    expect((await t.query(api.dashboard.listRestaurants, {})).map((row) => row.name)).toContain(
-      "Trimmed",
-    );
+    await t.mutation(api.demoSources.dashboard.createRestaurant, {
+      cuisine: "Deli",
+      name: "  Trimmed  ",
+    });
+    expect(
+      (await t.query(api.demoSources.dashboard.listRestaurants, {})).map((row) => row.name),
+    ).toContain("Trimmed");
   });
 
   it("renames in place, refusing a collision with another row, and stamps the binding as stale", async () => {
     const t = signedIn();
-    const a = await t.mutation(api.dashboard.createRestaurant, { cuisine: "Cafe", name: "A" });
-    const b = await t.mutation(api.dashboard.createRestaurant, { cuisine: "Bar", name: "B" });
+    const a = await t.mutation(api.demoSources.dashboard.createRestaurant, {
+      cuisine: "Cafe",
+      name: "A",
+    });
+    const b = await t.mutation(api.demoSources.dashboard.createRestaurant, {
+      cuisine: "Bar",
+      name: "B",
+    });
     await expect(
-      t.mutation(api.dashboard.updateRestaurant, { cuisine: "Cafe", id: b, name: "A" }),
+      t.mutation(api.demoSources.dashboard.updateRestaurant, { cuisine: "Cafe", id: b, name: "A" }),
     ).rejects.toThrow(/already exists/);
     await expect(
-      t.mutation(api.dashboard.updateRestaurant, { cuisine: "X", id: b, name: "  " }),
+      t.mutation(api.demoSources.dashboard.updateRestaurant, { cuisine: "X", id: b, name: "  " }),
     ).rejects.toThrow(/Name and cuisine are required/);
-    await t.mutation(api.dashboard.updateRestaurant, { cuisine: "Bar", id: b, name: "B2" });
-    const rows = await t.query(api.dashboard.listRestaurants, {});
+    await t.mutation(api.demoSources.dashboard.updateRestaurant, {
+      cuisine: "Bar",
+      id: b,
+      name: "B2",
+    });
+    const rows = await t.query(api.demoSources.dashboard.listRestaurants, {});
     expect(rows.map((row) => [row.name, row.cuisine])).toStrictEqual([
       ["A", "Cafe"],
       ["B2", "Bar"],
@@ -143,7 +156,7 @@ describe("locations", () => {
   it("validates required fields and the lat/lng ranges, and refuses duplicate labels", async () => {
     const t = signedIn();
     await expect(
-      t.mutation(api.dashboard.createLocation, {
+      t.mutation(api.demoSources.dashboard.createLocation, {
         address: "1 Main",
         city: "TV",
         label: "",
@@ -153,7 +166,7 @@ describe("locations", () => {
       }),
     ).rejects.toThrow(/Label, address, city, and state are required/);
     await expect(
-      t.mutation(api.dashboard.createLocation, {
+      t.mutation(api.demoSources.dashboard.createLocation, {
         address: "1 Main",
         city: "TV",
         label: "L",
@@ -163,7 +176,7 @@ describe("locations", () => {
       }),
     ).rejects.toThrow(/Latitude must be between -90 and 90/);
     await expect(
-      t.mutation(api.dashboard.createLocation, {
+      t.mutation(api.demoSources.dashboard.createLocation, {
         address: "1 Main",
         city: "TV",
         label: "L",
@@ -172,7 +185,7 @@ describe("locations", () => {
         state: "TS",
       }),
     ).rejects.toThrow(/Longitude must be between -180 and 180/);
-    await t.mutation(api.dashboard.createLocation, {
+    await t.mutation(api.demoSources.dashboard.createLocation, {
       address: "1 Main",
       city: "TV",
       label: "L",
@@ -181,7 +194,7 @@ describe("locations", () => {
       state: "TS",
     });
     await expect(
-      t.mutation(api.dashboard.createLocation, {
+      t.mutation(api.demoSources.dashboard.createLocation, {
         address: "2 Main",
         city: "TV",
         label: "L",
@@ -197,11 +210,11 @@ describe("locations", () => {
 async function fixture(
   t: TestConvex,
 ): Promise<{ locationId: Id<"locations">; restaurantId: Id<"restaurants"> }> {
-  const restaurantId = await t.mutation(api.dashboard.createRestaurant, {
+  const restaurantId = await t.mutation(api.demoSources.dashboard.createRestaurant, {
     cuisine: "Cafe",
     name: "Probe",
   });
-  const locationId = await t.mutation(api.dashboard.createLocation, {
+  const locationId = await t.mutation(api.demoSources.dashboard.createLocation, {
     address: "1 Main",
     city: "TV",
     label: "L0",
@@ -217,27 +230,27 @@ describe("links (the join table)", () => {
     const t = signedIn();
     const { locationId, restaurantId } = await fixture(t);
     await expect(
-      t.mutation(api.dashboard.createLink, {
+      t.mutation(api.demoSources.dashboard.createLink, {
         locationId,
         openedYear: 1899,
         restaurantId,
       }),
     ).rejects.toThrow(/Opened year must be between 1900 and 2100/);
-    const linkId = await t.mutation(api.dashboard.createLink, {
+    const linkId = await t.mutation(api.demoSources.dashboard.createLink, {
       locationId,
       openedYear: 2020,
       restaurantId,
     });
     expect(linkId).toBeTruthy();
     await expect(
-      t.mutation(api.dashboard.createLink, { locationId, restaurantId }),
+      t.mutation(api.demoSources.dashboard.createLink, { locationId, restaurantId }),
     ).rejects.toThrow(/already linked/);
     // A missing end is refused: delete the restaurant, then link again.
     await t.run(async (ctx) => {
       await ctx.db.delete(restaurantId);
     });
     await expect(
-      t.mutation(api.dashboard.createLink, { locationId, restaurantId }),
+      t.mutation(api.demoSources.dashboard.createLink, { locationId, restaurantId }),
     ).rejects.toThrow(/Pick both a restaurant and a location/);
     const feed = await feedOf(t);
     expect(feed).toStrictEqual([
@@ -268,26 +281,29 @@ describe("links (the join table)", () => {
   it("updates openedYear without a commit (openedYear is not projected)", async () => {
     const t = signedIn();
     const { locationId, restaurantId } = await fixture(t);
-    const linkId = await t.mutation(api.dashboard.createLink, {
+    const linkId = await t.mutation(api.demoSources.dashboard.createLink, {
       locationId,
       openedYear: 2020,
       restaurantId,
     });
-    await t.mutation(api.dashboard.updateLink, { id: linkId, openedYear: null });
-    await t.mutation(api.dashboard.updateLink, { id: linkId, openedYear: 1999 });
+    await t.mutation(api.demoSources.dashboard.updateLink, { id: linkId, openedYear: null });
+    await t.mutation(api.demoSources.dashboard.updateLink, { id: linkId, openedYear: 1999 });
     // Only the link's add commit exists — openedYear is not part of the
     // projection, so no commit is appended for its edits.
     expect(await feedOf(t)).toHaveLength(1);
-    const links = await t.query(api.dashboard.listLinks, {});
+    const links = await t.query(api.demoSources.dashboard.listLinks, {});
     expect(at(links, 0).openedYear).toBe(1999);
   });
 
   it("deleting a link feeds a remove op labeled by the projection", async () => {
     const t = signedIn();
     const { locationId, restaurantId } = await fixture(t);
-    const linkId = await t.mutation(api.dashboard.createLink, { locationId, restaurantId });
-    await t.mutation(api.dashboard.deleteLink, { id: linkId });
-    expect(await t.query(api.dashboard.listLinks, {})).toStrictEqual([]);
+    const linkId = await t.mutation(api.demoSources.dashboard.createLink, {
+      locationId,
+      restaurantId,
+    });
+    await t.mutation(api.demoSources.dashboard.deleteLink, { id: linkId });
+    expect(await t.query(api.demoSources.dashboard.listLinks, {})).toStrictEqual([]);
     const feed = await feedOf(t);
     const removeCommit = feed[1];
     expect(removeCommit === undefined ? undefined : removeCommit.message).toBe("Unlinked L0");
@@ -295,7 +311,7 @@ describe("links (the join table)", () => {
     expect(removeOp === undefined ? undefined : removeOp.op).toBe("delete");
     expect(removeOp === undefined ? undefined : removeOp.fields).toStrictEqual([]);
     // Deleting a gone link is refused outright — the raw db delete throws.
-    await expect(t.mutation(api.dashboard.deleteLink, { id: linkId })).rejects.toThrow(
+    await expect(t.mutation(api.demoSources.dashboard.deleteLink, { id: linkId })).rejects.toThrow(
       /non-existent/,
     );
     // No commit was appended for the refused delete: add + remove only.
@@ -306,11 +322,11 @@ describe("links (the join table)", () => {
 describe("cascade and feed behavior", () => {
   it("deleting a restaurant cascades its links and feeds one remove per link", async () => {
     const t = signedIn();
-    const restaurantId = await t.mutation(api.dashboard.createRestaurant, {
+    const restaurantId = await t.mutation(api.demoSources.dashboard.createRestaurant, {
       cuisine: "Cafe",
       name: "Probe",
     });
-    const first = await t.mutation(api.dashboard.createLocation, {
+    const first = await t.mutation(api.demoSources.dashboard.createLocation, {
       address: "1 Main",
       city: "TV",
       label: "L0",
@@ -318,7 +334,7 @@ describe("cascade and feed behavior", () => {
       lng: -80,
       state: "TS",
     });
-    const second = await t.mutation(api.dashboard.createLocation, {
+    const second = await t.mutation(api.demoSources.dashboard.createLocation, {
       address: "2 Main",
       city: "TV",
       label: "L1",
@@ -326,18 +342,20 @@ describe("cascade and feed behavior", () => {
       lng: -80.1,
       state: "TS",
     });
-    const linkA = await t.mutation(api.dashboard.createLink, {
+    const linkA = await t.mutation(api.demoSources.dashboard.createLink, {
       locationId: first,
       restaurantId,
     });
-    const linkB = await t.mutation(api.dashboard.createLink, {
+    const linkB = await t.mutation(api.demoSources.dashboard.createLink, {
       locationId: second,
       restaurantId,
     });
-    const cascaded = await t.mutation(api.dashboard.deleteRestaurant, { id: restaurantId });
+    const cascaded = await t.mutation(api.demoSources.dashboard.deleteRestaurant, {
+      id: restaurantId,
+    });
     expect(cascaded).toBe(2);
-    expect(await t.query(api.dashboard.listLinks, {})).toStrictEqual([]);
-    expect(await t.query(api.dashboard.listRestaurants, {})).toStrictEqual([]);
+    expect(await t.query(api.demoSources.dashboard.listLinks, {})).toStrictEqual([]);
+    expect(await t.query(api.demoSources.dashboard.listRestaurants, {})).toStrictEqual([]);
 
     const feed = await feedOf(t);
     // Feed order: two link adds, then the delete (one op per cascaded link;
@@ -364,8 +382,11 @@ describe("cascade and feed behavior", () => {
   it("an update lands as field-level before/after ops, one per joined link, with lat marking geometry changed", async () => {
     const t = signedIn();
     const { locationId, restaurantId } = await fixture(t);
-    const linkId = await t.mutation(api.dashboard.createLink, { locationId, restaurantId });
-    await t.mutation(api.dashboard.updateLocation, {
+    const linkId = await t.mutation(api.demoSources.dashboard.createLink, {
+      locationId,
+      restaurantId,
+    });
+    await t.mutation(api.demoSources.dashboard.updateLocation, {
       address: "1 Main",
       city: "TV",
       id: locationId,
@@ -401,7 +422,7 @@ describe("cascade and feed behavior", () => {
     // Deleting a location cascades its links silently and appends ONE
     // commit — the delete ops carry the cascaded keys, labeled from the
     // before-snapshot.
-    await t.mutation(api.dashboard.deleteLocation, { id: locationId });
+    await t.mutation(api.demoSources.dashboard.deleteLocation, { id: locationId });
     const afterDelete = await feedOf(t);
     expect(afterDelete).toHaveLength(3);
     const removed = at(afterDelete, 2);
@@ -412,7 +433,10 @@ describe("cascade and feed behavior", () => {
   it("every write with a live binding stamps sourceUpdatedAt (the staleness badge)", async () => {
     const t = signedIn();
     const { locationId, restaurantId } = await fixture(t);
-    const linkId = await t.mutation(api.dashboard.createLink, { locationId, restaurantId });
+    const linkId = await t.mutation(api.demoSources.dashboard.createLink, {
+      locationId,
+      restaurantId,
+    });
     // No binding yet: writes work without a staleness target.
     expect(await bindingRow(t)).toBeNull();
 
@@ -423,7 +447,7 @@ describe("cascade and feed behavior", () => {
         source: "restaurantLocations",
       });
     });
-    await t.mutation(api.dashboard.updateLink, { id: linkId, openedYear: 2000 });
+    await t.mutation(api.demoSources.dashboard.updateLink, { id: linkId, openedYear: 2000 });
     const binding = await bindingRow(t);
     expect(binding === null ? undefined : binding.sourceUpdatedAt).toBeDefined();
   });

@@ -24,8 +24,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { api, components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
+import { SOURCE_KEY } from "./demoSources/sources";
 import schema from "./schema";
-import { SOURCE_KEY } from "./sources";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -757,7 +757,7 @@ describe("mirror idempotency (#127 defect 8)", () => {
         throw new Error("fixture mapping vanished");
       }
       // The entry goes; the map row dangles — the poison.
-      await ctx.runMutation(components.jsonCms.lib.deleteEntry, {
+      await ctx.runMutation(components.jsonCms.entries.deleteEntry, {
         boundWrite: "unbind",
         entryId: mapping.entryId,
       });

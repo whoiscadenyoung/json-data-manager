@@ -30,11 +30,11 @@ type Location = Doc<"locations">;
 
 /** Locations tab — CRUD over the `locations` table (the lat/lng rows the projection turns into Points). */
 export function LocationsPanel() {
-  const locations = useQuery(api.dashboard.listLocations),
-    links = useQuery(api.dashboard.listLinks),
-    createLocation = useMutation(api.dashboard.createLocation),
-    updateLocation = useMutation(api.dashboard.updateLocation),
-    deleteLocation = useMutation(api.dashboard.deleteLocation),
+  const locations = useQuery(api.demoSources.dashboard.listLocations),
+    links = useQuery(api.demoSources.dashboard.listLinks),
+    createLocation = useMutation(api.demoSources.dashboard.createLocation),
+    updateLocation = useMutation(api.demoSources.dashboard.updateLocation),
+    deleteLocation = useMutation(api.demoSources.dashboard.deleteLocation),
     [sheetOpen, setSheetOpen] = useState(false),
     [editing, setEditing] = useState<Location | undefined>(undefined),
     [label, setLabel] = useState(""),

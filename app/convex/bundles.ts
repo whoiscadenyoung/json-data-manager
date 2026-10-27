@@ -388,9 +388,9 @@ const MAX_REPORTED_FAILURES = 20;
 async function tryGetCollection(
   ctx: { runQuery: QueryCtx["runQuery"] },
   collectionId: string,
-): Promise<FunctionReturnType<typeof components.jsonCms.lib.getCollection>> {
+): Promise<FunctionReturnType<typeof components.jsonCms.collections.getCollection>> {
   try {
-    return await ctx.runQuery(components.jsonCms.lib.getCollection, { collectionId });
+    return await ctx.runQuery(components.jsonCms.collections.getCollection, { collectionId });
   } catch {
     return null;
   }
@@ -400,9 +400,9 @@ async function tryGetCollection(
 async function tryGetMap(
   ctx: { runQuery: QueryCtx["runQuery"] },
   mapId: string,
-): Promise<FunctionReturnType<typeof components.jsonCms.lib.getMap>> {
+): Promise<FunctionReturnType<typeof components.jsonCms.maps.getMap>> {
   try {
-    return await ctx.runQuery(components.jsonCms.lib.getMap, { mapId });
+    return await ctx.runQuery(components.jsonCms.maps.getMap, { mapId });
   } catch {
     return null;
   }
@@ -430,7 +430,7 @@ async function collectLayersByMap(
       continue; // Deleted maps are dropped by the core, not here — it reports them.
     }
     // oxlint-disable-next-line no-await-in-loop -- see above.
-    const layers = await ctx.runQuery(components.jsonCms.lib.listMapLayers, {
+    const layers = await ctx.runQuery(components.jsonCms.maps.listMapLayers, {
       limit: CATALOG_READ_LIMIT,
       mapId: membership.artifactId,
     });
@@ -471,16 +471,18 @@ async function collectClosureInput(
     .withIndex("by_project", (q) => q.eq("projectId", projectId))
     .take(MAX_MAPS * 5);
   const [summaries, drafts, membershipsRows, groups] = await Promise.all([
-    ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, {
+    ctx.runQuery(components.jsonCms.schemas.listSchemaSummaries, {
       limit: CATALOG_READ_LIMIT,
       viewerId,
     }),
-    ctx.runQuery(components.jsonCms.lib.listDraftSchemaSummaries, {
+    ctx.runQuery(components.jsonCms.schemas.listDraftSchemaSummaries, {
       limit: CATALOG_READ_LIMIT,
       viewerId,
     }),
-    ctx.runQuery(components.jsonCms.lib.listSchemaCollections, { limit: CATALOG_READ_LIMIT }),
-    ctx.runQuery(components.jsonCms.lib.listGroups, { limit: CATALOG_READ_LIMIT }),
+    ctx.runQuery(components.jsonCms.collections.listSchemaCollections, {
+      limit: CATALOG_READ_LIMIT,
+    }),
+    ctx.runQuery(components.jsonCms.groups.listGroups, { limit: CATALOG_READ_LIMIT }),
   ]);
 
   const lifecycleByDataset = new Map<string, "draft" | "published">(),
@@ -800,9 +802,9 @@ export const layerResolutions = query({
 async function tryGetSchemaOrNull(
   ctx: { runQuery: QueryCtx["runQuery"] },
   schemaId: string,
-): Promise<FunctionReturnType<typeof components.jsonCms.lib.getSchema>> {
+): Promise<FunctionReturnType<typeof components.jsonCms.schemas.getSchema>> {
   try {
-    return await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId });
+    return await ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId });
   } catch {
     return null;
   }
@@ -992,14 +994,14 @@ async function fileMemberIntoCollection(
     return;
   }
   await assertDatasetWritable(ctx, args.actorId, rowId);
-  await ctx.runMutation(components.jsonCms.lib.addSchemaToCollection, {
+  await ctx.runMutation(components.jsonCms.collections.addSchemaToCollection, {
     collectionId: args.collectionId,
     schemaId: rowId,
   });
   if (args.member.groupId !== undefined && args.member.publishedSchemaId !== undefined) {
     // The frozen row joins its draft's group, so group layers keep rendering
     // (organization writes are allowed on lineage rows).
-    await ctx.runMutation(components.jsonCms.lib.setSchemaGroup, {
+    await ctx.runMutation(components.jsonCms.groups.setSchemaGroup, {
       groupId: args.member.groupId,
       schemaId: rowId,
     });
@@ -1025,7 +1027,7 @@ export const promoteCollection = mutation({
       collectionId = undefined;
     }
     if (collectionId === undefined) {
-      collectionId = await ctx.runMutation(components.jsonCms.lib.createCollection, {
+      collectionId = await ctx.runMutation(components.jsonCms.collections.createCollection, {
         description: runRow.projectDescription,
         name: runRow.title,
       });
@@ -1073,7 +1075,7 @@ export const linkMapLayers = mutation({
       // layer is gone must not survive the leg.
       // oxlint-disable-next-line no-await-in-loop -- one layers read + one edge scan per map member, bounded by the run's member count.
       const [layers, existing] = await Promise.all([
-        ctx.runQuery(components.jsonCms.lib.listMapLayers, {
+        ctx.runQuery(components.jsonCms.maps.listMapLayers, {
           limit: CATALOG_READ_LIMIT,
           mapId: member.datasetKey,
         }),

@@ -1,7 +1,7 @@
+import { parseDataRows } from "@caden/importers";
 import { describe, expect, it } from "vitest";
 
 import { inferSchemaFromData } from "./infer-schema.js";
-import { parseDataRows } from "./parse-data.js";
 
 describe("inferSchemaFromData", () => {
   it("infers primitive types across rows", () => {

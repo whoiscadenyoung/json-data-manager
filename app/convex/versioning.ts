@@ -50,7 +50,7 @@ export const DEFAULT_KEEP_VERSIONS = 10;
  * union derived from it — never re-declared by hand, so the component's
  * validator stays the single source of the six names.
  */
-type SchemaDoc = NonNullable<FunctionReturnType<typeof components.jsonCms.lib.getSchema>>;
+type SchemaDoc = NonNullable<FunctionReturnType<typeof components.jsonCms.schemas.getSchema>>;
 export type SchemaGeometryType = NonNullable<SchemaDoc["geometryType"]>;
 
 /** The component's validator for one commit-ops entry — the delta ops shape. */
@@ -163,7 +163,7 @@ export async function versionRowsBounded(
   // callers are internal mutations/queries, unreachable by clients, and the
   // client-facing tag queries (tags.versionEntries/getVersionDelta) apply the
   // stage-8 visibility rule themselves before reading.
-  const entries = await ctx.runQuery(components.jsonCms.lib.listEntriesForSchemaBounded, {
+  const entries = await ctx.runQuery(components.jsonCms.schemas.listEntriesForSchemaBounded, {
     limit: VERSION_DIFF_LIMIT + 1,
     schemaId,
   });
@@ -263,7 +263,9 @@ export async function alreadyFrozenByRef(
   ctx: { runQuery: QueryCtx["runQuery"] },
   ref: string,
 ): Promise<{ _id: string } | null> {
-  return ctx.runQuery(components.jsonCms.lib.getSchemaVersionBySnapshotRef, { snapshotRef: ref });
+  return ctx.runQuery(components.jsonCms.schemas.getSchemaVersionBySnapshotRef, {
+    snapshotRef: ref,
+  });
 }
 
 /**
@@ -304,7 +306,7 @@ export async function createFrozenVersion(
     total: number;
   },
 ): Promise<{ importId: string; schemaId: string }> {
-  const schemaId = await ctx.runMutation(components.jsonCms.lib.createSchema, {
+  const schemaId = await ctx.runMutation(components.jsonCms.schemas.createSchema, {
     actorId: args.actorId,
     geometryType: args.geometryType,
     kind: args.kind,
@@ -314,12 +316,12 @@ export async function createFrozenVersion(
     source: args.source,
   });
   if (args.collectionsSourceSchemaId !== undefined) {
-    const collections = await ctx.runQuery(components.jsonCms.lib.listCollectionsBySchema, {
+    const collections = await ctx.runQuery(components.jsonCms.collections.listCollectionsBySchema, {
       schemaId: args.collectionsSourceSchemaId,
     });
     for (const collection of collections) {
       // oxlint-disable-next-line no-await-in-loop -- one membership write per collection, ordered and trivial.
-      await ctx.runMutation(components.jsonCms.lib.addSchemaToCollection, {
+      await ctx.runMutation(components.jsonCms.collections.addSchemaToCollection, {
         collectionId: collection._id,
         schemaId,
       });
@@ -327,7 +329,7 @@ export async function createFrozenVersion(
   }
   // The `boundWrite` attestation marks this as the calling flow (the
   // component's read-only gate requires it on a lineage-marked schema).
-  const importId = await ctx.runMutation(components.jsonCms.lib.startImport, {
+  const importId = await ctx.runMutation(components.jsonCms.imports.startImport, {
     boundWrite: args.boundWrite,
     schemaId,
     storageIds: args.chunkStorageIds,
@@ -358,7 +360,7 @@ export const freezeVersion = internalMutation({
     if (existing !== null) {
       return { alreadyFrozen: true, importId: undefined, schemaId: existing._id };
     }
-    const live = await ctx.runQuery(components.jsonCms.lib.getSchema, {
+    const live = await ctx.runQuery(components.jsonCms.schemas.getSchema, {
       schemaId: args.sourceSchemaId,
     });
     if (live === null) {
@@ -414,7 +416,7 @@ export const enforceRetention = internalMutation({
     // The fold ceiling (schemas.ts): retention must see the whole chain to
     // retire everything past keep — keep-N bounds chain length in practice
     // (issue #128 bounded the underlying component read).
-    const versions = await ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+    const versions = await ctx.runQuery(components.jsonCms.schemas.listSchemaVersions, {
       limit: CATALOG_READ_LIMIT,
       sourceSchemaId: args.sourceSchemaId,
     });
@@ -451,7 +453,7 @@ export const recordVersionDelta = internalMutation({
     toRef: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const target = await ctx.runQuery(components.jsonCms.lib.getSchema, {
+    const target = await ctx.runQuery(components.jsonCms.schemas.getSchema, {
       schemaId: args.toSchemaId,
     });
     if (target === null || target.lineage === undefined) {
@@ -460,7 +462,7 @@ export const recordVersionDelta = internalMutation({
     // The fold ceiling (schemas.ts): the previous-version search must reach
     // the whole chain (issue #128 bounded the underlying component read;
     // keep-N retention bounds chain length in practice).
-    const versions = await ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+    const versions = await ctx.runQuery(components.jsonCms.schemas.listSchemaVersions, {
       limit: CATALOG_READ_LIMIT,
       sourceSchemaId: args.sourceSchemaId,
     });

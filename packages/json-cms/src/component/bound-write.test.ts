@@ -7,7 +7,7 @@ import { initConvexTest } from "./setup.test.js";
 
 /**
  * Component-level read-only enforcement for bound datasets
- * (`assertDataWritable` in lib.ts): data mutations on a `source`-marked
+ * (`assertDataWritable` in internal/shared.ts): data mutations on a `source`-marked
  * (live projection) or `lineage`-marked (frozen version) dataset are
  * rejected unless the host's sync/ingest/retirement flow attests them with
  * `boundWrite` — the attestation `exposeApi` wrappers deliberately cannot
@@ -34,7 +34,7 @@ async function createBoundSchema(
     source?: { name: string };
   },
 ) {
-  return t.mutation(api.lib.createSchema, {
+  return t.mutation(api.schemas.createSchema, {
     geometryType: "Point",
     kind: "geospatial",
     lineage: markers.lineage,
@@ -51,25 +51,25 @@ describe("bound dataset read-only enforcement", () => {
     const schemaId = await createBoundSchema(t, { source: { name: "restaurantLocations" } });
 
     await expect(
-      t.mutation(api.lib.createEntry, { data: { label: "A" }, schemaId }),
+      t.mutation(api.entries.createEntry, { data: { label: "A" }, schemaId }),
     ).rejects.toThrow("read-only projection");
     await expect(
-      t.mutation(api.lib.createEntriesBulk, { entries: [{ data: { label: "A" } }], schemaId }),
+      t.mutation(api.entries.createEntriesBulk, { entries: [{ data: { label: "A" } }], schemaId }),
     ).rejects.toThrow("read-only projection");
 
-    const entryId: Id<"entries"> = await t.mutation(api.lib.createEntry, {
+    const entryId: Id<"entries"> = await t.mutation(api.entries.createEntry, {
       boundWrite: "sync",
       data: { label: "A" },
       geometry: POINT,
       schemaId,
     });
     await expect(
-      t.mutation(api.lib.updateEntry, { data: { label: "B" }, entryId }),
+      t.mutation(api.entries.updateEntry, { data: { label: "B" }, entryId }),
     ).rejects.toThrow("read-only projection");
-    await expect(t.mutation(api.lib.deleteEntry, { entryId })).rejects.toThrow(
+    await expect(t.mutation(api.entries.deleteEntry, { entryId })).rejects.toThrow(
       "read-only projection",
     );
-    await expect(t.mutation(api.lib.deleteEntriesBySchema, { schemaId })).rejects.toThrow(
+    await expect(t.mutation(api.entries.deleteEntriesBySchema, { schemaId })).rejects.toThrow(
       "read-only projection",
     );
   });
@@ -78,37 +78,37 @@ describe("bound dataset read-only enforcement", () => {
     const t = initConvexTest();
     const schemaId = await createBoundSchema(t, { source: { name: "restaurantLocations" } });
 
-    const entryId: Id<"entries"> = await t.mutation(api.lib.createEntry, {
+    const entryId: Id<"entries"> = await t.mutation(api.entries.createEntry, {
       boundWrite: "sync",
       data: { label: "A" },
       geometry: POINT,
       schemaId,
     });
-    await t.mutation(api.lib.updateEntry, {
+    await t.mutation(api.entries.updateEntry, {
       boundWrite: "sync",
       data: { label: "B" },
       entryId,
     });
-    await t.mutation(api.lib.deleteEntry, { boundWrite: "sync", entryId });
-    await t.mutation(api.lib.deleteEntriesBySchema, { boundWrite: "sync", schemaId });
-    expect(await t.query(api.lib.listEntries, { limit: 500, schemaId })).toHaveLength(0);
+    await t.mutation(api.entries.deleteEntry, { boundWrite: "sync", entryId });
+    await t.mutation(api.entries.deleteEntriesBySchema, { boundWrite: "sync", schemaId });
+    expect(await t.query(api.entries.listEntries, { limit: 500, schemaId })).toHaveLength(0);
   });
 
   it("rejects schema deletion and the import/simplify/conversion workflows on bound datasets", async () => {
     const t = initConvexTest();
     const schemaId = await createBoundSchema(t, { source: { name: "restaurantLocations" } });
 
-    await expect(t.mutation(api.lib.deleteSchema, { schemaId })).rejects.toThrow(
+    await expect(t.mutation(api.deletes.deleteSchema, { schemaId })).rejects.toThrow(
       "read-only projection",
     );
     await expect(
-      t.mutation(api.lib.startImport, { schemaId, storageIds: [], total: 0 }),
+      t.mutation(api.imports.startImport, { schemaId, storageIds: [], total: 0 }),
     ).rejects.toThrow("read-only projection");
-    await expect(t.mutation(api.lib.startSimplification, { schemaId, total: 0 })).rejects.toThrow(
-      "read-only projection",
-    );
     await expect(
-      t.mutation(api.lib.startGeospatialConversion, {
+      t.mutation(api.geospatial.startSimplification, { schemaId, total: 0 }),
+    ).rejects.toThrow("read-only projection");
+    await expect(
+      t.mutation(api.geospatial.startGeospatialConversion, {
         latField: "lat",
         lonField: "lng",
         schemaId,
@@ -118,7 +118,7 @@ describe("bound dataset read-only enforcement", () => {
 
     // The same calls succeed once the host flow attests them — the
     // retirement/delete path the version-retirement flow relies on.
-    await t.mutation(api.lib.deleteSchema, { boundWrite: "retire", schemaId });
+    await t.mutation(api.deletes.deleteSchema, { boundWrite: "retire", schemaId });
   });
 
   it("enforces the same gate on a frozen version dataset (lineage marker)", async () => {
@@ -129,38 +129,38 @@ describe("bound dataset read-only enforcement", () => {
     });
 
     await expect(
-      t.mutation(api.lib.createEntry, { data: { label: "A" }, schemaId: versionId }),
+      t.mutation(api.entries.createEntry, { data: { label: "A" }, schemaId: versionId }),
     ).rejects.toThrow("read-only projection");
-    await expect(t.mutation(api.lib.deleteSchema, { schemaId: versionId })).rejects.toThrow(
+    await expect(t.mutation(api.deletes.deleteSchema, { schemaId: versionId })).rejects.toThrow(
       "read-only projection",
     );
-    await t.mutation(api.lib.deleteSchema, { boundWrite: "retire", schemaId: versionId });
+    await t.mutation(api.deletes.deleteSchema, { boundWrite: "retire", schemaId: versionId });
   });
 
   it("leaves ordinary datasets fully writable", async () => {
     const t = initConvexTest();
-    const schemaId = await t.mutation(api.lib.createSchema, {
+    const schemaId = await t.mutation(api.schemas.createSchema, {
       geometryType: "Point",
       kind: "geospatial",
       schema: RESTAURANT_SCHEMA,
     });
 
-    const entryId: Id<"entries"> = await t.mutation(api.lib.createEntry, {
+    const entryId: Id<"entries"> = await t.mutation(api.entries.createEntry, {
       data: { label: "A" },
       geometry: POINT,
       schemaId,
     });
-    await t.mutation(api.lib.updateEntry, { data: { label: "B" }, entryId });
-    await t.mutation(api.lib.deleteEntry, { entryId });
-    expect(await t.query(api.lib.listEntries, { limit: 500, schemaId })).toHaveLength(0);
+    await t.mutation(api.entries.updateEntry, { data: { label: "B" }, entryId });
+    await t.mutation(api.entries.deleteEntry, { entryId });
+    expect(await t.query(api.entries.listEntries, { limit: 500, schemaId })).toHaveLength(0);
   });
 
   it("keeps metadata edits allowed on bound datasets", async () => {
     const t = initConvexTest();
     const schemaId = await createBoundSchema(t, { source: { name: "restaurantLocations" } });
 
-    await t.mutation(api.lib.updateSchema, { schemaId, title: "Renamed" });
-    const doc = await t.query(api.lib.getSchema, { schemaId });
+    await t.mutation(api.schemas.updateSchema, { schemaId, title: "Renamed" });
+    const doc = await t.query(api.schemas.getSchema, { schemaId });
     expect(doc !== null && doc.title).toBe("Renamed");
   });
 });
