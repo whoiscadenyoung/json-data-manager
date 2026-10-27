@@ -1,13 +1,12 @@
-import { Moon, Sun, SunMoon } from "lucide-react";
-import { useEffect, useSyncExternalStore } from "react";
-
-import { buttonVariants } from "#/components/ui/button";
+import { buttonVariants } from "@caden/ui/components/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "#/components/ui/dropdown-menu";
+} from "@caden/ui/components/dropdown-menu";
+import { Moon, Sun, SunMoon } from "lucide-react";
+import { useEffect, useSyncExternalStore } from "react";
 
 type ThemeMode = "light" | "dark" | "auto";
 

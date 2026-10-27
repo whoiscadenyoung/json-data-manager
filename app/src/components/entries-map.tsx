@@ -1,20 +1,21 @@
 import { buildFeatureCollection, computeBbox, useResolvedGeometries } from "@caden/json-cms/react";
 import type { BoundingBox, Geometry } from "@caden/json-cms/react";
-import { Link } from "@tanstack/react-router";
-import type * as GeoJSON from "geojson";
-import { ChevronRight, Loader2, Map as MapIcon, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-
-import { Button } from "#/components/ui/button";
+import { Button } from "@caden/ui/components/button";
 import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-} from "#/components/ui/empty";
-import { Map, MapClusterLayer, MapGeoJSON, MapVectorTiles } from "#/components/ui/map";
-import { Skeleton } from "#/components/ui/skeleton";
+} from "@caden/ui/components/empty";
+import { Map, MapClusterLayer, MapGeoJSON, MapVectorTiles } from "@caden/ui/components/map";
+import { Skeleton } from "@caden/ui/components/skeleton";
+import { cn } from "@caden/ui/lib/utils";
+import { Link } from "@tanstack/react-router";
+import type * as GeoJSON from "geojson";
+import { ChevronRight, Loader2, Map as MapIcon, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+
 import type { DatasetEntryRow, DatasetGeometryRow } from "#/lib/dataset-rows";
 import { formatPropertyValue } from "#/lib/format";
 import { layerSourceKind, layerSourceUrl } from "#/lib/layer-source";
@@ -24,7 +25,6 @@ import {
   buildPointFeatureCollection,
   splitPointLikeGeometries,
 } from "#/lib/point-geometry";
-import { cn } from "#/lib/utils";
 
 // Row shapes come from the row-resolution seam: `geometries` below is a flat
 // array the caller already assembled from every page (via

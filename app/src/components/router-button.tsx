@@ -1,9 +1,8 @@
+import { buttonVariants } from "@caden/ui/components/button";
+import { cn } from "@caden/ui/lib/utils";
 import { Link } from "@tanstack/react-router";
 import type { LinkProps } from "@tanstack/react-router";
 import type { VariantProps } from "class-variance-authority";
-
-import { buttonVariants } from "#/components/ui/button";
-import { cn } from "#/lib/utils";
 
 type RouterButtonProps = LinkProps &
   VariantProps<typeof buttonVariants> & {

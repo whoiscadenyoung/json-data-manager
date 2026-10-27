@@ -1,4 +1,20 @@
 import { ConfirmDialog } from "@caden/json-cms/react/ui";
+import { Button } from "@caden/ui/components/button";
+import { Card } from "@caden/ui/components/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@caden/ui/components/dropdown-menu";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@caden/ui/components/empty";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
@@ -7,22 +23,6 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { CollectionFormPanel } from "#/components/collection-form-panel";
-import { Button } from "#/components/ui/button";
-import { Card } from "#/components/ui/card";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "#/components/ui/dropdown-menu";
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "#/components/ui/empty";
 import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 

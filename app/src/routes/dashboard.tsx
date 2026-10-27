@@ -1,3 +1,4 @@
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@caden/ui/components/tabs";
 import { createFileRoute } from "@tanstack/react-router";
 
 import { LinksPanel } from "#/components/dashboard/links-panel";
@@ -6,7 +7,6 @@ import { RemoteSourcesCard } from "#/components/dashboard/remote-sources-card";
 import { RestaurantsPanel } from "#/components/dashboard/restaurants-panel";
 import { SnapshotsCard } from "#/components/dashboard/snapshots-card";
 import { SyncStatusCard } from "#/components/dashboard/sync-status-card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "#/components/ui/tabs";
 
 export const Route = createFileRoute("/dashboard")({ component: DashboardPage });
 

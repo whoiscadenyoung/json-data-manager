@@ -1,9 +1,8 @@
+import { Map, useMap } from "@caden/ui/components/map";
+import { cn } from "@caden/ui/lib/utils";
 import type * as GeoJSON from "geojson";
 import type { GeoJSONSource } from "maplibre-gl";
 import { useEffect, useMemo } from "react";
-
-import { Map, useMap } from "#/components/ui/map";
-import { cn } from "#/lib/utils";
 
 /**
  * A dedicated GeoJSON overlay map for bound-dataset diffs (#77): commit

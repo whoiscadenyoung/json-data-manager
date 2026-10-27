@@ -1,9 +1,9 @@
+import { cn } from "@caden/ui/lib/utils";
 import { CheckSquare, ChevronDown, ChevronRight, Square } from "lucide-react";
 import { useState } from "react";
 
 import type { JsonSchemaNode, ParsedProperty } from "#/lib/json-schema";
 import { parseSchemaProperties } from "#/lib/json-schema";
-import { cn } from "#/lib/utils";
 
 /** A read-only stand-in for an <Input>/<select> box in the create-time schema builder. */
 function Chip({ children }: { children: React.ReactNode }) {

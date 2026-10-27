@@ -1,4 +1,4 @@
-import { cn } from "#/lib/utils";
+import { cn } from "@caden/ui/lib/utils";
 
 /**
  * A user's avatar: their Better Auth image when set, otherwise their

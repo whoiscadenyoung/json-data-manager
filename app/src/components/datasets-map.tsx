@@ -1,16 +1,16 @@
 import { unionBbox } from "@caden/json-cms/react";
 import type { BoundingBox } from "@caden/json-cms/react";
-import type { FunctionReturnType } from "convex/server";
-import { Map as MapIcon } from "lucide-react";
-
 import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-} from "#/components/ui/empty";
-import { Map, MapGeoJSON } from "#/components/ui/map";
+} from "@caden/ui/components/empty";
+import { Map, MapGeoJSON } from "@caden/ui/components/map";
+import type { FunctionReturnType } from "convex/server";
+import { Map as MapIcon } from "lucide-react";
+
 import { asBoundingBox, bboxFeature } from "#/lib/point-geometry";
 import { api } from "#convex/_generated/api";
 

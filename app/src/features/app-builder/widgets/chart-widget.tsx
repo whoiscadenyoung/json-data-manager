@@ -1,3 +1,20 @@
+import { Button } from "@caden/ui/components/button";
+import {
+  ChartContainer,
+  ChartLegend,
+  ChartLegendContent,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from "@caden/ui/components/chart";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@caden/ui/components/table";
 import { BarChart3, Table2 } from "lucide-react";
 import { useState } from "react";
 import {
@@ -14,24 +31,6 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-
-import { Button } from "#/components/ui/button";
-import {
-  ChartContainer,
-  ChartLegend,
-  ChartLegendContent,
-  ChartTooltip,
-  ChartTooltipContent,
-  type ChartConfig,
-} from "#/components/ui/chart";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "#/components/ui/table";
 
 import { useDatasetRecords } from "../data";
 import {

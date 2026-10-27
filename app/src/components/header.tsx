@@ -1,7 +1,7 @@
+import { Button } from "@caden/ui/components/button";
 import { Link, useMatches } from "@tanstack/react-router";
 import { useConvexAuth, useQuery } from "convex/react";
 
-import { Button } from "#/components/ui/button";
 import { UserAvatar } from "#/components/user-avatar";
 import { authClient } from "#/lib/auth-client";
 import { api } from "#convex/_generated/api";

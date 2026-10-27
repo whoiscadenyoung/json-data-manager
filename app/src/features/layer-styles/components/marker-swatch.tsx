@@ -1,6 +1,5 @@
+import { cn } from "@caden/ui/lib/utils";
 import { useEffect, useRef, useState } from "react";
-
-import { cn } from "#/lib/utils";
 
 import { iconImage, type IconImage, type UploadedIcon } from "../lib/icon-images";
 import { SDF_EDGE } from "../lib/sdf";

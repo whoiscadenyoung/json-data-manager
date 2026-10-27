@@ -1,3 +1,4 @@
+import { Badge } from "@caden/ui/components/badge";
 import type { FunctionReturnType } from "convex/server";
 import {
   AlertTriangle,
@@ -12,7 +13,6 @@ import {
   Unlink,
 } from "lucide-react";
 
-import { Badge } from "#/components/ui/badge";
 import { api } from "#convex/_generated/api";
 
 export type DatasetSummary = FunctionReturnType<typeof api.schemas.listSummaries>[number];

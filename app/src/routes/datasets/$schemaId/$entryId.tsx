@@ -1,5 +1,27 @@
 import type { Geometry, ReferenceField } from "@caden/json-cms/react";
 import { computeBbox, getReferenceFields, useResolvedGeometries } from "@caden/json-cms/react";
+import { Badge } from "@caden/ui/components/badge";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@caden/ui/components/breadcrumb";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@caden/ui/components/card";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@caden/ui/components/collapsible";
+import { Map, MapClusterLayer, MapGeoJSON } from "@caden/ui/components/map";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
@@ -8,18 +30,6 @@ import { useState } from "react";
 
 import { QueryErrorBoundary } from "@/components/query-error-boundary";
 import { RouterButton } from "@/components/router-button";
-import { Badge } from "@/components/ui/badge";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { Map, MapClusterLayer, MapGeoJSON } from "@/components/ui/map";
 import type { DatasetGeometryRow } from "@/lib/dataset-rows";
 import { useDatasetEntryGeometryRow, useDatasetEntryRow } from "@/lib/dataset-rows-react";
 import { formatBytes, formatPropertyValue } from "@/lib/format";

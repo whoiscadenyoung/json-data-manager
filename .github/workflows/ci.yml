@@ -77,6 +77,10 @@ jobs:
       - name: Typecheck (@caden/geometry-archive)
         run: bun --filter=@caden/geometry-archive run typecheck
 
+      # Source-only package (ADR 0014): no dist, typechecked from src.
+      - name: Typecheck (@caden/ui)
+        run: bun --filter=@caden/ui run typecheck
+
       - name: Typecheck (@caden/data-export)
         run: bun --filter=@caden/data-export run typecheck
 

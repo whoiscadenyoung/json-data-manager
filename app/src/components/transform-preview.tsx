@@ -1,8 +1,5 @@
 import { applyLookup, type LookupDiagnostics, type LookupOperation } from "@caden/json-cms/react";
-import { RefreshCw } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
-
-import { Button } from "#/components/ui/button";
+import { Button } from "@caden/ui/components/button";
 import {
   Table,
   TableBody,
@@ -10,7 +7,10 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "#/components/ui/table";
+} from "@caden/ui/components/table";
+import { RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+
 import type { DatasetEntryRow } from "#/lib/dataset-rows";
 import { fetchDatasetEntryRows } from "#/lib/dataset-rows";
 import { PREVIEW_ROW_COUNT, matchStatLine, truncateOrphanKeys } from "#/lib/transform-model";

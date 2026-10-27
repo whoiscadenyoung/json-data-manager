@@ -1,6 +1,4 @@
-import { Info, RotateCcw, X } from "lucide-react";
-
-import { Button } from "#/components/ui/button";
+import { Button } from "@caden/ui/components/button";
 import {
   Card,
   CardAction,
@@ -8,9 +6,11 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
-} from "#/components/ui/card";
-import { Field, FieldLabel } from "#/components/ui/field";
-import { ToggleGroup, ToggleGroupItem } from "#/components/ui/toggle-group";
+} from "@caden/ui/components/card";
+import { Field, FieldLabel } from "@caden/ui/components/field";
+import { ToggleGroup, ToggleGroupItem } from "@caden/ui/components/toggle-group";
+import { Info, RotateCcw, X } from "lucide-react";
+
 import type { DatasetEntryRow } from "#/lib/dataset-rows";
 import { entryDataRecord } from "#/lib/dataset-rows";
 import type { LayerStyle, Renderer, StyleEditor } from "#convex/layerStyles/validators";

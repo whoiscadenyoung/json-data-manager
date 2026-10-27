@@ -1,3 +1,4 @@
+import { pmtilesProtocol } from "@caden/ui/lib/pmtiles-protocol";
 /**
  * OPFS pin for tile archives (issue #58 part 5) — the persistent layer of the
  * client cache. After part 3 installs an archive server-side, this module
@@ -14,7 +15,7 @@
  * archive pointer disappears server-side (`metas` → `null`, e.g. dataset
  * deletion), local copies go immediately.
  *
- * Reads plug into `pmtilesProtocol` (see `./pmtiles-protocol.ts`): the tile
+ * Reads plug into `pmtilesProtocol` (see `@caden/ui/lib/pmtiles-protocol`): the tile
  * URL stays `pmtiles://{storageUrl}` exactly as part 4 rendered it, but a
  * pre-added `PMTiles` instance whose source is `OpfsBackfillSource` wins the
  * protocol's lookup and serves ranges from disk, falling back to network
@@ -34,8 +35,6 @@ import type { RangeResponse, Source } from "pmtiles";
 import { useEffect, useMemo } from "react";
 
 import { api } from "#convex/_generated/api";
-
-import { pmtilesProtocol } from "./pmtiles-protocol";
 
 /** OPFS directory (under the origin root) holding every pinned archive. */
 export const TILE_ARCHIVE_CACHE_DIR = "tile-archives";

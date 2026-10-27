@@ -1,3 +1,11 @@
+import { Badge } from "@caden/ui/components/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@caden/ui/components/card";
 import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { formatDistanceToNow } from "date-fns";
@@ -9,8 +17,6 @@ import {
   type DiffPoint,
   type DiffPointStatus,
 } from "#/components/diff-overlay-map";
-import { Badge } from "#/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
 import { api } from "#convex/_generated/api";
 
 type Binding = NonNullable<FunctionReturnType<typeof api.bindings.getBySchema>>;

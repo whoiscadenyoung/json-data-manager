@@ -1,12 +1,12 @@
 import { buildFeatureCollection, unionBbox, useResolvedGeometries } from "@caden/json-cms/react";
 import type { BoundingBox, Geometry } from "@caden/json-cms/react";
+import { Button } from "@caden/ui/components/button";
+import { Map, MapClusterLayer, MapGeoJSON, MapVectorTiles } from "@caden/ui/components/map";
 import { Link } from "@tanstack/react-router";
 import { ChevronRight, Loader2, X } from "lucide-react";
 import { Fragment, useState } from "react";
 import type { ReactNode } from "react";
 
-import { Button } from "#/components/ui/button";
-import { Map, MapClusterLayer, MapGeoJSON, MapVectorTiles } from "#/components/ui/map";
 import type { DatasetEntryRow, DatasetGeometryRow } from "#/lib/dataset-rows";
 import { useEnrichedDatasetEntryRow } from "#/lib/dataset-rows-react";
 import { formatPropertyValue } from "#/lib/format";

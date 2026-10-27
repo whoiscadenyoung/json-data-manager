@@ -1,8 +1,14 @@
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@caden/ui/components/card";
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
 
 import { RemoteSourceControls } from "#/components/remote-source-controls";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
 import { api } from "#convex/_generated/api";
 
 /**

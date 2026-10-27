@@ -1,6 +1,6 @@
+import { Badge } from "@caden/ui/components/badge";
 import { CheckCircle2, Loader2, TriangleAlert } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { useMapTileArchiveBuildState, type TileArchiveBuildState } from "@/lib/tile-archive";
 
 /**
