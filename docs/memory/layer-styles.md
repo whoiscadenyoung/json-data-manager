@@ -1,6 +1,6 @@
 ---
 name: layer-styles
-description: 2026-10-26 GIS basic-tier train (#158, #159–#166) and the layer-styles module (#159) — optional, MapLibre style-spec JSON, extension slots in LayersMap/MapLayerPanel; tile-path feature-state limits; sandbox verification recipe
+description: 2026-10-26 GIS basic-tier train (#158, #159–#166) and the layer-styles module (#159) — optional, MapLibre style-spec JSON, extension slots in LayersMap/MapLayerPanel; tile-path feature-state limits; sandbox verification recipe; 2026-10-27 #168 point markers (SDF sprite, uploads) + gotchas
 metadata:
   type: project
 ---
@@ -46,6 +46,33 @@ Gotchas:
 - `api.d.ts` can be hand-edited when no deployment exists (codegen is
   alphabetical and deterministic; verified identical later).
 
+**#168 point markers (2026-10-27, ADR 0013):** shapes / curated Lucide /
+all of Maki ship as one committed SDF sprite in
+`app/public/sprites/layer-styles/` (built by hand with
+`bun src/features/layer-styles/sprite/build.ts`: resvg + our own EDT in
+`lib/sdf.ts`); markers compile to a `symbol` layer, icons namespaced
+`shape-|lucide-|maki-|user-<id>`; uploads = `layerStyleIcons` table + Convex
+storage, browser-rasterized PNG only. Gotchas:
+
+- `ImageBitmap.close()` zeroes `width`/`height` — read them first (the
+  sprite silently failed to decode until this was fixed).
+- A thrown `ConvexError` rolls back `ctx.storage.delete` too; `icons.create`
+  deletes a refused upload and _returns_ `{ ok: false, error }`.
+- convex-test's `storage.store` records no `contentType`; tests patch the
+  `_storage` row (`icons.test.ts` `storeFile`).
+- `map.setSprite`/`addSprite` namespace names (`id:name`), which breaks
+  exported JSON — register only used images with `map.addImage` before
+  `addLayer`.
+- pngjs encodes much worse than PIL; the 2x SDF sheet is ~740 KB (grey+alpha,
+  deflate 9). Lazy-loaded; only HiDPI fetches it.
+- MapLibre 6's dist is ESM-only (`maplibre-gl.mjs`) — the plain-MapLibre
+  interop fixture (`fixtures/plain-maplibre.html` + `prepare-fixture.ts`)
+  imports it as a module.
+- PRE-EXISTING (not fixed): `convex dev`'s own typecheck fails on main
+  because `convex/layerStyles/*.test.ts` import `src/` files that use the
+  `#convex/*` alias and `Object.hasOwn` (convex/tsconfig has neither). Start
+  the dev backend with `--typecheck=disable`; CI's app `tsc` is unaffected.
+
 **Sandbox verification recipe (worked 2026-10-26):**
 
 1. From `app/`, run `CONVEX_AGENT_MODE=anonymous bunx convex dev` (backend on
@@ -60,6 +87,12 @@ Gotchas:
    SwiftShader args, and an init script that disables `backdrop-filter`, or
    screenshots of open dialogs time out.
 
-CARTO basemaps and glyphs are blocked by the sandbox proxy, so the map draws
-on a blank canvas and labels can't be checked visually. The tile path and
+CARTO basemaps and glyphs are blocked by the sandbox proxy. On 2026-10-27
+the map did NOT fire `load` at all (nothing drew) until Playwright
+`context.route(/cartocdn\.com/)` stubbed `tiles.json` (TileJSON with a stub
+tile URL), `sprite*.json` (`{}`), `sprite*.png` (1×1 PNG) and everything else
+(204). Labels still can't be checked visually. Public functions run from the
+CLI with `bunx convex run --identity '{"subject":"<authId>"}' maps:create …`
+(the authId `auth:createAccount` returns) — handy for creating a map and
+adding a layer without driving the UI. The tile path and
 polygon/line rendering were unit-tested only.

@@ -11,11 +11,14 @@ import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 import type { LayerStyle } from "#convex/layerStyles/validators";
 
+import { MarkerSwatch } from "./components/marker-swatch";
 import { StyleMenu } from "./components/style-menu";
 import { StylePanel } from "./components/style-panel";
 import { FIELD_SEPARATOR, StyledLayer } from "./components/styled-layer";
 import { fieldsOfStyle, tileLayers } from "./lib/expressions";
-import { legendClasses, swatchColor } from "./lib/legend";
+import type { UploadedIcon } from "./lib/icon-images";
+import { withIconFallback } from "./lib/icons";
+import { legendClasses, singleMarkerIcon, swatchColor } from "./lib/legend";
 
 /** How long the editor waits after the last change before saving (slider drags coalesce). */
 const SAVE_DEBOUNCE_MS = 400;
@@ -32,7 +35,15 @@ export interface UseLayerStylesOptions {
   tileRenderIds: ReadonlySet<string>;
   /** The map's assigned colors — a fresh style starts from the dataset's current color. */
   colorBySchema: ReadonlyMap<string, string>;
+  /**
+   * The dataset's stored geometry type (`Point`, `Polygon`, …), if known —
+   * the Marker picker only shows for datasets that may have points
+   * (unknown or mixed counts as "may").
+   */
+  geometryTypeFor?: (renderId: string) => string | undefined;
 }
+
+const NON_POINT_TYPES = new Set(["LineString", "MultiLineString", "Polygon", "MultiPolygon"]);
 
 export interface UseLayerStylesResult {
   /** Plug into `LayersMap`'s `extension`. */
@@ -116,8 +127,18 @@ export function useLayerStyles({
   entrySourceFor,
   tileRenderIds,
   colorBySchema,
+  geometryTypeFor,
 }: UseLayerStylesOptions): UseLayerStylesResult {
   const saved = useQuery(api.layerStyles.styles.listForMap, { mapId }),
+    uploadList = useQuery(api.layerStyles.icons.list, {}),
+    uploadsReady = uploadList !== undefined,
+    uploads = new Map<string, UploadedIcon>(
+      (uploadList === undefined ? [] : uploadList).map((icon) => [icon.name, icon]),
+    ),
+    // A `user-*` icon is drawable once the upload list confirms it exists
+    // (assumed while the list loads, so nothing flickers to circles).
+    isIconAvailable = (name: string) =>
+      !name.startsWith("user-") || !uploadsReady || uploads.has(name),
     saveStyle = useMutation(api.layerStyles.styles.set),
     resetStyle = useMutation(api.layerStyles.styles.reset),
     [previews, setPreviews] = useState<Map<string, LayerStyle | null>>(() => new Map()),
@@ -205,22 +226,44 @@ export function useLayerStyles({
       }
     };
 
+  const effectiveColors = withSwatchColors(colorBySchema, styles);
+
   const rowsFor = (renderId: string): readonly DatasetEntryRow[] => {
     const report = reportsBySchema.get(entrySourceFor(renderId));
     return report === undefined ? NO_ROWS : report.rows;
   };
 
+  const markerFor = (icon: string | undefined, color: string) =>
+    icon === undefined || !isIconAvailable(icon) ? undefined : (
+      <MarkerSwatch icon={icon} color={color} uploads={uploads} size={12} />
+    );
+
   const extension: LayersMapExtension = {
     legendFor: (renderId) => {
-      const style = styles.get(renderId);
-      return style === undefined ? undefined : legendClasses(style);
+      const style = styles.get(renderId),
+        classes = style === undefined ? undefined : legendClasses(style);
+      return classes === undefined
+        ? undefined
+        : classes.map((item) => ({
+            color: item.color,
+            label: item.label,
+            marker: markerFor(item.icon, item.color),
+          }));
+    },
+    legendSwatchFor: (renderId) => {
+      const style = styles.get(renderId),
+        color = effectiveColors.get(renderId);
+      return style === undefined || color === undefined
+        ? undefined
+        : markerFor(singleMarkerIcon(style), color);
     },
     renderLayer: (args: LayersMapLayerArgs) => {
       const style = styles.get(args.renderId);
       if (style === undefined) {
         return undefined;
       }
-      const layers = args.source.kind === "tiles" ? tileLayers(style).layers : style.layers;
+      const drawable = withIconFallback(style.layers, isIconAvailable).layers,
+        layers = args.source.kind === "tiles" ? tileLayers(drawable).layers : drawable;
       if (layers.length === 0) {
         return undefined;
       }
@@ -232,14 +275,14 @@ export function useLayerStyles({
           entryRows={rowsFor(args.renderId)}
           fieldsKey={fieldsOfStyle(style).join(FIELD_SEPARATOR)}
           visible={args.visible}
+          uploads={uploads}
+          uploadsReady={uploadsReady}
           onSelect={args.onSelect}
           onTileIdle={args.onTileIdle}
         />
       );
     },
   };
-
-  const effectiveColors = withSwatchColors(colorBySchema, styles);
 
   const datasetActions: DatasetActionsSlot = ({ renderId, title }) => (
     <StyleMenu
@@ -256,6 +299,11 @@ export function useLayerStyles({
 
   const editingReport =
       editingSource === undefined ? undefined : reportsBySchema.get(editingSource),
+    editingStyle = editing === undefined ? undefined : styles.get(editing.renderId),
+    editingGeometry =
+      editing === undefined || geometryTypeFor === undefined
+        ? undefined
+        : geometryTypeFor(editing.renderId),
     panel =
       editing === undefined ? null : (
         <StylePanel
@@ -265,7 +313,15 @@ export function useLayerStyles({
             setEditing(undefined);
           }}
           title={editing.title}
-          style={styles.get(editing.renderId)}
+          style={editingStyle}
+          mayHavePoints={editingGeometry === undefined || !NON_POINT_TYPES.has(editingGeometry)}
+          uploads={uploads}
+          uploadList={uploadList}
+          missingIcons={
+            editingStyle === undefined
+              ? []
+              : withIconFallback(editingStyle.layers, isIconAvailable).missing
+          }
           defaultColor={colorBySchema.get(editing.renderId) ?? "#3b82f6"}
           rows={editingReport === undefined ? undefined : editingReport.rows}
           rowsComplete={editingReport !== undefined && editingReport.complete}

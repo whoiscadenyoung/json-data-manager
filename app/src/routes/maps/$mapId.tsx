@@ -339,6 +339,18 @@ function MapDetailPage() {
           renderableDerived,
           chain === undefined ? undefined : chain.sourceByRenderId,
         ),
+      geometryTypeFor: (renderId) => {
+        const sourceId = entrySourceOf(
+            renderId,
+            renderableDerived,
+            chain === undefined ? undefined : chain.sourceByRenderId,
+          ),
+          dataset =
+            aliasedDatasets === undefined
+              ? undefined
+              : aliasedDatasets.find((item) => item._id === sourceId);
+        return dataset === undefined ? undefined : dataset.geometryType;
+      },
       mapId,
       renderIds: schemaIds,
       tileRenderIds: new Set(tileSources.map((source) => source.schemaId)),

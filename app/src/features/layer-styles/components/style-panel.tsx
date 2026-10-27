@@ -15,7 +15,7 @@ import type { DatasetEntryRow } from "#/lib/dataset-rows";
 import { entryDataRecord } from "#/lib/dataset-rows";
 import type { LayerStyle, Renderer, StyleEditor } from "#convex/layerStyles/validators";
 
-import { compileStyle, defaultEditor } from "../lib/compile";
+import { compileStyle, defaultEditor, usesIcons } from "../lib/compile";
 import { hasTileLimitations } from "../lib/expressions";
 import { legendClasses } from "../lib/legend";
 import { isRampName, RAMP_NAMES, rampColors, type RampName } from "../lib/palettes";
@@ -29,6 +29,12 @@ import {
 } from "../lib/renderers";
 import { AdvancedSection } from "./advanced-section";
 import { ColorField, RangeField, Section, SelectField, SwatchList } from "./controls";
+import {
+  CategoryIconButton,
+  MarkerControls,
+  MarkerOptionsSection,
+  type MarkerIcons,
+} from "./marker-section";
 
 type Records = ReadonlyArray<Record<string, unknown>>;
 
@@ -75,18 +81,70 @@ function rendererForKind(
       });
 }
 
+/** A category row's color, with its marker button first when points draw as shapes/icons. */
+function CategoryRow({
+  id,
+  label,
+  color,
+  icon,
+  marker,
+  icons,
+  onColor,
+  onIcon,
+}: {
+  id: string;
+  label: string;
+  color: string;
+  icon: string | undefined;
+  marker: StyleEditor["marker"];
+  icons: MarkerIcons;
+  onColor: (color: string) => void;
+  onIcon?: (icon: string) => void;
+}) {
+  if (!usesIcons(marker) || onIcon === undefined) {
+    return <ColorField id={id} label={label} value={color} onChange={onColor} />;
+  }
+  return (
+    <div className="flex items-center gap-2">
+      <CategoryIconButton
+        marker={marker}
+        icon={icon ?? marker.icon}
+        color={color}
+        label={label}
+        icons={icons}
+        onPick={onIcon}
+      />
+      <div className="min-w-0 flex-1">
+        <ColorField id={id} label={label} value={color} onChange={onColor} />
+      </div>
+    </div>
+  );
+}
+
 function CategoriesEditor({
   renderer,
+  marker,
+  icons,
   records,
   fields,
   onChange,
 }: {
   renderer: Extract<Renderer, { kind: "categorical" }>;
+  marker: StyleEditor["marker"];
+  icons: MarkerIcons;
   records: Records;
   fields: string[];
   onChange: (next: Renderer) => void;
 }) {
-  const overflow = overflowCount(valuesOf(records, renderer.field));
+  const overflow = overflowCount(valuesOf(records, renderer.field)),
+    setCategory = (index: number, patch: { color?: string; icon?: string }) => {
+      onChange({
+        ...renderer,
+        categories: renderer.categories.map((item, itemIndex) =>
+          itemIndex === index ? { ...item, ...patch } : item,
+        ),
+      });
+    };
   return (
     <>
       <SelectField
@@ -100,26 +158,30 @@ function CategoriesEditor({
       />
       <div className="flex flex-col gap-1.5">
         {renderer.categories.map((category, index) => (
-          <ColorField
+          <CategoryRow
             key={String(category.value)}
             id={`style-category-${index}`}
             label={String(category.value)}
-            value={category.color}
-            onChange={(color) => {
-              onChange({
-                ...renderer,
-                categories: renderer.categories.map((item, itemIndex) =>
-                  itemIndex === index ? { ...item, color } : item,
-                ),
-              });
+            color={category.color}
+            icon={category.icon}
+            marker={marker}
+            icons={icons}
+            onColor={(color) => {
+              setCategory(index, { color });
+            }}
+            onIcon={(icon) => {
+              setCategory(index, { icon });
             }}
           />
         ))}
-        <ColorField
+        <CategoryRow
           id="style-category-other"
           label={overflow > 0 ? `Other (${overflow} more values)` : "Other"}
-          value={renderer.otherColor}
-          onChange={(otherColor) => {
+          color={renderer.otherColor}
+          icon={undefined}
+          marker={marker}
+          icons={icons}
+          onColor={(otherColor) => {
             onChange({ ...renderer, otherColor });
           }}
         />
@@ -212,11 +274,13 @@ function GraduatedEditor({
 
 function RendererEditor({
   editor,
+  icons,
   records,
   fields,
   onChange,
 }: {
   editor: StyleEditor;
+  icons: MarkerIcons;
   records: Records;
   fields: { all: string[]; numeric: string[] };
   onChange: (next: Renderer) => void;
@@ -226,6 +290,8 @@ function RendererEditor({
     return (
       <CategoriesEditor
         renderer={renderer}
+        marker={editor.marker}
+        icons={icons}
         records={records}
         fields={fields.all}
         onChange={onChange}
@@ -261,6 +327,9 @@ function SymbologySection({
   fields,
   fieldsLoading,
   fallbackColor,
+  mayHavePoints,
+  icons,
+  missingIcons,
   onChange,
 }: {
   editor: StyleEditor;
@@ -268,6 +337,9 @@ function SymbologySection({
   fields: { all: string[]; numeric: string[] };
   fieldsLoading: boolean;
   fallbackColor: string;
+  mayHavePoints: boolean;
+  icons: MarkerIcons;
+  missingIcons: readonly string[];
   onChange: (next: StyleEditor) => void;
 }) {
   const setRenderer = (renderer: Renderer) => {
@@ -315,7 +387,21 @@ function SymbologySection({
           <p className="text-xs text-muted-foreground">Loading this dataset's fields…</p>
         )}
       </Field>
-      <RendererEditor editor={editor} records={records} fields={fields} onChange={setRenderer} />
+      {mayHavePoints && (
+        <MarkerControls
+          editor={editor}
+          icons={icons}
+          missingIcons={missingIcons}
+          onChange={onChange}
+        />
+      )}
+      <RendererEditor
+        editor={editor}
+        icons={icons}
+        records={records}
+        fields={fields}
+        onChange={setRenderer}
+      />
       <RangeField
         id="style-opacity"
         label="Fill opacity"
@@ -373,18 +459,20 @@ function OutlineSection({
           onChange({ ...editor, lineWidth });
         }}
       />
-      <RangeField
-        id="style-radius"
-        label="Point size"
-        value={editor.radius}
-        min={1}
-        max={20}
-        step={0.5}
-        format={px}
-        onChange={(radius) => {
-          onChange({ ...editor, radius });
-        }}
-      />
+      {!usesIcons(editor.marker) && (
+        <RangeField
+          id="style-radius"
+          label="Point size"
+          value={editor.radius}
+          min={1}
+          max={20}
+          step={0.5}
+          format={px}
+          onChange={(radius) => {
+            onChange({ ...editor, radius });
+          }}
+        />
+      )}
     </Section>
   );
 }
@@ -563,6 +651,10 @@ export function StylePanel({
   rowsComplete,
   rendersFromTiles,
   saving,
+  mayHavePoints,
+  uploads,
+  uploadList,
+  missingIcons,
   onChange,
   onReset,
 }: {
@@ -576,6 +668,13 @@ export function StylePanel({
   rowsComplete: boolean;
   rendersFromTiles: boolean;
   saving: boolean;
+  /** Whether the dataset may have points (unknown or mixed counts) — the Marker picker shows only then. */
+  mayHavePoints: boolean;
+  /** Uploaded icons by name, and the list (undefined while loading). */
+  uploads: MarkerIcons["uploads"];
+  uploadList: MarkerIcons["uploadList"];
+  /** Uploaded icons the style names that were deleted (those points draw circles). */
+  missingIcons: readonly string[];
   onChange: (style: LayerStyle) => void;
   onReset: () => void;
 }) {
@@ -586,7 +685,8 @@ export function StylePanel({
     applyEditor = (next: StyleEditor) => {
       onChange(compileStyle(next));
     },
-    tileNote = style !== undefined && rendersFromTiles && hasTileLimitations(style);
+    tileNote = style !== undefined && rendersFromTiles && hasTileLimitations(style),
+    icons: MarkerIcons = { uploadList, uploads };
   return (
     <Card className="h-fit gap-0 py-0" aria-label={`Style for ${title}`}>
       <CardHeader className="border-b py-4">
@@ -620,8 +720,12 @@ export function StylePanel({
             fields={fields}
             fieldsLoading={!rowsComplete}
             fallbackColor={defaultColor}
+            mayHavePoints={mayHavePoints}
+            icons={icons}
+            missingIcons={missingIcons}
             onChange={applyEditor}
           />
+          {mayHavePoints && <MarkerOptionsSection editor={editor} onChange={applyEditor} />}
           <OutlineSection editor={editor} onChange={applyEditor} />
           <LabelsSection
             editor={editor}
@@ -635,13 +739,14 @@ export function StylePanel({
       <AdvancedSection
         style={style === undefined ? compileStyle(defaultEditor(defaultColor)) : style}
         title={title}
+        icons={icons}
         onApply={onChange}
       />
       {tileNote && (
         <p className="flex gap-2 border-b px-4 py-3 text-xs text-muted-foreground">
           <Info className="mt-0.5 size-3.5 shrink-0" />
-          Large datasets draw from map tiles: colors and sizes work, but labels and attribute
-          filters only show once the dataset renders from rows.
+          Large datasets draw from map tiles: colors and sizes work, but labels, attribute filters,
+          per-category icons and icon sizes by class only show once the dataset renders from rows.
         </p>
       )}
       <CardFooter className="flex-row items-center justify-between py-2">

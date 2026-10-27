@@ -30,6 +30,8 @@ type FeatureProperties = { entryId: string; schemaId: string };
 export interface LayersMapLegendClass {
   color: string;
   label: string;
+  /** Drawn instead of the color square (e.g. the class's point marker icon). */
+  marker?: ReactNode;
 }
 
 /**
@@ -63,6 +65,8 @@ export interface LayersMapExtension {
   renderLayer: (args: LayersMapLayerArgs) => ReactNode | undefined;
   /** Legend classes for a dataset (shown under its title), or `undefined` for the plain swatch. */
   legendFor: (renderId: string) => LayersMapLegendClass[] | undefined;
+  /** Drawn instead of an unclassed dataset's color dot (e.g. its point marker icon), or `undefined` for the dot. */
+  legendSwatchFor?: (renderId: string) => ReactNode | undefined;
 }
 
 /** The dataset fields LayersMap reads (titles + stored extents) — any schema-row shape carrying them works. */
@@ -154,6 +158,8 @@ type LegendDataset = {
   color: string;
   /** Styled datasets' classes (an extension's `legendFor`), listed under the title. */
   classes?: LayersMapLegendClass[];
+  /** An extension's swatch for an unclassed dataset (`legendSwatchFor`), replacing the dot. */
+  swatch?: ReactNode;
 };
 
 /** A styled dataset's legend block: its title, then one swatch per class. */
@@ -170,10 +176,12 @@ function LegendClasses({
       <div className="flex flex-wrap gap-x-3 gap-y-0.5">
         {classes.map((item) => (
           <span key={`${item.label}:${item.color}`} className="flex items-center gap-1.5">
-            <span
-              className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm"
-              style={{ backgroundColor: item.color }}
-            />
+            {item.marker ?? (
+              <span
+                className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm"
+                style={{ backgroundColor: item.color }}
+              />
+            )}
             <span className="max-w-32 truncate">{item.label}</span>
           </span>
         ))}
@@ -200,10 +208,12 @@ function MapLegend({ datasets }: { datasets: LegendDataset[] }) {
             key={dataset.schemaId}
             className="flex items-center gap-1.5 text-xs text-muted-foreground"
           >
-            <span
-              className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-              style={{ backgroundColor: dataset.color }}
-            />
+            {dataset.swatch ?? (
+              <span
+                className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ backgroundColor: dataset.color }}
+              />
+            )}
             <span className="max-w-40 truncate">{dataset.title}</span>
           </div>
         ) : (
@@ -212,6 +222,16 @@ function MapLegend({ datasets }: { datasets: LegendDataset[] }) {
       )}
     </div>
   );
+}
+
+/** The extension's swatch for an unclassed dataset, if any (no extension or no hook → the dot). */
+function legendSwatchFor(
+  extension: LayersMapExtension | undefined,
+  renderId: string,
+): ReactNode | undefined {
+  return extension === undefined || extension.legendSwatchFor === undefined
+    ? undefined
+    : extension.legendSwatchFor(renderId);
 }
 
 /** The extension's legend classes for a render id, if any (no extension → none). */
@@ -449,6 +469,7 @@ export function LayersMap({
         title: getDatasetTitle(datasetById, titlesById, schemaId, "Untitled dataset"),
         color: colorBySchema.get(schemaId) ?? "#3b82f6",
         classes: legendClassesFor(extension, schemaId),
+        swatch: legendSwatchFor(extension, schemaId),
       })),
     visibleTileSources = tileSources.filter((source) =>
       visibleSchemaIds.has(source.schemaId),

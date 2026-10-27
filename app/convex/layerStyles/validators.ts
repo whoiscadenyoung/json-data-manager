@@ -25,7 +25,49 @@ export const STYLE_LIMITS = {
   jsonChars: 32_000,
   /** Field-name length. */
   field: 200,
+  /** Icon-name length (`user-<convex id>` is the longest form). */
+  icon: 80,
 } as const;
+
+/**
+ * Point marker icons are sprite image names, namespaced by family: the
+ * built-in sprite's `shape-*`, `lucide-*`, `maki-*`, and uploads' `user-<id>`
+ * (docs/layer-styles.md "Point markers").
+ */
+export const ICON_NAME_PATTERN = /^(shape|lucide|maki|user)-[a-z0-9-]+$/;
+
+/** Bounds on uploaded marker icons (docs/layer-styles.md "Uploaded icons"). */
+export const ICON_LIMITS = {
+  /** The file a person picks (SVG or PNG), and the PNG stored after rasterizing. */
+  fileBytes: 256 * 1024,
+  /** Stored image width/height in device pixels (and a PNG's accepted input size). */
+  maxPx: 128,
+  /** Uploaded icons across the deployment (the picker lists them all). */
+  count: 500,
+  /** Display-name length. */
+  label: 80,
+} as const;
+
+export const MARKER_KINDS = ["circle", "shape", "icon"] as const;
+
+/**
+ * How points draw. `circle` is a MapLibre `circle` layer (`StyleEditor.radius`
+ * sizes it); `shape` and `icon` compile to a `symbol` layer whose
+ * `icon-image` is `icon` (or, in a categories style, a per-category icon).
+ */
+export const markerValidator = v.object({
+  kind: v.union(v.literal("circle"), v.literal("shape"), v.literal("icon")),
+  /** Sprite image name for shape/icon markers (the default for every class). */
+  icon: v.string(),
+  /** Glyph size in pixels for shape/icon markers. */
+  size: v.number(),
+  /** Clockwise rotation in degrees (shape/icon). */
+  rotation: v.number(),
+  /** Draw every marker even when they overlap (shape/icon; circles always do). */
+  allowOverlap: v.boolean(),
+  /** Graduated only: the largest class draws this many times the base size, classes in between scale evenly. */
+  sizeScale: v.optional(v.number()),
+});
 
 export const STYLE_LAYER_TYPES = ["fill", "line", "circle", "symbol"] as const;
 
@@ -55,6 +97,8 @@ const categoricalRendererValidator = v.object({
     v.object({
       value: categoryValueValidator,
       color: v.string(),
+      /** This class's marker icon when points draw as shapes/icons (else the marker's own icon). */
+      icon: v.optional(v.string()),
     }),
   ),
   /** Color for values outside `categories` (and missing values). */
@@ -100,6 +144,8 @@ export const styleEditorValidator = v.object({
   /** Point radius in pixels. */
   radius: v.number(),
   label: v.optional(labelValidator),
+  /** How points draw; absent = circles (the original look). */
+  marker: v.optional(markerValidator),
   minzoom: v.optional(v.number()),
   maxzoom: v.optional(v.number()),
 });
@@ -114,5 +160,7 @@ export type StyleLayer = Infer<typeof styleLayerValidator>;
 export type StyleLayerType = StyleLayer["type"];
 export type Renderer = Infer<typeof rendererValidator>;
 export type StyleLabel = Infer<typeof labelValidator>;
+export type Marker = Infer<typeof markerValidator>;
+export type MarkerKind = Marker["kind"];
 export type StyleEditor = Infer<typeof styleEditorValidator>;
 export type LayerStyle = Infer<typeof layerStyleValidator>;

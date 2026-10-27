@@ -1,0 +1,70 @@
+<!doctype html>
+<!--
+  Interop fixture for "Download sprite" (docs/layer-styles.md, #168): a plain
+  MapLibre page with none of this app's code. It draws an exported style's
+  layers from `style.json` with its sprite (`sprite.json`/`.png`, `@2x`) over
+  `data.geojson`, so the pair can be checked against the app's map.
+
+  Build a folder with `prepare-fixture.ts` (see that file) and serve it:
+    bun src/features/layer-styles/fixtures/prepare-fixture.ts <export.zip> <out-dir>
+    (cd <out-dir> && python3 -m http.server 8123)  → http://localhost:8123/
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Plain MapLibre fixture</title>
+    <link rel="stylesheet" href="maplibre/maplibre-gl.css" />
+    <style>
+      html,
+      body,
+      #map {
+        margin: 0;
+        height: 100%;
+        background: #fafaf9;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
+    <script type="module">
+      // MapLibre's own ESM build (copied from node_modules by prepare-fixture.ts).
+      import * as maplibregl from "./maplibre/maplibre-gl.mjs";
+
+      Promise.all([
+        fetch("style.json").then((response) => response.json()),
+        fetch("data.geojson").then((response) => response.json()),
+      ]).then(([layers, data]) => {
+        let west = 180,
+          south = 90,
+          east = -180,
+          north = -90;
+        for (const feature of data.features) {
+          const [lng, lat] = feature.geometry.coordinates;
+          west = Math.min(west, lng);
+          east = Math.max(east, lng);
+          south = Math.min(south, lat);
+          north = Math.max(north, lat);
+        }
+        const map = new maplibregl.Map({
+          bounds: [west, south, east, north],
+          container: "map",
+          fitBoundsOptions: { padding: 40 },
+          style: {
+            layers: [
+              { id: "background", paint: { "background-color": "#fafaf9" }, type: "background" },
+              ...layers,
+            ],
+            sources: { dataset: { data, type: "geojson" } },
+            // The exported sprite, relative to this page.
+            sprite: new URL("sprite", location.href).href,
+            version: 8,
+          },
+        });
+        map.on("idle", () => {
+          document.body.dataset.ready = "true";
+        });
+      });
+    </script>
+  </body>
+</html>

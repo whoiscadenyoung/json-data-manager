@@ -8,6 +8,8 @@ import {
   type StyleLayerType,
 } from "#convex/layerStyles/validators";
 
+import { iconNamesOfLayers } from "./icons";
+
 /**
  * Moving styles in and out as MapLibre style-spec JSON (the transferability
  * contract in docs/layer-styles.md): validation against the real style spec,
@@ -105,12 +107,24 @@ function layerListOf(parsed: unknown): unknown[] {
 
 export type ImportResult = { ok: true; style: LayerStyle } | { ok: false; errors: string[] };
 
+/** The message for icons a pasted style names that this app has no image for. */
+export function unknownIconsError(names: readonly string[]): string {
+  const shown = names.slice(0, 10).map((name) => `"${name}"`),
+    more = names.length > 10 ? ` and ${names.length - 10} more` : "";
+  return `Unknown icon${names.length === 1 ? "" : "s"}: ${shown.join(", ")}${more}. Pick a built-in icon or upload your own under Marker, then use the name it shows.`;
+}
+
 /**
  * Parses pasted MapLibre JSON — one layer object, an array of layers, or a
  * full style.json (its `layers` are taken; sources, ids, and `source-layer`
  * are ignored because this app wires them per map) — into a custom style.
+ * Icons the layers name must pass `isKnownIcon` (built-in sprite or an
+ * upload); unknown ones are listed by name instead of drawing blanks.
  */
-export function importStyleJson(text: string): ImportResult {
+export function importStyleJson(
+  text: string,
+  isKnownIcon: (name: string) => boolean = () => true,
+): ImportResult {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -130,6 +144,10 @@ export function importStyleJson(text: string): ImportResult {
   const errors = validateLayers(layers);
   if (errors.length > 0) {
     return { errors, ok: false };
+  }
+  const unknown = iconNamesOfLayers(layers).filter((name) => !isKnownIcon(name));
+  if (unknown.length > 0) {
+    return { errors: [unknownIconsError(unknown)], ok: false };
   }
   const style: LayerStyle = { layers, version: 1 };
   if (JSON.stringify(style).length > STYLE_LIMITS.jsonChars) {
