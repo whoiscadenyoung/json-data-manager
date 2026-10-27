@@ -42,9 +42,12 @@ bound dataset:
 | `routes`    | MultiLineString | deployments that have a route | `deploymentId` (reference), `name`, `status` |
 
 - Both layers key their rows by the deployment id.
-- `routes.deploymentId` becomes a reference field (`x-reference`) to the
-  centroid entry. That gives click-through and reverse lookup ("this
-  deployment's route") without duplicating the attributes.
+- `routes.deploymentId` should become a reference field (`x-reference`) to
+  the centroid entry. That would give click-through and reverse lookup
+  ("this deployment's route") without duplicating the attributes. **Not built
+  yet:** reference values are json-cms entry ids, so the sync would have to
+  translate the foreign key through the centroids binding's `bindingEntries`
+  map at apply time. Today the field syncs as a plain string.
 - A map composes them by adding both datasets as layers.
 - A new geometry kind later means a new layer, not a change to the sync
   engine.
@@ -151,19 +154,29 @@ Rules (the #127 invariants, now owned by the foreign app):
 
 ## 5. Staleness and the Sync button
 
+As built (`app/convex/remoteSources.ts`):
+
 - The binding stores `remoteRevision` (the first page's revision at the last
-  successful sync) and `remoteSchemaVersion`.
-- A lightweight `checkRemote` action fetches `/manifest` and stamps
-  `latestRemoteRevision` and `checkedAt` on each layer's binding. It runs:
-  - when the dataset page opens (throttled to about once a minute),
-  - from a cron (every 15 minutes, for list badges),
-  - when the user clicks "Check".
-- The UI compares `latestRemoteRevision > remoteRevision` and shows "Update
-  available" plus a **Sync** button, which starts the existing full-state
-  sync. A `schemaVersion` mismatch shows "Source schema changed" and blocks
-  Sync until someone acknowledges it.
-- The source is defined as a whole: one manifest lists every layer, so a
-  single "Sync all layers" action can run each layer's binding in turn.
+  successful sync) and `remoteSchemaVersion` (the version the dataset was
+  built from).
+- Each manifest check writes the layer it read, plus `checkedAt` and any
+  error, to a `remoteSourceChecks` row per source. This is kept separate from
+  the binding so a never-synced source can still show its layer, and so cron
+  writes don't contend with the sync engine. Checks run:
+  - when the dataset page or dashboard card mounts (`checkIfStale`,
+    server-throttled to once a minute),
+  - from a cron (`checkAll`, every 15 minutes),
+  - when the user clicks **Check**.
+- When a check sees `revision > remoteRevision`, it also stamps the binding's
+  `sourceUpdatedAt`. Every existing "Out of date" badge (`isSyncStale`)
+  therefore covers remote sources without changes.
+- `remoteSources.status`/`list` compute `outOfDate` and `schemaChanged` for
+  the UI. **Sync** (`remoteSources.sync`) re-reads the manifest and refuses a
+  `schemaVersion` mismatch ("unbind and sync again to rebuild"). It then
+  starts the engine's full-state run (`sync.startRemoteRun`), which creates
+  the dataset from the manifest's layer on the first bind.
+- Not built yet: a "Sync all layers" action. Each layer has its own Sync
+  button.
 
 ## 6. Code changes
 
@@ -191,41 +204,57 @@ The registry gets two entries, `deployments.centroids` and
 `deployments.routes`. Their `dataset` descriptors are a fallback: the
 manifest's schema and geometry type are what's used at bind time.
 
-### 6.2 New `app/convex/remoteSource.ts`
+### 6.2 New `app/convex/remoteClient.ts`
 
 Plain functions, called from actions:
 
-- `remoteManifest(source)` and `remoteListRows(source, cursor)`.
-- Requests go through `remoteGet`, which resolves the env vars, adds the
-  bearer header, applies `AbortSignal.timeout(30_000)`, and retries
-  429/5xx up to 3 times with backoff.
+- `fetchManifestLayer(source)` and `fetchRowsPage(source, cursor)`.
+- Requests go through `remoteGet`, which:
+  - resolves the env vars,
+  - adds the bearer header,
+  - applies a 30-second abort timeout,
+  - makes up to 3 attempts in total, with backoff, on 429/5xx and network
+    errors.
 - Responses are validated with zod, which is already an app dependency. A
   malformed page throws, which fails the run loudly through `collectRows`'
   existing catch.
 
 ### 6.3 `app/convex/sync.ts`
 
-1. `collectFullState` branches on transport. For `http` it drains
-   `remoteListRows` and records the first page's revision; otherwise it uses
-   the existing `runQuery` hops. `collectCommitTail` refuses remote sources.
-2. `readSourceRows`, `readCommitTail` and `readNewestCommit` narrow to a
-   `getLocalSource(key)` that throws for remote sources.
-3. Bind-time dataset creation (around line 176) runs from an action for
-   remote sources. It fetches `/manifest`, then creates the dataset from the
-   layer's schema and geometry type and stamps the revision fields.
-4. `finalizeRun` stamps `remoteRevision`, and the new `checkRemote`
-   internal action is added.
-5. The reconcile cron for remote bindings is replaced by the `checkRemote`
-   cron. Syncing is user-initiated in v1.
+1. `collectRows` picks its leg through `collectForRun`.
+   - Remote sources drain `fetchRowsPage` (`collectRemoteState`) and record
+     the first page's revision on the run (`syncRuns.remoteRevision`).
+   - Local sources keep the existing `runQuery` hops.
+2. `readSourceRows`, `readCommitTail`, `readNewestCommit` and the
+   commit-tail apply narrow to a `getLocalSource(key)` that throws for remote
+   sources.
+3. `ensureBoundDataset` takes an optional dataset override (the manifest's
+   layer), passed in by the internal `startRemoteRun`. The public `startRun`
+   mutation refuses remote sources.
+4. `completeRun` stamps `remoteRevision` from the run.
+5. `reconcileAll` skips remote bindings. The `checkAll` cron replaces it for
+   them, and syncing is user-initiated in v1.
 
-New optional `datasetBindings` fields: `remoteRevision`,
-`latestRemoteRevision`, `remoteSchemaVersion`, `remoteCheckedAt`.
+New optional fields:
+
+- `datasetBindings`: `remoteRevision` and `remoteSchemaVersion`.
+- `syncRuns`: `remoteRevision`.
+
+New table: `remoteSourceChecks`.
 
 ### 6.4 UI
 
-On the dataset page, the binding card gets a "Last synced revision N · source
-at M" line, an Update available badge, and Sync and Check buttons. Lists
-reuse the Synced badge with an "outdated" variant.
+`RemoteSourceControls` (`app/src/components/remote-source-controls.tsx`)
+shows a status badge (Up to date / Update available / Not synced / Source
+schema changed), a line reading "synced rev N · source at rev M · checked
+…", live run progress, and Sync/Check buttons. It appears in two places:
+
+- On the dataset page's Source row. It renders nothing for local sources.
+- In a new dashboard **Remote sources** card, which lists every registered
+  remote layer, including never-synced ones. The first Sync creates the
+  dataset.
+
+The local-source sync card now hides remote bindings.
 
 ## 7. Later (not v1)
 

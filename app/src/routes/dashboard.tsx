@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { LinksPanel } from "#/components/dashboard/links-panel";
 import { LocationsPanel } from "#/components/dashboard/locations-panel";
+import { RemoteSourcesCard } from "#/components/dashboard/remote-sources-card";
 import { RestaurantsPanel } from "#/components/dashboard/restaurants-panel";
 import { SnapshotsCard } from "#/components/dashboard/snapshots-card";
 import { SyncStatusCard } from "#/components/dashboard/sync-status-card";
@@ -27,6 +28,7 @@ function DashboardPage() {
         </p>
       </div>
       <SyncStatusCard />
+      <RemoteSourcesCard />
       <SnapshotsCard />
       <Tabs defaultValue="restaurants">
         <TabsList>

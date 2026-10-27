@@ -8,11 +8,12 @@ import type { QueryCtx } from "./_generated/server";
  * external source — a descriptor for the dataset its projection is created
  * from (schema, kind, geometry), the declared field → projection mapping,
  * and one full-state read. Co-deployed sources read the host's own tables;
- * a remote source (phase 5, #78) implements the same interface over HTTP
- * and the sync/versioning machinery is unchanged.
+ * a remote source (phase 5, #78 — docs/remote-source-adapter-design.md)
+ * reads another app's layer over HTTP from the sync's collect action
+ * (remoteSources.ts), and the apply/sweep/finalize machinery is unchanged.
  *
- * Adding a second bound source means adding one entry to `SOURCES` — no
- * changes anywhere else.
+ * Adding a bound source means adding one entry to `SOURCES` — no changes
+ * anywhere else.
  */
 
 /** One row of a source's state, as the projection should materialize it. */
@@ -22,16 +23,21 @@ export type ProjectionRow = {
   // lose rows.
   key: string;
   data: Record<string, unknown>;
-  // GeoJSON geometry (Points today). Null means "this row has no geometry";
-  // absent only for non-geospatial sources.
+  // GeoJSON geometry — any type a remote layer declares. Null means "this
+  // row has no geometry"; absent only for non-geospatial sources.
+  geometry?: { coordinates: unknown; type: string } | null;
+};
+
+/** A co-deployed source's row: the local sources project Points only. */
+export type LocalProjectionRow = ProjectionRow & {
   geometry?: { coordinates: number[]; type: string } | null;
 };
 
-/** One page of a source's state: the rows plus the read's continuation. */
+/** One page of a local source's state: the rows plus the read's continuation. */
 export type ProjectionRowPage = {
   // Null once the whole state has been read — the signal callers drain to.
   cursor: string | null;
-  rows: ProjectionRow[];
+  rows: LocalProjectionRow[];
 };
 
 /**
@@ -48,9 +54,17 @@ export type SourceMapping = {
   geometry?: { kind: "latLng"; lat: string; lng: string };
 };
 
+export type SourceGeometryType =
+  | "LineString"
+  | "MultiLineString"
+  | "MultiPoint"
+  | "MultiPolygon"
+  | "Point"
+  | "Polygon";
+
 export type SourceDataset = {
   description: string;
-  geometryType?: "Point";
+  geometryType?: SourceGeometryType;
   kind: "standard" | "geospatial";
   schema: Record<string, unknown>;
   title: string;
@@ -80,10 +94,15 @@ export type CommitFeedEntry = {
   seq: number;
 };
 
-export interface BoundSource {
+interface SourceBase {
   dataset: SourceDataset;
   key: string;
   mapping: SourceMapping;
+}
+
+/** A co-deployed source: reads the host's own tables inside a query. */
+export interface LocalSource extends SourceBase {
+  transport: "local";
   /** The design's §8.1 state reader, co-deployed form: one page of rows. */
   listRows(ctx: Pick<QueryCtx, "db">, cursor: string | null): Promise<ProjectionRowPage>;
   /**
@@ -101,6 +120,23 @@ export interface BoundSource {
    */
   buildGeometry?(data: Record<string, unknown>): { coordinates: number[]; type: string } | null;
 }
+
+/**
+ * A remote source (#78): one layer of another app's HTTP contract
+ * (`/manifest` + `/layers/{layer}/rows`). It has no commit feed in v1 — every
+ * sync is a full-state pass, user-initiated, with the manifest's per-layer
+ * `revision` as the staleness signal. `dataset` is only the fallback
+ * descriptor; a bind creates the dataset from the live manifest.
+ */
+export interface RemoteSource extends SourceBase {
+  /** Env var NAMES (resolved at call time) for the base URL and bearer secret. */
+  env: { secret: string; url: string };
+  /** The layer key in the remote manifest. */
+  layer: string;
+  transport: "http";
+}
+
+export type BoundSource = LocalSource | RemoteSource;
 
 /** The primary demo source's stable key (the running example from the PoC). */
 export const SOURCE_KEY = "restaurantLocations";
@@ -122,7 +158,7 @@ const SOURCE_READ_PAGE = 500;
  */
 export const COMMIT_TAIL_PAGE = 500;
 
-const restaurantLocationsSource: BoundSource = {
+const restaurantLocationsSource: LocalSource = {
   dataset: {
     description:
       "Live projection of the restaurants/locations/restaurantLocations tables. " +
@@ -235,12 +271,13 @@ const restaurantLocationsSource: BoundSource = {
     },
     geometry: { kind: "latLng", lat: "locations.lat", lng: "locations.lng" },
   },
+  transport: "local",
 };
 
 // A second, deliberately different source: non-geospatial, different join
 // (none), different natural key — proves the sync machinery is
 // descriptor-driven and not specific to the locations projection.
-const restaurantsSource: BoundSource = {
+const restaurantsSource: LocalSource = {
   dataset: {
     description:
       "Live projection of the restaurants table. Bound dataset — sync from the source table; read-only here.",
@@ -275,11 +312,54 @@ const restaurantsSource: BoundSource = {
     entryKey: "restaurants._id",
     fields: { cuisine: "restaurants.cuisine", name: "restaurants.name" },
   },
+  transport: "local",
+};
+
+// The deployment-data app's two geometry layers (demo stand-in:
+// demo/deploy-source). json-cms holds one geometry per entry, so the
+// centroid and the optional secondary route bind as two datasets keyed by
+// the same deployment id.
+const DEPLOYMENTS_ENV = {
+  secret: "REMOTE_SOURCE_DEPLOYMENTS_SECRET",
+  url: "REMOTE_SOURCE_DEPLOYMENTS_URL",
+};
+
+const deploymentCentroidsSource: RemoteSource = {
+  dataset: {
+    description: "Deployments from the deployment-data app. Bound dataset — read-only here.",
+    geometryType: "Point",
+    kind: "geospatial",
+    schema: { properties: {}, type: "object" },
+    title: "Deployments",
+  },
+  env: DEPLOYMENTS_ENV,
+  key: "deployments.centroids",
+  layer: "centroids",
+  mapping: { entryKey: "deployments.id", fields: {} },
+  transport: "http",
+};
+
+const deploymentRoutesSource: RemoteSource = {
+  dataset: {
+    description:
+      "Secondary route geometry for deployments that have one. Bound dataset — read-only here.",
+    geometryType: "MultiLineString",
+    kind: "geospatial",
+    schema: { properties: {}, type: "object" },
+    title: "Deployment routes",
+  },
+  env: DEPLOYMENTS_ENV,
+  key: "deployments.routes",
+  layer: "routes",
+  mapping: { entryKey: "deployments.id", fields: {} },
+  transport: "http",
 };
 
 /** The registry every bound source must be declared in. */
 export const SOURCES: Record<string, BoundSource> = {
   [SOURCE_KEY]: restaurantLocationsSource,
+  [deploymentCentroidsSource.key]: deploymentCentroidsSource,
+  [deploymentRoutesSource.key]: deploymentRoutesSource,
   restaurants: restaurantsSource,
 };
 
@@ -289,6 +369,35 @@ export function getSource(key: string): BoundSource {
     throw new ConvexError(`Unknown bound source: ${key}`);
   }
   return source;
+}
+
+/** A co-deployed source — the query-side readers only ever serve these. */
+export function getLocalSource(key: string): LocalSource {
+  const source = getSource(key);
+  if (source.transport !== "local") {
+    throw new ConvexError(`Bound source ${key} is remote — it is read over HTTP, not by a query.`);
+  }
+  return source;
+}
+
+export function getRemoteSource(key: string): RemoteSource {
+  const source = getSource(key);
+  if (source.transport !== "http") {
+    throw new ConvexError(`Bound source ${key} is not a remote source.`);
+  }
+  return source;
+}
+
+export function isRemoteSourceKey(key: string): boolean {
+  const source = SOURCES[key];
+  return source !== undefined && source.transport === "http";
+}
+
+/** Every registered remote source, in registry order. */
+export function remoteSources(): RemoteSource[] {
+  return Object.values(SOURCES).filter(
+    (source): source is RemoteSource => source.transport === "http",
+  );
 }
 
 // Mirrors the client importer's chunking intent (and the snapshot ingest's):

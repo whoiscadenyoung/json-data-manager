@@ -4,7 +4,7 @@ import { components, internal } from "./_generated/api";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { assertDatasetWritable, auth } from "./auth";
 import { deleteDatasetCascading } from "./schemas";
-import { SOURCE_KEY } from "./sources";
+import { isRemoteSourceKey, SOURCE_KEY } from "./sources";
 
 /**
  * The bound-datasets binding registry's read side and its escape hatch.
@@ -24,6 +24,8 @@ const bindingValidator = v.object({
   lastReconciledAt: v.optional(v.number()),
   lastSyncedAt: v.optional(v.number()),
   pinnedRefs: v.optional(v.array(v.string())),
+  remoteRevision: v.optional(v.number()),
+  remoteSchemaVersion: v.optional(v.string()),
   schemaId: v.string(),
   schemaMapping: v.optional(v.any()),
   source: v.string(),
@@ -47,6 +49,8 @@ export const list = query({
           _id: binding._id,
           lastReconciledAt: binding.lastReconciledAt,
           lastSyncedAt: binding.lastSyncedAt,
+          // Remote sources (#78) have their own dashboard card and controls.
+          remote: isRemoteSourceKey(binding.source),
           source: binding.source,
           sourceUpdatedAt: binding.sourceUpdatedAt,
           syncedEntryCount: binding.syncedEntryCount,
@@ -64,6 +68,7 @@ export const list = query({
       _id: v.id("datasetBindings"),
       lastReconciledAt: v.optional(v.number()),
       lastSyncedAt: v.optional(v.number()),
+      remote: v.boolean(),
       source: v.string(),
       sourceUpdatedAt: v.optional(v.number()),
       syncedEntryCount: v.optional(v.number()),
