@@ -23,6 +23,7 @@ import {
   chunkByJsonBytes,
   type CommitFeedEntry,
   COMMIT_TAIL_PAGE,
+  getLocalSource,
   getSource,
   SOURCES,
 } from "./sources";
@@ -107,16 +108,22 @@ async function seedCommit(
 }
 
 describe("the source registry", () => {
-  it("carries exactly the two shipped descriptors", () => {
+  it("carries exactly the shipped descriptors", () => {
     expect(sorted(Object.keys(SOURCES), byString)).toStrictEqual([
+      "deployments.centroids",
+      "deployments.routes",
       "restaurantLocations",
       "restaurants",
     ]);
   });
 
+  it("keeps remote sources out of the query-side readers", () => {
+    expect(() => getLocalSource("deployments.centroids")).toThrow(/is remote/);
+  });
+
   it("resolves a source by key", () => {
-    expect(getSource("restaurantLocations").key).toBe("restaurantLocations");
-    expect(getSource("restaurants").key).toBe("restaurants");
+    expect(getLocalSource("restaurantLocations").key).toBe("restaurantLocations");
+    expect(getLocalSource("restaurants").key).toBe("restaurants");
   });
 
   it("rejects an unknown key", () => {
@@ -124,7 +131,7 @@ describe("the source registry", () => {
   });
 
   it("the locations descriptor declares the join mapping and the shared dataset shape", () => {
-    const source = getSource("restaurantLocations");
+    const source = getLocalSource("restaurantLocations");
     expect(source.mapping.entryKey).toBe("restaurantLocations._id");
     expect(source.mapping.geometry).toStrictEqual({
       kind: "latLng",
@@ -137,7 +144,7 @@ describe("the source registry", () => {
   });
 
   it("the restaurants descriptor is the non-geospatial control: no feed, no geometry", () => {
-    const source = getSource("restaurants");
+    const source = getLocalSource("restaurants");
     expect(source.dataset.kind).toBe("standard");
     expect(source.dataset.geometryType).toBeUndefined();
     expect(source.mapping.geometry).toBeUndefined();
@@ -152,7 +159,9 @@ describe("restaurantLocations.listRows (the §8.1 state reader)", () => {
   it("joins the three tables into labeled Point rows keyed by the link id", async () => {
     const t = signedIn();
     const linkIds = await seedLinks(t, 2);
-    const page = await t.run(async (ctx) => getSource("restaurantLocations").listRows(ctx, null));
+    const page = await t.run(async (ctx) =>
+      getLocalSource("restaurantLocations").listRows(ctx, null),
+    );
     expect(page.cursor).toBeNull();
     const rows = page.rows;
     expect(rows).toStrictEqual([
@@ -197,7 +206,9 @@ describe("restaurantLocations.listRows (the §8.1 state reader)", () => {
       }
       await ctx.db.delete(link.locationId);
     });
-    const page = await t.run(async (ctx) => getSource("restaurantLocations").listRows(ctx, null));
+    const page = await t.run(async (ctx) =>
+      getLocalSource("restaurantLocations").listRows(ctx, null),
+    );
     expect(page.cursor).toBeNull();
     expect(page.rows).toHaveLength(1);
     expect(at(page.rows, 0).key).toBe(linkIds[0]);
@@ -208,7 +219,7 @@ describe("restaurantLocations commit feed (the §8.2 reader)", () => {
   it("answers null for an empty feed and the newest entry otherwise", async () => {
     const t = signedIn();
     const newestOf = async (ctx: QueryCtx) => {
-      const source = getSource("restaurantLocations");
+      const source = getLocalSource("restaurantLocations");
       return source.newestCommit === undefined ? null : source.newestCommit(ctx);
     };
     expect(await t.run(newestOf)).toBeNull();
@@ -241,7 +252,7 @@ describe("restaurantLocations commit feed (the §8.2 reader)", () => {
       await seedCommit(t, { foreignCommitId: `restaurantLocations:${seq}`, ops: [], seq });
     }
     const tail = await t.run(async (ctx) => {
-      const source = getSource("restaurantLocations");
+      const source = getLocalSource("restaurantLocations");
       return source.commitsSince === undefined ? [] : source.commitsSince(ctx, 1);
     });
     expect(tail.map((commit) => commit.seq)).toStrictEqual([2, 3]);
@@ -253,14 +264,14 @@ describe("restaurantLocations commit feed (the §8.2 reader)", () => {
 
 describe("restaurantLocations.buildGeometry", () => {
   it("builds a Point from [lng, lat]", () => {
-    const source = getSource("restaurantLocations");
+    const source = getLocalSource("restaurantLocations");
     expect(
       source.buildGeometry === undefined ? null : source.buildGeometry({ lat: 31, lng: -81 }),
     ).toStrictEqual({ coordinates: [-81, 31], type: "Point" });
   });
 
   it("answers null when lat or lng is missing or non-numeric", () => {
-    const source = getSource("restaurantLocations");
+    const source = getLocalSource("restaurantLocations");
     expect(
       source.buildGeometry === undefined ? null : source.buildGeometry({ lat: 31 }),
     ).toBeNull();
@@ -324,7 +335,9 @@ describe("reading past the caps (#127 defect 1/2)", () => {
     const t = signedIn();
     const linkIds = await seedLinks(t, 1004);
     // Page 1 is bounded; the continuation reaches the rest.
-    const first = await t.run(async (ctx) => getSource("restaurantLocations").listRows(ctx, null));
+    const first = await t.run(async (ctx) =>
+      getLocalSource("restaurantLocations").listRows(ctx, null),
+    );
     expect(first.rows.length).toBeLessThan(1004);
     expect(first.cursor).not.toBeNull();
     let cursor = first.cursor,
@@ -334,7 +347,7 @@ describe("reading past the caps (#127 defect 1/2)", () => {
     while (cursor !== null) {
       // oxlint-disable-next-line no-await-in-loop -- the drain under test.
       const page = await t.run(async (ctx) =>
-        getSource("restaurantLocations").listRows(ctx, cursor),
+        getLocalSource("restaurantLocations").listRows(ctx, cursor),
       );
       seen += page.rows.length;
       if (page.rows.length > 0) {
@@ -360,7 +373,7 @@ describe("reading past the caps (#127 defect 1/2)", () => {
       seen = 0;
     do {
       // oxlint-disable-next-line no-await-in-loop -- the drain under test.
-      const page = await t.run(async (ctx) => getSource("restaurants").listRows(ctx, cursor));
+      const page = await t.run(async (ctx) => getLocalSource("restaurants").listRows(ctx, cursor));
       seen += page.rows.length;
       cursor = page.cursor;
     } while (cursor !== null);
@@ -384,12 +397,12 @@ describe("reading past the caps (#127 defect 1/2)", () => {
       }
     });
     const first = await t.run(async (ctx) => {
-      const source = getSource("restaurantLocations");
+      const source = getLocalSource("restaurantLocations");
       return source.commitsSince === undefined ? [] : source.commitsSince(ctx, 0);
     });
     expect(first).toHaveLength(COMMIT_TAIL_PAGE);
     const rest = await t.run(async (ctx) => {
-      const source = getSource("restaurantLocations");
+      const source = getLocalSource("restaurantLocations");
       return source.commitsSince === undefined ? [] : source.commitsSince(ctx, COMMIT_TAIL_PAGE);
     });
     expect(rest).toHaveLength(3);

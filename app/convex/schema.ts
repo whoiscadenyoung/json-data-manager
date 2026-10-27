@@ -113,11 +113,43 @@ export default defineSchema({
     // Set by the dashboard's source-table mutations on every write, so the
     // UI can show "source changed since last sync" without diffing rows —
     // the PoC stand-in for the design's commit cursor.
+    // Remote sources (#78) also stamp it from `remoteSources` checks whenever
+    // the remote layer's revision has moved past `remoteRevision`, so the
+    // same staleness badges cover both transports.
     sourceUpdatedAt: v.optional(v.number()),
     syncedEntryCount: v.optional(v.number()),
+    // Remote sources only: the layer revision the last completed sync read
+    // (its first page's), and the manifest schemaVersion the dataset was
+    // built from — a later mismatch blocks Sync as "schema changed".
+    remoteRevision: v.optional(v.number()),
+    remoteSchemaVersion: v.optional(v.string()),
   })
     .index("by_source", ["source"])
     .index("by_schema", ["schemaId"]),
+
+  // The latest manifest check per remote source (#78,
+  // docs/remote-source-adapter-design.md §5) — kept apart from the binding
+  // so a never-synced source can show its layer, and so the cron's frequent
+  // writes don't contend with the binding the sync engine stamps.
+  remoteSourceChecks: defineTable({
+    checkedAt: v.number(),
+    // Set when the last check failed; the layer fields then keep the last
+    // successful read.
+    error: v.optional(v.string()),
+    layer: v.optional(
+      v.object({
+        description: v.optional(v.string()),
+        featureCount: v.optional(v.number()),
+        geometryType: v.string(),
+        revision: v.number(),
+        schema: v.any(),
+        schemaVersion: v.string(),
+        title: v.string(),
+      }),
+    ),
+    recordUrlTemplate: v.optional(v.string()),
+    source: v.string(),
+  }).index("by_source", ["source"]),
 
   // One durable sync run (docs/bound-datasets-design.md §5): the run's
   // source rows are chunked into app-storage blobs during "collecting", then
@@ -165,6 +197,10 @@ export default defineSchema({
         op: v.union(v.literal("add"), v.literal("remove"), v.literal("update")),
       }),
     ),
+    // Remote sources: the layer revision of the run's FIRST rows page —
+    // what completion stamps as the binding's `remoteRevision`, so a write
+    // landing mid-drain reads as out of date again rather than being lost.
+    remoteRevision: v.optional(v.number()),
     removed: v.number(),
     rowOffset: v.number(),
     source: v.string(),

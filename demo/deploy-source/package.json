@@ -1,0 +1,18 @@
+{
+  "name": "@caden/deploy-source-demo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Stand-in for the external deployment-data app: serves the remote-source HTTP contract (manifest + per-layer FeatureCollection pages) from a local SQLite file. Depends on nothing in this repo.",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/main.ts",
+    "start": "bun src/main.ts",
+    "seed": "bun src/seed.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "typescript": "5.9.3"
+  }
+}

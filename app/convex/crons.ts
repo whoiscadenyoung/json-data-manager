@@ -18,6 +18,10 @@ const crons = cronJobs();
 
 crons.cron("Weekly reconcile of bound datasets", "0 9 * * 1", internal.sync.reconcileAll, {});
 
+// Remote sources (#78) only CHECK on a schedule — a newer layer revision
+// flips the dataset to "Out of date"; syncing stays user-initiated.
+crons.interval("Check remote sources", { minutes: 15 }, internal.remoteSources.checkAll, {});
+
 crons.interval("Sweep abandoned uploads", { hours: 24 }, internal.uploads.sweepAbandoned, {});
 
 export default crons;

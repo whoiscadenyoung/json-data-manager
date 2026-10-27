@@ -3,11 +3,13 @@
   "private": true,
   "workspaces": [
     "app",
-    "packages/*"
+    "packages/*",
+    "demo/*"
   ],
   "type": "module",
   "scripts": {
     "dev": "bun --filter=app run dev",
+    "demo:deploy-source": "bun --filter=@caden/deploy-source-demo run dev",
     "build": "bun --filter=app run build",
     "preview": "bun --filter=app run preview",
     "test": "bun --filter=app run test",

@@ -11,7 +11,7 @@ import {
   sourceVisibleToViewer,
 } from "./consumption";
 import { CATALOG_READ_LIMIT, deleteDatasetCascading } from "./schemas";
-import { chunkByJsonBytes, getSource, SOURCE_KEY } from "./sources";
+import { chunkByJsonBytes, getLocalSource, SOURCE_KEY } from "./sources";
 import {
   DEFAULT_KEEP_VERSIONS,
   commitOpValidator,
@@ -125,7 +125,7 @@ export const collectProjectionRowsQuery = internalQuery({
   // drains pages across transactions until the null cursor.
   args: { cursor: v.union(v.string(), v.null()) },
   handler: async (ctx, args) => {
-    const page = await getSource(SOURCE_KEY).listRows(ctx, args.cursor);
+    const page = await getLocalSource(SOURCE_KEY).listRows(ctx, args.cursor);
     // Snapshot files keep the {data, geometry} transport shape (no key) —
     // the file is the point-in-time state the import pipeline consumes.
     return {

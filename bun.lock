@@ -107,6 +107,14 @@
         "vitest": "^3.2.7",
       },
     },
+    "demo/deploy-source": {
+      "name": "@caden/deploy-source-demo",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@types/bun": "^1.4.2",
+        "typescript": "5.9.3",
+      },
+    },
     "packages/data-export": {
       "name": "@caden/data-export",
       "version": "0.1.0",
@@ -307,6 +315,8 @@
     "@bramus/specificity": ["@bramus/specificity@2.4.2", "", { "dependencies": { "css-tree": "^3.0.0" }, "bin": { "specificity": "bin/cli.js" } }, "sha512-ctxtJ/eA+t+6q2++vj5j7FYX3nRu311q1wfYH3xjlLOsczhlhxAg2FWNUXhpGvAw3BWo1xBcvOV6/YLc2r5FJw=="],
 
     "@caden/data-export": ["@caden/data-export@workspace:packages/data-export"],
+
+    "@caden/deploy-source-demo": ["@caden/deploy-source-demo@workspace:demo/deploy-source"],
 
     "@caden/geometry-archive": ["@caden/geometry-archive@workspace:packages/geometry-archive"],
 

@@ -12,13 +12,19 @@ import {
   query,
 } from "./_generated/server";
 import { auth } from "./auth";
+import { fetchRowsPage } from "./remoteClient";
 import { deleteDatasetCascading } from "./schemas";
 import {
   chunkByJsonBytes,
   type CommitFeedEntry,
   COMMIT_TAIL_PAGE,
+  getLocalSource,
+  getRemoteSource,
   getSource,
+  isRemoteSourceKey,
+  type LocalSource,
   type ProjectionRow,
+  type SourceDataset,
 } from "./sources";
 
 /**
@@ -162,18 +168,21 @@ async function ensureCollection(ctx: MutationCtx): Promise<string> {
 
 /**
  * Find-or-create the bound dataset + binding row for one source. The
- * dataset is created from the source's descriptor, marked read-only at the
+ * dataset is created from the source's descriptor (or, for a remote source,
+ * the live manifest's layer passed as `dataset`), marked read-only at the
  * component (`source: { name: key }`), and filed into the shared collection.
  */
 async function ensureBoundDataset(
   ctx: MutationCtx,
   sourceKey: string,
+  datasetOverride?: SourceDataset,
 ): Promise<{
-  binding: { lastAppliedCommitSeq?: number };
+  binding: { lastAppliedCommitSeq?: number; remoteSchemaVersion?: string };
   bindingId: Id<"datasetBindings">;
   schemaId: string;
 }> {
   const source = getSource(sourceKey);
+  const dataset = datasetOverride ?? source.dataset;
   const collectionId = await ensureCollection(ctx);
 
   const binding = await ctx.db
@@ -182,9 +191,9 @@ async function ensureBoundDataset(
     .first();
   if (binding === null) {
     const schemaId = await ctx.runMutation(components.jsonCms.lib.createSchema, {
-      geometryType: source.dataset.geometryType,
-      kind: source.dataset.kind,
-      schema: source.dataset.schema,
+      geometryType: dataset.geometryType,
+      kind: dataset.kind,
+      schema: dataset.schema,
       source: { name: sourceKey },
     });
     await ctx.runMutation(components.jsonCms.lib.addSchemaToCollection, {
@@ -215,9 +224,9 @@ async function ensureBoundDataset(
       await deleteDatasetCascading(ctx, { schemaId });
     }
     schemaId = await ctx.runMutation(components.jsonCms.lib.createSchema, {
-      geometryType: source.dataset.geometryType,
-      kind: source.dataset.kind,
-      schema: source.dataset.schema,
+      geometryType: dataset.geometryType,
+      kind: dataset.kind,
+      schema: dataset.schema,
       source: { name: sourceKey },
     });
     await ctx.runMutation(components.jsonCms.lib.addSchemaToCollection, {
@@ -340,7 +349,14 @@ async function joinOrReviveActiveRun(
 
 async function startRunInternal(
   ctx: MutationCtx,
-  args: { mode: "reconcile" | "sync"; source: string },
+  args: {
+    // Remote sources: the live manifest's layer, used when the run creates
+    // the dataset, and the schemaVersion it was built from.
+    dataset?: SourceDataset;
+    mode: "reconcile" | "sync";
+    remoteSchemaVersion?: string;
+    source: string;
+  },
 ): Promise<{ alreadyRunning: boolean; runId: Id<"syncRuns"> }> {
   const source = getSource(args.source);
   // The active-run check runs BEFORE any binding write: patching the
@@ -358,15 +374,21 @@ async function startRunInternal(
     }
   }
 
-  const { binding, bindingId, schemaId } = await ensureBoundDataset(ctx, args.source);
+  const { binding, bindingId, schemaId } = await ensureBoundDataset(ctx, args.source, args.dataset);
   await clearPreEngineStrays(ctx, bindingId, schemaId);
+  if (args.remoteSchemaVersion !== undefined && binding.remoteSchemaVersion === undefined) {
+    // First bind: the dataset was just built from this schema version.
+    await ctx.db.patch(bindingId, { remoteSchemaVersion: args.remoteSchemaVersion });
+  }
 
   // Mode decision: "sync" prefers the design's primary path — the commit
   // tail since the binding's last-applied commit — whenever the source has a
   // commit feed and the binding has a keyed baseline. Full passes
-  // re-baseline the cursor; "reconcile" always diffs full state.
+  // re-baseline the cursor; "reconcile" always diffs full state. Remote
+  // sources have no feed in v1, so they always take the full pass.
   const tailEligible =
     args.mode === "sync" &&
+    source.transport === "local" &&
     source.commitsSince !== undefined &&
     binding.lastAppliedCommitSeq !== undefined;
   const runMode: "commit-tail" | "reconcile" | "sync" = tailEligible ? "commit-tail" : args.mode;
@@ -409,7 +431,51 @@ export const startRun = mutation({
   },
   handler: async (ctx, args) => {
     await auth(ctx);
+    if (isRemoteSourceKey(args.source)) {
+      // A remote run must start from the live manifest (schema check +
+      // dataset descriptor), which only an action can fetch.
+      throw new ConvexError("Remote sources sync through remoteSources.sync.");
+    }
     return startRunInternal(ctx, args);
+  },
+  returns: v.object({
+    alreadyRunning: v.boolean(),
+    runId: v.id("syncRuns"),
+  }),
+});
+
+/**
+ * Starts a remote source's run (#78) once `remoteSources.sync` has fetched
+ * the manifest and passed its schema-version check. Always a full-state
+ * pass; the layer descriptor seeds the dataset on first bind.
+ */
+export const startRemoteRun = internalMutation({
+  args: {
+    dataset: v.object({
+      description: v.string(),
+      geometryType: v.union(
+        v.literal("LineString"),
+        v.literal("MultiLineString"),
+        v.literal("MultiPoint"),
+        v.literal("MultiPolygon"),
+        v.literal("Point"),
+        v.literal("Polygon"),
+      ),
+      kind: v.literal("geospatial"),
+      schema: v.any(),
+      title: v.string(),
+    }),
+    remoteSchemaVersion: v.string(),
+    source: v.string(),
+  },
+  handler: async (ctx, args) => {
+    getRemoteSource(args.source);
+    return startRunInternal(ctx, {
+      dataset: args.dataset,
+      mode: "sync",
+      remoteSchemaVersion: args.remoteSchemaVersion,
+      source: args.source,
+    });
   },
   returns: v.object({
     alreadyRunning: v.boolean(),
@@ -483,7 +549,7 @@ export const latestRun = query({
 /** Reads one page of a source's state — the action-side bridge to its descriptor. Callers drain pages until the null cursor (#127 defect 1). */
 export const readSourceRows = internalQuery({
   args: { cursor: v.union(v.string(), v.null()), source: v.string() },
-  handler: async (ctx, args) => getSource(args.source).listRows(ctx, args.cursor),
+  handler: async (ctx, args) => getLocalSource(args.source).listRows(ctx, args.cursor),
   returns: v.object({
     cursor: v.union(v.string(), v.null()),
     rows: v.array(
@@ -500,7 +566,7 @@ export const readSourceRows = internalQuery({
 export const readCommitTail = internalQuery({
   args: { sinceSeq: v.number(), source: v.string() },
   handler: async (ctx, args) => {
-    const source = getSource(args.source);
+    const source = getLocalSource(args.source);
     if (source.commitsSince === undefined) {
       return [];
     }
@@ -536,6 +602,8 @@ interface CollectedPayload {
   chunkStorageIds: Array<Id<"_storage">>;
   cursorCommitId?: string;
   cursorSeq?: number;
+  // Remote sources: the first rows page's layer revision.
+  remoteRevision?: number;
   total: number;
 }
 
@@ -628,6 +696,55 @@ async function collectFullState(
   payload.cursorSeq = newest !== null ? newest.seq : undefined;
 }
 
+/**
+ * The remote full-state leg (#78): drains the layer's rows over HTTP, page
+ * by page, until the null cursor — the same drain contract as the local
+ * leg, enforced by the foreign app (docs/remote-source-adapter-design.md
+ * §3.2). The FIRST page's revision is the one the run records: rows cover
+ * at least that revision, so a write landing mid-drain reads as out of date
+ * again rather than being stamped as synced.
+ */
+async function collectRemoteState(
+  ctx: ActionCtx,
+  sourceKey: string,
+  payload: CollectedPayload,
+): Promise<void> {
+  const source = getRemoteSource(sourceKey);
+  let cursor: string | null = null;
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- paging a remote cursor; the null cursor ends the drain.
+    const page = await fetchRowsPage(source, cursor);
+    if (payload.remoteRevision === undefined) {
+      payload.remoteRevision = page.revision;
+    }
+    for (const chunk of chunkByJsonBytes<ProjectionRow>(page.rows)) {
+      // oxlint-disable-next-line no-await-in-loop -- sequential uploads keep action memory bounded, mirroring the importer.
+      await storeChunk(ctx, payload.chunkStorageIds, chunk);
+    }
+    payload.total += page.rows.length;
+    if (page.cursor === null) {
+      break;
+    }
+    cursor = page.cursor;
+  }
+}
+
+/** Runs the collect leg the run's mode and source transport call for. */
+async function collectForRun(
+  ctx: ActionCtx,
+  run: { bindingId: Id<"datasetBindings">; mode: string },
+  source: string,
+  payload: CollectedPayload,
+): Promise<void> {
+  if (isRemoteSourceKey(source)) {
+    await collectRemoteState(ctx, source, payload);
+  } else if (run.mode === "commit-tail") {
+    await collectCommitTail(ctx, { bindingId: run.bindingId, source }, payload);
+  } else {
+    await collectFullState(ctx, source, payload);
+  }
+}
+
 export const collectRows = internalAction({
   args: { claim: v.string(), runId: v.id("syncRuns"), source: v.string() },
   handler: async (ctx, args): Promise<null> => {
@@ -653,17 +770,14 @@ export const collectRows = internalAction({
       // App storage (not the component's — the apply action reads these
       // back with its own ctx.storage, and component blobs only resolve
       // inside the component).
-      if (run.mode === "commit-tail") {
-        await collectCommitTail(ctx, { bindingId: run.bindingId, source: args.source }, payload);
-      } else {
-        await collectFullState(ctx, args.source, payload);
-      }
+      await collectForRun(ctx, run, args.source, payload);
 
       const won = await ctx.runMutation(internal.sync.markCollected, {
         claim: args.claim,
         chunkStorageIds: payload.chunkStorageIds,
         lastCommitId: payload.cursorCommitId,
         lastSeq: payload.cursorSeq,
+        remoteRevision: payload.remoteRevision,
         runId: args.runId,
         total: payload.total,
       });
@@ -709,7 +823,7 @@ export const collectRows = internalAction({
 export const readNewestCommit = internalQuery({
   args: { source: v.string() },
   handler: async (ctx, args) => {
-    const source = getSource(args.source);
+    const source = getLocalSource(args.source);
     return source.newestCommit === undefined ? null : source.newestCommit(ctx);
   },
   returns: v.union(
@@ -753,6 +867,7 @@ export const markCollected = internalMutation({
     chunkStorageIds: v.array(v.id("_storage")),
     lastCommitId: v.optional(v.string()),
     lastSeq: v.optional(v.number()),
+    remoteRevision: v.optional(v.number()),
     runId: v.id("syncRuns"),
     total: v.number(),
   },
@@ -795,6 +910,7 @@ export const markCollected = internalMutation({
       lastCommitId: args.lastCommitId,
       lastProgressAt: Date.now(),
       lastSeq: args.lastSeq,
+      remoteRevision: args.remoteRevision,
       rowOffset: 0,
       status: "applying",
       total: args.total,
@@ -928,7 +1044,7 @@ async function existingEntryData(
 
 /** Serializes a commit op's derived geometry, or undefined when the source builds none from data. */
 function commitGeometry(
-  source: ReturnType<typeof getSource>,
+  source: LocalSource,
   baseData: Record<string, unknown>,
 ): string | undefined {
   const geometryJson =
@@ -984,7 +1100,7 @@ async function applyCommitOp(
       geometryChanged: boolean;
       op: "add" | "delete" | "update";
     };
-    source: ReturnType<typeof getSource>;
+    source: LocalSource;
     tally: BatchTally;
   },
 ): Promise<void> {
@@ -1136,7 +1252,7 @@ export const applyCommitsBatch = internalMutation({
     if (binding === null) {
       throw new ConvexError("The binding vanished mid-sync.");
     }
-    const source = getSource(run.source);
+    const source = getLocalSource(run.source);
 
     const tally: BatchTally = {
       added: 0,
@@ -1515,6 +1631,8 @@ async function completeRun(
     lastAppliedCommitSeq: run.lastSeq,
     lastReconciledAt: run.mode === "reconcile" ? finishedAt : binding.lastReconciledAt,
     lastSyncedAt: finishedAt,
+    // Remote runs record the revision their rows cover (absent → unchanged).
+    remoteRevision: run.remoteRevision ?? binding.remoteRevision,
     syncedEntryCount: finalEntryCount,
   });
   await ctx.db.insert("datasetActivity", {
@@ -1610,7 +1728,11 @@ export const markRunFailed = internalMutation({
 export const reconcileAll = internalMutation({
   args: {},
   handler: async (ctx) => {
-    const bindings = await ctx.db.query("datasetBindings").collect();
+    // Remote sources are user-initiated in v1 (docs/remote-source-adapter-design.md
+    // §5) — their cron only checks the manifest (remoteSources.checkAll).
+    const bindings = (await ctx.db.query("datasetBindings").collect()).filter(
+      (binding) => !isRemoteSourceKey(binding.source),
+    );
     for (const binding of bindings) {
       // oxlint-disable-next-line no-await-in-loop -- one scheduled kickoff per binding.
       await ctx.scheduler.runAfter(0, internal.sync.reconcileOne, { source: binding.source });

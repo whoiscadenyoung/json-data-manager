@@ -30,6 +30,7 @@ import {
   ConsumedByCard,
   SourceDriftCard,
 } from "#/components/dataset-consumption";
+import { RemoteSourceControls } from "#/components/remote-source-controls";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
@@ -76,6 +77,8 @@ function SourceRow({ binding, source }: { binding?: BindingDoc; source: { name: 
           <Badge variant="destructive">Out of date</Badge>
         )}
       </dd>
+      {/* Remote sources (#78) sync from here; renders nothing for local ones. */}
+      {binding !== undefined && <RemoteSourceControls source={binding.source} />}
     </div>
   );
 }

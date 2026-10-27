@@ -129,7 +129,10 @@ function SourceRow({ binding }: { binding: BindingRow }) {
  * "Reconcile" runs the same full diff-and-repair pass on demand.
  */
 export function SyncStatusCard() {
-  const bindings = useQuery(api.bindings.list),
+  // Remote sources (#78) list in their own card with Check/Sync controls.
+  const allBindings = useQuery(api.bindings.list),
+    bindings =
+      allBindings === undefined ? undefined : allBindings.filter((binding) => !binding.remote),
     startRun = useMutation(api.sync.startRun),
     [isStarting, setIsStarting] = useState(false),
     createFirstDataset = async () => {
