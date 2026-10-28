@@ -51,3 +51,39 @@ CONVEX_SELF_HOSTED_URL/ADMIN_KEY>` for `convex dev --once`, `env set` and
   `DataTransfer` → `input.files` → a `change` event.
 - `convex run --component jsonCms entries:listGeometries` times component
   queries directly with admin auth.
+
+**#184 FIXED 2026-10-28 (build-failure backoff):** `TileArchiveScheduler`
+(`packages/maps/src/build-scheduler.ts`) now backs off per dataset after a
+thrown build: retries at 1 m, 5 m, then every 30 m
+(`TILE_ARCHIVE_FAILURE_BACKOFF_MS`). `schedule()` triggers at the failed
+`mapTileCacheVersion` are absorbed while backing off; the backoff's own timer
+runs the retry. A newer version resets it, and so does a newer version queued
+during the failing build. `ensure()` (import immediacy + the manual Retry)
+skips the wait but keeps the count. The app's manager keeps a persistent
+failure record (`useMapTileArchiveBuildFailure`, fed by the scheduler's
+`onBackoff`). It is cleared only by an installed or skipped build, and it
+toasts only the first failure of a streak. `TileBuildStatus` shows it as a
+"Map tiles failed to build" alert with the error, the next retry time and a
+Retry button. The chip only mounts on the dataset page; the `/maps`
+workspace has no build-status surface yet. The scheduler is in-memory, so the
+backoff (plus the error message) is persisted per browser in localStorage
+`tile-archive-backoff` and re-armed with `restoreBackoff` when the scheduler
+is created. Without that, every page reload bought a failing dataset a fresh
+attempt (found in browser verification). Verification recipe: a temporary
+patch that throws in `runBuild` behind a localStorage flag. Bump the version
+by re-saving an entry with `convex run --component jsonCms
+entries:updateEntry` (admin, isolated backend). `preview_start {name}` reads
+the MAIN checkout's `.claude/launch.json`, whose `dev` config runs `convex
+dev` against the cloud deployment. For isolated testing, run vite from Bash
+with env overrides and open it with `preview_start {url}`.
+
+Review follow-ups (same PR): the alert and badge moved to top-left at z-5, so
+the feature-details panel (top-right, z-10) always wins. The manager calls
+`scheduler.clear()` and drops the failure for any dataset that reads current,
+because another tab or user may have built it. A failure from `ensure()`
+before any `schedule()` (version 0) adopts the first version seen instead of
+being reset by it. `dispose()` stops a late-settling build from arming
+timers. **Known limit:** backoff state is per tab. With N tabs open, each tab
+has its own scheduler and worker, so a failing dataset is fetched N times per
+window. Storage is read only when a tab's scheduler starts, so tabs don't
+share a live window. A reload does keep the backoff (localStorage restore).

@@ -15,6 +15,7 @@ import {
   isTileArchiveStale,
   rememberBelowThresholdSkip,
   TileArchiveScheduler,
+  type TileArchiveBackoff,
   type TileArchiveBuildOutcome,
   type TileArchiveBuildPhase,
   type TileArchiveBuildState,
@@ -58,6 +59,134 @@ export type TileArchiveWorkerOutbound =
 
 const buildStates = new Map<string, TileArchiveBuildState>();
 const buildListeners = new Set<() => void>();
+
+/**
+ * A dataset's last failed build (issue #184). Unlike the `"error"` build
+ * state, which flashes and reverts, this persists until a build succeeds so
+ * the map can keep saying "tiles failed to build" across retries.
+ */
+export interface TileArchiveBuildFailure {
+  message: string;
+  /** Consecutive failures at the current version (0 until the scheduler reports). */
+  failures: number;
+  /** When the scheduler's automatic retry fires; undefined when none is pending. */
+  retryAt: number | undefined;
+}
+
+const buildFailures = new Map<string, TileArchiveBuildFailure>();
+
+function notifyBuildListeners(): void {
+  for (const listener of buildListeners) listener();
+}
+
+/** Records a failed build; toasts only the first failure of a streak. */
+function recordBuildFailure(schemaId: string, message: string): void {
+  const previous = buildFailures.get(schemaId);
+  if (previous === undefined) {
+    toast.error(`Tile rebuild failed (${schemaId.slice(-6)}): ${message}`);
+  }
+  buildFailures.set(schemaId, {
+    failures: previous === undefined ? 0 : previous.failures,
+    message,
+    retryAt: undefined,
+  });
+  notifyBuildListeners();
+}
+
+function clearBuildFailure(schemaId: string): void {
+  if (buildFailures.delete(schemaId)) notifyBuildListeners();
+}
+
+const DEFAULT_FAILURE_MESSAGE = "Tile-archive build failed.";
+
+/**
+ * Scheduler callback: attaches the backoff window to the failure record and
+ * persists it, so a reload neither forgets the failure nor retries early.
+ */
+function applyBackoff(schemaId: string, backoff: TileArchiveBackoff | undefined): void {
+  const failure = buildFailures.get(schemaId);
+  writeStoredBackoff(
+    schemaId,
+    backoff === undefined
+      ? undefined
+      : { ...backoff, message: failure === undefined ? DEFAULT_FAILURE_MESSAGE : failure.message },
+  );
+  if (failure === undefined) return;
+  buildFailures.set(
+    schemaId,
+    backoff === undefined
+      ? { ...failure, retryAt: undefined }
+      : { ...failure, failures: backoff.failures, retryAt: backoff.retryAt },
+  );
+  notifyBuildListeners();
+}
+
+// --- Backoff persistence (issue #184): the scheduler is in-memory, so
+// without this every page reload bought a failing dataset a fresh attempt ---
+
+const BACKOFF_STORAGE_KEY = "tile-archive-backoff";
+
+/** Per dataset: the scheduler's backoff window plus the error the alert shows. */
+interface StoredBackoff extends TileArchiveBackoff {
+  message: string;
+}
+
+function isStoredBackoff(value: unknown): value is StoredBackoff {
+  return (
+    isRecord(value) &&
+    typeof value.failures === "number" &&
+    typeof value.message === "string" &&
+    typeof value.retryAt === "number" &&
+    typeof value.version === "number"
+  );
+}
+
+function readStoredBackoffs(): Map<string, StoredBackoff> {
+  const stored = new Map<string, StoredBackoff>();
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(BACKOFF_STORAGE_KEY) ?? "{}");
+    if (!isRecord(parsed)) return stored;
+    for (const [schemaId, value] of Object.entries(parsed)) {
+      if (isStoredBackoff(value)) stored.set(schemaId, value);
+    }
+  } catch {
+    // Storage unavailable or corrupt: start without persisted backoffs.
+  }
+  return stored;
+}
+
+function writeStoredBackoff(schemaId: string, backoff: StoredBackoff | undefined): void {
+  const stored = readStoredBackoffs();
+  if (backoff === undefined) {
+    if (!stored.delete(schemaId)) return;
+  } else {
+    stored.set(schemaId, backoff);
+  }
+  try {
+    if (stored.size === 0) {
+      localStorage.removeItem(BACKOFF_STORAGE_KEY);
+    } else {
+      localStorage.setItem(BACKOFF_STORAGE_KEY, JSON.stringify(Object.fromEntries(stored)));
+    }
+  } catch {
+    // Best effort: without storage the backoff still holds for this page.
+  }
+}
+
+/** Re-arms persisted backoffs in a new scheduler and restores their alerts. */
+function restoreStoredBackoffs(scheduler: TileArchiveScheduler): void {
+  const stored = readStoredBackoffs();
+  for (const [schemaId, backoff] of stored) {
+    buildFailures.set(schemaId, {
+      failures: backoff.failures,
+      message: backoff.message,
+      retryAt: backoff.retryAt,
+    });
+    scheduler.restoreBackoff(schemaId, backoff);
+  }
+  if (stored.size > 0) notifyBuildListeners();
+}
+
 const buildRevertTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 /** Terminal states flash briefly, then the indicator returns to idle. */
@@ -83,7 +212,7 @@ function setBuildState(schemaId: string, state: TileArchiveBuildState): void {
   if (import.meta.env.DEV) {
     console.debug(`[tile-archive] ${schemaId.slice(-6)} → ${state}`);
   }
-  for (const listener of buildListeners) listener();
+  notifyBuildListeners();
 }
 
 /** Subscribes to per-dataset build-state changes (for `useSyncExternalStore`). */
@@ -96,6 +225,19 @@ export function subscribeTileArchiveBuildState(listener: () => void): () => void
 
 export function getTileArchiveBuildState(schemaId: string): TileArchiveBuildState {
   return buildStates.get(schemaId) ?? "idle";
+}
+
+export function getTileArchiveBuildFailure(schemaId: string): TileArchiveBuildFailure | undefined {
+  return buildFailures.get(schemaId);
+}
+
+/** The dataset's persistent build failure, until a build succeeds. */
+export function useMapTileArchiveBuildFailure(
+  schemaId: string,
+): TileArchiveBuildFailure | undefined {
+  return useSyncExternalStore(subscribeTileArchiveBuildState, () =>
+    getTileArchiveBuildFailure(schemaId),
+  );
 }
 
 /** The current build state for one dataset (`"idle"` when nothing is running). */
@@ -164,21 +306,22 @@ function handleWorkerMessage(event: MessageEvent<unknown>): void {
   pendingBuilds.delete(schemaId);
   if (data.type === "done") {
     setBuildState(schemaId, "done");
+    clearBuildFailure(schemaId);
     pending.resolve("installed");
   } else if (data.type === "stale-discarded") {
     setBuildState(schemaId, "stale-discarded");
     pending.resolve("discarded");
   } else if (data.type === "skipped") {
     setBuildState(schemaId, "idle");
+    clearBuildFailure(schemaId);
     recordSkipMemo(data, schemaId);
     pending.resolve("skipped");
   } else {
     setBuildState(schemaId, "error");
-    const message = typeof data.message === "string" ? data.message : "Tile-archive build failed.";
-    // Issue #71: a failed build used to flash an in-memory state nothing
-    // rendered — users never saw it. The toast persists past the 4s state
-    // revert and is the one surface that follows the user across pages.
-    toast.error(`Tile rebuild failed (${schemaId.slice(-6)}): ${message}`);
+    const message = typeof data.message === "string" ? data.message : DEFAULT_FAILURE_MESSAGE;
+    // Issue #71 added the toast (the one surface that follows the user
+    // across pages); #184 keeps the failure on the map until a build succeeds.
+    recordBuildFailure(schemaId, message);
     pending.reject(new Error(message));
   }
 }
@@ -203,7 +346,7 @@ function getWorker(): Worker {
         pendingBuilds.delete(schemaId);
         setBuildState(schemaId, "error");
         const message = event.message || "Tile-archive worker crashed.";
-        toast.error(`Tile rebuild failed (${schemaId.slice(-6)}): ${message}`);
+        recordBuildFailure(schemaId, message);
         pending.reject(new Error(message));
       }
       archiveWorker = undefined;
@@ -228,7 +371,12 @@ async function buildViaWorker(schemaId: string): Promise<TileArchiveBuildOutcome
 let rebuildScheduler: TileArchiveScheduler | undefined;
 
 function getScheduler(): TileArchiveScheduler {
-  rebuildScheduler ??= new TileArchiveScheduler(buildViaWorker);
+  if (rebuildScheduler === undefined) {
+    rebuildScheduler = new TileArchiveScheduler(buildViaWorker, undefined, {
+      onBackoff: applyBackoff,
+    });
+    restoreStoredBackoffs(rebuildScheduler);
+  }
   return rebuildScheduler;
 }
 
@@ -253,6 +401,12 @@ export function useMapTileArchiveManager(): void {
       const currentVersion = schema.mapTileCacheVersion ?? 0;
       if (isTileArchiveStale(schema, currentVersion)) {
         scheduler.schedule(schema._id, currentVersion);
+      } else {
+        // Current without our help (another tab or user built it): drop the
+        // failure and its armed retry, which would only rebuild a fresh
+        // archive (#184 review).
+        scheduler.clear(schema._id);
+        clearBuildFailure(schema._id);
       }
     }
   }, [schemas]);
@@ -265,8 +419,10 @@ export function TileArchiveManager(): null {
 }
 
 /**
- * Import-UI immediacy: skip the debounce window and start (or queue) a build
- * now. Safe to call speculatively — the worker no-ops for datasets the
+ * Import-UI immediacy, and the failed-build state's manual retry (issue #184):
+ * skip the debounce window and any failure backoff, and start (or queue) a
+ * build now. A repeat failure still escalates the backoff. Safe to call
+ * speculatively — the worker no-ops for datasets the
  * threshold doesn't warrant, and part 2's guard covers races.
  */
 export function ensureMapTileArchive(schemaId: string): void {

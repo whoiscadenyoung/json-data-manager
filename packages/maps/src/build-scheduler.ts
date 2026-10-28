@@ -36,6 +36,34 @@ export const MAP_TILE_ARCHIVE_MIN_BYTES = 262_144; // 256 KB
 const REBUILD_DEBOUNCE_MS = 5_000;
 
 /**
+ * Failure backoff (issue #184): the automatic retry after the 1st, 2nd and
+ * 3rd+ consecutive failed build at one `mapTileCacheVersion`. The last step
+ * repeats, so a dataset that never builds costs one attempt per 30 m instead
+ * of one per summaries update.
+ */
+export const TILE_ARCHIVE_FAILURE_BACKOFF_MS: readonly number[] = [60_000, 300_000, 1_800_000];
+
+/** A dataset's failure backoff, reported through `onBackoff`. */
+export interface TileArchiveBackoff {
+  /** Consecutive failed builds at the current version. */
+  failures: number;
+  /** Epoch ms when the automatic retry fires. */
+  retryAt: number;
+  /** The `mapTileCacheVersion` the failures happened at; a newer one resets. */
+  version: number;
+}
+
+export interface TileArchiveSchedulerOptions {
+  /** Retry delays per consecutive failure; the last entry repeats. */
+  backoffMs?: readonly number[];
+  /**
+   * Called when a failure starts a backoff window, and with `undefined` when
+   * the backoff ends early: a build succeeded or a newer version reset it.
+   */
+  onBackoff?: (schemaId: string, backoff: TileArchiveBackoff | undefined) => void;
+}
+
+/**
  * Trailing-debounced, single-flight-per-schema rebuild scheduler.
  *
  * `schedule(schemaId, version)` debounces by version: a newer version resets
@@ -44,6 +72,14 @@ const REBUILD_DEBOUNCE_MS = 5_000;
  * the running build either installs its snapshot and makes the queue moot, or
  * self-discards and the queued rebuild runs against the newer data). Builds
  * resolve/throw per outcome; a thrown build never wedges the scheduler.
+ *
+ * A thrown build backs off (issue #184): `schedule` triggers at the failed
+ * version are absorbed until the backoff's own retry timer fires, so a
+ * failing dataset is attempted at most once per window. A newer version
+ * resets the backoff (the data changed, so the failure may not recur);
+ * `ensure` skips the remaining wait but keeps the failure count. The
+ * scheduler lives in memory; `restoreBackoff` re-arms a window a caller
+ * persisted, so a page reload doesn't buy a failing dataset a fresh attempt.
  */
 export class TileArchiveScheduler {
   readonly #startBuild: StartTileArchiveBuild;
@@ -51,13 +87,30 @@ export class TileArchiveScheduler {
   readonly #timers = new Map<string, { id: ReturnType<typeof setTimeout>; version: number }>();
   readonly #inFlight = new Map<string, number>();
   readonly #queued = new Map<string, number>();
+  readonly #backoffMs: readonly number[];
+  readonly #onBackoff: NonNullable<TileArchiveSchedulerOptions["onBackoff"]>;
+  /** Newest version `schedule` has seen per schema (0 until the first). */
+  readonly #versions = new Map<string, number>();
+  /** Consecutive failures and the version they happened at. */
+  readonly #failures = new Map<string, { count: number; version: number }>();
+  /** Pending backoff retries; presence means "backing off". */
+  readonly #retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  #disposed = false;
 
-  constructor(startBuild: StartTileArchiveBuild, debounceMs = REBUILD_DEBOUNCE_MS) {
+  constructor(
+    startBuild: StartTileArchiveBuild,
+    debounceMs = REBUILD_DEBOUNCE_MS,
+    options: TileArchiveSchedulerOptions = {},
+  ) {
     this.#startBuild = startBuild;
     this.#debounceMs = debounceMs;
+    this.#backoffMs = options.backoffMs ?? TILE_ARCHIVE_FAILURE_BACKOFF_MS;
+    this.#onBackoff = options.onBackoff ?? (() => undefined);
   }
 
   schedule(schemaId: string, version: number): void {
+    this.#noteVersion(schemaId, version);
+    if (this.#retryTimers.has(schemaId)) return;
     if (this.#inFlight.has(schemaId)) {
       this.#queueNewer(schemaId, version);
       return;
@@ -80,6 +133,7 @@ export class TileArchiveScheduler {
    * running) queues an immediate follow-up so the trigger isn't lost.
    */
   ensure(schemaId: string): void {
+    this.#clearRetryTimer(schemaId);
     const pending = this.#timers.get(schemaId);
     if (pending) {
       clearTimeout(pending.id);
@@ -92,11 +146,94 @@ export class TileArchiveScheduler {
     this.#run(schemaId, 0);
   }
 
+  /**
+   * Drops a dataset's failure backoff, for when its archive turned current
+   * some other way (another tab or user built it): the armed retry would
+   * only rebuild an archive that is already fresh.
+   */
+  clear(schemaId: string): void {
+    const hadRetry = this.#clearRetryTimer(schemaId);
+    if (this.#failures.delete(schemaId) || hadRetry) {
+      this.#onBackoff(schemaId, undefined);
+    }
+  }
+
+  /** Cancels pending timers; a build still in flight settles without arming any. */
   dispose(): void {
+    this.#disposed = true;
     for (const { id } of this.#timers.values()) {
       clearTimeout(id);
     }
     this.#timers.clear();
+    for (const id of this.#retryTimers.values()) {
+      clearTimeout(id);
+    }
+    this.#retryTimers.clear();
+  }
+
+  /**
+   * Re-arms a backoff persisted from an earlier `onBackoff` (for example
+   * across a page reload). The retry fires at `retryAt`, or right away if
+   * that has passed. Ignored while the dataset is building or backing off.
+   */
+  restoreBackoff(schemaId: string, backoff: TileArchiveBackoff): void {
+    if (this.#inFlight.has(schemaId) || this.#retryTimers.has(schemaId)) return;
+    this.#failures.set(schemaId, { count: backoff.failures, version: backoff.version });
+    this.#versions.set(schemaId, Math.max(this.#versions.get(schemaId) ?? 0, backoff.version));
+    this.#armRetry(schemaId, backoff.version, Math.max(0, backoff.retryAt - Date.now()));
+  }
+
+  /** Tracks the newest version and resets the backoff when it moves past the failed one. */
+  #noteVersion(schemaId: string, version: number): void {
+    if (version <= (this.#versions.get(schemaId) ?? 0)) return;
+    this.#versions.set(schemaId, version);
+    const failure = this.#failures.get(schemaId);
+    if (failure === undefined || version <= failure.version) return;
+    if (failure.version === 0) {
+      // The failure came from an `ensure` before any `schedule` reported a
+      // version. The first one seen is what that build read: adopt it, or
+      // the very next trigger would wipe the backoff it just earned.
+      this.#failures.set(schemaId, { count: failure.count, version });
+      return;
+    }
+    this.#failures.delete(schemaId);
+    if (this.#clearRetryTimer(schemaId)) {
+      this.#onBackoff(schemaId, undefined);
+    }
+  }
+
+  /** Cancels a pending backoff retry; true when one was pending. */
+  #clearRetryTimer(schemaId: string): boolean {
+    const retry = this.#retryTimers.get(schemaId);
+    if (retry === undefined) return false;
+    clearTimeout(retry);
+    this.#retryTimers.delete(schemaId);
+    return true;
+  }
+
+  #recordFailure(schemaId: string, version: number): void {
+    const previous = this.#failures.get(schemaId),
+      count = previous !== undefined && previous.version === version ? previous.count + 1 : 1,
+      delay = this.#backoffMs.at(Math.min(count, this.#backoffMs.length) - 1) ?? 0;
+    this.#failures.set(schemaId, { count, version });
+    this.#armRetry(schemaId, version, delay);
+    this.#onBackoff(schemaId, { failures: count, retryAt: Date.now() + delay, version });
+  }
+
+  #armRetry(schemaId: string, version: number, delay: number): void {
+    this.#retryTimers.set(
+      schemaId,
+      setTimeout(() => {
+        this.#retryTimers.delete(schemaId);
+        this.#fire(schemaId, version);
+      }, delay),
+    );
+  }
+
+  #recordSuccess(schemaId: string): void {
+    if (this.#failures.delete(schemaId)) {
+      this.#onBackoff(schemaId, undefined);
+    }
   }
 
   #queueNewer(schemaId: string, version: number): void {
@@ -118,21 +255,40 @@ export class TileArchiveScheduler {
 
   #run(schemaId: string, version: number): void {
     this.#inFlight.set(schemaId, version);
-    void this.#startBuild(schemaId)
-      .catch(() => undefined)
-      .finally(() => {
-        if (this.#inFlight.get(schemaId) === version) {
-          this.#inFlight.delete(schemaId);
-        }
-        const queued = this.#queued.get(schemaId);
-        if (queued !== undefined) {
-          this.#queued.delete(schemaId);
-          // The queued rebuild starts without another debounce wait: it
-          // already trailed a full window behind the burst, and the worker
-          // re-reads the live version when it starts.
-          this.#run(schemaId, queued);
-        }
-      });
+    void this.#track(schemaId, version, this.#versions.get(schemaId) ?? 0);
+  }
+
+  async #track(schemaId: string, version: number, startedAt: number): Promise<void> {
+    let failed = false;
+    try {
+      await this.#startBuild(schemaId);
+      this.#recordSuccess(schemaId);
+    } catch {
+      failed = true;
+    }
+    this.#settle(schemaId, version, startedAt, failed);
+  }
+
+  #settle(schemaId: string, version: number, startedAt: number, failed: boolean): void {
+    if (this.#inFlight.get(schemaId) === version) {
+      this.#inFlight.delete(schemaId);
+    }
+    if (this.#disposed) return;
+    const queued = this.#queued.get(schemaId);
+    this.#queued.delete(schemaId);
+    // After a failure, only newer data earns an immediate rebuild; anything
+    // else waits out the backoff like a fresh trigger would.
+    const newerData = (this.#versions.get(schemaId) ?? 0) > startedAt;
+    if (queued !== undefined && (!failed || newerData)) {
+      // The queued rebuild starts without another debounce wait: it
+      // already trailed a full window behind the burst, and the worker
+      // re-reads the live version when it starts.
+      this.#run(schemaId, queued);
+      return;
+    }
+    if (failed) {
+      this.#recordFailure(schemaId, startedAt);
+    }
   }
 }
 
