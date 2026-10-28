@@ -225,7 +225,7 @@ describe("host delete cascade (issue #128)", () => {
       // host-visible… they aren't — `schemaCollections` is a component table
       // too; its drain is covered by the phase ordering below.
       const leftoverEntries = await t.run(async (ctx) =>
-        ctx.runQuery(components.jsonCms.lib.listEntriesForSchemaBounded, {
+        ctx.runQuery(components.jsonCms.schemas.listEntriesForSchemaBounded, {
           limit: 1,
           schemaId,
         }),

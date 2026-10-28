@@ -38,7 +38,7 @@ export const storeTestBlob = action({
  * component's own failed-import cleanup (`handleImportComplete` deletes only
  * the `storageIds` an import carried). Each id deletes independently; an
  * already-gone blob is a harmless no-op (the `tryDeleteStorage` precedent in
- * lib.ts).
+ * imports.ts).
  */
 export const deleteStorageBlobs = mutation({
   args: { storageIds: v.array(v.string()) },

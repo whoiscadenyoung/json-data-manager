@@ -122,7 +122,7 @@ export async function deleteDatasetCascading(
   opts: { artifactKind?: CascadeArtifactKind; boundWrite?: string; schemaId: string },
 ): Promise<void> {
   await ctx.runMutation(
-    components.jsonCms.lib.deleteSchema,
+    components.jsonCms.deletes.deleteSchema,
     opts.boundWrite === undefined
       ? { schemaId: opts.schemaId }
       : { boundWrite: opts.boundWrite, schemaId: opts.schemaId },
@@ -368,7 +368,7 @@ export const createDraftForImport = mutation({
   },
   handler: async (ctx, args) => {
     const actorId = await auth(ctx, { fn: "createSchema", type: "create" });
-    return ctx.runMutation(components.jsonCms.lib.createSchema, {
+    return ctx.runMutation(components.jsonCms.schemas.createSchema, {
       ...args,
       actorId,
       lifecycle: "draft" as const,
@@ -390,7 +390,7 @@ export const markImportComplete = mutation({
   args: { schemaId: v.string() },
   handler: async (ctx, args) => {
     await auth(ctx, { fn: "markImportComplete", schemaId: args.schemaId, type: "update" });
-    await ctx.runMutation(components.jsonCms.lib.setSchemaLifecycle, {
+    await ctx.runMutation(components.jsonCms.schemas.setSchemaLifecycle, {
       lifecycle: "published",
       schemaId: args.schemaId,
     });
@@ -421,7 +421,7 @@ export const maxTileCacheVersion = query({
   args: {},
   handler: async (ctx) => {
     const viewerId = await auth(ctx);
-    const schemas = await ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, {
+    const schemas = await ctx.runQuery(components.jsonCms.schemas.listSchemaSummaries, {
       limit: CATALOG_READ_LIMIT,
       viewerId,
     });
@@ -451,9 +451,9 @@ export const setVisibility = mutation({
   },
   handler: async (ctx, args) => {
     const actorId = await auth(ctx);
-    let doc: FunctionReturnType<typeof components.jsonCms.lib.getSchema>;
+    let doc: FunctionReturnType<typeof components.jsonCms.schemas.getSchema>;
     try {
-      doc = await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: args.schemaId });
+      doc = await ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId: args.schemaId });
     } catch {
       // A string that isn't a well-formed component id — the same "not
       // found" as an unknown id (the projects.ts tryGetSchema precedent).
@@ -462,7 +462,7 @@ export const setVisibility = mutation({
     if (doc === null || doc.createdBy !== actorId) {
       throw new ConvexError("That dataset doesn't exist or you don't have access to it.");
     }
-    await ctx.runMutation(components.jsonCms.lib.setSchemaVisibility, {
+    await ctx.runMutation(components.jsonCms.schemas.setSchemaVisibility, {
       publishedVisibility: args.visibility,
       schemaId: args.schemaId,
     });
@@ -491,9 +491,9 @@ export const setEditPolicy = mutation({
   },
   handler: async (ctx, args) => {
     const actorId = await auth(ctx);
-    let doc: FunctionReturnType<typeof components.jsonCms.lib.getSchema>;
+    let doc: FunctionReturnType<typeof components.jsonCms.schemas.getSchema>;
     try {
-      doc = await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: args.schemaId });
+      doc = await ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId: args.schemaId });
     } catch {
       // A string that isn't a well-formed component id — the same "not
       // found" as an unknown id (the setVisibility precedent above).
@@ -502,7 +502,7 @@ export const setEditPolicy = mutation({
     if (doc === null || doc.createdBy !== actorId) {
       throw new ConvexError("That dataset doesn't exist or you don't have access to it.");
     }
-    await ctx.runMutation(components.jsonCms.lib.setEditPolicy, {
+    await ctx.runMutation(components.jsonCms.schemas.setEditPolicy, {
       editPolicy: args.editPolicy,
       schemaId: args.schemaId,
     });
@@ -525,7 +525,7 @@ export const setEditPolicy = mutation({
  */
 export const backfillSummaries = internalMutation({
   args: {},
-  handler: async (ctx) => ctx.runMutation(components.jsonCms.lib.backfillDatasetSummaries, {}),
+  handler: async (ctx) => ctx.runMutation(components.jsonCms.entries.backfillDatasetSummaries, {}),
   returns: v.object({
     membershipsPatched: v.number(),
     schemasPatched: v.number(),

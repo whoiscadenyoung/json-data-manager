@@ -1,3 +1,7 @@
+import { detectCoordinateColumns, extractPointGeometry } from "@caden/data-core/coordinate-columns";
+import type { GeometryType } from "@caden/data-core/geojson";
+import { enabledAcceptString, enabledExtensionsHint, findImportParser } from "@caden/importers";
+import type { ImportParseResult, ParsedSheet } from "@caden/importers";
 import {
   AlertTriangle,
   CheckCircle,
@@ -10,15 +14,7 @@ import {
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { detectCoordinateColumns, extractPointGeometry } from "../../shared/coordinate-columns.js";
-import type { GeometryType } from "../../shared/geojson/types.js";
 import { looksLikeGeoJson, parseGeoJsonFeatures } from "../lib/geojson-import.js";
-import {
-  enabledAcceptString,
-  enabledExtensionsHint,
-  findImportParser,
-} from "../lib/import-parsers/registry.js";
-import type { ImportParseResult, ParsedSheet } from "../lib/import-parsers/types.js";
 import { inferSchemaFromData } from "../lib/infer-schema.js";
 import { errorMessage } from "./lib/errors.js";
 import { cn } from "./lib/utils.js";

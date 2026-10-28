@@ -145,14 +145,14 @@ describe("profile (one page load)", () => {
     // A draft (invisible to every viewer's profile) and an author-narrowed
     // published row (component-host-flow fields the wrapper omits).
     const draft = await t.run(async (ctx) =>
-      ctx.runMutation(components.jsonCms.lib.createSchema, {
+      ctx.runMutation(components.jsonCms.schemas.createSchema, {
         actorId: "user-1",
         lifecycle: "draft",
         schema: { fields: [], title: "Secret draft" },
       }),
     );
     const narrowed = await t.run(async (ctx) =>
-      ctx.runMutation(components.jsonCms.lib.createSchema, {
+      ctx.runMutation(components.jsonCms.schemas.createSchema, {
         actorId: "user-1",
         publishedVisibility: "author",
         schema: { fields: [], title: "Authors only" },

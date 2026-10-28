@@ -117,7 +117,7 @@ describe("reads", () => {
     // nothing to show. (Delete the dataset out from under the binding, the
     // way a crashed unbind would leave it.)
     await t.run(async (ctx) => {
-      await ctx.runMutation(components.jsonCms.lib.deleteSchema, {
+      await ctx.runMutation(components.jsonCms.deletes.deleteSchema, {
         boundWrite: "unbind",
         schemaId,
       });

@@ -1,6 +1,8 @@
 import { ConvexError } from "convex/values";
 
+import type { Id } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
+import { DEMO_SOURCES } from "./demoSources/sources";
 
 /**
  * The bound-datasets source layer (docs/bound-datasets-design.md §4/§8): a
@@ -13,7 +15,8 @@ import type { QueryCtx } from "./_generated/server";
  * (remoteSources.ts), and the apply/sweep/finalize machinery is unchanged.
  *
  * Adding a bound source means adding one entry to `SOURCES` — no changes
- * anywhere else.
+ * anywhere else. The demo foreign app's sources live in ./demoSources and
+ * join the registry through one spread.
  */
 
 /** One row of a source's state, as the projection should materialize it. */
@@ -94,6 +97,13 @@ export type CommitFeedEntry = {
   seq: number;
 };
 
+/** One registered foreign snapshot: its opaque ref, label, and stored file. */
+export type SourceSnapshot = {
+  fileStorageId: Id<"_storage">;
+  label: string;
+  ref: string;
+};
+
 interface SourceBase {
   dataset: SourceDataset;
   key: string;
@@ -119,6 +129,13 @@ export interface LocalSource extends SourceBase {
    * non-geospatial sources.
    */
   buildGeometry?(data: Record<string, unknown>): { coordinates: number[]; type: string } | null;
+  /**
+   * The design's §8.3 snapshot listing — the foreign app's registered
+   * snapshots (tags), each a stored JSONL file of {data, geometry} rows.
+   * Absent means the source takes no snapshots; tag ingest serves the one
+   * registered source that has it.
+   */
+  listSnapshots?(ctx: Pick<QueryCtx, "db">): Promise<SourceSnapshot[]>;
 }
 
 /**
@@ -138,182 +155,10 @@ export interface RemoteSource extends SourceBase {
 
 export type BoundSource = LocalSource | RemoteSource;
 
-/** The primary demo source's stable key (the running example from the PoC). */
-export const SOURCE_KEY = "restaurantLocations";
-
-// #127 invariant: the state reader serves ONE PAGE per call and reports its
-// continuation — never a truncated prefix dressed up as the whole state.
-// finalize's sweep deletes every mapping the run did not see, so callers
-// (the sync collect action, the snapshot collector) must drain pages across
-// transactions until the null cursor; a collect that fails mid-drain fails
-// the run loudly and never reaches the sweep. (Convex allows a single
-// paginated query per function execution, so the paging lives across the
-// callers' runQuery hops, not inside one transaction.)
-const SOURCE_READ_PAGE = 500;
-
-/**
- * How many commits one `commitsSince` page carries. The sync engine's
- * collect drains the tail page by page until a short page — the page size
- * is the drain signal, so it lives here next to the reader (#127 defect 2).
- */
-export const COMMIT_TAIL_PAGE = 500;
-
-const restaurantLocationsSource: LocalSource = {
-  dataset: {
-    description:
-      "Live projection of the restaurants/locations/restaurantLocations tables. " +
-      "Bound dataset — sync from the source tables; read-only here.",
-    geometryType: "Point",
-    kind: "geospatial",
-    schema: {
-      properties: {
-        address: { title: "Address", type: "string" },
-        city: { title: "City", type: "string" },
-        cuisine: { title: "Cuisine", type: "string" },
-        label: { title: "Location", type: "string" },
-        lat: { title: "Latitude", type: "number" },
-        lng: { title: "Longitude", type: "number" },
-        restaurantName: { title: "Restaurant", type: "string" },
-        state: { title: "State", type: "string" },
-      },
-      required: ["restaurantName", "label", "city", "state", "lat", "lng"],
-      title: "Restaurant locations",
-      type: "object",
-    },
-    title: "Restaurant locations",
-  },
-  key: SOURCE_KEY,
-  // One page of the join, with the continuation cursor. Rows past the old
-  // .take(1000) cap used to vanish from the projection when finalize swept
-  // them as unseen (#127 defect 1) — callers now drain every page.
-  listRows: async (ctx, cursor) => {
-    const page = await ctx.db.query("restaurantLocations").paginate({
-      cursor,
-      numItems: SOURCE_READ_PAGE,
-    });
-    const joined = await Promise.all(
-      page.page.map(async (link) => {
-        const location = await ctx.db.get(link.locationId);
-        const restaurant = await ctx.db.get(link.restaurantId);
-        if (!location || !restaurant) {
-          return null;
-        }
-        return {
-          data: {
-            address: location.address,
-            city: location.city,
-            cuisine: restaurant.cuisine,
-            label: location.label,
-            lat: location.lat,
-            lng: location.lng,
-            restaurantName: restaurant.name,
-            state: location.state,
-          },
-          geometry: {
-            coordinates: [location.lng, location.lat] as number[],
-            type: "Point",
-          },
-          key: link._id,
-        };
-      }),
-    );
-    return {
-      cursor: page.isDone ? null : page.continueCursor,
-      rows: joined.filter((row) => row !== null),
-    };
-  },
-  commitsSince: async (ctx, sinceSeq) => {
-    const feed = await ctx.db
-      .query("sourceCommits")
-      .withIndex("by_source_seq", (q) => q.eq("source", SOURCE_KEY).gt("seq", sinceSeq))
-      .take(COMMIT_TAIL_PAGE);
-    return feed.map((commit) => ({
-      at: commit.at,
-      foreignCommitId: commit.foreignCommitId,
-      message: commit.message,
-      ops: commit.ops,
-      seq: commit.seq,
-    }));
-  },
-  newestCommit: async (ctx) => {
-    const newest = await ctx.db
-      .query("sourceCommits")
-      .withIndex("by_source_seq", (q) => q.eq("source", SOURCE_KEY))
-      .order("desc")
-      .first();
-    return newest !== null
-      ? {
-          at: newest.at,
-          foreignCommitId: newest.foreignCommitId,
-          message: newest.message,
-          ops: newest.ops,
-          seq: newest.seq,
-        }
-      : null;
-  },
-  buildGeometry: (data) => {
-    if (typeof data.lat !== "number" || typeof data.lng !== "number") {
-      return null;
-    }
-    return { coordinates: [data.lng, data.lat], type: "Point" };
-  },
-  mapping: {
-    entryKey: "restaurantLocations._id",
-    fields: {
-      address: "locations.address",
-      city: "locations.city",
-      cuisine: "restaurants.cuisine",
-      label: "locations.label",
-      lat: "locations.lat",
-      lng: "locations.lng",
-      restaurantName: "restaurants.name",
-      state: "locations.state",
-    },
-    geometry: { kind: "latLng", lat: "locations.lat", lng: "locations.lng" },
-  },
-  transport: "local",
-};
-
-// A second, deliberately different source: non-geospatial, different join
-// (none), different natural key — proves the sync machinery is
-// descriptor-driven and not specific to the locations projection.
-const restaurantsSource: LocalSource = {
-  dataset: {
-    description:
-      "Live projection of the restaurants table. Bound dataset — sync from the source table; read-only here.",
-    kind: "standard",
-    schema: {
-      properties: {
-        cuisine: { title: "Cuisine", type: "string" },
-        name: { title: "Name", type: "string" },
-      },
-      required: ["name", "cuisine"],
-      title: "Restaurants",
-      type: "object",
-    },
-    title: "Restaurants",
-  },
-  key: "restaurants",
-  // One page per call, like the locations reader (#127 defect 1).
-  listRows: async (ctx, cursor) => {
-    const page = await ctx.db.query("restaurants").paginate({
-      cursor,
-      numItems: SOURCE_READ_PAGE,
-    });
-    return {
-      cursor: page.isDone ? null : page.continueCursor,
-      rows: page.page.map((restaurant) => ({
-        data: { cuisine: restaurant.cuisine, name: restaurant.name },
-        key: restaurant._id,
-      })),
-    };
-  },
-  mapping: {
-    entryKey: "restaurants._id",
-    fields: { cuisine: "restaurants.cuisine", name: "restaurants.name" },
-  },
-  transport: "local",
-};
+// The paging contract every co-deployed reader honors lives in
+// ./sourcePaging (a dependency-free module, so ./demoSources can share it
+// without an import cycle through this registry).
+export { COMMIT_TAIL_PAGE } from "./sourcePaging";
 
 // The deployment-data app's two geometry layers (demo stand-in:
 // demo/deploy-source). json-cms holds one geometry per entry, so the
@@ -356,12 +201,15 @@ const deploymentRoutesSource: RemoteSource = {
 };
 
 /** The registry every bound source must be declared in. */
-export const SOURCES: Record<string, BoundSource> = {
-  [SOURCE_KEY]: restaurantLocationsSource,
-  [deploymentCentroidsSource.key]: deploymentCentroidsSource,
-  [deploymentRoutesSource.key]: deploymentRoutesSource,
-  restaurants: restaurantsSource,
-};
+export const SOURCES: Record<string, BoundSource> = Object.fromEntries(
+  [
+    // The demo foreign app's co-deployed sources (./demoSources) — removable
+    // with this line plus the folder and its schema.ts spread.
+    ...DEMO_SOURCES,
+    deploymentCentroidsSource,
+    deploymentRoutesSource,
+  ].map((source) => [source.key, source]),
+);
 
 export function getSource(key: string): BoundSource {
   const source = SOURCES[key];
@@ -391,6 +239,25 @@ export function getRemoteSource(key: string): RemoteSource {
 export function isRemoteSourceKey(key: string): boolean {
   const source = SOURCES[key];
   return source !== undefined && source.transport === "http";
+}
+
+/**
+ * The primary co-deployed source — the first local source in registry order
+ * (the dashboard's status badge and CLI checks read its binding), or null
+ * when none is registered.
+ */
+export function primaryLocalSourceKey(): string | null {
+  const source = Object.values(SOURCES).find((candidate) => candidate.transport === "local");
+  return source === undefined ? null : source.key;
+}
+
+/** The registered source that takes snapshots (§8.3), or null when none does. */
+export function snapshotSource(): LocalSource | null {
+  const source = Object.values(SOURCES).find(
+    (candidate): candidate is LocalSource =>
+      candidate.transport === "local" && candidate.listSnapshots !== undefined,
+  );
+  return source === undefined ? null : source;
 }
 
 /** Every registered remote source, in registry order. */

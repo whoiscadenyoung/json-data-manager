@@ -153,7 +153,7 @@ describe("projects: the working container (roadmap 7a, #102)", () => {
     // Born together: the draft is a REAL component dataset carrying the
     // host-only draft flag from creation...
     const draft = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: draftId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId: draftId }),
     );
     expect(draft === null ? undefined : draft.lifecycle).toBe("draft");
     // ...and its membership row exists — one transaction produced both.

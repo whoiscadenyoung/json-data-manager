@@ -64,7 +64,7 @@ async function storeChunk(
       bytes: bytes.buffer,
     }),
     { uploadId } = await t.run(async (ctx) =>
-      ctx.runMutation(components.jsonCms.lib.generateUploadUrl, { scope: attemptId }),
+      ctx.runMutation(components.jsonCms.imports.generateUploadUrl, { scope: attemptId }),
     );
   return { storageId, uploadId };
 }
@@ -77,7 +77,7 @@ async function createDraftDataset(
   options: { entries?: Array<{ data: Record<string, unknown> }>; title?: string },
 ): Promise<string> {
   return t.run(async (ctx) =>
-    ctx.runMutation(components.jsonCms.lib.createSchema, {
+    ctx.runMutation(components.jsonCms.schemas.createSchema, {
       actorId: "user-1",
       lifecycle: "draft",
       schema: {
@@ -488,7 +488,7 @@ describe("reference pin/float, sync, and revert (AC)", () => {
     expect(synced.mode).toBe("pin");
     row = await referenceRow(t, v1.schemaId, consumer.consumerId);
     const v2Head = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: v2.schemaId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId: v2.schemaId }),
     );
     expect(row.pinnedRef).toBe(refOf(v2Head));
     expect(row.pinnedSchemaId).toBe(v2.schemaId);
@@ -558,7 +558,7 @@ describe("reference pin/float, sync, and revert (AC)", () => {
     const v2 = await publishDraft(t, draftId, [{ data: { label: "A" } }, { data: { label: "B" } }]);
     await t.mutation(api.consumption.syncReference, { referenceId: consumer.referenceId ?? "" });
     const v2Head = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: v2.schemaId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId: v2.schemaId }),
     );
 
     // Revert: back to the PRIOR version's ref (append-only — v2 stays).
@@ -566,7 +566,7 @@ describe("reference pin/float, sync, and revert (AC)", () => {
       referenceId: consumer.referenceId ?? "",
     });
     const v1Head = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: v1.schemaId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId: v1.schemaId }),
     );
     expect(reverted.pinnedRef).toBe(refOf(v1Head));
     expect(refOf(v2Head)).not.toBe(reverted.pinnedRef);
@@ -630,7 +630,7 @@ async function referenceRow(
 /** The current head ref of a draft-published chain (raw component read). */
 async function headRefOf(t: TestConvex, anchorId: string): Promise<string | undefined> {
   return t.run(async (ctx) => {
-    const versions = await ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+    const versions = await ctx.runQuery(components.jsonCms.schemas.listSchemaVersions, {
       limit: CATALOG_READ_LIMIT,
       sourceSchemaId: anchorId,
     });
@@ -657,10 +657,10 @@ describe("publish-completion delta vs fixture rows (AC)", () => {
       { data: { label: "C" } },
     ]);
     const v1Head = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: v1.schemaId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId: v1.schemaId }),
     );
     const v2Head = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: v2.schemaId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId: v2.schemaId }),
     );
     const fromRef = refOf(v1Head) ?? "",
       toRef = refOf(v2Head) ?? "";
@@ -700,7 +700,7 @@ describe("publish-completion delta vs fixture rows (AC)", () => {
       { data: { label: "C" } },
     ]);
     const v3Head = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: v3.schemaId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId: v3.schemaId }),
     );
     const empty = await t.query(api.consumption.storedDelta, {
       anchorId: draftId,
@@ -818,14 +818,15 @@ describe("retention keeps newest-N unpinned and never retires a pinned one (AC)"
 /** Whether a component row still exists (retirement check). */
 async function schemaExists(t: TestConvex, schemaId: string): Promise<boolean> {
   return t.run(
-    async (ctx) => (await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId })) !== null,
+    async (ctx) =>
+      (await ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId })) !== null,
   );
 }
 
 /** One frozen row's snapshot ref while the row still exists (empty once retired). */
 async function rowRefOf(t: TestConvex, schemaId: string): Promise<string> {
   const row = await t.run(async (ctx) =>
-    ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId }),
+    ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId }),
   );
   return refOf(row) ?? "";
 }
@@ -1048,7 +1049,7 @@ describe("analysisTargets", () => {
   it("answers missing for unknown ids and for a foreign draft — a draft's existence never leaks (stage 8)", async () => {
     const t = signedIn(),
       foreignDraft = await t.withIdentity({ subject: "user-2" }).run(async (ctx) =>
-        ctx.runMutation(components.jsonCms.lib.createSchema, {
+        ctx.runMutation(components.jsonCms.schemas.createSchema, {
           actorId: "user-2",
           lifecycle: "draft",
           schema: { properties: { label: { type: "string" } }, title: "Secret", type: "object" },

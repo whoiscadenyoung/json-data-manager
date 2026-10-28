@@ -207,7 +207,7 @@ describe("remote sync", () => {
       throw new Error("no dataset was created");
     }
     const dataset = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId }),
     );
     expect(dataset === null ? undefined : dataset.title).toBe("Deployment routes");
     expect(dataset === null ? undefined : dataset.geometryType).toBe("MultiLineString");
