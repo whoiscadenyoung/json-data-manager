@@ -76,3 +76,14 @@ entries:updateEntry` (admin, isolated backend). `preview_start {name}` reads
 the MAIN checkout's `.claude/launch.json`, whose `dev` config runs `convex
 dev` against the cloud deployment. For isolated testing, run vite from Bash
 with env overrides and open it with `preview_start {url}`.
+
+Review follow-ups (same PR): the alert and badge moved to top-left at z-5, so
+the feature-details panel (top-right, z-10) always wins. The manager calls
+`scheduler.clear()` and drops the failure for any dataset that reads current,
+because another tab or user may have built it. A failure from `ensure()`
+before any `schedule()` (version 0) adopts the first version seen instead of
+being reset by it. `dispose()` stops a late-settling build from arming
+timers. **Known limit:** backoff state is per tab. With N tabs open, each tab
+has its own scheduler and worker, so a failing dataset is fetched N times per
+window. Storage is read only when a tab's scheduler starts, so tabs don't
+share a live window. A reload does keep the backoff (localStorage restore).

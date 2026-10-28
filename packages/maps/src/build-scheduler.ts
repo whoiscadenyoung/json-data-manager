@@ -95,6 +95,7 @@ export class TileArchiveScheduler {
   readonly #failures = new Map<string, { count: number; version: number }>();
   /** Pending backoff retries; presence means "backing off". */
   readonly #retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  #disposed = false;
 
   constructor(
     startBuild: StartTileArchiveBuild,
@@ -145,7 +146,21 @@ export class TileArchiveScheduler {
     this.#run(schemaId, 0);
   }
 
+  /**
+   * Drops a dataset's failure backoff, for when its archive turned current
+   * some other way (another tab or user built it): the armed retry would
+   * only rebuild an archive that is already fresh.
+   */
+  clear(schemaId: string): void {
+    const hadRetry = this.#clearRetryTimer(schemaId);
+    if (this.#failures.delete(schemaId) || hadRetry) {
+      this.#onBackoff(schemaId, undefined);
+    }
+  }
+
+  /** Cancels pending timers; a build still in flight settles without arming any. */
   dispose(): void {
+    this.#disposed = true;
     for (const { id } of this.#timers.values()) {
       clearTimeout(id);
     }
@@ -174,6 +189,13 @@ export class TileArchiveScheduler {
     this.#versions.set(schemaId, version);
     const failure = this.#failures.get(schemaId);
     if (failure === undefined || version <= failure.version) return;
+    if (failure.version === 0) {
+      // The failure came from an `ensure` before any `schedule` reported a
+      // version. The first one seen is what that build read: adopt it, or
+      // the very next trigger would wipe the backoff it just earned.
+      this.#failures.set(schemaId, { count: failure.count, version });
+      return;
+    }
     this.#failures.delete(schemaId);
     if (this.#clearRetryTimer(schemaId)) {
       this.#onBackoff(schemaId, undefined);
@@ -251,6 +273,7 @@ export class TileArchiveScheduler {
     if (this.#inFlight.get(schemaId) === version) {
       this.#inFlight.delete(schemaId);
     }
+    if (this.#disposed) return;
     const queued = this.#queued.get(schemaId);
     this.#queued.delete(schemaId);
     // After a failure, only newer data earns an immediate rebuild; anything

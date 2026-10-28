@@ -21,6 +21,12 @@ import {
  * failure stays as a "map tiles failed to build" alert with the error, the
  * next automatic retry, and a manual retry until a build succeeds (#184) —
  * a running retry swaps back to the spinner badge.
+ *
+ * Both sit top-LEFT: the map's top-right corner belongs to the feature
+ * details panel and the "Loading features…" pill, and a persistent,
+ * clickable alert there covered the panel's header and close button. They
+ * also stack one level BELOW those overlays (z-5 vs z-10): on a map too
+ * narrow for both side by side, an open panel wins.
  */
 
 /** Copy per state — only non-idle states render. */
@@ -53,7 +59,7 @@ function TileBuildFailure({
   schemaId: string;
 }) {
   return (
-    <div className="absolute top-3 right-3 z-10 w-72 max-w-[calc(100%-1.5rem)]">
+    <div className="absolute top-3 left-3 z-5 w-72 max-w-[calc(100%-1.5rem)]">
       <Alert variant="destructive" className="shadow-sm">
         <TriangleAlert />
         <AlertTitle>Map tiles failed to build</AlertTitle>
@@ -97,7 +103,7 @@ export function TileBuildStatus({ schemaId }: { schemaId: string }) {
   const failed = state === "error",
     updated = state === "done";
   return (
-    <div className="pointer-events-none absolute top-3 right-3 z-10">
+    <div className="pointer-events-none absolute top-3 left-3 z-5">
       <Badge
         variant={failed ? "destructive" : updated ? "default" : "secondary"}
         className="gap-1.5 shadow-sm"

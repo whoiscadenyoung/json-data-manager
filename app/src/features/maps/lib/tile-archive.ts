@@ -401,6 +401,12 @@ export function useMapTileArchiveManager(): void {
       const currentVersion = schema.mapTileCacheVersion ?? 0;
       if (isTileArchiveStale(schema, currentVersion)) {
         scheduler.schedule(schema._id, currentVersion);
+      } else {
+        // Current without our help (another tab or user built it): drop the
+        // failure and its armed retry, which would only rebuild a fresh
+        // archive (#184 review).
+        scheduler.clear(schema._id);
+        clearBuildFailure(schema._id);
       }
     }
   }, [schemas]);

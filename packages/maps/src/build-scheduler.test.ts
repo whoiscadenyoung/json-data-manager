@@ -444,6 +444,105 @@ describe("TileArchiveScheduler failure backoff (issue #184)", () => {
     }
   });
 
+  it("a same-version trigger during the backoff's own retry adds no build", async () => {
+    const { calls, startBuild } = deferredStartBuild(),
+      onBackoff = vi.fn<OnBackoff>(),
+      scheduler = new TileArchiveScheduler(startBuild, 5000, { backoffMs, onBackoff });
+    try {
+      scheduler.schedule("s1", 3);
+      await vi.advanceTimersByTimeAsync(5000);
+      await failBuild(calls, 0);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(startBuild).toHaveBeenCalledTimes(2);
+
+      // A summaries update lands mid-retry at the same version: queued, but
+      // a failed retry drops it and backs off instead of rebuilding at once.
+      scheduler.schedule("s1", 3);
+      await failBuild(calls, 1);
+      expect(startBuild).toHaveBeenCalledTimes(2);
+      expect(onBackoff).toHaveBeenLastCalledWith("s1", {
+        failures: 2,
+        retryAt: Date.now() + 300_000,
+        version: 3,
+      });
+    } finally {
+      scheduler.dispose();
+    }
+  });
+
+  it("an ensure() failure before any schedule() adopts the first version seen", async () => {
+    const { calls, startBuild } = deferredStartBuild(),
+      onBackoff = vi.fn<OnBackoff>(),
+      scheduler = new TileArchiveScheduler(startBuild, 5000, { backoffMs, onBackoff });
+    try {
+      scheduler.ensure("s1");
+      await failBuild(calls, 0);
+      expect(onBackoff).toHaveBeenLastCalledWith("s1", {
+        failures: 1,
+        retryAt: Date.now() + 60_000,
+        version: 0,
+      });
+
+      // The manager's first trigger reports the version that build read:
+      // the backoff holds instead of resetting into an extra attempt.
+      scheduler.schedule("s1", 5);
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(startBuild).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(startBuild).toHaveBeenCalledTimes(2);
+
+      // The retry's failure counts against that version.
+      await failBuild(calls, 1);
+      expect(onBackoff).toHaveBeenLastCalledWith("s1", {
+        failures: 2,
+        retryAt: Date.now() + 300_000,
+        version: 5,
+      });
+    } finally {
+      scheduler.dispose();
+    }
+  });
+
+  it("clear() drops the backoff and its armed retry", async () => {
+    const { calls, startBuild } = deferredStartBuild(),
+      onBackoff = vi.fn<OnBackoff>(),
+      scheduler = new TileArchiveScheduler(startBuild, 5000, { backoffMs, onBackoff });
+    try {
+      scheduler.schedule("s1", 3);
+      await vi.advanceTimersByTimeAsync(5000);
+      await failBuild(calls, 0);
+
+      // Another tab installed the archive: the manager clears the dataset.
+      scheduler.clear("s1");
+      expect(onBackoff).toHaveBeenLastCalledWith("s1", undefined);
+      await vi.advanceTimersByTimeAsync(1_800_000);
+      expect(startBuild).toHaveBeenCalledTimes(1);
+
+      // Clearing a dataset with no backoff reports nothing.
+      onBackoff.mockClear();
+      scheduler.clear("s1");
+      scheduler.clear("other");
+      expect(onBackoff).not.toHaveBeenCalled();
+    } finally {
+      scheduler.dispose();
+    }
+  });
+
+  it("a build settling after dispose() arms no retry and runs no queued build", async () => {
+    const { calls, startBuild } = deferredStartBuild(),
+      onBackoff = vi.fn<OnBackoff>(),
+      scheduler = new TileArchiveScheduler(startBuild, 5000, { backoffMs, onBackoff });
+    scheduler.schedule("s1", 3);
+    await vi.advanceTimersByTimeAsync(5000);
+    scheduler.schedule("s1", 4);
+    scheduler.dispose();
+
+    await failBuild(calls, 0);
+    await vi.advanceTimersByTimeAsync(1_800_000);
+    expect(startBuild).toHaveBeenCalledTimes(1);
+    expect(onBackoff).not.toHaveBeenCalled();
+  });
+
   it("backs off per dataset", async () => {
     const { calls, startBuild } = deferredStartBuild(),
       scheduler = new TileArchiveScheduler(startBuild, 5000, { backoffMs });
