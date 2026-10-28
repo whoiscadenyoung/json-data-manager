@@ -1,7 +1,6 @@
+import { geometryArgsValidator, geometryTypeValidator } from "@caden/data-core/geojson";
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
-
-import { geometryArgsValidator, geometryTypeValidator } from "../shared/geojson/validators.js";
 
 /**
  * The `lineage` object a frozen version dataset carries (see the `schemas`
@@ -182,7 +181,7 @@ export default defineSchema({
     kind: v.optional(v.union(v.literal("standard"), v.literal("geospatial"))),
     // Catalog lifecycle state (roadmap 5a, #99; docs/catalog-lifecycle-design.md
     // §3): `"draft"` hides the dataset from the catalog's list reads
-    // (`listSchemas`/`listSchemaSummaries` — see lib.ts), `"published"` and
+    // (`listSchemas`/`listSchemaSummaries` — see schemas.ts), `"published"` and
     // ABSENT both show it. Absent-reads-as-published is the polarity that
     // keeps every pre-field row and every dataset created through today's
     // flows catalog-visible without a backfill — which is also why this is a
@@ -202,7 +201,7 @@ export default defineSchema({
     // setSchemaVisibility flow (creators flipping their own rows) and
     // inherited from the draft at publish (the freeze passthrough), never
     // through an exposeApi wrapper. Enforced server-side in the catalog
-    // enumerations (isVisibleToViewer in lib.ts) and in the host's by-id auth
+    // enumerations (isVisibleToViewer in internal/schemaViews.ts) and in the host's by-id auth
     // policy — never in the UI. Deliberately carried on the dataset row
     // itself, never on project-shaped data: nothing published knows projects
     // exist (lifecycle §4).
@@ -221,7 +220,7 @@ export default defineSchema({
     // the same way `lifecycle` grew.
     editPolicy: v.optional(v.union(v.literal("open"), v.literal("locked"))),
     // Denormalized dataset-level summary, maintained incrementally by the
-    // entry/geometry mutations in component/lib.ts (never recomputed from a
+    // entry/geometry mutations in component/entries.ts (never recomputed from a
     // full scan). `featureCount` is kept exactly accurate — cheap to keep
     // exact, and users notice when it's wrong. `boundingBox` is a
     // best-effort, monotonically NON-SHRINKING envelope: an insert/replace
@@ -233,7 +232,7 @@ export default defineSchema({
     // something to treat as exact.
     featureCount: v.optional(v.number()),
     // Total rows in the dataset — like `featureCount`, kept exactly accurate
-    // by the entry mutations (see `applyEntryCountDelta` in lib.ts). This is
+    // by the entry mutations (see `applyEntryCountDelta` in internal/entryWrites.ts). This is
     // the count the UI can afford to read on every list page: Convex has no
     // count operator, so without it a "Data (N)" badge would mean reading
     // every entry doc (and their full `data` payloads) up to the 16 MiB
@@ -244,7 +243,7 @@ export default defineSchema({
     boundingBox: v.optional(v.array(v.number())), // [minLon, minLat, maxLon, maxLat]
     // Rendering-cache bookkeeping for the tile-archive path (#58): every
     // geometry-affecting write bumps `mapTileCacheVersion` (see
-    // `bumpMapTileCacheVersion` in lib.ts) so a stale rebuild can detect
+    // `bumpMapTileCacheVersion` in internal/entryWrites.ts) so a stale rebuild can detect
     // itself, and the remaining five fields point at the current archive —
     // set atomically by `setMapTileArchive` only when its `expectedVersion`
     // still matches. All six are absent on datasets that never had an
@@ -269,7 +268,7 @@ export default defineSchema({
     // landed after the archive was built.
     mapTileArchiveBuiltVersion: v.optional(v.number()),
     // The archive-layout generation the CURRENT installed blob was written
-    // by (`MAP_TILE_ARCHIVE_FORMAT` in lib.ts). Absent = installed before
+    // by (`MAP_TILE_ARCHIVE_FORMAT` in internal/tileArchive.ts). Absent = installed before
     // format tracking (format 1) — those archives were built by a builder
     // whose run-length dedupe could merge tiles across tile-id gaps
     // (issue #125), so `getMapTileArchiveMeta` treats them as no archive
@@ -287,7 +286,7 @@ export default defineSchema({
     // itself enforces the read-only rule: data mutations on a `source`- or
     // `lineage`-marked dataset are rejected unless the host's sync/ingest
     // flow attests them with `boundWrite` (see `assertDataWritable` in
-    // lib.ts) — hosts additionally gate their own wrapped mutations.
+    // internal/shared.ts) — hosts additionally gate their own wrapped mutations.
     source: v.optional(v.object({ name: v.string() })),
     // Set when this dataset is a frozen point-in-time version — of a bound
     // live dataset (the host's tag-ingest flow, docs/bound-datasets-design.md
@@ -298,7 +297,7 @@ export default defineSchema({
     // with `sourceSchemaId` set appear there) and the already-frozen lookup
     // by `snapshotRef` (the host's idempotency key — a ref never freezes
     // twice). Like `source`, its presence makes the dataset read-only at the
-    // component level (see `assertDataWritable` in lib.ts).
+    // component level (see `assertDataWritable` in internal/shared.ts).
     lineage: v.optional(lineageValidator),
     schema: v.any(), // JSON schema object
     // The exact file the dataset was imported from, kept in file storage so
@@ -346,7 +345,7 @@ export default defineSchema({
   // has no such cap, and stored one of two ways:
   //  - `geometryJson`: inline, when the JSON text comfortably fits under
   //    Convex's ~1 MiB per-document limit (see INLINE_GEOMETRY_BYTE_LIMIT in
-  //    lib.ts). This is the common case — most geometries land here.
+  //    geometry_storage.ts). This is the common case — most geometries land here.
   //  - `geometryStorageId`: a file-storage blob holding the same JSON text,
   //    for geometries too large to fit inline (measured up to ~4 MB in real
   //    datasets) — file storage has no document-size or array-length ceiling.
@@ -355,7 +354,7 @@ export default defineSchema({
   // `geometry` (the old inline nested-array field) is kept declared, but
   // optional and no longer written, purely so pre-migration rows already
   // holding it don't fail schema validation — see `resolveGeometryOutput` in
-  // lib.ts, which normalizes it away for every reader.
+  // entries.ts, which normalizes it away for every reader.
   geometries: defineTable({
     bbox: v.optional(v.array(v.number())), // This geometry's own bounding box
     entryId: v.id("entries"),
@@ -372,7 +371,7 @@ export default defineSchema({
   // Denormalized index of every outgoing foreign reference (see
   // ../shared/reference.ts): one row per `{sourceEntry, field, targetEntry}`
   // pointer, kept in sync with `entries.data` by the entry mutations in
-  // lib.ts (deleted and re-derived from scratch on every create/update of the
+  // entries.ts (deleted and re-derived from scratch on every create/update of the
   // source entry — reference fields per entry are few, so this is cheap).
   // Exists purely so "what references this entry?" (reverse lookup) is an
   // indexed query instead of a full scan of every other dataset's entries.
@@ -399,7 +398,7 @@ export default defineSchema({
   // Client can monitor progress. The client splits the row payload into
   // several small chunks itself (each already comfortably small enough for
   // the component's per-chunk action to parse in Convex's default action
-  // runtime — see lib.ts's `insertChunkFromStorage`; components cannot use
+  // runtime — see imports.ts's `insertChunkFromStorage`; components cannot use
   // the Node runtime at all, so no server-side step can safely hold a whole
   // multi-tens-of-MB upload at once) and uploads each to its own storage blob.
   imports: defineTable({

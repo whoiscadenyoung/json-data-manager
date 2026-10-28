@@ -93,7 +93,7 @@ function cleanDescription(description: string | undefined): string | undefined {
 async function datasetVisibleTo(ctx: MutationCtx, schemaId: string, actorId: string) {
   let doc;
   try {
-    doc = await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId });
+    doc = await ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId });
   } catch {
     return false;
   }

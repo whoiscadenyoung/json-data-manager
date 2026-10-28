@@ -52,7 +52,7 @@ import {
   applyRollup,
   applySql,
   geometrySourceOperationOf,
-} from "@caden/json-cms/transform";
+} from "@caden/data-core/transform";
 import type {
   GeometrySource,
   LookupOperation,
@@ -60,7 +60,7 @@ import type {
   SqlColumnSpec,
   SqlEngine,
   SqlOperation,
-} from "@caden/json-cms/transform";
+} from "@caden/data-core/transform";
 
 import { MAX_ANALYSIS_SOURCE_ROWS, sourceRowCapError } from "./analysis-caps";
 

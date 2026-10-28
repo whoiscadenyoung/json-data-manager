@@ -1,3 +1,9 @@
+// The pure engine, React-free (`./transform` subpath): this module is
+// imported by the tile-archive web worker, so it must never pull the
+// `@caden/json-cms/react` barrel (react + convex/react + the query bridge)
+// into the worker bundle.
+import { applyLookup, LookupKeyConflictError } from "@caden/data-core/transform";
+import type { LookupOperation } from "@caden/data-core/transform";
 /**
  * The row-resolution seam (roadmap 0.2) — the one client-side interface for
  * "resolve this dataset's rows (draft or published, specs applied)".
@@ -36,12 +42,6 @@
  * — live in `dataset-rows-react.tsx`.
  */
 import type { Geometry } from "@caden/json-cms/react";
-// The pure engine, React-free (`./transform` subpath): this module is
-// imported by the tile-archive web worker, so it must never pull the
-// `@caden/json-cms/react` barrel (react + convex/react + the query bridge)
-// into the worker bundle.
-import { applyLookup, LookupKeyConflictError } from "@caden/json-cms/transform";
-import type { LookupOperation } from "@caden/json-cms/transform";
 import { ConvexClient } from "convex/browser";
 import type { FunctionReturnType } from "convex/server";
 

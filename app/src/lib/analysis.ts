@@ -53,7 +53,7 @@ export interface AnalysisRequest {
 
 /** What one run returns: plain-record rows plus the engine's diagnostics (error carried here, never thrown). */
 export interface AnalysisRunResult {
-  diagnostics: import("@caden/json-cms/transform").SqlDiagnostics;
+  diagnostics: import("@caden/data-core/transform").SqlDiagnostics;
   rows: Array<Record<string, unknown>>;
 }
 

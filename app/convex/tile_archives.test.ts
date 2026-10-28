@@ -64,7 +64,7 @@ async function archiveBlob(t: ReturnType<typeof signedIn>, payload: string): Pro
  * `schemaId`, exactly as the worker's upload flow does (issue #131). */
 async function uploadToken(t: ReturnType<typeof signedIn>, schemaId: string): Promise<string> {
   const { uploadId } = await t.run(async (ctx) =>
-    ctx.runMutation(components.jsonCms.lib.generateUploadUrl, { scope: schemaId }),
+    ctx.runMutation(components.jsonCms.imports.generateUploadUrl, { scope: schemaId }),
   );
   return uploadId;
 }
@@ -189,7 +189,7 @@ describe("install", () => {
     const t = signedIn();
     const schemaId = await geospatialDataset(t);
     await t.run(async (ctx) => {
-      await ctx.runMutation(components.jsonCms.lib.deleteSchema, {
+      await ctx.runMutation(components.jsonCms.deletes.deleteSchema, {
         boundWrite: "retire",
         schemaId,
       });
@@ -228,7 +228,7 @@ describe("install", () => {
     // outside the visibility checks every other write answers to.
     const t = signedIn();
     const foreignDraft = await t.run(async (ctx) =>
-      ctx.runMutation(components.jsonCms.lib.createSchema, {
+      ctx.runMutation(components.jsonCms.schemas.createSchema, {
         actorId: "user-2",
         geometryType: "Point",
         kind: "geospatial",

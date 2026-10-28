@@ -120,12 +120,12 @@ function LinkDeleteConfirm({
 }
 
 export function LinksPanel() {
-  const links = useQuery(api.dashboard.listLinks),
-    restaurants = useQuery(api.dashboard.listRestaurants),
-    locations = useQuery(api.dashboard.listLocations),
-    createLink = useMutation(api.dashboard.createLink),
-    updateLink = useMutation(api.dashboard.updateLink),
-    deleteLink = useMutation(api.dashboard.deleteLink),
+  const links = useQuery(api.demoSources.dashboard.listLinks),
+    restaurants = useQuery(api.demoSources.dashboard.listRestaurants),
+    locations = useQuery(api.demoSources.dashboard.listLocations),
+    createLink = useMutation(api.demoSources.dashboard.createLink),
+    updateLink = useMutation(api.demoSources.dashboard.updateLink),
+    deleteLink = useMutation(api.demoSources.dashboard.deleteLink),
     [sheetOpen, setSheetOpen] = useState(false),
     // `editing` undefined = create mode; set = only the opened year is editable.
     [editing, setEditing] = useState<LinkRow | undefined>(undefined),

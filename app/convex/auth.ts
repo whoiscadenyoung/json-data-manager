@@ -307,9 +307,9 @@ export async function auth(ctx: { auth: Auth }, operation?: ExposeApiOperation):
 async function tryGetSchemaForPolicy(
   ctx: MutationCtx,
   schemaId: string,
-): Promise<FunctionReturnType<typeof components.jsonCms.lib.getSchema>> {
+): Promise<FunctionReturnType<typeof components.jsonCms.schemas.getSchema>> {
   try {
-    return await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId });
+    return await ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId });
   } catch {
     return null;
   }
@@ -340,7 +340,7 @@ async function datasetIdsForOperation(
     }
   }
   if (operation.importId !== undefined) {
-    const schemaId = await ctx.runQuery(components.jsonCms.lib.getImportSchemaId, {
+    const schemaId = await ctx.runQuery(components.jsonCms.schemas.getImportSchemaId, {
       importId: operation.importId,
     });
     if (schemaId !== null) {
@@ -434,7 +434,7 @@ async function isReadOnlyDataset(ctx: MutationCtx, schemaId: string): Promise<bo
   // A frozen tag version has no binding row of its own — its lineage marks
   // it read-only the same way. Only the datasets that fail the binding
   // check pay this extra component read.
-  const schema = await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId });
+  const schema = await ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId });
   return schema !== null && schema.lineage !== undefined;
 }
 
@@ -446,7 +446,7 @@ async function isReadOnlyDataset(ctx: MutationCtx, schemaId: string): Promise<bo
  */
 async function entrySchemaId(ctx: MutationCtx, entryId: string): Promise<string | undefined> {
   try {
-    const entry = await ctx.runQuery(components.jsonCms.lib.getEntry, { entryId });
+    const entry = await ctx.runQuery(components.jsonCms.entries.getEntry, { entryId });
     if (entry === null) {
       return undefined;
     }

@@ -1,15 +1,12 @@
-import { it, afterEach, describe, expect, beforeEach, vi } from "vitest";
+import type { GeometryArgs, GeometryTypeArg } from "@caden/data-core/geojson";
 /// <reference types="vite/client" />
+import { it, afterEach, describe, expect, beforeEach, vi } from "vitest";
 
-import type { GeometryArgs, GeometryTypeArg } from "../shared/geojson/validators.js";
 import { api, internal } from "./_generated/api.js";
 import type { Id } from "./_generated/dataModel.js";
 import { INLINE_GEOMETRY_BYTE_LIMIT } from "./geometry_storage.js";
-import {
-  GEOMETRY_PAGE_BYTE_BUDGET,
-  MAP_TILE_ARCHIVE_FORMAT,
-  MAP_TILE_ARCHIVE_MIN_BYTES,
-} from "./lib.js";
+import { GEOMETRY_PAGE_BYTE_BUDGET } from "./internal/geometryPages.js";
+import { MAP_TILE_ARCHIVE_FORMAT, MAP_TILE_ARCHIVE_MIN_BYTES } from "./internal/tileArchive.js";
 import { initConvexTest } from "./setup.test.js";
 
 /** `|| 0` normalizes a `-0` result (e.g. right at an angle where sin/cos rounds to negative zero) to plain `0` — `JSON.stringify(-0) === "0"`, so without this a fixture value could "round-trip" through JSON as `0` instead of `-0` and fail a strict-equality assertion for a reason that has nothing to do with the code under test. */
@@ -28,12 +25,12 @@ function bigRing(pointCount: number): number[][] {
 
 /** Seeds a collection row for collections-and-groups tests. */
 async function createTestCollection(t: TestCtx, name: string) {
-  return t.mutation(api.lib.createCollection, { name });
+  return t.mutation(api.collections.createCollection, { name });
 }
 
 /** Plain dataset through today's create flow — no lifecycle argument, like every current caller (catalog-lifecycle tests). */
 async function createPlainDataset(t: TestCtx, title: string) {
-  return t.mutation(api.lib.createSchema, { schema: { title, type: "object" } });
+  return t.mutation(api.schemas.createSchema, { schema: { title, type: "object" } });
 }
 
 /**
@@ -46,7 +43,7 @@ const VIEWER = "viewer-1";
 
 /** Schema for the geospatial-conversion tests: plain tabular rows with Latitude/Longitude columns. */
 async function createCoordinateSchema(t: TestCtx) {
-  return t.mutation(api.lib.createSchema, {
+  return t.mutation(api.schemas.createSchema, {
     schema: {
       description: "Tabular rows with coordinate columns",
       properties: {
@@ -71,7 +68,7 @@ async function runConversion(t: TestCtx, schemaId: Id<"schemas">) {
   while (!isDone) {
     // oxlint-disable-next-line no-await-in-loop -- each page's cursor depends on the previous one.
     const result: ConversionBatchResult = await t.mutation(
-      internal.lib.convertEntriesBatchInternal,
+      internal.geospatial.convertEntriesBatchInternal,
       {
         cursor,
         latField: "Latitude",
@@ -95,7 +92,7 @@ function assertDefined<T>(value: T): asserts value is NonNullable<T> {
 }
 
 /**
- * `listGeometries` is paginated (see its doc comment in lib.ts — a dataset's
+ * `listGeometries` is paginated (see its doc comment in entries.ts — a dataset's
  * cumulative geometry payload can exceed Convex's per-execution read-byte
  * budget even though each row is safely under its own document-size limit).
  * Fetches every page and returns the merged, flat array — what most tests
@@ -103,7 +100,7 @@ function assertDefined<T>(value: T): asserts value is NonNullable<T> {
  */
 async function listAllGeometries(t: TestCtx, schemaId: Id<"schemas">) {
   const fetchPage = async (cursor: string | null) =>
-      t.query(api.lib.listGeometries, { paginationOpts: { cursor, numItems: 1000 }, schemaId }),
+      t.query(api.entries.listGeometries, { paginationOpts: { cursor, numItems: 1000 }, schemaId }),
     pages: Array<Awaited<ReturnType<typeof fetchPage>>["page"][number]> = [];
   let cursor: string | null = null,
     isDone = false;
@@ -118,7 +115,7 @@ async function listAllGeometries(t: TestCtx, schemaId: Id<"schemas">) {
 }
 
 async function createTestSchema(t: TestCtx) {
-  return t.mutation(api.lib.createSchema, {
+  return t.mutation(api.schemas.createSchema, {
     schema: {
       description: "A test schema",
       properties: {
@@ -132,7 +129,7 @@ async function createTestSchema(t: TestCtx) {
 }
 
 async function createImportSchema(t: TestCtx) {
-  return t.mutation(api.lib.createSchema, {
+  return t.mutation(api.schemas.createSchema, {
     schema: {
       description: "For import tests",
       properties: { name: { type: "string" } },
@@ -164,7 +161,7 @@ async function storeRows(t: TestCtx, rows: unknown[]) {
  */
 async function issuedChunk(t: TestCtx, scope: string, rows: unknown[]) {
   const storageId = await storeRows(t, rows),
-    { uploadId } = await t.mutation(api.lib.generateUploadUrl, { scope });
+    { uploadId } = await t.mutation(api.imports.generateUploadUrl, { scope });
   return { storageId, uploadId };
 }
 
@@ -178,7 +175,7 @@ async function installArchive(
   const storageId = await t.run(async (ctx) =>
     ctx.storage.store(new Blob([label], { type: "application/octet-stream" })),
   );
-  await t.mutation(api.lib.setMapTileArchive, {
+  await t.mutation(api.schemas.setMapTileArchive, {
     bytes: label.length,
     expectedVersion,
     maxZoom: 12,
@@ -193,7 +190,7 @@ async function createGeospatialSchema(
   geometryType: GeometryTypeArg,
   options?: { simplifyGeometry?: boolean },
 ) {
-  return t.mutation(api.lib.createSchema, {
+  return t.mutation(api.schemas.createSchema, {
     geometryType,
     kind: "geospatial",
     schema: {
@@ -224,12 +221,12 @@ describe("json-cms component", () => {
           title: "Test Schema",
           type: "object",
         },
-        schemaId = await t.mutation(api.lib.createSchema, {
+        schemaId = await t.mutation(api.schemas.createSchema, {
           schema: testSchema,
         });
       expect(schemaId).toBeDefined();
 
-      const schemas = await t.query(api.lib.listSchemas, { limit: 500, viewerId: VIEWER });
+      const schemas = await t.query(api.schemas.listSchemas, { limit: 500, viewerId: VIEWER });
       expect(schemas).toHaveLength(1);
       expect(schemas[0].title).toBe("Test Schema");
       expect(schemas[0].description).toBe("A test schema");
@@ -242,10 +239,10 @@ describe("json-cms component", () => {
           title: "Test Schema",
           type: "object",
         },
-        schemaId = await t.mutation(api.lib.createSchema, {
+        schemaId = await t.mutation(api.schemas.createSchema, {
           schema: testSchema,
         }),
-        schema = await t.query(api.lib.getSchema, { schemaId });
+        schema = await t.query(api.schemas.getSchema, { schemaId });
       assertDefined(schema);
       expect(schema.title).toBe("Test Schema");
       expect(schema.description).toBe("A test schema");
@@ -259,13 +256,13 @@ describe("json-cms component", () => {
           title: "Temp Schema",
           type: "object",
         },
-        schemaId = await t.mutation(api.lib.createSchema, {
+        schemaId = await t.mutation(api.schemas.createSchema, {
           schema: testSchema,
         });
-      await t.mutation(api.lib.deleteSchema, { schemaId });
+      await t.mutation(api.deletes.deleteSchema, { schemaId });
 
       // Now the ID should return null
-      const schema = await t.query(api.lib.getSchema, { schemaId });
+      const schema = await t.query(api.schemas.getSchema, { schemaId });
       expect(schema).toBeNull();
     });
 
@@ -276,11 +273,11 @@ describe("json-cms component", () => {
           title: "Test Schema",
           type: "object",
         },
-        schemaId = await t.mutation(api.lib.createSchema, {
+        schemaId = await t.mutation(api.schemas.createSchema, {
           schema: testSchema,
         });
 
-      await t.mutation(api.lib.updateSchema, {
+      await t.mutation(api.schemas.updateSchema, {
         schema: {
           description: "An updated schema",
           title: "Updated Schema",
@@ -289,7 +286,7 @@ describe("json-cms component", () => {
         schemaId,
       });
 
-      const schema = await t.query(api.lib.getSchema, { schemaId });
+      const schema = await t.query(api.schemas.getSchema, { schemaId });
       assertDefined(schema);
       expect(schema.title).toBe("Updated Schema");
       expect(schema.description).toBe("An updated schema");
@@ -302,16 +299,16 @@ describe("json-cms component", () => {
           title: "Test Schema",
           type: "object",
         },
-        schemaId = await t.mutation(api.lib.createSchema, {
+        schemaId = await t.mutation(api.schemas.createSchema, {
           schema: testSchema,
         });
 
-      await t.mutation(api.lib.updateSchema, {
+      await t.mutation(api.schemas.updateSchema, {
         schemaId,
         title: "Updated Title",
       });
 
-      const schema = await t.query(api.lib.getSchema, { schemaId });
+      const schema = await t.query(api.schemas.getSchema, { schemaId });
       assertDefined(schema);
       expect(schema.title).toBe("Updated Title");
       expect(schema.description).toBe("A test schema");
@@ -330,18 +327,18 @@ describe("json-cms component", () => {
         testUiSchema = {
           name: { "ui:widget": "textarea" },
         },
-        schemaId = await t.mutation(api.lib.createSchema, {
+        schemaId = await t.mutation(api.schemas.createSchema, {
           schema: testSchema,
           uiSchema: testUiSchema,
         }),
-        schema = await t.query(api.lib.getSchema, { schemaId });
+        schema = await t.query(api.schemas.getSchema, { schemaId });
       assertDefined(schema);
       expect(schema.uiSchema).toStrictEqual(testUiSchema);
     });
 
     it("update schema's uiSchema", async () => {
       const t = initConvexTest(),
-        schemaId = await t.mutation(api.lib.createSchema, {
+        schemaId = await t.mutation(api.schemas.createSchema, {
           schema: {
             description: "A test schema",
             title: "Test Schema",
@@ -349,12 +346,12 @@ describe("json-cms component", () => {
           },
         }),
         uiSchema = { "ui:order": ["name", "age"] };
-      await t.mutation(api.lib.updateSchema, {
+      await t.mutation(api.schemas.updateSchema, {
         schemaId,
         uiSchema,
       });
 
-      const schema = await t.query(api.lib.getSchema, { schemaId });
+      const schema = await t.query(api.schemas.getSchema, { schemaId });
       assertDefined(schema);
       expect(schema.uiSchema).toStrictEqual(uiSchema);
       // Title/description untouched by a uiSchema-only update
@@ -364,7 +361,7 @@ describe("json-cms component", () => {
     it("uiSchema: null clears the stored uiSchema; omitting the arg leaves it (issue #135)", async () => {
       const t = initConvexTest(),
         uiSchema = { "ui:order": ["name", "age"] },
-        schemaId = await t.mutation(api.lib.createSchema, {
+        schemaId = await t.mutation(api.schemas.createSchema, {
           schema: {
             description: "A test schema",
             title: "Test Schema",
@@ -374,14 +371,14 @@ describe("json-cms component", () => {
         });
 
       // Omitted arg: untouched.
-      await t.mutation(api.lib.updateSchema, { schemaId, title: "Renamed" });
-      const stillThere = await t.query(api.lib.getSchema, { schemaId });
+      await t.mutation(api.schemas.updateSchema, { schemaId, title: "Renamed" });
+      const stillThere = await t.query(api.schemas.getSchema, { schemaId });
       assertDefined(stillThere);
       expect(stillThere.uiSchema).toStrictEqual(uiSchema);
 
       // Explicit null: the field is patched away.
-      await t.mutation(api.lib.updateSchema, { schemaId, uiSchema: null });
-      const cleared = await t.query(api.lib.getSchema, { schemaId });
+      await t.mutation(api.schemas.updateSchema, { schemaId, uiSchema: null });
+      const cleared = await t.query(api.schemas.getSchema, { schemaId });
       assertDefined(cleared);
       expect(cleared.uiSchema).toBeUndefined();
       expect(cleared.title).toBe("Renamed");
@@ -394,18 +391,18 @@ describe("json-cms component", () => {
           type: "object",
         };
 
-      await expect(t.mutation(api.lib.createSchema, { schema: badSchema })).rejects.toThrow(
+      await expect(t.mutation(api.schemas.createSchema, { schema: badSchema })).rejects.toThrow(
         "Schema must have a non-empty 'title' property",
       );
     });
 
     it("create schema without description succeeds — description is optional", async () => {
       const t = initConvexTest(),
-        schemaId = await t.mutation(api.lib.createSchema, {
+        schemaId = await t.mutation(api.schemas.createSchema, {
           schema: { title: "Test Schema", type: "object" },
         });
 
-      const schema = await t.query(api.lib.getSchema, { schemaId });
+      const schema = await t.query(api.schemas.getSchema, { schemaId });
       assertDefined(schema);
       expect(schema.title).toBe("Test Schema");
       expect(schema.description).toBeUndefined();
@@ -419,14 +416,14 @@ describe("json-cms component", () => {
           title: "Temp Schema",
           type: "object",
         },
-        schemaId = await t.mutation(api.lib.createSchema, {
+        schemaId = await t.mutation(api.schemas.createSchema, {
           schema: testSchema,
         });
-      await t.mutation(api.lib.deleteSchema, { schemaId });
+      await t.mutation(api.deletes.deleteSchema, { schemaId });
 
       // Now updating the deleted ID should throw
       await expect(
-        t.mutation(api.lib.updateSchema, {
+        t.mutation(api.schemas.updateSchema, {
           schemaId,
           title: "New Title",
         }),
@@ -440,26 +437,26 @@ describe("json-cms component", () => {
           title: "Test Schema",
           type: "object",
         },
-        schemaId = await t.mutation(api.lib.createSchema, {
+        schemaId = await t.mutation(api.schemas.createSchema, {
           schema: testSchema,
         }),
         // Create an entry for this schema and remember its ID
-        entryId = await t.mutation(api.lib.createEntry, {
+        entryId = await t.mutation(api.entries.createEntry, {
           data: { name: "test" },
           schemaId,
         }),
         // Verify entry exists before deletion
-        entryBefore = await t.query(api.lib.getEntry, { entryId });
+        entryBefore = await t.query(api.entries.getEntry, { entryId });
       expect(entryBefore).toBeDefined();
 
-      await t.mutation(api.lib.deleteSchema, { schemaId });
+      await t.mutation(api.deletes.deleteSchema, { schemaId });
 
       // Schema should be deleted
-      const schema = await t.query(api.lib.getSchema, { schemaId });
+      const schema = await t.query(api.schemas.getSchema, { schemaId });
       expect(schema).toBeNull();
 
       // Entry should also be deleted (cascade delete)
-      const entryAfter = await t.query(api.lib.getEntry, { entryId });
+      const entryAfter = await t.query(api.entries.getEntry, { entryId });
       expect(entryAfter).toBeNull();
     });
 
@@ -471,13 +468,13 @@ describe("json-cms component", () => {
           title: "Temp Schema",
           type: "object",
         },
-        schemaId = await t.mutation(api.lib.createSchema, {
+        schemaId = await t.mutation(api.schemas.createSchema, {
           schema: testSchema,
         });
-      await t.mutation(api.lib.deleteSchema, { schemaId });
+      await t.mutation(api.deletes.deleteSchema, { schemaId });
 
       // Now deleting again should throw
-      await expect(t.mutation(api.lib.deleteSchema, { schemaId })).rejects.toThrow(
+      await expect(t.mutation(api.deletes.deleteSchema, { schemaId })).rejects.toThrow(
         "Schema not found",
       );
     });
@@ -486,7 +483,7 @@ describe("json-cms component", () => {
   describe("listSchemaSummaries (issue #53)", () => {
     it("projects list-page fields without the schema/uiSchema payloads", async () => {
       const t = initConvexTest(),
-        schemaId = await t.mutation(api.lib.createSchema, {
+        schemaId = await t.mutation(api.schemas.createSchema, {
           actorId: "user-123",
           kind: "geospatial",
           geometryType: "Point",
@@ -501,7 +498,10 @@ describe("json-cms component", () => {
           },
           uiSchema: { name: { "ui:widget": "text" } },
         }),
-        summaries = await t.query(api.lib.listSchemaSummaries, { limit: 500, viewerId: VIEWER }),
+        summaries = await t.query(api.schemas.listSchemaSummaries, {
+          limit: 500,
+          viewerId: VIEWER,
+        }),
         row = summaries.find((summary) => summary._id === schemaId);
       assertDefined(row);
       expect(row.title).toBe("Summary Schema");
@@ -516,7 +516,7 @@ describe("json-cms component", () => {
       expect("schema" in row).toBe(false);
       expect("uiSchema" in row).toBe(false);
       // …and the full-doc query still carries them for the editor surfaces.
-      const full = await t.query(api.lib.getSchema, { schemaId });
+      const full = await t.query(api.schemas.getSchema, { schemaId });
       assertDefined(full);
       expect(full.schema).toBeDefined();
       expect(full.uiSchema).toBeDefined();
@@ -524,10 +524,13 @@ describe("json-cms component", () => {
 
     it("counts zero fields for a schema without properties", async () => {
       const t = initConvexTest(),
-        schemaId = await t.mutation(api.lib.createSchema, {
+        schemaId = await t.mutation(api.schemas.createSchema, {
           schema: { title: "No Properties", type: "string" },
         }),
-        summaries = await t.query(api.lib.listSchemaSummaries, { limit: 500, viewerId: VIEWER }),
+        summaries = await t.query(api.schemas.listSchemaSummaries, {
+          limit: 500,
+          viewerId: VIEWER,
+        }),
         row = summaries.find((summary) => summary._id === schemaId);
       assertDefined(row);
       expect(row.fieldCount).toBe(0);
@@ -538,7 +541,7 @@ describe("json-cms component", () => {
         schemaId = await createGeospatialSchema(t, "Point");
       const flagOf = async () => {
         const row = (
-          await t.query(api.lib.listSchemaSummaries, { limit: 500, viewerId: VIEWER })
+          await t.query(api.schemas.listSchemaSummaries, { limit: 500, viewerId: VIEWER })
         ).find((summary) => summary._id === schemaId);
         assertDefined(row);
         return row.mapTileArchiveFormatCurrent;
@@ -565,8 +568,11 @@ describe("json-cms component", () => {
     it("absent lifecycle reads as published — pre-field rows stay catalog-visible", async () => {
       const t = initConvexTest(),
         schemaId = await createPlainDataset(t, "Pre-field Dataset"),
-        listed = await t.query(api.lib.listSchemas, { limit: 500, viewerId: VIEWER }),
-        summaries = await t.query(api.lib.listSchemaSummaries, { limit: 500, viewerId: VIEWER });
+        listed = await t.query(api.schemas.listSchemas, { limit: 500, viewerId: VIEWER }),
+        summaries = await t.query(api.schemas.listSchemaSummaries, {
+          limit: 500,
+          viewerId: VIEWER,
+        });
       expect(listed.map((schema) => schema._id)).toContain(schemaId);
       const row = summaries.find((summary) => summary._id === schemaId);
       assertDefined(row);
@@ -585,32 +591,37 @@ describe("json-cms component", () => {
       await t.run(async (ctx) => {
         await ctx.db.patch(draftId, { createdBy: VIEWER, lifecycle: "draft" });
       });
-      const listed = await t.query(api.lib.listSchemas, { limit: 500, viewerId: VIEWER });
+      const listed = await t.query(api.schemas.listSchemas, { limit: 500, viewerId: VIEWER });
       expect(listed.map((schema) => schema._id)).toContain(publishedId);
       expect(listed.map((schema) => schema._id)).not.toContain(draftId);
-      const summaries = await t.query(api.lib.listSchemaSummaries, {
+      const summaries = await t.query(api.schemas.listSchemaSummaries, {
         limit: 500,
         viewerId: VIEWER,
       });
       expect(summaries.map((summary) => summary._id)).not.toContain(draftId);
       // By-id reads are the HOST's scope (stage 8's auth policy) — the
       // component's per-id surface stays unfiltered.
-      const full = await t.query(api.lib.getSchema, { schemaId: draftId });
+      const full = await t.query(api.schemas.getSchema, { schemaId: draftId });
       assertDefined(full);
       expect(full.lifecycle).toBe("draft");
     });
 
     it("a draft inside a collection is filtered from listSchemasByCollection too (review: consumer enumeration)", async () => {
       const t = initConvexTest(),
-        collectionId = await t.mutation(api.lib.createCollection, { name: "Lifecycle Collection" }),
+        collectionId = await t.mutation(api.collections.createCollection, {
+          name: "Lifecycle Collection",
+        }),
         publishedId = await createPlainDataset(t, "Collection Published"),
         draftId = await createPlainDataset(t, "Collection Draft");
-      await t.mutation(api.lib.addSchemaToCollection, { collectionId, schemaId: publishedId });
-      await t.mutation(api.lib.addSchemaToCollection, { collectionId, schemaId: draftId });
+      await t.mutation(api.collections.addSchemaToCollection, {
+        collectionId,
+        schemaId: publishedId,
+      });
+      await t.mutation(api.collections.addSchemaToCollection, { collectionId, schemaId: draftId });
       await t.run(async (ctx) => {
         await ctx.db.patch(draftId, { createdBy: VIEWER, lifecycle: "draft" });
       });
-      const listed = await t.query(api.lib.listSchemasByCollection, {
+      const listed = await t.query(api.collections.listSchemasByCollection, {
         collectionId,
         viewerId: VIEWER,
       });
@@ -624,7 +635,7 @@ describe("json-cms component", () => {
       await t.run(async (ctx) => {
         await ctx.db.patch(draftId, { createdBy: VIEWER, lifecycle: "draft" });
       });
-      const drafts = await t.query(api.lib.listDraftSchemaSummaries, {
+      const drafts = await t.query(api.schemas.listDraftSchemaSummaries, {
         limit: 500,
         viewerId: VIEWER,
       });
@@ -646,11 +657,14 @@ describe("json-cms component", () => {
         await ctx.db.patch(draftId, { createdBy: VIEWER, lifecycle: "draft" });
         await ctx.db.patch(publishedId, { lifecycle: "published" });
       });
-      const drafts = await t.query(api.lib.listDraftSchemaSummaries, {
+      const drafts = await t.query(api.schemas.listDraftSchemaSummaries, {
           limit: 500,
           viewerId: VIEWER,
         }),
-        summaries = await t.query(api.lib.listSchemaSummaries, { limit: 500, viewerId: VIEWER });
+        summaries = await t.query(api.schemas.listSchemaSummaries, {
+          limit: 500,
+          viewerId: VIEWER,
+        });
       const draftRow = drafts.find((summary) => summary._id === draftId);
       assertDefined(draftRow);
       expect(draftRow.lifecycle).toBe("draft");
@@ -665,11 +679,11 @@ describe("json-cms component", () => {
         // Host-flow arg (the source/lineage pattern): the component accepts
         // lifecycle, but no exposeApi wrapper exposes it, so no client path
         // can produce a draft.
-        flaggedId = await t.mutation(api.lib.createSchema, {
+        flaggedId = await t.mutation(api.schemas.createSchema, {
           lifecycle: "draft",
           schema: { title: "Created Draft", type: "object" },
         });
-      const summaries = await t.query(api.lib.listSchemaSummaries, {
+      const summaries = await t.query(api.schemas.listSchemaSummaries, {
         limit: 500,
         viewerId: VIEWER,
       });
@@ -687,12 +701,12 @@ describe("json-cms component", () => {
         await ctx.db.patch(mineId, { createdBy: VIEWER, lifecycle: "draft" });
         await ctx.db.patch(theirsId, { createdBy: "viewer-2", lifecycle: "draft" });
       });
-      const mine = await t.query(api.lib.listDraftSchemaSummaries, {
+      const mine = await t.query(api.schemas.listDraftSchemaSummaries, {
         limit: 500,
         viewerId: VIEWER,
       });
       expect(mine.map((summary) => summary._id)).toEqual([mineId]);
-      const theirs = await t.query(api.lib.listDraftSchemaSummaries, {
+      const theirs = await t.query(api.schemas.listDraftSchemaSummaries, {
         limit: 500,
         viewerId: "viewer-2",
       });
@@ -701,50 +715,52 @@ describe("json-cms component", () => {
 
     it("a publishedVisibility author row is catalog-invisible to other viewers, visible to its author", async () => {
       const t = initConvexTest(),
-        authorOnlyId = await t.mutation(api.lib.createSchema, {
+        authorOnlyId = await t.mutation(api.schemas.createSchema, {
           actorId: VIEWER,
           publishedVisibility: "author",
           schema: { title: "Author-only Dataset", type: "object" },
         }),
-        collectionId = await t.mutation(api.lib.createCollection, { name: "Shared Collection" });
-      await t.mutation(api.lib.addSchemaToCollection, {
+        collectionId = await t.mutation(api.collections.createCollection, {
+          name: "Shared Collection",
+        });
+      await t.mutation(api.collections.addSchemaToCollection, {
         collectionId,
         schemaId: authorOnlyId,
       });
 
       // The author sees it everywhere the catalog reads…
-      const ownListed = await t.query(api.lib.listSchemas, { limit: 500, viewerId: VIEWER });
+      const ownListed = await t.query(api.schemas.listSchemas, { limit: 500, viewerId: VIEWER });
       expect(ownListed.map((schema) => schema._id)).toContain(authorOnlyId);
-      const ownSummaries = await t.query(api.lib.listSchemaSummaries, {
+      const ownSummaries = await t.query(api.schemas.listSchemaSummaries, {
         limit: 500,
         viewerId: VIEWER,
       });
       expect(ownSummaries.map((summary) => summary._id)).toContain(authorOnlyId);
-      const ownInCollection = await t.query(api.lib.listSchemasByCollection, {
+      const ownInCollection = await t.query(api.collections.listSchemasByCollection, {
         collectionId,
         viewerId: VIEWER,
       });
       expect(ownInCollection.map((schema) => schema._id)).toContain(authorOnlyId);
       // …and the drafts view NEVER carries it (it is published-side).
       expect(
-        (await t.query(api.lib.listDraftSchemaSummaries, { limit: 500, viewerId: VIEWER })).map(
+        (await t.query(api.schemas.listDraftSchemaSummaries, { limit: 500, viewerId: VIEWER })).map(
           (summary) => summary._id,
         ),
       ).not.toContain(authorOnlyId);
 
       // Another signed-in viewer gets the same answer as for a missing row:
       // absent from every enumeration — invisible, not merely UI-hidden.
-      const foreignListed = await t.query(api.lib.listSchemas, {
+      const foreignListed = await t.query(api.schemas.listSchemas, {
         limit: 500,
         viewerId: "viewer-2",
       });
       expect(foreignListed.map((schema) => schema._id)).not.toContain(authorOnlyId);
-      const foreignSummaries = await t.query(api.lib.listSchemaSummaries, {
+      const foreignSummaries = await t.query(api.schemas.listSchemaSummaries, {
         limit: 500,
         viewerId: "viewer-2",
       });
       expect(foreignSummaries.map((summary) => summary._id)).not.toContain(authorOnlyId);
-      const foreignInCollection = await t.query(api.lib.listSchemasByCollection, {
+      const foreignInCollection = await t.query(api.collections.listSchemasByCollection, {
         collectionId,
         viewerId: "viewer-2",
       });
@@ -754,25 +770,25 @@ describe("json-cms component", () => {
     it("batch entry reads filter invisible sources instead of denying or leaking (stage 8)", async () => {
       const t = initConvexTest(),
         visibleId = await createPlainDataset(t, "Visible Dataset"),
-        authorOnlyId = await t.mutation(api.lib.createSchema, {
+        authorOnlyId = await t.mutation(api.schemas.createSchema, {
           actorId: "viewer-2",
           publishedVisibility: "author",
           schema: { title: "Hidden Dataset", type: "object" },
         }),
-        foreignDraftId = await t.mutation(api.lib.createSchema, {
+        foreignDraftId = await t.mutation(api.schemas.createSchema, {
           actorId: "viewer-2",
           lifecycle: "draft",
           schema: { title: "Their Draft", type: "object" },
         });
-      await t.mutation(api.lib.createEntriesBulk, {
+      await t.mutation(api.entries.createEntriesBulk, {
         entries: [{ data: { name: "v" } }],
         schemaId: visibleId,
       });
-      await t.mutation(api.lib.createEntriesBulk, {
+      await t.mutation(api.entries.createEntriesBulk, {
         entries: [{ data: { name: "h" } }],
         schemaId: authorOnlyId,
       });
-      await t.mutation(api.lib.createEntriesBulk, {
+      await t.mutation(api.entries.createEntriesBulk, {
         entries: [{ data: { name: "d" } }],
         schemaId: foreignDraftId,
       });
@@ -780,7 +796,7 @@ describe("json-cms component", () => {
       // The batch read answers rows from the VISIBLE subset only — no
       // denial, no leak: an invisible reference target renders as no
       // candidates, never as a broken form.
-      const batch = await t.query(api.lib.listEntriesForSchemas, {
+      const batch = await t.query(api.entries.listEntriesForSchemas, {
         limit: 500,
         schemaIds: [visibleId, authorOnlyId, foreignDraftId],
         viewerId: VIEWER,
@@ -790,18 +806,18 @@ describe("json-cms component", () => {
 
       // The label lookup filters too: mixed visible/invisible ids answer
       // only the visible rows (the raw-id fallback covers the rest).
-      const visibleEntries = await t.query(api.lib.listEntries, {
+      const visibleEntries = await t.query(api.entries.listEntries, {
         limit: 500,
         schemaId: visibleId,
       });
-      const hiddenEntries = await t.query(api.lib.listEntries, {
+      const hiddenEntries = await t.query(api.entries.listEntries, {
         limit: 500,
         schemaId: authorOnlyId,
       });
       const hiddenEntry = hiddenEntries[0];
       const visibleEntry = visibleEntries[0];
       assertDefined(visibleEntry);
-      const labels = await t.query(api.lib.listEntriesForIds, {
+      const labels = await t.query(api.entries.listEntriesForIds, {
         entryIds:
           hiddenEntry === undefined ? [visibleEntry._id] : [visibleEntry._id, hiddenEntry._id],
         viewerId: VIEWER,
@@ -815,25 +831,25 @@ describe("json-cms component", () => {
         plainId = await createPlainDataset(t, "Public By Default");
       // Absent: every viewer sees it.
       expect(
-        (await t.query(api.lib.listSchemaSummaries, { limit: 500, viewerId: "viewer-2" })).map(
+        (await t.query(api.schemas.listSchemaSummaries, { limit: 500, viewerId: "viewer-2" })).map(
           (summary) => summary._id,
         ),
       ).toContain(plainId);
-      await t.mutation(api.lib.setSchemaVisibility, {
+      await t.mutation(api.schemas.setSchemaVisibility, {
         publishedVisibility: "author",
         schemaId: plainId,
       });
       expect(
-        (await t.query(api.lib.listSchemaSummaries, { limit: 500, viewerId: "viewer-2" })).map(
+        (await t.query(api.schemas.listSchemaSummaries, { limit: 500, viewerId: "viewer-2" })).map(
           (summary) => summary._id,
         ),
       ).not.toContain(plainId);
-      await t.mutation(api.lib.setSchemaVisibility, {
+      await t.mutation(api.schemas.setSchemaVisibility, {
         publishedVisibility: "everyone",
         schemaId: plainId,
       });
       expect(
-        (await t.query(api.lib.listSchemaSummaries, { limit: 500, viewerId: "viewer-2" })).map(
+        (await t.query(api.schemas.listSchemaSummaries, { limit: 500, viewerId: "viewer-2" })).map(
           (summary) => summary._id,
         ),
       ).toContain(plainId);
@@ -844,40 +860,40 @@ describe("json-cms component", () => {
     it("returns one map's override rows, not every map's", async () => {
       const t = initConvexTest(),
         schemaId = await createTestSchema(t),
-        mapA = await t.mutation(api.lib.createMap, { name: "Map A" }),
-        mapB = await t.mutation(api.lib.createMap, { name: "Map B" });
+        mapA = await t.mutation(api.maps.createMap, { name: "Map A" }),
+        mapB = await t.mutation(api.maps.createMap, { name: "Map B" });
       // `addMapLayer` returns null when the layer already exists — fresh maps
       // here, so each add must produce a layer.
-      const layerA = await t.mutation(api.lib.addMapLayer, {
+      const layerA = await t.mutation(api.maps.addMapLayer, {
           mapId: mapA,
           targetId: schemaId,
           targetType: "dataset",
         }),
-        layerB = await t.mutation(api.lib.addMapLayer, {
+        layerB = await t.mutation(api.maps.addMapLayer, {
           mapId: mapB,
           targetId: schemaId,
           targetType: "dataset",
         });
       assertDefined(layerA);
       assertDefined(layerB);
-      await t.mutation(api.lib.setMapLayerOverride, {
+      await t.mutation(api.maps.setMapLayerOverride, {
         childKey: `dataset:${schemaId}`,
         layerId: layerA,
         visible: false,
       });
-      await t.mutation(api.lib.setMapLayerOverride, {
+      await t.mutation(api.maps.setMapLayerOverride, {
         childKey: `dataset:${schemaId}`,
         layerId: layerB,
         visible: false,
       });
 
-      const overridesA = await t.query(api.lib.listMapLayerOverridesForMap, { mapId: mapA });
+      const overridesA = await t.query(api.maps.listMapLayerOverridesForMap, { mapId: mapA });
       expect(overridesA).toHaveLength(1);
       expect(overridesA[0].layerId).toBe(layerA);
 
       // A map with no overrides lists nothing — even though overrides exist elsewhere.
-      const mapC = await t.mutation(api.lib.createMap, { name: "Map C" });
-      expect(await t.query(api.lib.listMapLayerOverridesForMap, { mapId: mapC })).toHaveLength(0);
+      const mapC = await t.mutation(api.maps.createMap, { name: "Map C" });
+      expect(await t.query(api.maps.listMapLayerOverridesForMap, { mapId: mapC })).toHaveLength(0);
     });
   });
 
@@ -888,9 +904,9 @@ describe("json-cms component", () => {
         type: "object",
       },
       createLive = async (t: TestCtx) =>
-        t.mutation(api.lib.createSchema, { schema: versionedSchema }),
+        t.mutation(api.schemas.createSchema, { schema: versionedSchema }),
       freezeVersion = async (t: TestCtx, sourceSchemaId: Id<"schemas">, versionLabel: string) =>
-        t.mutation(api.lib.createSchema, {
+        t.mutation(api.schemas.createSchema, {
           lineage: {
             frozenAt: Date.now(),
             snapshotRef: `snap_${versionLabel}`,
@@ -905,7 +921,7 @@ describe("json-cms component", () => {
       const t = initConvexTest(),
         liveId = await createLive(t),
         frozenAt = Date.now(),
-        versionId = await t.mutation(api.lib.createSchema, {
+        versionId = await t.mutation(api.schemas.createSchema, {
           lineage: {
             frozenAt,
             snapshotRef: "snap_v1",
@@ -915,7 +931,7 @@ describe("json-cms component", () => {
           schema: versionedSchema,
           source: { name: "restaurantLocations" },
         }),
-        version = await t.query(api.lib.getSchema, { schemaId: versionId });
+        version = await t.query(api.schemas.getSchema, { schemaId: versionId });
       assertDefined(version);
       expect(version.lineage).toEqual({
         frozenAt,
@@ -925,7 +941,7 @@ describe("json-cms component", () => {
       });
       expect(version.source).toEqual({ name: "restaurantLocations" });
       // The live dataset itself carries no lineage.
-      const live = await t.query(api.lib.getSchema, { schemaId: liveId });
+      const live = await t.query(api.schemas.getSchema, { schemaId: liveId });
       assertDefined(live);
       expect(live.lineage).toBeUndefined();
     });
@@ -941,7 +957,7 @@ describe("json-cms component", () => {
       // A different live dataset's version — proves the listing is scoped.
       await freezeVersion(t, otherLiveId, "other-v1");
 
-      const versions = await t.query(api.lib.listSchemaVersions, {
+      const versions = await t.query(api.schemas.listSchemaVersions, {
         limit: 10,
         sourceSchemaId: liveId,
       });
@@ -951,15 +967,15 @@ describe("json-cms component", () => {
         "Versioned Schema — v1",
       ]);
 
-      const otherVersions = await t.query(api.lib.listSchemaVersions, {
+      const otherVersions = await t.query(api.schemas.listSchemaVersions, {
         limit: 10,
         sourceSchemaId: otherLiveId,
       });
       expect(otherVersions).toHaveLength(1);
 
       // Ordinary datasets (no versions) list nothing.
-      const plainId = await t.mutation(api.lib.createSchema, { schema: versionedSchema });
-      const none = await t.query(api.lib.listSchemaVersions, {
+      const plainId = await t.mutation(api.schemas.createSchema, { schema: versionedSchema });
+      const none = await t.query(api.schemas.listSchemaVersions, {
         limit: 10,
         sourceSchemaId: plainId,
       });
@@ -976,7 +992,7 @@ describe("json-cms component", () => {
       vi.advanceTimersByTime(1);
       await freezeVersion(t, liveId, "v3");
 
-      const versions = await t.query(api.lib.listSchemaVersions, {
+      const versions = await t.query(api.schemas.listSchemaVersions, {
         limit: 2,
         sourceSchemaId: liveId,
       });
@@ -993,11 +1009,13 @@ describe("json-cms component", () => {
       const t = initConvexTest(),
         liveId = await createLive(t),
         versionId = await freezeVersion(t, liveId, "v1"),
-        found = await t.query(api.lib.getSchemaVersionBySnapshotRef, { snapshotRef: "snap_v1" });
+        found = await t.query(api.schemas.getSchemaVersionBySnapshotRef, {
+          snapshotRef: "snap_v1",
+        });
       assertDefined(found);
       expect(found._id).toBe(versionId);
 
-      const unknown = await t.query(api.lib.getSchemaVersionBySnapshotRef, {
+      const unknown = await t.query(api.schemas.getSchemaVersionBySnapshotRef, {
         snapshotRef: "snap_missing",
       });
       expect(unknown).toBeNull();
@@ -1007,8 +1025,8 @@ describe("json-cms component", () => {
   describe("collections & groups", () => {
     it("creates standalone groups without a collection", async () => {
       const t = initConvexTest(),
-        groupId = await t.mutation(api.lib.createGroup, { name: "Standalone group" }),
-        group = await t.query(api.lib.getGroup, { groupId });
+        groupId = await t.mutation(api.groups.createGroup, { name: "Standalone group" }),
+        group = await t.query(api.groups.getGroup, { groupId });
       assertDefined(group);
       expect(group.name).toBe("Standalone group");
       expect(group.collectionId).toBeUndefined();
@@ -1017,15 +1035,15 @@ describe("json-cms component", () => {
     it("creates nested groups with a validated collection", async () => {
       const t = initConvexTest(),
         collectionId = await createTestCollection(t, "Grant data"),
-        groupId = await t.mutation(api.lib.createGroup, {
+        groupId = await t.mutation(api.groups.createGroup, {
           collectionId,
           name: "SMART Grant 2025",
         }),
-        group = await t.query(api.lib.getGroup, { groupId });
+        group = await t.query(api.groups.getGroup, { groupId });
       assertDefined(group);
       expect(group.collectionId).toBe(collectionId);
 
-      await expect(t.mutation(api.lib.createGroup, { collectionId, name: " " })).rejects.toThrow(
+      await expect(t.mutation(api.groups.createGroup, { collectionId, name: " " })).rejects.toThrow(
         "Group must have a name",
       );
     });
@@ -1033,13 +1051,13 @@ describe("json-cms component", () => {
     it("lists all groups when no collection filter is given", async () => {
       const t = initConvexTest(),
         collectionId = await createTestCollection(t, "Grant data"),
-        nestedId = await t.mutation(api.lib.createGroup, { collectionId, name: "Nested" }),
-        standaloneId = await t.mutation(api.lib.createGroup, { name: "Standalone" });
+        nestedId = await t.mutation(api.groups.createGroup, { collectionId, name: "Nested" }),
+        standaloneId = await t.mutation(api.groups.createGroup, { name: "Standalone" });
 
-      const all = await t.query(api.lib.listGroups, { limit: 500 });
+      const all = await t.query(api.groups.listGroups, { limit: 500 });
       expect(all.map((group) => group._id).toSorted()).toEqual([nestedId, standaloneId].toSorted());
 
-      const nested = await t.query(api.lib.listGroups, { collectionId, limit: 500 });
+      const nested = await t.query(api.groups.listGroups, { collectionId, limit: 500 });
       expect(nested.map((group) => group._id)).toEqual([nestedId]);
     });
 
@@ -1049,18 +1067,18 @@ describe("json-cms component", () => {
         firstId = await createTestCollection(t, "First"),
         secondId = await createTestCollection(t, "Second");
 
-      await t.mutation(api.lib.addSchemaToCollection, { collectionId: firstId, schemaId });
-      await t.mutation(api.lib.addSchemaToCollection, { collectionId: secondId, schemaId });
+      await t.mutation(api.collections.addSchemaToCollection, { collectionId: firstId, schemaId });
+      await t.mutation(api.collections.addSchemaToCollection, { collectionId: secondId, schemaId });
       // Adding the same membership twice is a no-op.
-      await t.mutation(api.lib.addSchemaToCollection, { collectionId: firstId, schemaId });
+      await t.mutation(api.collections.addSchemaToCollection, { collectionId: firstId, schemaId });
 
-      const collections = await t.query(api.lib.listCollectionsBySchema, { schemaId });
+      const collections = await t.query(api.collections.listCollectionsBySchema, { schemaId });
       expect(collections.map((collection) => collection._id).toSorted()).toEqual(
         [firstId, secondId].toSorted(),
       );
-      expect(await t.query(api.lib.listSchemaCollections, { limit: 500 })).toHaveLength(2);
+      expect(await t.query(api.collections.listSchemaCollections, { limit: 500 })).toHaveLength(2);
 
-      const firstDatasets = await t.query(api.lib.listSchemasByCollection, {
+      const firstDatasets = await t.query(api.collections.listSchemasByCollection, {
         collectionId: firstId,
         viewerId: VIEWER,
       });
@@ -1073,11 +1091,14 @@ describe("json-cms component", () => {
         firstId = await createTestCollection(t, "First"),
         secondId = await createTestCollection(t, "Second");
 
-      await t.mutation(api.lib.addSchemaToCollection, { collectionId: firstId, schemaId });
-      await t.mutation(api.lib.addSchemaToCollection, { collectionId: secondId, schemaId });
-      await t.mutation(api.lib.removeSchemaFromCollection, { collectionId: firstId, schemaId });
+      await t.mutation(api.collections.addSchemaToCollection, { collectionId: firstId, schemaId });
+      await t.mutation(api.collections.addSchemaToCollection, { collectionId: secondId, schemaId });
+      await t.mutation(api.collections.removeSchemaFromCollection, {
+        collectionId: firstId,
+        schemaId,
+      });
 
-      const collections = await t.query(api.lib.listCollectionsBySchema, { schemaId });
+      const collections = await t.query(api.collections.listCollectionsBySchema, { schemaId });
       expect(collections.map((collection) => collection._id)).toEqual([secondId]);
     });
 
@@ -1085,25 +1106,25 @@ describe("json-cms component", () => {
       const t = initConvexTest(),
         schemaId = await createTestSchema(t),
         collectionId = await createTestCollection(t, "Grant data"),
-        groupId = await t.mutation(api.lib.createGroup, { collectionId, name: "Nested" });
+        groupId = await t.mutation(api.groups.createGroup, { collectionId, name: "Nested" });
 
       // Setting a group must not join the group's collection…
-      await t.mutation(api.lib.setSchemaGroup, { groupId, schemaId });
-      expect(await t.query(api.lib.listCollectionsBySchema, { schemaId })).toEqual([]);
+      await t.mutation(api.groups.setSchemaGroup, { groupId, schemaId });
+      expect(await t.query(api.collections.listCollectionsBySchema, { schemaId })).toEqual([]);
 
       // …and joining a collection must not touch the group.
-      await t.mutation(api.lib.addSchemaToCollection, { collectionId, schemaId });
-      const dataset = await t.query(api.lib.getSchema, { schemaId });
+      await t.mutation(api.collections.addSchemaToCollection, { collectionId, schemaId });
+      const dataset = await t.query(api.schemas.getSchema, { schemaId });
       assertDefined(dataset);
       expect(dataset.groupId).toBe(groupId);
 
       // Clearing the group leaves the collection membership alone.
-      await t.mutation(api.lib.setSchemaGroup, { groupId: null, schemaId });
-      const afterClear = await t.query(api.lib.getSchema, { schemaId });
+      await t.mutation(api.groups.setSchemaGroup, { groupId: null, schemaId });
+      const afterClear = await t.query(api.schemas.getSchema, { schemaId });
       assertDefined(afterClear);
       expect(afterClear.groupId).toBeUndefined();
       expect(
-        (await t.query(api.lib.listCollectionsBySchema, { schemaId })).map((c) => c._id),
+        (await t.query(api.collections.listCollectionsBySchema, { schemaId })).map((c) => c._id),
       ).toEqual([collectionId]);
     });
 
@@ -1113,26 +1134,32 @@ describe("json-cms component", () => {
         otherSchemaId = await createTestSchema(t),
         doomedId = await createTestCollection(t, "Doomed"),
         survivorId = await createTestCollection(t, "Survivor"),
-        doomedGroupId = await t.mutation(api.lib.createGroup, {
+        doomedGroupId = await t.mutation(api.groups.createGroup, {
           collectionId: doomedId,
           name: "Doomed group",
         });
 
-      await t.mutation(api.lib.addSchemaToCollection, { collectionId: doomedId, schemaId });
-      await t.mutation(api.lib.addSchemaToCollection, { collectionId: survivorId, schemaId });
-      await t.mutation(api.lib.setSchemaGroup, { groupId: doomedGroupId, schemaId: otherSchemaId });
+      await t.mutation(api.collections.addSchemaToCollection, { collectionId: doomedId, schemaId });
+      await t.mutation(api.collections.addSchemaToCollection, {
+        collectionId: survivorId,
+        schemaId,
+      });
+      await t.mutation(api.groups.setSchemaGroup, {
+        groupId: doomedGroupId,
+        schemaId: otherSchemaId,
+      });
 
-      await t.mutation(api.lib.deleteCollection, { collectionId: doomedId });
+      await t.mutation(api.collections.deleteCollection, { collectionId: doomedId });
 
       // Membership in the survivor survives; the doomed collection is gone.
-      const collections = await t.query(api.lib.listCollectionsBySchema, { schemaId });
+      const collections = await t.query(api.collections.listCollectionsBySchema, { schemaId });
       expect(collections.map((collection) => collection._id)).toEqual([survivorId]);
-      expect(await t.query(api.lib.getCollection, { collectionId: doomedId })).toBeNull();
+      expect(await t.query(api.collections.getCollection, { collectionId: doomedId })).toBeNull();
 
       // The nested group died, and its datasets became ungrouped — but kept
       // their own collection memberships.
-      expect(await t.query(api.lib.getGroup, { groupId: doomedGroupId })).toBeNull();
-      const ungrouped = await t.query(api.lib.getSchema, { schemaId: otherSchemaId });
+      expect(await t.query(api.groups.getGroup, { groupId: doomedGroupId })).toBeNull();
+      const ungrouped = await t.query(api.schemas.getSchema, { schemaId: otherSchemaId });
       assertDefined(ungrouped);
       expect(ungrouped.groupId).toBeUndefined();
     });
@@ -1142,12 +1169,12 @@ describe("json-cms component", () => {
         schemaId = await createTestSchema(t),
         collectionId = await createTestCollection(t, "Grant data");
 
-      await t.mutation(api.lib.addSchemaToCollection, { collectionId, schemaId });
-      await t.mutation(api.lib.deleteSchema, { schemaId });
+      await t.mutation(api.collections.addSchemaToCollection, { collectionId, schemaId });
+      await t.mutation(api.deletes.deleteSchema, { schemaId });
 
-      expect(await t.query(api.lib.listSchemaCollections, { limit: 500 })).toEqual([]);
+      expect(await t.query(api.collections.listSchemaCollections, { limit: 500 })).toEqual([]);
       expect(
-        await t.query(api.lib.listSchemasByCollection, { collectionId, viewerId: VIEWER }),
+        await t.query(api.collections.listSchemasByCollection, { collectionId, viewerId: VIEWER }),
       ).toEqual([]);
     });
   });
@@ -1183,7 +1210,7 @@ describe("json-cms component", () => {
       const t = initConvexTest();
 
       await expect(
-        t.mutation(api.lib.createSchema, {
+        t.mutation(api.schemas.createSchema, {
           kind: "geospatial",
           schema: {
             description: "A geospatial test schema",
@@ -1197,7 +1224,7 @@ describe("json-cms component", () => {
     it("createSchema with kind 'geospatial' and geometryType 'Polygon' succeeds", async () => {
       const t = initConvexTest(),
         schemaId = await createGeospatialSchema(t, "Polygon"),
-        schemaDoc = await t.query(api.lib.getSchema, { schemaId });
+        schemaDoc = await t.query(api.schemas.getSchema, { schemaId });
       assertDefined(schemaDoc);
       expect(schemaDoc.kind).toBe("geospatial");
       expect(schemaDoc.geometryType).toBe("Polygon");
@@ -1208,7 +1235,7 @@ describe("json-cms component", () => {
         schemaId = await createTestSchema(t);
 
       await expect(
-        t.mutation(api.lib.createEntry, {
+        t.mutation(api.entries.createEntry, {
           data: { name: "test" },
           geometry: JSON.stringify(validPolygon),
           schemaId,
@@ -1219,12 +1246,12 @@ describe("json-cms component", () => {
     it("createEntry on a MultiPolygon-locked schema accepts a Polygon geometry (asymmetric compatibility)", async () => {
       const t = initConvexTest(),
         schemaId = await createGeospatialSchema(t, "MultiPolygon"),
-        entryId = await t.mutation(api.lib.createEntry, {
+        entryId = await t.mutation(api.entries.createEntry, {
           data: { name: "test" },
           geometry: JSON.stringify(validPolygon),
           schemaId,
         }),
-        entry = await t.query(api.lib.getEntry, { entryId });
+        entry = await t.query(api.entries.getEntry, { entryId });
       assertDefined(entry);
       // Stored as a pointer, not inline: `entries` never carries coordinates.
       expect(entry).not.toHaveProperty("geometry");
@@ -1246,7 +1273,7 @@ describe("json-cms component", () => {
         schemaId = await createGeospatialSchema(t, "Polygon");
 
       await expect(
-        t.mutation(api.lib.createEntry, {
+        t.mutation(api.entries.createEntry, {
           data: { name: "test" },
           geometry: JSON.stringify(validMultiPolygon),
           schemaId,
@@ -1261,7 +1288,7 @@ describe("json-cms component", () => {
         schemaId = await createGeospatialSchema(t, "Point");
 
       await expect(
-        t.mutation(api.lib.createEntry, {
+        t.mutation(api.entries.createEntry, {
           data: { name: "test" },
           geometry: JSON.stringify(invalidPoint),
           schemaId,
@@ -1277,7 +1304,7 @@ describe("json-cms component", () => {
       expect(huge.length).toBeGreaterThan(INLINE_GEOMETRY_BYTE_LIMIT);
 
       await expect(
-        t.mutation(api.lib.createEntry, { data: {}, geometry: huge, schemaId }),
+        t.mutation(api.entries.createEntry, { data: {}, geometry: huge, schemaId }),
       ).rejects.toThrow("too large to attach directly");
     });
 
@@ -1287,26 +1314,26 @@ describe("json-cms component", () => {
         pointA: GeometryArgs = { coordinates: [0, 0], type: "Point" },
         pointB: GeometryArgs = { coordinates: [10, 10], type: "Point" },
         pointC: GeometryArgs = { coordinates: [-5, -5], type: "Point" },
-        entryId = await t.mutation(api.lib.createEntry, {
+        entryId = await t.mutation(api.entries.createEntry, {
           data: {},
           geometry: JSON.stringify(pointA),
           schemaId,
         });
 
-      let schemaDoc = await t.query(api.lib.getSchema, { schemaId });
+      let schemaDoc = await t.query(api.schemas.getSchema, { schemaId });
       assertDefined(schemaDoc);
       expect(schemaDoc.featureCount).toBe(1);
       expect(schemaDoc.boundingBox).toStrictEqual([0, 0, 0, 0]);
 
       // Replace the geometry with one further out: bbox grows, count is unchanged
       // (a replace, not an add), and the SAME `geometries` row is reused in place.
-      await t.mutation(api.lib.updateEntry, {
+      await t.mutation(api.entries.updateEntry, {
         data: {},
         entryId,
         geometry: JSON.stringify(pointB),
       });
 
-      schemaDoc = await t.query(api.lib.getSchema, { schemaId });
+      schemaDoc = await t.query(api.schemas.getSchema, { schemaId });
       assertDefined(schemaDoc);
       expect(schemaDoc.featureCount).toBe(1);
       expect(schemaDoc.boundingBox).toStrictEqual([0, 0, 10, 10]);
@@ -1317,22 +1344,22 @@ describe("json-cms component", () => {
       expect(JSON.parse(geometriesAfterUpdate[0].geometryJson)).toStrictEqual(pointB);
 
       // A second entry elsewhere, to prove the bbox stays monotonic through a later delete.
-      await t.mutation(api.lib.createEntry, {
+      await t.mutation(api.entries.createEntry, {
         data: {},
         geometry: JSON.stringify(pointC),
         schemaId,
       });
 
-      schemaDoc = await t.query(api.lib.getSchema, { schemaId });
+      schemaDoc = await t.query(api.schemas.getSchema, { schemaId });
       assertDefined(schemaDoc);
       expect(schemaDoc.featureCount).toBe(2);
       expect(schemaDoc.boundingBox).toStrictEqual([-5, -5, 10, 10]);
 
       // Delete the first entry: featureCount decrements exactly; bbox does NOT
       // shrink back (monotonic-growth contract — see schema.ts).
-      await t.mutation(api.lib.deleteEntry, { entryId });
+      await t.mutation(api.entries.deleteEntry, { entryId });
 
-      schemaDoc = await t.query(api.lib.getSchema, { schemaId });
+      schemaDoc = await t.query(api.schemas.getSchema, { schemaId });
       assertDefined(schemaDoc);
       expect(schemaDoc.featureCount).toBe(1);
       expect(schemaDoc.boundingBox).toStrictEqual([-5, -5, 10, 10]);
@@ -1344,20 +1371,20 @@ describe("json-cms component", () => {
     it("updateEntry with geometry: null explicitly clears geometry and decrements featureCount", async () => {
       const t = initConvexTest(),
         schemaId = await createGeospatialSchema(t, "Point"),
-        entryId = await t.mutation(api.lib.createEntry, {
+        entryId = await t.mutation(api.entries.createEntry, {
           data: {},
           geometry: JSON.stringify({ coordinates: [1, 1], type: "Point" }),
           schemaId,
         });
 
-      await t.mutation(api.lib.updateEntry, { data: {}, entryId, geometry: null });
+      await t.mutation(api.entries.updateEntry, { data: {}, entryId, geometry: null });
 
-      const entry = await t.query(api.lib.getEntry, { entryId });
+      const entry = await t.query(api.entries.getEntry, { entryId });
       assertDefined(entry);
       expect(entry.geometryId).toBeUndefined();
       expect(entry.geometryType).toBeUndefined();
 
-      const schemaDoc = await t.query(api.lib.getSchema, { schemaId });
+      const schemaDoc = await t.query(api.schemas.getSchema, { schemaId });
       assertDefined(schemaDoc);
       expect(schemaDoc.featureCount).toBe(0);
 
@@ -1369,7 +1396,7 @@ describe("json-cms component", () => {
       const t = initConvexTest(),
         schemaId = await createGeospatialSchema(t, "Point");
 
-      await t.mutation(api.lib.createEntry, {
+      await t.mutation(api.entries.createEntry, {
         data: {},
         geometry: JSON.stringify({ coordinates: [1, 1], type: "Point" }),
         schemaId,
@@ -1377,7 +1404,7 @@ describe("json-cms component", () => {
       // Sanity: the geometries row exists before deletion.
       expect(await listAllGeometries(t, schemaId)).toHaveLength(1);
 
-      await t.mutation(api.lib.deleteSchema, { schemaId });
+      await t.mutation(api.deletes.deleteSchema, { schemaId });
 
       // `listGeometries` 404s on the deleted schemaId (it checks schema
       // existence first), so inspect storage directly for orphans.
@@ -1394,7 +1421,7 @@ describe("json-cms component", () => {
       const t = initConvexTest(),
         schemaId = await createGeospatialSchema(t, "Point");
 
-      await t.mutation(api.lib.createEntriesBulk, {
+      await t.mutation(api.entries.createEntriesBulk, {
         entries: [
           { data: { n: 1 }, geometry: JSON.stringify({ coordinates: [0, 0], type: "Point" }) },
           { data: { n: 2 } }, // No geometry — should not affect featureCount/boundingBox.
@@ -1403,7 +1430,7 @@ describe("json-cms component", () => {
         schemaId,
       });
 
-      const schemaDoc = await t.query(api.lib.getSchema, { schemaId });
+      const schemaDoc = await t.query(api.schemas.getSchema, { schemaId });
       assertDefined(schemaDoc);
       expect(schemaDoc.featureCount).toBe(2);
       expect(schemaDoc.boundingBox).toStrictEqual([0, 0, 5, 5]);
@@ -1419,7 +1446,7 @@ describe("json-cms component", () => {
         // enough as JSON text to land inline (see INLINE_GEOMETRY_BYTE_LIMIT).
         ring = bigRing(10_000),
         geometry: GeometryArgs = { coordinates: [ring], type: "Polygon" },
-        entryId = await t.mutation(api.lib.createEntry, {
+        entryId = await t.mutation(api.entries.createEntry, {
           data: {},
           geometry: JSON.stringify(geometry),
           schemaId,
@@ -1449,7 +1476,7 @@ describe("json-cms component", () => {
         // pagination *mechanism* (cursors, page boundaries, no data lost)
         // rather than the production safety net itself. The safety net —
         // `maximumBytesRead: GEOMETRY_READ_BYTE_BUDGET` passed to every
-        // `.paginate()` call in `listGeometries`/lib.ts — was confirmed
+        // `.paginate()` call in `listGeometries`/entries.ts — was confirmed
         // separately against a real deployment (see the PR notes): the exact
         // failure this fixture models ("Too many bytes read in a single
         // function execution") reproduced against unpaginated `.collect()`
@@ -1468,7 +1495,7 @@ describe("json-cms component", () => {
 
         for (let i = 0; i < ROW_COUNT; i += 1) {
           // oxlint-disable-next-line no-await-in-loop -- seeding fixture rows; order doesn't matter but each is cheap and sequential is simplest here.
-          await t.mutation(api.lib.createEntry, {
+          await t.mutation(api.entries.createEntry, {
             data: { n: i },
             geometry: geometryJson,
             schemaId,
@@ -1478,7 +1505,7 @@ describe("json-cms component", () => {
         // A deliberately small requested page size proves the pagination
         // mechanism itself works: multiple calls are required, and none of
         // them silently reads (or returns) more than asked.
-        const firstPage = await t.query(api.lib.listGeometries, {
+        const firstPage = await t.query(api.entries.listGeometries, {
           paginationOpts: { cursor: null, numItems: 5 },
           schemaId,
         });
@@ -1504,7 +1531,7 @@ describe("json-cms component", () => {
         const t = initConvexTest(),
           schemaId = await createGeospatialSchema(t, "Point"),
           ROW_COUNT = 100;
-        await t.mutation(api.lib.createEntriesBulk, {
+        await t.mutation(api.entries.createEntriesBulk, {
           entries: Array.from({ length: ROW_COUNT }, (_, i) => ({
             data: { n: i },
             geometry: JSON.stringify({ coordinates: [i % 170, i % 80], type: "Point" }),
@@ -1512,7 +1539,7 @@ describe("json-cms component", () => {
           schemaId,
         });
 
-        const page = await t.query(api.lib.listGeometries, {
+        const page = await t.query(api.entries.listGeometries, {
           paginationOpts: { cursor: null, numItems: 200 },
           schemaId,
         });
@@ -1540,7 +1567,7 @@ describe("json-cms component", () => {
         expect(Math.floor(GEOMETRY_PAGE_BYTE_BUDGET / rowBytes)).toBeGreaterThan(8);
         expect(ROW_COUNT * rowBytes).toBeGreaterThan(GEOMETRY_PAGE_BYTE_BUDGET);
 
-        await t.mutation(api.lib.createEntriesBulk, {
+        await t.mutation(api.entries.createEntriesBulk, {
           entries: Array.from({ length: ROW_COUNT }, (_, i) => ({
             data: { n: i },
             geometry: geometryJson,
@@ -1548,7 +1575,7 @@ describe("json-cms component", () => {
           schemaId,
         });
 
-        const firstPage = await t.query(api.lib.listGeometries, {
+        const firstPage = await t.query(api.entries.listGeometries, {
           paginationOpts: { cursor: null, numItems: 200 },
           schemaId,
         });
@@ -1568,7 +1595,7 @@ describe("json-cms component", () => {
         const t = initConvexTest(),
           schemaId = await createGeospatialSchema(t, "Point"),
           ROW_COUNT = 505; // one more than the 500-row ceiling.
-        await t.mutation(api.lib.createEntriesBulk, {
+        await t.mutation(api.entries.createEntriesBulk, {
           entries: Array.from({ length: ROW_COUNT }, (_, i) => ({
             data: { n: i },
             geometry: JSON.stringify({ coordinates: [i % 170, i % 80], type: "Point" }),
@@ -1576,7 +1603,7 @@ describe("json-cms component", () => {
           schemaId,
         });
 
-        const firstPage = await t.query(api.lib.listGeometries, {
+        const firstPage = await t.query(api.entries.listGeometries, {
           paginationOpts: { cursor: null, numItems: 100_000 },
           schemaId,
         });
@@ -1603,7 +1630,7 @@ describe("json-cms component", () => {
 
         for (let i = 0; i < 3; i += 1) {
           // oxlint-disable-next-line no-await-in-loop
-          await t.mutation(api.lib.createEntry, {
+          await t.mutation(api.entries.createEntry, {
             data: { i },
             geometry: JSON.stringify({ coordinates: [i, i], type: "Point" }),
             schemaId: schemaA,
@@ -1611,7 +1638,7 @@ describe("json-cms component", () => {
         }
         for (let i = 0; i < 4; i += 1) {
           // oxlint-disable-next-line no-await-in-loop
-          await t.mutation(api.lib.createEntry, {
+          await t.mutation(api.entries.createEntry, {
             data: { i },
             geometry: JSON.stringify({ coordinates: [-i, -i], type: "Point" }),
             schemaId: schemaB,
@@ -1632,13 +1659,13 @@ describe("json-cms component", () => {
     it("create and list entries", async () => {
       const t = initConvexTest(),
         schemaId = await createTestSchema(t),
-        entryId = await t.mutation(api.lib.createEntry, {
+        entryId = await t.mutation(api.entries.createEntry, {
           data: { age: 30, name: "John" },
           schemaId,
         });
       expect(entryId).toBeDefined();
 
-      const entries = await t.query(api.lib.listEntries, { limit: 500, schemaId });
+      const entries = await t.query(api.entries.listEntries, { limit: 500, schemaId });
       expect(entries).toHaveLength(1);
       expect(entries[0].data).toStrictEqual({ age: 30, name: "John" });
       expect(entries[0].schemaId).toStrictEqual(schemaId);
@@ -1647,11 +1674,11 @@ describe("json-cms component", () => {
     it("get entry", async () => {
       const t = initConvexTest(),
         schemaId = await createTestSchema(t),
-        entryId = await t.mutation(api.lib.createEntry, {
+        entryId = await t.mutation(api.entries.createEntry, {
           data: { name: "John" },
           schemaId,
         }),
-        entry = await t.query(api.lib.getEntry, { entryId });
+        entry = await t.query(api.entries.getEntry, { entryId });
       assertDefined(entry);
       expect(entry.data).toStrictEqual({ name: "John" });
     });
@@ -1660,21 +1687,21 @@ describe("json-cms component", () => {
       const t = initConvexTest(),
         schemaId = await createTestSchema(t),
         // Create and delete an entry
-        entryId = await t.mutation(api.lib.createEntry, {
+        entryId = await t.mutation(api.entries.createEntry, {
           data: { name: "test" },
           schemaId,
         });
-      await t.mutation(api.lib.deleteEntry, { entryId });
+      await t.mutation(api.entries.deleteEntry, { entryId });
 
       // Now the ID should return null
-      const entry = await t.query(api.lib.getEntry, { entryId });
+      const entry = await t.query(api.entries.getEntry, { entryId });
       expect(entry).toBeNull();
     });
 
     it("create entries in bulk", async () => {
       const t = initConvexTest(),
         schemaId = await createTestSchema(t),
-        ids = await t.mutation(api.lib.createEntriesBulk, {
+        ids = await t.mutation(api.entries.createEntriesBulk, {
           entries: [
             { data: { name: "John" } },
             { data: { name: "Jane" } },
@@ -1684,24 +1711,24 @@ describe("json-cms component", () => {
         });
       expect(ids).toHaveLength(3);
 
-      const entries = await t.query(api.lib.listEntries, { limit: 500, schemaId });
+      const entries = await t.query(api.entries.listEntries, { limit: 500, schemaId });
       expect(entries).toHaveLength(3);
     });
 
     it("update entry", async () => {
       const t = initConvexTest(),
         schemaId = await createTestSchema(t),
-        entryId = await t.mutation(api.lib.createEntry, {
+        entryId = await t.mutation(api.entries.createEntry, {
           data: { age: 30, name: "John" },
           schemaId,
         });
 
-      await t.mutation(api.lib.updateEntry, {
+      await t.mutation(api.entries.updateEntry, {
         data: { age: 31, name: "John" },
         entryId,
       });
 
-      const entry = await t.query(api.lib.getEntry, { entryId });
+      const entry = await t.query(api.entries.getEntry, { entryId });
       assertDefined(entry);
       expect(entry.data).toStrictEqual({ age: 31, name: "John" });
     });
@@ -1709,14 +1736,14 @@ describe("json-cms component", () => {
     it("delete entry", async () => {
       const t = initConvexTest(),
         schemaId = await createTestSchema(t),
-        entryId = await t.mutation(api.lib.createEntry, {
+        entryId = await t.mutation(api.entries.createEntry, {
           data: { name: "John" },
           schemaId,
         });
 
-      await t.mutation(api.lib.deleteEntry, { entryId });
+      await t.mutation(api.entries.deleteEntry, { entryId });
 
-      const entry = await t.query(api.lib.getEntry, { entryId });
+      const entry = await t.query(api.entries.getEntry, { entryId });
       expect(entry).toBeNull();
     });
 
@@ -1724,21 +1751,21 @@ describe("json-cms component", () => {
       const t = initConvexTest(),
         schemaId = await createTestSchema(t);
 
-      await t.mutation(api.lib.createEntry, {
+      await t.mutation(api.entries.createEntry, {
         data: { name: "John" },
         schemaId,
       });
-      await t.mutation(api.lib.createEntry, {
+      await t.mutation(api.entries.createEntry, {
         data: { name: "Jane" },
         schemaId,
       });
 
-      const count = await t.mutation(api.lib.deleteEntriesBySchema, {
+      const count = await t.mutation(api.entries.deleteEntriesBySchema, {
         schemaId,
       });
       expect(count).toBe(2);
 
-      const entries = await t.query(api.lib.listEntries, { limit: 500, schemaId });
+      const entries = await t.query(api.entries.listEntries, { limit: 500, schemaId });
       expect(entries).toHaveLength(0);
     });
   });
@@ -1767,19 +1794,19 @@ describe("json-cms component", () => {
         // One bulk seed — convex-test bumps `_creationTime` on ties in
         // insertion order, so the page order is deterministic here.
         names = ["a", "b", "c", "d", "e"];
-      await t.mutation(api.lib.createEntriesBulk, {
+      await t.mutation(api.entries.createEntriesBulk, {
         entries: names.map((name) => ({ data: { name } })),
         schemaId,
       });
 
-      const page1 = await t.query(api.lib.listEntriesPage, {
+      const page1 = await t.query(api.entries.listEntriesPage, {
         paginationOpts: { cursor: null, numItems: 3 },
         schemaId,
       });
       expect(pageNames(page1)).toStrictEqual(["e", "d", "c"]);
       expect(page1.isDone).toBe(false);
 
-      const page2 = await t.query(api.lib.listEntriesPage, {
+      const page2 = await t.query(api.entries.listEntriesPage, {
         paginationOpts: { cursor: page1.continueCursor, numItems: 3 },
         schemaId,
       });
@@ -1790,9 +1817,9 @@ describe("json-cms component", () => {
     it("listEntriesPage throws for a deleted schema", async () => {
       const t = initConvexTest(),
         schemaId = await createTestSchema(t);
-      await t.mutation(api.lib.deleteSchema, { schemaId });
+      await t.mutation(api.deletes.deleteSchema, { schemaId });
       await expect(
-        t.query(api.lib.listEntriesPage, {
+        t.query(api.entries.listEntriesPage, {
           paginationOpts: { cursor: null, numItems: 10 },
           schemaId,
         }),
@@ -1804,43 +1831,45 @@ describe("json-cms component", () => {
         schemaId = await createTestSchema(t);
       expect(await getSchemaEntryCount(t, schemaId)).toBe(0);
 
-      const firstId = await t.mutation(api.lib.createEntry, {
+      const firstId = await t.mutation(api.entries.createEntry, {
         data: { name: "John" },
         schemaId,
       });
       expect(await getSchemaEntryCount(t, schemaId)).toBe(1);
 
-      await t.mutation(api.lib.createEntriesBulk, {
+      await t.mutation(api.entries.createEntriesBulk, {
         entries: [{ data: { name: "A" } }, { data: { name: "B" } }],
         schemaId,
       });
       expect(await getSchemaEntryCount(t, schemaId)).toBe(3);
 
       // A data-only UPDATE must not touch the count.
-      await t.mutation(api.lib.updateEntry, { data: { name: "Johnny" }, entryId: firstId });
+      await t.mutation(api.entries.updateEntry, { data: { name: "Johnny" }, entryId: firstId });
       expect(await getSchemaEntryCount(t, schemaId)).toBe(3);
 
-      await t.mutation(api.lib.deleteEntry, { entryId: firstId });
+      await t.mutation(api.entries.deleteEntry, { entryId: firstId });
       expect(await getSchemaEntryCount(t, schemaId)).toBe(2);
 
-      await t.mutation(api.lib.deleteEntriesBySchema, { schemaId });
+      await t.mutation(api.entries.deleteEntriesBySchema, { schemaId });
       expect(await getSchemaEntryCount(t, schemaId)).toBe(0);
     });
 
     it("addSchemaToCollection stamps the dataset kind onto the membership row", async () => {
       const t = initConvexTest(),
         schemaId = await createGeospatialSchema(t, "Point"),
-        collectionId = await t.mutation(api.lib.createCollection, { name: "Geo collection" });
-      await t.mutation(api.lib.addSchemaToCollection, { collectionId, schemaId });
+        collectionId = await t.mutation(api.collections.createCollection, {
+          name: "Geo collection",
+        });
+      await t.mutation(api.collections.addSchemaToCollection, { collectionId, schemaId });
       expect((await getMembershipRow(t, schemaId)).kind).toBe("geospatial");
     });
 
     it("backfillDatasetSummaries repairs pre-field counts and membership kinds", async () => {
       const t = initConvexTest(),
         schemaId = await createTestSchema(t),
-        collectionId = await t.mutation(api.lib.createCollection, { name: "Collection" });
-      await t.mutation(api.lib.addSchemaToCollection, { collectionId, schemaId });
-      await t.mutation(api.lib.createEntriesBulk, {
+        collectionId = await t.mutation(api.collections.createCollection, { name: "Collection" });
+      await t.mutation(api.collections.addSchemaToCollection, { collectionId, schemaId });
+      await t.mutation(api.entries.createEntriesBulk, {
         entries: [{ data: { name: "A" } }, { data: { name: "B" } }, { data: { name: "C" } }],
         schemaId,
       });
@@ -1857,7 +1886,7 @@ describe("json-cms component", () => {
         }
       });
 
-      const stats = await t.mutation(api.lib.backfillDatasetSummaries, {});
+      const stats = await t.mutation(api.entries.backfillDatasetSummaries, {});
       expect(stats.schemasPatched).toBe(1);
       expect(stats.membershipsPatched).toBe(1);
       expect(await getSchemaEntryCount(t, schemaId)).toBe(3);
@@ -1867,11 +1896,11 @@ describe("json-cms component", () => {
     it("listEntriesForIds returns only existing entries, deduplicated", async () => {
       const t = initConvexTest(),
         schemaId = await createTestSchema(t),
-        kept = await t.mutation(api.lib.createEntry, { data: { name: "kept" }, schemaId }),
-        deleted = await t.mutation(api.lib.createEntry, { data: { name: "gone" }, schemaId });
-      await t.mutation(api.lib.deleteEntry, { entryId: deleted });
+        kept = await t.mutation(api.entries.createEntry, { data: { name: "kept" }, schemaId }),
+        deleted = await t.mutation(api.entries.createEntry, { data: { name: "gone" }, schemaId });
+      await t.mutation(api.entries.deleteEntry, { entryId: deleted });
 
-      const rows = await t.query(api.lib.listEntriesForIds, {
+      const rows = await t.query(api.entries.listEntriesForIds, {
         entryIds: [kept, deleted, kept],
         viewerId: VIEWER,
       });
@@ -1882,9 +1911,9 @@ describe("json-cms component", () => {
     it("listEntriesForIds rejects oversized id lists", async () => {
       const t = initConvexTest(),
         schemaId = await createTestSchema(t),
-        entryId = await t.mutation(api.lib.createEntry, { data: { name: "x" }, schemaId });
+        entryId = await t.mutation(api.entries.createEntry, { data: { name: "x" }, schemaId });
       await expect(
-        t.query(api.lib.listEntriesForIds, {
+        t.query(api.entries.listEntriesForIds, {
           entryIds: Array.from({ length: 201 }, () => entryId),
           viewerId: VIEWER,
         }),
@@ -1894,21 +1923,21 @@ describe("json-cms component", () => {
     it("listEntriesByCollection limit caps rows per dataset", async () => {
       const t = initConvexTest(),
         schemaId = await createGeospatialSchema(t, "Point"),
-        collectionId = await t.mutation(api.lib.createCollection, { name: "Collection" });
-      await t.mutation(api.lib.addSchemaToCollection, { collectionId, schemaId });
-      await t.mutation(api.lib.createEntriesBulk, {
+        collectionId = await t.mutation(api.collections.createCollection, { name: "Collection" });
+      await t.mutation(api.collections.addSchemaToCollection, { collectionId, schemaId });
+      await t.mutation(api.entries.createEntriesBulk, {
         entries: [{ data: { name: "A" } }, { data: { name: "B" } }, { data: { name: "C" } }],
         schemaId,
       });
 
-      const capped = await t.query(api.lib.listEntriesByCollection, {
+      const capped = await t.query(api.entries.listEntriesByCollection, {
         collectionId,
         limit: 2,
         viewerId: VIEWER,
       });
       expect(capped).toHaveLength(2);
 
-      const all = await t.query(api.lib.listEntriesByCollection, {
+      const all = await t.query(api.entries.listEntriesByCollection, {
         collectionId,
         limit: 500,
         viewerId: VIEWER,
@@ -1936,7 +1965,7 @@ describe("json-cms component", () => {
         };
       }
 
-      await expect(t.mutation(api.lib.createSchema, { schema: largeSchema })).rejects.toThrow(
+      await expect(t.mutation(api.schemas.createSchema, { schema: largeSchema })).rejects.toThrow(
         "Schema exceeds the 100 KB size limit",
       );
     });
@@ -1948,7 +1977,7 @@ describe("json-cms component", () => {
           title: "Test Schema",
           type: "object",
         },
-        schemaId = await t.mutation(api.lib.createSchema, {
+        schemaId = await t.mutation(api.schemas.createSchema, {
           schema: testSchema,
         }),
         largeSchema = {
@@ -1966,7 +1995,7 @@ describe("json-cms component", () => {
       }
 
       await expect(
-        t.mutation(api.lib.updateSchema, {
+        t.mutation(api.schemas.updateSchema, {
           schema: largeSchema,
           schemaId,
         }),
@@ -1977,14 +2006,14 @@ describe("json-cms component", () => {
   describe("integration", () => {
     it("multiple schemas with entries are isolated", async () => {
       const t = initConvexTest(),
-        schemaId1 = await t.mutation(api.lib.createSchema, {
+        schemaId1 = await t.mutation(api.schemas.createSchema, {
           schema: {
             description: "First schema",
             title: "Schema 1",
             type: "object",
           },
         }),
-        schemaId2 = await t.mutation(api.lib.createSchema, {
+        schemaId2 = await t.mutation(api.schemas.createSchema, {
           schema: {
             description: "Second schema",
             title: "Schema 2",
@@ -1992,21 +2021,21 @@ describe("json-cms component", () => {
           },
         });
 
-      await t.mutation(api.lib.createEntry, {
+      await t.mutation(api.entries.createEntry, {
         data: { source: "schema1" },
         schemaId: schemaId1,
       });
 
-      await t.mutation(api.lib.createEntry, {
+      await t.mutation(api.entries.createEntry, {
         data: { source: "schema2" },
         schemaId: schemaId2,
       });
 
-      const entries1 = await t.query(api.lib.listEntries, {
+      const entries1 = await t.query(api.entries.listEntries, {
           limit: 500,
           schemaId: schemaId1,
         }),
-        entries2 = await t.query(api.lib.listEntries, {
+        entries2 = await t.query(api.entries.listEntries, {
           limit: 500,
           schemaId: schemaId2,
         });
@@ -2019,7 +2048,7 @@ describe("json-cms component", () => {
 
     it("entries are ordered by creation time descending", async () => {
       const t = initConvexTest(),
-        schemaId = await t.mutation(api.lib.createSchema, {
+        schemaId = await t.mutation(api.schemas.createSchema, {
           schema: {
             description: "A test schema",
             title: "Test Schema",
@@ -2028,26 +2057,26 @@ describe("json-cms component", () => {
         });
 
       // Create entries with timestamps
-      await t.mutation(api.lib.createEntry, {
+      await t.mutation(api.entries.createEntry, {
         data: { order: 1 },
         schemaId,
       });
 
       vi.advanceTimersByTime(1000);
 
-      await t.mutation(api.lib.createEntry, {
+      await t.mutation(api.entries.createEntry, {
         data: { order: 2 },
         schemaId,
       });
 
       vi.advanceTimersByTime(1000);
 
-      await t.mutation(api.lib.createEntry, {
+      await t.mutation(api.entries.createEntry, {
         data: { order: 3 },
         schemaId,
       });
 
-      const entries = await t.query(api.lib.listEntries, { limit: 500, schemaId });
+      const entries = await t.query(api.entries.listEntries, { limit: 500, schemaId });
 
       // Should be in reverse order (newest first)
       expect(entries[0].data.order).toBe(3);
@@ -2076,12 +2105,12 @@ describe("json-cms component", () => {
         schemaId = await createImportSchema(t),
         chunk = Array.from({ length: 300 }, (_, i) => ({ data: { name: `row-${i}` } }));
 
-      await t.mutation(internal.lib.insertEntriesChunkInternal, {
+      await t.mutation(internal.imports.insertEntriesChunkInternal, {
         dataArray: chunk,
         schemaId,
       });
 
-      const entries = await t.query(api.lib.listEntries, { limit: 500, schemaId });
+      const entries = await t.query(api.entries.listEntries, { limit: 500, schemaId });
       expect(entries).toHaveLength(chunk.length);
     });
 
@@ -2090,10 +2119,10 @@ describe("json-cms component", () => {
         schemaId = await createImportSchema(t),
         chunkRows = Array.from({ length: 500 }, (_, i) => ({ data: { name: `row-${i}` } })),
         storageId = await storeRows(t, chunkRows),
-        inserted = await t.action(internal.lib.insertChunkFromStorage, { schemaId, storageId });
+        inserted = await t.action(internal.imports.insertChunkFromStorage, { schemaId, storageId });
       expect(inserted).toBe(500);
 
-      const entries = await t.query(api.lib.listEntries, { limit: 500, schemaId });
+      const entries = await t.query(api.entries.listEntries, { limit: 500, schemaId });
       expect(entries).toHaveLength(500);
 
       // The chunk blob is deleted once its rows are inserted (import-litter cleanup).
@@ -2107,10 +2136,10 @@ describe("json-cms component", () => {
         chunk = await issuedChunk(t, schemaId, [{ name: "a" }]);
 
       // Delete the schema so startImport can't find it.
-      await t.mutation(api.lib.deleteSchema, { schemaId });
+      await t.mutation(api.deletes.deleteSchema, { schemaId });
 
       await expect(
-        t.mutation(api.lib.startImport, { chunks: [chunk], schemaId, total: 1 }),
+        t.mutation(api.imports.startImport, { chunks: [chunk], schemaId, total: 1 }),
       ).rejects.toThrow("Schema not found");
     });
 
@@ -2121,7 +2150,7 @@ describe("json-cms component", () => {
         geometry = { coordinates: [ring], type: "Polygon" },
         storageId = await storeRows(t, [{ data: { name: "big" }, geometry }]);
 
-      await t.action(internal.lib.insertChunkFromStorage, { schemaId, storageId });
+      await t.action(internal.imports.insertChunkFromStorage, { schemaId, storageId });
 
       const geometries = await listAllGeometries(t, schemaId);
       expect(geometries).toHaveLength(1);
@@ -2140,7 +2169,7 @@ describe("json-cms component", () => {
       expect(geometryJsonSize).toBeGreaterThan(INLINE_GEOMETRY_BYTE_LIMIT);
 
       const storageId = await storeRows(t, [{ data: { name: "huge" }, geometry }]);
-      await t.action(internal.lib.insertChunkFromStorage, { schemaId, storageId });
+      await t.action(internal.imports.insertChunkFromStorage, { schemaId, storageId });
 
       const geometries = await listAllGeometries(t, schemaId);
       expect(geometries).toHaveLength(1);
@@ -2185,7 +2214,7 @@ describe("json-cms component", () => {
         // oxlint-disable-next-line no-await-in-loop -- each chunk needs its own storage blob before its insert action runs.
         const storageId = await storeRows(t, chunk);
         // oxlint-disable-next-line no-await-in-loop
-        totalInserted += await t.action(internal.lib.insertChunkFromStorage, {
+        totalInserted += await t.action(internal.imports.insertChunkFromStorage, {
           schemaId,
           storageId,
         });
@@ -2198,7 +2227,7 @@ describe("json-cms component", () => {
       const doc = await t.run(async (ctx) => ctx.db.get(schemaId));
       assertDefined(doc);
       expect(doc.entryCount).toBe(1200);
-      expect(await t.query(api.lib.listEntries, { limit: 500, schemaId })).toHaveLength(500);
+      expect(await t.query(api.entries.listEntries, { limit: 500, schemaId })).toHaveLength(500);
     });
 
     it("rejects a chunk atomically when one of its rows has an invalid geometry, before writing any of that chunk's rows", async () => {
@@ -2210,10 +2239,10 @@ describe("json-cms component", () => {
         ]);
 
       await expect(
-        t.action(internal.lib.insertChunkFromStorage, { schemaId, storageId }),
+        t.action(internal.imports.insertChunkFromStorage, { schemaId, storageId }),
       ).rejects.toThrow(/Row 1/);
 
-      const entries = await t.query(api.lib.listEntries, { limit: 500, schemaId });
+      const entries = await t.query(api.entries.listEntries, { limit: 500, schemaId });
       expect(entries).toHaveLength(0);
     });
 
@@ -2227,12 +2256,15 @@ describe("json-cms component", () => {
           { data: { n: 2 }, geometry: { coordinates: [200, 0], type: "Point" } }, // out-of-range longitude
         ]);
 
-      await t.action(internal.lib.insertChunkFromStorage, { schemaId, storageId: goodStorageId });
+      await t.action(internal.imports.insertChunkFromStorage, {
+        schemaId,
+        storageId: goodStorageId,
+      });
       await expect(
-        t.action(internal.lib.insertChunkFromStorage, { schemaId, storageId: badStorageId }),
+        t.action(internal.imports.insertChunkFromStorage, { schemaId, storageId: badStorageId }),
       ).rejects.toThrow(/Row 0/);
 
-      const entries = await t.query(api.lib.listEntries, { limit: 500, schemaId });
+      const entries = await t.query(api.entries.listEntries, { limit: 500, schemaId });
       expect(entries).toHaveLength(1);
     });
   });
@@ -2246,7 +2278,7 @@ describe("json-cms component", () => {
 
     it("startGeospatialConversion rejects converting an already-geospatial dataset", async () => {
       const t = initConvexTest(),
-        schemaId = await t.mutation(api.lib.createSchema, {
+        schemaId = await t.mutation(api.schemas.createSchema, {
           geometryType: "Point",
           kind: "geospatial",
           schema: {
@@ -2261,7 +2293,7 @@ describe("json-cms component", () => {
         });
 
       await expect(
-        t.mutation(api.lib.startGeospatialConversion, {
+        t.mutation(api.geospatial.startGeospatialConversion, {
           latField: "Latitude",
           lonField: "Longitude",
           schemaId,
@@ -2282,13 +2314,13 @@ describe("json-cms component", () => {
         createdIds = [];
       for (const data of rows) {
         // oxlint-disable-next-line no-await-in-loop -- sequential inserts keep createdIds aligned with rows.
-        createdIds.push(await t.mutation(api.lib.createEntry, { data, schemaId }));
+        createdIds.push(await t.mutation(api.entries.createEntry, { data, schemaId }));
       }
 
       const geocoded = await runConversion(t, schemaId);
       expect(geocoded).toBe(2);
 
-      const entries = await t.query(api.lib.listEntries, { limit: 500, schemaId });
+      const entries = await t.query(api.entries.listEntries, { limit: 500, schemaId });
       expect(entries).toHaveLength(rows.length);
       for (const [i, id] of createdIds.entries()) {
         const entry = entries.find((e) => e._id === id);
@@ -2319,12 +2351,12 @@ describe("json-cms component", () => {
     it("createSchema stores simplifyGeometry for geospatial datasets and rejects it for standard ones", async () => {
       const t = initConvexTest(),
         schemaId = await createGeospatialSchema(t, "Polygon", { simplifyGeometry: true }),
-        stored = await t.query(api.lib.getSchema, { schemaId });
+        stored = await t.query(api.schemas.getSchema, { schemaId });
       assertDefined(stored);
       expect(stored.simplifyGeometry).toBe(true);
 
       await expect(
-        t.mutation(api.lib.createSchema, {
+        t.mutation(api.schemas.createSchema, {
           kind: "standard",
           schema: { title: "Plain", type: "object" },
           simplifyGeometry: true,
@@ -2338,12 +2370,12 @@ describe("json-cms component", () => {
         exactSchemaId = await createGeospatialSchema(t, "Point"),
         geometry = { coordinates: [0.123456789, 0.987654321], type: "Point" };
 
-      await t.mutation(api.lib.createEntry, {
+      await t.mutation(api.entries.createEntry, {
         data: { n: 1 },
         geometry: JSON.stringify(geometry),
         schemaId: simplifiedSchemaId,
       });
-      await t.mutation(api.lib.createEntry, {
+      await t.mutation(api.entries.createEntry, {
         data: { n: 2 },
         geometry: JSON.stringify(geometry),
         schemaId: exactSchemaId,
@@ -2380,8 +2412,14 @@ describe("json-cms component", () => {
         blobGeometry = { coordinates: [hugeRing], type: "Polygon" },
         inlineStorageId = await storeRows(t, [{ data: { n: 1 }, geometry: inlineGeometry }]),
         blobStorageId = await storeRows(t, [{ data: { n: 2 }, geometry: blobGeometry }]);
-      await t.action(internal.lib.insertChunkFromStorage, { schemaId, storageId: inlineStorageId });
-      await t.action(internal.lib.insertChunkFromStorage, { schemaId, storageId: blobStorageId });
+      await t.action(internal.imports.insertChunkFromStorage, {
+        schemaId,
+        storageId: inlineStorageId,
+      });
+      await t.action(internal.imports.insertChunkFromStorage, {
+        schemaId,
+        storageId: blobStorageId,
+      });
 
       const before = await listAllGeometries(t, schemaId);
       expect(before).toHaveLength(2);
@@ -2394,7 +2432,7 @@ describe("json-cms component", () => {
         return row.geometryStorageId;
       });
 
-      const result = await t.action(internal.lib.simplifyGeometryBatchInternal, {
+      const result = await t.action(internal.geospatial.simplifyGeometryBatchInternal, {
         cursor: null,
         schemaId,
       });
@@ -2439,9 +2477,9 @@ describe("json-cms component", () => {
     it("startSimplification rejects a standard dataset", async () => {
       const t = initConvexTest(),
         schemaId = await createImportSchema(t);
-      await expect(t.mutation(api.lib.startSimplification, { schemaId, total: 1 })).rejects.toThrow(
-        "Only a geospatial dataset can simplify geometry.",
-      );
+      await expect(
+        t.mutation(api.geospatial.startSimplification, { schemaId, total: 1 }),
+      ).rejects.toThrow("Only a geospatial dataset can simplify geometry.");
     });
 
     it("deleteSchema also deletes the retained source-file blob", async () => {
@@ -2454,7 +2492,7 @@ describe("json-cms component", () => {
         await ctx.db.patch(schemaId, { sourceFileStorageId });
       });
 
-      await t.mutation(api.lib.deleteSchema, { schemaId });
+      await t.mutation(api.deletes.deleteSchema, { schemaId });
 
       const stillThere = await t.run(async (ctx) => ctx.storage.get(sourceFileStorageId));
       expect(stillThere).toBeNull();
@@ -2469,7 +2507,7 @@ describe("json-cms component", () => {
     // simplify batches and `deleteEntriesBySchema` — NOT data-only property
     // edits, which never touch stored coordinates.
     async function versionOf(t: TestCtx, schemaId: Id<"schemas">): Promise<number | undefined> {
-      const schemaDoc = await t.query(api.lib.getSchema, { schemaId });
+      const schemaDoc = await t.query(api.schemas.getSchema, { schemaId });
       assertDefined(schemaDoc);
       return schemaDoc.mapTileCacheVersion;
     }
@@ -2483,7 +2521,7 @@ describe("json-cms component", () => {
         schemaId = await createGeospatialSchema(t, "Point"),
         pointA = { coordinates: [0, 0], type: "Point" },
         pointB = { coordinates: [1, 1], type: "Point" },
-        entryId = await t.mutation(api.lib.createEntry, {
+        entryId = await t.mutation(api.entries.createEntry, {
           data: { n: 1 },
           geometry: JSON.stringify(pointA),
           schemaId,
@@ -2492,33 +2530,33 @@ describe("json-cms component", () => {
       expect(await versionOf(t, schemaId)).toBe(1);
 
       // A data-only edit (no `geometry` arg) never touches coordinates.
-      await t.mutation(api.lib.updateEntry, { data: { n: 2 }, entryId });
+      await t.mutation(api.entries.updateEntry, { data: { n: 2 }, entryId });
       expect(await versionOf(t, schemaId)).toBe(1);
 
-      await t.mutation(api.lib.updateEntry, {
+      await t.mutation(api.entries.updateEntry, {
         data: { n: 2 },
         entryId,
         geometry: JSON.stringify(pointB),
       });
       expect(await versionOf(t, schemaId)).toBe(2);
 
-      await t.mutation(api.lib.updateEntry, { data: { n: 2 }, entryId, geometry: null });
+      await t.mutation(api.entries.updateEntry, { data: { n: 2 }, entryId, geometry: null });
       expect(await versionOf(t, schemaId)).toBe(3);
 
       // Deleting an entry whose geometry is ALREADY gone is not
       // geometry-affecting (nothing maintains featureCount/boundingBox) —
       // no bump. Deleting one that still has a geometry is.
-      const secondId = await t.mutation(api.lib.createEntry, {
+      const secondId = await t.mutation(api.entries.createEntry, {
         data: { n: 3 },
         geometry: JSON.stringify(pointA),
         schemaId,
       });
       expect(await versionOf(t, schemaId)).toBe(4);
 
-      await t.mutation(api.lib.deleteEntry, { entryId });
+      await t.mutation(api.entries.deleteEntry, { entryId });
       expect(await versionOf(t, schemaId)).toBe(4);
 
-      await t.mutation(api.lib.deleteEntry, { entryId: secondId });
+      await t.mutation(api.entries.deleteEntry, { entryId: secondId });
       expect(await versionOf(t, schemaId)).toBe(5);
     });
 
@@ -2529,7 +2567,7 @@ describe("json-cms component", () => {
       expect(await versionOf(t, schemaId)).toBeUndefined();
 
       // …and the first geometry write lands at 1, not 2.
-      await t.mutation(api.lib.createEntry, {
+      await t.mutation(api.entries.createEntry, {
         data: { n: 1 },
         geometry: JSON.stringify({ coordinates: [0, 0], type: "Point" }),
         schemaId,
@@ -2538,7 +2576,7 @@ describe("json-cms component", () => {
 
       // A standard dataset's entries carry no geometry — no bumps, ever.
       const standardId = await createTestSchema(t);
-      await t.mutation(api.lib.createEntry, { data: { name: "plain" }, schemaId: standardId });
+      await t.mutation(api.entries.createEntry, { data: { name: "plain" }, schemaId: standardId });
       expect(await versionOf(t, standardId)).toBeUndefined();
     });
 
@@ -2547,7 +2585,7 @@ describe("json-cms component", () => {
         schemaId = await createGeospatialSchema(t, "Point"),
         point = { coordinates: [0.5, 0.5], type: "Point" };
 
-      await t.mutation(internal.lib.insertEntriesChunkInternal, {
+      await t.mutation(internal.imports.insertEntriesChunkInternal, {
         dataArray: [
           {
             data: { n: 1 },
@@ -2563,7 +2601,7 @@ describe("json-cms component", () => {
       const afterChunkOne = await versionOf(t, schemaId);
       expect(afterChunkOne).toBe(1);
 
-      await t.mutation(internal.lib.insertEntriesChunkInternal, {
+      await t.mutation(internal.imports.insertEntriesChunkInternal, {
         dataArray: [
           {
             data: { n: 3 },
@@ -2585,13 +2623,13 @@ describe("json-cms component", () => {
             geometry: { coordinates: [0.123456789012, 0.987654321098], type: "Point" },
           },
         ]);
-      await t.action(internal.lib.insertChunkFromStorage, {
+      await t.action(internal.imports.insertChunkFromStorage, {
         schemaId: simplifySchemaId,
         storageId: noisyStorageId,
       });
       expect(await versionOf(t, simplifySchemaId)).toBe(1);
 
-      const result = await t.action(internal.lib.simplifyGeometryBatchInternal, {
+      const result = await t.action(internal.geospatial.simplifyGeometryBatchInternal, {
         cursor: null,
         schemaId: simplifySchemaId,
       });
@@ -2602,7 +2640,7 @@ describe("json-cms component", () => {
     it("deleteEntriesBySchema deletes the archive blob, clears the archive fields, and bumps the cache version monotonically", async () => {
       const t = initConvexTest(),
         schemaId = await createGeospatialSchema(t, "Point");
-      await t.mutation(api.lib.createEntry, {
+      await t.mutation(api.entries.createEntry, {
         data: { n: 1 },
         geometry: JSON.stringify({ coordinates: [0, 0], type: "Point" }),
         schemaId,
@@ -2610,16 +2648,16 @@ describe("json-cms component", () => {
       const archiveStorageId = await t.run(async (ctx) =>
         ctx.storage.store(new Blob(["pmtiles"], { type: "application/octet-stream" })),
       );
-      await t.mutation(api.lib.setMapTileArchive, {
+      await t.mutation(api.schemas.setMapTileArchive, {
         bytes: 7,
         expectedVersion: 1,
         maxZoom: 14,
         schemaId,
         storageId: archiveStorageId,
       });
-      assertDefined(await t.query(api.lib.getMapTileArchiveMeta, { schemaId }));
+      assertDefined(await t.query(api.schemas.getMapTileArchiveMeta, { schemaId }));
 
-      await t.mutation(api.lib.deleteEntriesBySchema, { schemaId });
+      await t.mutation(api.entries.deleteEntriesBySchema, { schemaId });
 
       // The reset is checked on the STORED doc — the public `getSchema` view
       // deliberately never carries the storage pointer (issue #131). The
@@ -2629,14 +2667,14 @@ describe("json-cms component", () => {
       const stored = await t.run(async (ctx) => ctx.db.get(schemaId));
       assertDefined(stored);
       expect(stored.mapTileArchiveStorageId).toBeUndefined();
-      const schemaDoc = await t.query(api.lib.getSchema, { schemaId });
+      const schemaDoc = await t.query(api.schemas.getSchema, { schemaId });
       assertDefined(schemaDoc);
       expect(schemaDoc.mapTileArchiveBytes).toBeUndefined();
       expect(schemaDoc.mapTileArchiveMaxZoom).toBeUndefined();
       expect(schemaDoc.mapTileArchiveBuiltVersion).toBeUndefined();
       expect(schemaDoc.mapTileArchiveFormat).toBeUndefined();
       expect(schemaDoc.mapTileCacheVersion).toBe(2);
-      expect(await t.query(api.lib.getMapTileArchiveMeta, { schemaId })).toBeNull();
+      expect(await t.query(api.schemas.getMapTileArchiveMeta, { schemaId })).toBeNull();
       const stillThere = await t.run(async (ctx) => ctx.storage.get(archiveStorageId));
       expect(stillThere).toBeNull();
     });
@@ -2647,7 +2685,7 @@ describe("json-cms component", () => {
         archiveStorageId = await t.run(async (ctx) =>
           ctx.storage.store(new Blob(["pmtiles"], { type: "application/octet-stream" })),
         );
-      await t.mutation(api.lib.setMapTileArchive, {
+      await t.mutation(api.schemas.setMapTileArchive, {
         bytes: 7,
         expectedVersion: 0,
         maxZoom: 14,
@@ -2655,7 +2693,7 @@ describe("json-cms component", () => {
         storageId: archiveStorageId,
       });
 
-      await t.mutation(api.lib.deleteSchema, { schemaId });
+      await t.mutation(api.deletes.deleteSchema, { schemaId });
 
       const stillThere = await t.run(async (ctx) => ctx.storage.get(archiveStorageId));
       expect(stillThere).toBeNull();
@@ -2670,7 +2708,7 @@ describe("json-cms component", () => {
         // Absent-version rows read as version 0, so the install matches —
         // and writes the version explicitly, keeping "archive present ⇒
         // version present" for the meta query.
-        const meta = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
+        const meta = await t.query(api.schemas.getMapTileArchiveMeta, { schemaId });
         assertDefined(meta);
         // The meta carries NO storage id (issue #131).
         expect("storageId" in meta).toBe(false);
@@ -2691,14 +2729,14 @@ describe("json-cms component", () => {
           storageId = await installArchive(t, schemaId, 0, "built-at-0");
 
         // Fresh install: built-at version equals the live counter.
-        const before = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
+        const before = await t.query(api.schemas.getMapTileArchiveMeta, { schemaId });
         assertDefined(before);
         expect(before.version).toBe(0);
-        const rowBefore = await t.query(api.lib.getSchema, { schemaId });
+        const rowBefore = await t.query(api.schemas.getSchema, { schemaId });
         assertDefined(rowBefore);
         expect(rowBefore.mapTileCacheVersion).toBe(0);
 
-        await t.mutation(api.lib.createEntry, {
+        await t.mutation(api.entries.createEntry, {
           data: { n: 1 },
           geometry: JSON.stringify({ coordinates: [0, 0], type: "Point" }),
           schemaId,
@@ -2707,10 +2745,10 @@ describe("json-cms component", () => {
         // The edit bumped the row's counter but not the archive's built-at
         // snapshot — meta.version falls behind, which the rebuild worker's
         // stale-on-view trigger reads as "rebuild".
-        const meta = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
+        const meta = await t.query(api.schemas.getMapTileArchiveMeta, { schemaId });
         assertDefined(meta);
         expect(meta.version).toBe(0);
-        const row = await t.query(api.lib.getSchema, { schemaId });
+        const row = await t.query(api.schemas.getSchema, { schemaId });
         assertDefined(row);
         expect(row.mapTileCacheVersion).toBe(1);
         const stored = await t.run(async (ctx) => ctx.db.get(schemaId));
@@ -2725,7 +2763,7 @@ describe("json-cms component", () => {
 
         // Fresh installs always stamp the current format, so a current
         // archive serves normally...
-        const fresh = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
+        const fresh = await t.query(api.schemas.getMapTileArchiveMeta, { schemaId });
         assertDefined(fresh);
         expect(fresh.version).toBe(0);
         // Post-#131 the meta carries no storage id — the url is the
@@ -2742,7 +2780,7 @@ describe("json-cms component", () => {
         await t.run(async (ctx) => {
           await ctx.db.patch(schemaId, { mapTileArchiveFormat: undefined });
         });
-        expect(await t.query(api.lib.getMapTileArchiveMeta, { schemaId })).toBeNull();
+        expect(await t.query(api.schemas.getMapTileArchiveMeta, { schemaId })).toBeNull();
 
         // The rebuild converges: a new install stamps the current format
         // and the archive serves again (superseding blob deleted).
@@ -2750,7 +2788,7 @@ describe("json-cms component", () => {
         expect(rebuiltId).not.toBe(storageId);
         const replaced = await t.run(async (ctx) => ctx.storage.get(storageId));
         expect(replaced).toBeNull();
-        const meta = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
+        const meta = await t.query(api.schemas.getMapTileArchiveMeta, { schemaId });
         assertDefined(meta);
         expect(meta.url).not.toBe(freshUrl);
         expect(MAP_TILE_ARCHIVE_FORMAT).toBeGreaterThan(1);
@@ -2774,18 +2812,18 @@ describe("json-cms component", () => {
       it("a stale expectedVersion discards the incoming blob and leaves the row untouched", async () => {
         const t = initConvexTest(),
           schemaId = await createGeospatialSchema(t, "Point");
-        await t.mutation(api.lib.createEntry, {
+        await t.mutation(api.entries.createEntry, {
           data: { n: 1 },
           geometry: JSON.stringify({ coordinates: [0, 0], type: "Point" }),
           schemaId,
         });
         const currentId = await installArchive(t, schemaId, 1, "current-archive");
-        const before = await t.query(api.lib.getSchema, { schemaId });
+        const before = await t.query(api.schemas.getSchema, { schemaId });
         assertDefined(before);
 
         // The rebuild started at version 1, but a second edit bumped the
         // row to 2 while it generated — installing at 1 must self-discard.
-        await t.mutation(api.lib.createEntry, {
+        await t.mutation(api.entries.createEntry, {
           data: { n: 2 },
           geometry: JSON.stringify({ coordinates: [1, 1], type: "Point" }),
           schemaId,
@@ -2797,12 +2835,12 @@ describe("json-cms component", () => {
         const stored = await t.run(async (ctx) => ctx.db.get(schemaId));
         assertDefined(stored);
         expect(stored.mapTileArchiveStorageId).toBe(currentId);
-        const after = await t.query(api.lib.getSchema, { schemaId });
+        const after = await t.query(api.schemas.getSchema, { schemaId });
         assertDefined(after);
         expect(after.mapTileCacheVersion).toBe(2);
         expect(after.mapTileArchiveBytes).toBe(before.mapTileArchiveBytes);
 
-        const meta = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
+        const meta = await t.query(api.schemas.getMapTileArchiveMeta, { schemaId });
         assertDefined(meta);
         // `version` is the BUILT-at version of the surviving archive (1) —
         // behind the row's live counter (2), which is exactly the signal a
@@ -2816,9 +2854,9 @@ describe("json-cms component", () => {
           storageId = await t.run(async (ctx) =>
             ctx.storage.store(new Blob(["orphan"], { type: "application/octet-stream" })),
           );
-        await t.mutation(api.lib.deleteSchema, { schemaId });
+        await t.mutation(api.deletes.deleteSchema, { schemaId });
 
-        await t.mutation(api.lib.setMapTileArchive, {
+        await t.mutation(api.schemas.setMapTileArchive, {
           bytes: 6,
           expectedVersion: 0,
           maxZoom: 12,
@@ -2835,17 +2873,19 @@ describe("json-cms component", () => {
           legacyId = await createGeospatialSchema(t, "Point");
         // Write some geometry so the row is not brand new, but never install
         // an archive — absent fields must read as "row path only".
-        await t.mutation(api.lib.createEntry, {
+        await t.mutation(api.entries.createEntry, {
           data: { n: 1 },
           geometry: JSON.stringify({ coordinates: [0, 0], type: "Point" }),
           schemaId: legacyId,
         });
 
-        expect(await t.query(api.lib.getMapTileArchiveMeta, { schemaId: legacyId })).toBeNull();
+        expect(await t.query(api.schemas.getMapTileArchiveMeta, { schemaId: legacyId })).toBeNull();
 
         const missingId = await createTestSchema(t);
-        await t.mutation(api.lib.deleteSchema, { schemaId: missingId });
-        expect(await t.query(api.lib.getMapTileArchiveMeta, { schemaId: missingId })).toBeNull();
+        await t.mutation(api.deletes.deleteSchema, { schemaId: missingId });
+        expect(
+          await t.query(api.schemas.getMapTileArchiveMeta, { schemaId: missingId }),
+        ).toBeNull();
       });
     });
   });
@@ -2854,11 +2894,11 @@ describe("json-cms component", () => {
 describe("createSchema actor stamping", () => {
   it("stores the host's actor id as createdBy when one is passed", async () => {
     const t = initConvexTest(),
-      schemaId = await t.mutation(api.lib.createSchema, {
+      schemaId = await t.mutation(api.schemas.createSchema, {
         actorId: "user-123",
         schema: { properties: { n: { type: "number" } }, title: "Authored", type: "object" },
       }),
-      doc = await t.query(api.lib.getSchema, { schemaId });
+      doc = await t.query(api.schemas.getSchema, { schemaId });
 
     expect(doc !== null && doc.createdBy).toBe("user-123");
   });
@@ -2866,7 +2906,7 @@ describe("createSchema actor stamping", () => {
   it("leaves createdBy absent when no actor is passed (host flows, pre-field rows)", async () => {
     const t = initConvexTest(),
       schemaId = await createTestSchema(t),
-      doc = await t.query(api.lib.getSchema, { schemaId });
+      doc = await t.query(api.schemas.getSchema, { schemaId });
 
     expect(doc === null ? undefined : doc.createdBy).toBeUndefined();
   });

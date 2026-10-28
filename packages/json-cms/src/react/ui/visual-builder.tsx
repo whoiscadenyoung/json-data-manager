@@ -1,7 +1,7 @@
+import { REFERENCE_KEYWORD, isReferenceMeta } from "@caden/data-core/reference";
 import { AlertCircle, ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { useCallback, useState } from "react";
 
-import { REFERENCE_KEYWORD, isReferenceMeta } from "../../shared/reference.js";
 import { cn } from "./lib/utils.js";
 import { Button } from "./primitives/button.js";
 import { Input } from "./primitives/input.js";

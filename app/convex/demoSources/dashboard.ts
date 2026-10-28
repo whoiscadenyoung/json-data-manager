@@ -1,9 +1,9 @@
 import { ConvexError, v } from "convex/values";
 
-import type { Id } from "./_generated/dataModel";
-import type { MutationCtx } from "./_generated/server";
-import { mutation, query } from "./_generated/server";
-import { auth } from "./auth";
+import type { Id } from "../_generated/dataModel";
+import type { MutationCtx } from "../_generated/server";
+import { mutation, query } from "../_generated/server";
+import { auth } from "../auth";
 import { SOURCE_KEY } from "./sources";
 
 /**

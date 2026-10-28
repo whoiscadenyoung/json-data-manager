@@ -63,7 +63,7 @@ async function planOf(t: TestConvex, projectId: string) {
  * the attempt, exactly as the client's upload flow does (issue #131). */
 async function uploadToken(t: TestConvex, scope: string): Promise<string> {
   const { uploadId } = await t.run(async (ctx) =>
-    ctx.runMutation(components.jsonCms.lib.generateUploadUrl, { scope }),
+    ctx.runMutation(components.jsonCms.imports.generateUploadUrl, { scope }),
   );
   return uploadId;
 }
@@ -231,7 +231,7 @@ async function runOf(t: TestConvex, runId: Id<"bundleRuns">) {
 /** A dataset's frozen versions of either chain kind, read through the component. */
 async function versionsOf(t: TestConvex, sourceSchemaId: string) {
   return t.run(async (ctx) =>
-    ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+    ctx.runQuery(components.jsonCms.schemas.listSchemaVersions, {
       limit: CATALOG_READ_LIMIT,
       sourceSchemaId,
     }),
@@ -240,7 +240,7 @@ async function versionsOf(t: TestConvex, sourceSchemaId: string) {
 
 async function lifecycleOf(t: TestConvex, schemaId: string): Promise<string | undefined> {
   return t.run(async (ctx) => {
-    const doc = await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId });
+    const doc = await ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId });
     return doc === null ? undefined : doc.lifecycle;
   });
 }
@@ -345,7 +345,7 @@ describe("one press, one bundle (AC 1)", () => {
       throw new Error("the press never recorded its collection");
     }
     const collection = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getCollection, { collectionId }),
+      ctx.runQuery(components.jsonCms.collections.getCollection, { collectionId }),
     );
     expect(prop(collection, "name")).toBe("SMART 2024");
     const filed = (await t.query(api.collections.listDatasets, { collectionId })).map(
@@ -415,7 +415,7 @@ describe("auto-publish and exposure (AC 2, AC 3)", () => {
     // The source: a standalone draft referenced ONLY by the spec — not a
     // project member, not a map layer, not in a collection.
     const sourceId = await t.run(async (ctx) =>
-      ctx.runMutation(components.jsonCms.lib.createSchema, {
+      ctx.runMutation(components.jsonCms.schemas.createSchema, {
         // Stage 8: drafts are creator-scoped — the fixture carries the
         // suite's identity so the owner's reads (and the press) see it.
         actorId: "user-1",
@@ -458,7 +458,7 @@ describe("auto-publish and exposure (AC 2, AC 3)", () => {
     expect(prop(derivedMember, "status")).toBe("published");
     const frozenId = prop(derivedMember, "publishedSchemaId") ?? "";
     const frozen = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: frozenId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId: frozenId }),
     );
     const lineage = prop(frozen, "lineage");
     expect(prop(lineage, "sourceKey")).toBe(registryId);
@@ -533,7 +533,7 @@ describe("republish (AC 4: append-only)", () => {
     const v1 = at(await versionsOf(t, draftA), 0);
     expect(prop(prop(v1, "lineage"), "versionLabel")).toBe("v1");
     const v1Count = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: prop(v1, "_id") ?? "" }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId: prop(v1, "_id") ?? "" }),
     );
     expect(prop(v1Count, "entryCount")).toBe(1);
 
@@ -560,7 +560,7 @@ describe("republish (AC 4: append-only)", () => {
 
     // The prior row is untouched — one row, one entry — and stays read-only.
     const v1After = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: prop(v1, "_id") ?? "" }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId: prop(v1, "_id") ?? "" }),
     );
     expect(prop(v1After, "_id")).toBe(prop(v1, "_id"));
     expect(prop(v1After, "entryCount")).toBe(1);
@@ -827,14 +827,14 @@ describe("fork-as-spec", () => {
     const run = await runOf(t, press.runId);
     const frozenId = prop(at(run.members, 0), "publishedSchemaId") ?? "";
     const frozen = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: frozenId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId: frozenId }),
     );
     const lineage = prop(frozen, "lineage");
     expect(prop(lineage, "sourceKey")).toBe(forkId);
     expect(prop(lineage, "sourceVersions")).toEqual([{ datasetId: publishedId }]);
     // The source row is untouched by the fork's publish.
     const source = await t.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: publishedId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId: publishedId }),
     );
     expect(prop(source, "lineage")).toBeUndefined();
   });
