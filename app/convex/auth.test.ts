@@ -156,17 +156,19 @@ describe("gate: host functions with an explicit gate (bucket 3)", () => {
 
   it("dashboard: reads and writes reject signed out; a signed-in write reads back", async () => {
     const t = initTest();
-    await expect(t.query(api.dashboard.listRestaurants, {})).rejects.toThrow(GATE_MESSAGE);
+    await expect(t.query(api.demoSources.dashboard.listRestaurants, {})).rejects.toThrow(
+      GATE_MESSAGE,
+    );
     await expect(
-      t.mutation(api.dashboard.createRestaurant, { cuisine: "Cafe", name: "Gate" }),
+      t.mutation(api.demoSources.dashboard.createRestaurant, { cuisine: "Cafe", name: "Gate" }),
     ).rejects.toThrow(GATE_MESSAGE);
     const signedIn = initTest().withIdentity({ subject: "user-1" });
-    const id = await signedIn.mutation(api.dashboard.createRestaurant, {
+    const id = await signedIn.mutation(api.demoSources.dashboard.createRestaurant, {
       cuisine: "Cafe",
       name: "Gate",
     });
     expect(id).toBeTruthy();
-    const rows = await signedIn.query(api.dashboard.listRestaurants, {});
+    const rows = await signedIn.query(api.demoSources.dashboard.listRestaurants, {});
     expect(rows).toHaveLength(1);
     const row = rows[0];
     expect(row === undefined ? undefined : row.name).toBe("Gate");

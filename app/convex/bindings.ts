@@ -4,7 +4,7 @@ import { components, internal } from "./_generated/api";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { assertDatasetWritable, auth } from "./auth";
 import { deleteDatasetCascading } from "./schemas";
-import { isRemoteSourceKey, SOURCE_KEY } from "./sources";
+import { isRemoteSourceKey, primaryLocalSourceKey } from "./sources";
 
 /**
  * The bound-datasets binding registry's read side and its escape hatch.
@@ -41,7 +41,7 @@ export const list = query({
     const bindings = await ctx.db.query("datasetBindings").take(100);
     return Promise.all(
       bindings.map(async (binding) => {
-        const schema = await ctx.runQuery(components.jsonCms.lib.getSchema, {
+        const schema = await ctx.runQuery(components.jsonCms.schemas.getSchema, {
           schemaId: binding.schemaId,
         });
         return {
@@ -193,21 +193,25 @@ export const unbind = mutation({
 });
 
 /**
- * Binding + projected dataset status for the primary demo source — CLI
+ * Binding + projected dataset status for the primary co-deployed source — CLI
  * checks and the dashboard's badge. `null` before the first sync.
  */
 export const status = query({
   args: {},
   handler: async (ctx) => {
     await auth(ctx);
+    const sourceKey = primaryLocalSourceKey();
+    if (sourceKey === null) {
+      return null;
+    }
     const binding = await ctx.db
       .query("datasetBindings")
-      .withIndex("by_source", (q) => q.eq("source", SOURCE_KEY))
+      .withIndex("by_source", (q) => q.eq("source", sourceKey))
       .first();
     if (!binding) {
       return null;
     }
-    const schema = await ctx.runQuery(components.jsonCms.lib.getSchema, {
+    const schema = await ctx.runQuery(components.jsonCms.schemas.getSchema, {
       schemaId: binding.schemaId,
     });
     return { binding, schema };

@@ -1,8 +1,7 @@
 "use client";
 
+import type { Geometry } from "@caden/data-core/geojson";
 import { useEffect, useMemo, useRef, useState } from "react";
-
-import type { Geometry } from "../../shared/geojson/types.js";
 
 /** The subset of `GeometryDoc` this module needs to resolve a row to an actual `Geometry`. */
 export interface ResolvableGeometryRow {

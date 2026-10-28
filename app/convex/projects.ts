@@ -25,7 +25,7 @@ import { CATALOG_READ_LIMIT } from "./schemas";
  * (guidelines), so the draft dataset and its membership row are born together
  * — a crash cannot orphan either. That is also why the draft flag rides the
  * schema doc from creation: `startImport` takes no lifecycle argument (the
- * component's lib.ts), so the existing client ingest flows
+ * component's imports.ts), so the existing client ingest flows
  * (`imports.generateUploadUrl`/`startImport`/`getImportStatus`, driven from
  * the create page and bulk-upload) are reused untouched — a draft's rows are
  * real component rows, resolvable through the row-resolution seam like any
@@ -76,9 +76,9 @@ function assertSchemaTitle(schema: unknown): void {
 async function tryGetSchema(
   ctx: { runQuery: QueryCtx["runQuery"] },
   schemaId: string,
-): Promise<FunctionReturnType<typeof components.jsonCms.lib.getSchema>> {
+): Promise<FunctionReturnType<typeof components.jsonCms.schemas.getSchema>> {
   try {
-    return await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId });
+    return await ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId });
   } catch {
     return null;
   }
@@ -88,9 +88,9 @@ async function tryGetSchema(
 async function tryGetMap(
   ctx: { runQuery: QueryCtx["runQuery"] },
   mapId: string,
-): Promise<FunctionReturnType<typeof components.jsonCms.lib.getMap>> {
+): Promise<FunctionReturnType<typeof components.jsonCms.maps.getMap>> {
   try {
-    return await ctx.runQuery(components.jsonCms.lib.getMap, { mapId });
+    return await ctx.runQuery(components.jsonCms.maps.getMap, { mapId });
   } catch {
     return null;
   }
@@ -306,7 +306,7 @@ export const createDraftDataset = mutation({
     }
     const project = await projectForWrite(ctx, actorId, projectId);
     assertSchemaTitle(args.schema);
-    const schemaId = await ctx.runMutation(components.jsonCms.lib.createSchema, {
+    const schemaId = await ctx.runMutation(components.jsonCms.schemas.createSchema, {
       actorId,
       geometryType: args.geometryType,
       kind: args.kind,
@@ -528,8 +528,10 @@ export const list = query({
   ),
 });
 
-type DatasetSummary = FunctionReturnType<typeof components.jsonCms.lib.listSchemaSummaries>[number];
-type ComponentMap = FunctionReturnType<typeof components.jsonCms.lib.listMaps>[number];
+type DatasetSummary = FunctionReturnType<
+  typeof components.jsonCms.schemas.listSchemaSummaries
+>[number];
+type ComponentMap = FunctionReturnType<typeof components.jsonCms.maps.listMaps>[number];
 type Membership = Doc<"projectArtifacts">;
 
 /** The workspace's per-artifact resolution: the reference, resolved — or `missing` when the artifact was deleted out from under the project (readers answer defensively, the mapLayers precedent). */
@@ -666,15 +668,15 @@ export const get = query({
     // the workspace never sees another user's drafts, even by a stale
     // membership row pointing at one).
     const [summaries, draftSummaries, maps] = await Promise.all([
-      ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, {
+      ctx.runQuery(components.jsonCms.schemas.listSchemaSummaries, {
         limit: CATALOG_READ_LIMIT,
         viewerId: viewer,
       }),
-      ctx.runQuery(components.jsonCms.lib.listDraftSchemaSummaries, {
+      ctx.runQuery(components.jsonCms.schemas.listDraftSchemaSummaries, {
         limit: CATALOG_READ_LIMIT,
         viewerId: viewer,
       }),
-      ctx.runQuery(components.jsonCms.lib.listMaps, { limit: CATALOG_READ_LIMIT }),
+      ctx.runQuery(components.jsonCms.maps.listMaps, { limit: CATALOG_READ_LIMIT }),
     ]);
     const datasetById = new Map<string, DatasetSummary>();
     for (const row of summaries) {

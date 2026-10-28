@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 
-import type { Id } from "./_generated/dataModel";
-import { internalMutation } from "./_generated/server";
+import type { Id } from "../_generated/dataModel";
+import { internalMutation } from "../_generated/server";
 
 /**
  * Idempotent seed for the foreign-domain stand-in tables (see schema.ts and
@@ -10,7 +10,7 @@ import { internalMutation } from "./_generated/server";
  * rows by the (restaurant, location) pair — re-running only backfills what
  * is missing and reports what already existed.
  *
- * Run with: `bunx convex run seed:seedRestaurants` (from app/)
+ * Run with: `bunx convex run demoSources/seed:seedRestaurants` (from app/)
  */
 
 const RESTAURANTS = [

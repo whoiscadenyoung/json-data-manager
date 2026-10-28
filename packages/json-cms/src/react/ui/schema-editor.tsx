@@ -1,10 +1,10 @@
+import { GEOMETRY_TYPES } from "@caden/data-core/geojson";
+import type { GeometryType } from "@caden/data-core/geojson";
 import { AlertCircle, Code2, FileJson, LayoutTemplate, Save, Upload } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
 
-import { GEOMETRY_TYPES } from "../../shared/geojson/types.js";
-import type { GeometryType } from "../../shared/geojson/types.js";
 import { inferSchemaFromData } from "../lib/infer-schema.js";
 import { errorMessage } from "./lib/errors.js";
 import { cn } from "./lib/utils.js";

@@ -28,15 +28,17 @@ published knows how it was drafted (ADR 0008).
 
 Bun workspace (`bun.lock` at the root; use `bun`, not node/npm):
 
-| Path                         | What it is                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `app/`                       | The application: TanStack Start (React 19) frontend in `app/src`, Convex host functions in `app/convex`.                                                                                                                                                                                                                                                                                                    |
-| `packages/json-cms/`         | `@caden/json-cms` — the CMS Convex component (`src/component`), a typed client facade with `exposeApi` (`src/client`), React hooks + prop-driven UI (`src/react`), backend-free shared code (`src/shared`: geojson, references, **coercion** utilities, **transform engine** `src/shared/transform`, exported React-free as `@caden/json-cms/transform`). Keeps its own `example/` app as dev/codegen host. |
-| `packages/ui/`               | `@caden/ui` — source-only package (ADR 0014) holding all registry UI: the shadcn base-mira primitives, niko-table, and mapcn's MapLibre kit, plus the theme tokens (`globals.css`, imported by `app/src/styles.css`) and the shared PMTiles protocol instance. Has its own `components.json`, so `shadcn add` writes here.                                                                                  |
-| `packages/geometry-archive/` | `@caden/geometry-archive` — PMTiles archive writer + tile logic used by the map tile pipeline (issue #58).                                                                                                                                                                                                                                                                                                  |
-| `packages/data-export/`      | `@caden/data-export` — durable snapshot-export component. **Built but not wired in**: no consumer, not registered in `app/convex/convex.config.ts`; typechecked and tested in CI. Latent defects parked on #137 for any future wire-in.                                                                                                                                                                     |
-| `.github/workflows/ci.yml`   | Root CI (see [Development](#development)).                                                                                                                                                                                                                                                                                                                                                                  |
-| `docs/`                      | Design docs, decision records, and project memory (see the map at the end).                                                                                                                                                                                                                                                                                                                                 |
+| Path                         | What it is                                                                                                                                                                                                                                                                                                                                         |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app/`                       | The application: TanStack Start (React 19) frontend in `app/src`, Convex host functions in `app/convex`.                                                                                                                                                                                                                                           |
+| `packages/json-cms/`         | `@caden/json-cms` — the CMS Convex component (`src/component`), a typed client facade with `exposeApi` (`src/client`), React hooks + prop-driven UI (`src/react`). Builds on `@caden/data-core` and `@caden/importers` and re-exports their parser/transform names from `@caden/json-cms/react`. Keeps its own `example/` app as dev/codegen host. |
+| `packages/data-core/`        | `@caden/data-core` (built) — backend-free shared code: `/geojson` (types, validation, bbox, Convex geometry validators), `/coercion`, `/reference`, `/coordinate-columns`, and the **transform engine** `/transform`.                                                                                                                              |
+| `packages/importers/`        | `@caden/importers` (built) — browser-side tabular import parsers (JSON/JSONL, CSV, Excel via `exceljs`) behind a pluggable registry, plus `parseDataRows`.                                                                                                                                                                                         |
+| `packages/ui/`               | `@caden/ui` — source-only package (ADR 0014) holding all registry UI: the shadcn base-mira primitives, niko-table, and mapcn's MapLibre kit, plus the theme tokens (`globals.css`, imported by `app/src/styles.css`) and the shared PMTiles protocol instance. Has its own `components.json`, so `shadcn add` writes here.                         |
+| `packages/geometry-archive/` | `@caden/geometry-archive` — PMTiles archive writer + tile logic used by the map tile pipeline (issue #58).                                                                                                                                                                                                                                         |
+| `packages/data-export/`      | `@caden/data-export` — durable snapshot-export component. **Built but not wired in**: no consumer, not registered in `app/convex/convex.config.ts`; typechecked and tested in CI. Latent defects parked on #137 for any future wire-in.                                                                                                            |
+| `.github/workflows/ci.yml`   | Root CI (see [Development](#development)).                                                                                                                                                                                                                                                                                                         |
+| `docs/`                      | Design docs, decision records, and project memory (see the map at the end).                                                                                                                                                                                                                                                                        |
 
 **Module boundaries (ADR 0014).** The frontend is core (`app/src/components`, `app/src/lib`, `app/src/integrations`: app shell, shared widgets, the row-resolution seam) plus features in `app/src/features/<name>/` (with `app/convex/<domain>/` when they have a backend). Domain features (`maps`, `datasets`, `versions`, `publishing`, `analysis`, `catalog`, `dashboard`) may import each other's root entry files (`#/features/<name>`, or `#/features/maps/tiles` for the root's tile managers) as long as the graph stays acyclic; optional modules (`app-builder`, `layer-styles`) are wired only by routes; core never imports features; feature subfolders are private. `.oxlintrc.json` enforces this with `no-restricted-imports` and `import/no-cycle`. Workspace packages are either built (`dist`, for anything Convex component code imports) or source-only (`private`, app-only), and never import `#convex/_generated`.
 
@@ -111,6 +113,26 @@ wrappers deliberately omit them:
 | `publishedVisibility`   | `"everyone"` (default) or `"author"`; narrows catalog reads to the creator. Set by `schemas.setVisibility` (creator-only).                                                                                                                                                                                        |
 | `lineage` (generalized) | Frozen-version marker: `versionLabel`, `frozenAt`, `snapshotRef` (global "a ref never freezes twice" key), `sourceSchemaId` (draft/bound chain anchor) **or** `sourceKey` (host registry-row chain anchor), `recipe` (the executed spec), `sourceVersions` (`{datasetId, ref?, frozenAt?}` per source at freeze). |
 
+### Component modules (`packages/json-cms/src/component/`)
+
+Component functions are split by domain; a function's path is
+`<module>.<name>` (`components.jsonCms.entries.listEntriesPage`,
+`internal.imports.importWorkflow`). The `exposeApi` names in `src/client`
+are independent of these paths.
+
+| Module            | Contents                                                                                                                                                      |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schemas.ts`      | Dataset (schema) queries/mutations, version lookups, tile-archive meta/install, lifecycle                                                                     |
+| `collections.ts`  | Collections and dataset↔collection membership                                                                                                                 |
+| `groups.ts`       | Groups, dataset→group and group→collection assignment                                                                                                         |
+| `maps.ts`         | Maps, map layers, and per-map layer overrides                                                                                                                 |
+| `entries.ts`      | Entry/geometry reads, entry mutations, internal entry functions, dataset-summary backfill                                                                     |
+| `imports.ts`      | Batched, monitored import workflow (upload URLs, chunk insertion, progress/completion)                                                                        |
+| `deletes.ts`      | Budget-aware batched dataset delete/clear (issue #128)                                                                                                        |
+| `geospatial.ts`   | Geospatial conversion and simplify-geometry workflows                                                                                                         |
+| `host_support.ts` | Host-only storage helpers (upload claims, blob deletes, sweeps)                                                                                               |
+| `internal/*.ts`   | Shared non-function helpers (validators, list-read bounds, delete budget, geometry paging, …). Registers no functions, so each function has exactly one path. |
+
 ### Host tables (`app/convex/schema.ts`)
 
 Three concerns, currently one schema (segmentation is tracked in #82):
@@ -137,8 +159,10 @@ record theirs here too via `consumption.afterPublishCompleted`).
 
 **Foreign-domain stand-in** — the PoC's "other app": `restaurants`,
 `locations`, `restaurantLocations` (join), `sourceCommits` (its git-like
-feed), `restaurantSnapshots` (its tag snapshots as JSONL in storage). This
-is scaffolding for the real integration; phase 5 (#78, remote transport) is
+feed), `restaurantSnapshots` (its tag snapshots as JSONL in storage),
+declared in `app/convex/demoSources/tables.ts` and spread into `schema.ts`
+with one line. Core code reads them only through the `LocalSource` adapters
+in `demoSources/sources.ts`. This is scaffolding for the real integration; phase 5 (#78, remote transport) is
 blocked on the hosting-fork decision — see
 [`docs/bound-datasets-design.md`](./bound-datasets-design.md) §8.
 
@@ -229,16 +253,21 @@ appear in either schema.
   `projects.ts`, `publish.ts`, `bundles.ts`, `consumption.ts`,
   `versioning.ts` (sections below).
 - **Bound-datasets layer** — `sources.ts` (the `BoundSource` descriptor
-  interface + registry: adding a source = one entry), `sync.ts` (durable
+  interface + registry: adding a source = one entry; snapshot-taking
+  sources implement `listSnapshots`), `sourcePaging.ts` (the #127 page-size
+  contract readers share), `sync.ts` (durable
   engine: collect → chunked apply, keyed and idempotent via `bindingEntries`;
   commit-tail is the primary path, full pass falls back or reconciles),
   `tags.ts` (snapshot ingest: freeze foreign snapshots into read-only
   lineage datasets via `versioning.ts`, version compare, keep-N/pin
   retention), `bindings.ts` (binding status/unbind queries for the UI).
   Weekly reconcile cron in `crons.ts`.
-- **Foreign-domain CRUD** — `dashboard.ts` (restaurants/locations/links CRUD
-  for `/dashboard`; every write only stamps staleness on the binding) and
-  `seed.ts`.
+- **Demo foreign app** — `demoSources/` (removable; see
+  [bound-datasets-design §9](./bound-datasets-design.md#removing-the-demo-sources)):
+  `tables.ts`, `sources.ts` (the two co-deployed `LocalSource` adapters),
+  `dashboard.ts` (restaurants/locations/links CRUD for `/dashboard`; every
+  write only stamps staleness on the binding), `snapshots.ts` (the foreign
+  app's snapshot taking + tag listing), and `seed.ts`.
 - **Tile install** — `tile_archives.ts` — deliberately NOT an exposeApi
   export: `install` is a host wrapper around the component's
   `setMapTileArchive` so only the rebuild worker (standalone ConvexClient)
@@ -269,8 +298,8 @@ appear in either schema.
 
 ## Derived datasets and the transform engine
 
-- **Engine** (`packages/json-cms/src/shared/transform`, React-free via
-  `@caden/json-cms/transform`): pure functions over generic records,
+- **Engine** (`packages/data-core/src/transform`, React-free via
+  `@caden/data-core/transform`): pure functions over generic records,
   inputs never mutated, joined through the shared coercion utilities
   (`normalizeKey`: number `42` joins string `"42"`; trimmed, case-folded,
   never numeric-normalized). Operation kinds form a discriminated union on

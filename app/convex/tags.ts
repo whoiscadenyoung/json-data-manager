@@ -11,7 +11,7 @@ import {
   sourceVisibleToViewer,
 } from "./consumption";
 import { CATALOG_READ_LIMIT, deleteDatasetCascading } from "./schemas";
-import { chunkByJsonBytes, getLocalSource, SOURCE_KEY } from "./sources";
+import { chunkByJsonBytes, snapshotSource } from "./sources";
 import {
   DEFAULT_KEEP_VERSIONS,
   commitOpValidator,
@@ -29,11 +29,12 @@ import {
  *
  * The flow mirrors the design exactly:
  *
- * 1. The foreign app snapshots its state into a file — here
- *    `createRestaurantSnapshot` serializes the joined tables to JSONL (one
- *    {data, geometry} row per line, the same transport the import pipeline
- *    consumes) and registers the tag in `restaurantSnapshots`. That file is
- *    the point-in-time truth: ingest never re-reads the live tables.
+ * 1. The foreign app snapshots its state into a file — in the demo,
+ *    `demoSources/snapshots.createRestaurantSnapshot` serializes the joined
+ *    tables to JSONL (one {data, geometry} row per line, the same transport
+ *    the import pipeline consumes) and registers the tag; the source's
+ *    `listSnapshots` serves the registry. That file is the point-in-time
+ *    truth: ingest never re-reads the live tables.
  * 2. `ingestSnapshots` is the design's PULL — an idempotent reconcile that
  *    ingests every snapshot without a frozen version yet. It goes through
  *    the existing import pipeline (chunk upload → startImport → durable
@@ -109,135 +110,6 @@ function chunkRows(rows: SnapshotRow[]): SnapshotRow[][] {
   return chunkByJsonBytes(rows, SNAPSHOT_CHUNK_ROWS, SNAPSHOT_CHUNK_BYTES);
 }
 
-const snapshotValidator = v.object({
-  _creationTime: v.number(),
-  _id: v.id("restaurantSnapshots"),
-  createdAt: v.number(),
-  fileStorageId: v.id("_storage"),
-  label: v.string(),
-  ref: v.string(),
-  rowCount: v.number(),
-});
-
-/** The shared projection join, callable from an action — one page per call. */
-export const collectProjectionRowsQuery = internalQuery({
-  // One page per call (sources.ts's #127 contract): the snapshot action
-  // drains pages across transactions until the null cursor.
-  args: { cursor: v.union(v.string(), v.null()) },
-  handler: async (ctx, args) => {
-    const page = await getLocalSource(SOURCE_KEY).listRows(ctx, args.cursor);
-    // Snapshot files keep the {data, geometry} transport shape (no key) —
-    // the file is the point-in-time state the import pipeline consumes.
-    return {
-      cursor: page.cursor,
-      rows: page.rows.flatMap(({ data, geometry }) =>
-        geometry === null || geometry === undefined
-          ? []
-          : [{ data, geometry: { coordinates: geometry.coordinates, type: geometry.type } }],
-      ),
-    };
-  },
-  returns: v.object({
-    cursor: v.union(v.string(), v.null()),
-    rows: v.array(
-      v.object({
-        data: v.record(v.string(), v.any()),
-        geometry: v.object({ coordinates: v.array(v.number()), type: v.string() }),
-      }),
-    ),
-  }),
-});
-
-/** Inserts the tag row for a snapshot whose file the action already stored. */
-export const registerSnapshot = internalMutation({
-  args: {
-    fileStorageId: v.id("_storage"),
-    label: v.string(),
-    rowCount: v.number(),
-  },
-  handler: async (ctx, args) => {
-    const createdAt = Date.now(),
-      // Opaque foreign snapshot id — unique per snapshot, stable forever,
-      // and the only thing ingest needs to have seen before.
-      ref = `snap_${createdAt.toString(36)}${Math.floor(Math.random() * 1296)
-        .toString(36)
-        .padStart(2, "0")}`;
-    await ctx.db.insert("restaurantSnapshots", {
-      createdAt,
-      fileStorageId: args.fileStorageId,
-      label: args.label,
-      ref,
-      rowCount: args.rowCount,
-    });
-    return { label: args.label, ref, rowCount: args.rowCount };
-  },
-  returns: v.object({ label: v.string(), ref: v.string(), rowCount: v.number() }),
-});
-
-/**
- * The foreign app takes a snapshot: serializes the current state to a JSONL
- * file and registers the tag. Stands in for the design's "push hook on
- * snapshot creation" — the dashboard's snapshots card drives it. Every call
- * is a NEW foreign snapshot (a fresh ref): idempotency belongs to ingest,
- * not to the foreign app's timeline. An action because file storage writes
- * (`ctx.storage.store`) live on the action writer.
- */
-export const createRestaurantSnapshot = action({
-  args: { label: v.string() },
-  // Explicit return type: this handler references `internal.tags.*`, whose
-  // type resolves back through this module — inferring it would be circular.
-  handler: async (ctx, args): Promise<{ label: string; ref: string; rowCount: number }> => {
-    await auth(ctx);
-    const label = args.label.trim();
-    if (label === "") {
-      throw new ConvexError("A snapshot label is required.");
-    }
-    // Explicit row type — the guidelines' workaround for the same-file
-    // runQuery circularity (the query's type lands here via generated api).
-    // The projection drains page by page across transactions until the null
-    // cursor — a truncated snapshot must never register (#127 defect 1).
-    const rows: Array<{
-      data: Record<string, unknown>;
-      geometry: { coordinates: number[]; type: string };
-    }> = [];
-    let cursor: string | null = null;
-    for (;;) {
-      // oxlint-disable-next-line no-await-in-loop -- paging the projection; the null cursor ends the drain.
-      const page: { cursor: string | null; rows: typeof rows } = await ctx.runQuery(
-        internal.tags.collectProjectionRowsQuery,
-        { cursor },
-      );
-      rows.push(...page.rows);
-      if (page.cursor === null) {
-        break;
-      }
-      cursor = page.cursor;
-    }
-    const jsonl = rows.map((row) => JSON.stringify(row)).join("\n"),
-      fileStorageId = await ctx.storage.store(new Blob([jsonl], { type: "application/jsonl" }));
-    return await ctx.runMutation(internal.tags.registerSnapshot, {
-      fileStorageId,
-      label,
-      rowCount: rows.length,
-    });
-  },
-  returns: v.object({
-    label: v.string(),
-    ref: v.string(),
-    rowCount: v.number(),
-  }),
-});
-
-/** The foreign app's tag listing, newest first — the snapshots card's rows. */
-export const listSnapshots = query({
-  args: {},
-  handler: async (ctx) => {
-    await auth(ctx);
-    return ctx.db.query("restaurantSnapshots").order("desc").take(200);
-  },
-  returns: v.array(snapshotValidator),
-});
-
 /**
  * Retires one frozen version dataset: deletes it through the component's
  * read-only gate with the host's retirement attestation. The snapshot row
@@ -263,7 +135,7 @@ export const retireVersion = mutation({
   args: { schemaId: v.string() },
   handler: async (ctx, args) => {
     const actorId = await auth(ctx);
-    const schema = await ctx.runQuery(components.jsonCms.lib.getSchema, {
+    const schema = await ctx.runQuery(components.jsonCms.schemas.getSchema, {
       schemaId: args.schemaId,
     });
     if (schema === null) {
@@ -351,7 +223,7 @@ export const listVersions = query({
   args: { sourceSchemaId: v.string() },
   handler: async (ctx, args) => {
     await auth(ctx);
-    const versions = await ctx.runQuery(components.jsonCms.lib.listSchemaVersions, {
+    const versions = await ctx.runQuery(components.jsonCms.schemas.listSchemaVersions, {
       limit: CATALOG_READ_LIMIT,
       sourceSchemaId: args.sourceSchemaId,
     });
@@ -383,22 +255,29 @@ export const snapshotFileUrl = internalQuery({
 export const ingestPlan = internalQuery({
   args: {},
   handler: async (ctx) => {
+    const source = snapshotSource();
+    if (source === null || source.listSnapshots === undefined) {
+      throw new ConvexError("No registered bound source takes snapshots.");
+    }
     const binding = await ctx.db
       .query("datasetBindings")
-      .withIndex("by_source", (q) => q.eq("source", SOURCE_KEY))
+      .withIndex("by_source", (q) => q.eq("source", source.key))
       .first();
     if (binding === null) {
       throw new ConvexError(
         "No bound dataset to attach versions to — create it with a sync (dashboard → Sync now) first.",
       );
     }
-    const snapshots = await ctx.db.query("restaurantSnapshots").take(500),
+    const snapshots = await source.listSnapshots(ctx),
       pending: PendingSnapshot[] = [];
     for (const snapshot of snapshots) {
       // oxlint-disable-next-line no-await-in-loop -- keeps the plan loop readable; the listing is dashboard-bounded.
-      const existing = await ctx.runQuery(components.jsonCms.lib.getSchemaVersionBySnapshotRef, {
-        snapshotRef: snapshot.ref,
-      });
+      const existing = await ctx.runQuery(
+        components.jsonCms.schemas.getSchemaVersionBySnapshotRef,
+        {
+          snapshotRef: snapshot.ref,
+        },
+      );
       if (existing === null) {
         pending.push({
           fileStorageId: snapshot.fileStorageId,
@@ -447,7 +326,7 @@ async function uploadChunkBlobs(
   const chunkStorageIds: string[] = [];
   for (const chunk of chunkRows(rows)) {
     // oxlint-disable-next-line no-await-in-loop -- chunks upload sequentially, mirroring the browser importer.
-    const { storageUrl } = await ctx.runMutation(components.jsonCms.lib.generateUploadUrl, {});
+    const { storageUrl } = await ctx.runMutation(components.jsonCms.imports.generateUploadUrl, {});
     // oxlint-disable-next-line no-await-in-loop
     const upload = await fetch(storageUrl, {
       body: JSON.stringify(chunk),
@@ -486,7 +365,7 @@ async function waitForImport(
     // oxlint-disable-next-line no-await-in-loop -- polling is inherently sequential.
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
     // oxlint-disable-next-line no-await-in-loop
-    const status = await ctx.runQuery(components.jsonCms.lib.getImportStatus, {
+    const status = await ctx.runQuery(components.jsonCms.imports.getImportStatus, {
       importId,
     });
     if (status === null) {
@@ -497,7 +376,7 @@ async function waitForImport(
     }
     if (status.status === "completed") {
       // oxlint-disable-next-line no-await-in-loop
-      const version = await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId });
+      const version = await ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId });
       return version === null ? fallbackCount : (version.entryCount ?? fallbackCount);
     }
   }
@@ -510,11 +389,11 @@ async function cleanupPartialVersion(
   ref: string,
 ): Promise<void> {
   try {
-    const partial = await ctx.runQuery(components.jsonCms.lib.getSchemaVersionBySnapshotRef, {
+    const partial = await ctx.runQuery(components.jsonCms.schemas.getSchemaVersionBySnapshotRef, {
       snapshotRef: ref,
     });
     if (partial !== null) {
-      await ctx.runMutation(components.jsonCms.lib.deleteSchema, {
+      await ctx.runMutation(components.jsonCms.deletes.deleteSchema, {
         boundWrite: "retire",
         schemaId: partial._id,
       });
@@ -684,7 +563,7 @@ export const setVersionPinned = mutation({
   args: { pinned: v.boolean(), schemaId: v.string() },
   handler: async (ctx, args) => {
     const actorId = await auth(ctx);
-    const schema = await ctx.runQuery(components.jsonCms.lib.getSchema, {
+    const schema = await ctx.runQuery(components.jsonCms.schemas.getSchema, {
       schemaId: args.schemaId,
     });
     if (schema === null || schema.lineage === undefined) {

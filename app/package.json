@@ -13,6 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@caden/data-core": "workspace:*",
     "@caden/geometry-archive": "workspace:*",
     "@caden/json-cms": "workspace:*",
     "@caden/ui": "workspace:*",

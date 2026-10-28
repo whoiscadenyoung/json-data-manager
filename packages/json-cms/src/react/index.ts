@@ -46,19 +46,19 @@ export {
   extractReferenceIds,
   extractReferences,
   isReferenceMeta,
-} from "../shared/reference.js";
+} from "@caden/data-core/reference";
 export type {
   ReferenceMeta,
   ReferenceField,
   ExtractedReference,
   ReferenceCandidate,
-} from "../shared/reference.js";
+} from "@caden/data-core/reference";
 export { buildReferenceUiSchema, buildReferenceCandidates } from "./lib/reference-ui-schema.js";
 
 // Framework-agnostic utilities
 export { inferSchemaFromData } from "./lib/infer-schema.js";
-export { parseDataRows } from "./lib/parse-data.js";
-export type { ParseDataResult, ParseError } from "./lib/parse-data.js";
+export { parseDataRows } from "@caden/importers";
+export type { ParseDataResult, ParseError } from "@caden/importers";
 
 // Tabular import parsers (JSON/JSONL, CSV, Excel) — a pluggable registry so
 // a format can be added, removed, or disabled in one place. See
@@ -69,13 +69,13 @@ export {
   findImportParser,
   enabledAcceptString,
   enabledExtensionsHint,
-} from "./lib/import-parsers/registry.js";
+} from "@caden/importers";
 export type {
   ImportParser,
   ImportParseResult,
   ImportParseError,
   ParsedSheet,
-} from "./lib/import-parsers/types.js";
+} from "@caden/importers";
 export {
   createDefaultUiSchema,
   mergeUiSchemas,
@@ -94,31 +94,21 @@ export {
   parseCoordinateValue,
   isValidLatitude,
   isValidLongitude,
-} from "../shared/coordinate-columns.js";
-export type { CoordinateColumnGuess } from "../shared/coordinate-columns.js";
+} from "@caden/data-core/coordinate-columns";
+export type { CoordinateColumnGuess } from "@caden/data-core/coordinate-columns";
 
-export { GeoParseError, GeometryError } from "../shared/geojson/error.js";
-export {
-  assertGeometry,
-  isValidGeometry,
-  computeBbox,
-  unionBbox,
-} from "../shared/geojson/geometry.js";
-export type { BoundingBox } from "../shared/geojson/geometry.js";
-export { buildFeature, buildFeatureCollection } from "../shared/geojson/geojson.js";
-export type { FeatureRow } from "../shared/geojson/geojson.js";
+export { GeoParseError, GeometryError } from "@caden/data-core/geojson";
+export { assertGeometry, isValidGeometry, computeBbox, unionBbox } from "@caden/data-core/geojson";
+export type { BoundingBox } from "@caden/data-core/geojson";
+export { buildFeature, buildFeatureCollection } from "@caden/data-core/geojson";
+export type { FeatureRow } from "@caden/data-core/geojson";
 export {
   coalesceGeometryTypes,
   isGeometryCompatibleWithDatasetType,
-} from "../shared/geojson/coalesce.js";
-export type { CoalesceOutcome } from "../shared/geojson/coalesce.js";
-export { GEOMETRY_TYPES } from "../shared/geojson/types.js";
-export type {
-  Geometry,
-  GeometryType,
-  Feature,
-  FeatureCollection,
-} from "../shared/geojson/types.js";
+} from "@caden/data-core/geojson";
+export type { CoalesceOutcome } from "@caden/data-core/geojson";
+export { GEOMETRY_TYPES } from "@caden/data-core/geojson";
+export type { Geometry, GeometryType, Feature, FeatureCollection } from "@caden/data-core/geojson";
 export { looksLikeGeoJson, parseGeoJsonFeatures } from "./lib/geojson-import.js";
 export type { GeoJsonRow, GeoJsonParseResult, GeoJsonFeatureError } from "./lib/geojson-import.js";
 
@@ -130,17 +120,17 @@ export type { GeoJsonRow, GeoJsonParseResult, GeoJsonFeatureError } from "./lib/
 // union-aware dependency helper. Stage 9 (#105) added the SQL escape hatch
 // (applySql + its typed-table materialization) — the same engine interface,
 // its DuckDB handle injected (see ../shared/transform/sql.ts).
-export { applyLookup, LookupKeyConflictError } from "../shared/transform/lookup.js";
-export { applyRollup } from "../shared/transform/rollup.js";
+export { applyLookup, LookupKeyConflictError } from "@caden/data-core/transform";
+export { applyRollup } from "@caden/data-core/transform";
 export {
   applySql,
   declaredColumnTypes,
   materializeSqlTable,
   sqlSourceName,
-} from "../shared/transform/sql.js";
-export { transformSpecDependencies, geometrySourceOperationOf } from "../shared/transform/spec.js";
-export type { LookupDiagnostics, LookupResult } from "../shared/transform/lookup.js";
-export type { RollupDiagnostics, RollupResult } from "../shared/transform/rollup.js";
+} from "@caden/data-core/transform";
+export { transformSpecDependencies, geometrySourceOperationOf } from "@caden/data-core/transform";
+export type { LookupDiagnostics, LookupResult } from "@caden/data-core/transform";
+export type { RollupDiagnostics, RollupResult } from "@caden/data-core/transform";
 export type {
   SqlApplyOptions,
   SqlColumnSpec,
@@ -149,7 +139,7 @@ export type {
   SqlResult,
   SqlSideTable,
   SqlTable,
-} from "../shared/transform/sql.js";
+} from "@caden/data-core/transform";
 export type {
   TransformSpec,
   TransformOperation,
@@ -159,7 +149,7 @@ export type {
   SqlOperation,
   SqlTableRef,
   GeometrySource,
-} from "../shared/transform/spec.js";
+} from "@caden/data-core/transform";
 
 // Resolves a `GeometryDoc`'s `geometryJson`/`geometryUrl` (see its doc
 // comment in types.ts) into an actual `Geometry` — handles the client-side

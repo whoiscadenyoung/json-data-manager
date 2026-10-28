@@ -1,6 +1,6 @@
-/** The plain JSON/JSONL parser, wrapped as an `ImportParser` for the registry. Delegates entirely to `parseDataRows` — see that module for the parsing strategy. */
-import { parseDataRows } from "../parse-data.js";
 import { readFileAsText } from "./file-utils.js";
+/** The plain JSON/JSONL parser, wrapped as an `ImportParser` for the registry. Delegates entirely to `parseDataRows` — see that module for the parsing strategy. */
+import { parseDataRows } from "./parse-data.js";
 import type { ImportParseResult, ImportParser } from "./types.js";
 
 export async function parseJsonFile(file: File): Promise<ImportParseResult> {

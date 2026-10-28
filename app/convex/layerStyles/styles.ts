@@ -38,7 +38,7 @@ const styleRowValidator = v.object({
 
 async function mapExists(ctx: QueryCtx, mapId: string): Promise<boolean> {
   try {
-    return (await ctx.runQuery(components.jsonCms.lib.getMap, { mapId })) !== null;
+    return (await ctx.runQuery(components.jsonCms.maps.getMap, { mapId })) !== null;
   } catch {
     // Not a well-formed component map id.
     return false;
@@ -49,7 +49,7 @@ async function mapExists(ctx: QueryCtx, mapId: string): Promise<boolean> {
 async function datasetVisibleTo(ctx: MutationCtx, schemaId: string, actorId: string) {
   let doc;
   try {
-    doc = await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId });
+    doc = await ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId });
   } catch {
     return false;
   }
