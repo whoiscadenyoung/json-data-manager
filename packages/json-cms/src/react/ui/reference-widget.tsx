@@ -1,10 +1,9 @@
 "use client";
 
+import type { ReferenceCandidate } from "@caden/data-core/reference";
 import type { WidgetProps } from "@rjsf/utils";
 
-import type { ReferenceCandidate } from "../../shared/reference.js";
-
-export type { ReferenceCandidate } from "../../shared/reference.js";
+export type { ReferenceCandidate } from "@caden/data-core/reference";
 
 function isCandidate(value: unknown): value is ReferenceCandidate {
   return (

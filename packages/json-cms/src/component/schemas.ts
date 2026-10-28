@@ -1,8 +1,8 @@
+import { geometryTypeValidator } from "@caden/data-core/geojson";
+import type { GeometryTypeArg } from "@caden/data-core/geojson";
+import { REFERENCE_KEYWORD } from "@caden/data-core/reference";
 import { ConvexError, v } from "convex/values";
 
-import { geometryTypeValidator } from "../shared/geojson/validators.js";
-import type { GeometryTypeArg } from "../shared/geojson/validators.js";
-import { REFERENCE_KEYWORD } from "../shared/reference.js";
 import { internal } from "./_generated/api.js";
 import type { Doc } from "./_generated/dataModel.js";
 import { internalMutation, mutation, query } from "./_generated/server.js";

@@ -1,7 +1,7 @@
-import { it, afterEach, describe, expect, beforeEach, vi } from "vitest";
+import type { GeometryArgs, GeometryTypeArg } from "@caden/data-core/geojson";
 /// <reference types="vite/client" />
+import { it, afterEach, describe, expect, beforeEach, vi } from "vitest";
 
-import type { GeometryArgs, GeometryTypeArg } from "../shared/geojson/validators.js";
 import { api, internal } from "./_generated/api.js";
 import type { Id } from "./_generated/dataModel.js";
 import { INLINE_GEOMETRY_BYTE_LIMIT } from "./geometry_storage.js";

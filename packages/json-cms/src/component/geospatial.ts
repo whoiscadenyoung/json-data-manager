@@ -1,10 +1,10 @@
-import { ConvexError, v } from "convex/values";
-
-import { extractPointGeometry } from "../shared/coordinate-columns.js";
+import { extractPointGeometry } from "@caden/data-core/coordinate-columns";
 import {
   GEOMETRY_SIMPLIFY_DECIMAL_PLACES,
   roundGeometryCoordinates,
-} from "../shared/geojson/geometry.js";
+} from "@caden/data-core/geojson";
+import { ConvexError, v } from "convex/values";
+
 import { internal } from "./_generated/api.js";
 import type { Id } from "./_generated/dataModel.js";
 import { internalAction, internalMutation, internalQuery, mutation } from "./_generated/server.js";

@@ -1,6 +1,6 @@
+import type { GeometryTypeArg } from "@caden/data-core/geojson";
 import { ConvexError } from "convex/values";
 
-import type { GeometryTypeArg } from "../../shared/geojson/validators.js";
 import type { Id } from "../_generated/dataModel.js";
 import type { QueryCtx } from "../_generated/server.js";
 import { INLINE_GEOMETRY_BYTE_LIMIT, byteLength } from "../geometry_storage.js";

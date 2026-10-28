@@ -1,4 +1,4 @@
-import type { SqlEngine, SqlTable } from "@caden/json-cms/transform";
+import type { SqlEngine, SqlTable } from "@caden/data-core/transform";
 import type { AsyncDuckDB, AsyncDuckDBConnection } from "@duckdb/duckdb-wasm";
 /**
  * The analysis layer's SQL engine handle (roadmap stage 9, #105) — a lazily

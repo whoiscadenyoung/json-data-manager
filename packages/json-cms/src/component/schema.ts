@@ -1,7 +1,6 @@
+import { geometryArgsValidator, geometryTypeValidator } from "@caden/data-core/geojson";
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
-
-import { geometryArgsValidator, geometryTypeValidator } from "../shared/geojson/validators.js";
 
 /**
  * The `lineage` object a frozen version dataset carries (see the `schemas`

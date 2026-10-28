@@ -1,8 +1,9 @@
-import { GeoParseError, GeometryError } from "../shared/geojson/error.js";
-import { assertGeometry, computeBbox } from "../shared/geojson/geometry.js";
-import type { BoundingBox } from "../shared/geojson/geometry.js";
-import type { Geometry } from "../shared/geojson/types.js";
-import type { GeometryTypeArg } from "../shared/geojson/validators.js";
+import { GeoParseError, GeometryError } from "@caden/data-core/geojson";
+import { assertGeometry, computeBbox } from "@caden/data-core/geojson";
+import type { BoundingBox } from "@caden/data-core/geojson";
+import type { Geometry } from "@caden/data-core/geojson";
+import type { GeometryTypeArg } from "@caden/data-core/geojson";
+
 import type { Id } from "./_generated/dataModel.js";
 
 /**
