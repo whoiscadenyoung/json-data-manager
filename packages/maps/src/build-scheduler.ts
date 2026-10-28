@@ -49,6 +49,8 @@ export interface TileArchiveBackoff {
   failures: number;
   /** Epoch ms when the automatic retry fires. */
   retryAt: number;
+  /** The `mapTileCacheVersion` the failures happened at; a newer one resets. */
+  version: number;
 }
 
 export interface TileArchiveSchedulerOptions {
@@ -75,7 +77,9 @@ export interface TileArchiveSchedulerOptions {
  * version are absorbed until the backoff's own retry timer fires, so a
  * failing dataset is attempted at most once per window. A newer version
  * resets the backoff (the data changed, so the failure may not recur);
- * `ensure` skips the remaining wait but keeps the failure count.
+ * `ensure` skips the remaining wait but keeps the failure count. The
+ * scheduler lives in memory; `restoreBackoff` re-arms a window a caller
+ * persisted, so a page reload doesn't buy a failing dataset a fresh attempt.
  */
 export class TileArchiveScheduler {
   readonly #startBuild: StartTileArchiveBuild;
@@ -152,6 +156,18 @@ export class TileArchiveScheduler {
     this.#retryTimers.clear();
   }
 
+  /**
+   * Re-arms a backoff persisted from an earlier `onBackoff` (for example
+   * across a page reload). The retry fires at `retryAt`, or right away if
+   * that has passed. Ignored while the dataset is building or backing off.
+   */
+  restoreBackoff(schemaId: string, backoff: TileArchiveBackoff): void {
+    if (this.#inFlight.has(schemaId) || this.#retryTimers.has(schemaId)) return;
+    this.#failures.set(schemaId, { count: backoff.failures, version: backoff.version });
+    this.#versions.set(schemaId, Math.max(this.#versions.get(schemaId) ?? 0, backoff.version));
+    this.#armRetry(schemaId, backoff.version, Math.max(0, backoff.retryAt - Date.now()));
+  }
+
   /** Tracks the newest version and resets the backoff when it moves past the failed one. */
   #noteVersion(schemaId: string, version: number): void {
     if (version <= (this.#versions.get(schemaId) ?? 0)) return;
@@ -178,6 +194,11 @@ export class TileArchiveScheduler {
       count = previous !== undefined && previous.version === version ? previous.count + 1 : 1,
       delay = this.#backoffMs.at(Math.min(count, this.#backoffMs.length) - 1) ?? 0;
     this.#failures.set(schemaId, { count, version });
+    this.#armRetry(schemaId, version, delay);
+    this.#onBackoff(schemaId, { failures: count, retryAt: Date.now() + delay, version });
+  }
+
+  #armRetry(schemaId: string, version: number, delay: number): void {
     this.#retryTimers.set(
       schemaId,
       setTimeout(() => {
@@ -185,7 +206,6 @@ export class TileArchiveScheduler {
         this.#fire(schemaId, version);
       }, delay),
     );
-    this.#onBackoff(schemaId, { failures: count, retryAt: Date.now() + delay });
   }
 
   #recordSuccess(schemaId: string): void {

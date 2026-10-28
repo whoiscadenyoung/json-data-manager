@@ -97,9 +97,20 @@ function clearBuildFailure(schemaId: string): void {
   if (buildFailures.delete(schemaId)) notifyBuildListeners();
 }
 
-/** Scheduler callback: attaches the backoff window to the failure record. */
+const DEFAULT_FAILURE_MESSAGE = "Tile-archive build failed.";
+
+/**
+ * Scheduler callback: attaches the backoff window to the failure record and
+ * persists it, so a reload neither forgets the failure nor retries early.
+ */
 function applyBackoff(schemaId: string, backoff: TileArchiveBackoff | undefined): void {
   const failure = buildFailures.get(schemaId);
+  writeStoredBackoff(
+    schemaId,
+    backoff === undefined
+      ? undefined
+      : { ...backoff, message: failure === undefined ? DEFAULT_FAILURE_MESSAGE : failure.message },
+  );
   if (failure === undefined) return;
   buildFailures.set(
     schemaId,
@@ -109,6 +120,73 @@ function applyBackoff(schemaId: string, backoff: TileArchiveBackoff | undefined)
   );
   notifyBuildListeners();
 }
+
+// --- Backoff persistence (issue #184): the scheduler is in-memory, so
+// without this every page reload bought a failing dataset a fresh attempt ---
+
+const BACKOFF_STORAGE_KEY = "tile-archive-backoff";
+
+/** Per dataset: the scheduler's backoff window plus the error the alert shows. */
+interface StoredBackoff extends TileArchiveBackoff {
+  message: string;
+}
+
+function isStoredBackoff(value: unknown): value is StoredBackoff {
+  return (
+    isRecord(value) &&
+    typeof value.failures === "number" &&
+    typeof value.message === "string" &&
+    typeof value.retryAt === "number" &&
+    typeof value.version === "number"
+  );
+}
+
+function readStoredBackoffs(): Map<string, StoredBackoff> {
+  const stored = new Map<string, StoredBackoff>();
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(BACKOFF_STORAGE_KEY) ?? "{}");
+    if (!isRecord(parsed)) return stored;
+    for (const [schemaId, value] of Object.entries(parsed)) {
+      if (isStoredBackoff(value)) stored.set(schemaId, value);
+    }
+  } catch {
+    // Storage unavailable or corrupt: start without persisted backoffs.
+  }
+  return stored;
+}
+
+function writeStoredBackoff(schemaId: string, backoff: StoredBackoff | undefined): void {
+  const stored = readStoredBackoffs();
+  if (backoff === undefined) {
+    if (!stored.delete(schemaId)) return;
+  } else {
+    stored.set(schemaId, backoff);
+  }
+  try {
+    if (stored.size === 0) {
+      localStorage.removeItem(BACKOFF_STORAGE_KEY);
+    } else {
+      localStorage.setItem(BACKOFF_STORAGE_KEY, JSON.stringify(Object.fromEntries(stored)));
+    }
+  } catch {
+    // Best effort: without storage the backoff still holds for this page.
+  }
+}
+
+/** Re-arms persisted backoffs in a new scheduler and restores their alerts. */
+function restoreStoredBackoffs(scheduler: TileArchiveScheduler): void {
+  const stored = readStoredBackoffs();
+  for (const [schemaId, backoff] of stored) {
+    buildFailures.set(schemaId, {
+      failures: backoff.failures,
+      message: backoff.message,
+      retryAt: backoff.retryAt,
+    });
+    scheduler.restoreBackoff(schemaId, backoff);
+  }
+  if (stored.size > 0) notifyBuildListeners();
+}
+
 const buildRevertTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 /** Terminal states flash briefly, then the indicator returns to idle. */
@@ -240,7 +318,7 @@ function handleWorkerMessage(event: MessageEvent<unknown>): void {
     pending.resolve("skipped");
   } else {
     setBuildState(schemaId, "error");
-    const message = typeof data.message === "string" ? data.message : "Tile-archive build failed.";
+    const message = typeof data.message === "string" ? data.message : DEFAULT_FAILURE_MESSAGE;
     // Issue #71 added the toast (the one surface that follows the user
     // across pages); #184 keeps the failure on the map until a build succeeds.
     recordBuildFailure(schemaId, message);
@@ -293,9 +371,12 @@ async function buildViaWorker(schemaId: string): Promise<TileArchiveBuildOutcome
 let rebuildScheduler: TileArchiveScheduler | undefined;
 
 function getScheduler(): TileArchiveScheduler {
-  rebuildScheduler ??= new TileArchiveScheduler(buildViaWorker, undefined, {
-    onBackoff: applyBackoff,
-  });
+  if (rebuildScheduler === undefined) {
+    rebuildScheduler = new TileArchiveScheduler(buildViaWorker, undefined, {
+      onBackoff: applyBackoff,
+    });
+    restoreStoredBackoffs(rebuildScheduler);
+  }
   return rebuildScheduler;
 }
 

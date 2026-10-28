@@ -236,6 +236,7 @@ describe("TileArchiveScheduler failure backoff (issue #184)", () => {
       expect(onBackoff).toHaveBeenLastCalledWith("s1", {
         failures: 1,
         retryAt: Date.now() + 60_000,
+        version: 3,
       });
 
       // Every dataset view / summaries update re-schedules the stale dataset:
@@ -269,6 +270,7 @@ describe("TileArchiveScheduler failure backoff (issue #184)", () => {
         expect(onBackoff).toHaveBeenLastCalledWith("s1", {
           failures: index + 1,
           retryAt: Date.now() + delay,
+          version: 0,
         });
         await vi.advanceTimersByTimeAsync(delay - 1);
         expect(startBuild).toHaveBeenCalledTimes(index + 1);
@@ -300,6 +302,7 @@ describe("TileArchiveScheduler failure backoff (issue #184)", () => {
       expect(onBackoff).toHaveBeenLastCalledWith("s1", {
         failures: 2,
         retryAt: Date.now() + 300_000,
+        version: 3,
       });
 
       // An edit bumps the version: the pending retry is cancelled and the
@@ -314,6 +317,7 @@ describe("TileArchiveScheduler failure backoff (issue #184)", () => {
       expect(onBackoff).toHaveBeenLastCalledWith("s1", {
         failures: 1,
         retryAt: Date.now() + 60_000,
+        version: 4,
       });
 
       // And the old 5 m retry never fires on top of it.
@@ -362,6 +366,7 @@ describe("TileArchiveScheduler failure backoff (issue #184)", () => {
       expect(onBackoff).toHaveBeenLastCalledWith("s1", {
         failures: 2,
         retryAt: Date.now() + 300_000,
+        version: 3,
       });
 
       // The cancelled 1 m retry does not also fire.
@@ -371,6 +376,69 @@ describe("TileArchiveScheduler failure backoff (issue #184)", () => {
       expect(startBuild).toHaveBeenCalledTimes(3);
       firstDeferral(calls, 2).resolve("installed");
       await flushMicrotasks();
+    } finally {
+      scheduler.dispose();
+    }
+  });
+
+  it("restoreBackoff() keeps a reloaded page inside the persisted window", async () => {
+    const { calls, startBuild } = deferredStartBuild(),
+      scheduler = new TileArchiveScheduler(startBuild, 5000, { backoffMs });
+    try {
+      scheduler.restoreBackoff("s1", {
+        failures: 2,
+        retryAt: Date.now() + 120_000,
+        version: 3,
+      });
+      // The reloaded manager sees the same stale version: no fresh attempt.
+      scheduler.schedule("s1", 3);
+      await vi.advanceTimersByTimeAsync(119_999);
+      expect(startBuild).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(startBuild).toHaveBeenCalledTimes(1);
+
+      // The restored count carries on: the next failure waits 30 m.
+      const onBackoffAfterRestore = vi.fn<OnBackoff>(),
+        restored = new TileArchiveScheduler(startBuild, 5000, {
+          backoffMs,
+          onBackoff: onBackoffAfterRestore,
+        });
+      try {
+        restored.restoreBackoff("s2", { failures: 2, retryAt: Date.now(), version: 1 });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(startBuild).toHaveBeenLastCalledWith("s2");
+        await failBuild(calls, 1);
+        expect(onBackoffAfterRestore).toHaveBeenLastCalledWith("s2", {
+          failures: 3,
+          retryAt: Date.now() + 1_800_000,
+          version: 1,
+        });
+      } finally {
+        restored.dispose();
+      }
+      firstDeferral(calls, 0).resolve("installed");
+      await flushMicrotasks();
+    } finally {
+      scheduler.dispose();
+    }
+  });
+
+  it("a restored backoff still resets on a newer version", async () => {
+    const { calls, startBuild } = deferredStartBuild(),
+      scheduler = new TileArchiveScheduler(startBuild, 5000, { backoffMs });
+    try {
+      scheduler.restoreBackoff("s1", {
+        failures: 3,
+        retryAt: Date.now() + 1_800_000,
+        version: 3,
+      });
+      scheduler.schedule("s1", 4);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(startBuild).toHaveBeenCalledTimes(1);
+      firstDeferral(calls, 0).resolve("installed");
+      await flushMicrotasks();
+      await vi.advanceTimersByTimeAsync(1_800_000);
+      expect(startBuild).toHaveBeenCalledTimes(1);
     } finally {
       scheduler.dispose();
     }

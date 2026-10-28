@@ -65,4 +65,14 @@ failure record (`useMapTileArchiveBuildFailure`, fed by the scheduler's
 toasts only the first failure of a streak. `TileBuildStatus` shows it as a
 "Map tiles failed to build" alert with the error, the next retry time and a
 Retry button. The chip only mounts on the dataset page; the `/maps`
-workspace has no build-status surface yet.
+workspace has no build-status surface yet. The scheduler is in-memory, so the
+backoff (plus the error message) is persisted per browser in localStorage
+`tile-archive-backoff` and re-armed with `restoreBackoff` when the scheduler
+is created. Without that, every page reload bought a failing dataset a fresh
+attempt (found in browser verification). Verification recipe: a temporary
+patch that throws in `runBuild` behind a localStorage flag. Bump the version
+by re-saving an entry with `convex run --component jsonCms
+entries:updateEntry` (admin, isolated backend). `preview_start {name}` reads
+the MAIN checkout's `.claude/launch.json`, whose `dev` config runs `convex
+dev` against the cloud deployment. For isolated testing, run vite from Bash
+with env overrides and open it with `preview_start {url}`.
