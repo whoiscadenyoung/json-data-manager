@@ -31,11 +31,11 @@ sizes every `.take()` as
 5 MB page budget and a 900 KB worst-case row, that's **at most 5 rows per
 take**, whatever the real row size. A point row is ~60 bytes.
 
-| `listGeometries` page size | Before | With 100-row takes (experiment) |
-| --- | --- | --- |
-| 100 rows | 3.5 s | 0.4 s |
-| 300 rows | 10.0 s | — |
-| 500 rows | **fails after 15 s**: "timed out performing too many system operations" | 0.8 s |
+| `listGeometries` page size | Before                                                                  | With 100-row takes (experiment) |
+| -------------------------- | ----------------------------------------------------------------------- | ------------------------------- |
+| 100 rows                   | 3.5 s                                                                   | 0.4 s                           |
+| 300 rows                   | 10.0 s                                                                  | —                               |
+| 500 rows                   | **fails after 15 s**: "timed out performing too many system operations" | 0.8 s                           |
 
 (Wall times include ~0.3 s of CLI overhead.)
 
@@ -57,10 +57,10 @@ operations`. The dataset is stuck on the row path, and the build is retried
 With the experimental fix, the archive builds and later opens are fast. The
 first open after an import or edit still pays for both paths at once:
 
-| Dataset | Cold open (row path + in-browser build) | Peak JS heap | Warm open (tile path) | Warm heap |
-| --- | --- | --- | --- | --- |
-| 20k points | ~32 s until loaded (the archive landed first) | 517 MB | **1.3 s** | 238 MB |
-| 50k points | still loading at 150 s; archive done ~150 s | 641 MB | **3.8 s** | 286 MB |
+| Dataset    | Cold open (row path + in-browser build)       | Peak JS heap | Warm open (tile path) | Warm heap |
+| ---------- | --------------------------------------------- | ------------ | --------------------- | --------- |
+| 20k points | ~32 s until loaded (the archive landed first) | 517 MB       | **1.3 s**             | 238 MB    |
+| 50k points | still loading at 150 s; archive done ~150 s   | 641 MB       | **3.8 s**             | 286 MB    |
 
 Causes:
 

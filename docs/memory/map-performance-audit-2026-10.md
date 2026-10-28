@@ -31,7 +31,7 @@ over N live subscriptions. The planned P0 fix is a monotonic
 - What works: run the backend binary directly (as in [[better-auth-setup]],
   cwd `app/.convex/local/default/`, a fresh sqlite file plus
   `--local-storage <dir>`). Then use `--env-file <file with
-  CONVEX_SELF_HOSTED_URL/ADMIN_KEY>` for `convex dev --once`, `env set` and
+CONVEX_SELF_HOSTED_URL/ADMIN_KEY>` for `convex dev --once`, `env set` and
   `run`.
 - `convex dev --once --env-file` still REWRITES `app/.env.local` (VITE URLs →
   127.0.0.1, drops `CONVEX_DEPLOYMENT`). Back it up first and restore it after.
