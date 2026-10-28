@@ -575,6 +575,8 @@ export const createSchema = mutation({
       entryCount: 0,
       featureCount: args.kind === "geospatial" ? 0 : undefined,
       geometryType: args.geometryType,
+      // Born measured (no rows yet), so writes maintain it from the start.
+      maxGeometryRowBytes: args.kind === "geospatial" ? 0 : undefined,
       kind: args.kind,
       lifecycle: args.lifecycle,
       lineage: args.lineage,

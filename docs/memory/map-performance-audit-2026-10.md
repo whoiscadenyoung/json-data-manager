@@ -1,6 +1,6 @@
 ---
 name: map-performance-audit-2026-10
-description: 2026-10-28 large-point-dataset audit — geometry paginator takes only 5 rows per .take() (900 KB worst-case guard), so 500-row pages time out and tile archives never build for small-row datasets; plan in docs/map-performance-audit-2026-10-28.md; isolated-backend recipe gotchas
+description: 2026-10-28 large-point-dataset audit — geometry paginator took only 5 rows per .take() (900 KB worst-case guard), so 500-row pages timed out and tile archives never built for small-row datasets; FIXED by #183 (maxGeometryRowBytes + backfill); plan in docs/map-performance-audit-2026-10-28.md; isolated-backend recipe gotchas
 metadata:
   type: project
 ---
@@ -21,6 +21,15 @@ page; warm tile opens were then 1.3 s (20k) and 3.8 s (50k). Cold opens were
 still 32 s / 150 s+ because the row path and the in-browser build double-fetch
 over N live subscriptions. The planned P0 fix is a monotonic
 `maxGeometryRowBytes` on `schemas` to size takes.
+
+**#183 shipped 2026-10-28:** `schemas.maxGeometryRowBytes` (absent =
+unknown → 900 KB fallback; writers leave absent alone, born/cleared = 0,
+otherwise only grows) sizes takes; 500-row point pages are one take (1.2 s
+CLI), the 20k archive builds, warm open ~1.5 s. Pre-field datasets need
+`bunx convex run cms/schemas:backfillGeometryRowBytes` (from app/); it
+measures with the conservative sizing, ~200 s per 20k rows on the local
+backend. Component `_generated/component.ts` was hand-edited because
+`convex codegen --component-dir` needs a configured deployment.
 
 **Isolated-backend recipe gotchas (learned the hard way):**
 

@@ -15,6 +15,7 @@ import type { Id } from "../_generated/dataModel.js";
 import type { MutationCtx } from "../_generated/server.js";
 import {
   byteLength,
+  geometryRowBudgetBytes,
   inlineGeometryFieldsOrThrow,
   parseAndValidateGeometry,
 } from "../geometry_storage.js";
@@ -150,28 +151,46 @@ export function asResolvedGeometry(value: {
   };
 }
 
+/** The schema-doc fields `applyGeometryStatsDelta` folds a geometry write into. */
+export interface GeometryStatsDoc {
+  boundingBox?: number[];
+  featureCount?: number;
+  mapTileCacheVersion?: number;
+  maxGeometryRowBytes?: number;
+}
+
 /**
  * Folds a geometry add/remove/replace into a schema doc's denormalized
- * `featureCount`/`boundingBox` summary — and bumps `mapTileCacheVersion` in
- * the same patch, so any geometry-affecting write invalidates the dataset's
- * tile archive in the same transaction (see `bumpMapTileCacheVersion`).
- * `featureCount` is kept exactly accurate (clamped at 0). `boundingBox` only
- * ever grows (via `unionBbox`) — see the field's doc comment in schema.ts
- * for why deletes don't shrink it back down.
+ * `featureCount`/`boundingBox`/`maxGeometryRowBytes` summary — and bumps
+ * `mapTileCacheVersion` in the same patch, so any geometry-affecting write
+ * invalidates the dataset's tile archive in the same transaction (see
+ * `bumpMapTileCacheVersion`). `featureCount` is kept exactly accurate
+ * (clamped at 0). `boundingBox` only ever grows (via `unionBbox`) — see the
+ * field's doc comment in schema.ts for why deletes don't shrink it back
+ * down — and so does `maxGeometryRowBytes` (`newRowBytes` is the largest
+ * written row's `geometryRowBudgetBytes`, 0 for a delete), which stays
+ * absent until the backfill stamps it: a max over only the new rows would
+ * understate an unmeasured dataset's existing ones.
  */
 export async function applyGeometryStatsDelta(
   ctx: MutationCtx,
   schemaId: Id<"schemas">,
-  schemaDoc: { featureCount?: number; boundingBox?: number[]; mapTileCacheVersion?: number },
+  schemaDoc: GeometryStatsDoc,
   countDelta: number,
   newBbox: BoundingBox | undefined,
+  newRowBytes: number,
 ): Promise<void> {
   const featureCount = Math.max(0, (schemaDoc.featureCount ?? 0) + countDelta),
-    boundingBox = unionBbox(asBoundingBox(schemaDoc.boundingBox), newBbox);
+    boundingBox = unionBbox(asBoundingBox(schemaDoc.boundingBox), newBbox),
+    maxGeometryRowBytes =
+      schemaDoc.maxGeometryRowBytes === undefined
+        ? undefined
+        : Math.max(schemaDoc.maxGeometryRowBytes, newRowBytes);
   await ctx.db.patch(schemaId, {
     boundingBox,
     featureCount,
     mapTileCacheVersion: (schemaDoc.mapTileCacheVersion ?? 0) + 1,
+    maxGeometryRowBytes,
   });
 }
 
@@ -394,6 +413,7 @@ export async function insertEntryBatch(
     featureCount?: number;
     entryCount?: number;
     boundingBox?: number[];
+    maxGeometryRowBytes?: number;
   },
   rows: Array<{ data: unknown; geometry?: PendingGeometry }>,
 ): Promise<Array<Id<"entries">>> {
@@ -412,6 +432,7 @@ export async function insertEntryBatch(
   });
 
   let addedCount = 0,
+    maxRowBytes = 0,
     unionedBbox: BoundingBox | undefined;
 
   const ids = await Promise.all(
@@ -421,6 +442,7 @@ export async function insertEntryBatch(
       if (resolved !== undefined) {
         const bbox = await attachGeometry(ctx, entryId, schemaId, resolved);
         addedCount += 1;
+        maxRowBytes = Math.max(maxRowBytes, geometryRowBudgetBytes(resolved));
         unionedBbox = unionBbox(unionedBbox, bbox);
       }
       await syncEntryReferences(ctx, entryId, schemaId, schemaDoc, data);
@@ -429,7 +451,7 @@ export async function insertEntryBatch(
   );
 
   if (addedCount > 0) {
-    await applyGeometryStatsDelta(ctx, schemaId, schemaDoc, addedCount, unionedBbox);
+    await applyGeometryStatsDelta(ctx, schemaId, schemaDoc, addedCount, unionedBbox, maxRowBytes);
   }
   // Every inserted row counts toward `entryCount`, geometry or not.
   await applyEntryCountDelta(ctx, schemaId, schemaDoc, rows.length);
@@ -449,9 +471,10 @@ export async function insertEntryBatch(
 export async function replaceEntryGeometry(
   ctx: MutationCtx,
   entry: { _id: Id<"entries">; schemaId: Id<"schemas">; geometryId?: Id<"geometries"> },
-  schemaDoc: { featureCount?: number; boundingBox?: number[] },
+  schemaDoc: GeometryStatsDoc,
   resolved: ResolvedGeometry,
 ): Promise<void> {
+  const rowBytes = geometryRowBudgetBytes(resolved);
   if (entry.geometryId !== undefined) {
     const existing = await ctx.db.get(entry.geometryId);
     await ctx.db.patch(entry.geometryId, {
@@ -463,9 +486,9 @@ export async function replaceEntryGeometry(
     });
     await ctx.db.patch(entry._id, { geometryType: resolved.type });
     await deleteGeometryStorageIfAny(ctx, existing);
-    await applyGeometryStatsDelta(ctx, entry.schemaId, schemaDoc, 0, resolved.bbox);
+    await applyGeometryStatsDelta(ctx, entry.schemaId, schemaDoc, 0, resolved.bbox, rowBytes);
     return;
   }
   const bbox = await attachGeometry(ctx, entry._id, entry.schemaId, resolved);
-  await applyGeometryStatsDelta(ctx, entry.schemaId, schemaDoc, 1, bbox);
+  await applyGeometryStatsDelta(ctx, entry.schemaId, schemaDoc, 1, bbox, rowBytes);
 }

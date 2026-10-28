@@ -43,6 +43,25 @@ export function byteLength(text: string): number {
 }
 
 /**
+ * Upper-bounds one `geometries` row's contribution to a geometry page's byte
+ * budget. Inline rows cost exactly their JSON text; a pre-migration legacy
+ * row costs its re-serialized form; a storage-backed row's payload lives in
+ * a blob the paginator never touches (the client fetches it separately via
+ * `geometryUrl`), so it's charged the worst-case inline size — conservative
+ * for the budget, which is the safe direction. Also the measure behind
+ * `schemas.maxGeometryRowBytes`, so the take sizing and the budget agree.
+ */
+export function geometryRowBudgetBytes(row: { geometry?: unknown; geometryJson?: string }): number {
+  if (row.geometryJson !== undefined) {
+    return byteLength(row.geometryJson);
+  }
+  if (row.geometry !== undefined) {
+    return byteLength(JSON.stringify(row.geometry));
+  }
+  return INLINE_GEOMETRY_BYTE_LIMIT;
+}
+
+/**
  * Parses + structurally validates a geometry JSON string, translating a
  * JSON syntax error into the same `GeoParseError` class `assertGeometry`
  * itself throws for a structural problem — callers only need to catch one

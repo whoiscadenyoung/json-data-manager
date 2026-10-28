@@ -136,6 +136,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveFormat?: number;
           mapTileArchiveMaxZoom?: number;
           mapTileCacheVersion?: number;
+          maxGeometryRowBytes?: number;
           publishedVisibility?: "author" | "everyone";
           schema: any;
           simplifyGeometry?: boolean;
@@ -177,6 +178,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "internal",
         {},
         { membershipsPatched: number; schemasPatched: number },
+        Name
+      >;
+      backfillGeometryRowBytes: FunctionReference<
+        "mutation",
+        "internal",
+        {},
+        { done: boolean; schemasPatched: number },
         Name
       >;
       createEntriesBulk: FunctionReference<
@@ -845,6 +853,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveFormat?: number;
           mapTileArchiveMaxZoom?: number;
           mapTileCacheVersion?: number;
+          maxGeometryRowBytes?: number;
           publishedVisibility?: "author" | "everyone";
           schema: any;
           simplifyGeometry?: boolean;
@@ -898,6 +907,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveFormat?: number;
           mapTileArchiveMaxZoom?: number;
           mapTileCacheVersion?: number;
+          maxGeometryRowBytes?: number;
           publishedVisibility?: "author" | "everyone";
           schema: any;
           simplifyGeometry?: boolean;
@@ -1026,6 +1036,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveFormat?: number;
           mapTileArchiveMaxZoom?: number;
           mapTileCacheVersion?: number;
+          maxGeometryRowBytes?: number;
           publishedVisibility?: "author" | "everyone";
           schema: any;
           simplifyGeometry?: boolean;
@@ -1127,6 +1138,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           mapTileArchiveFormat?: number;
           mapTileArchiveMaxZoom?: number;
           mapTileCacheVersion?: number;
+          maxGeometryRowBytes?: number;
           publishedVisibility?: "author" | "everyone";
           schema: any;
           simplifyGeometry?: boolean;

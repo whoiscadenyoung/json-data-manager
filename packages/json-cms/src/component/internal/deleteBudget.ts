@@ -171,6 +171,9 @@ export async function finishClear(ctx: MutationCtx, schemaId: Id<"schemas">): Pr
     // geometry-affecting writes this dataset has ever seen" (see the field's
     // doc on the `schemas` table).
     mapTileCacheVersion: (doc.mapTileCacheVersion ?? 0) + 1,
+    // Known again once the dataset is empty: no rows, so no worst case. Rows
+    // written after the clear grow it from here (see `applyGeometryStatsDelta`).
+    maxGeometryRowBytes: doc.kind === "geospatial" ? 0 : undefined,
   });
 }
 

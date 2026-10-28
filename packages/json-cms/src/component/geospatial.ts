@@ -228,6 +228,9 @@ export const startGeospatialConversion = mutation({
       featureCount: 0,
       geometryType: "Point",
       kind: "geospatial",
+      // A standard dataset has no geometry rows yet, so the worst case is
+      // known (0) and every converted row grows it.
+      maxGeometryRowBytes: 0,
     });
     // Membership rows cache `kind` (see `schemaCollections` in schema.ts) —
     // rewrite this dataset's rows in the same transaction so collection
@@ -300,10 +303,13 @@ export const listSimplifyBatchInternal = internalQuery({
     schemaId: v.id("schemas"),
   },
   handler: async (ctx, args) => {
-    const result = await paginateGeometriesBySchema(ctx, args.schemaId, {
-      cursor: args.cursor,
-      numItems: args.numItems,
-    });
+    const schemaDoc = await ctx.db.get(args.schemaId),
+      result = await paginateGeometriesBySchema(
+        ctx,
+        args.schemaId,
+        { cursor: args.cursor, numItems: args.numItems },
+        schemaDoc === null ? undefined : schemaDoc.maxGeometryRowBytes,
+      );
     return {
       continueCursor: result.continueCursor,
       isDone: result.isDone,
