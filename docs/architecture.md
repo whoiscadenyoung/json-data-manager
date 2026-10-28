@@ -40,7 +40,7 @@ Bun workspace (`bun.lock` at the root; use `bun`, not node/npm):
 | `.github/workflows/ci.yml`   | Root CI (see [Development](#development)).                                                                                                                                                                                                                                                                                                         |
 | `docs/`                      | Design docs, decision records, and project memory (see the map at the end).                                                                                                                                                                                                                                                                        |
 
-**Module boundaries (ADR 0014).** Features live in `app/src/features/<name>/` (plus `app/convex/<domain>/` when they have a backend) and are imported only through their `index.ts`; features never import each other. `.oxlintrc.json` enforces both with `no-restricted-imports`. Workspace packages are either built (`dist`, for anything Convex component code imports) or source-only (`private`, app-only), and never import `#convex/_generated`.
+**Module boundaries (ADR 0014).** The frontend is core (`app/src/components`, `app/src/lib`, `app/src/integrations`: app shell, shared widgets, the row-resolution seam) plus features in `app/src/features/<name>/` (with `app/convex/<domain>/` when they have a backend). Domain features (`maps`, `datasets`, `versions`, `publishing`, `analysis`, `catalog`, `dashboard`) may import each other's root entry files (`#/features/<name>`, or `#/features/maps/tiles` for the root's tile managers) as long as the graph stays acyclic; optional modules (`app-builder`, `layer-styles`) are wired only by routes; core never imports features; feature subfolders are private. `.oxlintrc.json` enforces this with `no-restricted-imports` and `import/no-cycle`. Workspace packages are either built (`dist`, for anything Convex component code imports) or source-only (`private`, app-only), and never import `#convex/_generated`.
 
 ## Runtime topology
 
@@ -321,8 +321,8 @@ appear in either schema.
 - **Execution is client-side** (Convex only stores specs): the Transform tab
   on the dataset page (`transform-builder.tsx`, `transform-preview.tsx` with
   match-rate stats), export enrichment ("include joined fields" in
-  `lib/export.ts`), popup enrichment at seam point reads, and publish
-  (`lib/publish-spec.ts`). Anything virtual becomes real only by
+  `features/datasets/lib/export.ts`), popup enrichment at seam point reads, and publish
+  (`features/publishing/lib/publish-spec.ts`). Anything virtual becomes real only by
   [publishing](#publish-and-freeze-path).
 
 ## Row-resolution seam
@@ -356,7 +356,7 @@ back.
 1. **`publish.start`** resolves the target (caller's own saved registry row
    or draft dataset), mints the `publishKey` once per attempt, and
    joins-or-revives an active attempt (stale after 2 min of no progress).
-2. **Client executes** (`app/src/lib/publish.ts`, `publish-spec.ts`): rows via
+2. **Client executes** (`app/src/features/publishing/lib/publish.ts`, `publish-spec.ts`): rows via
    the seam, spec applied once (lookup → rollup → sql; `geometrySource`
    pairing preserved), chunked with `chunkRowsForImport`, each chunk uploaded
    and registered on the attempt (`registerChunk`), so a resumed browser
@@ -401,14 +401,14 @@ top of frozen chains.
   `setChainVersionPinned` (policy in `versionPolicies`), `consumedBy`
   (reverse projection; fork edges surface only to their own project's
   creator), `chainVersions`, `storedDelta` (diff via `tagDeltas`).
-- **UI**: `components/dataset-consumption.tsx` (badges, sync/revert,
+- **UI**: `features/versions/components/dataset-consumption.tsx` (badges, sync/revert,
   consumed-by), `version-compare.tsx`.
 - A pinned version that was retired resolves to nothing and map layers over
   it are suppressed rather than falling back to newer rows.
 
 ## Bundles
 
-`bundles.ts` + `app/src/lib/bundle-publish.ts` — one project publishes as one
+`bundles.ts` + `app/src/features/publishing/lib/bundle-publish.ts` — one project publishes as one
 bundle: a collection plus its maps plus the datasets they reference.
 
 - **`bundleClosure`** (pure) computes the plan: project memberships plus every
@@ -464,14 +464,14 @@ There is no server-side analytics path.
   (identity / float / registry / missing), then the worker registers the
   resolved component ids. v1 authors over component datasets only (registry
   ids report `registry`).
-- **Execution**: `app/src/lib/analysis.ts` (main-thread run manager, one run
+- **Execution**: `app/src/features/analysis/lib/analysis.ts` (main-thread run manager, one run
   at a time, lazy worker), `analysis.worker.ts` (pages every table through the
   seam, types columns from declared structure, runs `applySql`),
   `analysis-duckdb.ts` (lazy single-threaded DuckDB-WASM with a memory limit),
   `analysis-caps.ts` (`MAX_ANALYSIS_RESULT_ROWS` = 10,000; truncation always
   reported, publish refuses truncated results). The worker authenticates via a
   token round-trip to the main thread.
-- **UI**: the dataset page's **Analyze** tab (`components/analysis-panel.tsx`).
+- **UI**: the dataset page's **Analyze** tab (`features/analysis/components/analysis-panel.tsx`).
 - Parquet sidecar (DuckDB range reads over a per-version artifact) is
   deferred; the registration path is shaped so it can substitute for
   streaming.
@@ -485,7 +485,7 @@ chunks rows, uploads chunk blobs, and drives the component's workflow-driven
 Imports never mutate existing data; new data lands as a draft in a project or
 as a plain dataset.
 
-Reading geometry has two paths, chosen per dataset by `app/src/lib/layer-source.ts`:
+Reading geometry has two paths, chosen per dataset by `app/src/features/maps/lib/layer-source.ts`:
 
 - **Row path** — byte-budget pagination (`geometries.list`, ~5 MB/page,
   500-row ceiling) rendered as GeoJSON. Small datasets, always available.
@@ -500,7 +500,7 @@ The tile path exists because the 2026-09 audit measured the row path at
 46.55 MB for one real dataset — see
 [`docs/map-performance-audit-2026-09-16.md`](./map-performance-audit-2026-09-16.md).
 
-Exports (`lib/export.ts`, GeoJSON/JSON/XLSX) read rows through the seam and
+Exports (`features/datasets/lib/export.ts`, GeoJSON/JSON/XLSX) read rows through the seam and
 can fold saved transform specs in as extra columns.
 
 ## Frontend layout (`app/src/`)

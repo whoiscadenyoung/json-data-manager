@@ -23,15 +23,31 @@ workspace packages. This ADR records the conventions those steps follow.
 - **Feature modules.** A feature lives in `app/src/features/<name>/` and,
   when it has a backend, in `app/convex/<domain>/` with its own `tables.ts`
   spread into `schema.ts` with one line.
-  - Code outside the feature imports only its public API,
-    `#/features/<name>` (its `index.ts`, named re-exports only, since
-    `oxc/no-barrel-file` rejects `export *`).
+  - Files at a feature's root are its public entry points: `index.ts`
+    (`#/features/<name>`), plus an extra entry such as `maps/tiles.ts` when
+    importers need part of a feature without its heavy modules. Entries use
+    named re-exports only, since `oxc/no-barrel-file` rejects `export *`.
+    Subfolders (`components/`, `lib/`, …) are private.
   - Inside a feature, files import each other with relative paths.
-  - Features never import other features. Core exposes extension slots
-    (the `LayersMap` `extension` / `MapLayerPanel` `datasetActions` pattern
-    from ADR 0012) and only the page that composes them wires both.
-  - `.oxlintrc.json` enforces the first and third rules with
-    `no-restricted-imports`.
+  - **Two tiers (amended 2026-10-27, step F2).** Moving the rest of the app
+    into features showed that domain features build on each other (datasets
+    shows versions; versions and analysis publish).
+    - _Domain features_ (`maps`, `datasets`, `versions`, `publishing`,
+      `analysis`, `catalog`, `dashboard`) may import each other's public
+      entries. The graph must stay acyclic.
+    - _Optional modules_ (`app-builder`, `layer-styles`) are removable:
+      only routes import them. Core and domain features expose extension
+      slots (the `LayersMap` `extension` / `MapLayerPanel` `datasetActions`
+      pattern from ADR 0012) and only the page that composes them wires
+      the module in.
+  - **Core** (`src/components`, `src/lib`, `src/integrations`) holds the app
+    shell, shared widgets (`dataset-type-tags`, `dataset-picker-sheet`,
+    `confirm-delete-dialog`) and shared seams (`dataset-rows`,
+    `version-rows`, the DuckDB engine until step F3 moves it). Core never
+    imports features.
+  - `.oxlintrc.json` enforces these rules: `no-restricted-imports` for
+    private subfolders, optional modules and core, plus `import/no-cycle`
+    over `app/src`.
 - **Two kinds of workspace package.**
   - _Built_ packages compile to `dist` with `tsc`, like `@caden/json-cms` and
     `@caden/geometry-archive`. Use this for anything imported by Convex

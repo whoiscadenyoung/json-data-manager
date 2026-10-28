@@ -1,0 +1,332 @@
+/**
+ * Tile-archive rebuild worker (issue #58 part 3) — one build per inbound
+ * "build" message: page the dataset's geometry rows to exhaustion, assemble a
+ * GeoJSON FeatureCollection, run `buildGeometryArchive` (part 1's package),
+ * upload the blob through the app's storage upload-url flow, and install it
+ * via the app-level `tile_archives.install` wrapper with the version captured
+ * BEFORE generation — part 2's `expectedVersion` guard makes a build raced by
+ * edits self-discard, so the trailing debounce here only bounds work, never
+ * correctness.
+ *
+ * Runs inside a web worker: the standalone `ConvexClient` keeps every page
+ * fetch and its `JSON.parse` off the main thread, and builds serialize
+ * (promise-chained) so the CPU-bound tile math never interleaves. The
+ * client authenticates by requesting the session's Convex JWT from the
+ * main thread over the message channel — see `fetchTokenFromMain` below.
+ */
+import {
+  buildGeometryArchive,
+  DEFAULT_MAX_ZOOM,
+  type GeoJSONFeature,
+  type GeoJSONGeometry,
+} from "@caden/geometry-archive";
+import { ConvexClient } from "convex/browser";
+
+import { env } from "#/env";
+import { BoundedPool } from "#/lib/bounded-pool";
+import { forEachDatasetGeometryPage, type DatasetGeometryRow } from "#/lib/dataset-rows";
+import { api } from "#convex/_generated/api";
+
+import type {
+  TileArchiveBuildPhase,
+  TileArchiveWorkerInbound,
+  TileArchiveWorkerOutbound,
+} from "./tile-archive";
+
+/**
+ * Minimum geometry-payload bytes an archive is worth building for — keep in
+ * sync with `MAP_TILE_ARCHIVE_MIN_BYTES` in the component's `lib.ts` (and its
+ * mirror in `./tile-archive`). Applied here, after assembly, on the exact
+ * payload size: a small dataset skips upload/install entirely and reports
+ * `skipped`.
+ */
+const MAP_TILE_ARCHIVE_MIN_BYTES = 262_144; // 256 KB
+
+/**
+ * Geometry payload fetches in flight at once (issue #134's 8–16 band). Each
+ * page's rows used to start fetching unbounded — a 40-page dataset ran
+ * hundreds of concurrent fetches. Twelve overlaps page round trips without
+ * thrashing the browser's per-origin connection pool.
+ */
+const GEOMETRY_FETCH_POOL_SIZE = 12;
+
+// Worker scope (`DedicatedWorkerGlobalScope`) isn't available to name under
+// the app's DOM-lib tsconfig, but `self.postMessage` / `self.addEventListener`
+// used here are the same calls on the narrow worker surface this module uses —
+// at runtime `self` IS the worker scope.
+function post(message: TileArchiveWorkerOutbound): void {
+  // Worker-scope `postMessage` takes (message, transfer) — the `targetOrigin`
+  // second argument this lint rule wants does not exist in worker scope.
+  // oxlint-disable-next-line unicorn/require-post-message-target-origin
+  self.postMessage(message);
+}
+
+function postPhase(schemaId: string, phase: TileArchiveBuildPhase): void {
+  post({ phase, schemaId, type: "phase" });
+}
+
+let client: ConvexClient | undefined;
+
+/**
+ * The standalone client authenticates through the main thread: its setAuth
+ * fetcher round-trips a token request over the message channel (the worker
+ * has no Better Auth session of its own). Since the sign-in gate (roadmap
+ * 0.1) every data call — geometry paging, the schema read, the upload URL,
+ * the install — is rejected without identity. The main thread replies with
+ * null when signed out; the client then runs unauthenticated and builds
+ * fail with the gate's sign-in error.
+ */
+let tokenRequestSeq = 0;
+const pendingTokenRequests = new Map<number, (token: string | null) => void>();
+
+async function fetchTokenFromMain(): Promise<string | null> {
+  return new Promise((resolve) => {
+    tokenRequestSeq += 1;
+    pendingTokenRequests.set(tokenRequestSeq, resolve);
+    post({ requestId: tokenRequestSeq, type: "token-request" });
+  });
+}
+
+function convexClient(): ConvexClient {
+  if (client === undefined) {
+    client = new ConvexClient(env.VITE_CONVEX_URL);
+    client.setAuth(fetchTokenFromMain);
+  }
+  return client;
+}
+
+// One heavy build at a time: async page fetches may interleave, but the
+// CPU-bound geojson-vt indexing serializes on this worker's single thread.
+let buildQueue: Promise<void> = Promise.resolve();
+
+self.addEventListener("message", (event: MessageEvent<TileArchiveWorkerInbound>) => {
+  const message = event.data;
+  if (!message) return;
+  if (message.type === "token") {
+    const resolve = pendingTokenRequests.get(message.requestId);
+    if (resolve !== undefined) {
+      pendingTokenRequests.delete(message.requestId);
+      resolve(message.token);
+    }
+    return;
+  }
+  if (message.type !== "build") return;
+  const { schemaId } = message;
+  // Re-assert auth per build so a client first created signed out
+  // authenticates as soon as a session exists (sign-out reloads the page,
+  // but sign-in does not).
+  convexClient().setAuth(fetchTokenFromMain);
+  buildQueue = buildQueue.then(async () => runBuild(schemaId)).catch(() => undefined); // runBuild reports its own error message; the queue keeps draining.
+});
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+const GEOMETRY_TYPES_WITH_COORDINATES = new Set([
+  "MultiPoint",
+  "MultiLineString",
+  "MultiPolygon",
+  "Point",
+  "LineString",
+  "Polygon",
+]);
+
+function isGeometry(value: unknown): value is GeoJSONGeometry {
+  if (!isRecord(value) || typeof value.type !== "string") return false;
+  if (value.type === "GeometryCollection") return "geometries" in value;
+  return GEOMETRY_TYPES_WITH_COORDINATES.has(value.type) && "coordinates" in value;
+}
+
+function parseGeometry(json: string, source: string): GeoJSONGeometry {
+  const value: unknown = JSON.parse(json);
+  if (!isGeometry(value)) {
+    throw new Error(`${source} did not parse to a GeoJSON geometry object.`);
+  }
+  return value;
+}
+
+async function fetchGeometry(url: string): Promise<{ bytes: number; geometry: GeoJSONGeometry }> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Geometry payload fetch failed with HTTP ${response.status}`);
+  }
+  // Count real bytes off the wire — `text.length` counts UTF-16 code units,
+  // which undercounts multi-byte payloads (issue #134).
+  const buffer = await response.arrayBuffer();
+  const text = new TextDecoder().decode(buffer);
+  return { bytes: buffer.byteLength, geometry: parseGeometry(text, `Geometry payload ${url}`) };
+}
+
+/** UTF-8 byte length of an inline payload — `text.length` counts UTF-16 code
+ * units, not bytes (issue #134). */
+function utf8ByteLength(text: string): number {
+  return new TextEncoder().encode(text).byteLength;
+}
+
+function feature(entryId: string, geometry: GeoJSONGeometry): GeoJSONFeature {
+  // `_id` is the archive lib's app convention: it becomes the tile feature's
+  // `entryId` property — the join key part 4 maps a tile click back through.
+  return { _id: entryId, geometry, properties: null, type: "Feature" };
+}
+
+interface ResolvedGeometryRow {
+  bytes: number;
+  entryId: string;
+  geometry: GeoJSONGeometry;
+}
+
+async function resolveRow(row: DatasetGeometryRow): Promise<ResolvedGeometryRow | null> {
+  if (row.geometryJson !== undefined) {
+    return {
+      bytes: utf8ByteLength(row.geometryJson),
+      entryId: row.entryId,
+      geometry: parseGeometry(row.geometryJson, `Geometry row ${row.entryId}`),
+    };
+  }
+  if (row.geometryUrl === undefined) return null;
+  const fetched = await fetchGeometry(row.geometryUrl);
+  return { bytes: fetched.bytes, entryId: row.entryId, geometry: fetched.geometry };
+}
+
+/**
+ * Pages the dataset to exhaustion (`isDone`) and accumulates its features —
+ * the cursor chain, page size, and completeness semantics live in the
+ * row-resolution seam (`forEachDatasetGeometryPage`, run here on this
+ * worker's own client). Rows resolve through {@link BoundedPool} so at most
+ * {@link GEOMETRY_FETCH_POOL_SIZE} fetches are ever in flight, across pages
+ * too: a page's fetches run while the next page's query is still in flight.
+ * Exported for the pool-contract test (issue #134).
+ */
+export async function fetchAllGeometryFeatures(
+  convex: ConvexClient,
+  schemaId: string,
+): Promise<{ features: Array<GeoJSONFeature>; payloadBytes: number }> {
+  const features: Array<GeoJSONFeature> = [];
+  const pool = new BoundedPool(GEOMETRY_FETCH_POOL_SIZE);
+  const rowTasks: Array<Promise<ResolvedGeometryRow | null>> = [];
+  await forEachDatasetGeometryPage(
+    schemaId,
+    (rows) => {
+      for (const row of rows) {
+        rowTasks.push(
+          pool.run(async () => {
+            return await resolveRow(row);
+          }),
+        );
+      }
+    },
+    { convex },
+  );
+  const resolvedRows = await Promise.all(rowTasks);
+  let payloadBytes = 0;
+  for (const resolved of resolvedRows) {
+    if (resolved === null) continue;
+    features.push(feature(resolved.entryId, resolved.geometry));
+    payloadBytes += resolved.bytes;
+  }
+  return { features, payloadBytes };
+}
+
+/**
+ * Uploads the archive through the app's storage upload-url flow, issued for
+ * THIS dataset (`scope`) — the install then presents the issuance token, and
+ * an id that didn't come from a server-issued upload for this dataset is
+ * rejected at `tile_archives.install` (issue #131).
+ */
+async function uploadArchive(
+  convex: ConvexClient,
+  schemaId: string,
+  archive: Uint8Array,
+): Promise<{ storageId: string; uploadId: string }> {
+  const { storageUrl, uploadId } = await convex.mutation(api.imports.generateUploadUrl, {
+    scope: schemaId,
+  });
+  // The archive is one fresh buffer from `assembleArchive`, so an
+  // ArrayBuffer-backed copy for the Blob part is the honest typing.
+  const response = await fetch(storageUrl, {
+    body: new Blob([new Uint8Array(archive)], { type: "application/octet-stream" }),
+    headers: { "Content-Type": "application/octet-stream" },
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(`Archive upload failed with HTTP ${response.status}`);
+  }
+  const body: unknown = await response.json();
+  if (
+    typeof body !== "object" ||
+    body === null ||
+    !("storageId" in body) ||
+    typeof body.storageId !== "string"
+  ) {
+    throw new Error("Archive upload did not return a storageId.");
+  }
+  return { storageId: body.storageId, uploadId };
+}
+
+async function buildAndInstall(
+  convex: ConvexClient,
+  schemaId: string,
+  expectedVersion: number,
+  features: Array<GeoJSONFeature>,
+): Promise<void> {
+  postPhase(schemaId, "building");
+  const archive = await buildGeometryArchive({
+    features,
+    maxZoom: DEFAULT_MAX_ZOOM,
+  });
+
+  postPhase(schemaId, "uploading");
+  const { storageId, uploadId } = await uploadArchive(convex, schemaId, archive);
+
+  postPhase(schemaId, "installing");
+  const outcome = await convex.mutation(api.tile_archives.install, {
+    bytes: archive.byteLength,
+    expectedVersion,
+    maxZoom: DEFAULT_MAX_ZOOM,
+    schemaId,
+    storageId,
+    uploadId,
+  });
+  if (outcome === "installed") {
+    post({
+      builtVersion: expectedVersion,
+      bytes: archive.byteLength,
+      maxZoom: DEFAULT_MAX_ZOOM,
+      schemaId,
+      type: "done",
+    });
+  } else {
+    // Edits landed during the build — the guard deleted the incoming blob;
+    // a queued/stale-on-view rebuild converges to fresh.
+    post({ schemaId, type: "stale-discarded" });
+  }
+}
+
+async function runBuild(schemaId: string): Promise<void> {
+  try {
+    const convex = convexClient();
+    postPhase(schemaId, "fetching");
+    const schema = await convex.query(api.schemas.get, { schemaId });
+    if (schema === null || schema.kind !== "geospatial" || schema.geometryType === undefined) {
+      post({ reason: "not-geospatial", schemaId, type: "skipped", version: 0 });
+      return;
+    }
+    const expectedVersion = schema.mapTileCacheVersion ?? 0;
+    const { features, payloadBytes } = await fetchAllGeometryFeatures(convex, schemaId);
+    if (payloadBytes < MAP_TILE_ARCHIVE_MIN_BYTES) {
+      // The version rides along so the manager can memoize the skip —
+      // without it a below-threshold dataset reads as stale forever and
+      // refetches on every summaries update (issue #134).
+      post({ reason: "below-threshold", schemaId, type: "skipped", version: expectedVersion });
+      return;
+    }
+    await buildAndInstall(convex, schemaId, expectedVersion, features);
+  } catch (error) {
+    post({
+      message: error instanceof Error ? error.message : String(error),
+      schemaId,
+      type: "error",
+    });
+  }
+}

@@ -23,33 +23,37 @@ import { Download, Layers, MapIcon, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { GroupFormPanel } from "#/features/catalog";
+import {
+  applyJoinedFields,
+  buildGeoJsonCollection,
+  buildJsonPayload,
+  type Dataset,
+  DatasetList,
+  downloadText,
+  entryRows,
+  ExportDialog,
+  exportExcelWorkbook,
+  type ExportFormat,
+  type ExportFormatOption,
+  slugify,
+} from "#/features/datasets";
+import {
+  AddToMapSheet,
+  GroupMap,
+  type LayerSourceSplit,
+  splitSchemaIdsByDecision,
+  useTileArchiveSources,
+} from "#/features/maps";
 import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
-import { AddToMapSheet } from "@/components/add-to-map-sheet";
-import { DatasetList } from "@/components/dataset-list";
-import type { Dataset } from "@/components/dataset-list";
 import { DatasetPickerSheet } from "@/components/dataset-picker-sheet";
-import { ExportDialog } from "@/components/export-dialog";
-import type { ExportFormat, ExportFormatOption } from "@/components/export-dialog";
-import { GroupFormPanel } from "@/components/group-form-panel";
-import { GroupMap } from "@/components/group-map";
 import {
   fetchDatasetEntryRows,
   resolveDatasetGeometryRows,
   type DatasetEntryRow,
 } from "@/lib/dataset-rows";
 import { useGeometriesBySchemas } from "@/lib/dataset-rows-react";
-import {
-  applyJoinedFields,
-  buildGeoJsonCollection,
-  buildJsonPayload,
-  downloadText,
-  entryRows,
-  exportExcelWorkbook,
-  slugify,
-} from "@/lib/export";
-import type { LayerSourceSplit } from "@/lib/layer-source";
-import { splitSchemaIdsByDecision, useTileArchiveSources } from "@/lib/layer-source";
 
 /**
  * The group members' JSON-schema payloads, read on demand for an export that

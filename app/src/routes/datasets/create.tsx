@@ -13,9 +13,9 @@ import { toast } from "sonner";
 import { z } from "zod";
 
 import { RouterButton } from "#/components/router-button";
+import { uploadChunkBlob, uploadSourceFileBlob } from "#/features/datasets";
+import { ensureMapTileArchive } from "#/features/maps/tiles";
 import { errorMessage } from "#/lib/errors";
-import { ensureMapTileArchive } from "#/lib/tile-archive";
-import { uploadChunkBlob, uploadSourceFileBlob } from "#/lib/upload";
 
 import { api } from "../../../convex/_generated/api";
 

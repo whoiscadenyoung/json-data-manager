@@ -39,7 +39,7 @@ import { toast } from "sonner";
 
 import { DatasetTypeTags, DerivedDatasetBadge } from "#/components/dataset-type-tags";
 import { RouterButton } from "#/components/router-button";
-import { publishProjectBundle } from "#/lib/bundle-publish";
+import { publishProjectBundle } from "#/features/publishing";
 import { errorMessage } from "#/lib/errors";
 
 import { api } from "../../../convex/_generated/api";

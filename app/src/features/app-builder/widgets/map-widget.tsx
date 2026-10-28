@@ -12,10 +12,13 @@ import { Skeleton } from "@caden/ui/components/skeleton";
 import { Spinner } from "@caden/ui/components/spinner";
 import { useState } from "react";
 
-import { LayersMap } from "#/components/layers-map";
+import {
+  colorForIndex,
+  LayersMap,
+  splitSchemaIdsByDecision,
+  useTileArchiveSources,
+} from "#/features/maps";
 import { useGeometriesBySchemas } from "#/lib/dataset-rows-react";
-import { splitSchemaIdsByDecision, useTileArchiveSources } from "#/lib/layer-source";
-import { colorForIndex } from "#/lib/map-layers";
 import { APP_LIMITS } from "#convex/appBuilder/validators";
 
 import { useAppDatasets, datasetTitle, type DatasetDoc, type DatasetState } from "../data";

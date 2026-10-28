@@ -57,14 +57,19 @@
     "react/syntax": "error",
     "react/unsupported-syntax": "warn",
     "typescript/use-unknown-in-catch-callback-variable": "error",
-    // Feature modules expose a public API from their index.ts (ADR 0014).
+    // Module boundaries (ADR 0014): feature subfolders are private, and
+    // optional modules (app-builder, layer-styles) are wired only by routes.
     "no-restricted-imports": [
       "error",
       {
         "patterns": [
           {
-            "regex": "^#/features/[^/]+/.+",
-            "message": "Import a feature through its public API (#/features/<name>), not its internals (ADR 0014)."
+            "regex": "^#/features/[^/]+/[^/]+/",
+            "message": "Feature subfolders are private: import from the feature's root entry files (#/features/<name> or #/features/<name>/<entry>) (ADR 0014)."
+          },
+          {
+            "regex": "^#/features/(app-builder|layer-styles)(/|$)",
+            "message": "Optional modules are wired only by routes; core and other features expose extension slots instead (ADR 0011, 0012, 0014)."
           }
         ]
       }
@@ -122,9 +127,33 @@
       }
     },
     {
-      // Inside a feature: relative imports for its own files, and no imports of
-      // other features — core exposes extension slots instead (ADR 0012, 0014).
-      "files": ["app/src/features/**"],
+      // Features may build on each other's public entries, but the graph must
+      // stay acyclic (ADR 0014).
+      "files": ["app/src/**"],
+      "rules": {
+        "import/no-cycle": "error"
+      }
+    },
+    {
+      // Routes compose everything, optional modules included.
+      "files": ["app/src/routes/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^#/features/[^/]+/[^/]+/",
+                "message": "Feature subfolders are private: import from the feature's root entry files (#/features/<name> or #/features/<name>/<entry>) (ADR 0014)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // Core never depends on features; features build on core.
+      "files": ["app/src/components/**", "app/src/lib/**", "app/src/integrations/**"],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -132,7 +161,7 @@
             "patterns": [
               {
                 "regex": "^#/features/",
-                "message": "Features never import other features; use relative imports within a feature and extension slots across features (ADR 0014)."
+                "message": "Core (src/components, src/lib, src/integrations) never imports features (ADR 0014)."
               }
             ]
           }
