@@ -12,7 +12,7 @@ import { Input } from "#/components/ui/input";
 import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 
-type Snapshot = FunctionReturnType<typeof api.tags.listSnapshots>[number];
+type Snapshot = FunctionReturnType<typeof api.demoSources.snapshots.listSnapshots>[number];
 type Version = FunctionReturnType<typeof api.tags.listVersions>[number];
 
 /**
@@ -58,9 +58,9 @@ export function SnapshotsCard() {
  * form, and the ingest button with its pending count.
  */
 function SnapshotsPanel({ liveSchemaId }: { liveSchemaId: string }) {
-  const snapshots = useQuery(api.tags.listSnapshots),
+  const snapshots = useQuery(api.demoSources.snapshots.listSnapshots),
     versions = useQuery(api.tags.listVersions, { sourceSchemaId: liveSchemaId }),
-    createSnapshot = useAction(api.tags.createRestaurantSnapshot),
+    createSnapshot = useAction(api.demoSources.snapshots.createRestaurantSnapshot),
     ingest = useAction(api.tags.ingestSnapshots),
     [label, setLabel] = useState(""),
     [isBusy, setIsBusy] = useState(false),

@@ -156,8 +156,10 @@ record theirs here too via `consumption.afterPublishCompleted`).
 
 **Foreign-domain stand-in** — the PoC's "other app": `restaurants`,
 `locations`, `restaurantLocations` (join), `sourceCommits` (its git-like
-feed), `restaurantSnapshots` (its tag snapshots as JSONL in storage). This
-is scaffolding for the real integration; phase 5 (#78, remote transport) is
+feed), `restaurantSnapshots` (its tag snapshots as JSONL in storage),
+declared in `app/convex/demoSources/tables.ts` and spread into `schema.ts`
+with one line. Core code reads them only through the `LocalSource` adapters
+in `demoSources/sources.ts`. This is scaffolding for the real integration; phase 5 (#78, remote transport) is
 blocked on the hosting-fork decision — see
 [`docs/bound-datasets-design.md`](./bound-datasets-design.md) §8.
 
@@ -248,16 +250,21 @@ appear in either schema.
   `projects.ts`, `publish.ts`, `bundles.ts`, `consumption.ts`,
   `versioning.ts` (sections below).
 - **Bound-datasets layer** — `sources.ts` (the `BoundSource` descriptor
-  interface + registry: adding a source = one entry), `sync.ts` (durable
+  interface + registry: adding a source = one entry; snapshot-taking
+  sources implement `listSnapshots`), `sourcePaging.ts` (the #127 page-size
+  contract readers share), `sync.ts` (durable
   engine: collect → chunked apply, keyed and idempotent via `bindingEntries`;
   commit-tail is the primary path, full pass falls back or reconciles),
   `tags.ts` (snapshot ingest: freeze foreign snapshots into read-only
   lineage datasets via `versioning.ts`, version compare, keep-N/pin
   retention), `bindings.ts` (binding status/unbind queries for the UI).
   Weekly reconcile cron in `crons.ts`.
-- **Foreign-domain CRUD** — `dashboard.ts` (restaurants/locations/links CRUD
-  for `/dashboard`; every write only stamps staleness on the binding) and
-  `seed.ts`.
+- **Demo foreign app** — `demoSources/` (removable; see
+  [bound-datasets-design §9](./bound-datasets-design.md#removing-the-demo-sources)):
+  `tables.ts`, `sources.ts` (the two co-deployed `LocalSource` adapters),
+  `dashboard.ts` (restaurants/locations/links CRUD for `/dashboard`; every
+  write only stamps staleness on the binding), `snapshots.ts` (the foreign
+  app's snapshot taking + tag listing), and `seed.ts`.
 - **Tile install** — `tile_archives.ts` — deliberately NOT an exposeApi
   export: `install` is a host wrapper around the component's
   `setMapTileArchive` so only the rebuild worker (standalone ConvexClient)
