@@ -1,3 +1,5 @@
+import { MAX_ANALYSIS_RESULT_ROWS } from "@caden/analysis/caps";
+import { analysisSqlEngine } from "@caden/analysis/duckdb";
 import {
   declaredColumnTypes,
   geometrySourceOperationOf,
@@ -30,8 +32,6 @@ import type { ImportRow } from "@caden/json-cms/react";
 import { ConvexClient } from "convex/browser";
 import type { FunctionReturnType } from "convex/server";
 
-import { MAX_ANALYSIS_RESULT_ROWS } from "#/lib/analysis-caps";
-import { analysisSqlEngine } from "#/lib/analysis-duckdb";
 import {
   entryDataRecord,
   fetchDatasetEntryRows,

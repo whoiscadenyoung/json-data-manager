@@ -13,6 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@caden/analysis": "workspace:*",
     "@caden/data-core": "workspace:*",
     "@caden/geometry-archive": "workspace:*",
     "@caden/json-cms": "workspace:*",
@@ -25,7 +26,6 @@
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
-    "@duckdb/duckdb-wasm": "1.33.1-dev57.0",
     "@rjsf/core": "^6.8.0",
     "@rjsf/shadcn": "^6.8.0",
     "@rjsf/utils": "^6.8.0",
@@ -42,7 +42,6 @@
     "@tanstack/react-router-devtools": "1.167.2",
     "@tanstack/react-router-ssr-query": "1.167.3",
     "@tanstack/react-start": "1.168.59",
-    "apache-arrow": "17.0.0",
     "better-auth": "1.6.15",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.3.0",

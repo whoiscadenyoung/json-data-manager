@@ -37,6 +37,7 @@ Bun workspace (`bun.lock` at the root; use `bun`, not node/npm):
 | `packages/ui/`               | `@caden/ui` — source-only package (ADR 0014) holding all registry UI: the shadcn base-mira primitives, niko-table, and mapcn's MapLibre kit, plus the theme tokens (`globals.css`, imported by `app/src/styles.css`). Has its own `components.json`, so `shadcn add` writes here.                                                                  |
 | `packages/maps/`             | `@caden/maps` — source-only (ADR 0014) backend-free map engine: the shared PMTiles protocol instance, the OPFS tile-archive cache, the debounced rebuild scheduler + staleness check, the bounded fetch pool, and geometry-row parsing for the build worker. The Convex-bound managers and worker stay in `app/src/features/maps/`.                |
 | `packages/layer-styles/`     | `@caden/layer-styles` — source-only (ADR 0014) layer-styles engine: the stored-style validators (shared by `app/convex/layerStyles` and the client), compile, classify, palettes, legend, SDF and style.json exchange. See [`layer-styles.md`](./layer-styles.md).                                                                                 |
+| `packages/analysis/`         | `@caden/analysis` — source-only (ADR 0014) analysis engine: the lazy single-threaded DuckDB-WASM SQL engine (lockdown + memory limit) and the analysis row caps; used by `features/analysis` and publish. The Convex-bound worker stays in `app/src/features/analysis/`.                                                                           |
 | `packages/geometry-archive/` | `@caden/geometry-archive` — PMTiles archive writer + tile logic used by the map tile pipeline (issue #58).                                                                                                                                                                                                                                         |
 | `packages/data-export/`      | `@caden/data-export` — durable snapshot-export component. **Built but not wired in**: no consumer, not registered in `app/convex/convex.config.ts`; typechecked and tested in CI. Latent defects parked on #137 for any future wire-in.                                                                                                            |
 | `.github/workflows/ci.yml`   | Root CI (see [Development](#development)).                                                                                                                                                                                                                                                                                                         |
@@ -469,8 +470,8 @@ There is no server-side analytics path.
 - **Execution**: `app/src/features/analysis/lib/analysis.ts` (main-thread run manager, one run
   at a time, lazy worker), `analysis.worker.ts` (pages every table through the
   seam, types columns from declared structure, runs `applySql`),
-  `analysis-duckdb.ts` (lazy single-threaded DuckDB-WASM with a memory limit),
-  `analysis-caps.ts` (`MAX_ANALYSIS_RESULT_ROWS` = 10,000; truncation always
+  `@caden/analysis/duckdb` (lazy single-threaded DuckDB-WASM with a memory limit),
+  `@caden/analysis/caps` (`MAX_ANALYSIS_RESULT_ROWS` = 10,000; truncation always
   reported, publish refuses truncated results). The worker authenticates via a
   token round-trip to the main thread.
 - **UI**: the dataset page's **Analyze** tab (`features/analysis/components/analysis-panel.tsx`).

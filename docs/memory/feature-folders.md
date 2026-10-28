@@ -13,8 +13,8 @@ Step F2 moved 70 files from flat `app/src/components` + `app/src/lib` into
 `app/src/features/{maps,datasets,versions,publishing,analysis,catalog,dashboard}`
 (each with `components/`, `lib/` and a generated `index.ts`). Core keeps the
 shell, `dataset-type-tags`, `dataset-picker-sheet`, `confirm-delete-dialog`,
-the row seam (`dataset-rows*`, `version-rows`) and the DuckDB engine
-(`analysis-caps`, `analysis-duckdb`, until step F3).
+the row seam (`dataset-rows*`, `version-rows`) and, until step F3 moved it
+to `@caden/analysis`, the DuckDB engine.
 
 - **"Features never import features" didn't survive contact.** The real
   graph has domain features building on each other (datasets → versions →

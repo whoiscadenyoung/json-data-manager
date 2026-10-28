@@ -1,6 +1,5 @@
+import { MAX_ANALYSIS_SOURCE_ROWS } from "@caden/analysis/caps";
 import { describe, expect, it } from "vitest";
-
-import { MAX_ANALYSIS_SOURCE_ROWS } from "#/lib/analysis-caps";
 
 import {
   PUBLISH_GEOMETRY_COLUMN,

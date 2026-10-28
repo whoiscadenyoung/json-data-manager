@@ -43,8 +43,7 @@ workspace packages. This ADR records the conventions those steps follow.
   - **Core** (`src/components`, `src/lib`, `src/integrations`) holds the app
     shell, shared widgets (`dataset-type-tags`, `dataset-picker-sheet`,
     `confirm-delete-dialog`) and shared seams (`dataset-rows`,
-    `version-rows`, the DuckDB engine until step F3 moves it). Core never
-    imports features.
+    `version-rows`). Core never imports features.
   - `.oxlintrc.json` enforces these rules: `no-restricted-imports` for
     private subfolders, optional modules and core, plus `import/no-cycle`
     over `app/src`.

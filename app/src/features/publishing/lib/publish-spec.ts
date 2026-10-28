@@ -1,3 +1,4 @@
+import { MAX_ANALYSIS_SOURCE_ROWS, sourceRowCapError } from "@caden/analysis/caps";
 /**
  * The publish executor's pure core (roadmap 5b, #100): run a stored
  * transform spec ONCE over pre-loaded source rows and pair every output row
@@ -61,8 +62,6 @@ import type {
   SqlEngine,
   SqlOperation,
 } from "@caden/data-core/transform";
-
-import { MAX_ANALYSIS_SOURCE_ROWS, sourceRowCapError } from "#/lib/analysis-caps";
 
 /**
  * The record key an entry's geometry pointer is injected under, when the
