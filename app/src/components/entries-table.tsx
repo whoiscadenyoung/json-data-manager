@@ -1,34 +1,34 @@
 import type { ReferenceField } from "@caden/json-cms/react";
 import { getReferenceFields } from "@caden/json-cms/react";
-import { Link } from "@tanstack/react-router";
-import { useQuery } from "convex/react";
-import { Copy, Eye, MoreHorizontal, Pencil } from "lucide-react";
-import { toast } from "sonner";
-
-import { DataTableClearFilter } from "#/components/niko-table/components/data-table-clear-filter";
-import { DataTableColumnHeader } from "#/components/niko-table/components/data-table-column-header";
-import { DataTableColumnSortMenu } from "#/components/niko-table/components/data-table-column-sort";
-import { DataTableColumnTitle } from "#/components/niko-table/components/data-table-column-title";
-import { DataTableFilterMenu } from "#/components/niko-table/components/data-table-filter-menu";
-import { DataTableSearchFilter } from "#/components/niko-table/components/data-table-search-filter";
-import { DataTableToolbarSection } from "#/components/niko-table/components/data-table-toolbar-section";
-import { DataTableViewMenu } from "#/components/niko-table/components/data-table-view-menu";
-import { DataTable } from "#/components/niko-table/core/data-table";
-import { DataTableRoot } from "#/components/niko-table/core/data-table-root";
-import {
-  DataTableVirtualizedBody,
-  DataTableVirtualizedEmptyBody,
-  DataTableVirtualizedHeader,
-} from "#/components/niko-table/core/data-table-virtualized-structure";
-import type { DataTableColumnDef } from "#/components/niko-table/types";
-import { Button } from "#/components/ui/button";
+import { Button } from "@caden/ui/components/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "#/components/ui/dropdown-menu";
+} from "@caden/ui/components/dropdown-menu";
+import { DataTableClearFilter } from "@caden/ui/niko-table/components/data-table-clear-filter";
+import { DataTableColumnHeader } from "@caden/ui/niko-table/components/data-table-column-header";
+import { DataTableColumnSortMenu } from "@caden/ui/niko-table/components/data-table-column-sort";
+import { DataTableColumnTitle } from "@caden/ui/niko-table/components/data-table-column-title";
+import { DataTableFilterMenu } from "@caden/ui/niko-table/components/data-table-filter-menu";
+import { DataTableSearchFilter } from "@caden/ui/niko-table/components/data-table-search-filter";
+import { DataTableToolbarSection } from "@caden/ui/niko-table/components/data-table-toolbar-section";
+import { DataTableViewMenu } from "@caden/ui/niko-table/components/data-table-view-menu";
+import { DataTable } from "@caden/ui/niko-table/core/data-table";
+import { DataTableRoot } from "@caden/ui/niko-table/core/data-table-root";
+import {
+  DataTableVirtualizedBody,
+  DataTableVirtualizedEmptyBody,
+  DataTableVirtualizedHeader,
+} from "@caden/ui/niko-table/core/data-table-virtualized-structure";
+import type { DataTableColumnDef } from "@caden/ui/niko-table/types";
+import { Link } from "@tanstack/react-router";
+import { useQuery } from "convex/react";
+import { Copy, Eye, MoreHorizontal, Pencil } from "lucide-react";
+import { toast } from "sonner";
+
 import type { DatasetEntryRow } from "#/lib/dataset-rows";
 import { buildLabelsByField, referencedEntryIds } from "#/lib/reference-labels";
 import { api } from "#convex/_generated/api";

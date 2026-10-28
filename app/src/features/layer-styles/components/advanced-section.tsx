@@ -1,9 +1,9 @@
+import { Button } from "@caden/ui/components/button";
+import { Textarea } from "@caden/ui/components/textarea";
 import { Copy, Download, PackageOpen } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { Button } from "#/components/ui/button";
-import { Textarea } from "#/components/ui/textarea";
 import type { LayerStyle } from "#convex/layerStyles/validators";
 
 import { exportStyleJson, importStyleJson, slugify } from "../lib/exchange";

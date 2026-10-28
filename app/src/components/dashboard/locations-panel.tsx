@@ -1,11 +1,6 @@
-import { useMutation, useQuery } from "convex/react";
-import { useState } from "react";
-import { toast } from "sonner";
-
-import { ConfirmDeleteDialog } from "#/components/dashboard/confirm-delete-dialog";
-import { Button } from "#/components/ui/button";
-import { Input } from "#/components/ui/input";
-import { Label } from "#/components/ui/label";
+import { Button } from "@caden/ui/components/button";
+import { Input } from "@caden/ui/components/input";
+import { Label } from "@caden/ui/components/label";
 import {
   Sheet,
   SheetContent,
@@ -13,7 +8,7 @@ import {
   SheetFooter,
   SheetHeader,
   SheetTitle,
-} from "#/components/ui/sheet";
+} from "@caden/ui/components/sheet";
 import {
   Table,
   TableBody,
@@ -21,7 +16,12 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "#/components/ui/table";
+} from "@caden/ui/components/table";
+import { useMutation, useQuery } from "convex/react";
+import { useState } from "react";
+import { toast } from "sonner";
+
+import { ConfirmDeleteDialog } from "#/components/dashboard/confirm-delete-dialog";
 import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 import type { Doc } from "#convex/_generated/dataModel";

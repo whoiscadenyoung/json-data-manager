@@ -1,3 +1,12 @@
+import { Badge } from "@caden/ui/components/badge";
+import { Button } from "@caden/ui/components/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@caden/ui/components/select";
 import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { GitCompareArrows } from "lucide-react";
@@ -8,15 +17,6 @@ import {
   type DiffPoint,
   type DiffPointStatus,
 } from "#/components/diff-overlay-map";
-import { Badge } from "#/components/ui/badge";
-import { Button } from "#/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "#/components/ui/select";
 import type { VersionRow } from "#/lib/version-rows";
 import { api } from "#convex/_generated/api";
 

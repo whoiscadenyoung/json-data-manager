@@ -1,7 +1,7 @@
+import { Tabs, TabsList, TabsTrigger } from "@caden/ui/components/tabs";
 import { Maximize2 } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { Tabs, TabsList, TabsTrigger } from "#/components/ui/tabs";
 import type { AppPage } from "#convex/appBuilder/validators";
 
 /**

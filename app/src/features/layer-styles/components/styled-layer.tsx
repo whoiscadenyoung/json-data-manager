@@ -1,7 +1,7 @@
+import { useMap } from "@caden/ui/components/map";
 import type * as MapLibreGL from "maplibre-gl";
 import { useEffect, useMemo, useRef } from "react";
 
-import { useMap } from "#/components/ui/map";
 import type { DatasetEntryRow } from "#/lib/dataset-rows";
 import { entryDataRecord } from "#/lib/dataset-rows";
 import type { StyleLayer } from "#convex/layerStyles/validators";

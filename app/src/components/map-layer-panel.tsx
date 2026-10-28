@@ -1,3 +1,11 @@
+import { Button } from "@caden/ui/components/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@caden/ui/components/card";
 import {
   Blend,
   ChevronDown,
@@ -12,8 +20,6 @@ import {
 import { useState } from "react";
 import type { ReactElement } from "react";
 
-import { Button } from "#/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
 import {
   datasetChildKey,
   isChildEffectivelyVisible,

@@ -7,6 +7,17 @@ import {
   isGeometryCompatibleWithDatasetType,
 } from "@caden/json-cms/react";
 import { ReferenceWidget } from "@caden/json-cms/react/ui";
+import { Button } from "@caden/ui/components/button";
+import { Label } from "@caden/ui/components/label";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@caden/ui/components/sheet";
+import { Textarea } from "@caden/ui/components/textarea";
+import { cn } from "@caden/ui/lib/utils";
 import { Form } from "@rjsf/shadcn";
 import validator from "@rjsf/validator-ajv8";
 import { useMutation, useQuery } from "convex/react";
@@ -15,18 +26,7 @@ import { Maximize2, Minimize2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { Button } from "#/components/ui/button";
-import { Label } from "#/components/ui/label";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "#/components/ui/sheet";
-import { Textarea } from "#/components/ui/textarea";
 import type { DatasetEntryRow } from "#/lib/dataset-rows";
-import { cn } from "#/lib/utils";
 import { api } from "#convex/_generated/api";
 
 type Schema = NonNullable<FunctionReturnType<typeof api.schemas.get>>;

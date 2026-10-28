@@ -1,3 +1,12 @@
+import { Badge } from "@caden/ui/components/badge";
+import { Button } from "@caden/ui/components/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@caden/ui/components/card";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { formatDistanceToNow } from "date-fns";
@@ -5,9 +14,6 @@ import { RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { Badge } from "#/components/ui/badge";
-import { Button } from "#/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
 import { errorMessage } from "#/lib/errors";
 import { isSyncStale } from "#/lib/sync-staleness";
 import { api } from "#convex/_generated/api";

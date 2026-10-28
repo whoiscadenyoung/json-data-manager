@@ -1,9 +1,4 @@
-import { Link } from "@tanstack/react-router";
-import type { FunctionReturnType } from "convex/server";
-import { MoreHorizontal, Trash2, Ungroup } from "lucide-react";
-
-import { DatasetTypeTags } from "#/components/dataset-type-tags";
-import { Button } from "#/components/ui/button";
+import { Button } from "@caden/ui/components/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,7 +8,12 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
-} from "#/components/ui/dropdown-menu";
+} from "@caden/ui/components/dropdown-menu";
+import { Link } from "@tanstack/react-router";
+import type { FunctionReturnType } from "convex/server";
+import { MoreHorizontal, Trash2, Ungroup } from "lucide-react";
+
+import { DatasetTypeTags } from "#/components/dataset-type-tags";
 import { api } from "#convex/_generated/api";
 
 export type GroupDoc = FunctionReturnType<typeof api.groups.list>[number];

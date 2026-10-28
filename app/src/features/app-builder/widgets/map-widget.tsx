@@ -1,8 +1,5 @@
-import { useState } from "react";
-
-import { LayersMap } from "#/components/layers-map";
-import { Badge } from "#/components/ui/badge";
-import { Checkbox } from "#/components/ui/checkbox";
+import { Badge } from "@caden/ui/components/badge";
+import { Checkbox } from "@caden/ui/components/checkbox";
 import {
   Field,
   FieldDescription,
@@ -10,9 +7,12 @@ import {
   FieldLabel,
   FieldLegend,
   FieldSet,
-} from "#/components/ui/field";
-import { Skeleton } from "#/components/ui/skeleton";
-import { Spinner } from "#/components/ui/spinner";
+} from "@caden/ui/components/field";
+import { Skeleton } from "@caden/ui/components/skeleton";
+import { Spinner } from "@caden/ui/components/spinner";
+import { useState } from "react";
+
+import { LayersMap } from "#/components/layers-map";
 import { useGeometriesBySchemas } from "#/lib/dataset-rows-react";
 import { splitSchemaIdsByDecision, useTileArchiveSources } from "#/lib/layer-source";
 import { colorForIndex } from "#/lib/map-layers";

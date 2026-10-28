@@ -124,7 +124,7 @@ Key choices (the reasoning is in ADR 0011):
 
 ### UI components (shadcn base-ui registry)
 
-The module builds its UI from the project's shadcn kit (`app/src/components/ui`, style
+The module builds its UI from the project's shadcn kit (`@caden/ui`, `packages/ui/src/components`, style
 `base-mira` on Base UI) rather than custom markup, so restyling or upgrading the kit
 restyles the builder too:
 

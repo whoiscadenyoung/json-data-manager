@@ -5,13 +5,13 @@ import {
   unionBbox,
 } from "@caden/json-cms/react";
 import type { BoundingBox, Geometry } from "@caden/json-cms/react";
+import { Button } from "@caden/ui/components/button";
+import { Map, MapClusterLayer, MapGeoJSON, MapVectorTiles } from "@caden/ui/components/map";
 import { Link } from "@tanstack/react-router";
 import type { FunctionReturnType } from "convex/server";
 import { ChevronRight, X } from "lucide-react";
 import { Fragment, useState } from "react";
 
-import { Button } from "#/components/ui/button";
-import { Map, MapClusterLayer, MapGeoJSON, MapVectorTiles } from "#/components/ui/map";
 import type { DatasetGeometryRow } from "#/lib/dataset-rows";
 import { formatPropertyValue } from "#/lib/format";
 import {

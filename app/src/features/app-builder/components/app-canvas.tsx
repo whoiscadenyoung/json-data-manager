@@ -1,3 +1,7 @@
+import { Button } from "@caden/ui/components/button";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@caden/ui/components/card";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@caden/ui/components/tooltip";
+import { cn } from "@caden/ui/lib/utils";
 import {
   closestCenter,
   DndContext,
@@ -24,10 +28,6 @@ import {
   type RefObject,
 } from "react";
 
-import { Button } from "#/components/ui/button";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
-import { Tooltip, TooltipContent, TooltipTrigger } from "#/components/ui/tooltip";
-import { cn } from "#/lib/utils";
 import type { PageLayout, Widget } from "#convex/appBuilder/validators";
 
 import {

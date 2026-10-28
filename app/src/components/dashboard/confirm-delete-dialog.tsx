@@ -1,4 +1,4 @@
-import { Button } from "#/components/ui/button";
+import { Button } from "@caden/ui/components/button";
 import {
   Dialog,
   DialogContent,
@@ -6,7 +6,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "#/components/ui/dialog";
+} from "@caden/ui/components/dialog";
 
 /**
  * Shared "delete this? it cascades to links" confirmation for the dashboard

@@ -1,19 +1,20 @@
-import { DataTableColumnHeader } from "#/components/niko-table/components/data-table-column-header";
-import { DataTableColumnSortMenu } from "#/components/niko-table/components/data-table-column-sort";
-import { DataTableColumnTitle } from "#/components/niko-table/components/data-table-column-title";
-import { DataTableSearchFilter } from "#/components/niko-table/components/data-table-search-filter";
-import { DataTableToolbarSection } from "#/components/niko-table/components/data-table-toolbar-section";
-import { DataTable } from "#/components/niko-table/core/data-table";
-import { DataTableRoot } from "#/components/niko-table/core/data-table-root";
+import { Button } from "@caden/ui/components/button";
+import { Checkbox } from "@caden/ui/components/checkbox";
+import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@caden/ui/components/field";
+import { DataTableColumnHeader } from "@caden/ui/niko-table/components/data-table-column-header";
+import { DataTableColumnSortMenu } from "@caden/ui/niko-table/components/data-table-column-sort";
+import { DataTableColumnTitle } from "@caden/ui/niko-table/components/data-table-column-title";
+import { DataTableSearchFilter } from "@caden/ui/niko-table/components/data-table-search-filter";
+import { DataTableToolbarSection } from "@caden/ui/niko-table/components/data-table-toolbar-section";
+import { DataTable } from "@caden/ui/niko-table/core/data-table";
+import { DataTableRoot } from "@caden/ui/niko-table/core/data-table-root";
 import {
   DataTableVirtualizedBody,
   DataTableVirtualizedEmptyBody,
   DataTableVirtualizedHeader,
-} from "#/components/niko-table/core/data-table-virtualized-structure";
-import type { DataTableColumnDef } from "#/components/niko-table/types";
-import { Button } from "#/components/ui/button";
-import { Checkbox } from "#/components/ui/checkbox";
-import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "#/components/ui/field";
+} from "@caden/ui/niko-table/core/data-table-virtualized-structure";
+import type { DataTableColumnDef } from "@caden/ui/niko-table/types";
+
 import { entryDataRecord, type DatasetEntryRow } from "#/lib/dataset-rows";
 import { useDatasetEntryPages } from "#/lib/dataset-rows-react";
 import { formatPropertyValue } from "#/lib/format";

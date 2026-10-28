@@ -34,6 +34,7 @@ Bun workspace (`bun.lock` at the root; use `bun`, not node/npm):
 | `packages/json-cms/`         | `@caden/json-cms` — the CMS Convex component (`src/component`), a typed client facade with `exposeApi` (`src/client`), React hooks + prop-driven UI (`src/react`). Builds on `@caden/data-core` and `@caden/importers` and re-exports their parser/transform names from `@caden/json-cms/react`. Keeps its own `example/` app as dev/codegen host. |
 | `packages/data-core/`        | `@caden/data-core` (built) — backend-free shared code: `/geojson` (types, validation, bbox, Convex geometry validators), `/coercion`, `/reference`, `/coordinate-columns`, and the **transform engine** `/transform`.                                                                                                                              |
 | `packages/importers/`        | `@caden/importers` (built) — browser-side tabular import parsers (JSON/JSONL, CSV, Excel via `exceljs`) behind a pluggable registry, plus `parseDataRows`.                                                                                                                                                                                         |
+| `packages/ui/`               | `@caden/ui` — source-only package (ADR 0014) holding all registry UI: the shadcn base-mira primitives, niko-table, and mapcn's MapLibre kit, plus the theme tokens (`globals.css`, imported by `app/src/styles.css`) and the shared PMTiles protocol instance. Has its own `components.json`, so `shadcn add` writes here.                         |
 | `packages/geometry-archive/` | `@caden/geometry-archive` — PMTiles archive writer + tile logic used by the map tile pipeline (issue #58).                                                                                                                                                                                                                                         |
 | `packages/data-export/`      | `@caden/data-export` — durable snapshot-export component. **Built but not wired in**: no consumer, not registered in `app/convex/convex.config.ts`; typechecked and tested in CI. Latent defects parked on #137 for any future wire-in.                                                                                                            |
 | `.github/workflows/ci.yml`   | Root CI (see [Development](#development)).                                                                                                                                                                                                                                                                                                         |
@@ -514,12 +515,12 @@ can fold saved transform specs in as extra columns.
   `/dashboard` (the foreign-domain CRUD surface), `/api/auth/$` (Better Auth
   proxy). The sign-in gate is server-side; the header shows the sign-in link
   and project pages render a signed-out state.
-- **`components/ui/map.tsx`** — the app's MapLibre kit (~15 components: Map,
+- **`@caden/ui/components/map`** (`packages/ui/src/components/map.tsx`, from the mapcn registry) — the app's MapLibre kit (~15 components: Map,
   Marker/Popup, Controls, GeoJSON/VectorTiles/Arc/Cluster layers). Per-page
   map components (`entries-map`, `group-map`, `layers-map`, `datasets-map`,
   `diff-overlay-map`) compose it; they share orchestration that is a known
   duplication target (#82).
-- **`components/niko-table/`** — vendored third-party table library
+- **`@caden/ui/niko-table/*`** (`packages/ui/src/niko-table/`) — vendored third-party table library
   (niko-table), ~11.7k lines, consumed only by `entries-table.tsx`.
   Vendor-boundary cleanup tracked in #82.
 - **State** — Convex via the `@convex-dev/react-query` bridge; no global

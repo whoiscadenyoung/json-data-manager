@@ -1,3 +1,13 @@
+import { Badge } from "@caden/ui/components/badge";
+import { Button } from "@caden/ui/components/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@caden/ui/components/card";
+import { Input } from "@caden/ui/components/input";
 import { useAction, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { formatDistanceToNow } from "date-fns";
@@ -5,10 +15,6 @@ import { Camera, CloudDownload, Tag } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { Badge } from "#/components/ui/badge";
-import { Button } from "#/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
-import { Input } from "#/components/ui/input";
 import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 

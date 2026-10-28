@@ -1,12 +1,11 @@
-import { Ellipsis, Palette, RotateCcw } from "lucide-react";
-
-import { Button } from "#/components/ui/button";
+import { Button } from "@caden/ui/components/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "#/components/ui/dropdown-menu";
+} from "@caden/ui/components/dropdown-menu";
+import { Ellipsis, Palette, RotateCcw } from "lucide-react";
 
 /**
  * The styling module's only footprint in the layer panel: a `⋯` menu on a

@@ -1,7 +1,5 @@
-import type { ReactNode } from "react";
-
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia } from "#/components/ui/empty";
-import { Field, FieldLabel } from "#/components/ui/field";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia } from "@caden/ui/components/empty";
+import { Field, FieldLabel } from "@caden/ui/components/field";
 import {
   Select,
   SelectContent,
@@ -9,8 +7,10 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "#/components/ui/select";
-import { Spinner } from "#/components/ui/spinner";
+} from "@caden/ui/components/select";
+import { Spinner } from "@caden/ui/components/spinner";
+import type { ReactNode } from "react";
+
 import type { Aggregate, Widget, WidgetKind } from "#convex/appBuilder/validators";
 
 import { useAppDataset, useAppDatasets, datasetTitle, type DatasetState } from "../data";

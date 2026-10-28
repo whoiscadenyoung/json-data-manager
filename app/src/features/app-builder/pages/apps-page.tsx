@@ -1,12 +1,5 @@
-import { convexQuery } from "@convex-dev/react-query";
-import { useQuery } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
-import type { FunctionReturnType } from "convex/server";
-import { Globe, LayoutDashboard, Lock, Plus, Sparkles } from "lucide-react";
-import { useState } from "react";
-
-import { Badge } from "#/components/ui/badge";
-import { Button } from "#/components/ui/button";
+import { Badge } from "@caden/ui/components/badge";
+import { Button } from "@caden/ui/components/button";
 import {
   Card,
   CardAction,
@@ -14,7 +7,7 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
-} from "#/components/ui/card";
+} from "@caden/ui/components/card";
 import {
   Empty,
   EmptyContent,
@@ -22,7 +15,14 @@ import {
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-} from "#/components/ui/empty";
+} from "@caden/ui/components/empty";
+import { convexQuery } from "@convex-dev/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { Link, useNavigate } from "@tanstack/react-router";
+import type { FunctionReturnType } from "convex/server";
+import { Globe, LayoutDashboard, Lock, Plus, Sparkles } from "lucide-react";
+import { useState } from "react";
+
 import { api } from "#convex/_generated/api";
 
 import { AppDetailsDialog } from "../components/app-details-dialog";

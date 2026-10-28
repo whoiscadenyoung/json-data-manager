@@ -1,11 +1,5 @@
-import { Link, createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "convex/react";
-import type { FunctionReturnType } from "convex/server";
-import { Calendar, UserX } from "lucide-react";
-
-import { DatasetTypeTags } from "#/components/dataset-type-tags";
-import { Badge } from "#/components/ui/badge";
-import { Card } from "#/components/ui/card";
+import { Badge } from "@caden/ui/components/badge";
+import { Card } from "@caden/ui/components/card";
 import {
   Empty,
   EmptyContent,
@@ -13,7 +7,13 @@ import {
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-} from "#/components/ui/empty";
+} from "@caden/ui/components/empty";
+import { Link, createFileRoute } from "@tanstack/react-router";
+import { useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
+import { Calendar, UserX } from "lucide-react";
+
+import { DatasetTypeTags } from "#/components/dataset-type-tags";
 import { UserAvatar } from "#/components/user-avatar";
 import { api } from "#convex/_generated/api";
 

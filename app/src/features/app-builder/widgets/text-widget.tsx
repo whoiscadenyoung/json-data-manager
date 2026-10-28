@@ -1,7 +1,6 @@
+import { Field, FieldDescription, FieldLabel } from "@caden/ui/components/field";
+import { Textarea } from "@caden/ui/components/textarea";
 import type { ReactNode } from "react";
-
-import { Field, FieldDescription, FieldLabel } from "#/components/ui/field";
-import { Textarea } from "#/components/ui/textarea";
 
 import { WidgetMessage, type WidgetSettingsProps, type WidgetViewProps } from "./shared";
 

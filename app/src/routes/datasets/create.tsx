@@ -2,6 +2,7 @@ import type { GeometryType } from "@caden/json-cms/react";
 import { chunkRowsForImport } from "@caden/json-cms/react";
 import type { DatasetImportOptions, DatasetImportRow } from "@caden/json-cms/react/ui";
 import { DatasetImporter, SchemaEditor } from "@caden/json-cms/react/ui";
+import { Card, CardDescription, CardHeader, CardTitle } from "@caden/ui/components/card";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
@@ -12,7 +13,6 @@ import { toast } from "sonner";
 import { z } from "zod";
 
 import { RouterButton } from "#/components/router-button";
-import { Card, CardDescription, CardHeader, CardTitle } from "#/components/ui/card";
 import { errorMessage } from "#/lib/errors";
 import { ensureMapTileArchive } from "#/lib/tile-archive";
 import { uploadChunkBlob, uploadSourceFileBlob } from "#/lib/upload";

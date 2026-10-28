@@ -96,7 +96,7 @@
     "builtin": true
   },
   "globals": {},
-  "ignorePatterns": ["app/src/components/ui", "app/src/components/niko-table"],
+  "ignorePatterns": ["packages/ui/src/components", "packages/ui/src/niko-table"],
   "overrides": [
     {
       "files": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx"],

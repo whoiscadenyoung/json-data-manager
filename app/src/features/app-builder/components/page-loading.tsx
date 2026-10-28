@@ -1,4 +1,4 @@
-import { Spinner } from "#/components/ui/spinner";
+import { Spinner } from "@caden/ui/components/spinner";
 
 /** The app builder pages' whole-page loading state. */
 export function PageLoading() {

@@ -1,9 +1,9 @@
-import { ChevronDown } from "lucide-react";
-import { useState } from "react";
-import type { ReactNode } from "react";
-
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "#/components/ui/collapsible";
-import { Field, FieldLabel } from "#/components/ui/field";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@caden/ui/components/collapsible";
+import { Field, FieldLabel } from "@caden/ui/components/field";
 import {
   Select,
   SelectContent,
@@ -11,7 +11,10 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "#/components/ui/select";
+} from "@caden/ui/components/select";
+import { ChevronDown } from "lucide-react";
+import { useState } from "react";
+import type { ReactNode } from "react";
 
 /** Small form controls shared by the Style panel's sections. */
 
