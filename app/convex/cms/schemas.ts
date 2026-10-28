@@ -531,3 +531,19 @@ export const backfillSummaries = internalMutation({
     schemasPatched: v.number(),
   }),
 });
+
+/**
+ * Stamps `maxGeometryRowBytes` (issue #183) onto every geospatial dataset
+ * that predates the field, inside the component. Until a dataset is
+ * measured, its geometry pages fall back to worst-case take sizing (five
+ * rows per read), which times out on large point datasets. Idempotent and
+ * internal for the same reasons as `backfillSummaries`; large catalogs
+ * finish in scheduled hops after this returns `done: false`.
+ *
+ * Run with: `bunx convex run cms/schemas:backfillGeometryRowBytes` (from app/)
+ */
+export const backfillGeometryRowBytes = internalMutation({
+  args: {},
+  handler: async (ctx) => ctx.runMutation(components.jsonCms.entries.backfillGeometryRowBytes, {}),
+  returns: v.object({ done: v.boolean(), schemasPatched: v.number() }),
+});

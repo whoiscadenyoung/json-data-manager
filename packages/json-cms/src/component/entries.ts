@@ -7,6 +7,7 @@ import { internal } from "./_generated/api.js";
 import type { Id } from "./_generated/dataModel.js";
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server.js";
 import type { MutationCtx, QueryCtx } from "./_generated/server.js";
+import { geometryRowBudgetBytes } from "./geometry_storage.js";
 import {
   DELETE_BYTE_RESERVE,
   DELETE_ROW_BYTE_ESTIMATE,
@@ -26,6 +27,7 @@ import {
   syncEntryReferences,
   validateEntryGeometry,
 } from "./internal/entryWrites.js";
+import type { GeometryStatsDoc } from "./internal/entryWrites.js";
 import { paginateGeometriesBySchema } from "./internal/geometryPages.js";
 import { clampLimit, isVisibleToViewer } from "./internal/schemaViews.js";
 import {
@@ -160,7 +162,12 @@ export const listGeometries = query({
       throw new ConvexError("Schema not found");
     }
 
-    const result = await paginateGeometriesBySchema(ctx, args.schemaId, args.paginationOpts);
+    const result = await paginateGeometriesBySchema(
+      ctx,
+      args.schemaId,
+      args.paginationOpts,
+      schemaDoc.maxGeometryRowBytes,
+    );
     return {
       ...result,
       page: await Promise.all(result.page.map(async (row) => resolveGeometryOutput(ctx, row))),
@@ -438,6 +445,154 @@ export const listReferencingEntries = query({
   returns: v.array(entryReferenceValidator),
 });
 
+// One-off maintenance for `schemas.maxGeometryRowBytes` (issue #183): stamps
+// the worst-case row size onto every geospatial dataset that predates the
+// field, so the geometry paginator can size its takes from the data instead
+// of the global ~900 KB worst case. Only absent values are filled — the
+// write paths keep a present value exact-or-above, so re-running is a cheap
+// no-op on measured datasets.
+//
+// The scan itself has to read with the conservative (unknown-size) sizing —
+// it's the measurement — so each hop reads a bounded handful of
+// paginator pages and hands off to `backfillGeometryRowBytesStep`, keeping
+// every transaction far from the read and system-operation limits. A row
+// replaced in place behind the cursor mid-scan is the one write the
+// measurement can miss (writers leave an absent value alone); the paginator
+// raises its sizing in-page when it meets a bigger row, so a miss costs a
+// larger overshoot on that page, never a wrong result.
+
+/** Geometry rows per paginator call while measuring (≤ 20 conservative five-row takes). */
+const ROW_BYTES_BACKFILL_PAGE_ROWS = 100,
+  /** Paginator calls per hop before handing off to a fresh transaction. */
+  ROW_BYTES_BACKFILL_PAGES_PER_HOP = 2;
+
+/** The measuring drain's resumable position: schemas before `schemaCreationTime` are done; `schemaId`'s scan reached `geometryCursor` with `maxRowBytes` the largest row so far. */
+interface RowBytesBackfillState {
+  geometryCursor: string | null;
+  maxRowBytes: number;
+  schemaCreationTime: number;
+  schemaId: Id<"schemas"> | null;
+  schemasPatched: number;
+}
+
+/** Moves the walk to the next schema still missing `maxGeometryRowBytes` (returning its id), or reports why it stopped. */
+async function nextUnmeasuredSchema(
+  ctx: MutationCtx,
+  s: RowBytesBackfillState,
+): Promise<Id<"schemas"> | "done" | "out-of-budget"> {
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- each probe resumes from the previous one's position; inherently sequential.
+    const remaining = await transactionReadRemaining(ctx);
+    if (remaining !== null && remaining < BACKFILL_BYTE_RESERVE) {
+      return "out-of-budget";
+    }
+    // oxlint-disable-next-line no-await-in-loop -- see above.
+    const [next] = await ctx.db
+      .query("schemas")
+      .withIndex("by_creation_time", (q) => q.gt("_creationTime", s.schemaCreationTime))
+      .take(1);
+    if (next === undefined) {
+      return "done";
+    }
+    s.schemaCreationTime = next._creationTime;
+    if (next.kind === "geospatial" && next.maxGeometryRowBytes === undefined) {
+      s.schemaId = next._id;
+      s.geometryCursor = null;
+      s.maxRowBytes = 0;
+      return next._id;
+    }
+  }
+}
+
+/** The shared drain behind `backfillGeometryRowBytes` and its scheduled continuation: measures unmeasured geospatial schemas in creation order, patching each when its scan completes. */
+async function runRowBytesBackfillHop(
+  ctx: MutationCtx,
+  state: RowBytesBackfillState,
+): Promise<RowBytesBackfillState & { done: boolean }> {
+  const s: RowBytesBackfillState = { ...state };
+  let pages = 0;
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- one schema at a time; inherently sequential.
+    const schemaId = s.schemaId ?? (await nextUnmeasuredSchema(ctx, s));
+    if (schemaId === "done" || schemaId === "out-of-budget") {
+      return { ...s, done: schemaId === "done" };
+    }
+    if (pages >= ROW_BYTES_BACKFILL_PAGES_PER_HOP) {
+      return { ...s, done: false };
+    }
+    // oxlint-disable-next-line no-await-in-loop -- each page resumes from the previous page's cursor; inherently sequential.
+    const { continueCursor, isDone, page } = await paginateGeometriesBySchema(
+      ctx,
+      schemaId,
+      { cursor: s.geometryCursor, numItems: ROW_BYTES_BACKFILL_PAGE_ROWS },
+      undefined,
+    );
+    pages += 1;
+    for (const row of page) {
+      s.maxRowBytes = Math.max(s.maxRowBytes, geometryRowBudgetBytes(row));
+    }
+    s.geometryCursor = continueCursor;
+    if (!isDone) {
+      continue;
+    }
+    // Re-read: the doc may have been deleted, cleared (stamping 0) or
+    // measured by a concurrent run since the walk picked it.
+    // oxlint-disable-next-line no-await-in-loop -- see above.
+    const schemaDoc = await ctx.db.get(schemaId);
+    if (schemaDoc !== null && schemaDoc.maxGeometryRowBytes === undefined) {
+      // oxlint-disable-next-line no-await-in-loop -- see above.
+      await ctx.db.patch(schemaId, { maxGeometryRowBytes: s.maxRowBytes });
+      s.schemasPatched += 1;
+    }
+    s.schemaId = null;
+  }
+}
+
+const rowBytesBackfillStateValidator = {
+  geometryCursor: v.union(v.string(), v.null()),
+  maxRowBytes: v.number(),
+  schemaCreationTime: v.number(),
+  schemaId: v.union(v.id("schemas"), v.null()),
+  schemasPatched: v.number(),
+};
+
+/** Continuation hop for `backfillGeometryRowBytes` (issue #183): resumes the measuring walk at the given state until done. */
+export const backfillGeometryRowBytesStep = internalMutation({
+  args: rowBytesBackfillStateValidator,
+  handler: async (ctx, args) => {
+    const { done, ...state } = await runRowBytesBackfillHop(ctx, args);
+    if (!done) {
+      await ctx.scheduler.runAfter(0, internal.entries.backfillGeometryRowBytesStep, state);
+    }
+  },
+  returns: v.null(),
+});
+
+/**
+ * Public (not internal) so a host app can wrap it — component internals are
+ * only reachable inside the component. Hosts should put their own auth gate
+ * in front, as `app/convex/cms/schemas.ts` does. Returns how many schemas
+ * the synchronous first hop measured and whether the walk already finished;
+ * when it hasn't, scheduled hops finish it.
+ */
+export const backfillGeometryRowBytes = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const { done, ...state } = await runRowBytesBackfillHop(ctx, {
+      geometryCursor: null,
+      maxRowBytes: 0,
+      schemaCreationTime: -1,
+      schemaId: null,
+      schemasPatched: 0,
+    });
+    if (!done) {
+      await ctx.scheduler.runAfter(0, internal.entries.backfillGeometryRowBytesStep, state);
+    }
+    return { done, schemasPatched: state.schemasPatched };
+  },
+  returns: v.object({ done: v.boolean(), schemasPatched: v.number() }),
+});
+
 // Internal queries/mutations for use within the component
 
 export const getSchemaInternal = internalQuery({
@@ -474,7 +629,7 @@ async function deleteEntryCascading(ctx: MutationCtx, entryId: Id<"entries">): P
     await ctx.db.delete(existing.geometryId);
     await deleteGeometryStorageIfAny(ctx, geometryDoc);
     if (schemaDoc) {
-      await applyGeometryStatsDelta(ctx, existing.schemaId, schemaDoc, -1, undefined);
+      await applyGeometryStatsDelta(ctx, existing.schemaId, schemaDoc, -1, undefined, 0);
     }
   }
   await deleteReferencesForEntry(ctx, entryId);
@@ -490,7 +645,7 @@ async function deleteEntryCascading(ctx: MutationCtx, entryId: Id<"entries">): P
 async function clearEntryGeometry(
   ctx: MutationCtx,
   entry: { _id: Id<"entries">; schemaId: Id<"schemas">; geometryId?: Id<"geometries"> },
-  schemaDoc: { featureCount?: number; boundingBox?: number[] },
+  schemaDoc: GeometryStatsDoc,
 ): Promise<void> {
   if (entry.geometryId === undefined) {
     return;
@@ -499,7 +654,7 @@ async function clearEntryGeometry(
   await ctx.db.delete(entry.geometryId);
   await deleteGeometryStorageIfAny(ctx, existing);
   await ctx.db.patch(entry._id, { geometryId: undefined, geometryType: undefined });
-  await applyGeometryStatsDelta(ctx, entry.schemaId, schemaDoc, -1, undefined);
+  await applyGeometryStatsDelta(ctx, entry.schemaId, schemaDoc, -1, undefined, 0);
 }
 
 // Entry mutations (geometry/summary contract: see internal/entryWrites.ts)

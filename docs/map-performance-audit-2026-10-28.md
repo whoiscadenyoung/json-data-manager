@@ -108,6 +108,24 @@ Size takes from the dataset's real worst-case row instead of the global
 - Consider deleting `GEOMETRY_PAGE_CHUNK_ROWS = 8`, which no longer earns
   its place.
 
+**Result (#183, 2026-10-28).** Shipped as planned. `GEOMETRY_PAGE_CHUNK_ROWS`
+is gone; the paginator also raises its sizing in-page if it meets a row
+bigger than the stored bound, so a stale value can oversize at most one take
+per page. Existing datasets are measured by
+`cms/schemas:backfillGeometryRowBytes`. Re-measured with this audit's recipe
+(isolated backend, the 20k file imported through the UI):
+
+| Measure                                    | Before                      | After                                                |
+| ------------------------------------------ | --------------------------- | ---------------------------------------------------- |
+| `listGeometries`, 100 rows (CLI wall time) | 3.5 s                       | 0.8 s                                                |
+| `listGeometries`, 500 rows (CLI wall time) | fails after 15 s            | 1.2 s (one take; stored max row = 54 bytes)          |
+| Tile archive for 20k points                | never builds                | builds on the first open (`[tile-archive] … → done`) |
+| Warm dataset-page open, full reload        | n/a (stuck on the row path) | 1.5–1.7 s (`vite dev`), 0.7 s via in-app navigation  |
+| Backfill of the 20k dataset                | —                           | ~200 s in ~100 scheduled hops, no limit errors       |
+
+No "Tile rebuild failed" toast appeared. The cold open (finding 2) and the
+50k file were not re-measured here; they belong to #185/#186.
+
 ### P0 — Make build failures visible and bounded (app) — #184
 
 - Back off after a failed build (for example, retry after 1 m, 5 m, 30 m)

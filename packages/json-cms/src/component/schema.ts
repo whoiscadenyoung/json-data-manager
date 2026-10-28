@@ -241,6 +241,18 @@ export default defineSchema({
     // "unknown" and fall back to what the loaded pages show.
     entryCount: v.optional(v.number()),
     boundingBox: v.optional(v.array(v.number())), // [minLon, minLat, maxLon, maxLat]
+    // The dataset's largest `geometries` row as the geometry paginator
+    // charges it (`geometryRowBudgetBytes` in geometry_storage.ts; storage-
+    // backed rows count as `INLINE_GEOMETRY_BYTE_LIMIT`). The paginator sizes
+    // each `.take()` from it (issue #183), so a page of ~60-byte points reads
+    // in one take instead of five-row chunks sized for a ~900 KB worst case.
+    // Like `boundingBox`, it never shrinks on delete/replace (an upper bound
+    // stays safe); only an emptying clear or conversion resets it to 0.
+    // Absent = unknown (pre-field rows, until `backfillGeometryRowBytes`
+    // stamps them): readers fall back to `INLINE_GEOMETRY_BYTE_LIMIT`, and
+    // writers leave it absent, since a max over only the new rows could
+    // understate the existing ones.
+    maxGeometryRowBytes: v.optional(v.number()),
     // Rendering-cache bookkeeping for the tile-archive path (#58): every
     // geometry-affecting write bumps `mapTileCacheVersion` (see
     // `bumpMapTileCacheVersion` in internal/entryWrites.ts) so a stale rebuild can detect
