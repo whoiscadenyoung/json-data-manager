@@ -51,3 +51,18 @@ CONVEX_SELF_HOSTED_URL/ADMIN_KEY>` for `convex dev --once`, `env set` and
   `DataTransfer` → `input.files` → a `change` event.
 - `convex run --component jsonCms entries:listGeometries` times component
   queries directly with admin auth.
+
+**#184 FIXED 2026-10-28 (build-failure backoff):** `TileArchiveScheduler`
+(`packages/maps/src/build-scheduler.ts`) now backs off per dataset after a
+thrown build: retries at 1 m, 5 m, then every 30 m
+(`TILE_ARCHIVE_FAILURE_BACKOFF_MS`). `schedule()` triggers at the failed
+`mapTileCacheVersion` are absorbed while backing off; the backoff's own timer
+runs the retry. A newer version resets it, and so does a newer version queued
+during the failing build. `ensure()` (import immediacy + the manual Retry)
+skips the wait but keeps the count. The app's manager keeps a persistent
+failure record (`useMapTileArchiveBuildFailure`, fed by the scheduler's
+`onBackoff`). It is cleared only by an installed or skipped build, and it
+toasts only the first failure of a streak. `TileBuildStatus` shows it as a
+"Map tiles failed to build" alert with the error, the next retry time and a
+Retry button. The chip only mounts on the dataset page; the `/maps`
+workspace has no build-status surface yet.

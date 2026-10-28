@@ -6,6 +6,7 @@ import {
   isTileArchiveStale,
   rememberBelowThresholdSkip,
   type TileArchiveBuildOutcome,
+  type TileArchiveSchedulerOptions,
 } from "./build-scheduler";
 
 function deferred<T>() {
@@ -204,6 +205,190 @@ describe("TileArchiveScheduler", () => {
       expect(startBuild).toHaveBeenCalledWith("b");
 
       firstDeferral(calls, 0).resolve("installed");
+      firstDeferral(calls, 1).resolve("installed");
+      await flushMicrotasks();
+    } finally {
+      scheduler.dispose();
+    }
+  });
+});
+
+type OnBackoff = NonNullable<TileArchiveSchedulerOptions["onBackoff"]>;
+
+describe("TileArchiveScheduler failure backoff (issue #184)", () => {
+  const backoffMs = [60_000, 300_000, 1_800_000];
+
+  /** Fails build `index`, letting the settle chain record the backoff. */
+  async function failBuild(calls: Array<BuildDeferral>, index: number): Promise<void> {
+    firstDeferral(calls, index).reject(new Error("listGeometries timed out"));
+    await flushMicrotasks();
+  }
+
+  it("absorbs triggers at the failed version until the backoff expires, then retries once", async () => {
+    const { calls, startBuild } = deferredStartBuild(),
+      onBackoff = vi.fn<OnBackoff>(),
+      scheduler = new TileArchiveScheduler(startBuild, 5000, { backoffMs, onBackoff });
+    try {
+      scheduler.schedule("s1", 3);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(startBuild).toHaveBeenCalledTimes(1);
+      await failBuild(calls, 0);
+      expect(onBackoff).toHaveBeenLastCalledWith("s1", {
+        failures: 1,
+        retryAt: Date.now() + 60_000,
+      });
+
+      // Every dataset view / summaries update re-schedules the stale dataset:
+      // none of them starts a build inside the window.
+      for (let second = 0; second < 59; second += 1) {
+        scheduler.schedule("s1", 3);
+        // oxlint-disable-next-line no-await-in-loop -- one re-trigger per simulated second of views.
+        await vi.advanceTimersByTimeAsync(1000);
+      }
+      expect(startBuild).toHaveBeenCalledTimes(1);
+
+      // The window ends: exactly one automatic retry.
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(startBuild).toHaveBeenCalledTimes(2);
+      firstDeferral(calls, 1).resolve("installed");
+      await flushMicrotasks();
+      expect(onBackoff).toHaveBeenLastCalledWith("s1", undefined);
+    } finally {
+      scheduler.dispose();
+    }
+  });
+
+  it("escalates 1 m → 5 m → 30 m and repeats the last step", async () => {
+    const { calls, startBuild } = deferredStartBuild(),
+      onBackoff = vi.fn<OnBackoff>(),
+      scheduler = new TileArchiveScheduler(startBuild, 5000, { backoffMs, onBackoff });
+    try {
+      /** Fails build `index` and checks the retry waits exactly `delay`. */
+      const expectRetryAfter = async (index: number, delay: number): Promise<void> => {
+        await failBuild(calls, index);
+        expect(onBackoff).toHaveBeenLastCalledWith("s1", {
+          failures: index + 1,
+          retryAt: Date.now() + delay,
+        });
+        await vi.advanceTimersByTimeAsync(delay - 1);
+        expect(startBuild).toHaveBeenCalledTimes(index + 1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(startBuild).toHaveBeenCalledTimes(index + 2);
+      };
+      scheduler.ensure("s1");
+      await expectRetryAfter(0, 60_000);
+      await expectRetryAfter(1, 300_000);
+      await expectRetryAfter(2, 1_800_000);
+      await expectRetryAfter(3, 1_800_000);
+      firstDeferral(calls, 4).resolve("installed");
+      await flushMicrotasks();
+    } finally {
+      scheduler.dispose();
+    }
+  });
+
+  it("a newer mapTileCacheVersion resets the backoff", async () => {
+    const { calls, startBuild } = deferredStartBuild(),
+      onBackoff = vi.fn<OnBackoff>(),
+      scheduler = new TileArchiveScheduler(startBuild, 5000, { backoffMs, onBackoff });
+    try {
+      scheduler.schedule("s1", 3);
+      await vi.advanceTimersByTimeAsync(5000);
+      await failBuild(calls, 0);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await failBuild(calls, 1);
+      expect(onBackoff).toHaveBeenLastCalledWith("s1", {
+        failures: 2,
+        retryAt: Date.now() + 300_000,
+      });
+
+      // An edit bumps the version: the pending retry is cancelled and the
+      // normal debounced build runs instead of waiting out 5 m.
+      scheduler.schedule("s1", 4);
+      expect(onBackoff).toHaveBeenLastCalledWith("s1", undefined);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(startBuild).toHaveBeenCalledTimes(3);
+
+      // The count restarted: the next failure waits 1 m, not 30 m.
+      await failBuild(calls, 2);
+      expect(onBackoff).toHaveBeenLastCalledWith("s1", {
+        failures: 1,
+        retryAt: Date.now() + 60_000,
+      });
+
+      // And the old 5 m retry never fires on top of it.
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(startBuild).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(startBuild).toHaveBeenCalledTimes(4);
+      firstDeferral(calls, 3).resolve("installed");
+      await flushMicrotasks();
+    } finally {
+      scheduler.dispose();
+    }
+  });
+
+  it("a newer version queued mid-build skips the backoff when that build fails", async () => {
+    const { calls, startBuild } = deferredStartBuild(),
+      onBackoff = vi.fn<OnBackoff>(),
+      scheduler = new TileArchiveScheduler(startBuild, 5000, { backoffMs, onBackoff });
+    try {
+      scheduler.schedule("s1", 3);
+      await vi.advanceTimersByTimeAsync(5000);
+      scheduler.schedule("s1", 4);
+      await failBuild(calls, 0);
+      expect(startBuild).toHaveBeenCalledTimes(2);
+      expect(onBackoff).not.toHaveBeenCalled();
+      firstDeferral(calls, 1).resolve("installed");
+      await flushMicrotasks();
+    } finally {
+      scheduler.dispose();
+    }
+  });
+
+  it("ensure() retries now but keeps escalating on a repeat failure", async () => {
+    const { calls, startBuild } = deferredStartBuild(),
+      onBackoff = vi.fn<OnBackoff>(),
+      scheduler = new TileArchiveScheduler(startBuild, 5000, { backoffMs, onBackoff });
+    try {
+      scheduler.schedule("s1", 3);
+      await vi.advanceTimersByTimeAsync(5000);
+      await failBuild(calls, 0);
+
+      // The manual retry skips the remaining minute.
+      scheduler.ensure("s1");
+      expect(startBuild).toHaveBeenCalledTimes(2);
+      await failBuild(calls, 1);
+      expect(onBackoff).toHaveBeenLastCalledWith("s1", {
+        failures: 2,
+        retryAt: Date.now() + 300_000,
+      });
+
+      // The cancelled 1 m retry does not also fire.
+      await vi.advanceTimersByTimeAsync(299_999);
+      expect(startBuild).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(startBuild).toHaveBeenCalledTimes(3);
+      firstDeferral(calls, 2).resolve("installed");
+      await flushMicrotasks();
+    } finally {
+      scheduler.dispose();
+    }
+  });
+
+  it("backs off per dataset", async () => {
+    const { calls, startBuild } = deferredStartBuild(),
+      scheduler = new TileArchiveScheduler(startBuild, 5000, { backoffMs });
+    try {
+      scheduler.schedule("a", 1);
+      await vi.advanceTimersByTimeAsync(5000);
+      await failBuild(calls, 0);
+
+      scheduler.schedule("a", 1);
+      scheduler.schedule("b", 1);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(startBuild).toHaveBeenCalledTimes(2);
+      expect(startBuild).toHaveBeenLastCalledWith("b");
       firstDeferral(calls, 1).resolve("installed");
       await flushMicrotasks();
     } finally {
