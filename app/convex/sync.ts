@@ -155,12 +155,12 @@ function recordActivity(tally: BatchTally, entry: ActivityOp): void {
 /** Find-or-create the "External demo" collection grouping bound datasets. */
 async function ensureCollection(ctx: MutationCtx): Promise<string> {
   const COLLECTION_NAME = "External demo";
-  const collections = await ctx.runQuery(components.jsonCms.lib.listCollections, {});
+  const collections = await ctx.runQuery(components.jsonCms.collections.listCollections, {});
   const existing = collections.find((collection) => collection.name === COLLECTION_NAME);
   if (existing !== undefined) {
     return existing._id;
   }
-  return ctx.runMutation(components.jsonCms.lib.createCollection, {
+  return ctx.runMutation(components.jsonCms.collections.createCollection, {
     description: "Datasets projected from the app's own tables — the bound-datasets PoC.",
     name: COLLECTION_NAME,
   });
@@ -190,13 +190,13 @@ async function ensureBoundDataset(
     .withIndex("by_source", (q) => q.eq("source", sourceKey))
     .first();
   if (binding === null) {
-    const schemaId = await ctx.runMutation(components.jsonCms.lib.createSchema, {
+    const schemaId = await ctx.runMutation(components.jsonCms.schemas.createSchema, {
       geometryType: dataset.geometryType,
       kind: dataset.kind,
       schema: dataset.schema,
       source: { name: sourceKey },
     });
-    await ctx.runMutation(components.jsonCms.lib.addSchemaToCollection, {
+    await ctx.runMutation(components.jsonCms.collections.addSchemaToCollection, {
       collectionId,
       schemaId,
     });
@@ -213,7 +213,7 @@ async function ensureBoundDataset(
   // dataset without `source` is deleted and recreated so the read-only
   // marker (and the component-level gate) is present everywhere it is read.
   let schemaId = binding.schemaId;
-  const existing = await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId });
+  const existing = await ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId });
   if (existing === null || existing.source === undefined) {
     if (existing !== null) {
       // The legacy copy is unmarked, so the gate allows this delete. The
@@ -223,13 +223,13 @@ async function ensureBoundDataset(
       // history under the re-pointed binding).
       await deleteDatasetCascading(ctx, { schemaId });
     }
-    schemaId = await ctx.runMutation(components.jsonCms.lib.createSchema, {
+    schemaId = await ctx.runMutation(components.jsonCms.schemas.createSchema, {
       geometryType: dataset.geometryType,
       kind: dataset.kind,
       schema: dataset.schema,
       source: { name: sourceKey },
     });
-    await ctx.runMutation(components.jsonCms.lib.addSchemaToCollection, {
+    await ctx.runMutation(components.jsonCms.collections.addSchemaToCollection, {
       collectionId,
       schemaId,
     });
@@ -257,9 +257,9 @@ async function clearPreEngineStrays(
   if (existingMapping !== null) {
     return;
   }
-  const schema = await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId });
+  const schema = await ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId });
   if (schema !== null && (schema.entryCount ?? 0) > 0) {
-    await ctx.runMutation(components.jsonCms.lib.deleteEntriesBySchema, {
+    await ctx.runMutation(components.jsonCms.entries.deleteEntriesBySchema, {
       boundWrite: "sync",
       schemaId,
     });
@@ -1032,7 +1032,7 @@ async function existingEntryData(
   entryId: string,
 ): Promise<Record<string, unknown>> {
   // oxlint-disable-next-line no-await-in-loop -- sequential keyed applies inside one transaction.
-  const existing = await ctx.runQuery(components.jsonCms.lib.getEntry, { entryId });
+  const existing = await ctx.runQuery(components.jsonCms.entries.getEntry, { entryId });
   const baseData: Record<string, unknown> = {};
   if (existing !== null && typeof existing.data === "object" && existing.data !== null) {
     for (const [name, value] of Object.entries(existing.data)) {
@@ -1068,7 +1068,7 @@ async function applyDeleteOp(
     return;
   }
   // oxlint-disable-next-line no-await-in-loop -- ordered deletes under the transaction's write budget.
-  await ctx.runMutation(components.jsonCms.lib.deleteEntry, {
+  await ctx.runMutation(components.jsonCms.entries.deleteEntry, {
     boundWrite: "sync",
     entryId: mapping.entryId,
   });
@@ -1139,7 +1139,7 @@ async function applyCommitOp(
 
   if (mapping === null) {
     // oxlint-disable-next-line no-await-in-loop -- sequential keyed applies inside one transaction.
-    const entryId: string = await ctx.runMutation(components.jsonCms.lib.createEntry, {
+    const entryId: string = await ctx.runMutation(components.jsonCms.entries.createEntry, {
       boundWrite: "sync",
       data: baseData,
       geometry,
@@ -1157,7 +1157,7 @@ async function applyCommitOp(
   }
 
   // oxlint-disable-next-line no-await-in-loop -- sequential keyed applies inside one transaction.
-  await ctx.runMutation(components.jsonCms.lib.updateEntry, {
+  await ctx.runMutation(components.jsonCms.entries.updateEntry, {
     boundWrite: "sync",
     data: baseData,
     entryId: mapping.entryId,
@@ -1369,7 +1369,7 @@ async function applyRow(
 
   if (mapping === null) {
     // oxlint-disable-next-line no-await-in-loop
-    const entryId: string = await ctx.runMutation(components.jsonCms.lib.createEntry, {
+    const entryId: string = await ctx.runMutation(components.jsonCms.entries.createEntry, {
       boundWrite: "sync",
       data: row.data,
       geometry: geometryJson,
@@ -1387,13 +1387,13 @@ async function applyRow(
   }
 
   // oxlint-disable-next-line no-await-in-loop
-  const entry = await ctx.runQuery(components.jsonCms.lib.getEntry, {
+  const entry = await ctx.runQuery(components.jsonCms.entries.getEntry, {
     entryId: mapping.entryId,
   });
   if (entry === null) {
     // Dangling map row (the entry was deleted out of band) — rebuild it.
     // oxlint-disable-next-line no-await-in-loop
-    const entryId: string = await ctx.runMutation(components.jsonCms.lib.createEntry, {
+    const entryId: string = await ctx.runMutation(components.jsonCms.entries.createEntry, {
       boundWrite: "sync",
       data: row.data,
       geometry: geometryJson,
@@ -1407,12 +1407,12 @@ async function applyRow(
 
   const dataChanged = JSON.stringify(entry.data) !== JSON.stringify(row.data);
   // oxlint-disable-next-line no-await-in-loop
-  const geometry = await ctx.runQuery(components.jsonCms.lib.getEntryGeometry, {
+  const geometry = await ctx.runQuery(components.jsonCms.entries.getEntryGeometry, {
     entryId: mapping.entryId,
   });
   if (dataChanged || rowGeometryChanged(geometry, hasGeometry, geometryJson)) {
     // oxlint-disable-next-line no-await-in-loop
-    await ctx.runMutation(components.jsonCms.lib.updateEntry, {
+    await ctx.runMutation(components.jsonCms.entries.updateEntry, {
       boundWrite: "sync",
       data: row.data,
       entryId: mapping.entryId,
@@ -1514,7 +1514,7 @@ async function deleteStaleBatch(
   }
   for (const mapping of stale) {
     // oxlint-disable-next-line no-await-in-loop -- ordered deletes under the transaction's write budget.
-    await ctx.runMutation(components.jsonCms.lib.deleteEntry, {
+    await ctx.runMutation(components.jsonCms.entries.deleteEntry, {
       boundWrite: "sync",
       entryId: mapping.entryId,
     });
@@ -1620,7 +1620,7 @@ async function completeRun(
   run: Doc<"syncRuns">,
   binding: Doc<"datasetBindings">,
 ): Promise<void> {
-  const schema = await ctx.runQuery(components.jsonCms.lib.getSchema, {
+  const schema = await ctx.runQuery(components.jsonCms.schemas.getSchema, {
     schemaId: binding.schemaId,
   });
   const finishedAt = Date.now(),
@@ -1809,7 +1809,7 @@ export const commitFeatureMap = query({
       const ids = mappings.slice(start, start + COMMIT_FEATURE_ID_BATCH).map((m) => m.entryId);
       // oxlint-disable-next-line no-await-in-loop -- one component read per bounded id batch.
       const entries: Array<{ _id: string; data: unknown }> = await ctx.runQuery(
-        components.jsonCms.lib.listEntriesForIds,
+        components.jsonCms.entries.listEntriesForIds,
         { entryIds: ids, viewerId },
       );
       for (const entry of entries) {

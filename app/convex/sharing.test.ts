@@ -89,7 +89,7 @@ async function addEntry(t: TestConvex, schemaId: string, label: string): Promise
  * `scope`, exactly as the client's upload flow does (issue #131). */
 async function uploadToken(t: TestConvex, scope: string): Promise<string> {
   const { uploadId } = await t.run(async (ctx) =>
-    ctx.runMutation(components.jsonCms.lib.generateUploadUrl, { scope }),
+    ctx.runMutation(components.jsonCms.imports.generateUploadUrl, { scope }),
   );
   return uploadId;
 }
@@ -328,7 +328,7 @@ describe("published-visibility control (stage 8 AC, decision D2)", () => {
     // …and the choice crossed the lifecycle line with the data: the frozen
     // row carries it…
     const frozenDoc = await mine.run(async (ctx) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId: frozen.schemaId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId: frozen.schemaId }),
     );
     expect(frozenDoc === null ? undefined : frozenDoc.publishedVisibility).toBe("author");
 
@@ -957,7 +957,7 @@ describe("stage-8 batch and cross-dataset reads (review round 2)", () => {
     });
     const uploadId = await uploadToken(mine, draftId);
     const importId = await mine.run(async (ctx) =>
-      ctx.runMutation(components.jsonCms.lib.startImport, {
+      ctx.runMutation(components.jsonCms.imports.startImport, {
         chunks: [{ storageId, uploadId }],
         schemaId: draftId,
         total: 1,

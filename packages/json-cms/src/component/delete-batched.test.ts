@@ -29,13 +29,13 @@ const ENTRY_COUNT = 10_500, // comfortably past the ~8k failure threshold
 
 /** Seeds a geospatial dataset with `count` rows, each carrying a real (if small) Point geometry, plus one collection membership. */
 async function seedBigDataset(t: TestHarness, count: number): Promise<Id<"schemas">> {
-  const schemaId = await t.mutation(api.lib.createSchema, {
+  const schemaId = await t.mutation(api.schemas.createSchema, {
       geometryType: "Point",
       kind: "geospatial",
       schema: { title: "Big geospatial dataset", type: "object" },
     }),
-    collectionId = await t.mutation(api.lib.createCollection, { name: "Big" });
-  await t.mutation(api.lib.addSchemaToCollection, { collectionId, schemaId });
+    collectionId = await t.mutation(api.collections.createCollection, { name: "Big" });
+  await t.mutation(api.collections.addSchemaToCollection, { collectionId, schemaId });
   let inserted = 0;
   while (inserted < count) {
     const rows = Array.from({ length: Math.min(BULK, count - inserted) }, (_, i) => ({
@@ -48,7 +48,7 @@ async function seedBigDataset(t: TestHarness, count: number): Promise<Id<"schema
       }),
     }));
     // oxlint-disable-next-line no-await-in-loop -- one transaction per seeding batch.
-    await t.mutation(api.lib.createEntriesBulk, { entries: rows, schemaId });
+    await t.mutation(api.entries.createEntriesBulk, { entries: rows, schemaId });
     inserted += rows.length;
   }
   return schemaId;
@@ -107,7 +107,7 @@ describe("batched deletes (issue #128)", () => {
       }
       expect(doc.entryCount).toBe(ENTRY_COUNT);
 
-      await t.mutation(api.lib.deleteSchema, { schemaId });
+      await t.mutation(api.deletes.deleteSchema, { schemaId });
       // Small drains complete inside the calling mutation; a big one
       // schedules its continuation — either way this converges.
       await drainScheduled(t);
@@ -129,7 +129,7 @@ describe("batched deletes (issue #128)", () => {
       }
       const versionBeforeClear = before.mapTileCacheVersion;
 
-      const cleared = await t.mutation(api.lib.deleteEntriesBySchema, { schemaId });
+      const cleared = await t.mutation(api.entries.deleteEntriesBySchema, { schemaId });
       await drainScheduled(t);
 
       expect(cleared).toBe(ENTRY_COUNT);
@@ -175,12 +175,12 @@ describe("batched deletes (issue #128)", () => {
       // suffices: the step drains its whole phase list in one call here.
       const t = initConvexTest(),
         deleteId = await seedBigDataset(t, 250);
-      await t.mutation(internal.lib.deleteSchemaStep, { phase: "entries", schemaId: deleteId });
+      await t.mutation(internal.deletes.deleteSchemaStep, { phase: "entries", schemaId: deleteId });
       await drainScheduled(t);
       await assertSchemaFullyGone(t, deleteId);
 
       const clearId = await seedBigDataset(t, 250);
-      await t.mutation(internal.lib.clearEntriesStep, { phase: "entries", schemaId: clearId });
+      await t.mutation(internal.deletes.clearEntriesStep, { phase: "entries", schemaId: clearId });
       await drainScheduled(t);
       const doc = await t.run(async (ctx) => ctx.db.get(clearId));
       if (doc === null) {

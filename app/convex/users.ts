@@ -125,7 +125,7 @@ export const profile = query({
     // profiled user's author-restricted published datasets appear only to
     // that user; drafts never appear in any viewer's profile either way (the
     // summaries projection excludes them).
-    const summaries = await ctx.runQuery(components.jsonCms.lib.listSchemaSummaries, {
+    const summaries = await ctx.runQuery(components.jsonCms.schemas.listSchemaSummaries, {
       limit: CATALOG_READ_LIMIT,
       viewerId,
     });

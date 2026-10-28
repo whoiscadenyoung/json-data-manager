@@ -546,7 +546,7 @@ describe("freezeVersion (Convex core, #126 AC / #138)", () => {
     // that was never created by deleting the fixture through the component
     // with the host's retirement attestation.
     await t.run(async (ctx) => {
-      await ctx.runMutation(components.jsonCms.lib.deleteSchema, {
+      await ctx.runMutation(components.jsonCms.deletes.deleteSchema, {
         boundWrite: "retire",
         schemaId: sourceSchemaId,
       });

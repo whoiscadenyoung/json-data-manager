@@ -68,7 +68,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * key/field names staleness checks against. Tolerant: anything without an
  * object `properties` maps has no declared columns (the component's
  * `storedSchemaFieldCount` reads the same shape, packages/json-cms
- * `lib.ts`).
+ * `schemas.ts`).
  */
 export function schemaProperties(schemaJson: unknown): string[] {
   if (!isRecord(schemaJson)) {

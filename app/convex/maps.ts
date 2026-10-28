@@ -29,9 +29,9 @@ export const {
 async function tryGetSchema(
   ctx: MutationCtx,
   schemaId: string,
-): Promise<FunctionReturnType<typeof components.jsonCms.lib.getSchema>> {
+): Promise<FunctionReturnType<typeof components.jsonCms.schemas.getSchema>> {
   try {
-    return await ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId });
+    return await ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId });
   } catch {
     return null;
   }
@@ -65,7 +65,7 @@ export const addLayer = mutation({
         throw new ConvexError("Dataset not found");
       }
     }
-    return ctx.runMutation(components.jsonCms.lib.addMapLayer, {
+    return ctx.runMutation(components.jsonCms.maps.addMapLayer, {
       mapId: args.mapId,
       targetId: args.targetId,
       targetType: args.targetType,
@@ -112,7 +112,7 @@ export const addDerivedLayer = mutation({
     if (row === null || (row.status !== "saved" && row.createdBy !== actorId)) {
       throw new ConvexError("Derived dataset not found");
     }
-    return ctx.runMutation(components.jsonCms.lib.addMapLayer, {
+    return ctx.runMutation(components.jsonCms.maps.addMapLayer, {
       mapId: args.mapId,
       targetId: args.targetId,
       targetType: "derived",

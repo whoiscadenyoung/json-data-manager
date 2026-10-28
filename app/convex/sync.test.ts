@@ -757,7 +757,7 @@ describe("mirror idempotency (#127 defect 8)", () => {
         throw new Error("fixture mapping vanished");
       }
       // The entry goes; the map row dangles — the poison.
-      await ctx.runMutation(components.jsonCms.lib.deleteEntry, {
+      await ctx.runMutation(components.jsonCms.entries.deleteEntry, {
         boundWrite: "unbind",
         entryId: mapping.entryId,
       });

@@ -43,7 +43,7 @@ async function createLockedDataset(
     entries: Array<{ data: Record<string, unknown>; geometry?: string }>;
   },
 ): Promise<string> {
-  const schemaId = await ctx.runMutation(components.jsonCms.lib.createSchema, {
+  const schemaId = await ctx.runMutation(components.jsonCms.schemas.createSchema, {
     ...(args.geospatial ? { geometryType: "Point" as const, kind: "geospatial" as const } : {}),
     schema: {
       description: `${args.description} ${SAMPLE_NOTE}`,
@@ -52,11 +52,14 @@ async function createLockedDataset(
       type: "object",
     },
   });
-  await ctx.runMutation(components.jsonCms.lib.createEntriesBulk, {
+  await ctx.runMutation(components.jsonCms.entries.createEntriesBulk, {
     entries: args.entries,
     schemaId,
   });
-  await ctx.runMutation(components.jsonCms.lib.setEditPolicy, { editPolicy: "locked", schemaId });
+  await ctx.runMutation(components.jsonCms.schemas.setEditPolicy, {
+    editPolicy: "locked",
+    schemaId,
+  });
   return schemaId;
 }
 
@@ -288,7 +291,7 @@ async function existingSampleDatasets(
   }
   const docs = await Promise.all(
     [parks, visits].map(async (schemaId) =>
-      ctx.runQuery(components.jsonCms.lib.getSchema, { schemaId }),
+      ctx.runQuery(components.jsonCms.schemas.getSchema, { schemaId }),
     ),
   );
   return docs.every((doc) => doc !== null) ? { parks, visits } : undefined;

@@ -44,7 +44,7 @@ async function plantChunk(t: TestCtx, rows: unknown[]): Promise<Id<"_storage">> 
 }
 
 async function createImportSchema(t: TestCtx): Promise<Id<"schemas">> {
-  return t.mutation(api.lib.createSchema, {
+  return t.mutation(api.schemas.createSchema, {
     schema: {
       properties: { name: { type: "string" } },
       title: "Provenance Schema",
@@ -64,7 +64,7 @@ afterEach(() => {
 describe("generateUploadUrl", () => {
   it("records every issuance, with its scope", async () => {
     const t = initTest();
-    const issued = await t.mutation(api.lib.generateUploadUrl, { scope: "schema-1" });
+    const issued = await t.mutation(api.imports.generateUploadUrl, { scope: "schema-1" });
     expect(issued.storageUrl).toContain("https://");
     expect(issued.uploadId).toBeTruthy();
     const row = await t.run(async (ctx) => ctx.db.get(issued.uploadId));
@@ -75,7 +75,7 @@ describe("generateUploadUrl", () => {
 
     // A scope-less issuance (the host-internal shape) is tracked too — and
     // can never satisfy a claim, which the claim tests below pin.
-    const anonymous = await t.mutation(api.lib.generateUploadUrl, {});
+    const anonymous = await t.mutation(api.imports.generateUploadUrl, {});
     const anonymousRow = await t.run(async (ctx) => ctx.db.get(anonymous.uploadId));
     if (anonymousRow === null) {
       throw new Error("test fixture: issuance row vanished");
@@ -87,7 +87,7 @@ describe("generateUploadUrl", () => {
 describe("claimUpload", () => {
   it("consumes a live same-scope token exactly once", async () => {
     const t = initTest();
-    const { uploadId } = await t.mutation(api.lib.generateUploadUrl, { scope: "schema-1" });
+    const { uploadId } = await t.mutation(api.imports.generateUploadUrl, { scope: "schema-1" });
 
     await t.mutation(api.host_support.claimUpload, { scope: "schema-1", uploadId });
 
@@ -100,7 +100,7 @@ describe("claimUpload", () => {
 
   it("rejects a token issued for another scope", async () => {
     const t = initTest();
-    const { uploadId } = await t.mutation(api.lib.generateUploadUrl, { scope: "schema-1" });
+    const { uploadId } = await t.mutation(api.imports.generateUploadUrl, { scope: "schema-1" });
 
     await expect(
       t.mutation(api.host_support.claimUpload, { scope: "schema-2", uploadId }),
@@ -122,9 +122,9 @@ describe("startImport provenance", () => {
     const t = initTest(),
       schemaId = await createImportSchema(t),
       chunk = await plantChunk(t, [{ name: "a" }]),
-      { uploadId } = await t.mutation(api.lib.generateUploadUrl, { scope: schemaId });
+      { uploadId } = await t.mutation(api.imports.generateUploadUrl, { scope: schemaId });
 
-    await t.mutation(api.lib.startImport, {
+    await t.mutation(api.imports.startImport, {
       chunks: [{ storageId: chunk, uploadId }],
       schemaId,
       total: 1,
@@ -140,10 +140,10 @@ describe("startImport provenance", () => {
       chunk = await plantChunk(t, [{ name: "a" }]),
       // Issued against the OTHER dataset — the classic cross-dataset mixup
       // the provenance check exists for.
-      { uploadId } = await t.mutation(api.lib.generateUploadUrl, { scope: otherSchemaId });
+      { uploadId } = await t.mutation(api.imports.generateUploadUrl, { scope: otherSchemaId });
 
     await expect(
-      t.mutation(api.lib.startImport, {
+      t.mutation(api.imports.startImport, {
         chunks: [{ storageId: chunk, uploadId }],
         schemaId,
         total: 1,
@@ -157,7 +157,7 @@ describe("startImport provenance", () => {
       chunk = await plantChunk(t, [{ name: "a" }]);
 
     await expect(
-      t.mutation(api.lib.startImport, {
+      t.mutation(api.imports.startImport, {
         chunks: [{ storageId: chunk, uploadId: "fabricated000" }],
         schemaId,
         total: 1,
@@ -171,7 +171,7 @@ describe("startImport provenance", () => {
       chunk = await plantChunk(t, [{ name: "a" }]);
 
     await expect(
-      t.mutation(api.lib.startImport, { schemaId, storageIds: [chunk], total: 1 }),
+      t.mutation(api.imports.startImport, { schemaId, storageIds: [chunk], total: 1 }),
     ).rejects.toThrow(/raw storage ids/);
   });
 
@@ -183,7 +183,7 @@ describe("startImport provenance", () => {
     // The host flows (freeze/tag ingest) arrive with the `boundWrite`
     // attestation no client wrapper can carry — their ids were vetted at
     // their own boundary. No tokens requested or consumed.
-    const importId = await t.mutation(api.lib.startImport, {
+    const importId = await t.mutation(api.imports.startImport, {
       boundWrite: "publish",
       schemaId,
       storageIds: [chunk],
@@ -196,10 +196,10 @@ describe("startImport provenance", () => {
 describe("sweepAbandonedUploads", () => {
   it("sweeps unclaimed rows past the TTL and keeps younger ones", async () => {
     const t = initTest();
-    const stale = await t.mutation(api.lib.generateUploadUrl, { scope: "schema-1" });
+    const stale = await t.mutation(api.imports.generateUploadUrl, { scope: "schema-1" });
     // ...time passes; a fresh issuance lands after the stale one.
     vi.setSystemTime(Date.now() + PENDING_UPLOAD_TTL_MS + 60_000);
-    const fresh = await t.mutation(api.lib.generateUploadUrl, { scope: "schema-1" });
+    const fresh = await t.mutation(api.imports.generateUploadUrl, { scope: "schema-1" });
 
     const swept = await t.mutation(api.host_support.sweepAbandonedUploads, {});
 
@@ -210,7 +210,7 @@ describe("sweepAbandonedUploads", () => {
 
   it("never sweeps a row inside the TTL", async () => {
     const t = initTest();
-    const { uploadId } = await t.mutation(api.lib.generateUploadUrl, { scope: "schema-1" });
+    const { uploadId } = await t.mutation(api.imports.generateUploadUrl, { scope: "schema-1" });
 
     vi.setSystemTime(Date.now() + PENDING_UPLOAD_TTL_MS - 60_000);
     expect(await t.mutation(api.host_support.sweepAbandonedUploads, {})).toBe(0);
@@ -221,7 +221,7 @@ describe("sweepAbandonedUploads", () => {
 describe("public results carry no storage ids", () => {
   it("no client-exposed read of a fully-decorated dataset carries a _storage id", async () => {
     const t = initTest(),
-      schemaId = await t.mutation(api.lib.createSchema, {
+      schemaId = await t.mutation(api.schemas.createSchema, {
         geometryType: "Point",
         kind: "geospatial",
         schema: { properties: { n: { type: "number" } }, title: "Tiles", type: "object" },
@@ -232,7 +232,7 @@ describe("public results carry no storage ids", () => {
       sourceFile = await t.run(async (ctx) =>
         ctx.storage.store(new Blob(["original"], { type: "application/json" })),
       );
-    await t.mutation(api.lib.setMapTileArchive, {
+    await t.mutation(api.schemas.setMapTileArchive, {
       bytes: 7,
       expectedVersion: 0,
       maxZoom: 12,
@@ -245,9 +245,9 @@ describe("public results carry no storage ids", () => {
     // `getImportStatus` used to hand back. The source file rides the same
     // call, so the dataset also has a retained original.
     const chunk = await plantChunk(t, [{ name: "a" }]),
-      chunkIssue = await t.mutation(api.lib.generateUploadUrl, { scope: schemaId }),
-      sourceIssue = await t.mutation(api.lib.generateUploadUrl, { scope: schemaId }),
-      importId = await t.mutation(api.lib.startImport, {
+      chunkIssue = await t.mutation(api.imports.generateUploadUrl, { scope: schemaId }),
+      sourceIssue = await t.mutation(api.imports.generateUploadUrl, { scope: schemaId }),
+      importId = await t.mutation(api.imports.startImport, {
         chunks: [{ storageId: chunk, uploadId: chunkIssue.uploadId }],
         schemaId,
         sourceFile: {
@@ -262,9 +262,12 @@ describe("public results carry no storage ids", () => {
     // A second dataset (no source file) and a collection covering both, so
     // the list reads have rows beyond the primary one.
     const otherSchemaId = await createImportSchema(t),
-      collectionId = await t.mutation(api.lib.createCollection, { name: "Collection" });
-    await t.mutation(api.lib.addSchemaToCollection, { collectionId, schemaId });
-    await t.mutation(api.lib.addSchemaToCollection, { collectionId, schemaId: otherSchemaId });
+      collectionId = await t.mutation(api.collections.createCollection, { name: "Collection" });
+    await t.mutation(api.collections.addSchemaToCollection, { collectionId, schemaId });
+    await t.mutation(api.collections.addSchemaToCollection, {
+      collectionId,
+      schemaId: otherSchemaId,
+    });
 
     // Every planted blob id must be absent from every public result — the
     // storage-id secrecy half of issue #131, enforced at the value level so
@@ -279,7 +282,7 @@ describe("public results carry no storage ids", () => {
 
     // The full-doc reads (the finding-1 fix): the stored shape minus the two
     // `_storage` pointers, with the retained source file downgraded to a flag.
-    const doc = await t.query(api.lib.getSchema, { schemaId });
+    const doc = await t.query(api.schemas.getSchema, { schemaId });
     if (doc === null) {
       throw new Error("test fixture: the decorated dataset vanished");
     }
@@ -288,19 +291,19 @@ describe("public results carry no storage ids", () => {
     expect("sourceFileStorageId" in doc).toBe(false);
     expectNoLeak("getSchema", doc);
 
-    const plainDoc = await t.query(api.lib.getSchema, { schemaId: otherSchemaId });
+    const plainDoc = await t.query(api.schemas.getSchema, { schemaId: otherSchemaId });
     if (plainDoc === null) {
       throw new Error("test fixture: the plain dataset vanished");
     }
     expect(plainDoc.hasSourceFile).toBe(false);
 
-    const listed = await t.query(api.lib.listSchemas, { limit: 500, viewerId: "someone" });
+    const listed = await t.query(api.schemas.listSchemas, { limit: 500, viewerId: "someone" });
     expect(listed.map((row) => row._id).toSorted()).toStrictEqual(
       [schemaId, otherSchemaId].toSorted(),
     );
     expectNoLeak("listSchemas", listed);
 
-    const inCollection = await t.query(api.lib.listSchemasByCollection, {
+    const inCollection = await t.query(api.collections.listSchemasByCollection, {
       collectionId,
       viewerId: "someone",
     });
@@ -310,14 +313,14 @@ describe("public results carry no storage ids", () => {
     expectNoLeak("listSchemasByCollection", inCollection);
 
     // Import status: progress only, never the chunk pointers.
-    const status = await t.query(api.lib.getImportStatus, { importId });
+    const status = await t.query(api.imports.getImportStatus, { importId });
     expect(status).not.toBeNull();
     expect("storageId" in (status ?? {})).toBe(false);
     expect("storageIds" in (status ?? {})).toBe(false);
     expectNoLeak("getImportStatus", status);
 
     // The tile meta: exactly the decision fields, never the blob pointer.
-    const meta = await t.query(api.lib.getMapTileArchiveMeta, { schemaId });
+    const meta = await t.query(api.schemas.getMapTileArchiveMeta, { schemaId });
     expect(meta).not.toBeNull();
     expect(Object.keys(meta ?? {}).toSorted()).toStrictEqual([
       "bytes",
@@ -328,7 +331,7 @@ describe("public results carry no storage ids", () => {
     expectNoLeak("getMapTileArchiveMeta", meta);
 
     // The summaries: no archive storage id either (issue #131).
-    const summaries = await t.query(api.lib.listSchemaSummaries, {
+    const summaries = await t.query(api.schemas.listSchemaSummaries, {
       limit: 500,
       viewerId: "someone",
     });
@@ -337,7 +340,7 @@ describe("public results carry no storage ids", () => {
     expect("mapTileArchiveStorageId" in (row ?? {})).toBe(false);
     expectNoLeak("listSchemaSummaries", summaries);
 
-    const drafts = await t.query(api.lib.listDraftSchemaSummaries, {
+    const drafts = await t.query(api.schemas.listDraftSchemaSummaries, {
       limit: 500,
       viewerId: "someone",
     });

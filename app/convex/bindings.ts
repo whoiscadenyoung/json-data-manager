@@ -41,7 +41,7 @@ export const list = query({
     const bindings = await ctx.db.query("datasetBindings").take(100);
     return Promise.all(
       bindings.map(async (binding) => {
-        const schema = await ctx.runQuery(components.jsonCms.lib.getSchema, {
+        const schema = await ctx.runQuery(components.jsonCms.schemas.getSchema, {
           schemaId: binding.schemaId,
         });
         return {
@@ -207,7 +207,7 @@ export const status = query({
     if (!binding) {
       return null;
     }
-    const schema = await ctx.runQuery(components.jsonCms.lib.getSchema, {
+    const schema = await ctx.runQuery(components.jsonCms.schemas.getSchema, {
       schemaId: binding.schemaId,
     });
     return { binding, schema };

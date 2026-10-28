@@ -300,7 +300,7 @@ describe("version projections over the tag flow", () => {
     const v1 = await freezeSnapshot(t, { label: "v1", ref: "snap_v1", sourceSchemaId });
     // A foreign user's DRAFT row (creator-stamped) — invisible to user-2.
     const foreignDraft = await t.withIdentity({ subject: "user-2" }).run(async (ctx) =>
-      ctx.runMutation(components.jsonCms.lib.createSchema, {
+      ctx.runMutation(components.jsonCms.schemas.createSchema, {
         actorId: "user-2",
         lifecycle: "draft",
         schema: { properties: { label: { type: "string" } }, title: "Secret", type: "object" },
@@ -369,7 +369,7 @@ describe("the binding-backed retention policy", () => {
     // A foreign draft anchor is invisible — the defaults, indistinguishable
     // from an unconfigured chain (stage 8).
     const foreignDraft = await t.withIdentity({ subject: "user-2" }).run(async (ctx) =>
-      ctx.runMutation(components.jsonCms.lib.createSchema, {
+      ctx.runMutation(components.jsonCms.schemas.createSchema, {
         actorId: "user-2",
         lifecycle: "draft",
         schema: { properties: { label: { type: "string" } }, title: "Secret", type: "object" },
