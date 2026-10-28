@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { AppsPage } from "#/features/app-builder/pages/apps-page";
+import { AppsPage } from "#/features/app-builder";
 
 // The app builder's routes are thin shells over `features/app-builder`
 // (docs/app-builder.md) — delete `routes/apps/` with the feature.

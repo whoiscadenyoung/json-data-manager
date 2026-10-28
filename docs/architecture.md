@@ -37,6 +37,8 @@ Bun workspace (`bun.lock` at the root; use `bun`, not node/npm):
 | `.github/workflows/ci.yml`   | Root CI (see [Development](#development)).                                                                                                                                                                                                                                                                                                                                                                  |
 | `docs/`                      | Design docs, decision records, and project memory (see the map at the end).                                                                                                                                                                                                                                                                                                                                 |
 
+**Module boundaries (ADR 0014).** Features live in `app/src/features/<name>/` (plus `app/convex/<domain>/` when they have a backend) and are imported only through their `index.ts`; features never import each other. `.oxlintrc.json` enforces both with `no-restricted-imports`. Workspace packages are either built (`dist`, for anything Convex component code imports) or source-only (`private`, app-only), and never import `#convex/_generated`.
+
 ## Runtime topology
 
 ```
@@ -538,7 +540,7 @@ ages fast.
 | [`gis-geometry-transport-survey.md`](./gis-geometry-transport-survey.md)       | research (2026-09-17) | Survey of how major GIS platforms transport geometry; rationale companion to the tile path.                                            |
 | [`app-builder.md`](./app-builder.md)                                           | implemented           | App builder: shareable map/chart/table apps; module layout, sharing model, removal checklist; ADR 0011.                                |
 | [`layer-styles.md`](./layer-styles.md)                                         | implemented           | Layer styles: optional MapLibre-style-spec cartography for saved maps; extension slots, removal checklist; ADR 0012.                   |
-| [`decisions/`](./decisions/)                                                   | living log            | Numbered decision records (ADR-style), 0001–0012.                                                                                      |
+| [`decisions/`](./decisions/)                                                   | living log            | Numbered decision records (ADR-style), 0001–0014.                                                                                      |
 | [`memory/`](./memory/MEMORY.md)                                                | living log            | Project memory: durable lessons, verification gotchas, per-initiative records. Policy in the repo `AGENTS.md`.                         |
 
 ## Known gaps

@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { pageSearch } from "#/features/app-builder/lib/pages";
-import { AppViewPage } from "#/features/app-builder/pages/app-view-page";
+import { AppViewPage, pageSearch } from "#/features/app-builder";
 
 /**
  * The builder's preview: the app exactly as viewers see it, full page, under a
