@@ -17,7 +17,7 @@ import { fieldsOfSchema, type DatasetField } from "./lib/fields";
  * they couldn't open on its dataset page.
  */
 
-export type DatasetDoc = NonNullable<FunctionReturnType<typeof api.schemas.get>>;
+export type DatasetDoc = NonNullable<FunctionReturnType<typeof api.cms.schemas.get>>;
 
 export type DatasetState =
   | { status: "loading" }
@@ -45,7 +45,7 @@ export function AppDatasetsProvider({
 }) {
   const results = useQueries({
     queries: datasetIds.map((schemaId) => ({
-      ...convexQuery(api.schemas.get, { schemaId }),
+      ...convexQuery(api.cms.schemas.get, { schemaId }),
       retry: false,
     })),
   });
@@ -96,7 +96,7 @@ export function useDatasetRecords(schemaId: string): {
   records: DataRecord[];
   complete: boolean;
 } {
-  const { results, status } = useAllPaginated(api.entries.listPage, { schemaId }),
+  const { results, status } = useAllPaginated(api.cms.entries.listPage, { schemaId }),
     records = useMemo(() => results.map((row) => entryDataRecord(row)), [results]);
   return { complete: status === "Exhausted", records };
 }

@@ -105,13 +105,14 @@ describe("profile (one page load)", () => {
     await insertMirrorUser(t, { authId: "user-2", email: "two@example.com", name: "User Two" });
 
     // Each user creates a public dataset (createdBy = its caller).
-    const mine = await t.mutation(api.schemas.create, {
+    const mine = await t.mutation(api.cms.schemas.create, {
       kind: "standard",
       schema: { fields: [], title: "Mine" },
     });
-    const theirs = await t
-      .withIdentity({ subject: "user-2" })
-      .mutation(api.schemas.create, { kind: "standard", schema: { fields: [], title: "Theirs" } });
+    const theirs = await t.withIdentity({ subject: "user-2" }).mutation(api.cms.schemas.create, {
+      kind: "standard",
+      schema: { fields: [], title: "Theirs" },
+    });
 
     // User One's profile, viewed by user-2: public rows are catalog-visible
     // to every signed-in collaborator (ADR 0009), filtered to the profiled

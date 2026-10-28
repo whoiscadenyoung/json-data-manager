@@ -123,11 +123,11 @@ function toastError(error: unknown, fallback: string) {
  */
 function useMapLayerActions(mapId: string) {
   const navigate = useNavigate(),
-    removeLayer = useMutation(api.maps.removeLayer),
-    setLayerVisibility = useMutation(api.maps.setLayerVisibility),
-    moveLayer = useMutation(api.maps.moveLayer),
-    setMapLayerOverride = useMutation(api.maps.setMapLayerOverride),
-    deleteMap = useMutation(api.maps.remove),
+    removeLayer = useMutation(api.cms.maps.removeLayer),
+    setLayerVisibility = useMutation(api.cms.maps.setLayerVisibility),
+    moveLayer = useMutation(api.cms.maps.moveLayer),
+    setMapLayerOverride = useMutation(api.cms.maps.setMapLayerOverride),
+    deleteMap = useMutation(api.cms.maps.remove),
     handleRemoveLayer = async (layer: MapLayerDoc) => {
       try {
         await removeLayer({ layerId: layer._id });
@@ -184,27 +184,27 @@ function useMapLayerActions(mapId: string) {
 // oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 function MapDetailPage() {
   const { mapId } = Route.useParams(),
-    map = useQuery(api.maps.get, { mapId }),
-    layers = useQuery(api.maps.listLayers, { limit: 500, mapId }),
-    datasets = useQuery(api.schemas.listSummaries, { limit: 1000 }),
-    collections = useQuery(api.collections.list),
-    groups = useQuery(api.groups.list, { limit: 500 }),
-    memberships = useQuery(api.collections.listSchemaCollections, { limit: 1000 }),
+    map = useQuery(api.cms.maps.get, { mapId }),
+    layers = useQuery(api.cms.maps.listLayers, { limit: 500, mapId }),
+    datasets = useQuery(api.cms.schemas.listSummaries, { limit: 1000 }),
+    collections = useQuery(api.cms.collections.list),
+    groups = useQuery(api.cms.groups.list, { limit: 500 }),
+    memberships = useQuery(api.cms.collections.listSchemaCollections, { limit: 1000 }),
     // Saved derived datasets (read-time health included) — the summaries
     // projection is stage 3's single merge point. Feeds the picker's
     // candidates, the layer expansion, and the popup-title lookups.
-    derivedSummaries = useQuery(api.derivedDatasets.summaries),
+    derivedSummaries = useQuery(api.versions.derivedDatasets.summaries),
     // 7b (#103) chain resolutions for THIS map's dataset layers: a target
     // that holds a version chain (its project published) renders the chain —
     // head for float, the pinned row for pin. Targets without a chain
     // resolve to nothing and render themselves, exactly as before.
-    resolutions = useQuery(api.bundles.layerResolutions, { mapId }),
+    resolutions = useQuery(api.publishing.bundles.layerResolutions, { mapId }),
     // Child-visibility overrides for THIS map's layers only (issue #53) —
     // the wrapper reads through the map's `by_map` layers rather than
     // collecting every map's override rows.
-    overrides = useQuery(api.maps.listMapLayerOverrides, { mapId }),
-    addLayer = useMutation(api.maps.addLayer),
-    addDerivedLayer = useMutation(api.maps.addDerivedLayer),
+    overrides = useQuery(api.cms.maps.listMapLayerOverrides, { mapId }),
+    addLayer = useMutation(api.cms.maps.addLayer),
+    addDerivedLayer = useMutation(api.cms.maps.addDerivedLayer),
     [editingMap, setEditingMap] = useState(false),
     [addLayerOpen, setAddLayerOpen] = useState(false),
     [pendingDeleteMap, setPendingDeleteMap] = useState(false),

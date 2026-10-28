@@ -30,8 +30,8 @@ export function CollectionFormPanel({
   onOpenChange: (open: boolean) => void;
 }) {
   const isEditing = collection !== undefined,
-    createCollection = useMutation(api.collections.create),
-    updateCollection = useMutation(api.collections.update),
+    createCollection = useMutation(api.cms.collections.create),
+    updateCollection = useMutation(api.cms.collections.update),
     [name, setName] = useState(isEditing ? collection.name : ""),
     [description, setDescription] = useState(isEditing ? (collection.description ?? "") : ""),
     [isSubmitting, setIsSubmitting] = useState(false),

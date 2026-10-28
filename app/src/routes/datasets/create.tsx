@@ -24,7 +24,7 @@ import { api } from "../../../convex/_generated/api";
  * the dataset is created through `projects.createDraftDataset` — the host
  * mutation that lands the draft dataset and its project membership row in ONE
  * transaction, flagged `lifecycle: "draft"` (something the plain
- * `api.schemas.create` wrapper can never do — the wrapper deliberately omits
+ * `api.cms.schemas.create` wrapper can never do — the wrapper deliberately omits
  * the lifecycle field). Import/create thus lands IN the project, part of the
  * flow, not a separate act (lifecycle §3). Absent, the page behaves exactly
  * as before.
@@ -78,7 +78,7 @@ function CreateDatasetPage() {
     // projects pages use — instead of throwing to the router error boundary.
     // undefined data (query skipped) outside the in-project variant.
     projectQuery = useQuery({
-      ...convexQuery(api.projects.get, projectId === undefined ? "skip" : { projectId }),
+      ...convexQuery(api.publishing.projects.get, projectId === undefined ? "skip" : { projectId }),
     });
 
   return (
@@ -188,9 +188,9 @@ function PathChooser({ onChoose }: { onChoose: (mode: Mode) => void }) {
 // oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 function SchemaFirst({ projectId }: { projectId?: string }) {
   const navigate = useNavigate(),
-    createSchema = useMutation(api.schemas.create),
-    createDraft = useMutation(api.projects.createDraftDataset),
-    schemas = useQuery({ ...convexQuery(api.schemas.list, { limit: 1000 }) }).data,
+    createSchema = useMutation(api.cms.schemas.create),
+    createDraft = useMutation(api.publishing.projects.createDraftDataset),
+    schemas = useQuery({ ...convexQuery(api.cms.schemas.list, { limit: 1000 }) }).data,
     availableDatasets = (schemas ?? []).map((s) => ({
       id: s._id,
       schema: s.schema,
@@ -251,17 +251,17 @@ function ImportFirst({ projectId }: { projectId?: string }) {
     // to published only when the import completes (issue #129) — a failed
     // import leaves an invisible draft for Retry/Discard instead of an
     // empty, published dataset in the catalog.
-    createDraftForImport = useMutation(api.schemas.createDraftForImport),
-    createDraft = useMutation(api.projects.createDraftDataset),
-    generateUploadUrl = useMutation(api.imports.generateUploadUrl),
-    startImport = useMutation(api.imports.startImport),
-    clearRows = useMutation(api.entries.clearDatasetRows),
-    removeDataset = useMutation(api.schemas.remove),
-    markComplete = useMutation(api.schemas.markImportComplete),
+    createDraftForImport = useMutation(api.cms.schemas.createDraftForImport),
+    createDraft = useMutation(api.publishing.projects.createDraftDataset),
+    generateUploadUrl = useMutation(api.cms.imports.generateUploadUrl),
+    startImport = useMutation(api.cms.imports.startImport),
+    clearRows = useMutation(api.cms.entries.clearDatasetRows),
+    removeDataset = useMutation(api.cms.schemas.remove),
+    markComplete = useMutation(api.cms.schemas.markImportComplete),
     [importId, setImportId] = useState<string | undefined>(),
     [schemaId, setSchemaId] = useState<string | undefined>(),
     status = useQuery({
-      ...convexQuery(api.imports.getImportStatus, importId ? { importId } : "skip"),
+      ...convexQuery(api.cms.imports.getImportStatus, importId ? { importId } : "skip"),
     }).data,
     importStatus = status ? status.status : undefined;
 

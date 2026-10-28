@@ -592,9 +592,9 @@ function BulkUploadPage() {
 function BulkUploadBody() {
   const { schemaId } = Route.useParams(),
     navigate = useNavigate(),
-    schema = useQuery(api.schemas.get, { schemaId }),
-    generateUploadUrl = useMutation(api.imports.generateUploadUrl),
-    startImport = useMutation(api.imports.startImport),
+    schema = useQuery(api.cms.schemas.get, { schemaId }),
+    generateUploadUrl = useMutation(api.cms.imports.generateUploadUrl),
+    startImport = useMutation(api.cms.imports.startImport),
     [jsonText, setJsonText] = useState(""),
     [fileName, setFileName] = useState<string | null>(null),
     [isDragging, setIsDragging] = useState(false),
@@ -607,7 +607,7 @@ function BulkUploadBody() {
     [workbookSheets, setWorkbookSheets] = useState<ParsedSheet[] | null>(null),
     [workbookFileName, setWorkbookFileName] = useState(""),
     fileInputRef = useRef<HTMLInputElement>(null),
-    importStatus = useQuery(api.imports.getImportStatus, importId ? { importId } : "skip"),
+    importStatus = useQuery(api.cms.imports.getImportStatus, importId ? { importId } : "skip"),
     importStatusValue = importStatus ? importStatus.status : undefined,
     importTotal = importStatus ? importStatus.total : 0,
     importErrorMsg = importStatus && importStatus.error ? importStatus.error : "Import failed.";

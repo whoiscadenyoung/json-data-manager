@@ -50,13 +50,13 @@ import { fetchConvexToken, setAuthReasserting } from "#/lib/convex-auth-token";
 import { api } from "#convex/_generated/api";
 
 /** One entry row, as `entries.listPage` pages it. */
-export type DatasetEntryRow = FunctionReturnType<typeof api.entries.listPage>["page"][number];
+export type DatasetEntryRow = FunctionReturnType<typeof api.cms.entries.listPage>["page"][number];
 
 /** One whole `entries.listPage` page (rows + cursor + `isDone`). */
-type EntriesPage = FunctionReturnType<typeof api.entries.listPage>;
+type EntriesPage = FunctionReturnType<typeof api.cms.entries.listPage>;
 
 /** One geometry row, as `geometries.list` paginates it (see the query's doc comment in the component). */
-export type DatasetGeometryRow = FunctionReturnType<typeof api.geometries.list>["page"][number];
+export type DatasetGeometryRow = FunctionReturnType<typeof api.cms.geometries.list>["page"][number];
 
 /**
  * Rows per reactive entries page. In the persisted light-state query hash
@@ -371,7 +371,7 @@ export async function forEachDatasetEntryPage(
   let cursor: string | null = null;
   for (;;) {
     // oxlint-disable-next-line no-await-in-loop -- each page resumes from the previous page's cursor; inherently sequential.
-    const page: EntriesPage = await convex.query(api.entries.listPage, {
+    const page: EntriesPage = await convex.query(api.cms.entries.listPage, {
       order: entryOrder,
       paginationOpts: { cursor, numItems: ENTRIES_FETCH_PAGE_SIZE },
       schemaId,
@@ -426,7 +426,7 @@ export async function forEachDatasetGeometryPage(
   let cursor = "";
   for (;;) {
     // oxlint-disable-next-line no-await-in-loop -- each page resumes from the previous page's cursor; inherently sequential.
-    const page = await convex.query(api.geometries.list, {
+    const page = await convex.query(api.cms.geometries.list, {
       paginationOpts: { cursor, numItems: GEOMETRY_PAGE_ROWS },
       schemaId,
     });

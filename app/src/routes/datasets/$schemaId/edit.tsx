@@ -76,8 +76,8 @@ function EditSchemaPage() {
 function EditSchemaBody() {
   const { schemaId } = Route.useParams(),
     navigate = useNavigate(),
-    schema = useQuery(api.schemas.get, { schemaId }),
-    updateSchema = useMutation(api.schemas.update);
+    schema = useQuery(api.cms.schemas.get, { schemaId }),
+    updateSchema = useMutation(api.cms.schemas.update);
 
   if (schema === undefined) {
     return (
@@ -166,7 +166,7 @@ function MetadataEditForm({
   schemaId: string;
   title: string;
   description: string | undefined;
-  updateSchema: ReturnType<typeof useMutation<typeof api.schemas.update>>;
+  updateSchema: ReturnType<typeof useMutation<typeof api.cms.schemas.update>>;
   navigate: ReturnType<typeof useNavigate>;
 }) {
   const form = useForm({
@@ -275,10 +275,10 @@ function FullSchemaEditForm({
   schemaId: string;
   currentSchema: unknown;
   currentUiSchema?: unknown;
-  updateSchema: ReturnType<typeof useMutation<typeof api.schemas.update>>;
+  updateSchema: ReturnType<typeof useMutation<typeof api.cms.schemas.update>>;
   navigate: ReturnType<typeof useNavigate>;
 }) {
-  const schemas = useQuery(api.schemas.list, { limit: 1000 }),
+  const schemas = useQuery(api.cms.schemas.list, { limit: 1000 }),
     availableDatasets = (schemas ?? []).map((s) => ({
       id: s._id,
       schema: s.schema,

@@ -145,10 +145,10 @@ export function AddToMapSheet({
   onOpenChange: (open: boolean) => void;
   target: AddToMapTarget;
 }) {
-  const maps = useQuery(api.maps.list, { limit: 500 }),
-    layers = useQuery(api.maps.listLayers, { limit: 500 }),
-    createMap = useMutation(api.maps.create),
-    addLayer = useMutation(api.maps.addLayer),
+  const maps = useQuery(api.cms.maps.list, { limit: 500 }),
+    layers = useQuery(api.cms.maps.listLayers, { limit: 500 }),
+    createMap = useMutation(api.cms.maps.create),
+    addLayer = useMutation(api.cms.maps.addLayer),
     [search, setSearch] = useState(""),
     [newName, setNewName] = useState(""),
     // Which add is in flight — a map id, or "__new__" for create-and-add.

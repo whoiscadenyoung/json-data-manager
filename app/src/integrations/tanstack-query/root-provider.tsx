@@ -25,11 +25,11 @@ import { api } from "#convex/_generated/api";
  * Convex query keys are JSON-safe by design (`convexQuery` stores the function
  * NAME, not the opaque reference — see "Make query key serializable" in the
  * react-query integration package), so a persisted `["convexQuery",
- * "schemas:list", …]` key re-subscribes cleanly on restore: `hydrate` rebuilds
+ * "cms/schemas:list", …]` key re-subscribes cleanly on restore: `hydrate` rebuilds
  * the entry with the persisted hash, the integration's cache listener starts a
  * fresh WebSocket watch for it, and pushes land via `setQueryData`.
  *
- * The buster is `api.schemas.maxTileCacheVersion` (part 2's version counters):
+ * The buster is `api.cms.schemas.maxTileCacheVersion` (part 2's version counters):
  * any geometry write bumps some dataset's version, so the next boot discards
  * persisted state exactly when data changed. The provider stays unmounted (no
  * persistence at all) until the first buster value arrives — restoring against
@@ -47,7 +47,10 @@ const PERSIST_GC_TIME_MS = PERSIST_MAX_AGE_MS + 24 * 60 * 60 * 1000;
  * followed by a save simply re-fetches once on the next boot (safe, just not
  * instant). */
 const PERSIST_THROTTLE_MS = 5_000;
-const PERSIST_KEY = "light-query-cache";
+// Bumped when function paths move (restructure step B3: `schemas:*` became
+// `cms/schemas:*`), so a cache persisted under the old names is never
+// restored and re-subscribed against functions that no longer exist.
+const PERSIST_KEY = "light-query-cache-v2";
 const IDB_DB_NAME = "json-cms";
 const IDB_STORE_NAME = "tanstack-query";
 
@@ -136,7 +139,7 @@ export function TanStackQueryProvider({ children }: { children: ReactNode }) {
   // screen replaces the gate's redirect (#135 follow-up). Signed out, boot
   // on the plain provider: the gate mounts nothing that would cache anyway.
   const maxTileCacheVersion = useQuery(
-    api.schemas.maxTileCacheVersion,
+    api.cms.schemas.maxTileCacheVersion,
     isAuthenticated ? {} : "skip",
   );
   const persister = useMemo(

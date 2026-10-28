@@ -65,13 +65,13 @@ describe("auth (the gate itself)", () => {
 describe("gate: exposeApi wrappers (bucket 1)", () => {
   it("rejects a signed-out read (schemas.list)", async () => {
     const t = initTest();
-    await expect(t.query(api.schemas.list, { limit: 500 })).rejects.toThrow(GATE_MESSAGE);
+    await expect(t.query(api.cms.schemas.list, { limit: 500 })).rejects.toThrow(GATE_MESSAGE);
   });
 
   it("rejects a signed-out read (entries.listPage)", async () => {
     const t = initTest();
     await expect(
-      t.query(api.entries.listPage, {
+      t.query(api.cms.entries.listPage, {
         paginationOpts: { cursor: null, numItems: 10 },
         schemaId: "irrelevant-the-gate-runs-first",
       }),
@@ -81,22 +81,22 @@ describe("gate: exposeApi wrappers (bucket 1)", () => {
   it("rejects a signed-out write (entries.create)", async () => {
     const t = initTest();
     await expect(
-      t.mutation(api.entries.create, { data: { name: "x" }, schemaId: "irrelevant" }),
+      t.mutation(api.cms.entries.create, { data: { name: "x" }, schemaId: "irrelevant" }),
     ).rejects.toThrow(GATE_MESSAGE);
   });
 
   it("signed-in writes work, read back, and stamp createdBy", async () => {
     const t = initTest().withIdentity({ subject: "user-1" });
-    const schemaId = await t.mutation(api.schemas.create, {
+    const schemaId = await t.mutation(api.cms.schemas.create, {
       kind: "standard",
       schema: { fields: [], title: "Gate test" },
     });
-    const doc = await t.query(api.schemas.get, { schemaId });
+    const doc = await t.query(api.cms.schemas.get, { schemaId });
     if (doc === null) {
       throw new Error("created schema doc not found");
     }
     expect(doc.createdBy).toBe("user-1");
-    const page = await t.query(api.entries.listPage, {
+    const page = await t.query(api.cms.entries.listPage, {
       paginationOpts: { cursor: null, numItems: 10 },
       schemaId,
     });
@@ -107,51 +107,57 @@ describe("gate: exposeApi wrappers (bucket 1)", () => {
 describe("gate: host functions already riding the hook (bucket 2)", () => {
   it("rejects maxTileCacheVersion signed out; returns 0 signed in", async () => {
     const t = initTest();
-    await expect(t.query(api.schemas.maxTileCacheVersion, {})).rejects.toThrow(GATE_MESSAGE);
+    await expect(t.query(api.cms.schemas.maxTileCacheVersion, {})).rejects.toThrow(GATE_MESSAGE);
     const signedIn = initTest().withIdentity({ subject: "user-1" });
-    expect(await signedIn.query(api.schemas.maxTileCacheVersion, {})).toBe(0);
+    expect(await signedIn.query(api.cms.schemas.maxTileCacheVersion, {})).toBe(0);
   });
 
   it("rejects tile archive metas signed out; returns [] signed in", async () => {
     const t = initTest();
-    await expect(t.query(api.tile_archives.metas, { schemaIds: [] })).rejects.toThrow(GATE_MESSAGE);
+    await expect(t.query(api.cms.tile_archives.metas, { schemaIds: [] })).rejects.toThrow(
+      GATE_MESSAGE,
+    );
     const signedIn = initTest().withIdentity({ subject: "user-1" });
-    expect(await signedIn.query(api.tile_archives.metas, { schemaIds: [] })).toStrictEqual([]);
+    expect(await signedIn.query(api.cms.tile_archives.metas, { schemaIds: [] })).toStrictEqual([]);
   });
 });
 
 describe("gate: host functions with an explicit gate (bucket 3)", () => {
   it("bindings: list rejects signed out, returns [] signed in; unbind rejects signed out", async () => {
     const t = initTest();
-    await expect(t.query(api.bindings.list, {})).rejects.toThrow(GATE_MESSAGE);
-    await expect(t.mutation(api.bindings.unbind, { schemaId: "x" })).rejects.toThrow(GATE_MESSAGE);
+    await expect(t.query(api.sources.bindings.list, {})).rejects.toThrow(GATE_MESSAGE);
+    await expect(t.mutation(api.sources.bindings.unbind, { schemaId: "x" })).rejects.toThrow(
+      GATE_MESSAGE,
+    );
     const signedIn = initTest().withIdentity({ subject: "user-1" });
-    expect(await signedIn.query(api.bindings.list, {})).toStrictEqual([]);
+    expect(await signedIn.query(api.sources.bindings.list, {})).toStrictEqual([]);
   });
 
   it("tags: retentionSettings rejects signed out, defaults signed in; setKeepVersions and the ingest action reject signed out", async () => {
     const t = initTest();
-    await expect(t.query(api.tags.retentionSettings, { sourceSchemaId: "x" })).rejects.toThrow(
-      GATE_MESSAGE,
-    );
     await expect(
-      t.mutation(api.tags.setKeepVersions, { keep: 3, sourceSchemaId: "x" }),
+      t.query(api.versions.tags.retentionSettings, { sourceSchemaId: "x" }),
     ).rejects.toThrow(GATE_MESSAGE);
-    await expect(t.action(api.tags.ingestSnapshots, {})).rejects.toThrow(GATE_MESSAGE);
+    await expect(
+      t.mutation(api.versions.tags.setKeepVersions, { keep: 3, sourceSchemaId: "x" }),
+    ).rejects.toThrow(GATE_MESSAGE);
+    await expect(t.action(api.versions.tags.ingestSnapshots, {})).rejects.toThrow(GATE_MESSAGE);
     const signedIn = initTest().withIdentity({ subject: "user-1" });
-    expect(await signedIn.query(api.tags.retentionSettings, { sourceSchemaId: "x" })).toStrictEqual(
-      { keepVersions: 10, pinnedRefs: [] },
-    );
+    expect(
+      await signedIn.query(api.versions.tags.retentionSettings, { sourceSchemaId: "x" }),
+    ).toStrictEqual({ keepVersions: 10, pinnedRefs: [] });
   });
 
   it("sync: latestRun rejects signed out, returns null signed in; startRun rejects signed out", async () => {
     const t = initTest();
-    await expect(t.query(api.sync.latestRun, { source: "x" })).rejects.toThrow(GATE_MESSAGE);
-    await expect(t.mutation(api.sync.startRun, { mode: "sync", source: "x" })).rejects.toThrow(
+    await expect(t.query(api.sources.sync.latestRun, { source: "x" })).rejects.toThrow(
       GATE_MESSAGE,
     );
+    await expect(
+      t.mutation(api.sources.sync.startRun, { mode: "sync", source: "x" }),
+    ).rejects.toThrow(GATE_MESSAGE);
     const signedIn = initTest().withIdentity({ subject: "user-1" });
-    expect(await signedIn.query(api.sync.latestRun, { source: "x" })).toBeNull();
+    expect(await signedIn.query(api.sources.sync.latestRun, { source: "x" })).toBeNull();
   });
 
   it("dashboard: reads and writes reject signed out; a signed-in write reads back", async () => {

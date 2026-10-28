@@ -45,8 +45,8 @@ import { VersionCompare } from "./version-compare";
  * never a re-implementation.
  */
 
-type ChainVersionRow = FunctionReturnType<typeof api.consumption.chainVersions>[number];
-type DatasetDoc = FunctionReturnType<typeof api.schemas.list>[number];
+type ChainVersionRow = FunctionReturnType<typeof api.versions.consumption.chainVersions>[number];
+type DatasetDoc = FunctionReturnType<typeof api.cms.schemas.list>[number];
 
 /**
  * The diff view for one drifted source: pinned (the recorded freeze) vs the
@@ -66,7 +66,7 @@ function PinnedHeadDiff(options: {
   sourceTitle: string;
 }) {
   const storedDelta = useQuery({
-      ...convexQuery(api.consumption.storedDelta, {
+      ...convexQuery(api.versions.consumption.storedDelta, {
         anchorId: options.sourceAnchorId,
         fromRef: options.recordedRef,
         toRef: options.headRef,
@@ -114,7 +114,7 @@ function PinnedHeadDiff(options: {
 export function SourceDriftCard({ schema }: { schema: DatasetDoc }) {
   const lineage = schema.lineage;
   const badgesResult = useQuery({
-    ...convexQuery(api.consumption.sourceBadges, {
+    ...convexQuery(api.versions.consumption.sourceBadges, {
       registryIds: [],
       schemaIds: [schema._id],
     }),
@@ -262,11 +262,11 @@ function SourceBadgeRow({
  */
 export function ConsumedByCard({ schemaId }: { schemaId: string }) {
   const consumedBy = useQuery({
-    ...convexQuery(api.consumption.consumedBy, { datasetId: schemaId }),
+    ...convexQuery(api.versions.consumption.consumedBy, { datasetId: schemaId }),
   }).data;
-  const floatToHead = useMutation(api.consumption.setReferenceMode),
-    syncRef = useMutation(api.consumption.syncReference),
-    revertRef = useMutation(api.consumption.revertReference),
+  const floatToHead = useMutation(api.versions.consumption.setReferenceMode),
+    syncRef = useMutation(api.versions.consumption.syncReference),
+    revertRef = useMutation(api.versions.consumption.revertReference),
     [pendingId, setPendingId] = useState<string>();
   const consumers = consumedBy === undefined ? [] : consumedBy.consumers;
   // One reference action at a time, tracked by the row's reference id so the
@@ -396,11 +396,15 @@ export function ConsumedByCard({ schemaId }: { schemaId: string }) {
  */
 // oxlint-disable-next-line eslint/complexity -- the VersionsCard sibling carries the same shape (dataset-overview.tsx); splitting the card would scatter the keep/pin/retire wiring.
 export function ChainVersionsCard({ anchorId }: { anchorId: string }) {
-  const versions = useQuery({ ...convexQuery(api.consumption.chainVersions, { anchorId }) }).data,
-    retention = useQuery({ ...convexQuery(api.consumption.retentionPolicy, { anchorId }) }).data,
-    setKeep = useMutation(api.consumption.setChainKeep),
-    setPinned = useMutation(api.consumption.setChainVersionPinned),
-    retire = useMutation(api.tags.retireVersion),
+  const versions = useQuery({
+      ...convexQuery(api.versions.consumption.chainVersions, { anchorId }),
+    }).data,
+    retention = useQuery({
+      ...convexQuery(api.versions.consumption.retentionPolicy, { anchorId }),
+    }).data,
+    setKeep = useMutation(api.versions.consumption.setChainKeep),
+    setPinned = useMutation(api.versions.consumption.setChainVersionPinned),
+    retire = useMutation(api.versions.tags.retireVersion),
     [keepInput, setKeepInput] = useState<string>(),
     [compareOpen, setCompareOpen] = useState<string | undefined>(),
     [retireTarget, setRetireTarget] = useState<ChainVersionRow>(),

@@ -296,7 +296,7 @@ export async function loadSpecsBySource(
 ): Promise<globalThis.Map<string, ExportTransformSpec[]>> {
   const docs = await Promise.all(
     readySummaries.map(async (summary) =>
-      convex.query(api.derivedDatasets.get, { id: summary._id }),
+      convex.query(api.versions.derivedDatasets.get, { id: summary._id }),
     ),
   );
   const specsBySource = new globalThis.Map<string, ExportTransformSpec[]>();

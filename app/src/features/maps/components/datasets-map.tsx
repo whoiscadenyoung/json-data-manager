@@ -15,7 +15,7 @@ import { api } from "#convex/_generated/api";
 
 import { asBoundingBox, bboxFeature } from "../lib/point-geometry";
 
-type Dataset = FunctionReturnType<typeof api.schemas.listSummaries>[number];
+type Dataset = FunctionReturnType<typeof api.cms.schemas.listSummaries>[number];
 
 // Cycled per dataset so each shows up as a distinct color on the map/legend.
 const DATASET_COLORS = [

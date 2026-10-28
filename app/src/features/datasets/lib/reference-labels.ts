@@ -8,7 +8,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
  * Resolves each reference field's target entry ids to a display label (its
  * `displayProperty`, when the target entry has one), grouped by field name.
  * `candidateEntries` is expected to be the flattened result of one
- * `api.entries.listEntriesForSchemas` call covering every dataset any of
+ * `api.cms.entries.listEntriesForSchemas` call covering every dataset any of
  * `referenceFields` points at — see `entries-table.tsx` and `$entryId.tsx`.
  */
 export function buildLabelsByField(

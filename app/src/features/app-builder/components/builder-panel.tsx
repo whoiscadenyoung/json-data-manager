@@ -294,7 +294,7 @@ function DataPanel({
 }) {
   const states = useAppDatasets(),
     [pickerOpen, setPickerOpen] = useState(false),
-    summaries = useQuery({ ...convexQuery(api.schemas.listSummaries, { limit: 500 }) }).data,
+    summaries = useQuery({ ...convexQuery(api.cms.schemas.listSummaries, { limit: 500 }) }).data,
     inApp = new Set(content.datasetIds),
     candidates = (summaries ?? []).filter((summary) => !inApp.has(summary._id)),
     full = content.datasetIds.length >= APP_LIMITS.datasets;

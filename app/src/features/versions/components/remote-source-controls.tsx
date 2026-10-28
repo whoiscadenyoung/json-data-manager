@@ -10,8 +10,8 @@ import { toast } from "sonner";
 import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 
-type RemoteStatus = NonNullable<FunctionReturnType<typeof api.remoteSources.status>>;
-type RunRow = NonNullable<FunctionReturnType<typeof api.sync.latestRun>>;
+type RemoteStatus = NonNullable<FunctionReturnType<typeof api.sources.remoteSources.status>>;
+type RunRow = NonNullable<FunctionReturnType<typeof api.sources.sync.latestRun>>;
 
 function isRunActive(run: RunRow | null | undefined): boolean {
   return (
@@ -79,11 +79,11 @@ function RunLine({ run }: { run: RunRow | null | undefined }) {
  * waiting for the cron.
  */
 export function RemoteSourceControls({ source }: { source: string }) {
-  const status = useQuery(api.remoteSources.status, { source }),
-    run = useQuery(api.sync.latestRun, { source }),
-    checkIfStale = useAction(api.remoteSources.checkIfStale),
-    check = useAction(api.remoteSources.check),
-    sync = useAction(api.remoteSources.sync),
+  const status = useQuery(api.sources.remoteSources.status, { source }),
+    run = useQuery(api.sources.sync.latestRun, { source }),
+    checkIfStale = useAction(api.sources.remoteSources.checkIfStale),
+    check = useAction(api.sources.remoteSources.check),
+    sync = useAction(api.sources.remoteSources.sync),
     [pending, setPending] = useState<"check" | "sync" | undefined>(),
     isRemote = status !== null && status !== undefined;
 

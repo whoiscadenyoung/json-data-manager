@@ -32,8 +32,8 @@ export function GroupFormPanel({
   onOpenChange: (open: boolean) => void;
 }) {
   const isEditing = group !== undefined,
-    createGroup = useMutation(api.groups.create),
-    updateGroup = useMutation(api.groups.update),
+    createGroup = useMutation(api.cms.groups.create),
+    updateGroup = useMutation(api.cms.groups.update),
     [name, setName] = useState(isEditing ? group.name : ""),
     [description, setDescription] = useState(isEditing ? (group.description ?? "") : ""),
     [isSubmitting, setIsSubmitting] = useState(false),

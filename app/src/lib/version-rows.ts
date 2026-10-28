@@ -1,6 +1,6 @@
 /**
  * The pure version-row join rule (roadmap stage 6, #101) — deliberately
- * import-free so BOTH the server's delta machinery (app/convex/versioning.ts,
+ * import-free so BOTH the server's delta machinery (app/convex/versions/versioning.ts,
  * which re-exports these) and the client's row-resolution seam
  * (app/src/lib/dataset-rows.ts) key version rows with ONE definition. The
  * diff's ops (the server's `diffVersionRows`) and the diff overlay's

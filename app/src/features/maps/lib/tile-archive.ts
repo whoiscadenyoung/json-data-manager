@@ -245,7 +245,7 @@ function getScheduler(): TileArchiveScheduler {
  * `mapTileCacheVersion` server-side with no client hook.
  */
 export function useMapTileArchiveManager(): void {
-  const schemas = useQuery(api.schemas.listSummaries, { limit: 1000 });
+  const schemas = useQuery(api.cms.schemas.listSummaries, { limit: 1000 });
   useEffect(() => {
     if (schemas === undefined) return;
     const scheduler = getScheduler();

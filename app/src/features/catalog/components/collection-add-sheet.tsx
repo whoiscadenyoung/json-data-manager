@@ -21,8 +21,8 @@ import type { MembershipRow } from "#/features/maps";
 import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 
-type CollectionDoc = FunctionReturnType<typeof api.collections.list>[number];
-type GroupDoc = FunctionReturnType<typeof api.groups.list>[number];
+type CollectionDoc = FunctionReturnType<typeof api.cms.collections.list>[number];
+type GroupDoc = FunctionReturnType<typeof api.cms.groups.list>[number];
 
 /** True when `text`/`description` contains the (already normalized) search. */
 function matchesSearch(normalized: string, text: string, description?: string): boolean {
@@ -212,8 +212,8 @@ function useCollectionAddActions(
   onOpenChange: (open: boolean) => void,
   setPendingKey: (key: string | undefined) => void,
 ) {
-  const addSchemaToCollection = useMutation(api.collections.addSchemaToCollection),
-    setGroupCollection = useMutation(api.groups.setCollection),
+  const addSchemaToCollection = useMutation(api.cms.collections.addSchemaToCollection),
+    setGroupCollection = useMutation(api.cms.groups.setCollection),
     handleAddDataset = async (dataset: DatasetSummary) => {
       setPendingKey(dataset._id);
       try {

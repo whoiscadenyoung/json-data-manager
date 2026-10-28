@@ -4,16 +4,18 @@ import type { FunctionReturnType } from "convex/server";
 import type { DatasetGeometryRow } from "#/lib/dataset-rows";
 import { api } from "#convex/_generated/api";
 
-export type MapLayerDoc = FunctionReturnType<typeof api.maps.listLayers>[number];
-export type DatasetSummary = FunctionReturnType<typeof api.schemas.listSummaries>[number];
+export type MapLayerDoc = FunctionReturnType<typeof api.cms.maps.listLayers>[number];
+export type DatasetSummary = FunctionReturnType<typeof api.cms.schemas.listSummaries>[number];
 export type DerivedDatasetSummary = FunctionReturnType<
-  typeof api.derivedDatasets.summaries
+  typeof api.versions.derivedDatasets.summaries
 >[number];
-export type GroupSummary = FunctionReturnType<typeof api.groups.list>[number];
+export type GroupSummary = FunctionReturnType<typeof api.cms.groups.list>[number];
 export type MembershipRow = FunctionReturnType<
-  typeof api.collections.listSchemaCollections
+  typeof api.cms.collections.listSchemaCollections
 >[number];
-export type MapLayerOverride = FunctionReturnType<typeof api.maps.listMapLayerOverrides>[number];
+export type MapLayerOverride = FunctionReturnType<
+  typeof api.cms.maps.listMapLayerOverrides
+>[number];
 
 export type LayerTargetType = "collection" | "group" | "dataset" | "derived";
 
@@ -100,8 +102,10 @@ export function keyedGeometryRows(
   return keyed;
 }
 
-/** One layer-dataset chain resolution, as `api.bundles.layerResolutions` returns it (7b). */
-export type LayerChainResolution = FunctionReturnType<typeof api.bundles.layerResolutions>[number];
+/** One layer-dataset chain resolution, as `api.publishing.bundles.layerResolutions` returns it (7b). */
+export type LayerChainResolution = FunctionReturnType<
+  typeof api.publishing.bundles.layerResolutions
+>[number];
 
 /**
  * The chain view a published map's workspace renders through (7b, the
@@ -206,7 +210,7 @@ export function colorForIndex(index: number) {
  * - the chain bottoms out at a GEOSPATIAL component dataset (risk 6:
  *   non-renderable deriveds are filtered out here, never offered silently).
  *
- * Summaries are `api.derivedDatasets.summaries` — the single catalog
+ * Summaries are `api.versions.derivedDatasets.summaries` — the single catalog
  * projection its doc comment designates for stage 3's consumers. The walk
  * guards against revisits (the save gate rejects cycles; the guard is
  * defensive), and a bottom id that isn't a known geospatial dataset — a

@@ -51,10 +51,10 @@ import {
 } from "./publish-spec";
 
 /** The attempt id type, as the start mutation mints it. */
-type AttemptId = FunctionReturnType<typeof api.publish.start>["attemptId"];
+type AttemptId = FunctionReturnType<typeof api.publishing.publish.start>["attemptId"];
 
-/** The six geometry type literals, derived from the component doc `api.schemas.get` returns — `publish.plan`'s host validator takes exactly these (issue #130). */
-type GeometryTypeName = NonNullable<FunctionReturnType<typeof api.schemas.get>>["geometryType"];
+/** The six geometry type literals, derived from the component doc `api.cms.schemas.get` returns — `publish.plan`'s host validator takes exactly these (issue #130). */
+type GeometryTypeName = NonNullable<FunctionReturnType<typeof api.cms.schemas.get>>["geometryType"];
 
 /** What one publish run ended up as (status "importing" = handed off to the workflow). */
 export interface PublishOutcome {
@@ -197,9 +197,9 @@ async function loadPublishTables(
     // read the analysis worker does, so both executors register identical
     // typed tables. A gone/non-component id simply carries no declared
     // typing (the tryGetSchema tolerance).
-    let schema: FunctionReturnType<typeof api.schemas.get> = null;
+    let schema: FunctionReturnType<typeof api.cms.schemas.get> = null;
     try {
-      schema = await convex.query(api.schemas.get, { schemaId: datasetId });
+      schema = await convex.query(api.cms.schemas.get, { schemaId: datasetId });
     } catch {
       schema = null;
     }
@@ -226,7 +226,7 @@ async function loadPublishTables(
         continue;
       }
       // oxlint-disable-next-line no-await-in-loop -- each load pages a dataset; sequential keeps memory bounded.
-      const registryRow = await convex.query(api.derivedDatasets.get, { id: dependency });
+      const registryRow = await convex.query(api.versions.derivedDatasets.get, { id: dependency });
       if (registryRow === null) {
         // oxlint-disable-next-line no-await-in-loop -- each load pages a dataset; sequential keeps memory bounded.
         await loadComponent(dependency);
@@ -251,7 +251,7 @@ async function derivedPublish(
   convex: ConvexClient,
   datasetKey: string,
 ): Promise<{ chunkRows: ImportRow[]; plan: DerivedPlan }> {
-  const row = await convex.query(api.derivedDatasets.get, { id: datasetKey });
+  const row = await convex.query(api.versions.derivedDatasets.get, { id: datasetKey });
   if (row === null) {
     throw new Error("The transform to publish no longer exists.");
   }
@@ -311,7 +311,7 @@ async function geometryTypeOfRuleSide(
   }
   let dataset: { geometryType?: GeometryTypeName } | null = null;
   try {
-    dataset = await convex.query(api.schemas.get, { schemaId: sideDatasetId });
+    dataset = await convex.query(api.cms.schemas.get, { schemaId: sideDatasetId });
   } catch {
     // A registry-row side has no component doc — and no geometry of its own.
     return undefined;
@@ -326,7 +326,7 @@ async function settledOutcome(
   status: string,
 ): Promise<PublishOutcome> {
   // The attempt already froze — its workflow (or its result) stands.
-  const attempt = await convex.query(api.publish.attempt, { attemptId });
+  const attempt = await convex.query(api.publishing.publish.attempt, { attemptId });
   return {
     attemptId,
     importId: attempt === null ? undefined : attempt.importId,
@@ -348,7 +348,7 @@ async function uploadChunk(
   chunk: ImportRow[],
   index: number,
 ): Promise<void> {
-  const { storageUrl, uploadId } = await convex.mutation(api.imports.generateUploadUrl, {
+  const { storageUrl, uploadId } = await convex.mutation(api.cms.imports.generateUploadUrl, {
     scope: attemptId,
   });
   const upload = await fetch(storageUrl, {
@@ -368,7 +368,7 @@ async function uploadChunk(
   ) {
     throw new Error("Chunk upload did not return a storage id.");
   }
-  await convex.mutation(api.publish.registerChunk, {
+  await convex.mutation(api.publishing.publish.registerChunk, {
     attemptId,
     // The chunk's row count (issue #130): the freeze sums these against the
     // plan's totalRows, so a checkpoint can never freeze a row total its
@@ -483,14 +483,16 @@ export function resumePlan(
  * Publishes one draft dataset or saved transform: start (or join) the
  * attempt → execute → plan → upload (skipping already-stored chunks) →
  * freeze. Returns once the freeze has handed the import to the durable
- * workflow; subscribe to `api.publish.attempt` for the outcome.
+ * workflow; subscribe to `api.publishing.publish.attempt` for the outcome.
  */
 export async function publishDataset(options: {
   convex?: ConvexClient;
   datasetKey: string;
 }): Promise<PublishOutcome> {
   const convex = options.convex === undefined ? sharedClient() : options.convex,
-    started = await convex.mutation(api.publish.start, { datasetKey: options.datasetKey });
+    started = await convex.mutation(api.publishing.publish.start, {
+      datasetKey: options.datasetKey,
+    });
   if (started.status === "importing" || started.status === "completed") {
     return settledOutcome(convex, started.attemptId, started.status);
   }
@@ -511,9 +513,9 @@ export async function publishDataset(options: {
     });
   if (resume.reset) {
     // The stored chunks describe a publish that no longer exists.
-    await convex.mutation(api.publish.resetUpload, { attemptId: started.attemptId });
+    await convex.mutation(api.publishing.publish.resetUpload, { attemptId: started.attemptId });
   }
-  await convex.mutation(api.publish.plan, {
+  await convex.mutation(api.publishing.publish.plan, {
     attemptId: started.attemptId,
     chunkCount: chunks.length,
     // The executed content's fingerprint (issue #130): a resumed browser
@@ -530,7 +532,9 @@ export async function publishDataset(options: {
     totalRows: derived.chunkRows.length,
   });
   await uploadPendingChunks(convex, started.attemptId, chunks, resume.from);
-  const frozen = await convex.mutation(api.publish.freeze, { attemptId: started.attemptId });
+  const frozen = await convex.mutation(api.publishing.publish.freeze, {
+    attemptId: started.attemptId,
+  });
   return {
     attemptId: started.attemptId,
     importId: frozen.importId,

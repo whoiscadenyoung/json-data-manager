@@ -1,11 +1,11 @@
-import { COMMIT_TAIL_PAGE, SOURCE_READ_PAGE } from "../sourcePaging";
-import type { LocalSource, SourceSnapshot } from "../sources";
+import type { LocalSource, SourceSnapshot } from "../sources/registry";
+import { COMMIT_TAIL_PAGE, SOURCE_READ_PAGE } from "../sources/sourcePaging";
 
 /**
  * The demo foreign app's co-deployed bound sources
  * (docs/bound-datasets-design.md): the restaurants domain's tables
  * (./tables) projected through the core `LocalSource` adapter interface.
- * They join the core registry (`SOURCES` in ../sources.ts) through one
+ * They join the core registry (`SOURCES` in ../sources/registry.ts) through one
  * spread of `DEMO_SOURCES`.
  */
 

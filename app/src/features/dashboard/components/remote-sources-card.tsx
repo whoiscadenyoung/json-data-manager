@@ -17,7 +17,7 @@ import { api } from "#convex/_generated/api";
  * first Sync creates the dataset from the remote manifest.
  */
 export function RemoteSourcesCard() {
-  const sources = useQuery(api.remoteSources.list);
+  const sources = useQuery(api.sources.remoteSources.list);
 
   return (
     <Card>

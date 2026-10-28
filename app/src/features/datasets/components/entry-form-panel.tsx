@@ -29,7 +29,7 @@ import { toast } from "sonner";
 import type { DatasetEntryRow } from "#/lib/dataset-rows";
 import { api } from "#convex/_generated/api";
 
-type Schema = NonNullable<FunctionReturnType<typeof api.schemas.get>>;
+type Schema = NonNullable<FunctionReturnType<typeof api.cms.schemas.get>>;
 // One seam row (`entries.listPage` page item, via the row-resolution seam).
 type Entry = DatasetEntryRow;
 
@@ -75,7 +75,7 @@ function useReferenceUiSchema(schema: Schema): Record<string, unknown> {
   const referenceFields = getReferenceFields(schema.schema),
     targetSchemaIds = [...new Set(referenceFields.map((f) => f.meta.datasetId))],
     candidateEntries = useQuery(
-      api.entries.listEntriesForSchemas,
+      api.cms.entries.listEntriesForSchemas,
       targetSchemaIds.length > 0 ? { limit: 200, schemaIds: targetSchemaIds } : "skip",
     );
 
@@ -113,8 +113,8 @@ function EntryFormBody({
   onSaved: (mode: "created" | "updated") => void;
 }) {
   const isEditing = entry !== undefined,
-    createEntry = useMutation(api.entries.create),
-    updateEntry = useMutation(api.entries.update),
+    createEntry = useMutation(api.cms.entries.create),
+    updateEntry = useMutation(api.cms.entries.update),
     referenceUiSchema = useReferenceUiSchema(schema),
     [formKey, setFormKey] = useState(0),
     [geometryText, setGeometryText] = useState(() => geometryToText(initialGeometry)),

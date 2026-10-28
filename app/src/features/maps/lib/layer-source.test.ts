@@ -15,6 +15,7 @@ function dataset(id: string, kind: "geospatial" | "standard"): DatasetSummary {
     featureCount: 0,
     fieldCount: 0,
     kind,
+    mapTileArchiveFormatCurrent: true,
     title: `ds-${id}`,
   };
 }

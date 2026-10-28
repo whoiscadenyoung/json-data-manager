@@ -251,14 +251,14 @@ and version retention (pin/unpin or keep-N; versions accumulate until then).
 
 The demo foreign app lives in `app/convex/demoSources/`; core sync,
 versioning, and tag-ingest code only knows the `BoundSource`/`LocalSource`
-adapter interface in `app/convex/sources.ts`. To remove the demo:
+adapter interface in `app/convex/sources/registry.ts`. To remove the demo:
 
 1. Delete `app/convex/demoSources/`.
 2. Remove the `...demoSourceTables` spread (and its import) from
    `app/convex/schema.ts`.
 3. Remove the `...DEMO_SOURCES` entry (and its import) from `SOURCES` in
-   `app/convex/sources.ts`.
-4. Delete the `/dashboard` route and `app/src/components/dashboard/`, which
+   `app/convex/sources/registry.ts`.
+4. Delete the `/dashboard` route and `app/src/features/dashboard/`, which
    call `api.demoSources.*`.
 5. Rewrite or drop the tests that seed demo rows as their fixture source:
    `auth.test.ts`, `bindings.test.ts`, `sources.test.ts`, `sync.test.ts`,
@@ -279,11 +279,11 @@ and stay.
    choke point. Component-level enforcement + unbind/retire DONE 2026-09-19
    (#75, PR #79 — see §9).
 2. **Source interface + co-deployed sync** — DONE 2026-09-19 (#76, PR #80):
-   `app/convex/sources.ts` defines the `BoundSource` descriptor (dataset
+   `app/convex/sources/registry.ts` defines the `BoundSource` descriptor (dataset
    schema, declared field→projection mapping, full-state reader) behind an
    interface a remote transport (#78) can implement unchanged; a second,
    non-geospatial source ("Restaurants") ships to prove the machinery is
-   descriptor-driven. The sync engine (`app/convex/sync.ts`) replaced the
+   descriptor-driven. The sync engine (`app/convex/sources/sync.ts`) replaced the
    clear-then-reload mutation with a durable, keyed, resumable workflow:
    collect → chunk blobs → checkpointed keyed applies through the
    `bindingEntries` map (idempotent, no duplicates/loss on resume) →

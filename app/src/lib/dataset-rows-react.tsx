@@ -46,11 +46,11 @@ import {
 import { versionRowOf, type VersionRow } from "#/lib/version-rows";
 import { api } from "#convex/_generated/api";
 
-type EntriesPage = FunctionReturnType<typeof api.entries.listPage>;
+type EntriesPage = FunctionReturnType<typeof api.cms.entries.listPage>;
 type EntriesPageResult = UseQueryResult<EntriesPage>;
 
 function pageQuery(schemaId: string, cursor: string | null) {
-  return convexQuery(api.entries.listPage, {
+  return convexQuery(api.cms.entries.listPage, {
     paginationOpts: { cursor, numItems: ENTRIES_PAGE_SIZE },
     schemaId,
   });
@@ -168,7 +168,7 @@ export function useDatasetGeometryRows(
   isComplete: boolean;
 } {
   const { isLoading, results, status } = useAllPaginated(
-    api.geometries.list,
+    api.cms.geometries.list,
     enabled ? { schemaId } : "skip",
   );
   // Spec application memoized like the entry path below: identity today, but
@@ -201,7 +201,7 @@ export function useDatasetVersionRows(
   isComplete: boolean;
 } {
   const { isLoading, results, status } = useAllPaginated(
-      api.entries.listPage,
+      api.cms.entries.listPage,
       enabled ? { schemaId } : "skip",
     ),
     versionRows = useMemo(
@@ -234,7 +234,7 @@ export function useDatasetVersionRows(
 export function useDatasetEntryRow(
   entryId: string | undefined,
 ): DatasetEntryRow | null | undefined {
-  const entry = useQuery(api.entries.get, entryId === undefined ? "skip" : { entryId });
+  const entry = useQuery(api.cms.entries.get, entryId === undefined ? "skip" : { entryId });
   return entry === undefined || entry === null ? entry : applyEntryRowSpec(entry);
 }
 
@@ -374,7 +374,7 @@ function joinedPendingOf(
  * read, enriched. `undefined` (no selection) behaves exactly like
  * `useDatasetEntryRow(undefined)`; passing the clicked feature's
  * `{entryId, schemaId}` resolves the SAVED, read-time-healthy specs
- * targeting that dataset (`api.derivedDatasets.listBySource` for the
+ * targeting that dataset (`api.versions.derivedDatasets.listBySource` for the
  * source-keyed shortlist, `get` for each full spec — drafts never surface
  * to catalog consumers, and an orphaned/stale spec would render nulls at
  * best, so neither enriches) and streams each lookup dataset's rows through
@@ -419,7 +419,7 @@ export function useEnrichedDatasetEntryRow(selected: FeatureSelection | undefine
     schemaId = selected === undefined ? undefined : selected.schemaId,
     entry = useDatasetEntryRow(entryId),
     specSummaries = useQuery(
-      api.derivedDatasets.listBySource,
+      api.versions.derivedDatasets.listBySource,
       schemaId === undefined ? "skip" : { sourceDatasetId: schemaId },
     ),
     readySpecSummaries =
@@ -430,7 +430,7 @@ export function useEnrichedDatasetEntryRow(selected: FeatureSelection | undefine
           ),
     specResults = useQueries({
       queries: readySpecSummaries.map((summary) =>
-        convexQuery(api.derivedDatasets.get, { id: summary._id }),
+        convexQuery(api.versions.derivedDatasets.get, { id: summary._id }),
       ),
     }),
     specRead = dataSpecsOf(specResults),
@@ -439,7 +439,7 @@ export function useEnrichedDatasetEntryRow(selected: FeatureSelection | undefine
     // component datasets have entry rows (see `lookupSidesOf`).
     sideChecks = useQueries({
       queries: lookupSchemaIds.map((lookupSchemaId) =>
-        convexQuery(api.derivedDatasets.get, { id: lookupSchemaId }),
+        convexQuery(api.versions.derivedDatasets.get, { id: lookupSchemaId }),
       ),
     }),
     sides = lookupSidesOf(sideChecks),
@@ -474,7 +474,7 @@ export function useDatasetEntryGeometryRow(
   entryId: string | undefined,
 ): DatasetGeometryRow | null | undefined {
   const row = useQuery(
-    api.geometries.getEntryGeometry,
+    api.cms.geometries.getEntryGeometry,
     entryId === undefined ? "skip" : { entryId },
   );
   return row === undefined || row === null ? row : applyGeometryRowSpec(row);
@@ -523,7 +523,7 @@ export function SchemaGeometriesLoader({
   schemaId: string;
   onLoaded: (schemaId: string, report: SchemaGeometriesReport | undefined) => void;
 }) {
-  const { results, status } = useAllPaginated(api.geometries.list, { schemaId }),
+  const { results, status } = useAllPaginated(api.cms.geometries.list, { schemaId }),
     completedRef = useRef(false),
     // Applied once per page arrival, not per effect fire: the fan-out's
     // bail-out dedupes on row reference (`existing.rows === report.rows`),
@@ -660,7 +660,7 @@ export function SchemaEntriesLoader({
   onLoaded: (schemaId: string, report: SchemaEntriesReport | undefined) => void;
 }) {
   const { results, status } = useAllPaginated(
-      api.entries.listPage,
+      api.cms.entries.listPage,
       enabled ? { schemaId } : "skip",
     ),
     completedRef = useRef(false),

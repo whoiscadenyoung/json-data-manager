@@ -18,7 +18,7 @@ import { analysisSqlEngine } from "@caden/analysis/duckdb";
  *   no server-side analytics anywhere (app/convex imports no analysis code).
  * - **One seam.** The only row source is `fetchDatasetEntryRows` (drafts
  *   with specs applied, published rows, version rows — whatever the seam
- *   resolves); `api.schemas.get` is a METADATA read for the declared
+ *   resolves); `api.cms.schemas.get` is a METADATA read for the declared
  *   structure (the tile-archive worker's precedent), never a row path.
  * - **The auth choke point is inherited, not re-implemented.** The worker's
  *   standalone ConvexClient authenticates through the main thread (its setAuth
@@ -127,7 +127,7 @@ async function loadTable(schemaId: string): Promise<LoadedTable> {
   // Metadata read for the declared structure (NOT a row path): the typed
   // end-to-end invariant registers columns from the DECLARED structure and
   // lets materializeSqlTable infer only what the rows carry beyond it.
-  const schema = await convex.query(api.schemas.get, { schemaId });
+  const schema = await convex.query(api.cms.schemas.get, { schemaId });
   if (schema === null) {
     // The auth choke point's indistinguishable denial (a foreign draft, an
     // author-visibility row) and a deleted dataset read the same here.

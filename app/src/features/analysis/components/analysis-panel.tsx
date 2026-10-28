@@ -77,9 +77,9 @@ const AUTOSAVE_DELAY_MS = 800;
 /** Draft ids whose auto-resume the user closed — module-level so it survives the tab panel's unmounts (the dismissedDraftIds precedent). */
 const dismissedAnalysisDraftIds = new Set<string>();
 
-type RegistryRow = FunctionReturnType<typeof api.derivedDatasets.listBySource>[number];
-type DatasetSummary = FunctionReturnType<typeof api.schemas.listSummaries>[number];
-type TargetResolution = FunctionReturnType<typeof api.consumption.analysisTargets>[number];
+type RegistryRow = FunctionReturnType<typeof api.versions.derivedDatasets.listBySource>[number];
+type DatasetSummary = FunctionReturnType<typeof api.cms.schemas.listSummaries>[number];
+type TargetResolution = FunctionReturnType<typeof api.versions.consumption.analysisTargets>[number];
 
 /** One configured side table: the SQL alias the query uses + the dataset feeding it. */
 interface SideTable {
@@ -161,7 +161,7 @@ function draftFromDoc(docId: string | undefined, doc: RegistryRowGet | undefined
   };
 }
 
-type RegistryRowGet = FunctionReturnType<typeof api.derivedDatasets.get>;
+type RegistryRowGet = FunctionReturnType<typeof api.versions.derivedDatasets.get>;
 
 /** The columns a result table renders: first-seen across the (capped) preview rows. */
 function resultColumns(rows: Array<Record<string, unknown>>): string[] {
@@ -305,9 +305,9 @@ function AnalysisEditorForm({
   onClose: () => void;
   schemaId: string;
 }) {
-  const save = useMutation(api.derivedDatasets.save),
-    remove = useMutation(api.derivedDatasets.remove),
-    candidates = useQuery({ ...convexQuery(api.schemas.listSummaries, { limit: 500 }) }).data,
+  const save = useMutation(api.versions.derivedDatasets.save),
+    remove = useMutation(api.versions.derivedDatasets.remove),
+    candidates = useQuery({ ...convexQuery(api.cms.schemas.listSummaries, { limit: 500 }) }).data,
     [draft, setDraft] = useState(initial),
     [dirty, setDirty] = useState(false),
     [autosave, setAutosave] = useState<"error" | "idle" | "saved" | "saving">("idle"),
@@ -874,7 +874,7 @@ function formProblemOf(tables: SideTable[]): string | undefined {
 
 /** Resolves the analysis' table targets server-side (stage-6 semantics), typed for the editor's use. */
 async function resolveTargetsOf(datasetIds: string[]): Promise<TargetResolution[]> {
-  return sharedClient().query(api.consumption.analysisTargets, { datasetIds });
+  return sharedClient().query(api.versions.consumption.analysisTargets, { datasetIds });
 }
 
 /** Loads the opened registry row (or starts a new analysis) and hosts the form — the TransformEditor shape: spinner while the row loads, the same card a deleted row gets, and the form keyed per target so `initial` seeds state exactly once. */
@@ -892,7 +892,7 @@ function AnalysisEditor({
   schemaId: string;
 }) {
   const doc = useQuery({
-    ...convexQuery(api.derivedDatasets.get, docId === undefined ? "skip" : { id: docId }),
+    ...convexQuery(api.versions.derivedDatasets.get, docId === undefined ? "skip" : { id: docId }),
   }).data;
 
   if (docId !== undefined && doc === undefined) {
@@ -1039,7 +1039,7 @@ export function AnalysisPanel({
   schemaId: string;
 }) {
   const rows = useQuery({
-      ...convexQuery(api.derivedDatasets.listBySource, { sourceDatasetId: schemaId }),
+      ...convexQuery(api.versions.derivedDatasets.listBySource, { sourceDatasetId: schemaId }),
     }).data,
     me = useQuery({ ...convexQuery(api.users.me, {}) }).data,
     myAuthId = me === null || me === undefined ? undefined : me.authId,

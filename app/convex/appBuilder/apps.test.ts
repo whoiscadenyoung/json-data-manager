@@ -32,7 +32,7 @@ function as(t: Backend, subject: string) {
 type Caller = ReturnType<typeof as>;
 
 async function createDataset(t: Caller, title = "Parks"): Promise<string> {
-  return t.mutation(api.schemas.create, {
+  return t.mutation(api.cms.schemas.create, {
     schema: { properties: { name: { type: "string" } }, title, type: "object" },
   });
 }
@@ -149,7 +149,7 @@ describe("app builder content", () => {
       owner = as(t, "owner"),
       other = as(t, "other"),
       privateId = await createDataset(other, "Other's data");
-    await other.mutation(api.schemas.setVisibility, {
+    await other.mutation(api.cms.schemas.setVisibility, {
       schemaId: privateId,
       visibility: "author",
     });
@@ -317,7 +317,7 @@ describe("example apps", () => {
 
     // The sample datasets are catalog-visible and locked.
     const datasetIds = atlas === null ? [] : atlas.datasetIds;
-    const parks = await viewer.query(api.schemas.get, { schemaId: datasetIds[0] });
+    const parks = await viewer.query(api.cms.schemas.get, { schemaId: datasetIds[0] });
     expect(parks).toMatchObject({ editPolicy: "locked", entryCount: 28 });
 
     const copyId = await viewer.mutation(api.appBuilder.apps.duplicate, { appId: atlasId }),
