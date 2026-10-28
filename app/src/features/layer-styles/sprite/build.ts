@@ -15,11 +15,11 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { sdfImage, sdfParams } from "@caden/layer-styles/sdf";
 import { Resvg } from "@resvg/resvg-js";
 import { PNG } from "pngjs";
 import potpack from "potpack";
 
-import { sdfImage, sdfParams } from "../lib/sdf";
 import { LUCIDE_ICONS, SHAPES } from "./sources";
 
 /** Glyph size at 1x, in pixels — `icon-size: 1` draws a glyph this big. Keep in sync with `ICON_GLYPH_PX`. */

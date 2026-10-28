@@ -7,13 +7,13 @@
  * test backend with the json-cms component mounted (the apps.test.ts setup).
  */
 import { register as registerJsonCms } from "@caden/json-cms/test";
+import { compileStyle, defaultEditor } from "@caden/layer-styles/compile";
+import type { LayerStyle } from "@caden/layer-styles/validators";
 import { convexTest } from "convex-test";
 import { describe, expect, it } from "vitest";
 
-import { compileStyle, defaultEditor } from "../../src/features/layer-styles/lib/compile";
 import { api } from "../_generated/api";
 import schema from "../schema";
-import type { LayerStyle } from "./validators";
 
 const modules = import.meta.glob("/convex/**/*.ts");
 

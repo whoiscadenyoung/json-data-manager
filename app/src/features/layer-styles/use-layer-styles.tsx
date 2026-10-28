@@ -1,3 +1,7 @@
+import { fieldsOfStyle, tileLayers } from "@caden/layer-styles/expressions";
+import { withIconFallback } from "@caden/layer-styles/icons";
+import { legendClasses, singleMarkerIcon, swatchColor } from "@caden/layer-styles/legend";
+import type { LayerStyle } from "@caden/layer-styles/validators";
 import { useMutation, useQuery } from "convex/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -8,16 +12,12 @@ import type { DatasetEntryRow } from "#/lib/dataset-rows";
 import { useEntryRowsBySchemas } from "#/lib/dataset-rows-react";
 import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
-import type { LayerStyle } from "#convex/layerStyles/validators";
 
 import { MarkerSwatch } from "./components/marker-swatch";
 import { StyleMenu } from "./components/style-menu";
 import { StylePanel } from "./components/style-panel";
 import { FIELD_SEPARATOR, StyledLayer } from "./components/styled-layer";
-import { fieldsOfStyle, tileLayers } from "./lib/expressions";
 import type { UploadedIcon } from "./lib/icon-images";
-import { withIconFallback } from "./lib/icons";
-import { legendClasses, singleMarkerIcon, swatchColor } from "./lib/legend";
 
 /** How long the editor waits after the last change before saving (slider drags coalesce). */
 const SAVE_DEBOUNCE_MS = 400;

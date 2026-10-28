@@ -1,3 +1,6 @@
+import { DEFAULT_MARKER_ICON, usesIcons } from "@caden/layer-styles/compile";
+import { iconLabelFromFileName, rasterizeIcon } from "@caden/layer-styles/uploads";
+import type { Marker, MarkerKind, Renderer, StyleEditor } from "@caden/layer-styles/validators";
 import { Button } from "@caden/ui/components/button";
 import { Checkbox } from "@caden/ui/components/checkbox";
 import { Field, FieldLabel } from "@caden/ui/components/field";
@@ -14,11 +17,8 @@ import { toast } from "sonner";
 import { errorMessage } from "#/lib/errors";
 import { api } from "#convex/_generated/api";
 import type { Id } from "#convex/_generated/dataModel";
-import type { Marker, MarkerKind, Renderer, StyleEditor } from "#convex/layerStyles/validators";
 
-import { DEFAULT_MARKER_ICON, usesIcons } from "../lib/compile";
 import { loadCatalog, type IconCatalogEntry, type UploadedIcon } from "../lib/icon-images";
-import { iconLabelFromFileName, rasterizeIcon } from "../lib/uploads";
 import { RangeField, Section } from "./controls";
 import { MarkerSwatch } from "./marker-swatch";
 

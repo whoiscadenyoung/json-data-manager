@@ -1,7 +1,6 @@
-import { ICON_LIMITS } from "#convex/layerStyles/validators";
-
 import { ICON_GLYPH_PX } from "./compile";
 import { sdfImage } from "./sdf";
+import { ICON_LIMITS } from "./validators";
 
 /**
  * Turning a picked SVG/PNG into a stored marker icon (docs/layer-styles.md

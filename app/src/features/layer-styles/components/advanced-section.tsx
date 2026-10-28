@@ -1,14 +1,13 @@
+import { exportStyleJson, importStyleJson, slugify } from "@caden/layer-styles/exchange";
+import { iconNamesOfStyle } from "@caden/layer-styles/icons";
+import type { LayerStyle } from "@caden/layer-styles/validators";
 import { Button } from "@caden/ui/components/button";
 import { Textarea } from "@caden/ui/components/textarea";
 import { Copy, Download, PackageOpen } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import type { LayerStyle } from "#convex/layerStyles/validators";
-
-import { exportStyleJson, importStyleJson, slugify } from "../lib/exchange";
 import { loadCatalog } from "../lib/icon-images";
-import { iconNamesOfStyle } from "../lib/icons";
 import { buildSpriteZip } from "../lib/sprite-export";
 import { Section } from "./controls";
 import type { MarkerIcons } from "./marker-section";

@@ -6,7 +6,7 @@ import {
   supersededVersions,
   type ArchiveBlobStore,
   type CachedArchiveKey,
-} from "./tile-archive-cache";
+} from "./archive-cache";
 
 function key(schemaId: string, version: number): CachedArchiveKey {
   return { schemaId, version };

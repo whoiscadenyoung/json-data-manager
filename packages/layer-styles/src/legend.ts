@@ -1,7 +1,6 @@
-import type { LayerStyle } from "#convex/layerStyles/validators";
-
 import { usesIcons } from "./compile";
 import { NO_DATA_COLOR } from "./palettes";
+import type { LayerStyle } from "./validators";
 
 /** One legend row: a swatch (or the class's marker icon, tinted) and what it stands for. */
 export interface LegendClass {

@@ -114,8 +114,18 @@ next to your style and set the style's `"sprite"` to that folder's URL plus
 ## Architecture
 
 ```
+packages/layer-styles/src/         @caden/layer-styles: the backend-free engine (ADR 0014)
+  validators.ts                    the style document + limits (shared by backend and client)
+  compile.ts                       editor settings → MapLibre fragments
+  expressions.ts                   fields a style reads; tile-path feature-state rewrite
+  classify.ts, renderers.ts        distinct values, equal-interval/quantile breaks, default field
+  palettes.ts, legend.ts           category palette + ramps; legend classes
+  exchange.ts                      MapLibre validation, import (unknown icons listed), export
+  icons.ts                         icon names a style draws; deleted-upload fallback to circles
+  sdf.ts                           signed distance fields (sprite build + tintable uploads)
+  uploads.ts                       upload checks + browser rasterizing
+  style-lib.test.ts
 app/convex/layerStyles/            backend: api.layerStyles.styles.*
-  validators.ts                    the style document + limits (shared with the client)
   tables.ts                        the `layerStyles` table, spread into convex/schema.ts
   styles.ts                        listForMap · set · reset (auth, map existence, visibility rule, structural checks)
   icons.ts                         uploaded marker icons: generateUploadUrl · create · list · remove
@@ -127,16 +137,9 @@ app/src/features/layer-styles/     frontend
   components/style-menu.tsx        the `⋯` menu on dataset rows
   components/marker-section.tsx    Marker picker, icon grid + uploads, Marker options, per-category icons
   components/marker-swatch.tsx     a tinted marker icon (legend, picker, class rows)
-  lib/compile.ts                   editor settings → MapLibre fragments
-  lib/expressions.ts               fields a style reads; tile-path feature-state rewrite
-  lib/classify.ts, renderers.ts    distinct values, equal-interval/quantile breaks, default field
-  lib/palettes.ts, legend.ts       category palette + ramps; legend classes
-  lib/exchange.ts                  MapLibre validation, import (unknown icons listed), export
-  lib/icons.ts                     icon names a style draws; deleted-upload fallback to circles
   lib/icon-images.ts               sprite/catalog/upload loading; map.addImage
-  lib/sdf.ts                       signed distance fields (sprite build + tintable uploads)
-  lib/uploads.ts                   upload checks + browser rasterizing
   lib/sprite-export.ts             "Download sprite" (packing + zip)
+  lib/markers.test.ts              marker + sprite checks against the committed sprite
   sprite/sources.ts, build.ts      the built-in sprite's icon list and its bun build script
 app/public/sprites/layer-styles/   the built sprite (committed)
 ```

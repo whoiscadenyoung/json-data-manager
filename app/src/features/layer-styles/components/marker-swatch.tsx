@@ -1,8 +1,8 @@
+import { SDF_EDGE } from "@caden/layer-styles/sdf";
 import { cn } from "@caden/ui/lib/utils";
 import { useEffect, useRef, useState } from "react";
 
 import { iconImage, type IconImage, type UploadedIcon } from "../lib/icon-images";
-import { SDF_EDGE } from "../lib/sdf";
 
 /** SDF alpha either side of the edge that fades from transparent to solid (anti-aliasing). */
 const EDGE_SOFTNESS = 24;

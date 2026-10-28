@@ -1,0 +1,26 @@
+{
+  "name": "@caden/layer-styles",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Backend-free layer-styles engine: the stored style validators, compiling editor settings to MapLibre style-spec layers, classification, palettes, legends, SDF markers and style.json exchange. Source-only workspace package (ADR 0014).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@maplibre/maplibre-gl-style-spec": "^26.4.1"
+  },
+  "devDependencies": {
+    "convex": "^1.45.0",
+    "typescript": "^7.0.2",
+    "vitest": "^3.2.7"
+  },
+  "peerDependencies": {
+    "convex": "^1.36.1"
+  }
+}

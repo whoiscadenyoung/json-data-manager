@@ -32,5 +32,5 @@ and the theme tokens into `packages/ui` (`@caden/ui`, source-only, no build).
 - `app/components.json` points `ui`/`utils` at `@caden/ui`, and
   `packages/ui/components.json` exists, so `shadcn add` should write into the
   package. Not yet verified with a real `shadcn add`.
-- `pmtiles-protocol` lives in `@caden/ui/lib` for now because `map.tsx`
-  registers it; step F3 plans to move it to `@caden/maps`.
+- `pmtiles-protocol` lived in `@caden/ui/lib` until step F3 moved it to
+  `@caden/maps`; `map.tsx` now imports it from there.

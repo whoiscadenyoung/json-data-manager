@@ -34,7 +34,6 @@ import type * as imports from "../imports.js";
 import type * as layerStyles_icons from "../layerStyles/icons.js";
 import type * as layerStyles_styles from "../layerStyles/styles.js";
 import type * as layerStyles_tables from "../layerStyles/tables.js";
-import type * as layerStyles_validators from "../layerStyles/validators.js";
 import type * as maps from "../maps.js";
 import type * as projects from "../projects.js";
 import type * as publish from "../publish.js";
@@ -83,7 +82,6 @@ declare const fullApi: ApiFromModules<{
   "layerStyles/icons": typeof layerStyles_icons;
   "layerStyles/styles": typeof layerStyles_styles;
   "layerStyles/tables": typeof layerStyles_tables;
-  "layerStyles/validators": typeof layerStyles_validators;
   maps: typeof maps;
   projects: typeof projects;
   publish: typeof publish;

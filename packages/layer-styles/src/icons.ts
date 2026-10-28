@@ -1,4 +1,4 @@
-import type { LayerStyle, StyleLayer } from "#convex/layerStyles/validators";
+import type { LayerStyle, StyleLayer } from "./validators";
 
 /**
  * Which sprite images a style draws (`icon-image`), so the map can load them,

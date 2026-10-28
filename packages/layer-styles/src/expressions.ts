@@ -1,4 +1,4 @@
-import type { LayerStyle, StyleLayer } from "#convex/layerStyles/validators";
+import type { LayerStyle, StyleLayer } from "./validators";
 
 /**
  * Expression plumbing between a stored style and the two render paths:
