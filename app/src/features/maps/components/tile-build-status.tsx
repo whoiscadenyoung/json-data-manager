@@ -8,6 +8,7 @@ import {
   ensureMapTileArchive,
   type TileArchiveBuildFailure,
   useMapTileArchiveBuildFailure,
+  useMapTileArchiveBuildProgress,
   useMapTileArchiveBuildState,
 } from "../lib/tile-archive";
 
@@ -90,9 +91,42 @@ function TileBuildFailure({
   );
 }
 
+const countFormat = new Intl.NumberFormat();
+
+/** "Fetching features… 12,000 / 20,000" with a thin bar, while the row fetch reports progress. */
+function FetchProgress({ done, total }: { done: number; total: number }) {
+  return (
+    <span className="flex flex-col gap-1">
+      <span>
+        {STATE_LABELS.fetching} {countFormat.format(done)} / {countFormat.format(total)}
+      </span>
+      <progress
+        value={done}
+        max={total}
+        className="[&::-moz-progress-bar]:bg-foreground [&::-webkit-progress-bar]:bg-foreground/20 [&::-webkit-progress-value]:bg-foreground h-1 w-full appearance-none overflow-hidden rounded-full"
+      />
+    </span>
+  );
+}
+
+/** The badge text: the fetch phase swaps in the counted progress once it is reported. */
+function BuildStateLabel({
+  progress,
+  state,
+}: {
+  progress: { done: number; total: number } | undefined;
+  state: Exclude<TileArchiveBuildState, "idle">;
+}) {
+  if (state === "fetching" && progress !== undefined) {
+    return <FetchProgress done={progress.done} total={progress.total} />;
+  }
+  return STATE_LABELS[state];
+}
+
 export function TileBuildStatus({ schemaId }: { schemaId: string }) {
   const state = useMapTileArchiveBuildState(schemaId),
     failure = useMapTileArchiveBuildFailure(schemaId),
+    progress = useMapTileArchiveBuildProgress(schemaId),
     active = ACTIVE_STATES.has(state);
   if (failure !== undefined && !active) {
     return <TileBuildFailure failure={failure} schemaId={schemaId} />;
@@ -111,7 +145,7 @@ export function TileBuildStatus({ schemaId }: { schemaId: string }) {
         {active && <Loader2 className="h-3 w-3 animate-spin" />}
         {updated && <CheckCircle2 className="h-3 w-3" />}
         {failed && <TriangleAlert className="h-3 w-3" />}
-        {STATE_LABELS[state]}
+        <BuildStateLabel progress={progress} state={state} />
       </Badge>
     </div>
   );

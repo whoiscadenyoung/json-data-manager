@@ -177,6 +177,37 @@ export interface ImportRecoveryActions {
   onBack: () => void;
 }
 
+/** " N rows skipped." when the run skipped any, else empty — skips are surfaced, never silent (issue #129). */
+function skippedRowsNote(progress: DatasetImportProgress | null | undefined): string {
+  const skipped = progress && progress.skipped !== undefined ? progress.skipped : 0;
+  return skipped > 0 ? ` ${skipped} row${skipped === 1 ? "" : "s"} skipped.` : "";
+}
+
+/** The card's one-line status: uploading, queued, or the counted rows with a percentage. */
+function importingMessage({
+  indeterminate,
+  pct,
+  processed,
+  skippedNote,
+  status,
+  total,
+}: {
+  indeterminate: boolean;
+  pct: number;
+  processed: number;
+  skippedNote: string;
+  status: DatasetImportProgress["status"] | undefined;
+  total: number;
+}): string {
+  if (indeterminate) {
+    return `Uploading ${total.toLocaleString()} rows…`;
+  }
+  if (processed === 0 && status !== "completed") {
+    return "Starting import…";
+  }
+  return `${processed.toLocaleString()} of ${total.toLocaleString()} rows imported (${pct}%).${skippedNote}`;
+}
+
 /** The message + bar metrics a progress card renders, derived from the live status (all branching kept here so the card component stays simple). */
 function progressSummary(
   progress: DatasetImportProgress | null | undefined,
@@ -184,6 +215,8 @@ function progressSummary(
 ): {
   done: boolean;
   failed: boolean;
+  /** No server status yet (creating the dataset and uploading the rows): the bar can't be counted. */
+  indeterminate: boolean;
   message: string;
   pct: number;
 } {
@@ -192,14 +225,16 @@ function progressSummary(
     done = status === "completed",
     { pct, processed, total } = progressMetrics(progress, fallbackTotal),
     errorMsg = (progress && progress.error) || "Something went wrong during the import.",
-    skipped =
-      progress && progress.skipped !== undefined && progress.skipped > 0 ? progress.skipped : 0,
-    skippedNote = skipped > 0 ? ` ${skipped} row${skipped === 1 ? "" : "s"} skipped.` : "";
+    skippedNote = skippedRowsNote(progress);
+  const indeterminate = !failed && !done && !progress;
   return {
     done,
     failed,
+    indeterminate,
     // Skips are surfaced, never silent (issue #129).
-    message: failed ? errorMsg : `${processed} of ${total} rows imported.${skippedNote}`,
+    message: failed
+      ? errorMsg
+      : importingMessage({ indeterminate, pct, processed, skippedNote, status, total }),
     pct,
   };
 }
@@ -267,8 +302,9 @@ function ImportProgressView({
             className={cn(
               "h-full rounded-full transition-all",
               summary.failed ? "bg-destructive" : "bg-primary",
+              summary.indeterminate && "animate-pulse",
             )}
-            style={{ width: `${summary.failed ? 100 : summary.pct}%` }}
+            style={{ width: `${summary.failed || summary.indeterminate ? 100 : summary.pct}%` }}
           />
         </div>
         {summary.failed && recovery ? (

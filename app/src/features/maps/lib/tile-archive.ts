@@ -36,6 +36,7 @@ export type TileArchiveWorkerInbound =
 export type TileArchiveWorkerOutbound =
   | { requestId: number; type: "token-request" }
   | { schemaId: string; type: "phase"; phase: TileArchiveBuildPhase }
+  | { done: number; schemaId: string; total: number; type: "progress" }
   | {
       builtVersion: number;
       bytes: number;
@@ -59,6 +60,14 @@ export type TileArchiveWorkerOutbound =
 
 const buildStates = new Map<string, TileArchiveBuildState>();
 const buildListeners = new Set<() => void>();
+
+/** Row-fetch progress of a running build (the long phase of a large dataset). */
+export interface TileArchiveBuildProgress {
+  done: number;
+  total: number;
+}
+
+const buildProgress = new Map<string, TileArchiveBuildProgress>();
 
 /**
  * A dataset's last failed build (issue #184). Unlike the `"error"` build
@@ -193,6 +202,8 @@ const buildRevertTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const BUILD_STATE_REVERT_MS = 4_000;
 
 function setBuildState(schemaId: string, state: TileArchiveBuildState): void {
+  // Progress belongs to the fetch phase only; any other state retires it.
+  if (state !== "fetching" && buildProgress.delete(schemaId)) notifyBuildListeners();
   const revertTimer = buildRevertTimers.get(schemaId);
   if (revertTimer !== undefined) {
     clearTimeout(revertTimer);
@@ -243,6 +254,13 @@ export function useMapTileArchiveBuildFailure(
   return useSyncExternalStore(subscribeTileArchiveBuildState, () =>
     getTileArchiveBuildFailure(schemaId),
   );
+}
+
+/** Fetch progress of the dataset's running build, undefined when none is reported. */
+export function useMapTileArchiveBuildProgress(
+  schemaId: string,
+): TileArchiveBuildProgress | undefined {
+  return useSyncExternalStore(subscribeTileArchiveBuildState, () => buildProgress.get(schemaId));
 }
 
 /** The current build state for one dataset (`"idle"` when nothing is running). */
@@ -306,10 +324,30 @@ function noteInstalledVersion(data: Record<string, unknown>, schemaId: string): 
   }
 }
 
+/** Stores a `progress` message; a new object per update so snapshots change identity. */
+function recordBuildProgress(data: Record<string, unknown>, schemaId: string): void {
+  if (typeof data.done !== "number" || typeof data.total !== "number") return;
+  buildProgress.set(schemaId, { done: data.done, total: data.total });
+  notifyBuildListeners();
+}
+
+/** Progress is its own listener; `handleWorkerMessage` below must not read it as a terminal message. */
+function handleWorkerProgress(event: MessageEvent<unknown>): void {
+  const data: unknown = event.data;
+  if (isRecord(data) && data.type === "progress" && typeof data.schemaId === "string") {
+    recordBuildProgress(data, data.schemaId);
+  }
+}
+
+/** A build-state message (phase or terminal): has a schema id and is not a progress tick. */
+function isBuildStateMessage(data: unknown): data is Record<string, unknown> {
+  return isRecord(data) && typeof data.schemaId === "string" && data.type !== "progress";
+}
+
 function handleWorkerMessage(event: MessageEvent<unknown>): void {
   const data: unknown = event.data;
-  if (!isRecord(data) || typeof data.schemaId !== "string") return;
-  const { schemaId } = data;
+  if (!isBuildStateMessage(data)) return;
+  const schemaId = String(data.schemaId);
   if (data.type === "phase" && isBuildPhase(data.phase)) {
     setBuildState(schemaId, data.phase);
     return;
@@ -354,6 +392,7 @@ function getWorker(): Worker {
       type: "module",
     });
     spawned.addEventListener("message", handleWorkerTokenRequest);
+    spawned.addEventListener("message", handleWorkerProgress);
     spawned.addEventListener("message", handleWorkerMessage);
     spawned.addEventListener("error", (event) => {
       // The worker itself died (not just one build): fail everything pending
