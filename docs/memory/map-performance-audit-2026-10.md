@@ -87,3 +87,13 @@ timers. **Known limit:** backoff state is per tab. With N tabs open, each tab
 has its own scheduler and worker, so a failing dataset is fetched N times per
 window. Storage is read only when a tab's scheduler starts, so tabs don't
 share a live window. A reload does keep the backoff (localStorage restore).
+
+**Import speed 2026-10-29:** a 20k-point import took ~48 s because `importWorkflow`
+ran one workflow step per 500-row chunk: ~0.25 s of real work but ~0.9 s of
+step scheduling latency each (40 steps). `insertChunkGroup` now inserts 8
+chunks per step (`IMPORT_CHUNKS_PER_STEP`): 17 s, all 20000 rows landed. The
+app loads the component from `packages/json-cms/dist`, so run `bun run build`
+there before `convex dev --once` or the old workflow stays deployed. Progress
+now updates every ~4000 rows. Also measured: server-side archive builds
+(a `"use node"` action) were slower than the browser worker (28.6 s vs 16.5 s
+cold open); the V8 runtime OOMs at 64 MB for 20k points.

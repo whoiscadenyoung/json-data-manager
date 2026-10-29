@@ -14,7 +14,7 @@ import {
   mutation,
   query,
 } from "./_generated/server.js";
-import type { MutationCtx } from "./_generated/server.js";
+import type { ActionCtx, MutationCtx } from "./_generated/server.js";
 import { parseAndValidateGeometry, resolveGeometryStorage } from "./geometry_storage.js";
 import type { ResolvedGeometry } from "./geometry_storage.js";
 import { claimPendingUpload } from "./host_support.js";
@@ -544,6 +544,93 @@ async function resolveImportChunkRows(
   return resolvedRows;
 }
 
+/**
+ * One import chunk's replay-safe insert (the body of `insertChunkFromStorage`
+ * and each member of `insertChunkGroup`): read the chunk blob, resolve its
+ * rows, insert them with the completion record, delete the blob.
+ */
+async function insertChunk(
+  ctx: ActionCtx,
+  args: {
+    chunkIndex?: number;
+    importId?: Id<"imports">;
+    schemaId: Id<"schemas">;
+    storageId: string;
+  },
+): Promise<number> {
+  const schemaDoc = await ctx.runQuery(internal.entries.getSchemaInternal, {
+    schemaId: args.schemaId,
+  });
+  if (!schemaDoc) {
+    throw new ConvexError("Schema not found");
+  }
+
+  const { chunkIndex, importId } = args;
+  if (chunkIndex !== undefined && importId !== undefined) {
+    const done: { index: number; rows: number } | null = await ctx.runQuery(
+      internal.imports.getImportChunkRecord,
+      { chunkIndex, importId },
+    );
+    if (done !== null) {
+      // A previous attempt committed this chunk's rows and died before
+      // returning. No duplicates — finish the blob cleanup it may have
+      // missed and report the recorded count so `processed` stays exact.
+      await tryDeleteStorage(ctx, args.storageId);
+      return done.rows;
+    }
+  }
+
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- actions have no `normalizeId`; `storageId` is always a real `_storage` id, just untyped over the workflow boundary.
+  const blob = await ctx.storage.get(args.storageId as Id<"_storage">);
+  if (!blob) {
+    throw new ConvexError("Import chunk not found in storage");
+  }
+  const parsed: unknown = JSON.parse(await blob.text());
+  if (!Array.isArray(parsed)) {
+    // A non-array chunk used to read as ZERO rows and its blob was then
+    // deleted — a silently lost chunk behind a "completed" import
+    // (issue #129). Malformed input fails the import instead.
+    throw new ConvexError(
+      "Import chunk is malformed — expected an array of {data, geometry?} rows.",
+    );
+  }
+
+  // Geometry blobs stored for this attempt's rows (only
+  // `resolveGeometryStorage`'s file-storage fallbacks land here). If a
+  // later row fails, the rows never insert — delete the blobs instead of
+  // orphaning them (issue #129).
+  const storedGeometryIds: Array<Id<"_storage">> = [];
+  let insertedRows: Array<{ data: unknown; resolvedGeometry?: ResolvedGeometry }>;
+  try {
+    insertedRows = await resolveImportChunkRows(ctx, parsed, schemaDoc, storedGeometryIds);
+    await ctx.runMutation(internal.imports.insertEntriesChunkInternal, {
+      chunkIndex: args.chunkIndex,
+      dataArray: insertedRows,
+      importId: args.importId,
+      schemaId: args.schemaId,
+    });
+  } catch (err) {
+    // The rows never landed — the geometry blobs this attempt stored for
+    // them are unreferenced now. Best-effort delete, then rethrow. (The
+    // CHUNK blob's own delete stays outside this catch: once the rows are
+    // in, the geometry blobs are referenced data, not litter.)
+    await Promise.all(
+      storedGeometryIds.map(async (geometryStorageId) => {
+        try {
+          await ctx.storage.delete(geometryStorageId);
+        } catch {
+          // Already gone — best-effort cleanup on the failure path.
+        }
+      }),
+    );
+    throw err;
+  }
+
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  await ctx.storage.delete(args.storageId as Id<"_storage">);
+  return insertedRows.length;
+}
+
 export const insertChunkFromStorage = internalAction({
   args: {
     // The chunk's position in the import's `storageIds` — with `importId`,
@@ -561,78 +648,36 @@ export const insertChunkFromStorage = internalAction({
   // handler's own `internal.lib` references (the replay-check query) and
   // circularly references the export being defined (the memory-note gotcha:
   // annotate steps whose results cross `internal.lib`).
+  handler: async (ctx, args): Promise<number> => insertChunk(ctx, args),
+  returns: v.number(),
+});
+
+/**
+ * Inserts several consecutive chunks in one workflow step, in order. Each
+ * workflow step costs ~0.9 s of scheduling latency on top of ~0.25 s of real
+ * work per 500-row chunk, so one step per chunk spent most of a 20k-row
+ * import waiting; grouping amortizes it. Chunks still run one after another
+ * inside the action (memory stays one chunk's worth), and each keeps its own
+ * completion record, so a replayed group skips the chunks that already landed.
+ */
+export const insertChunkGroup = internalAction({
+  args: {
+    chunks: v.array(v.object({ chunkIndex: v.number(), storageId: v.string() })),
+    importId: v.id("imports"),
+    schemaId: v.id("schemas"),
+  },
   handler: async (ctx, args): Promise<number> => {
-    const schemaDoc = await ctx.runQuery(internal.entries.getSchemaInternal, {
-      schemaId: args.schemaId,
-    });
-    if (!schemaDoc) {
-      throw new ConvexError("Schema not found");
-    }
-
-    const { chunkIndex, importId } = args;
-    if (chunkIndex !== undefined && importId !== undefined) {
-      const done: { index: number; rows: number } | null = await ctx.runQuery(
-        internal.imports.getImportChunkRecord,
-        { chunkIndex, importId },
-      );
-      if (done !== null) {
-        // A previous attempt committed this chunk's rows and died before
-        // returning. No duplicates — finish the blob cleanup it may have
-        // missed and report the recorded count so `processed` stays exact.
-        await tryDeleteStorage(ctx, args.storageId);
-        return done.rows;
-      }
-    }
-
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- actions have no `normalizeId`; `storageId` is always a real `_storage` id, just untyped over the workflow boundary.
-    const blob = await ctx.storage.get(args.storageId as Id<"_storage">);
-    if (!blob) {
-      throw new ConvexError("Import chunk not found in storage");
-    }
-    const parsed: unknown = JSON.parse(await blob.text());
-    if (!Array.isArray(parsed)) {
-      // A non-array chunk used to read as ZERO rows and its blob was then
-      // deleted — a silently lost chunk behind a "completed" import
-      // (issue #129). Malformed input fails the import instead.
-      throw new ConvexError(
-        "Import chunk is malformed — expected an array of {data, geometry?} rows.",
-      );
-    }
-
-    // Geometry blobs stored for this attempt's rows (only
-    // `resolveGeometryStorage`'s file-storage fallbacks land here). If a
-    // later row fails, the rows never insert — delete the blobs instead of
-    // orphaning them (issue #129).
-    const storedGeometryIds: Array<Id<"_storage">> = [];
-    let insertedRows: Array<{ data: unknown; resolvedGeometry?: ResolvedGeometry }>;
-    try {
-      insertedRows = await resolveImportChunkRows(ctx, parsed, schemaDoc, storedGeometryIds);
-      await ctx.runMutation(internal.imports.insertEntriesChunkInternal, {
-        chunkIndex: args.chunkIndex,
-        dataArray: insertedRows,
+    let inserted = 0;
+    for (const chunk of args.chunks) {
+      // oxlint-disable-next-line no-await-in-loop -- chunks insert in order, one at a time, to bound memory.
+      inserted += await insertChunk(ctx, {
+        chunkIndex: chunk.chunkIndex,
         importId: args.importId,
         schemaId: args.schemaId,
+        storageId: chunk.storageId,
       });
-    } catch (err) {
-      // The rows never landed — the geometry blobs this attempt stored for
-      // them are unreferenced now. Best-effort delete, then rethrow. (The
-      // CHUNK blob's own delete stays outside this catch: once the rows are
-      // in, the geometry blobs are referenced data, not litter.)
-      await Promise.all(
-        storedGeometryIds.map(async (geometryStorageId) => {
-          try {
-            await ctx.storage.delete(geometryStorageId);
-          } catch {
-            // Already gone — best-effort cleanup on the failure path.
-          }
-        }),
-      );
-      throw err;
     }
-
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-    await ctx.storage.delete(args.storageId as Id<"_storage">);
-    return insertedRows.length;
+    return inserted;
   },
   returns: v.number(),
 });
@@ -690,6 +735,9 @@ export const insertEntriesChunkInternal = internalMutation({
   returns: v.null(),
 });
 
+/** Chunks inserted per workflow step (see `insertChunkGroup`). */
+const IMPORT_CHUNKS_PER_STEP = 8;
+
 /** Durable workflow: insert each client-uploaded chunk in turn, updating progress as it goes. */
 export const importWorkflow = workflow.define({
   args: {
@@ -710,13 +758,15 @@ export const importWorkflow = workflow.define({
     // incrementally; parallelizing the steps would defeat both. Each step is
     // replay-safe (see `insertChunkFromStorage`'s doc comment); a step that
     // throws — a malformed chunk, a bad row — fails the whole import.
-    for (const [chunkIndex, storageId] of args.storageIds.entries()) {
+    for (let start = 0; start < args.storageIds.length; start += IMPORT_CHUNKS_PER_STEP) {
+      const chunks = args.storageIds
+        .slice(start, start + IMPORT_CHUNKS_PER_STEP)
+        .map((storageId, offset) => ({ chunkIndex: start + offset, storageId }));
       // oxlint-disable-next-line no-await-in-loop
-      const inserted: number = await step.runAction(internal.imports.insertChunkFromStorage, {
-        chunkIndex,
+      const inserted: number = await step.runAction(internal.imports.insertChunkGroup, {
+        chunks,
         importId: args.importId,
         schemaId: args.schemaId,
-        storageId,
       });
       processed += inserted;
       // oxlint-disable-next-line no-await-in-loop
