@@ -129,6 +129,27 @@ describe("TileArchiveScheduler", () => {
     }
   });
 
+  it("drops a queued trigger the installed build already covers", async () => {
+    const { calls, startBuild } = deferredStartBuild(),
+      scheduler = new TileArchiveScheduler(startBuild, 5000);
+    try {
+      scheduler.ensure("s1");
+      scheduler.schedule("s1", 2);
+      scheduler.noteInstalled("s1", 2);
+      firstDeferral(calls, 0).resolve("installed");
+      await flushMicrotasks();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(startBuild).toHaveBeenCalledTimes(1);
+
+      // Newer data still rebuilds.
+      scheduler.schedule("s1", 3);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(startBuild).toHaveBeenCalledTimes(2);
+    } finally {
+      scheduler.dispose();
+    }
+  });
+
   it("ensure() skips the debounce window and starts immediately", async () => {
     const { startBuild } = deferredStartBuild(),
       scheduler = new TileArchiveScheduler(startBuild, 5000);

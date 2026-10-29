@@ -298,6 +298,14 @@ function recordSkipMemo(data: Record<string, unknown>, schemaId: string): void {
   }
 }
 
+/** Tells the scheduler which version a build installed, so it can drop a
+ * redundant queued rebuild for the same data. */
+function noteInstalledVersion(data: Record<string, unknown>, schemaId: string): void {
+  if (rebuildScheduler !== undefined && typeof data.builtVersion === "number") {
+    rebuildScheduler.noteInstalled(schemaId, data.builtVersion);
+  }
+}
+
 function handleWorkerMessage(event: MessageEvent<unknown>): void {
   const data: unknown = event.data;
   if (!isRecord(data) || typeof data.schemaId !== "string") return;
@@ -312,6 +320,7 @@ function handleWorkerMessage(event: MessageEvent<unknown>): void {
   if (data.type === "done") {
     setBuildState(schemaId, "done");
     clearBuildFailure(schemaId);
+    noteInstalledVersion(data, schemaId);
     pending.resolve("installed");
   } else if (data.type === "stale-discarded") {
     setBuildState(schemaId, "stale-discarded");

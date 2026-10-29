@@ -93,6 +93,8 @@ export class TileArchiveScheduler {
   readonly #versions = new Map<string, number>();
   /** Consecutive failures and the version they happened at. */
   readonly #failures = new Map<string, { count: number; version: number }>();
+  /** Newest version a build installed per schema (issue #195 item 1). */
+  readonly #installed = new Map<string, number>();
   /** Pending backoff retries; presence means "backing off". */
   readonly #retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   #disposed = false;
@@ -183,6 +185,23 @@ export class TileArchiveScheduler {
     this.#armRetry(schemaId, backoff.version, Math.max(0, backoff.retryAt - Date.now()));
   }
 
+  /**
+   * Records that a build installed an archive at `version`. A queued or
+   * debounced trigger for that version or older is then redundant: the data
+   * it would rebuild is already covered, so it is dropped instead of running
+   * a second full fetch-and-build right behind the first.
+   */
+  noteInstalled(schemaId: string, version: number): void {
+    if (version > (this.#installed.get(schemaId) ?? 0)) {
+      this.#installed.set(schemaId, version);
+    }
+  }
+
+  #isCovered(schemaId: string, version: number): boolean {
+    // Version 0 means "unknown" (an `ensure` before any `schedule`): never covered.
+    return version > 0 && version <= (this.#installed.get(schemaId) ?? 0);
+  }
+
   /** Tracks the newest version and resets the backoff when it moves past the failed one. */
   #noteVersion(schemaId: string, version: number): void {
     if (version <= (this.#versions.get(schemaId) ?? 0)) return;
@@ -246,6 +265,7 @@ export class TileArchiveScheduler {
 
   #fire(schemaId: string, version: number): void {
     this.#timers.delete(schemaId);
+    if (this.#isCovered(schemaId, version)) return;
     if (this.#inFlight.has(schemaId)) {
       this.#queueNewer(schemaId, version);
       return;
@@ -279,7 +299,7 @@ export class TileArchiveScheduler {
     // After a failure, only newer data earns an immediate rebuild; anything
     // else waits out the backoff like a fresh trigger would.
     const newerData = (this.#versions.get(schemaId) ?? 0) > startedAt;
-    if (queued !== undefined && (!failed || newerData)) {
+    if (queued !== undefined && !this.#isCovered(schemaId, queued) && (!failed || newerData)) {
       // The queued rebuild starts without another debounce wait: it
       // already trailed a full window behind the burst, and the worker
       // re-reads the live version when it starts.
