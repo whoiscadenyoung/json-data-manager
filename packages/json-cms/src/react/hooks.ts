@@ -5,6 +5,9 @@ import { useCallback, useState } from "react";
 
 import type { EntryId, SchemaId } from "../client/index.js";
 import { useAllPaginated } from "./lib/all-paginated.js";
+
+/** The component's `MAX_GEOMETRY_PAGE_ROWS` ceiling: fewer round trips and live subscriptions per pass. */
+const GEOMETRY_PAGE_SIZE = 500;
 import { chunkRowsForImport } from "./lib/chunk-rows.js";
 import { useJsonCmsApi } from "./provider.js";
 import type {
@@ -103,6 +106,7 @@ export function useGeometries(schemaId: SchemaId | undefined): GeometryDoc[] | u
     { hasCompletedPass, results } = useAllPaginated(
       api.listGeometries,
       schemaId ? { schemaId } : "skip",
+      { pageSize: GEOMETRY_PAGE_SIZE },
     );
   return hasCompletedPass ? results : undefined;
 }

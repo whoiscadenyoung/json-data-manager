@@ -10,6 +10,12 @@ import { useEffect, useState } from "react";
 // requested here, so this only affects round-trip count, never safety.
 const PAGE_SIZE = 200;
 
+/** Options for {@link useAllPaginated}. */
+export interface UseAllPaginatedOptions {
+  /** Rows requested per page (default 200). Geometry callers pass the server's 500-row ceiling. */
+  pageSize?: number;
+}
+
 interface AllPaginatedState<Item> {
   argsKey: string;
   hasCompletedPass: boolean;
@@ -95,16 +101,18 @@ function nextAllPaginatedState<Item>(
 export function useAllPaginated<Query extends PaginatedQueryReference>(
   query: Query,
   args: PaginatedQueryArgs<Query> | "skip",
+  options: UseAllPaginatedOptions = {},
 ) {
-  const { results, loadMore, status } = usePaginatedQuery(query, args, {
-    initialNumItems: PAGE_SIZE,
-  });
+  const { pageSize = PAGE_SIZE } = options,
+    { results, loadMore, status } = usePaginatedQuery(query, args, {
+      initialNumItems: pageSize,
+    });
 
   useEffect(() => {
     if (status === "CanLoadMore") {
-      loadMore(PAGE_SIZE);
+      loadMore(pageSize);
     }
-  }, [status, loadMore]);
+  }, [status, loadMore, pageSize]);
 
   const argsKey = args === "skip" ? "skip" : JSON.stringify(args),
     [state, setState] = useState<AllPaginatedState<PaginatedQueryItem<Query>>>(() =>
