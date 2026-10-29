@@ -97,3 +97,13 @@ there before `convex dev --once` or the old workflow stays deployed. Progress
 now updates every ~4000 rows. Also measured: server-side archive builds
 (a `"use node"` action) were slower than the browser worker (28.6 s vs 16.5 s
 cold open); the V8 runtime OOMs at 64 MB for 20k points.
+
+**Dead ends and direction 2026-10-29:** the 12 s row read is ~1 ms per
+document, linear, and parallel queries add no throughput, so paging and
+server-side reads do not help; only reading fewer documents does. A packed
+geometry snapshot (`docs/map-geometry-snapshot-design-2026-10-29.md`) was
+designed and shelved. The options (server-built archive at publish, import-time
+render, snapshot plus change feed, git-style local-first, Postgres/PostGIS) are
+in `docs/published-map-load-options-2026-10-29.md`; the Postgres/Supabase
+variant is in `docs/postgres-supabase-backend-notes-2026-10-29.md`. Nothing
+adopted yet; see [[published-load-direction]].
