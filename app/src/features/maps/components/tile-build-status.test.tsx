@@ -10,12 +10,14 @@ import type { TileArchiveBuildFailure } from "../lib/tile-archive";
 const store = vi.hoisted(() => ({
   ensure: vi.fn<(schemaId: string) => void>(),
   failure: undefined as TileArchiveBuildFailure | undefined,
+  progress: undefined as { done: number; total: number } | undefined,
   state: "idle" as TileArchiveBuildState,
 }));
 
 vi.mock("../lib/tile-archive", () => ({
   ensureMapTileArchive: store.ensure,
   useMapTileArchiveBuildFailure: () => store.failure,
+  useMapTileArchiveBuildProgress: () => store.progress,
   useMapTileArchiveBuildState: () => store.state,
 }));
 
@@ -25,6 +27,7 @@ afterEach(() => {
   cleanup();
   store.ensure.mockReset();
   store.failure = undefined;
+  store.progress = undefined;
   store.state = "idle";
 });
 
@@ -59,5 +62,22 @@ describe("TileBuildStatus failure state (#184)", () => {
   it("renders nothing while idle with no failure", () => {
     const { container } = render(<TileBuildStatus schemaId="schema-1" />);
     expect(container.childElementCount).toBe(0);
+  });
+});
+
+describe("TileBuildStatus fetch progress", () => {
+  it("shows fetched / total with a progress bar while fetching", () => {
+    store.state = "fetching";
+    store.progress = { done: 5000, total: 20000 };
+    render(<TileBuildStatus schemaId="schema-1" />);
+    expect(screen.getByText(/5,000 \/ 20,000/)).toBeTruthy();
+    expect(screen.getByRole("progressbar").getAttribute("value")).toBe("5000");
+  });
+
+  it("falls back to the plain label before any progress is reported", () => {
+    store.state = "fetching";
+    render(<TileBuildStatus schemaId="schema-1" />);
+    expect(screen.getByText("Fetching features…")).toBeTruthy();
+    expect(screen.queryByRole("progressbar")).toBeNull();
   });
 });

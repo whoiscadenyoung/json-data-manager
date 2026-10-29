@@ -128,13 +128,17 @@ self.addEventListener("message", (event: MessageEvent<TileArchiveWorkerInbound>)
 export async function fetchAllGeometryFeatures(
   convex: ConvexClient,
   schemaId: string,
+  onProgress?: (fetchedRows: number) => void,
 ): Promise<{ features: Array<GeoJSONFeature>; payloadBytes: number }> {
   const features: Array<GeoJSONFeature> = [];
   const pool = new BoundedPool(GEOMETRY_FETCH_POOL_SIZE);
   const rowTasks: Array<Promise<ResolvedGeometryRow | null>> = [];
+  let fetchedRows = 0;
   await forEachDatasetGeometryPage(
     schemaId,
     (rows) => {
+      fetchedRows += rows.length;
+      if (onProgress !== undefined) onProgress(fetchedRows);
       for (const row of rows) {
         rowTasks.push(
           pool.run(async () => {
@@ -240,7 +244,10 @@ async function runBuild(schemaId: string): Promise<void> {
       return;
     }
     const expectedVersion = schema.mapTileCacheVersion ?? 0;
-    const { features, payloadBytes } = await fetchAllGeometryFeatures(convex, schemaId);
+    const total = schema.featureCount ?? 0,
+      { features, payloadBytes } = await fetchAllGeometryFeatures(convex, schemaId, (done) => {
+        if (total > 0) post({ done: Math.min(done, total), schemaId, total, type: "progress" });
+      });
     if (payloadBytes < MAP_TILE_ARCHIVE_MIN_BYTES) {
       // The version rides along so the manager can memoize the skip —
       // without it a below-threshold dataset reads as stale forever and
