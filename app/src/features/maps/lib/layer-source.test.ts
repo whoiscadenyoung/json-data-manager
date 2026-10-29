@@ -1,7 +1,10 @@
+import { rememberBelowThresholdSkip } from "@caden/maps/build-scheduler";
 import { describe, expect, it } from "vitest";
 
 import {
   geospatialDatasetsFor,
+  selectLayerSource,
+  TILE_WAIT_MIN_FEATURES,
   splitSchemaIdsByDecision,
   type TileSourceDecision,
 } from "./layer-source";
@@ -74,5 +77,42 @@ describe("geospatialDatasetsFor", () => {
 
   it("answers nothing while the dataset list is still loading", () => {
     expect(geospatialDatasetsFor(["s1"], undefined)).toStrictEqual([]);
+  });
+});
+
+describe("selectLayerSource: waiting for the first archive (#185)", () => {
+  const large = {
+    _id: "big",
+    featureCount: TILE_WAIT_MIN_FEATURES,
+    geometryType: "Point",
+    kind: "geospatial" as const,
+    mapTileCacheVersion: 3,
+  };
+
+  it("holds the row path for a large dataset with no archive yet", () => {
+    expect(selectLayerSource(large, undefined)).toStrictEqual({ kind: "pending" });
+  });
+
+  it("keeps rows for small datasets, stale-but-built archives and unwritten datasets", () => {
+    expect(
+      selectLayerSource({ ...large, featureCount: TILE_WAIT_MIN_FEATURES - 1 }, undefined),
+    ).toStrictEqual({ kind: "rows" });
+    expect(selectLayerSource({ ...large, mapTileArchiveBuiltVersion: 2 }, undefined)).toStrictEqual(
+      { kind: "rows" },
+    );
+    expect(selectLayerSource({ ...large, mapTileCacheVersion: 0 }, undefined)).toStrictEqual({
+      kind: "rows",
+    });
+  });
+
+  it("falls back to rows after a failed build", () => {
+    expect(selectLayerSource(large, undefined, true)).toStrictEqual({ kind: "rows" });
+  });
+
+  it("falls back to rows once the build was skipped as below-threshold", () => {
+    rememberBelowThresholdSkip("big-skipped", 3);
+    expect(selectLayerSource({ ...large, _id: "big-skipped" }, undefined)).toStrictEqual({
+      kind: "rows",
+    });
   });
 });

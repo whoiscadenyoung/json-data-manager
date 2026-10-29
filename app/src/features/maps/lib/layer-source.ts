@@ -26,16 +26,28 @@
  * REBUILD side is structurally out too — the rebuild manager subscribes
  * `api.cms.schemas.listSummaries`, which derived ids never appear in.
  */
+import { isBelowThresholdSkipMemoized } from "@caden/maps/build-scheduler";
 import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
+import { useSyncExternalStore } from "react";
 
 import { api } from "#convex/_generated/api";
 
 import type { DatasetSummary } from "./map-layers";
+import { hasTileArchiveBuildFailure, subscribeTileArchiveBuildState } from "./tile-archive";
+
+/**
+ * Feature count at which a dataset with no archive yet waits for its first
+ * tile build instead of streaming rows (#185). Above it the row path and the
+ * build worker would fetch the same rows twice (20k points: ~32 s cold open,
+ * ~500 MB heap vs ~1.3 s on tiles). Below it, rows are cheap and unchanged.
+ */
+export const TILE_WAIT_MIN_FEATURES = 5000;
 
 /** One schema doc's tile-relevant fields, as `api.cms.schemas.listSummaries`/`api.cms.schemas.get` return them. */
 export interface TileSourceSchemaRow {
   _id: string;
+  featureCount?: number;
   geometryType?: string;
   kind?: "standard" | "geospatial";
   mapTileArchiveBuiltVersion?: number;
@@ -72,6 +84,20 @@ function isFreshArchiveCandidate(schema: TileSourceSchemaRow): boolean {
 }
 
 /**
+ * True when a large dataset has never had an archive and one is on its way:
+ * the row path would double-fetch against the build (#185). Stale-but-built
+ * datasets keep rows (they show the truth while the rebuild runs), and a
+ * below-threshold skip means no archive is coming.
+ */
+export function awaitsFirstArchive(schema: TileSourceSchemaRow): boolean {
+  if (schema.kind !== "geospatial" || schema.geometryType === undefined) return false;
+  if (schema.mapTileArchiveBuiltVersion !== undefined) return false;
+  const version = schema.mapTileCacheVersion ?? 0;
+  if (version === 0 || (schema.featureCount ?? 0) < TILE_WAIT_MIN_FEATURES) return false;
+  return !isBelowThresholdSkipMemoized(schema._id, version);
+}
+
+/**
  * Decides one dataset's source. Fresh-candidate rows wait on the meta URL
  * (`"pending"`) so a tile-path dataset never flashes the row path while the
  * metadata lands; every other state decides from the row alone.
@@ -79,8 +105,12 @@ function isFreshArchiveCandidate(schema: TileSourceSchemaRow): boolean {
 export function selectLayerSource(
   schema: TileSourceSchemaRow,
   meta: TileArchiveMeta | undefined,
+  buildFailed = false,
 ): TileSourceDecision {
   if (schema.kind !== "geospatial" || schema.geometryType === undefined) return ROWS;
+  // First build in flight for a large dataset: hold rows (the failure
+  // fallback is the caller's `buildFailed`).
+  if (!buildFailed && awaitsFirstArchive(schema)) return PENDING;
   if (!isFreshArchiveCandidate(schema)) return ROWS;
   // The meta hasn't arrived — withhold the row fetch rather than guess.
   if (meta === undefined) return PENDING;
@@ -116,6 +146,18 @@ export function useTileArchiveSources(
       api.cms.tile_archives.metas,
       geospatialIds.length > 0 ? { schemaIds: geospatialIds } : "skip",
     ),
+    // Re-evaluates when a build fails or is skipped (the build-state store
+    // notifies on both); a primitive snapshot keeps it referentially stable.
+    failedKey = useSyncExternalStore(
+      subscribeTileArchiveBuildState,
+      () =>
+        datasetsOrEmpty
+          .filter((schema) => hasTileArchiveBuildFailure(schema._id))
+          .map((schema) => schema._id)
+          .join(","),
+      () => "",
+    ),
+    failedIds = new globalThis.Set(failedKey === "" ? [] : failedKey.split(",")),
     metaBySchemaId = new globalThis.Map<string, TileArchiveMeta>();
   if (metas !== undefined) {
     for (const [index, schemaId] of geospatialIds.entries()) {
@@ -127,7 +169,10 @@ export function useTileArchiveSources(
   }
   const decisions = new globalThis.Map<string, TileSourceDecision>();
   for (const schema of datasetsOrEmpty) {
-    decisions.set(schema._id, selectLayerSource(schema, metaBySchemaId.get(schema._id)));
+    decisions.set(
+      schema._id,
+      selectLayerSource(schema, metaBySchemaId.get(schema._id), failedIds.has(schema._id)),
+    );
   }
   return decisions;
 }

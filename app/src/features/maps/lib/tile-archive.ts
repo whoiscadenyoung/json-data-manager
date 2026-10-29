@@ -231,6 +231,11 @@ export function getTileArchiveBuildFailure(schemaId: string): TileArchiveBuildFa
   return buildFailures.get(schemaId);
 }
 
+/** True while the dataset has a persistent build failure (snapshot for `useSyncExternalStore`). */
+export function hasTileArchiveBuildFailure(schemaId: string): boolean {
+  return buildFailures.has(schemaId);
+}
+
 /** The dataset's persistent build failure, until a build succeeds. */
 export function useMapTileArchiveBuildFailure(
   schemaId: string,
@@ -312,9 +317,11 @@ function handleWorkerMessage(event: MessageEvent<unknown>): void {
     setBuildState(schemaId, "stale-discarded");
     pending.resolve("discarded");
   } else if (data.type === "skipped") {
+    // Memo first: the idle notification re-evaluates layer-source decisions,
+    // which read the memo (#185).
+    recordSkipMemo(data, schemaId);
     setBuildState(schemaId, "idle");
     clearBuildFailure(schemaId);
-    recordSkipMemo(data, schemaId);
     pending.resolve("skipped");
   } else {
     setBuildState(schemaId, "error");
