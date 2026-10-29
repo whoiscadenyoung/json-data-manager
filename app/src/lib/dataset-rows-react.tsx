@@ -38,6 +38,7 @@ import {
   applyGeometryRowSpec,
   applyGeometryRowSpecs,
   ENTRIES_PAGE_SIZE,
+  GEOMETRY_PAGE_ROWS,
   type DatasetEntryRow,
   type DatasetGeometryRow,
   entryDataRecord,
@@ -480,6 +481,9 @@ export function useDatasetEntryGeometryRow(
   return row === undefined || row === null ? row : applyGeometryRowSpec(row);
 }
 
+/** Minimum gap between partial-pass reports from one geometry loader (#186). */
+const GEOMETRY_REPORT_INTERVAL_MS = 250;
+
 /**
  * One schema's live geometry-loading state, as `SchemaGeometriesLoader`
  * reports it: `rows` are the pages fetched so far (growing as the pass
@@ -523,8 +527,13 @@ export function SchemaGeometriesLoader({
   schemaId: string;
   onLoaded: (schemaId: string, report: SchemaGeometriesReport | undefined) => void;
 }) {
-  const { results, status } = useAllPaginated(api.cms.geometries.list, { schemaId }),
+  const { results, status } = useAllPaginated(
+      api.cms.geometries.list,
+      { schemaId },
+      { pageSize: GEOMETRY_PAGE_ROWS },
+    ),
     completedRef = useRef(false),
+    lastReportRef = useRef(0),
     // Applied once per page arrival, not per effect fire: the fan-out's
     // bail-out dedupes on row reference (`existing.rows === report.rows`),
     // which a real spec transform (fresh array per call) would otherwise
@@ -534,7 +543,24 @@ export function SchemaGeometriesLoader({
     if (status === "Exhausted") {
       completedRef.current = true;
     }
-    onLoaded(schemaId, { complete: completedRef.current, rows: specRows });
+    const report = { complete: completedRef.current, rows: specRows },
+      flush = () => {
+        lastReportRef.current = Date.now();
+        onLoaded(schemaId, report);
+      },
+      wait = lastReportRef.current + GEOMETRY_REPORT_INTERVAL_MS - Date.now();
+    // Partial passes report at most every interval (trailing edge, always the
+    // latest rows): each report rebuilds the FeatureCollection and re-sets the
+    // whole map source, which is quadratic across a streamed pass (#186).
+    // Completion and re-reads after it report immediately.
+    if (completedRef.current || wait <= 0) {
+      flush();
+      return;
+    }
+    const timer = setTimeout(flush, wait);
+    return () => {
+      clearTimeout(timer);
+    };
   }, [schemaId, status, specRows, onLoaded]);
   return null;
 }

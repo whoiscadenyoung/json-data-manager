@@ -3,7 +3,11 @@ import { cleanup, render, waitFor } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { SchemaEntriesLoader, useEnrichedDatasetEntryRow } from "./dataset-rows-react";
+import {
+  SchemaEntriesLoader,
+  SchemaGeometriesLoader,
+  useEnrichedDatasetEntryRow,
+} from "./dataset-rows-react";
 import type { FeatureSelection } from "./dataset-rows-react";
 
 // The reactive seam's data layer, mocked at module boundaries: the point
@@ -323,5 +327,61 @@ describe("SchemaEntriesLoader", () => {
     paginated = { results: secondRows, status: "Exhausted" };
     rerender(<SchemaEntriesLoader schemaId="s1" enabled onLoaded={onLoaded} />);
     expect(onLoaded).toHaveBeenLastCalledWith("s1", { complete: true, rows: secondRows });
+  });
+});
+
+describe("SchemaGeometriesLoader (#186)", () => {
+  it("requests 500-row pages", () => {
+    mocks.useAllPaginated.mockReturnValue({ results: [], status: "CanLoadMore" });
+    render(
+      <SchemaGeometriesLoader
+        schemaId="s1"
+        onLoaded={vi.fn<(schemaId: string, report: unknown) => void>()}
+      />,
+    );
+    expect(mocks.useAllPaginated).toHaveBeenCalledWith(
+      expect.anything(),
+      { schemaId: "s1" },
+      {
+        pageSize: 500,
+      },
+    );
+  });
+
+  it("throttles partial reports to the latest rows and reports completion immediately", () => {
+    vi.useFakeTimers();
+    try {
+      const onLoaded = vi.fn<(schemaId: string, report: unknown) => void>(),
+        page1 = [{ _id: "g1" }],
+        page2 = [{ _id: "g1" }, { _id: "g2" }],
+        page3 = [{ _id: "g1" }, { _id: "g2" }, { _id: "g3" }];
+      let paginated: { results: unknown[]; status: string } = {
+        results: page1,
+        status: "CanLoadMore",
+      };
+      mocks.useAllPaginated.mockImplementation(() => paginated);
+      const { rerender } = render(<SchemaGeometriesLoader schemaId="s1" onLoaded={onLoaded} />);
+      // First report is immediate.
+      expect(onLoaded).toHaveBeenCalledTimes(1);
+
+      // Pages landing inside the window are held back, then flushed once
+      // with the LATEST rows.
+      paginated = { results: page2, status: "CanLoadMore" };
+      rerender(<SchemaGeometriesLoader schemaId="s1" onLoaded={onLoaded} />);
+      paginated = { results: page3, status: "CanLoadMore" };
+      rerender(<SchemaGeometriesLoader schemaId="s1" onLoaded={onLoaded} />);
+      expect(onLoaded).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(250);
+      expect(onLoaded).toHaveBeenCalledTimes(2);
+      expect(onLoaded).toHaveBeenLastCalledWith("s1", { complete: false, rows: page3 });
+
+      // Completion bypasses the throttle.
+      paginated = { results: page3, status: "Exhausted" };
+      rerender(<SchemaGeometriesLoader schemaId="s1" onLoaded={onLoaded} />);
+      expect(onLoaded).toHaveBeenCalledTimes(3);
+      expect(onLoaded).toHaveBeenLastCalledWith("s1", { complete: true, rows: page3 });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
