@@ -1,6 +1,8 @@
 # Root CI gate — docs/data-platform-roadmap.md §3 item 0.5: fmt + lint +
-# typecheck + test + build on every PR, one job so the PR carries a single
-# green/red signal.
+# typecheck + test + build on every PR. The `ci` job carries the PR's single
+# green/red signal; `store` is the Supabase side (stage 0 of the migration,
+# docs/supabase-migration-design.md §12 + ADR 0015): boot supabase/postgres,
+# apply supabase/migrations/*.sql in lexical order, assert PostGIS is live.
 #
 # Deliberately out of scope here: deploys, publishing, coverage thresholds.
 # (The nested packages/data-export workflow inherited from its
@@ -141,3 +143,91 @@ jobs:
       # moved aside).
       - name: Build (app)
         run: bun --filter=app run build
+
+  # Supabase store gate (stage 0 — docs/supabase-migration-design.md §12).
+  # Independent of `ci` on purpose: it only needs the checked-out tree plus a
+  # Postgres service, so it stays fast and never holds the main signal's
+  # runner hostage. A red here means the migration set no longer applies
+  # cleanly, in lexical order, against the pinned supabase/postgres image.
+  store:
+    name: Supabase store (migrations + PostGIS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # Matches the service config below (POSTGRES_PASSWORD/POSTGRES_DB);
+      # stage-1 PG integration tests read this same variable
+      # (docs/supabase-migration-design.md §12). Connected as supabase_admin,
+      # not postgres: in the supabase/postgres image the postgres role is NOT
+      # a superuser and schema public is owned by pg_database_owner (=
+      # supabase_admin, which ran CREATE DATABASE "app"), so `create table`
+      # in public fails for postgres (verified against 15.8.1.049) — the
+      # superuser applies migrations of any stage; same POSTGRES_PASSWORD.
+      SUPABASE_DB_URL: postgresql://supabase_admin:postgres@localhost:5432/app
+
+    services:
+      postgres:
+        # supabase/postgres ships PostGIS + the supabase extensions on top of
+        # Postgres 15 (docs/supabase-migration-design.md §12). Tag bumped
+        # deliberately, never casually — migrations must re-apply against it.
+        image: supabase/postgres:15.8.1.049
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: app
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      # Same commit the repo's existing workflow pins.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # psql ships preinstalled on the ubuntu-latest runner image (postgresql-client).
+      - name: Apply supabase migrations in lexical order
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          # The service health gate checks the unix socket; TCP can lag and the
+          # image restarts postgres once mid-init (both measured against
+          # 15.8.1.049). Wait for a real TCP round-trip before applying.
+          for i in $(seq 1 30); do
+            psql "$SUPABASE_DB_URL" -X -c 'select 1;' >/dev/null 2>&1 && break
+            echo "waiting for postgres (attempt ${i}/30)..."; sleep 2
+          done
+          psql "$SUPABASE_DB_URL" -X -c 'select 1;' >/dev/null 2>&1 \
+            || { echo "::error::postgres never became reachable at \$SUPABASE_DB_URL" >&2; exit 1; }
+          # LC_ALL=C: byte-order sort, so zero-padded migration names apply in
+          # the order their numbers read, whatever the runner's locale is.
+          export LC_ALL=C
+          migrations=(supabase/migrations/*.sql)
+          if [ "${#migrations[@]}" -eq 0 ]; then
+            echo "::error::No migrations found under supabase/migrations/ — expected at least 0001_extensions.sql" >&2
+            exit 1
+          fi
+          for f in "${migrations[@]}"; do
+            echo "Applying ${f}"
+            psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -X -f "$f"
+          done
+          echo "Applied ${#migrations[@]} migration(s)."
+
+      # postgis_version() reports e.g. "3.4 USE_GEOS=1 USE_PROJ=1 USE_STATS=1";
+      # require it to start with a digit so a connection-level failure or an
+      # empty result cannot read as a pass.
+      - name: Assert PostGIS is available
+        run: |
+          set -euo pipefail
+          postgis="$(psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -X -tA -c 'select postgis_version();')"
+          echo "postgis_version() -> ${postgis}"
+          case "$postgis" in
+            [0-9]*)
+              echo "PostGIS present: ${postgis%% *}"
+              ;;
+            *)
+              echo "::error::postgis_version() returned '${postgis}' — expected a version string" >&2
+              exit 1
+              ;;
+          esac

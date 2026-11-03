@@ -1,10 +1,9 @@
 import { Button } from "@caden/ui/components/button";
 import { Link, useMatches } from "@tanstack/react-router";
-import { useConvexAuth, useQuery } from "convex/react";
 
 import { UserAvatar } from "#/components/user-avatar";
-import { authClient } from "#/lib/auth-client";
-import { api } from "#convex/_generated/api";
+import { supabase } from "#/integrations/supabase/client";
+import { useSession } from "#/integrations/supabase/provider";
 
 import { ThemeToggle } from "./theme-toggle";
 
@@ -13,53 +12,39 @@ import { ThemeToggle } from "./theme-toggle";
  * re-reads the world as signed-out (the auth docs' recommended path).
  */
 const onSignOut = async () => {
-  await authClient.signOut();
+  await supabase.auth.signOut();
   window.location.reload();
 };
 
 /**
- * The signed-in user's name (or email, if they never set a name) — served
- * from the `users` mirror the auth component's triggers keep in sync.
+ * The signed-in user's name (or email, if they never set a name) — read
+ * straight off the Supabase session's GoTrue user (design doc §9 rewires the
+ * chip at stage 0; a profiles read replaces the user-metadata projection when
+ * the store modules land, §3.1/§8.1).
  */
 function UserMenu() {
-  const { isAuthenticated, isLoading } = useConvexAuth();
-  const me = useQuery(api.users.me);
+  const { session, isLoading } = useSession();
 
   if (isLoading) {
     return <div className="h-6 w-28 animate-pulse rounded bg-muted" />;
   }
-  if (!isAuthenticated) {
+  if (session === null) {
     return (
       <Link to="/signin" className="text-sm text-muted-foreground hover:text-foreground">
         Sign in
       </Link>
     );
   }
-  // The chip doubles as the "your profile" button — avatar + name linking to
-  // /users/$authId. The plain "Signed in" fallback covers the edge where the
-  // session is live but the mirror row hasn't been created (or was deleted).
-  if (me === undefined || me === null) {
-    return (
-      <div className="flex items-center gap-3">
-        <span className="text-sm text-muted-foreground">Signed in</span>
-        <Button onClick={onSignOut} size="sm" type="button" variant="outline">
-          Sign out
-        </Button>
-      </div>
-    );
-  }
-  const label = me.name ?? me.email;
+  const meta = session.user.user_metadata,
+    name = typeof meta.name === "string" ? meta.name : undefined,
+    image = typeof meta.avatar_url === "string" ? meta.avatar_url : undefined,
+    label = name ?? session.user.email ?? "Signed in";
   return (
     <div className="flex items-center gap-3">
-      <Link
-        to="/users/$userId"
-        params={{ userId: me.authId }}
-        className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-        title="View your profile"
-      >
-        <UserAvatar className="h-6 w-6 text-[10px]" image={me.image} name={me.name} />
+      <span className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
+        <UserAvatar className="h-6 w-6 text-[10px]" image={image} name={name} />
         <span className="max-w-48 truncate">{label}</span>
-      </Link>
+      </span>
       <Button onClick={onSignOut} size="sm" type="button" variant="outline">
         Sign out
       </Button>

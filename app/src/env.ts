@@ -8,6 +8,11 @@ export const env = createEnv({
     // The deployment's .site counterpart — the auth server proxy forwards
     // Better Auth requests here (src/lib/auth-server.ts).
     VITE_CONVEX_SITE_URL: z.url(),
+    // Supabase (stage 0, design doc §2): the stack's API URL and the
+    // RLS-scoped anon key. Both stay validated alongside the Convex vars —
+    // they only leave env.ts at the stage-7 disconnect, like the Convex pair.
+    VITE_SUPABASE_URL: z.url(),
+    VITE_SUPABASE_ANON_KEY: z.string().min(1),
   },
 
   /**

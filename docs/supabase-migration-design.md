@@ -1241,3 +1241,52 @@ The Convex A/B numbers being compared against are the recorded measurements
   with 10+ concurrent tabs before relying on broad channel use.
 - Storage signed-URL TTL vs the OPFS pin's long-lived reads — pick at
   stage 2 (a longer TTL or a public-read bucket for archives).
+
+---
+
+## 17. Local bring-up status (stage 0, recorded 2026-11-03)
+
+Recorded by the stage-0 scaffold run in the `jdm-supabase-backend` worktree.
+
+**The stack is up.** `supabase start` → `supabase db reset` both completed,
+and the bring-up checks passed:
+
+- CLI is not installed natively — everything ran as `bunx supabase`
+  (**CLI 3.0.0**; note `--local` on `gen types` is deprecated, dropped in
+  v4). Docker Desktop was installed but not running; `open -a Docker`
+  started it (daemon 29.4.1 → 29.9.2 after a mid-bring-up crash-restart).
+- `supabase init` generated `supabase/config.toml`; edited for this
+  migration: `major_version = 15` (the CLI 3.0.0 default is 17 — pinned to
+  15 to match §2 and the §12 CI image `supabase/postgres:15.8.1.049`),
+  `[auth] enable_signup = false` (§9), and `[analytics] enabled = false`.
+- First two `supabase start` attempts failed their health checks on the
+  logflare+vector analytics containers (the realtime VM also raised a
+  `system_memory_high_watermark` alarm) and a third attempt crashed Docker
+  Desktop itself. Disabling the analytics stack (not part of §2's runtime
+  topology; only Studio's log explorer is lost) resolved it — fourth start
+  succeeded. `supabase db reset` then re-applied migrations cleanly
+  (it skips `migrations/README.md` by filename pattern, as intended).
+- Verified in the database (`psql` inside `supabase_db`):
+  `postgis 3.3.2` (`postgis_full_version()` reports `PGSQL="150"` — PG 15),
+  `pg_trgm 1.6`. All core containers healthy: db, auth (GoTrue
+  `/auth/v1/health` → 200), rest (`/rest/v1/` with the publishable key →
+  200), realtime, storage, studio, kong, pg_meta, inbucket. Stopped by
+  design: analytics, vector, imgproxy, edge_runtime, pooler.
+- Typed bindings generated: `supabase gen types typescript --local >
+  app/src/lib/supabase/database.types.ts` (oxfmt-formatted). `public` is
+  empty (`Tables: { [_ in never]: never } …`) as expected before the
+  core-schema migration — regenerate after each schema stage lands.
+- Local values for the app integrator's `app/.env.local`:
+  `VITE_SUPABASE_URL=http://127.0.0.1:54321`,
+  `VITE_SUPABASE_ANON_KEY=sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH`
+  (CLI 3 prints new-format keys; `bunx supabase status` prints the rest,
+  including the local-only secret key for §9's admin user creation). The
+  DB URL is `postgresql://postgres:postgres@127.0.0.1:54322/postgres`.
+- Runtime dirs `.branches/`/`.temp/`/`.logs/` are ignored via
+  `supabase/.gitignore` (the CLI's own generated file covers the first two;
+  `.logs` added).
+- Restart recipe after a reboot or Docker quit: `open -a Docker`, wait for
+  the daemon, then `bunx supabase start` in the repo root (stack state
+  persists in the Docker volumes; no reset needed unless schema changed —
+  then `bunx supabase db reset`).
+
