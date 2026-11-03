@@ -10,30 +10,38 @@ import { useSession } from "#/integrations/supabase/provider";
  * would throw "You're signed out" — the endless skeletons, TanStack error
  * screens, and false "Dataset Not Found" screens the review documented.
  *
- * Since the stage-0 auth swap (design doc §9) the gate reads the Supabase
- * session (`useSession`), not the Convex one: the sign-in surface writes a
- * Supabase session, so the gate has to answer from it. The shape is exactly
- * the Convex-era one: while the session is resolving (and during SSR, which
- * knows nothing of the session) it holds the same centered spinner the route
- * pages render — no child mounts, so no child query fires anonymously.
- * `/signin` passes through untouched.
+ * Stage 0 is a two-session world (design doc §9, the review-amended shape):
+ * sign-in writes a Supabase session AND bridges the same credentials into
+ * the Better Auth session the still-mounted Convex provider rides
+ * (routes/signin.tsx). The routed tree still queries ONLY Convex — no PG
+ * surface exists before stage 1 — so the gate opens only when BOTH halves
+ * have resolved signed-in: the Convex half (`useConvexAuth`, which every
+ * child query actually needs — opening on the Supabase session alone would
+ * mount the routed tree over a fully unauthenticated Convex backend) and
+ * the Supabase session (what sign-in writes, and the only session the PG
+ * surfaces read from stage 1 on). The shape is exactly the Convex-era one:
+ * while either half is resolving (and during SSR, which knows nothing of
+ * either) it holds the same centered spinner the route pages render — no
+ * child mounts, so no child query fires anonymously. `/signin` passes
+ * through untouched.
  */
 export function AuthGate({ children }: { children: ReactNode }) {
   const { session, isLoading } = useSession(),
+    { isAuthenticated, isLoading: convexLoading } = useConvexAuth(),
     location = useLocation(),
     pathname = location.pathname;
 
   if (pathname === "/signin") {
     return <>{children}</>;
   }
-  if (isLoading) {
+  if (isLoading || convexLoading) {
     return (
       <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
       </div>
     );
   }
-  if (session === null) {
+  if (session === null || !isAuthenticated) {
     // Remember where the visitor was headed (a shared app link, a dataset
     // URL) so signing in lands them there instead of on the home page.
     return (
