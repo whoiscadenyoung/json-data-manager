@@ -85,6 +85,7 @@ import {
   GeospatialConversionPanel,
   isLockedForViewer,
   LOCKED_DATASET_HINT,
+  PostgresDatasetPage,
   SchemaVisualizer,
   SimplifyGeometryPanel,
   slugify,
@@ -113,6 +114,7 @@ import {
   useDatasetEntryRow,
   useDatasetGeometryRows,
 } from "@/lib/dataset-rows-react";
+import { isPostgresDatasetId } from "@/lib/dataset-source";
 import { errorMessage } from "@/lib/errors";
 
 import { api } from "../../../../convex/_generated/api";
@@ -123,6 +125,13 @@ const entryPanelSearchSchema = z.object({
   // Active tab ("overview" is the default and deliberately absent from the URL).
   // Stage 9 (#105) added "analyze" — the SQL escape hatch beside "transform".
   view: z.enum(["overview", "entries", "history", "structure", "transform", "analyze"]).optional(),
+  // The Postgres table's server-driven state (design doc §8.4): the search
+  // box, the sort, and the filter-menu rows ride the URL and drive the
+  // `search_entries` RPC. Only the Postgres edition of the page reads them —
+  // the Convex table keeps its client-side row models.
+  q: z.string().optional(),
+  sort: z.string().optional(),
+  filters: z.string().optional(),
 });
 
 export const Route = createFileRoute("/datasets/$schemaId/")({
@@ -284,7 +293,7 @@ function EntryPanelHost({
     <EntryFormPanel
       schemaId={schemaId}
       schema={schema}
-      entry={entry}
+      entry={entry === undefined ? undefined : { data: entry.data, id: entry._id }}
       initialGeometry={initialGeometry}
       open={isOpen}
       onOpenChange={onOpenChange}
@@ -361,13 +370,40 @@ function DatasetNotFoundCard() {
 }
 
 function SchemaDetailPage() {
+  // Transitional split (design doc §14): the id says where the dataset was
+  // created — Postgres-native datasets (uuid ids, minted by the stage-1
+  // create flow) mount the store-backed page; every pre-migration Convex
+  // dataset keeps rendering exactly as it does today, through its Convex
+  // surface, never edited by the new code.
+  const { schemaId } = Route.useParams(),
+    search = Route.useSearch(),
+    navigate = Route.useNavigate();
+  if (isPostgresDatasetId(schemaId)) {
+    return (
+      <PostgresDatasetPage
+        onPatchSearch={(patch) => {
+          // Merge form, never replace — the ui-polish rule: an object-form
+          // search silently drops the page's other params (?view=, ?panel=).
+          void navigate({ search: (prev) => ({ ...prev, ...patch }) });
+        }}
+        schemaId={schemaId}
+        search={{
+          entryId: search.entryId,
+          filters: search.filters,
+          panel: search.panel,
+          q: search.q,
+          sort: search.sort,
+          view: search.view,
+        }}
+      />
+    );
+  }
   // Stage 8 (#104): a denied by-id read (a foreign draft, an author-only
   // dataset) throws from the raw seam subscriptions and errors the bridge
   // query — the boundary renders the same card a deleted dataset gets,
   // never the router's error screen or an infinite spinner.
   // `resetKey` (issue #135, defect 6): a new dataset id in the same route
   // instance clears a previous id's error instead of pinning "Not Found".
-  const { schemaId } = Route.useParams();
   return (
     <QueryErrorBoundary fallback={<DatasetNotFoundCard />} resetKey={schemaId}>
       {/* oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup. */}

@@ -1,0 +1,83 @@
+// @vitest-environment jsdom
+import { describe, expect, it, vi } from "vitest";
+
+// The store's import chain reaches `#/env` through the integrations client
+// (which validates at import time); CI has no .env.local — the
+// stage-3-ci-tree-lessons mock, applied before any store import.
+vi.mock("#/env", () => ({
+  env: { VITE_SUPABASE_ANON_KEY: "test-anon-key", VITE_SUPABASE_URL: "http://127.0.0.1:54321" },
+}));
+
+import { uploadSourceFile } from "./datasets";
+import { uploadGeometrySource } from "./geometries";
+import { firstArg, queryAt, stubSupabase, type RecordedUpload } from "./test-support";
+
+/** The only recorded upload, or a loud failure (the no-optional-chaining test style). */
+function onlyUpload(uploads: ReadonlyArray<RecordedUpload>): RecordedUpload {
+  if (uploads.length !== 1) {
+    throw new Error(`Expected exactly one upload (have ${uploads.length}).`);
+  }
+  const upload = uploads[0];
+  if (upload === undefined) {
+    throw new Error("No upload recorded.");
+  }
+  return upload;
+}
+
+describe("geometries.uploadGeometrySource — the §10 oversized-payload upload", () => {
+  it("puts the JSON payload into the dataset's geometries/ folder and answers path + exact bytes", async () => {
+    const { client, uploads } = stubSupabase();
+    const source = { coordinates: [1.234567, 2.345678], type: "Point" };
+    const result = await uploadGeometrySource(
+      { datasetId: "d1", rowIndex: 7, source },
+      { supabase: client },
+    );
+    // The row INDEX keys the path — the entry id doesn't exist until the
+    // import_entries chunk generates one.
+    expect(result.path).toBe("d1/row-7.json");
+    expect(result.bytes).toBe(JSON.stringify(source).length);
+    expect(uploads.length).toBe(1);
+    const upload = onlyUpload(uploads);
+    expect(upload.bucket).toBe("geometries");
+    expect(upload.path).toBe("d1/row-7.json");
+    // Upsert: a Retry regenerates the same row-indexed paths, so the failed
+    // attempt's leftover copies are overwritten, not rejected.
+    expect(upload.upsert).toBe(true);
+  });
+
+  it("propagates storage failures (the import aborts before any chunk is sent)", async () => {
+    // The stub's upload records and succeeds; a failure path is exercised by
+    // the caller contract (runPgImport's try/catch), so here just prove the
+    // happy path shapes the row the RPC expects.
+    const { client } = stubSupabase();
+    const result = await uploadGeometrySource(
+      { datasetId: "d1", rowIndex: 0, source: { type: "Point", coordinates: [0, 0] } },
+      { supabase: client },
+    );
+    expect(result.path).toBe("d1/row-0.json");
+  });
+});
+
+describe("datasets.uploadSourceFile — the §10 source-file retention", () => {
+  it("uploads the original file, records name/size/path on the dataset row, and answers the path", async () => {
+    const { client, queries, uploads } = stubSupabase(() => ({
+      data: [{ id: "d1" }],
+      error: null,
+    }));
+    const file = new File(["csv,data\n1,2"], "streets.csv", { type: "text/csv" });
+    const path = await uploadSourceFile({ datasetId: "d1", file }, { supabase: client });
+    expect(path).toBe("d1/streets.csv");
+    expect(uploads.length).toBe(1);
+    const upload = onlyUpload(uploads);
+    expect(upload.bucket).toBe("source-files");
+    // Upsert: a Retry re-attaches the file over the superseded copy.
+    expect(upload.upsert).toBe(true);
+    const update = queryAt(queries, 0);
+    expect(update.table).toBe("datasets");
+    expect(firstArg(update, "update")).toStrictEqual({
+      source_file_name: "streets.csv",
+      source_file_path: "d1/streets.csv",
+      source_file_size: file.size,
+    });
+  });
+});

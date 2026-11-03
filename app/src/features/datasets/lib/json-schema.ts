@@ -18,7 +18,7 @@ export interface JsonSchemaNode {
   maxItems?: number;
 }
 
-function isSchemaNode(value: unknown): value is JsonSchemaNode {
+export function isSchemaNode(value: unknown): value is JsonSchemaNode {
   return typeof value === "object" && value !== null;
 }
 
