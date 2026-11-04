@@ -82,12 +82,18 @@ const MEMBER_B = {
   publish: false,
   status: "referenced",
 };
+const MEMBER_C = {
+  ...MEMBER_A,
+  datasetKey: "dataset-c",
+  id: "member-c",
+  status: "pending",
+};
 const MEMBER_MAP = {
   ...MEMBER_A,
   datasetKey: "map-1",
   id: "member-map",
   kind: "map",
-  layerTargets: ["dataset-a"],
+  layerTargets: ["dataset-a", "dataset-c"],
 };
 
 /**
@@ -121,7 +127,8 @@ function pressResponder(state: {
       return { data: ARTIFACTS };
     }
     if (query.table === "dataset_versions") {
-      // dataset-b already published (its head exists); dataset-a never did.
+      // dataset-b already published (its head exists); dataset-a and
+      // dataset-c never did.
       const eq = methodOf(query, "eq");
       const datasetId = eq === undefined ? undefined : eq[1];
       if (datasetId === "dataset-b") {
@@ -130,7 +137,10 @@ function pressResponder(state: {
       return { data: [] };
     }
     if (query.table === "map_layers") {
-      return { data: [{ targetId: "dataset-a" }] };
+      // The map layers dataset-a (already a project artifact — the dedupe
+      // path) AND dataset-c, which the project never added — the layer
+      // target the bundle rule pulls into the plan.
+      return { data: [{ targetId: "dataset-a" }, { targetId: "dataset-c" }] };
     }
     if (query.table === "collections") {
       return { data: [{ id: "collection-1" }] };
@@ -182,6 +192,7 @@ function pressResponder(state: {
         data: [
           { ...MEMBER_A, status: state.memberStatus.get("member-a") ?? "pending" },
           { ...MEMBER_B, status: state.memberStatus.get("member-b") ?? "referenced" },
+          { ...MEMBER_C, status: state.memberStatus.get("member-c") ?? "pending" },
           { ...MEMBER_MAP, status: state.memberStatus.get("member-map") ?? "pending" },
         ],
       };
@@ -217,19 +228,27 @@ describe("pgPublishProjectBundle", () => {
       failedKeys: [],
       status: "completed",
     });
-    // Exactly ONE publish_version (dataset-a) — dataset-b joined referenced
-    // and was never re-frozen.
-    expect(stub.queries.filter((query) => query.rpc === "publish_version")).toHaveLength(1);
+    // Exactly TWO publish_version calls — dataset-a (the artifact) AND
+    // dataset-c (the map's non-artifact layer target, pulled into the plan
+    // by the bundle closure); dataset-b joined referenced, never re-frozen.
+    const rpcs = stub.queries.filter((query) => query.rpc === "publish_version");
+    expect(rpcs).toHaveLength(2);
     // The deterministic publish key rides the bundle+member pair.
-    const rpc = stub.queries.find((query) => query.rpc === "publish_version");
+    const rpc = rpcs[0];
     expect(rpc === undefined ? undefined : rpc.rpcArgs.p_publish_key).toBe("bundle-1:member-a");
     expect(rpc === undefined ? undefined : rpc.rpcArgs.p_version_label).toBe("v1");
-    // The map member reached "linked" AFTER the dataset publish (the leg order).
+    expect(rpcs[1] === undefined ? undefined : rpcs[1].rpcArgs.p_publish_key).toBe(
+      "bundle-1:member-c",
+    );
+    // The map member reached "linked" AFTER the dataset publishes (the leg order).
     expect(state.memberStatus.get("member-map")).toBe("linked");
     expect(state.memberStatus.get("member-a")).toBe("published");
-    // The promoted collection files the published dataset only.
+    expect(state.memberStatus.get("member-c")).toBe("published");
+    // The promoted collection files every dataset member whose frozen row
+    // stands: the two newly frozen rows AND dataset-b filing itself as the
+    // referenced member.
     const memberships = stub.queries.filter((query) => query.table === "collection_datasets");
-    expect(memberships).toHaveLength(1);
+    expect(memberships).toHaveLength(3);
   });
 
   it("joins a RUNNING press instead of forking a second bundle, reusing its collection", async () => {
@@ -302,13 +321,16 @@ describe("pgPublishProjectBundle", () => {
         query.table === "publish_bundle_members" &&
         query.operations.some((op) => op.method === "insert"),
     );
-    expect(memberInserts).toHaveLength(3);
-    const kinds = memberInserts.map((query) => {
+    expect(memberInserts).toHaveLength(4);
+    const keys = memberInserts.map((query) => {
       const insert = query.operations.find((op) => op.method === "insert");
       const payload = insert === undefined ? {} : (insert.args[0] as Record<string, unknown>);
-      return String(payload.kind);
+      return String(payload.dataset_key);
     });
-    // datasets first, then maps (the canonical order startBundle writes).
-    expect(kinds).toEqual(["dataset", "dataset", "map"]);
+    // datasets first, then maps (the canonical order startBundle writes);
+    // dataset-c is the map's layer target pulled into the plan, and
+    // dataset-a appears ONCE despite being both an artifact and a layer
+    // target (the closure dedupes by id).
+    expect(keys).toEqual(["dataset-a", "dataset-b", "dataset-c", "map-1"]);
   });
 });
