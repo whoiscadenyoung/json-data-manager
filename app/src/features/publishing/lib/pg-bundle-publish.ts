@@ -22,8 +22,14 @@ import {
  * host mutations: `startBundle` (join-or-create + member plan, canonical
  * datasets → derived → maps order) → per-dataset `publishDataset` with
  * `recordMember` checkpoints → the promoted collection (create-once,
- * file-every-published-member) → `linkMapLayers` (the maps' float
- * references, reconciled to the current targets) → `completeBundle`.
+ * file-every-published-or-referenced-member) → `linkMapLayers` (the maps'
+ * float references, reconciled to the current targets) → `completeBundle`.
+ *
+ * The member plan IS ADR 0008's bundle rule ("one project publishes as one
+ * bundle — a collection plus its maps plus the datasets they reference"):
+ * the plan is the project's artifacts PLUS every dataset its maps' layers
+ * target (the `bundleClosure` walk, deduped by id), so a layered map never
+ * publishes a collection missing its layer data.
  *
  * Every member's `publish_key` is DETERMINISTIC (`bundleId:memberId`) rather
  * than random: a browser killed mid-member re-presses into the same bundle
@@ -131,32 +137,52 @@ export async function pgPublishProjectBundle(options: {
       latestBundleQueryOptions({ projectId: options.projectId }, storeOptions).queryFn,
     );
 
-  // The member plan: never-published datasets freeze; already-published ones
-  // join referenced; maps carry their CURRENT dataset-layer targets (the
-  // snapshot linkMapLayers reconciles to).
-  const members: BundleMemberPlan[] = [];
+  // The member plan (the bundleClosure walk): never-published datasets
+  // freeze; already-published ones join referenced; every dataset a map's
+  // layers target joins the plan too — an artifact held AND layered, or
+  // layered by two maps, publishes once (deduped by id). Maps carry their
+  // CURRENT dataset-layer targets (the snapshot linkMapLayers reconciles
+  // to). Collection/group layers stay out of the plan — the recorded
+  // live-expansion asymmetry (bundles.ts): they expand at read time and
+  // become members only at the next press.
+  const datasetPlans = new Map<string, BundleMemberPlan>(),
+    derivedPlans: BundleMemberPlan[] = [],
+    mapPlans: BundleMemberPlan[] = [];
+  const planDataset = async (datasetId: string): Promise<void> => {
+    if (datasetPlans.has(datasetId)) {
+      return;
+    }
+    // oxlint-disable-next-line no-await-in-loop -- one head read per dataset member, in plan order.
+    const head = await headOf(datasetId, storeOptions);
+    datasetPlans.set(datasetId, {
+      datasetKey: datasetId,
+      kind: "dataset",
+      publish: head === null,
+    });
+  };
   for (const artifact of artifacts) {
     if (artifact.artifactKind === "dataset") {
-      // oxlint-disable-next-line no-await-in-loop -- one head read per dataset member, in artifact order.
-      const head = await headOf(artifact.artifactId, storeOptions);
-      members.push({
-        datasetKey: artifact.artifactId,
-        kind: "dataset",
-        publish: head === null,
-      });
+      // oxlint-disable-next-line no-await-in-loop -- one head read per dataset artifact, in artifact order.
+      await planDataset(artifact.artifactId);
     } else if (artifact.artifactKind === "map") {
       // oxlint-disable-next-line no-await-in-loop -- one targets read per map member, in artifact order.
       const targets = await mapLayerTargets(artifact.artifactId, storeOptions);
-      members.push({
+      for (const target of targets) {
+        // oxlint-disable-next-line no-await-in-loop -- one head read per layer-referenced dataset, in layer order.
+        await planDataset(target);
+      }
+      mapPlans.push({
         datasetKey: artifact.artifactId,
         kind: "map",
         layerTargets: targets,
         publish: true,
       });
     } else {
-      members.push({ datasetKey: artifact.artifactId, kind: "derived", publish: true });
+      derivedPlans.push({ datasetKey: artifact.artifactId, kind: "derived", publish: true });
     }
   }
+  // Already in canonical order: datasets, then derived, then maps.
+  const members: BundleMemberPlan[] = [...datasetPlans.values(), ...derivedPlans, ...mapPlans];
 
   const started = await startBundle(
       {
@@ -173,7 +199,17 @@ export async function pgPublishProjectBundle(options: {
     ),
     ordered = [...memberRows].sort((a, b) => memberOrder(a.kind) - memberOrder(b.kind)),
     failedKeys: string[] = [],
-    publishedDatasetIds: string[] = [],
+    // The collection's files (the promoteCollection walk, bundles.ts leg 3):
+    // referenced members file THEMSELVES — their frozen row already exists,
+    // which is exactly how a map-layer-referenced already-published dataset
+    // lands in the catalog — newly frozen members file the row the press
+    // produced (pushed below), and a resumed press re-files the members an
+    // earlier leg already published.
+    fileIntoCollection: string[] = ordered.flatMap((member) =>
+      member.kind === "dataset" && (member.status === "published" || member.status === "referenced")
+        ? [member.datasetKey]
+        : [],
+    ),
     mapLegs: Array<{ mapId: string; memberId: string; targets: ReadonlyArray<string> }> = [];
 
   for (const member of ordered) {
@@ -224,7 +260,7 @@ export async function pgPublishProjectBundle(options: {
         if (stamped === 0) {
           throw new Error("The member's checkpoint didn't record.");
         }
-        publishedDatasetIds.push(member.datasetKey);
+        fileIntoCollection.push(member.datasetKey);
       } else {
         // Derived publishing lands with stage 5 — the honest refusal, not a
         // silent skip.
@@ -242,7 +278,11 @@ export async function pgPublishProjectBundle(options: {
   }
 
   // The collection leg: reuse the prior press's collection, else create once
-  // and record it; every PUBLISHED dataset member files into it.
+  // and record it; every dataset member whose frozen row stands files into
+  // it — the newly frozen rows AND the referenced members (the frozen row,
+  // or — referenced — itself; bundles.ts leg 3). addToCollection is a no-op
+  // for an existing pair (the store's ignoreDuplicates upsert), so a resumed
+  // press refiling an earlier leg is safe.
   let collectionId = latest === null ? null : latest.collectionId;
   try {
     if (collectionId === null) {
@@ -264,7 +304,7 @@ export async function pgPublishProjectBundle(options: {
         throw new Error("The promoted collection didn't record on the bundle.");
       }
     }
-    for (const datasetId of publishedDatasetIds) {
+    for (const datasetId of fileIntoCollection) {
       // oxlint-disable-next-line no-await-in-loop -- one membership write per member, in press order.
       await collectionsStore.addToCollection({ collectionId, datasetId }, storeOptions);
     }
