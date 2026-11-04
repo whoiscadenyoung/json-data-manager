@@ -75,6 +75,7 @@ import type { DatasetRow } from "@/lib/store/datasets";
 import * as entriesStore from "@/lib/store/entries";
 import type { EntryRow } from "@/lib/store/entries";
 import * as geometriesStore from "@/lib/store/geometries";
+import * as groupsStore from "@/lib/store/groups";
 
 import { isLockedForViewer, LOCKED_DATASET_HINT } from "../lib/edit-policy";
 import type { JsonSchemaNode } from "../lib/json-schema";
@@ -82,6 +83,7 @@ import { declaredPropertyTypes, isSchemaNode } from "../lib/json-schema";
 import {
   pgTableStateFromParams,
   resolveUpdater,
+  sanitizePgTableState,
   useSearchEntriesPages,
   type PgColumnFilter,
   type PgTableParams,
@@ -89,18 +91,20 @@ import {
 import { useSplitReferenceLabels } from "../lib/pg-reference-labels";
 import { EntriesTable } from "./entries-table";
 import { EntryFormPanel } from "./entry-form-panel";
+import { PgDatasetOverview } from "./pg-dataset-overview";
 import { SchemaVisualizer } from "./schema-visualizer";
 
 /**
  * The dataset detail page's Postgres edition (design §14: surfaces split on
  * where the dataset was created — uuid ids were minted by the new backend).
  *
- * Stage-1 surface: header (title/description, lock + visibility controls),
- * the Data tab over `search_entries` (server-side sort/filter/search in the
- * URL, keyset pages), Structure (client-side schema rendering), and the
- * create/edit/delete row flows. The Convex-only tabs (Transform, Analyze,
- * History) and the map/tile path belong to stages 2/4/5/7 and are absent
- * here rather than broken.
+ * Surface set: header (title/description, lock + visibility controls, the
+ * group breadcrumb), the Overview tab (details + collection/group management
+ * — stage 3), the Data tab over `search_entries` (server-side
+ * sort/filter/search in the URL, keyset pages), Structure (client-side
+ * schema rendering), and the create/edit/delete row flows. The Convex-only
+ * tabs (Transform, Analyze, History) and the map/tile path belong to stages
+ * 2/4/5/7 and are absent here rather than broken.
  */
 
 /** The route search the PG page reads (structural; the route owns the zod schema — the view union mirrors it exactly so the merge-form navigation typechecks). */
@@ -253,6 +257,10 @@ function PgEntryPanelHost({
   );
 }
 
+/** Shared "no declared keys yet" set — the pre-load tick's sanitize target (a stable reference, so the compiler never re-derives it). */
+const NO_DECLARED_KEYS: ReadonlySet<string> = new Set<string>();
+
+// oxlint-disable-next-line eslint/complexity -- the page reads both stores' catalog rows and composes the store seams; ad hoc splitting risks these render paths (the same #82 phase-2 note the sibling Convex pages carry).
 function PostgresDatasetBody({
   schemaId,
   search,
@@ -266,8 +274,20 @@ function PostgresDatasetBody({
     { session } = useSession(),
     datasetQuery = useQuery(datasetsStore.getQueryOptions({ datasetId: schemaId })),
     dataset = datasetQuery.data,
-    view = search.view === "structure" ? "structure" : "entries",
-    tableState = pgTableStateFromParams(search),
+    // The active tab rides ?view= (merge-form navigations only); "overview"
+    // is the default and deliberately ABSENT from the URL (the ui-polish
+    // rule). The Convex-only tabs' tokens (analyze/history/transform) degrade
+    // to overview — the PG page doesn't mount them.
+    view = search.view === "entries" || search.view === "structure" ? search.view : "overview",
+    // The RPC validates sort/filter keys against the dataset's declared
+    // `properties` column — the SAME set here (the row's column, not a
+    // schema re-derivation). Until the row lands the set is empty: one
+    // default-state tick, then the sanitized state restarts the page chain.
+    declaredKeys =
+      dataset === undefined || dataset === null
+        ? NO_DECLARED_KEYS
+        : new Set<string>(dataset.properties),
+    tableState = sanitizePgTableState(pgTableStateFromParams(search), declaredKeys),
     // The declared property types: the server-mode filter menus read them for
     // their variant + served-operator restriction, and the RPC args coerce
     // filter values to the column's type (eq is jsonb containment — the text
@@ -280,6 +300,15 @@ function PostgresDatasetBody({
     referenceFields =
       dataset === undefined || dataset === null ? [] : getReferenceFields(dataset.jsonSchema),
     labelsByField = useSplitReferenceLabels(referenceFields, rows),
+    // The dataset's group, for the breadcrumb — skipped unless the dataset
+    // is grouped; `null` (a dangling groupId whose group was deleted) drops
+    // the crumb, exactly the Convex page's rule.
+    groupQuery = useQuery({
+      ...groupsStore.getQueryOptions({
+        groupId: dataset === undefined || dataset === null ? "" : (dataset.groupId ?? ""),
+      }),
+      enabled: dataset !== undefined && dataset !== null && dataset.groupId !== null,
+    }),
     [deleteTarget, setDeleteTarget] = useState<DatasetEntryRow | undefined>(undefined),
     [jsonDefinitionOpen, setJsonDefinitionOpen] = useState(false);
 
@@ -298,6 +327,7 @@ function PostgresDatasetBody({
   const me = session === null ? undefined : { authId: session.user.id },
     isCreator = me !== undefined && me.authId === dataset.createdBy,
     lockedForViewer = isLockedForViewer(dataset, me),
+    groupForBreadcrumb = groupQuery.data,
     displayCount = dataset.entryCount,
     isEmpty = displayCount === 0 && pages.isComplete,
     // Table-state patches ride the route's merge-form navigation — only the
@@ -376,6 +406,23 @@ function PostgresDatasetBody({
               <BreadcrumbItem>
                 <BreadcrumbLink render={<Link to="/datasets" />}>Datasets</BreadcrumbLink>
               </BreadcrumbItem>
+              {/* The group crumb mirrors the Convex page's trail (Datasets /
+                  {group} / {dataset}); a dangling groupId renders no crumb
+                  rather than a dead link. `null` = skipped. */}
+              {groupForBreadcrumb !== null && groupForBreadcrumb !== undefined && (
+                <>
+                  <BreadcrumbSeparator />
+                  <BreadcrumbItem>
+                    <BreadcrumbLink
+                      render={
+                        <Link to="/groups/$groupId" params={{ groupId: groupForBreadcrumb.id }} />
+                      }
+                    >
+                      {groupForBreadcrumb.name}
+                    </BreadcrumbLink>
+                  </BreadcrumbItem>
+                </>
+              )}
               <BreadcrumbSeparator />
               <BreadcrumbItem>
                 <BreadcrumbPage>{dataset.title}</BreadcrumbPage>
@@ -462,13 +509,25 @@ function PostgresDatasetBody({
       <Tabs
         value={view}
         onValueChange={(value) => {
-          onPatchSearch({ view: value === "entries" ? undefined : value });
+          // Tab switches write ?view= so the active tab survives reloads and
+          // is linkable; "overview" is the default and stays out of the URL
+          // (the ui-polish rule). The route's navigate MERGES — never
+          // replaces — so ?panel=/?q= ride along.
+          onPatchSearch({ view: value === "overview" ? undefined : value });
         }}
       >
         <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="entries">Data ({displayCount})</TabsTrigger>
           <TabsTrigger value="structure">Structure</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="overview" className="space-y-6">
+          <PgDatasetOverview
+            dataset={dataset}
+            lockedHint={lockedForViewer ? LOCKED_DATASET_HINT : undefined}
+          />
+        </TabsContent>
 
         <TabsContent value="entries">
           <Card>

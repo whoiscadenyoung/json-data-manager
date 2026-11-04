@@ -29,7 +29,13 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { DatasetPickerSheet } from "#/components/dataset-picker-sheet";
-import { CollectionAddSheet, CollectionFormPanel, GroupFormPanel } from "#/features/catalog";
+import {
+  CollectionAddSheet,
+  CollectionFormPanel,
+  GroupFormPanel,
+  PgCollectionPage,
+  isPostgresCatalogId,
+} from "#/features/catalog";
 import { type Dataset, DatasetList, type GroupDoc } from "#/features/datasets";
 import { AddToMapSheet, CollectionExtentMap } from "#/features/maps";
 import { errorMessage } from "#/lib/errors";
@@ -197,8 +203,20 @@ function CollectionMapSection({ datasets }: { datasets: Dataset[] }) {
 
 // oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 function CollectionDetailPage() {
-  const { collectionId } = Route.useParams(),
-    navigate = useNavigate(),
+  const { collectionId } = Route.useParams();
+  // Transitional split (design doc §14, the dataset page's pattern): the id
+  // says where the row was created — Postgres collections (uuid ids, stage 3)
+  // mount the store-backed page; every pre-migration Convex collection keeps
+  // rendering exactly as it does today through its Convex surface.
+  if (isPostgresCatalogId(collectionId)) {
+    return <PgCollectionPage collectionId={collectionId} />;
+  }
+  return <ConvexCollectionDetailPage collectionId={collectionId} />;
+}
+
+// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
+function ConvexCollectionDetailPage({ collectionId }: { collectionId: string }) {
+  const navigate = useNavigate(),
     collection = useQuery(api.cms.collections.get, { collectionId }),
     collections = useQuery(api.cms.collections.list),
     groups = useQuery(api.cms.groups.list, { collectionId, limit: 500 }),

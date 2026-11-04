@@ -122,7 +122,8 @@ export interface DatasetSummaryRow {
   mapTileArchiveFormat: number | null;
 }
 
-const SUMMARY_SELECT = [
+/** The list-page projection's select — exported for the catalog embeds (`collections.listDatasets` joins it through `collection_datasets`). */
+export const SUMMARY_SELECT = [
   "id",
   "title",
   "description",
@@ -147,8 +148,8 @@ const SUMMARY_SELECT = [
   "mapTileArchiveFormat:map_tile_archive_format",
 ].join(",");
 
-/** The full row: the summary columns plus the heavy payload and archive bookkeeping. */
-const FULL_SELECT = [
+/** The full row: the summary columns plus the heavy payload and archive bookkeeping. Exported for the catalog embeds (see `SUMMARY_SELECT`). */
+export const DATASET_FULL_SELECT = [
   "id",
   "title",
   "description",
@@ -206,7 +207,7 @@ export function listQueryOptions(options?: StoreOptions) {
       await queryRows<DatasetRow>(
         clientOf(options)
           .from("datasets")
-          .select(FULL_SELECT)
+          .select(DATASET_FULL_SELECT)
           .order("created_at", { ascending: false })
           .limit(CATALOG_READ_LIMIT),
       ),
@@ -254,7 +255,11 @@ export function getQueryOptions(args: { datasetId: string }, options?: StoreOpti
     queryKey: ["pg:datasets", "get", args],
     queryFn: async () =>
       await queryRow<DatasetRow>(
-        clientOf(options).from("datasets").select(FULL_SELECT).eq("id", args.datasetId).limit(1),
+        clientOf(options)
+          .from("datasets")
+          .select(DATASET_FULL_SELECT)
+          .eq("id", args.datasetId)
+          .limit(1),
       ),
   });
 }
@@ -310,6 +315,29 @@ export function maxTileCacheVersionQueryOptions(options?: StoreOptions) {
   });
 }
 
+/**
+ * One creator's datasets as the light summary projection — the profile
+ * page's per-creator listing (`/users/$userId` keyed by `created_by`, the
+ * pre-migration users-mirror shape). RLS scopes it like every catalog read:
+ * the creator's drafts and author-only rows appear only to their creator.
+ */
+export function listByCreatorQueryOptions(args: { createdBy: string }, options?: StoreOptions) {
+  return queryOptions({
+    queryKey: ["pg:datasets", "listByCreator", args],
+    queryFn: async () => {
+      const rows = await queryRows<DatasetSummaryWire>(
+        clientOf(options)
+          .from("datasets")
+          .select(SUMMARY_SELECT)
+          .eq("created_by", args.createdBy)
+          .order("created_at", { ascending: false })
+          .limit(CATALOG_READ_LIMIT),
+      );
+      return rows.map(summaryOf);
+    },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Writes (plain functions; features wrap them in useMutation + invalidation)
 // ---------------------------------------------------------------------------
@@ -324,8 +352,6 @@ export interface CreateDatasetArgs {
   simplifyGeometry?: boolean;
   /** Host-flow-only, as in the component: only the import flow may create a draft. */
   lifecycle?: "draft" | "published";
-  /** Frozen-version lineage (host flows only). */
-  lineage?: unknown;
   /** Bound-dataset marker (host flows only). */
   source?: { name: string };
   publishedVisibility?: "everyone" | "author";
@@ -365,8 +391,13 @@ function schemaDescription(schema: Record<string, unknown>): string | null {
  */
 export async function create(args: CreateDatasetArgs, options?: StoreOptions): Promise<string> {
   assertValidSchemaPayload(args.schema);
-  // `source`/`lineage` stay ABSENT when not given (host-flow-only fields —
-  // the component's create omits them for ordinary datasets too).
+  // `source` stays ABSENT when not given (host-flow-only field — the
+  // component's create omits it for ordinary datasets too). There is no
+  // `lineage` argument: the datasets INSERT policy can never admit a
+  // non-null lineage (a frozen row is absolute read-only, ADR 0009 — the
+  // with-check re-stated predicate rejects it), so the advertised argument
+  // was dead weight; frozen versions materialize through the stage-4
+  // definer publish path instead.
   const insert: Record<string, unknown> = {
     description: schemaDescription(args.schema),
     geometry_type: args.geometryType ?? null,
@@ -378,9 +409,6 @@ export async function create(args: CreateDatasetArgs, options?: StoreOptions): P
     simplify_geometry: args.simplifyGeometry ?? false,
     title: args.schema.title,
   };
-  if (args.lineage !== undefined) {
-    insert.lineage = args.lineage;
-  }
   if (args.source !== undefined) {
     insert.source = args.source;
   }

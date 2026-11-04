@@ -15,11 +15,27 @@ import { Calendar, UserX } from "lucide-react";
 
 import { DatasetTypeTags } from "#/components/dataset-type-tags";
 import { UserAvatar } from "#/components/user-avatar";
+import { PgProfilePage, isPostgresCatalogId } from "#/features/catalog";
 import { api } from "#convex/_generated/api";
 
 export const Route = createFileRoute("/users/$userId")({
   component: UserProfilePage,
 });
+
+/**
+ * The route's origin branch (design doc §14): a Postgres profile id (a uuid
+ * — the auth uid, which PG datasets stamp as `created_by`) mounts the
+ * store-backed profile page; a Convex Better Auth id (dash-free) keeps the
+ * legacy Convex profile page. The two id spaces are disjoint, so the id IS
+ * the creation record.
+ */
+function UserProfilePage() {
+  const { userId } = Route.useParams();
+  if (isPostgresCatalogId(userId)) {
+    return <PgProfilePage profileId={userId} />;
+  }
+  return <ConvexUserProfilePage userId={userId} />;
+}
 
 type ProfileDataset = FunctionReturnType<typeof api.users.profile>["datasets"][number];
 
@@ -74,11 +90,8 @@ function ProfileDatasetCard({ dataset }: { dataset: ProfileDataset }) {
   );
 }
 
-function UserProfilePage() {
-  const { userId } = Route.useParams(),
-    // `userId` is the Better Auth user id — the same string the component
-    // stamps as `schemas.createdBy` (users.authId on the mirror row).
-    profile = useQuery(api.users.profile, { authId: userId }),
+function ConvexUserProfilePage({ userId }: { userId: string }) {
+  const profile = useQuery(api.users.profile, { authId: userId }),
     me = useQuery(api.users.me),
     isMe = me !== undefined && me !== null && me.authId === userId;
 

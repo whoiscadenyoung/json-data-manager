@@ -31,13 +31,29 @@ import {
   resolveGeometryRows,
 } from "./dataset-rows-pg";
 
+/**
+ * The row fixture. The `id` slot rides the uuid wire shape via `uuidOf` —
+ * the keyset pager encodes the last row's id into a continuation cursor, and
+ * the store's cursor decode guard (the or= injection fix) rejects anything
+ * that is not the store's own wire shape. `data.id` keeps the short key so
+ * data-side assertions stay readable.
+ */
+function uuidOf(key: string): string {
+  const hex = Array.from(key)
+    .map((char) => char.charCodeAt(0).toString(16).padStart(2, "0"))
+    .join("")
+    .padEnd(12, "0")
+    .slice(0, 12);
+  return `00000000-0000-4000-8000-${hex}`;
+}
+
 function entryRow(id: string, overrides: Partial<DatasetEntryRow> = {}): DatasetEntryRow {
   return {
     createdAt: "2026-11-03T00:00:00+00:00",
     data: { id },
     datasetId: "d1",
     geometryType: null,
-    id,
+    id: uuidOf(id),
     ...overrides,
   };
 }
@@ -96,13 +112,14 @@ describe("forEachDatasetEntryPage", () => {
     // trimmed into the continuation); second page exhausts.
     expect(seen.length).toBe(2);
     expect(seen[0]).toHaveLength(ENTRIES_FETCH_PAGE_SIZE);
-    expect(seen[0][0]).toBe("e1");
-    expect(seen[1]).toStrictEqual(["last"]);
+    expect(seen[0][0]).toBe(uuidOf("e1"));
+    expect(seen[1]).toStrictEqual([uuidOf("last")]);
     expect(queries.length).toBe(2);
     // The second page resumes from the encoded (created_at, id) tuple of the
-    // first page's last row — the keyset filter, no OFFSET.
+    // first page's last row — the keyset filter, no OFFSET. Both tuple values
+    // ride QUOTED (the cursor injection guard's quoted-value form).
     expect(firstArg(queryAt(queries, 1), "or")).toBe(
-      `and(created_at.eq.2026-11-03T00:00:00+00:00,id.lt.e${ENTRIES_FETCH_PAGE_SIZE}),created_at.lt.2026-11-03T00:00:00+00:00`,
+      `and(created_at.eq."2026-11-03T00:00:00+00:00",id.lt."${uuidOf(`e${ENTRIES_FETCH_PAGE_SIZE}`)}"),created_at.lt."2026-11-03T00:00:00+00:00"`,
     );
   });
 
@@ -134,8 +151,8 @@ describe("fetchDatasetEntryRows", () => {
     );
     const rows = await fetchDatasetEntryRows("d1", { supabase: client });
     expect(rows.length).toBe(ENTRIES_FETCH_PAGE_SIZE + 1);
-    expect(rows[0]).toMatchObject({ id: "e1" });
-    expect(rows[ENTRIES_FETCH_PAGE_SIZE]).toMatchObject({ id: "last" });
+    expect(rows[0]).toMatchObject({ id: uuidOf("e1") });
+    expect(rows[ENTRIES_FETCH_PAGE_SIZE]).toMatchObject({ id: uuidOf("last") });
   });
 });
 

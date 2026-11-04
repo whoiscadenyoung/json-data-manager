@@ -108,6 +108,32 @@ export function pgTableStateFromParams(params: PgTableParams): PgTableState {
   };
 }
 
+/**
+ * Drops the state rows whose column key the dataset does NOT declare — the
+ * second URL-degrade layer, for a param that is STRUCTURALLY valid but names
+ * an undeclared property. Without it, a hand-edited `sort`/`filters` value
+ * rides to `search_entries`, whose key validation raises `invalid key` — the
+ * rejected query threw into the page's error boundary, whose fallback is the
+ * "Dataset Not Found" card, for an EXISTING dataset (the tranche-1 review
+ * defect). A dropped row reads as the DEFAULT state (no sort / fewer
+ * filters), the same degrade-to-fewer rule the malformed-param parse above
+ * follows. The empty set (dataset row not loaded yet) degrades to the full
+ * default state for one tick until the declared keys arrive.
+ *
+ * `q` passes through untouched: it is websearch TEXT, parsed safely inside
+ * the RPC, and nothing about it can make the RPC reject.
+ */
+export function sanitizePgTableState(
+  state: PgTableState,
+  declaredKeys: ReadonlySet<string>,
+): PgTableState {
+  return {
+    filters: state.filters.filter((filter) => declaredKeys.has(filter.id)),
+    query: state.query,
+    sorting: state.sorting.filter((entry) => declaredKeys.has(entry.id)),
+  };
+}
+
 /** The search-param patch for a table state — absent values are dropped from the URL entirely (the default state never appears). */
 export function pgTableParamsFromState(state: PgTableState): PgTableParams {
   const params: PgTableParams = {};
