@@ -9,11 +9,13 @@ import {
 import { Input } from "@caden/ui/components/input";
 import { Label } from "@caden/ui/components/label";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useConvexAuth } from "convex/react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { supabase } from "#/integrations/supabase/client";
 import { useSession } from "#/integrations/supabase/provider";
+import { authClient } from "#/lib/auth-client";
 
 /**
  * Where to go after signing in: an in-app path only (a leading single "/"),
@@ -34,27 +36,41 @@ export const Route = createFileRoute("/signin")({
 });
 
 /**
- * Supabase email + password sign-in (design doc §9, the stage-0 auth swap).
+ * Supabase email + password sign-in (design doc §9, the stage-0 auth swap),
+ * with the stage-0 session bridge: the still-mounted Convex half is fed
+ * solely by its Better Auth session (integrations/convex/provider.tsx) and
+ * app/convex/auth.ts rejects unauthenticated callers on every exposed read
+ * AND write — a Supabase session alone would open the gate over a fully
+ * unauthenticated Convex backend, the endless-skeleton failure mode #135
+ * built the gate to prevent. So the same credentials sign in to BOTH
+ * stores: the GoTrue session via `@supabase/ssr` cookies, and the Better
+ * Auth session via `authClient` (the Convex provider picks that up
+ * reactively — navigating home is enough). Accounts must exist in both
+ * stores with the same credentials; the §9 recipe mints the pair. If the
+ * bridge half fails, the Supabase half is rolled back so neither session
+ * is left live — the gate opens only when both exist.
+ *
  * There is deliberately no sign-up path, exactly as before: the public auth
- * surface has new-user signups disabled (the ADR 0009 addendum carries over
- * — the trusted-collaborator model), so accounts are minted by the operator
- * with the service-role key or the local Studio; see the design doc's
- * signup-gating note. The session lands in cookies via `@supabase/ssr` and
- * the auth provider picks it up reactively — navigating home is enough.
+ * surface has new-user signups disabled on both halves (the ADR 0009
+ * addendum carries over — the trusted-collaborator model), so accounts are
+ * minted by the operator; see the design doc's signup-gating note.
  */
 function SignInPage() {
   const navigate = useNavigate(),
     { redirect } = Route.useSearch(),
-    { session } = useSession();
+    { session } = useSession(),
+    { isAuthenticated } = useConvexAuth();
 
-  // Already signed in — or the session went live just after a sign-in whose
+  // Already signed in — or the sessions went live just after a sign-in whose
   // navigation raced it (the gate bounced the visitor back here): go on to
-  // where they were headed.
+  // where they were headed. Both halves must be up — the gate opens only on
+  // both — so watching either alone would bounce a half-signed-in visitor
+  // into a /signin ⇄ home redirect loop.
   useEffect(() => {
-    if (session !== null) {
+    if (session !== null && isAuthenticated) {
       void navigate({ href: redirect ?? "/", replace: true });
     }
-  }, [session, navigate, redirect]);
+  }, [session, isAuthenticated, navigate, redirect]);
   const [busy, setBusy] = useState(false);
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -72,6 +88,23 @@ function SignInPage() {
       });
       if (error !== null) {
         toast.error(error.message ?? "That didn't work — try again.");
+        return;
+      }
+      // The stage-0 bridge: the same credentials into the Better Auth store
+      // the Convex half rides. A failure here must not leave a half-open
+      // sign-in (the gate opens only when both sessions exist), so the
+      // Supabase half is rolled back and the reason surfaced — the usual
+      // cause is an account minted on only one side.
+      const bridge = await authClient.signIn.email({
+        email: field("email"),
+        password: field("password"),
+      });
+      if (bridge.error !== null) {
+        await supabase.auth.signOut();
+        toast.error(
+          (bridge.error.message ?? "That didn't work — try again.") +
+            " The app signs in to both auth stores — ask the maintainer to mint the account in both.",
+        );
         return;
       }
       await (redirect === undefined ? navigate({ to: "/" }) : navigate({ href: redirect }));

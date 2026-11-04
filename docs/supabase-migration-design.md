@@ -121,7 +121,11 @@ create function public.handle_new_user() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
   insert into public.profiles (id, email, email_verified, name, image)
-  values (new.id, new.email, coalesce(new.email_confirmed_at is not null, false),
+  -- confirmed_at, not email_confirmed_at: the pinned CI image
+  -- (supabase/postgres 15.8.1.049) carries only confirmed_at; the local
+  -- CLI 3.0.0 stack has both. confirmed_at is set whenever GoTrue marks
+  -- the account confirmed, so it is the portable signal.
+  values (new.id, new.email, coalesce(new.confirmed_at is not null, false),
           new.raw_user_meta_data->>'name', new.raw_user_meta_data->>'avatar_url');
   return new;
 end $$;
@@ -1021,18 +1025,44 @@ manual mode for the server concerns:
   `integrations/convex/provider.tsx` STAYS MOUNTED until stage 7 — both
   auth halves coexist; `useConvexAuth` keeps answering for Convex surfaces
   while the new `useSession` answers for PG surfaces.
-- **Rewired at stage 0:** `components/auth-gate.tsx` (useConvexAuth →
-  `useSession`; the gate keeps its exact shape — spinner while resolving,
-  redirect remembering `?redirect=`), `components/header.tsx` (user chip
-  from `store/profiles.self`), `routes/signin.tsx`
-  (`authClient.signInWithPassword({email, password})`; same
-  busy-state/redirect/safeRedirect semantics).
+- **Rewired at stage 0:** `components/auth-gate.tsx`, `components/header.tsx`
+  (user chip from the GoTrue user metadata at stage 0; a profiles read
+  replaces it when the store modules land, §3.1/§8.1), `routes/signin.tsx`
+  (same busy-state/redirect/safeRedirect semantics), and sign-out in
+  `components/header.tsx` (below).
+- **Stage-0 session bridge (review-mandated).** The still-mounted Convex
+  provider is fed SOLELY by its Better Auth session
+  (`ConvexBetterAuthProvider authClient`), and `app/convex/auth.ts` rejects
+  unauthenticated callers on every exposed read AND write — so a sign-in
+  that wrote only a Supabase session would open the gate over a fully
+  unauthenticated Convex backend (the endless-skeleton failure mode #135
+  built the gate to prevent). Stage 0 is therefore a two-session world:
+  - `routes/signin.tsx` signs the same credentials into BOTH stores —
+    `supabase.auth.signInWithPassword` first, then the bridge
+    `authClient.signIn.email` for the Better Auth session. If the bridge
+    half fails, the Supabase half is rolled back (`signOut`) so neither
+    session is left live, and the reason is surfaced — the usual cause is
+    an account minted on only one side.
+  - `components/auth-gate.tsx` opens only when BOTH halves resolved
+    signed-in (`useSession` session AND `useConvexAuth` authenticated);
+    the spinner/redirect shape is unchanged. The routed tree still queries
+    only Convex at stage 0, so the Convex half is load-bearing; the
+    Supabase half must also be up or the PG surfaces (stage 1+) and the
+    header chip would hang half-signed-in. `/signin` auto-redirects only
+    on both, so a half-signed-in visitor cannot loop.
+  - Sign-out ends both sessions (`supabase.auth.signOut()` +
+    `authClient.signOut()`), so no legacy Better Auth cookie outlives it.
 - **Signup gating carries (ADR 0009 addendum):** Supabase Auth has "Disable
   new user signups" enabled (`config.toml` / dashboard) — the public surface
-  is sign-in only; accounts are admin-created via the service-role key
-  (`auth.admin.createUser` with `email_confirm: true`) by the operator.
-  Local recipe: `supabase admin create-user` or a Dashboard action;
-  the design keeps the "ask the maintainer for an account" UX copy.
+  is sign-in only; accounts are admin-created by the operator AS A PAIR with
+  matching credentials (the bridge signs the same email/password into both):
+  the Supabase user via the service-role key (`auth.admin.createUser` with
+  `email_confirm: true` — local recipe: `supabase admin create-user` or a
+  Dashboard action) AND the Better Auth account via
+  `bunx convex run auth:createAccount '{"email": …, "password": …, "name":
+…}'` (local backend: add `--url http://127.0.0.1:3212 --admin-key …`;
+  password ≥ 8 chars, app/convex/auth.ts). The design keeps the
+  "ask the maintainer for an account" UX copy.
 - **Token plumbing retired:** `lib/convex-auth-token.ts` and the
   Better-Auth→Convex JWT feed die at stage 7; until then they serve only
   the still-mounted Convex half.
@@ -1289,3 +1319,38 @@ app/src/lib/supabase/database.types.ts` (oxfmt-formatted). `public` is
   the daemon, then `bunx supabase start` in the repo root (stack state
   persists in the Docker volumes; no reset needed unless schema changed —
   then `bunx supabase db reset`).
+
+**Review-fix addendum (2026-11-03, PR #207).** The stage-0 review found two
+must-fix gaps; both are fixed and verified as below.
+
+- `supabase/migrations/0002_profiles.sql` now ships the §3.1 half of the
+  stage-0 contract (table, `handle_new_user`, RLS projection). One
+  deliberate deviation from the §3.1 sketch, recorded there too: the
+  trigger reads `confirmed_at`, not `email_confirmed_at` — the pinned CI
+  image (supabase/postgres 15.8.1.049) carries only `confirmed_at` (checked
+  in `information_schema.columns`), while the local CLI 3.0.0 stack has
+  both; `confirmed_at` is set whenever GoTrue marks the account confirmed.
+- Verified in a throwaway `supabase/postgres:15.8.1.049` container
+  replicating the §12 CI store gate (both migrations applied in lexical
+  order as `supabase_admin`, `ON_ERROR_STOP=1`, both clean), plus smoke
+  tests in that container: an `auth.users` insert mints the matching
+  profiles row (confirmed → `email_verified true`, unconfirmed → false;
+  `raw_user_meta_data` name/avatar projected); RLS as a signed-in user
+  reads every profile and updates ONLY the self row (`auth.uid()` via
+  `request.jwt.claim.sub` — this image's `auth.uid()` reads that GUC, not
+  the whole-claims JSON); anon sees 0 rows; deleting the auth user removes
+  the profile (cascade).
+- NOT verified here: the live sign-in flow end-to-end (the app dev server
+  and the local Convex backend were not running during this fix run). The
+  §9 account-pair recipe (service-role/Studio user + matching
+  `auth:createAccount`) and the two-session bridge's runtime behavior are
+  to be exercised by the §15 step-3 verification before the stage is
+  declared done.
+- Local-stack note: the running local DB already carries a hand-applied
+  profiles schema (matches §3.1 modulo policy names, `confirmed_at`-era
+  trigger body) plus §3.2-sketch tables (datasets/entries/geometries/
+  imports/entry_references) that were applied outside `supabase/migrations/`
+  (§17 recorded `public` as empty at scaffold time — this arrived after).
+  0002 was therefore NOT applied to the running local DB; it applies
+  cleanly on a fresh database, and the next `supabase db reset` rebuilds
+  the local stack from the shipped migration set.
