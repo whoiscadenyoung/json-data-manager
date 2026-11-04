@@ -185,7 +185,11 @@ describe.skipIf(!dbUp() || !storageUp())("dataset-shaped buckets (§6)", () => {
     );
     expect(pol[0].qual as string).toMatch(/can_edit_dataset/i);
     expect(pol[0].qual as string).toMatch(/owner/i);
-    expect(pol[0].qual as string).toMatch(/auth\.uid/i);
+    // The qual text is session-dependent: under the supabase admin
+    // search_path (which includes auth, verified against the pinned CI
+    // image) auth.uid() renders unqualified as `uid()` — match the call,
+    // not its qualification.
+    expect(pol[0].qual as string).toMatch(/uid\(\)/i);
 
     await dropDatasets(s(), [datasetId]);
   });

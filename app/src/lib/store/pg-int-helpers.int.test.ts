@@ -388,22 +388,35 @@ export class PgSession {
     }
   }
 
-  /** Become an authenticated user for the current transaction. */
+  /** Become an authenticated user for the current transaction.
+   *
+   * Sets BOTH auth.uid() GUC generations: newer supabase stacks' auth.uid()
+   * parses the whole-claims JSON (`request.jwt.claims`), while the baked
+   * auth schema of the bare supabase/postgres image (CI's service
+   * container) reads `request.jwt.claim.sub` only (design §3.1 stage-0
+   * review addendum) — setting both keeps every image family's auth.uid()
+   * working. Both are cleared on every switch (asAnon/asAdmin and role
+   * changes below): with claims-only the bare image's auth.uid() would
+   * otherwise keep returning the PREVIOUS user after a mid-transaction
+   * asUser switch, since set local role does not touch GUCs. */
   async asUser(userId: string): Promise<void> {
     await this.expectOk("set local role authenticated");
     await this.expectOk(
       `select set_config('request.jwt.claims', ${sqlLit(JSON.stringify({ sub: userId, role: "authenticated" }))}, true)`,
     );
+    await this.expectOk(`select set_config('request.jwt.claim.sub', ${sqlLit(userId)}, true)`);
   }
 
   async asAnon(): Promise<void> {
     await this.expectOk("set local role anon");
     await this.expectOk(`select set_config('request.jwt.claims', '', true)`);
+    await this.expectOk(`select set_config('request.jwt.claim.sub', '', true)`);
   }
 
   async asAdmin(): Promise<void> {
     await this.expectOk("reset role");
     await this.expectOk(`select set_config('request.jwt.claims', '', true)`);
+    await this.expectOk(`select set_config('request.jwt.claim.sub', '', true)`);
   }
 
   async close(): Promise<void> {
@@ -477,12 +490,24 @@ function quote(text: string): string {
 // Fixture helpers
 // ---------------------------------------------------------------------------
 
-/** Create the fixture users (idempotent); the profiles trigger runs. */
+/** Create the fixture users (idempotent); the profiles trigger runs.
+ *
+ * confirmed_at, not email_confirmed_at: the baked auth schema of every
+ * supabase/postgres image (CI's bare service container included) carries
+ * ONLY confirmed_at — referencing email_confirmed_at fails with 42703 there
+ * — while CLI 3.x stacks that run newer GoTrue migrations carry
+ * email_confirmed_at as the insertable column (there confirmed_at is
+ * GENERATED ALWAYS from it, so an explicit confirmed_at insert fails with
+ * "cannot insert a non-DEFAULT value"). No fixed column list fits both
+ * image families, so the confirmation column is probed once per worker
+ * (see confirmedColumn below) and the insert is built around whichever
+ * column the target stack accepts. */
 export async function ensureUsers(session: PgSession): Promise<void> {
+  const confirmed = confirmedColumn;
   await session.expectOk(
-    `insert into auth.users (id, email, encrypted_password, aud, role, email_confirmed_at, created_at, updated_at)
-     values (${sqlLit(ALICE)}, 'alice@pg-int.test', '', 'authenticated', 'authenticated', now(), now(), now()),
-            (${sqlLit(BOB)}, 'bob@pg-int.test', '', 'authenticated', 'authenticated', now(), now(), now())
+    `insert into auth.users (id, email, encrypted_password, aud, role${confirmed === undefined ? "" : `, ${confirmed}`}, created_at, updated_at)
+     values (${sqlLit(ALICE)}, 'alice@pg-int.test', '', 'authenticated', 'authenticated'${confirmed === undefined ? "" : ", now()"}, now(), now()),
+            (${sqlLit(BOB)}, 'bob@pg-int.test', '', 'authenticated', 'authenticated'${confirmed === undefined ? "" : ", now()"}, now(), now())
      on conflict (id) do nothing`,
   );
 }
@@ -530,8 +555,19 @@ export async function dropDatasets(session: PgSession, ids: string[]): Promise<v
 }
 
 // Probe the stack once per worker so every test file can `skipIf(!dbUp())`.
+// The same probe resolves the auth.users confirmation column ensureUsers may
+// insert (email_confirmed_at on GoTrue-migrated CLI 3.x stacks, whose
+// confirmed_at is GENERATED ALWAYS; confirmed_at on the baked-schema images
+// CI's bare service container runs — see ensureUsers).
+let confirmedColumn: "email_confirmed_at" | "confirmed_at" | undefined;
 try {
   const probe = await PgSession.connect(DB_URL);
+  const confirmed = await probe.expectOk(
+    `select column_name from information_schema.columns
+      where table_schema = 'auth' and table_name = 'users'
+        and column_name = 'email_confirmed_at'`,
+  );
+  confirmedColumn = confirmed.length > 0 ? "email_confirmed_at" : "confirmed_at";
   await probe.close();
   probed = true;
 } catch (error) {

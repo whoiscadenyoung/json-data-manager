@@ -26,11 +26,20 @@ create index profiles_by_email on public.profiles (email);
 -- and `postgres` may create triggers on auth.users (verified against the
 -- local stack; CI's bare service container of the same image behaves
 -- identically), so no DO-block guard is needed here.
+-- confirmed_at, not email_confirmed_at: the baked auth schema of every
+-- supabase/postgres image (including the pinned
+-- public.ecr.aws/supabase/postgres:15.19.0.016 CI/local base — checked in
+-- information_schema.columns) carries ONLY confirmed_at, while the CLI 3.x
+-- stacks that run newer GoTrue migrations on top have both. confirmed_at is
+-- set whenever GoTrue marks the account confirmed, so it is the portable
+-- signal (docs/supabase-migration-design.md §3.1 and the stage-0 review
+-- addendum); referencing email_confirmed_at here made every auth.users
+-- insert fail with "record new has no field email_confirmed_at" on CI.
 create function public.handle_new_user() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
   insert into public.profiles (id, email, email_verified, name, image)
-  values (new.id, new.email, coalesce(new.email_confirmed_at is not null, false),
+  values (new.id, new.email, coalesce(new.confirmed_at is not null, false),
           new.raw_user_meta_data->>'name', new.raw_user_meta_data->>'avatar_url');
   return new;
 end $$;
