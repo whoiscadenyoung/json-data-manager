@@ -435,21 +435,41 @@ export async function setBundleCollection(
 /**
  * Marks the map legs linked: mints ONE float consumer_reference per direct
  * dataset layer target (`consumer_kind: "map"`, consumer_id = the map id —
- * the layer reads' chain-resolution leg, bundles.linkMapLayers), keyed on
- * the CURRENT targets the caller read, reconciling stale edges away.
+ * the layer reads' chain-resolution leg, bundles.linkMapLayers), reconciling
+ * stale edges away.
+ *
+ * The CURRENT layer list is RE-READ here, at leg time — never the
+ * press-time snapshot the plan carried (bundles.ts:1060-1123's recorded
+ * rule): a layer removed between `start` and this leg must not gain an
+ * edge, and an edge whose layer is gone must not survive the leg. A linked
+ * member skipped by a resumed press re-walks here and self-heals.
  * Returns the affected member-row count (the "linked" stamps).
  */
 export async function linkMapLayers(
   args: {
     bundleId: string;
-    /** Per map member: the map id and its CURRENT dataset-layer targets. */
-    maps: Array<{ mapId: string; memberId: string; targets: ReadonlyArray<string> }>;
+    /** Per map member: the map id (its member row gets the "linked" stamp). */
+    maps: Array<{ mapId: string; memberId: string }>;
   },
   options?: StoreOptions,
 ): Promise<number> {
   const client = clientOf(options);
   let linked = 0;
   for (const map of args.maps) {
+    // The leg-time layer read (bundles.ts runs maps.listMapLayers in the
+    // same position) — the snapshot the plan carried is never consulted.
+    // oxlint-disable-next-line eslint/no-await-in-loop -- one layers read + one edge scan per map member, bounded by the run's member count (the linkMapLayers walk).
+    const layerRows = await queryRows<{ targetId: string | null }>(
+      client
+        .from("map_layers")
+        .select("targetId:target_id")
+        .eq("map_id", map.mapId)
+        .eq("target_type", "dataset")
+        .limit(500),
+    );
+    const currentTargets = new Set(
+      layerRows.flatMap((row) => (row.targetId === null ? [] : [row.targetId])),
+    );
     // oxlint-disable-next-line eslint/no-await-in-loop -- one layers read + one edge scan per map member, bounded by the run's member count (the linkMapLayers walk).
     const existing = await queryRows<{
       consumerId: string;
@@ -459,9 +479,9 @@ export async function linkMapLayers(
       client
         .from("consumer_references")
         .select("id,consumerId:consumer_id,sourceDatasetId:source_dataset_id")
-        .eq("consumer_id", map.mapId),
+        .eq("consumer_id", map.mapId)
+        .eq("consumer_kind", "map"),
     );
-    const currentTargets = new Set(map.targets);
     for (const edge of existing) {
       const source = edge.sourceDatasetId;
       if (source !== null && !currentTargets.has(source)) {

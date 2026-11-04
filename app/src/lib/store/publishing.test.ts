@@ -21,6 +21,7 @@ import {
   type BundleMemberRow,
 } from "./publishing";
 import {
+  allArgs,
   argsOf,
   firstArg,
   postgrestError,
@@ -302,12 +303,18 @@ describe("publishing writes — the press's legs", () => {
     expect(firstArg(close, "update")).toMatchObject({ status: "failed" });
   });
 
-  it("linkMapLayers reconciles edges to the CURRENT targets and stamps members linked", async () => {
+  it("linkMapLayers re-reads the CURRENT map_layers at leg time and reconciles edges to them", async () => {
     const { client, queries, respond } = stubSupabase();
+    // The leg-time reads, per map: FIRST the current layer list, THEN the
+    // existing edges (the bundles.ts:1060-1123 order). The layer list says
+    // d1 + d2 — NOT any press-time snapshot the member row may carry.
     let step = 0;
-    respond((_query) => {
+    respond((query) => {
       step += 1;
-      if (step === 1) {
+      if (query.table === "map_layers") {
+        return { data: [{ targetId: "d1" }, { targetId: "d2" }] };
+      }
+      if (query.table === "consumer_references") {
         // Existing edges: one stale target + one current.
         return {
           data: [
@@ -318,13 +325,35 @@ describe("publishing writes — the press's legs", () => {
       }
       return { data: [{ id: "x" }] };
     });
+    // The args carry NO targets — the leg reads the layers itself.
     const linked = await linkMapLayers(
-      { bundleId: "b1", maps: [{ mapId: "map-1", memberId: "m-map", targets: ["d1", "d2"] }] },
+      { bundleId: "b1", maps: [{ mapId: "map-1", memberId: "m-map" }] },
       { supabase: client },
     );
     expect(linked).toBe(1);
-    const tables = queries.map((query) => query.table);
-    expect(tables.includes("consumer_references")).toBe(true);
+    // The layers read came FIRST, gated to the map's dataset layers.
+    const layersRead = queryAt(queries, 0);
+    expect(layersRead.table).toBe("map_layers");
+    expect(allArgs(layersRead, "eq")).toStrictEqual([
+      ["map_id", "map-1"],
+      ["target_type", "dataset"],
+    ]);
+    // The edge scan filters to the map's own edges (consumer_kind "map").
+    const edgeScan = queryAt(queries, 1);
+    expect(edgeScan.table).toBe("consumer_references");
+    expect(allArgs(edgeScan, "eq")).toStrictEqual([
+      ["consumer_id", "map-1"],
+      ["consumer_kind", "map"],
+    ]);
+    // Reconciliation follows the RE-READ list: the stale edge deletes, the
+    // only new edge is d2 (d1 already has one), nothing from a snapshot.
+    const deletes = queries.filter(
+      (query) =>
+        query.table === "consumer_references" &&
+        query.operations.some((op) => op.method === "delete"),
+    );
+    expect(deletes.length).toBe(1);
+    expect(allArgs(queryAt(deletes, 0), "eq")).toStrictEqual([["id", "edge-stale"]]);
     const inserts = queries.filter(
       (query) =>
         query.table === "consumer_references" &&
@@ -337,6 +366,7 @@ describe("publishing writes — the press's legs", () => {
       mode: "float",
       source_dataset_id: "d2",
     });
+    expect(step).toBeGreaterThanOrEqual(2);
   });
 
   it("listMembersQueryOptions reads the camelCase projection by bundle", async () => {

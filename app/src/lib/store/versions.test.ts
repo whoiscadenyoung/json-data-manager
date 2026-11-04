@@ -228,12 +228,94 @@ describe("versions.getVersionDelta — the bounded on-demand read", () => {
     expect(firstArg(first, "limit")).toBe(VERSION_DIFF_LIMIT + 1);
   });
 
-  it("counts add/remove/update ops and clears truncation under the budget", async () => {
+  it("counts add/remove/update ops exactly and clears truncation under the budget", async () => {
     const { client, respond } = stubSupabase();
-    respond((_query) => ({ data: [{ data: { label: "x" }, entryId: "e1" }] }));
+    // Different sides: version "a" holds x+y, version "b" holds x' (changed
+    // field) + z — the delta is exactly one add, one remove, one update.
+    respond((query) => {
+      const eqOp = query.operations.find((op) => op.method === "eq");
+      const side = eqOp === undefined ? undefined : eqOp.args[1];
+      if (side === "a") {
+        return {
+          data: [
+            { data: { label: "x", n: 1 }, entryId: "e-x" },
+            { data: { label: "y", n: 1 }, entryId: "e-y" },
+          ],
+        };
+      }
+      return {
+        data: [
+          { data: { label: "x", n: 2 }, entryId: "e-x" },
+          { data: { label: "z", n: 1 }, entryId: "e-z" },
+        ],
+      };
+    });
     const delta = await getVersionDelta({ aVersionId: "a", bVersionId: "b" }, { supabase: client });
     expect(delta.truncated).toBe(false);
-    expect(delta.added + delta.removed + delta.updated).toBeLessThanOrEqual(delta.ops.length);
+    expect(delta.added).toBe(1);
+    expect(delta.removed).toBe(1);
+    expect(delta.updated).toBe(1);
+    expect(delta.ops.length).toBe(3);
+    const updated = delta.ops.find((op) => op.op === "update");
+    expect(updated === undefined ? undefined : updated.entryKey).toBe("x");
+    expect(updated === undefined ? undefined : updated.fields).toStrictEqual([
+      { after: 2, before: 1, name: "n" },
+    ]);
+  });
+
+  it("excludes provenance-severed rows (entry_id null) from both sides — not a fake add/remove pair", async () => {
+    const { client, queries, respond } = stubSupabase();
+    // The alpha row was severed (its origin entry deleted) on BOTH sides —
+    // keyed on "" they would collide and read as a phantom update, and a
+    // one-sided severed row would fabricate add/remove. They sit outside the
+    // join key, exactly like the overlay feed (pg-versioning.ts).
+    respond((query) => {
+      const eqOp = query.operations.find((op) => op.method === "eq");
+      const side = eqOp === undefined ? undefined : eqOp.args[1];
+      if (side === "a") {
+        return {
+          data: [
+            { data: { label: "alpha" }, entryId: null },
+            { data: { label: "keep" }, entryId: "e-keep" },
+          ],
+        };
+      }
+      return {
+        data: [
+          { data: { label: "alpha" }, entryId: null },
+          { data: { label: "keep" }, entryId: "e-keep" },
+        ],
+      };
+    });
+    const delta = await getVersionDelta({ aVersionId: "a", bVersionId: "b" }, { supabase: client });
+    expect(delta.ops).toStrictEqual([]);
+    expect(delta.added).toBe(0);
+    expect(delta.removed).toBe(0);
+    expect(delta.updated).toBe(0);
+    // Both sides read version_entries bounded at LIMIT+1 (unchanged reads).
+    expect(queries.length).toBe(2);
+  });
+
+  it("still counts a one-sided severed row as absent from the diff, not as add/remove", async () => {
+    const { client, respond } = stubSupabase();
+    respond((query) => {
+      const eqOp = query.operations.find((op) => op.method === "eq");
+      const side = eqOp === undefined ? undefined : eqOp.args[1];
+      if (side === "a") {
+        return {
+          data: [
+            { data: { label: "severed" }, entryId: null },
+            { data: { label: "keep" }, entryId: "e-keep" },
+          ],
+        };
+      }
+      return { data: [{ data: { label: "keep" }, entryId: "e-keep" }] };
+    });
+    const delta = await getVersionDelta({ aVersionId: "a", bVersionId: "b" }, { supabase: client });
+    // The severed row's disappearance is NOT a delete op — its provenance
+    // (the join key) is gone, so the diff cannot name it.
+    expect(delta.removed).toBe(0);
+    expect(delta.ops).toStrictEqual([]);
   });
 });
 

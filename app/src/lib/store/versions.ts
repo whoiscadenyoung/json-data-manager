@@ -199,7 +199,16 @@ export function versionEntriesQueryOptions(args: VersionEntriesArgs, options?: S
   });
 }
 
-/** One version's light diff rows, bounded at VERSION_DIFF_LIMIT (+ the exact truncation answer) — the versionRowsBounded shape (versioning.ts:155). */
+/**
+ * One version's light diff rows, bounded at VERSION_DIFF_LIMIT (+ the exact
+ * truncation answer) — the versionRowsBounded shape (versioning.ts:155).
+ * Provenance-severed rows (`entry_id` nulled by a later origin delete) are
+ * EXCLUDED here, exactly like the overlay feed (pg-versioning.ts): keyed on
+ * a fallback they'd all collide on one key in `diffVersionRows`' maps and
+ * fabricate add/remove pairs — outside the join key they are honestly "not
+ * comparable". Truncation still counts the raw read (the bound is the
+ * table's answer, not the filtered one).
+ */
 async function versionRowsBounded(
   versionId: string,
   options?: StoreOptions,
@@ -215,7 +224,10 @@ async function versionRowsBounded(
   const truncated = rows.length > VERSION_DIFF_LIMIT;
   const light: VersionRow[] = [];
   for (const row of rows.slice(0, VERSION_DIFF_LIMIT)) {
-    const versionRow = versionRowOf(row.entryId ?? "", row.data);
+    if (row.entryId === null) {
+      continue;
+    }
+    const versionRow = versionRowOf(row.entryId, row.data);
     if (versionRow !== undefined) {
       light.push(versionRow);
     }

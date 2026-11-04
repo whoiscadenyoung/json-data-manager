@@ -23,7 +23,8 @@ import {
  * datasets → derived → maps order) → per-dataset `publishDataset` with
  * `recordMember` checkpoints → the promoted collection (create-once,
  * file-every-published-or-referenced-member) → `linkMapLayers` (the maps'
- * float references, reconciled to the current targets) → `completeBundle`.
+ * float references, reconciled against the CURRENT layer list the leg
+ * re-reads — never this plan's snapshot) → `completeBundle`.
  *
  * The member plan IS ADR 0008's bundle rule ("one project publishes as one
  * bundle — a collection plus its maps plus the datasets they reference"):
@@ -116,6 +117,12 @@ async function mapLayerTargets(mapId: string, options?: StoreOptions): Promise<s
  * (create-once, reused across presses) → link the maps' layer references →
  * close the run.
  */
+// The press is one linear orchestration of the recorded legs — start,
+// per-member freeze with checkpoints, collection, map links, close — where
+// each leg consumes the previous leg's rows; splitting it into helpers
+// would thread that mutable run state through parameters and hide the
+// checkpoint order the resume semantics depend on.
+// oxlint-disable-next-line eslint/complexity -- the leg sequence IS the flat, ordered control flow the press's resume contract is stated in.
 export async function pgPublishProjectBundle(options: {
   projectId: string;
   supabase?: StoreOptions["supabase"];
@@ -140,11 +147,12 @@ export async function pgPublishProjectBundle(options: {
   // The member plan (the bundleClosure walk): never-published datasets
   // freeze; already-published ones join referenced; every dataset a map's
   // layers target joins the plan too — an artifact held AND layered, or
-  // layered by two maps, publishes once (deduped by id). Maps carry their
-  // CURRENT dataset-layer targets (the snapshot linkMapLayers reconciles
-  // to). Collection/group layers stay out of the plan — the recorded
-  // live-expansion asymmetry (bundles.ts): they expand at read time and
-  // become members only at the next press.
+  // layered by two maps, publishes once (deduped by id). Maps record their
+  // PRESS-TIME dataset-layer targets on the member row, but the link leg
+  // never trusts that snapshot — it re-reads the CURRENT layer list at leg
+  // time (bundles.ts:1060-1123). Collection/group layers stay out of the
+  // plan — the recorded live-expansion asymmetry (bundles.ts): they expand
+  // at read time and become members only at the next press.
   const datasetPlans = new Map<string, BundleMemberPlan>(),
     derivedPlans: BundleMemberPlan[] = [],
     mapPlans: BundleMemberPlan[] = [];
@@ -197,7 +205,7 @@ export async function pgPublishProjectBundle(options: {
     memberRows = await runStoreRead(
       listMembersQueryOptions({ bundleId: started.bundleId }, storeOptions).queryFn,
     ),
-    ordered = [...memberRows].sort((a, b) => memberOrder(a.kind) - memberOrder(b.kind)),
+    ordered = [...memberRows].toSorted((a, b) => memberOrder(a.kind) - memberOrder(b.kind)),
     failedKeys: string[] = [],
     // The collection's files (the promoteCollection walk, bundles.ts leg 3):
     // referenced members file THEMSELVES — their frozen row already exists,
@@ -210,23 +218,23 @@ export async function pgPublishProjectBundle(options: {
         ? [member.datasetKey]
         : [],
     ),
-    mapLegs: Array<{ mapId: string; memberId: string; targets: ReadonlyArray<string> }> = [];
+    mapLegs: Array<{ mapId: string; memberId: string }> = [];
 
   for (const member of ordered) {
+    if (member.kind === "map") {
+      // EVERY map member re-walks — including one an earlier leg already
+      // linked (the Convex leg iterates all map members, no skip): the leg
+      // re-reads the CURRENT layers and self-heals the edges, so a resumed
+      // press never leaves a stale reference standing.
+      mapLegs.push({ mapId: member.datasetKey, memberId: member.id });
+      continue;
+    }
     if (
       !member.publish ||
       member.status === "published" ||
       member.status === "linked" ||
       member.status === "referenced"
     ) {
-      continue;
-    }
-    if (member.kind === "map") {
-      mapLegs.push({
-        mapId: member.datasetKey,
-        memberId: member.id,
-        targets: member.layerTargets ?? [],
-      });
       continue;
     }
     try {
@@ -321,8 +329,10 @@ export async function pgPublishProjectBundle(options: {
     return { bundleId: started.bundleId, collectionId: null, failedKeys, status: "failed" };
   }
 
-  // The map leg: one float reference per direct dataset-layer target, stale
-  // edges reconciled away, each map member stamped "linked".
+  // The map leg: one float reference per direct dataset-layer target, the
+  // CURRENT layer list re-read at leg time (stale edges reconciled away —
+  // including for members an earlier leg already linked), each map member
+  // stamped "linked".
   await linkMapLayers({ bundleId: started.bundleId, maps: mapLegs }, storeOptions);
 
   const closed = await completeBundle({ bundleId: started.bundleId }, storeOptions);

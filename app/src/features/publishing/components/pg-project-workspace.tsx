@@ -106,6 +106,11 @@ function PgProjectSignInPrompt() {
 }
 
 /** One project artifact row: link + remove; the label resolves from the loaded catalog lists, falling back to the honest "no longer exists" line. */
+// The row renders the artifact kinds' honest states — linked, draft, gone,
+// derived — as one flat conditional ladder; extracting branches would split
+// a single row's states across components with no reuse (each branch
+// renders once, here).
+// oxlint-disable-next-line eslint/complexity -- the state ladder is the row's whole contract, read top to bottom.
 function PgArtifactRow({
   artifact,
   datasetsById,
@@ -377,6 +382,10 @@ function PgAddReferenceSheet({
 }
 
 /** The workspace's bundle status line (the Convex page's shape): the live press, an interrupted one, the named failures, or the promoted collection link. Staleness reads the mount-time clock (react/purity) — the page remounts on return, which is exactly when an abandoned press should announce itself. */
+// One status line announcing exactly one of the four press states — the
+// branch per state IS the line's copy contract; extracting them would hide
+// the mutually-exclusive states behind a table no other surface shares.
+// oxlint-disable-next-line eslint/complexity -- the four states are the line's whole contract.
 function PgBundleStatusLine({ projectId }: { projectId: string }) {
   const latestQuery = useQuery(latestBundleQueryOptions({ projectId })),
     bundle = latestQuery.data,
@@ -443,6 +452,11 @@ function PgBundleStatusLine({ projectId }: { projectId: string }) {
 }
 
 /** The workspace body: the project's facts, the artifact sections, add/press actions. */
+// The body joins the project's reads and renders the workspace's three
+// sections with their press actions — the flat sequence the press lifecycle
+// doc states; the branches are the sections' load/denied states, each
+// rendered once, here.
+// oxlint-disable-next-line eslint/complexity -- the section ladder is the workspace's whole contract, read top to bottom.
 function PgProjectWorkspaceBody({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient(),
     projectQuery = useQuery(projectsStore.getQueryOptions({ projectId })),
