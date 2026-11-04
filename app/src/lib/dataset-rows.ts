@@ -42,11 +42,9 @@ import type { LookupOperation } from "@caden/data-core/transform";
  * — live in `dataset-rows-react.tsx`.
  */
 import type { Geometry } from "@caden/json-cms/react";
-import { ConvexClient } from "convex/browser";
+import type { ConvexClient } from "convex/browser";
 import type { FunctionReturnType } from "convex/server";
 
-import { env } from "#/env";
-import { fetchConvexToken, setAuthReasserting } from "#/lib/convex-auth-token";
 import { api } from "#convex/_generated/api";
 
 /** One entry row, as `entries.listPage` pages it. */
@@ -312,32 +310,26 @@ export function applyGeometryRowSpec(row: DatasetGeometryRow): DatasetGeometryRo
 // The imperative one-shot client (main thread)
 // ---------------------------------------------------------------------------
 
-// One shared client for the imperative all-rows reads: exports materialize
-// rarely, and `ConvexClient` shares the worker's proven pattern for
-// imperative one-shot calls. (Reactive reads ride the app provider's
-// ConvexReactClient instead — see `dataset-rows-react.tsx`.) The publish
-// orchestrator (`./publish`) rides the same client — one socket for every
-// imperative, signed-in flow.
-let client: ConvexClient | undefined;
-
 /**
- * The shared imperative client, identity attached. Exported for the publish
- * orchestrator; every other consumer goes through the read functions.
+ * The shared imperative Convex client — ARCHIVED at the stage-7 disconnect
+ * (issue #206, design doc §11: the Convex client is "deleted from the shell
+ * — not from the tree"). The construction above used to be
+ * `new ConvexClient(env.VITE_CONVEX_URL)` with the re-asserting Better Auth
+ * token fetcher (`setAuthReasserting(created, fetchConvexToken)`,
+ * #133 item 6); the provider unmount and the `VITE_CONVEX_URL` removal
+ * leave nothing for it to connect to. The Postgres edition of every read
+ * lives in `dataset-rows-pg.ts`; a Convex-origin call reaching this seam
+ * now fails loudly instead of dialing a deployment the shell no longer
+ * wires.
  *
- * Auth attaches ONCE, at creation (#133 item 6): `setAuth` pauses the
- * socket and refetches the token on every call, and this client sits under
- * every export/publish/preview call — the old per-call re-assert paused the
- * connection each time. The re-asserting fetcher (`setAuthReasserting`)
- * keeps the sign-in-without-reload behavior: a client created signed out
- * attaches again the moment a fetch returns null.
+ * Exported still (the publish orchestrator's signature keeps compiling);
+ * the read functions below all resolve through it, so every Convex-origin
+ * imperative read throws this same error.
  */
 export function sharedClient(): ConvexClient {
-  if (client === undefined) {
-    const created = new ConvexClient(env.VITE_CONVEX_URL);
-    setAuthReasserting(created, fetchConvexToken);
-    client = created;
-  }
-  return client;
+  throw new Error(
+    "Convex datasets are archived in this build (stage 7 disconnect): the Convex client is unmounted; Postgres datasets resolve through dataset-rows-pg.",
+  );
 }
 
 /** Options for the imperative reads: pass `convex` to run on a specific client (the tile-archive worker passes its own); defaults to the shared main-thread client. `entryOrder` picks the entries page direction — the table's newest-first default ("desc") or the ascending scan callers whose pre-seam read was `entries.listEntriesForSchemas` need for byte-identical output (the group export, 3a). */

@@ -37,12 +37,11 @@
  * below-threshold skip memo (ids never collide across backends).
  */
 import { isBelowThresholdSkipMemoized } from "@caden/maps/build-scheduler";
-import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { useSyncExternalStore } from "react";
 
 import { isPostgresDatasetId } from "#/lib/dataset-source";
-import { api } from "#convex/_generated/api";
+import type { api } from "#convex/_generated/api";
 
 import type { DatasetSummary } from "./map-layers";
 import type { PgTileArchiveMeta, PgTileSummaryRow } from "./pg-tile-archives";
@@ -207,16 +206,12 @@ export function useTileArchiveSources(
   datasets: ReadonlyArray<TileDecisionRow> | undefined,
 ): globalThis.Map<string, TileSourceDecision> {
   const datasetsOrEmpty: ReadonlyArray<TileDecisionRow> = datasets ?? [],
-    // The origin split: partition ONCE, then each backend runs its own path —
-    // the Convex block below is the pre-stage-2 code, unchanged.
+    // The origin split: partition ONCE, then each backend runs its own path.
+    // The Convex half is archived with the stage-7 disconnect (issue #206):
+    // no live surface passes a pre-migration schema row anymore, so
+    // `convexRows` partitions empty and the `api.cms.tile_archives.metas`
+    // subscription that served it is gone with the provider.
     { convexRows, pgRows } = partitionByOrigin(datasetsOrEmpty),
-    geospatialIds = convexRows
-      .filter((schema) => schema.kind === "geospatial" && schema.geometryType !== undefined)
-      .map((schema) => schema._id),
-    metas = useQuery(
-      api.cms.tile_archives.metas,
-      geospatialIds.length > 0 ? { schemaIds: geospatialIds } : "skip",
-    ),
     pgGeospatialIds = pgRows
       .filter((row) => row.isGeospatial && row.geometryType !== null)
       .map((row) => row.id),
@@ -232,17 +227,9 @@ export function useTileArchiveSources(
           .join(","),
       () => "",
     ),
-    failedIds = new globalThis.Set(failedKey === "" ? [] : failedKey.split(",")),
-    metaBySchemaId = new globalThis.Map<string, TileArchiveMeta>();
-  if (metas !== undefined) {
-    for (const [index, schemaId] of geospatialIds.entries()) {
-      const meta = metas[index];
-      if (meta !== undefined) {
-        metaBySchemaId.set(schemaId, meta);
-      }
-    }
-  }
-  const decisions = new globalThis.Map<string, TileSourceDecision>();
+    failedIds = new globalThis.Set(failedKey === "" ? [] : failedKey.split(","));
+  const metaBySchemaId = new globalThis.Map<string, TileArchiveMeta>(),
+    decisions = new globalThis.Map<string, TileSourceDecision>();
   for (const schema of convexRows) {
     decisions.set(
       schema._id,

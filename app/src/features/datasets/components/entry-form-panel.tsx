@@ -21,12 +21,10 @@ import { cn } from "@caden/ui/lib/utils";
 import { Form } from "@rjsf/shadcn";
 import validator from "@rjsf/validator-ajv8";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
-import { useMutation, useQuery as useConvexQuery } from "convex/react";
 import { Maximize2, Minimize2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { api } from "#convex/_generated/api";
 import { isPostgresDatasetId } from "@/lib/dataset-source";
 import { searchEntriesQueryOptions } from "@/lib/store/entries";
 import * as entriesStore from "@/lib/store/entries";
@@ -104,22 +102,19 @@ interface CandidateRow {
  * Builds the `uiSchema` fragment wiring `schema`'s reference fields (see
  * `@caden/json-cms/react`'s reference utilities) to a live candidate picker.
  *
- * The split-brain rule (design §14.6) decides where candidates come from:
- * each reference field names its TARGET dataset, and the target's backend —
- * not this dataset's — serves its candidates. Convex targets ride the
- * component's one `listEntriesForSchemas` query (unchanged); Postgres
- * targets ride the store's `search_entries` page (newest 200), one query per
- * target through `useQueries` — N independent queries cannot loop as hooks.
+ * Candidates come from the target dataset's store page (design §14.6: each
+ * reference field names its TARGET dataset; the store's `search_entries`
+ * page — newest 200 — serves it, one query per target through `useQueries`
+ * — N independent queries cannot loop as hooks). The Convex-target half of
+ * the old split is archived with the stage-7 disconnect (issue #206): a
+ * reference field pointing at a pre-migration Convex dataset gets no
+ * candidates (the widget's "No entries in the target dataset yet" state)
+ * rather than a live Convex read.
  */
 function useReferenceUiSchema(schema: PanelSchema): Record<string, unknown> {
   const referenceFields = getReferenceFields(schema.schema),
     targetSchemaIds = [...new Set(referenceFields.map((f) => f.meta.datasetId))],
-    convexTargetIds = targetSchemaIds.filter((id) => !isPostgresDatasetId(id)),
     pgTargetIds = targetSchemaIds.filter((id) => isPostgresDatasetId(id)),
-    convexCandidates = useConvexQuery(
-      api.cms.entries.listEntriesForSchemas,
-      convexTargetIds.length > 0 ? { limit: 200, schemaIds: convexTargetIds } : "skip",
-    ),
     pgCandidateQueries = useQueries({
       queries: pgTargetIds.map((targetId) => ({
         ...searchEntriesQueryOptions({ datasetId: targetId, limit: 200 }),
@@ -131,11 +126,6 @@ function useReferenceUiSchema(schema: PanelSchema): Record<string, unknown> {
     return {};
   }
   const entriesBySchema = new Map<string, CandidateRow[]>();
-  for (const candidateEntry of convexCandidates ?? []) {
-    const list = entriesBySchema.get(candidateEntry.schemaId) ?? [];
-    list.push(candidateEntry);
-    entriesBySchema.set(candidateEntry.schemaId, list);
-  }
   for (let index = 0; index < pgCandidateQueries.length; index += 1) {
     const queryResult = pgCandidateQueries[index],
       targetId = pgTargetIds[index];
@@ -176,8 +166,6 @@ function EntryFormBody({
   onSaved: (mode: "created" | "updated") => void;
 }) {
   const isEditing = entry !== undefined,
-    createEntry = useMutation(api.cms.entries.create),
-    updateEntry = useMutation(api.cms.entries.update),
     queryClient = useQueryClient(),
     referenceUiSchema = useReferenceUiSchema(schema),
     [formKey, setFormKey] = useState(0),
@@ -208,13 +196,6 @@ function EntryFormBody({
       }
       invalidatePg();
     },
-    submitConvex = async (formData: Record<string, unknown>, geometryArg: string | undefined) => {
-      if (isEditing) {
-        await updateEntry({ data: formData, entryId: entry.id, geometry: geometryArg });
-      } else {
-        await createEntry({ data: formData, geometry: geometryArg, schemaId });
-      }
-    },
     handleSubmit = async (data: any) => {
       if (!data.formData) {
         return;
@@ -239,7 +220,14 @@ function EntryFormBody({
         if (backend === "pg") {
           await submitPg(data.formData, geometryArg);
         } else {
-          await submitConvex(data.formData, geometryArg);
+          // The Convex entry mutations (`api.cms.entries.create`/`update`)
+          // are archived with the stage-7 disconnect (issue #206) — every
+          // live caller mounts this panel with `backend: "pg"`; any other
+          // value fails loudly instead of mutating a backend the shell no
+          // longer wires.
+          throw new Error(
+            "Convex datasets are archived in this build (stage 7 disconnect): entries write through the Postgres store.",
+          );
         }
         if (isEditing) {
           toast.success("Entry updated successfully!");
@@ -297,9 +285,6 @@ function EntryFormBody({
         widgets={{ reference: ReferenceWidget }}
         uiSchema={{
           ...referenceUiSchema,
-          ...(backend === "convex" && schema.uiSchema !== undefined && schema.uiSchema !== null
-            ? schema.uiSchema
-            : {}),
           "ui:submitButtonOptions": {
             norender: false,
             props: {

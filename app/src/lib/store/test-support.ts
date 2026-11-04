@@ -57,6 +57,12 @@ export interface RecordedUpload {
   upsert: boolean;
 }
 
+/** One `storage.from(...).remove` request in call order (the sync driver's chunk cleanup). */
+export interface RecordedRemove {
+  bucket: string;
+  paths: string[];
+}
+
 export interface StubSupabase {
   client: SupabaseClient;
   /** Every `from()`/`rpc()` query in call order. */
@@ -67,6 +73,10 @@ export interface StubSupabase {
   signedUploadUrls: RecordedSignedUploadUrl[];
   /** Every `storage.from(...).upload` request in call order. */
   uploads: RecordedUpload[];
+  /** Every `storage.from(...).remove` request in call order. */
+  removes: RecordedRemove[];
+  /** The `storage.from(...).download` scripts, consumed in call order: one entry per download (Blob, or an error). */
+  downloads: Array<{ blob?: Blob; error?: { message: string } }>;
   /** Stack the next responder (the top of the stack answers the next query). */
   respond: (responder: QueryResponder) => void;
 }
@@ -171,6 +181,8 @@ export function stubSupabase(
   const signedUrls: RecordedSignedUrl[] = [];
   const signedUploadUrls: RecordedSignedUploadUrl[] = [];
   const uploads: RecordedUpload[] = [];
+  const removes: RecordedRemove[] = [];
+  const downloads: Array<{ blob?: Blob; error?: { message: string } }> = [];
   const failurePaths = storageFailures === undefined ? undefined : storageFailures.signedUrlPaths;
   const failSignedUrlFor = (path: string): boolean =>
     failurePaths !== undefined && failurePaths.includes(path);
@@ -230,6 +242,23 @@ export function stubSupabase(
             uploads.push({ bodyBytes: bytes, bucket, path, upsert });
             return { data: { path }, error: null };
           },
+          // The sync driver's chunk reads: one scripted entry per download,
+          // consumed in call order (the driver downloads chunks strictly in
+          // order); past the script, downloads fail loudly.
+          download: async (path: string) => {
+            const script = downloads.shift();
+            if (script === undefined) {
+              return { data: null, error: { message: `no download scripted for ${path}` } };
+            }
+            return {
+              data: script.error === undefined ? (script.blob ?? null) : null,
+              error: script.error === undefined ? null : script.error,
+            };
+          },
+          remove: async (paths: string[]) => {
+            removes.push({ bucket, paths });
+            return { data: paths.map((path) => ({ path })), error: null };
+          },
         };
       },
     },
@@ -237,10 +266,12 @@ export function stubSupabase(
   return {
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- test stand-in: the real SupabaseClient surface is far wider than anything the store touches, and the stub only implements `from`/`rpc`/`storage`.
     client: client as unknown as SupabaseClient,
+    downloads,
     queries,
     respond: (responder: QueryResponder) => {
       stack.push(responder);
     },
+    removes,
     signedUploadUrls,
     signedUrls,
     uploads,

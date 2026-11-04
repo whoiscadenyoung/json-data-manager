@@ -23,6 +23,46 @@ export type Database = {
   };
   public: {
     Tables: {
+      binding_entries: {
+        Row: {
+          binding_id: string;
+          entry_id: string;
+          entry_key: string;
+          id: string;
+          seen_run: string | null;
+        };
+        ComputedFields: never;
+        Insert: {
+          binding_id: string;
+          entry_id: string;
+          entry_key: string;
+          id?: string;
+          seen_run?: string | null;
+        };
+        Update: {
+          binding_id?: string;
+          entry_id?: string;
+          entry_key?: string;
+          id?: string;
+          seen_run?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "binding_entries_binding_id_fkey";
+            columns: ["binding_id"];
+            isOneToOne: false;
+            referencedRelation: "dataset_bindings";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "binding_entries_entry_id_fkey";
+            columns: ["entry_id"];
+            isOneToOne: false;
+            referencedRelation: "entries";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       collection_datasets: {
         Row: {
           collection_id: string;
@@ -93,6 +133,48 @@ export type Database = {
           },
         ];
       };
+      commit_mirror: {
+        Row: {
+          applied_at: string;
+          at: string;
+          binding_id: string;
+          foreign_commit_id: string;
+          id: string;
+          message: string;
+          ops: NonNullable<Json>;
+          seq: number;
+        };
+        ComputedFields: never;
+        Insert: {
+          applied_at?: string;
+          at: string;
+          binding_id: string;
+          foreign_commit_id: string;
+          id?: string;
+          message: string;
+          ops?: NonNullable<Json>;
+          seq: number;
+        };
+        Update: {
+          applied_at?: string;
+          at?: string;
+          binding_id?: string;
+          foreign_commit_id?: string;
+          id?: string;
+          message?: string;
+          ops?: NonNullable<Json>;
+          seq?: number;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "commit_mirror_binding_id_fkey";
+            columns: ["binding_id"];
+            isOneToOne: false;
+            referencedRelation: "dataset_bindings";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       consumer_references: {
         Row: {
           consumer_id: string;
@@ -139,6 +221,127 @@ export type Database = {
             isOneToOne: false;
             referencedRelation: "datasets";
             referencedColumns: ["id"];
+          },
+        ];
+      };
+      dataset_activity: {
+        Row: {
+          added: number;
+          binding_id: string;
+          entry_count: number;
+          id: string;
+          kind: string | null;
+          needs_reconcile: boolean | null;
+          ops: NonNullable<Json>;
+          removed: number;
+          synced_at: string;
+          truncated: boolean | null;
+          updated: number;
+        };
+        ComputedFields: never;
+        Insert: {
+          added?: number;
+          binding_id: string;
+          entry_count?: number;
+          id?: string;
+          kind?: string | null;
+          needs_reconcile?: boolean | null;
+          ops?: NonNullable<Json>;
+          removed?: number;
+          synced_at: string;
+          truncated?: boolean | null;
+          updated?: number;
+        };
+        Update: {
+          added?: number;
+          binding_id?: string;
+          entry_count?: number;
+          id?: string;
+          kind?: string | null;
+          needs_reconcile?: boolean | null;
+          ops?: NonNullable<Json>;
+          removed?: number;
+          synced_at?: string;
+          truncated?: boolean | null;
+          updated?: number;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "dataset_activity_binding_id_fkey";
+            columns: ["binding_id"];
+            isOneToOne: false;
+            referencedRelation: "dataset_bindings";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      dataset_bindings: {
+        Row: {
+          created_at: string;
+          dataset_id: string;
+          id: string;
+          keep_versions: number | null;
+          last_applied_commit_id: string | null;
+          last_applied_commit_seq: number | null;
+          last_reconciled_at: string | null;
+          last_synced_at: string | null;
+          pinned_refs: string[];
+          remote_revision: number | null;
+          remote_schema_version: string | null;
+          schema_mapping: Json | null;
+          source: string;
+          source_updated_at: string | null;
+          synced_entry_count: number | null;
+        };
+        ComputedFields: never;
+        Insert: {
+          created_at?: string;
+          dataset_id: string;
+          id?: string;
+          keep_versions?: number | null;
+          last_applied_commit_id?: string | null;
+          last_applied_commit_seq?: number | null;
+          last_reconciled_at?: string | null;
+          last_synced_at?: string | null;
+          pinned_refs?: string[];
+          remote_revision?: number | null;
+          remote_schema_version?: string | null;
+          schema_mapping?: Json | null;
+          source: string;
+          source_updated_at?: string | null;
+          synced_entry_count?: number | null;
+        };
+        Update: {
+          created_at?: string;
+          dataset_id?: string;
+          id?: string;
+          keep_versions?: number | null;
+          last_applied_commit_id?: string | null;
+          last_applied_commit_seq?: number | null;
+          last_reconciled_at?: string | null;
+          last_synced_at?: string | null;
+          pinned_refs?: string[];
+          remote_revision?: number | null;
+          remote_schema_version?: string | null;
+          schema_mapping?: Json | null;
+          source?: string;
+          source_updated_at?: string | null;
+          synced_entry_count?: number | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "dataset_bindings_dataset_id_fkey";
+            columns: ["dataset_id"];
+            isOneToOne: true;
+            referencedRelation: "datasets";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "dataset_bindings_source_fkey";
+            columns: ["source"];
+            isOneToOne: false;
+            referencedRelation: "remote_sources";
+            referencedColumns: ["source"];
           },
         ];
       };
@@ -1066,6 +1269,121 @@ export type Database = {
           },
         ];
       };
+      remote_sources: {
+        Row: {
+          checked_at: string | null;
+          error: string | null;
+          layer: Json | null;
+          record_url_template: string | null;
+          source: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          checked_at?: string | null;
+          error?: string | null;
+          layer?: Json | null;
+          record_url_template?: string | null;
+          source: string;
+        };
+        Update: {
+          checked_at?: string | null;
+          error?: string | null;
+          layer?: Json | null;
+          record_url_template?: string | null;
+          source?: string;
+        };
+        Relationships: [];
+      };
+      sync_runs: {
+        Row: {
+          added: number;
+          applied: number;
+          binding_id: string;
+          chunk_index: number;
+          chunk_paths: string[];
+          claim: string | null;
+          collect_attempts: number | null;
+          error: string | null;
+          finished_at: string | null;
+          id: string;
+          last_commit_id: string | null;
+          last_progress_at: string;
+          last_seq: number | null;
+          mode: string;
+          needs_reconcile: boolean | null;
+          ops: NonNullable<Json>;
+          remote_revision: number | null;
+          removed: number;
+          row_offset: number;
+          started_at: string;
+          status: string;
+          total: number;
+          truncated: boolean;
+          updated: number;
+        };
+        ComputedFields: never;
+        Insert: {
+          added?: number;
+          applied?: number;
+          binding_id: string;
+          chunk_index?: number;
+          chunk_paths?: string[];
+          claim?: string | null;
+          collect_attempts?: number | null;
+          error?: string | null;
+          finished_at?: string | null;
+          id?: string;
+          last_commit_id?: string | null;
+          last_progress_at?: string;
+          last_seq?: number | null;
+          mode: string;
+          needs_reconcile?: boolean | null;
+          ops?: NonNullable<Json>;
+          remote_revision?: number | null;
+          removed?: number;
+          row_offset?: number;
+          started_at?: string;
+          status: string;
+          total?: number;
+          truncated?: boolean;
+          updated?: number;
+        };
+        Update: {
+          added?: number;
+          applied?: number;
+          binding_id?: string;
+          chunk_index?: number;
+          chunk_paths?: string[];
+          claim?: string | null;
+          collect_attempts?: number | null;
+          error?: string | null;
+          finished_at?: string | null;
+          id?: string;
+          last_commit_id?: string | null;
+          last_progress_at?: string;
+          last_seq?: number | null;
+          mode?: string;
+          needs_reconcile?: boolean | null;
+          ops?: NonNullable<Json>;
+          remote_revision?: number | null;
+          removed?: number;
+          row_offset?: number;
+          started_at?: string;
+          status?: string;
+          total?: number;
+          truncated?: boolean;
+          updated?: number;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "sync_runs_binding_id_fkey";
+            columns: ["binding_id"];
+            isOneToOne: false;
+            referencedRelation: "dataset_bindings";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       tags: {
         Row: {
           created_at: string;
@@ -1192,6 +1510,140 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
+      binding_activity_ops_limit: { Args: Record<PropertyKey, never>; Returns: number };
+      binding_apply_commit_op: {
+        Args: {
+          p_binding: Omit<
+            Database["public"]["Tables"]["dataset_bindings"]["Row"],
+            Database["public"]["Tables"]["dataset_bindings"]["ComputedFields"]
+          >;
+          p_op: Json;
+          p_run_id: string;
+          p_tally: Json;
+        };
+        Returns: Json;
+      };
+      binding_apply_commits_batch: {
+        Args: {
+          p_chunk_index: number;
+          p_claim: string;
+          p_commits: Json;
+          p_row_offset: number;
+          p_run_id: string;
+        };
+        Returns: Json;
+      };
+      binding_apply_row: {
+        Args: {
+          p_binding: Omit<
+            Database["public"]["Tables"]["dataset_bindings"]["Row"],
+            Database["public"]["Tables"]["dataset_bindings"]["ComputedFields"]
+          >;
+          p_row: Json;
+          p_run_id: string;
+          p_tally: Json;
+        };
+        Returns: Json;
+      };
+      binding_apply_rows_batch: {
+        Args: {
+          p_chunk_index: number;
+          p_claim: string;
+          p_row_offset: number;
+          p_rows: Json;
+          p_run_id: string;
+        };
+        Returns: Json;
+      };
+      binding_build_geometry: { Args: { p_data: Json; p_mapping: Json }; Returns: Json };
+      binding_claim_run: { Args: { p_run_id: string }; Returns: string };
+      binding_commit_mirror_limit: { Args: Record<PropertyKey, never>; Returns: number };
+      binding_complete_run: { Args: { p_run_id: string }; Returns: undefined };
+      binding_ensure: {
+        Args: { p_dataset: Json; p_schema_mapping?: Json; p_source: string };
+        Returns: string;
+      };
+      binding_fail_run: {
+        Args: { p_claim: string; p_error: string; p_run_id: string };
+        Returns: undefined;
+      };
+      binding_finalize_run: { Args: { p_claim: string; p_run_id: string }; Returns: undefined };
+      binding_for_source: {
+        Args: { p_source: string };
+        Returns: {
+          created_at: string;
+          dataset_id: string;
+          id: string;
+          keep_versions: number | null;
+          last_applied_commit_id: string | null;
+          last_applied_commit_seq: number | null;
+          last_reconciled_at: string | null;
+          last_synced_at: string | null;
+          pinned_refs: string[];
+          remote_revision: number | null;
+          remote_schema_version: string | null;
+          schema_mapping: Json | null;
+          source: string;
+          source_updated_at: string | null;
+          synced_entry_count: number | null;
+        };
+        SetofOptions: {
+          from: "*";
+          to: "dataset_bindings";
+          isOneToOne: true;
+          isSetofReturn: false;
+        };
+      };
+      binding_mark_collected: {
+        Args: {
+          p_chunk_paths: string[];
+          p_claim: string;
+          p_last_commit_id?: string;
+          p_last_seq?: number;
+          p_remote_revision?: number;
+          p_run_id: string;
+          p_total: number;
+        };
+        Returns: boolean;
+      };
+      binding_max_collect_attempts: { Args: Record<PropertyKey, never>; Returns: number };
+      binding_op_detail: { Args: { p_op: Json }; Returns: string };
+      binding_op_label: { Args: { p_op: Json }; Returns: string };
+      binding_patch_run_batch: {
+        Args: {
+          p_applied: number;
+          p_chunk_index: number;
+          p_row_offset: number;
+          p_run_id: string;
+          p_tally: Json;
+        };
+        Returns: undefined;
+      };
+      binding_record_op: {
+        Args: { p_detail?: string; p_label: string; p_op: string; p_tally: Json };
+        Returns: Json;
+      };
+      binding_row_detail: { Args: { p_after: Json; p_before: Json }; Returns: string };
+      binding_row_label: { Args: { p_data: Json; p_key: string }; Returns: string };
+      binding_run_state: { Args: { p_run_id: string }; Returns: Json };
+      binding_schedule_reconciles: { Args: Record<PropertyKey, never>; Returns: number };
+      binding_stale_run_interval: { Args: Record<PropertyKey, never>; Returns: string };
+      binding_start_run: {
+        Args: { p_mode: string; p_source: string };
+        Returns: {
+          already_running: boolean;
+          claim: string;
+          run_id: string;
+        }[];
+      };
+      binding_sweep_batch: { Args: { p_run_id: string }; Returns: number };
+      binding_sweep_batch_size: { Args: Record<PropertyKey, never>; Returns: number };
+      binding_tally_bump: { Args: { p_by: number; p_field: string; p_tally: Json }; Returns: Json };
+      binding_unbind: { Args: { p_binding_id: string }; Returns: undefined };
+      binding_write_geometry: {
+        Args: { p_dataset_id: string; p_entry_id: string; p_geometry: Json };
+        Returns: undefined;
+      };
       can_edit_dataset: { Args: { p_dataset: string }; Returns: boolean };
       can_view_dataset: { Args: { p_dataset: string }; Returns: boolean };
       consumer_reference_owner: { Args: { p_consumer: string; p_kind: string }; Returns: boolean };
@@ -1232,6 +1684,7 @@ export type Database = {
         };
         Returns: boolean;
       };
+      is_bound_dataset: { Args: { p_dataset: string }; Returns: boolean };
       project_artifact_owner: { Args: { p_project: string }; Returns: boolean };
       publish_bundle_owner: { Args: { p_bundle: string }; Returns: boolean };
       publish_version: {
@@ -1242,6 +1695,16 @@ export type Database = {
           p_version_label: string;
         };
         Returns: string;
+      };
+      remote_source_check: {
+        Args: {
+          p_error?: string;
+          p_layer?: Json;
+          p_ok: boolean;
+          p_record_url_template?: string;
+          p_source: string;
+        };
+        Returns: undefined;
       };
       search_entries: {
         Args: {

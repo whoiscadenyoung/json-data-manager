@@ -4,53 +4,53 @@ import {
   PersistQueryClientProvider,
   persistQueryClientSave,
 } from "@tanstack/react-query-persist-client";
-import { useConvexAuth, useQuery } from "convex/react";
 import { createStore, del, get, set } from "idb-keyval";
 import type { UseStore } from "idb-keyval";
 import { useMemo, type ReactNode } from "react";
 
-import { convexQueryClient } from "#/integrations/convex/provider";
 import { isPersistableQueryHash } from "#/integrations/tanstack-query/light-namespaces";
-import { api } from "#convex/_generated/api";
 
 /**
- * Persisted light state (issue #58 part 5): schema rows, entries pages and
- * meta/counts survive reloads through an IndexedDB-backed TanStack Query
- * persister, so tables open instantly on a cold start and revalidate over the
- * live WebSocket connection. Geometry payloads are excluded by construction —
- * the tile path never enters the query cache, and the namespace filter below
- * keeps the heavy geometry-page queries out even when a dataset renders from
- * rows.
+ * Persisted light state (issue #58 part 5, carried through the stage-7
+ * disconnect — design doc §8.2): schema rows, entries pages and meta/counts
+ * survive reloads through an IndexedDB-backed TanStack Query persister, so
+ * tables open instantly on a cold start and revalidate on the next mount.
+ * Geometry payloads are excluded by construction — the tile path never
+ * enters the query cache, and the namespace filter below keeps the heavy
+ * geometry-page queries out even when a dataset renders from rows.
  *
- * Convex query keys are JSON-safe by design (`convexQuery` stores the function
- * NAME, not the opaque reference — see "Make query key serializable" in the
- * react-query integration package), so a persisted `["convexQuery",
- * "cms/schemas:list", …]` key re-subscribes cleanly on restore: `hydrate` rebuilds
- * the entry with the persisted hash, the integration's cache listener starts a
- * fresh WebSocket watch for it, and pushes land via `setQueryData`.
+ * Stage 7 (issue #206) rewired this provider off Convex: the light queries
+ * are the store modules' `pg:*` keys now (each carries its own `queryFn` in
+ * its `queryOptions`, so the QueryClient needs no default queryFn), the
+ * `PERSIST_KEY` bumped to `light-query-cache-v3` so a cache persisted under
+ * the old convex namespaces (`["convexQuery", "cms/schemas:list", …]`) is
+ * never restored — the persisted query hashes carried the Convex function
+ * names, and re-subscribing them against functions the shell no longer wires
+ * would be garbage (the convex-domain-folders memory rule).
  *
- * The buster is `api.cms.schemas.maxTileCacheVersion` (part 2's version counters):
- * any geometry write bumps some dataset's version, so the next boot discards
- * persisted state exactly when data changed. The provider stays unmounted (no
- * persistence at all) until the first buster value arrives — restoring against
- * `undefined` would silently discard the store on every cold start.
+ * The buster is a plain constant now. Its old value tracked Convex's
+ * `maxTileCacheVersion` so a geometry write anywhere discarded persisted
+ * state on the next boot; that query left with the provider, and the PG
+ * store keys revalidate on mount anyway — a bump of `PERSIST_BUSTER` (or the
+ * key) remains the way to force a clean discard.
  */
 
 /** Persisted entries older than this are discarded on restore. */
 const PERSIST_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 /** Must be ≥ maxAge (the docs' gotcha: a smaller gcTime silently discards
- * restored cache entries). For Convex queries gcTime is also how long a
- * subscription lingers after its last observer unmounts — acceptable for the
- * light namespaces only. */
+ * restored cache entries). */
 const PERSIST_GC_TIME_MS = PERSIST_MAX_AGE_MS + 24 * 60 * 60 * 1000;
 /** Whole-cache rewrites are throttled to this; a buster bump that isn't
  * followed by a save simply re-fetches once on the next boot (safe, just not
  * instant). */
 const PERSIST_THROTTLE_MS = 5_000;
-// Bumped when function paths move (restructure step B3: `schemas:*` became
-// `cms/schemas:*`), so a cache persisted under the old names is never
-// restored and re-subscribed against functions that no longer exist.
-const PERSIST_KEY = "light-query-cache-v2";
+// Bumped when the persisted namespaces change shape — v2 carried the convex
+// function paths, v3 carries the store modules' `pg:*` keys (§8.2), so a
+// cache persisted under the old names is never restored.
+const PERSIST_KEY = "light-query-cache-v3";
+/** See the doc comment: the cache-generation marker `persistQueryClient`
+ * stores alongside the payload. */
+const PERSIST_BUSTER = "pg-v1";
 const IDB_DB_NAME = "json-cms";
 const IDB_STORE_NAME = "tanstack-query";
 
@@ -93,36 +93,17 @@ export function getContext() {
     return context;
   }
 
+  // Every live query carries its own `queryFn` (the store modules'
+  // `queryOptions`) — the default `queryFn`/`queryKeyHashFn` this client used
+  // to install were the Convex bridge's, and left with the stage-7
+  // disconnect. `gcTime` keeps covering the persistence window.
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: {
-        // Convex pushes updates into the cache (never stale), so gcTime is
-        // free to cover the persistence window. Non-Convex queries, if any
-        // appear, override queryFn per query.
         gcTime: PERSIST_GC_TIME_MS,
-        queryFn: convexQueryClient.queryFn(),
-        queryKeyHashFn: convexQueryClient.hashFn(),
       },
     },
   });
-  // Idempotent connect: after an HMR re-evaluation of this module the bridge
-  // singleton is still subscribed to the previous QueryClient — connect()
-  // throws then, and letting it propagate 500s every SSR request (the
-  // `context` memo below would never be reached). A same-client connection
-  // is detected via the integration's getter and skipped quietly.
-  let alreadyConnected = false;
-  try {
-    alreadyConnected = convexQueryClient.queryClient === queryClient;
-  } catch {
-    alreadyConnected = false; // getter throws while unconnected
-  }
-  if (!alreadyConnected) {
-    try {
-      convexQueryClient.connect(queryClient);
-    } catch (error) {
-      console.warn("[tanstack-query] ConvexQueryClient reconnect skipped", error);
-    }
-  }
 
   context = {
     queryClient,
@@ -133,20 +114,11 @@ export function getContext() {
 
 export function TanStackQueryProvider({ children }: { children: ReactNode }) {
   const { queryClient } = getContext();
-  const { isAuthenticated } = useConvexAuth();
-  // The buster only matters for signed-in light-state — an anonymous call
-  // here throws "You're signed out" at the provider-level boundary, whose
-  // screen replaces the gate's redirect (#135 follow-up). Signed out, boot
-  // on the plain provider: the gate mounts nothing that would cache anyway.
-  const maxTileCacheVersion = useQuery(
-    api.cms.schemas.maxTileCacheVersion,
-    isAuthenticated ? {} : "skip",
-  );
   const persister = useMemo(
     () => (typeof document === "undefined" ? undefined : createLightStatePersister()),
     [],
   );
-  if (maxTileCacheVersion === undefined || persister === undefined) {
+  if (persister === undefined) {
     return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
   }
   return (
@@ -157,7 +129,7 @@ export function TanStackQueryProvider({ children }: { children: ReactNode }) {
         // never produces after boot — persist whatever is cached right away
         // so the very first session already warms the store.
         void persistQueryClientSave({
-          buster: String(maxTileCacheVersion),
+          buster: PERSIST_BUSTER,
           dehydrateOptions: {
             shouldDehydrateQuery: (query) =>
               query.state.status === "success" && isPersistableQueryHash(query.queryHash),
@@ -169,7 +141,7 @@ export function TanStackQueryProvider({ children }: { children: ReactNode }) {
         });
       }}
       persistOptions={{
-        buster: String(maxTileCacheVersion),
+        buster: PERSIST_BUSTER,
         dehydrateOptions: {
           shouldDehydrateQuery: (query) =>
             query.state.status === "success" && isPersistableQueryHash(query.queryHash),

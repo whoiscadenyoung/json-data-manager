@@ -7,26 +7,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   invalidateQueries: vi.fn<(args: { queryKey: string[] }) => void>(),
   pgSummaries: undefined as Array<Record<string, unknown>> | undefined,
-  schemas: [] as Array<Record<string, unknown>>,
   toastError: vi.fn<(message: string) => void>(),
 }));
 
 vi.mock("sonner", () => ({ toast: { error: mocks.toastError } }));
 vi.mock("#/env", () => ({
   env: {
-    VITE_CONVEX_URL: "http://127.0.0.1:3212",
     VITE_SUPABASE_ANON_KEY: "test-anon-key",
     VITE_SUPABASE_URL: "http://127.0.0.1:54321",
   },
 }));
+// The dormant Convex token branch stays mocked (the module still imports it
+// for the archived worker path); nothing live reaches it.
 vi.mock("#/lib/convex-auth-token", () => ({ fetchConvexToken: async () => null }));
 vi.mock("#/integrations/tanstack-query/root-provider", () => ({
   getContext: () => ({ queryClient: { invalidateQueries: mocks.invalidateQueries } }),
 }));
-vi.mock("#convex/_generated/api", () => ({
-  api: { cms: { schemas: { listSummaries: "listSummaries" } } },
-}));
-vi.mock("convex/react", () => ({ useQuery: () => mocks.schemas }));
 // The PG feed: summaries scripted per test, metas irrelevant to the manager.
 vi.mock("./pg-tile-archives-react", () => ({
   usePgDatasetSummaries: () => mocks.pgSummaries,
@@ -84,7 +80,6 @@ beforeEach(async () => {
   vi.useFakeTimers();
   vi.stubGlobal("Worker", FakeWorker);
   FakeWorker.instances = [];
-  mocks.schemas = [];
   mocks.pgSummaries = undefined;
   mocks.invalidateQueries.mockReset();
   mocks.toastError.mockReset();
@@ -161,28 +156,31 @@ describe("tile-archive failure store (#184)", () => {
   });
 
   it("the manager clears a failure once the archive is current some other way", async () => {
-    const row = {
-      _id: SCHEMA,
-      geometryType: "Point",
-      kind: "geospatial",
-      mapTileArchiveBuiltVersion: 2,
-      mapTileArchiveFormatCurrent: true,
-      mapTileCacheVersion: 3,
-    };
-    mocks.schemas = [row];
+    // The pre-disconnect Convex watch drove this scenario off
+    // `api.cms.schemas.listSummaries`; the PG summaries feed drives the same
+    // staleness/clear cycle since stage 2 (issue #201) and is the only feed
+    // since the stage-7 disconnect (issue #206).
+    mocks.pgSummaries = [pgSummaryRow({ mapTileArchiveBuiltVersion: 2, mapTileCacheVersion: 3 })];
     const { rerender } = renderHook(() => {
       tiles.useMapTileArchiveManager();
     });
     await vi.advanceTimersByTimeAsync(5000);
     expect(worker().posted).toHaveLength(1);
-    await failBuild();
-    expect(tiles.getTileArchiveBuildFailure(SCHEMA)).toBeDefined();
+    // failBuild replies with the legacy SCHEMA id; this build's id is the PG
+    // one the scheduler keyed.
+    worker().reply({
+      message: "listGeometries timed out",
+      schemaId: PG_ID,
+      type: "error",
+    });
+    await flush();
+    expect(tiles.getTileArchiveBuildFailure(PG_ID)).toBeDefined();
 
     // Another tab installs the archive at version 3: the next summaries
     // update shows it current.
-    mocks.schemas = [{ ...row, mapTileArchiveBuiltVersion: 3 }];
+    mocks.pgSummaries = [pgSummaryRow({ mapTileArchiveBuiltVersion: 3, mapTileCacheVersion: 3 })];
     rerender();
-    expect(tiles.getTileArchiveBuildFailure(SCHEMA)).toBeUndefined();
+    expect(tiles.getTileArchiveBuildFailure(PG_ID)).toBeUndefined();
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
 
     // And the armed 1 m retry never rebuilds the fresh archive.
@@ -194,7 +192,7 @@ describe("tile-archive failure store (#184)", () => {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
-        [SCHEMA]: {
+        [PG_ID]: {
           failures: 1,
           message: "listGeometries timed out",
           retryAt: Date.now() + 60_000,
@@ -202,13 +200,11 @@ describe("tile-archive failure store (#184)", () => {
         },
       }),
     );
-    mocks.schemas = [
-      { _id: SCHEMA, geometryType: "Point", kind: "geospatial", mapTileCacheVersion: 3 },
-    ];
+    mocks.pgSummaries = [pgSummaryRow()];
     renderHook(() => {
       tiles.useMapTileArchiveManager();
     });
-    expect(tiles.getTileArchiveBuildFailure(SCHEMA)).toMatchObject({ failures: 1 });
+    expect(tiles.getTileArchiveBuildFailure(PG_ID)).toMatchObject({ failures: 1 });
 
     await vi.advanceTimersByTimeAsync(59_999);
     expect(FakeWorker.instances).toHaveLength(0);

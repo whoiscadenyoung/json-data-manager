@@ -1,43 +1,14 @@
-import type { GeometryType } from "@caden/json-cms/react";
-import { chunkRowsForImport } from "@caden/json-cms/react";
-import type { DatasetImportOptions, DatasetImportRow } from "@caden/json-cms/react/ui";
-import { DatasetImporter, SchemaEditor } from "@caden/json-cms/react/ui";
-import { Card, CardDescription, CardHeader, CardTitle } from "@caden/ui/components/card";
-import { convexQuery } from "@convex-dev/react-query";
-import { useQuery } from "@tanstack/react-query";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMutation } from "convex/react";
-import { ArrowLeft, FilePlus2, Upload } from "lucide-react";
-import { useEffect, useState } from "react";
-import { toast } from "sonner";
+import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 
-import { RouterButton } from "#/components/router-button";
-import {
-  PostgresCreateDatasetPage,
-  uploadChunkBlob,
-  uploadSourceFileBlob,
-} from "#/features/datasets";
-import { ensureMapTileArchive } from "#/features/maps/tiles";
-import { errorMessage } from "#/lib/errors";
-
-import { api } from "../../../convex/_generated/api";
+import { ArchivedConvexSurface } from "#/components/archived-convex-surface";
+import { PostgresCreateDatasetPage } from "#/features/datasets";
 
 /**
  * `?projectId=` puts the page in the in-project variant (roadmap 7a, #102):
- * the dataset is created through `projects.createDraftDataset` — the host
- * mutation that lands the draft dataset and its project membership row in ONE
- * transaction, flagged `lifecycle: "draft"` (something the plain
- * `api.cms.schemas.create` wrapper can never do — the wrapper deliberately omits
- * the lifecycle field). Import/create thus lands IN the project, part of the
- * flow, not a separate act (lifecycle §3). Absent, the page behaves exactly
- * as before.
- *
- * Transitional split (design doc §14.1, ADR 0015): WITHOUT `?projectId=` the
- * page is Postgres-native from stage 1 — the standalone create/import flow
- * mounts `PostgresCreateDatasetPage` and every write rides the
- * `#/lib/store/*` modules. The in-project variant stays on Convex until
- * stage 4 ports projects/publishing; that's the recorded deviation.
+ * the dataset is created through the host's draft flow so it lands IN the
+ * project, part of the flow, not a separate act (lifecycle §3). Absent, the
+ * page is the standalone Postgres create/import flow (design doc §14.1).
  */
 const createSearchSchema = z.object({
   projectId: z.string().optional(),
@@ -48,355 +19,28 @@ export const Route = createFileRoute("/datasets/create")({
   validateSearch: createSearchSchema,
 });
 
+/**
+ * The create route, collapsed by the stage-7 disconnect (issue #206): the
+ * standalone flow was Postgres-native from stage 1 and stays. The
+ * in-project variant — the Convex `createDraftDataset` host flow serving the
+ * pre-migration Convex project workspaces — is ARCHIVED: its `convex/react`
+ * mutations would throw against the unmounted provider, and it was only
+ * ever linked from the Convex project workspace (itself archived at the
+ * route). The variant's logic was removed from the shell; it lives on in
+ * the untouched `app/convex/` + `packages/json-cms/` reference trees. A
+ * Postgres project's add-dataset flow is the project workspace's own
+ * artifact sheet (`#/lib/store/projects.addArtifact`).
+ */
 function CreateDatasetPage() {
   const { projectId } = Route.useSearch();
   if (projectId === undefined) {
     return <PostgresCreateDatasetPage />;
   }
-  return <ConvexInProjectCreatePage projectId={projectId} />;
-}
-
-type Mode = "choose" | "schema" | "import";
-
-/**
- * The create args both paths send — the in-project variant spreads this and
- * adds `projectId`. The return annotation keeps the literal `kind` narrow (a
- * fresh object literal would otherwise widen it past the mutation's
- * validator type).
- */
-function createArgs(
-  datasetKind: "standard" | "geospatial",
-  geometryType: GeometryType | undefined,
-  schema: object,
-  uiSchema: object | undefined,
-  simplifyGeometry: boolean | undefined,
-): {
-  geometryType: GeometryType | undefined;
-  kind: "geospatial" | undefined;
-  schema: object;
-  simplifyGeometry: boolean | undefined;
-  uiSchema: object | undefined;
-} {
-  return {
-    geometryType: datasetKind === "geospatial" ? geometryType : undefined,
-    kind: datasetKind === "geospatial" ? "geospatial" : undefined,
-    schema,
-    simplifyGeometry,
-    uiSchema,
-  };
-}
-
-// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
-function ConvexInProjectCreatePage({ projectId }: { projectId: string }) {
-  const [mode, setMode] = useState<Mode>("choose"),
-    // The project's title, for the "creating in X" header line. The TanStack
-    // bridge (not convex/react's useQuery) so a signed-out visit degrades to
-    // hiding the title line + the submit toasts — the same handling the
-    // projects pages use — instead of throwing to the router error boundary.
-    // undefined data (query skipped) outside the in-project variant.
-    projectQuery = useQuery({
-      ...convexQuery(api.publishing.projects.get, { projectId }),
-    });
-
   return (
-    <main className="mx-auto max-w-7xl px-4 py-8">
-      <div className="mb-6">
-        {mode === "choose" ? (
-          <RouterButton
-            variant="ghost"
-            to="/projects/$projectId"
-            params={{ projectId }}
-            className="mb-4 -ml-2"
-          >
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Project
-          </RouterButton>
-        ) : (
-          <button
-            type="button"
-            onClick={() => {
-              setMode("choose");
-            }}
-            className="mb-4 -ml-2 inline-flex items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground hover:text-foreground"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Choose a different start
-          </button>
-        )}
-        <h1 className="text-3xl font-bold text-primary mb-1">Create dataset</h1>
-        <p className="text-muted-foreground">
-          {mode === "import"
-            ? "Import a JSON, CSV, or Excel file to auto-generate a schema and pre-populate the dataset."
-            : mode === "schema"
-              ? "Build your JSON schema visually or in code, then test it against sample data."
-              : "Start from an empty schema, or import data to generate one automatically."}
-          {" Everything you create here lands in your project as a draft."}
-        </p>
-        {projectQuery.data !== undefined && projectQuery.data !== null && (
-          <p className="mt-1 text-sm text-muted-foreground">
-            In project{" "}
-            <span className="font-medium text-foreground">{projectQuery.data.project.title}</span>
-          </p>
-        )}
-      </div>
-
-      {mode === "choose" && <PathChooser onChoose={setMode} />}
-      {mode === "schema" && <SchemaFirst projectId={projectId} />}
-      {mode === "import" && <ImportFirst projectId={projectId} />}
-    </main>
-  );
-}
-
-function PathChooser({ onChoose }: { onChoose: (mode: Mode) => void }) {
-  return (
-    <div className="grid gap-4 sm:grid-cols-2 max-w-3xl">
-      <button
-        type="button"
-        aria-label="Start from schema"
-        onClick={() => {
-          onChoose("schema");
-        }}
-        className="text-left"
-      >
-        <Card className="h-full transition-shadow hover:shadow-md">
-          <CardHeader>
-            <FilePlus2 className="h-6 w-6 text-primary mb-2" />
-            <CardTitle>Start from schema</CardTitle>
-            <CardDescription>
-              Define the shape of an empty dataset with the visual or code editor. Optionally upload
-              a JSON Schema to start from.
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      </button>
-      <button
-        type="button"
-        aria-label="Import data"
-        onClick={() => {
-          onChoose("import");
-        }}
-        className="text-left"
-      >
-        <Card className="h-full transition-shadow hover:shadow-md">
-          <CardHeader>
-            <Upload className="h-6 w-6 text-primary mb-2" />
-            <CardTitle>Import data</CardTitle>
-            <CardDescription>
-              Upload a JSON, CSV, or Excel file. We read every row to infer a matching schema and
-              pre-populate the dataset.
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      </button>
-    </div>
-  );
-}
-
-// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
-function SchemaFirst({ projectId }: { projectId: string }) {
-  const navigate = useNavigate(),
-    createDraft = useMutation(api.publishing.projects.createDraftDataset),
-    schemas = useQuery({ ...convexQuery(api.cms.schemas.list, { limit: 1000 }) }).data,
-    availableDatasets = (schemas ?? []).map((s) => ({
-      id: s._id,
-      schema: s.schema,
-      title: s.title,
-    })),
-    [datasetKind, setDatasetKind] = useState<"standard" | "geospatial">("standard"),
-    [geometryType, setGeometryType] = useState<GeometryType | undefined>(undefined);
-
-  return (
-    <SchemaEditor
-      availableDatasets={availableDatasets}
-      datasetKind={datasetKind}
-      onDatasetKindChange={setDatasetKind}
-      geometryType={geometryType}
-      onGeometryTypeChange={setGeometryType}
-      onSave={async (_json, parsed, _uiSchemaJson, uiSchemaParsed) => {
-        // The in-project variant adds `projectId` and lands the draft +
-        // membership atomically (see the route's doc comment).
-        const args = createArgs(
-          datasetKind,
-          geometryType,
-          parsed,
-          Object.keys(uiSchemaParsed).length > 0 ? uiSchemaParsed : undefined,
-          undefined,
-        );
-        try {
-          await createDraft({ ...args, projectId });
-          toast.success("Dataset created!");
-          await navigate({ params: { projectId }, to: "/projects/$projectId" });
-        } catch (error) {
-          toast.error(errorMessage(error, "Failed to create schema."));
-          throw error;
-        }
-      }}
-      saveLabel="Create schema"
-    />
-  );
-}
-
-/** The `{storageId, uploadId}` pair one uploaded blob is tracked by until `startImport` claims it. */
-interface UploadedBlob {
-  storageId: string;
-  uploadId: string;
-}
-
-function ImportFirst({ projectId }: { projectId: string }) {
-  const navigate = useNavigate(),
-    // The dataset an import fills is created as a lifecycle DRAFT and flips
-    // to published only when the import completes (issue #129) — a failed
-    // import leaves an invisible draft for Retry/Discard instead of an
-    // empty, published dataset in the catalog. In-project datasets stay
-    // drafts — the project's own publish owns that step (lifecycle §3).
-    createDraft = useMutation(api.publishing.projects.createDraftDataset),
-    generateUploadUrl = useMutation(api.cms.imports.generateUploadUrl),
-    startImport = useMutation(api.cms.imports.startImport),
-    clearRows = useMutation(api.cms.entries.clearDatasetRows),
-    removeDataset = useMutation(api.cms.schemas.remove),
-    [importId, setImportId] = useState<string | undefined>(),
-    [schemaId, setSchemaId] = useState<string | undefined>(),
-    status = useQuery({
-      ...convexQuery(api.cms.imports.getImportStatus, importId ? { importId } : "skip"),
-    }).data,
-    importStatus = status ? status.status : undefined;
-
-  // Uploads the row chunks (and the retained original file) for an already
-  // created dataset and starts the import workflow. Shared by the first
-  // import and a failed-import Retry — same flow, same target dataset
-  // (issue #129).
-  async function runRowImport(
-    targetSchemaId: string,
-    rows: DatasetImportRow[],
-    options: DatasetImportOptions,
-  ) {
-    // Split client-side (we already have every row parsed here) and
-    // upload each chunk to its own blob — never one giant upload. See
-    // `chunkRowsForImport`'s doc comment for why: Convex components
-    // can't use the Node runtime, so no server-side step could safely
-    // parse one large upload in a single pass. Each upload rides the
-    // token its URL was issued under (`uploadId`) — `startImport`
-    // rejects any blob without one, issued for THIS dataset (issue
-    // #131).
-    const chunks = chunkRowsForImport(rows),
-      uploaded: UploadedBlob[] = [];
-    for (const chunk of chunks) {
-      // oxlint-disable-next-line no-await-in-loop
-      const { storageUrl, uploadId } = await generateUploadUrl({ scope: targetSchemaId });
-      // oxlint-disable-next-line no-await-in-loop -- chunks upload sequentially so a failed upload aborts before later chunks are sent.
-      const storageId = await uploadChunkBlob(storageUrl, chunk);
-      uploaded.push({ storageId, uploadId });
-    }
-
-    // Retain the original file as its own blob so it stays
-    // re-downloadable from the dataset page — deliberately NOT in
-    // `uploaded` (the import workflow deletes chunk blobs as it
-    // consumes them; this one must survive). A Retry re-attaches it too;
-    // `startImport` deletes the superseded blob on the swap.
-    let sourceFile: { name: string; size: number; storageId: string; uploadId: string } | undefined;
-    if (options.sourceFile) {
-      const { storageUrl, uploadId } = await generateUploadUrl({ scope: targetSchemaId }),
-        storageId = await uploadSourceFileBlob(storageUrl, options.sourceFile);
-      sourceFile = {
-        name: options.sourceFile.name,
-        size: options.sourceFile.size,
-        storageId,
-        uploadId,
-      };
-    }
-
-    const newImportId = await startImport({
-      schemaId: targetSchemaId,
-      sourceFile,
-      chunks: uploaded,
-      total: rows.length,
-    });
-    setSchemaId(targetSchemaId);
-    setImportId(newImportId);
-  }
-
-  // Navigate back to the project once the import finishes. The tile archive
-  // rebuild happens server-side — nothing client-side can hook the workflow —
-  // so an import success just skips the manager's debounce window; the
-  // mounted manager catches the version bumps either way.
-  useEffect(() => {
-    if (importStatus === "completed" && schemaId) {
-      ensureMapTileArchive(schemaId);
-      toast.success("Dataset imported!");
-      void (async () => {
-        await navigate({ params: { projectId }, to: "/projects/$projectId" });
-      })();
-    }
-  }, [importStatus, schemaId, navigate, projectId]);
-
-  const progress = status
-    ? {
-        error: status.error,
-        processed: status.processed,
-        skipped: status.skipped,
-        status: status.status,
-        total: status.total,
-      }
-    : null;
-
-  return (
-    <DatasetImporter
-      progress={progress}
-      recovery={{
-        // Re-import into the SAME dataset: whatever partial rows the failed
-        // attempt committed are cleared first, then the full file runs again
-        // (issue #129). The dataset keeps its schema, kind, and project
-        // membership — no duplicate catalog entries.
-        onRetry: async (rows, options) => {
-          if (schemaId === undefined) {
-            throw new Error("This dataset is gone — start a new import instead.");
-          }
-          await clearRows({ schemaId });
-          await runRowImport(schemaId, rows, options);
-        },
-        // Delete the dataset the failed import created — nothing left
-        // behind (the host cascade removes the project membership too).
-        onDiscard: async () => {
-          if (schemaId !== undefined) {
-            await removeDataset({ schemaId });
-          }
-          toast.success("Draft dataset discarded.");
-          await navigate({ params: { projectId }, to: "/projects/$projectId" });
-          setSchemaId(undefined);
-          setImportId(undefined);
-        },
-        // Keep the (draft) dataset and leave the flow.
-        onBack: () => {
-          void navigate({ params: { projectId }, to: "/projects/$projectId" });
-        },
-      }}
-      // oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
-      onImport={async (
-        _json,
-        parsedSchema,
-        _uiJson,
-        parsedUiSchema,
-        rows,
-        kind,
-        geometryType,
-        options,
-      ) => {
-        // The in-project variant adds `projectId` and lands the draft +
-        // membership atomically (see the route's doc comment). The
-        // upload/startImport steps below are the SAME ingest flow — drafts
-        // are ordinary component datasets to it.
-        const args = createArgs(
-          kind,
-          geometryType,
-          parsedSchema,
-          Object.keys(parsedUiSchema).length > 0 ? parsedUiSchema : undefined,
-          kind === "geospatial" ? options.simplifyGeometry : undefined,
-        );
-
-        const newSchemaId = await createDraft({ ...args, projectId });
-
-        await runRowImport(newSchemaId, rows, options);
-      }}
+    <ArchivedConvexSurface
+      description="In-project dataset creation served the pre-migration Convex project workspaces. Postgres projects add datasets from the project workspace directly."
+      homeTo="/projects"
+      title="Convex datasets are archived in this build"
     />
   );
 }

@@ -6,21 +6,19 @@ import { Link, useMatches } from "@tanstack/react-router";
 import { UserAvatar } from "#/components/user-avatar";
 import { supabase } from "#/integrations/supabase/client";
 import { useSession } from "#/integrations/supabase/provider";
-import { authClient } from "#/lib/auth-client";
 import * as profilesStore from "#/lib/store/profiles";
 
 import { ThemeToggle } from "./theme-toggle";
 
 /**
  * Reload after sign-out so every cached/authenticated corner of the app
- * re-reads the world as signed-out (the auth docs' recommended path). Both
- * halves must end (stage 0, design doc §9): the Supabase session AND the
- * Better Auth session the still-mounted Convex half rides — ending only the
- * Supabase one would leave the legacy Better Auth cookie live, keeping the
- * Convex watchers signed in behind the reload.
+ * re-reads the world as signed-out (the auth docs' recommended path). The
+ * stage-7 disconnect (issue #206) made this Supabase-only: the Better Auth
+ * half the Convex provider rode is retired with the provider, so there is
+ * exactly one session to end.
  */
 const onSignOut = async () => {
-  await Promise.all([supabase.auth.signOut(), authClient.signOut()]);
+  await supabase.auth.signOut();
   window.location.reload();
 };
 

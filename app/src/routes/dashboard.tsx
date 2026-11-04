@@ -1,53 +1,28 @@
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@caden/ui/components/tabs";
 import { createFileRoute } from "@tanstack/react-router";
 
-import {
-  LinksPanel,
-  LocationsPanel,
-  RemoteSourcesCard,
-  RestaurantsPanel,
-  SnapshotsCard,
-  SyncStatusCard,
-} from "#/features/dashboard";
+import { ArchivedConvexSurface } from "#/components/archived-convex-surface";
 
 export const Route = createFileRoute("/dashboard")({ component: DashboardPage });
 
 /**
- * CRUD surface for the foreign-domain tables (restaurants, locations,
- * restaurantLocations) — the "source of truth" side of the bound-datasets
- * PoC. Editing here never touches the projected json-cms dataset directly;
- * the sync card above the tabs shows when the projection is stale and
- * rebuilds it on demand.
+ * ARCHIVED at the stage-7 disconnect (issue #206): this page was the CRUD
+ * surface over the bound-datasets PoC's foreign-domain tables (restaurants,
+ * locations, restaurantLocations) — the demo source's "source of truth"
+ * side, every panel riding `convex/react` against the demo's Convex tables.
+ * Issue #206 does NOT carry the demo source (`demoSources`) to Postgres —
+ * "the demo foreign app is demo-only per ADR 0014; if the demo is rebuilt,
+ * its projection target becomes an ordinary PG table created alongside
+ * stage 7" — so with the provider unmounted the page renders the shared
+ * archived state instead of hooks that would throw. The panels were removed
+ * from the shell; they live on in the untouched `app/convex/` +
+ * `packages/json-cms/` reference trees and the `demo/` fixtures.
  */
 function DashboardPage() {
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-8">
-      <div>
-        <h1 className="text-2xl font-semibold">External data dashboard</h1>
-        <p className="text-sm text-muted-foreground">
-          CRUD over the app's own tables — the source of truth in the bound-datasets PoC. Edits mark
-          the projection stale; sync pushes them into the json-cms dataset that the maps render.
-        </p>
-      </div>
-      <SyncStatusCard />
-      <RemoteSourcesCard />
-      <SnapshotsCard />
-      <Tabs defaultValue="restaurants">
-        <TabsList>
-          <TabsTrigger value="restaurants">Restaurants</TabsTrigger>
-          <TabsTrigger value="locations">Locations</TabsTrigger>
-          <TabsTrigger value="links">Restaurant locations</TabsTrigger>
-        </TabsList>
-        <TabsContent value="restaurants">
-          <RestaurantsPanel />
-        </TabsContent>
-        <TabsContent value="locations">
-          <LocationsPanel />
-        </TabsContent>
-        <TabsContent value="links">
-          <LinksPanel />
-        </TabsContent>
-      </Tabs>
-    </main>
+    <ArchivedConvexSurface
+      description="This dashboard was the bound-datasets demo's foreign-source editor — a demo-only surface over the pre-migration Convex tables. The demo source is not carried to Postgres (issue #206)."
+      homeTo="/datasets"
+      title="The demo source dashboard is archived in this build"
+    />
   );
 }

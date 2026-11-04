@@ -2,16 +2,22 @@ import type { GeometryType } from "@caden/json-cms/react";
 
 import type { DatasetEntryRow, DatasetGeometryRow } from "#/lib/dataset-rows";
 import { isPostgresDatasetId } from "#/lib/dataset-source";
+import type { CollectionMembershipRow, CollectionRow } from "#/lib/store/collections";
 import type { DatasetSummaryRow, DatasetBoundingBox } from "#/lib/store/datasets";
+import type { DerivedDatasetSummaryRow } from "#/lib/store/derived";
 import type { EntryRow } from "#/lib/store/entries";
 import type { GeometryRow } from "#/lib/store/geometries";
+import type { GroupRow } from "#/lib/store/groups";
 import type { MapLayerOverrideRow, MapLayerRow } from "#/lib/store/maps";
 
 import type {
   DatasetSummary,
+  DerivedDatasetSummary,
+  GroupSummary,
   LayerChainResolution,
   MapLayerDoc,
   MapLayerOverride,
+  MembershipRow,
 } from "../lib/map-layers";
 
 /**
@@ -203,3 +209,61 @@ export function isPostgresLayerTarget(targetId: string): boolean {
  * this constant documents that the PG side contributes none.
  */
 export const NO_PG_CHAIN_RESOLUTIONS: readonly LayerChainResolution[] = [];
+
+/**
+ * One PG collection as the pipeline's `CollectionDoc` (the component's
+ * collections doc): `id` → `_id`, null → absent for the optional columns;
+ * the `_creationTime` placeholder follows the adapters' house rule.
+ */
+export function pgCollectionToCollectionDoc(row: CollectionRow) {
+  return {
+    _creationTime: 0,
+    _id: row.id,
+    description: row.description ?? undefined,
+    name: row.name,
+  };
+}
+
+/** One PG group as the pipeline's `GroupSummary` (the component's groups doc). */
+export function pgGroupToGroupSummary(row: GroupRow): GroupSummary {
+  return {
+    _creationTime: 0,
+    _id: row.id,
+    collectionId: row.collectionId ?? undefined,
+    description: row.description ?? undefined,
+    name: row.name,
+  };
+}
+
+/**
+ * One PG membership row as the pipeline's `MembershipRow` (the component's
+ * schemaCollections doc): `datasetId` → `schemaId`; the synthetic `_id` is
+ * the pair (the pipeline reads memberships by collection/schemaId only —
+ * nothing consumes the row id).
+ */
+export function pgMembershipToMembershipRow(row: CollectionMembershipRow): MembershipRow {
+  return {
+    _creationTime: 0,
+    _id: `${row.collectionId}:${row.datasetId}`,
+    collectionId: row.collectionId,
+    kind: row.kind ?? undefined,
+    schemaId: row.datasetId,
+  };
+}
+
+/** One PG derived-registry summary as the pipeline's `DerivedDatasetSummary`. */
+export function pgDerivedToDerivedSummary(row: DerivedDatasetSummaryRow): DerivedDatasetSummary {
+  return {
+    _creationTime: 0,
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the pipeline's `DerivedDatasetSummary._id` carries the Convex registry's branded id; the PG registry's uuid keys the same string-typed render-id space (the pipeline reads it as a plain string).
+    _id: row.id as DerivedDatasetSummary["_id"],
+    carriesSql: row.carriesSql,
+    createdBy: row.createdBy,
+    description: row.description ?? undefined,
+    health: row.health,
+    healthReason: row.healthReason,
+    sourceDatasetId: row.sourceDatasetId,
+    status: row.status,
+    title: row.title,
+  };
+}

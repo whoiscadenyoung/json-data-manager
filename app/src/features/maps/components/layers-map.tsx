@@ -8,8 +8,6 @@ import { Fragment, useState } from "react";
 import type { ReactNode } from "react";
 
 import type { DatasetEntryRow, DatasetGeometryRow } from "#/lib/dataset-rows";
-import { useEnrichedDatasetEntryRow } from "#/lib/dataset-rows-react";
-import { isPostgresDatasetId } from "#/lib/dataset-source";
 import { formatPropertyValue } from "#/lib/format";
 
 import type { DatasetSummary } from "../lib/map-layers";
@@ -450,18 +448,14 @@ export function LayersMap({
     // and lookup-row reads that join the namespaced fields in. All of it
     // lives only while the popup is open; closing drops every subscription.
     //
-    // The transitional split (design §14): the executor is per-backend — a
-    // Convex dataset streams its saved specs and lookup rows through the
-    // Convex seam (below); a Postgres dataset takes the store point-read
-    // with the seam's spec pass (pg-entry-popup). The id says which —
-    // exactly one of the two hooks is live for a selection.
-    convexPopup = useEnrichedDatasetEntryRow(
-      selected !== null && !isPostgresDatasetId(selected.schemaId) ? selected : undefined,
-    ),
-    pgPopup = usePgEnrichedDatasetEntryRow(
-      selected !== null && isPostgresDatasetId(selected.schemaId) ? selected : undefined,
-    ),
-    popup = selected !== null && isPostgresDatasetId(selected.schemaId) ? pgPopup : convexPopup,
+    // The clicked feature's entry rides the PG point-read with the seam's
+    // spec pass (pg-entry-popup). The transitional Convex half
+    // (`useEnrichedDatasetEntryRow` over the Convex seam, for a pre-migration
+    // selection) is archived with the stage-7 disconnect (issue #206) —
+    // selections on archived datasets can't be produced anymore, so the
+    // split collapses to the Postgres executor.
+    pgPopup = usePgEnrichedDatasetEntryRow(selected === null ? undefined : selected),
+    popup = pgPopup,
     selectedDatasetTitle = selected
       ? getDatasetTitle(datasetById, titlesById, selected.schemaId, "")
       : "";
