@@ -194,18 +194,29 @@ export function getByEntryQueryOptions(args: { entryId: string }, options?: Stor
  * exact byte size the import row records alongside it; the entry is keyed by
  * INDEX (the row's position in the parsed rows), not by an entry id, which
  * does not exist until the `import_entries` chunk generates one.
+ *
+ * The path carries a PER-UPLOAD random token (the tile flow's
+ * `pgTileArchiveUploadPath` pattern, pg-tile-archives.ts:108): row-indexed
+ * paths are objects the FIRST uploader owns — a collaborator's retry after
+ * a partial import would PUT (upsert) onto someone else's objects, and the
+ * 0006 update/delete policies deny that for every editor but the original
+ * uploader. Per-upload tokens make every attempt its own object set; a
+ * failed attempt's leftovers are orphans a stage-later cleanup sweeps by
+ * the `<datasetId>/` prefix + age (the recorded tile-flow difference — the
+ * Convex flow deleted the incoming blob, a path-based flow cannot). The
+ * token stays INTERNAL (per call, not a new argument): each oversized row
+ * uploads exactly once per import attempt, so per-call tokens carry the
+ * same no-collision guarantee without a caller-signature change.
  */
 export async function uploadGeometrySource(
   args: { datasetId: string; rowIndex: number; source: unknown },
   options?: StoreOptions,
 ): Promise<{ path: string; bytes: number }> {
   const text = JSON.stringify(args.source);
-  const path = `${args.datasetId}/row-${args.rowIndex}.json`;
-  // Upsert: a Retry regenerates the same row-indexed paths — the failed
-  // attempt's leftover copies are overwritten, not rejected.
+  const path = `${args.datasetId}/${crypto.randomUUID()}/row-${args.rowIndex}.json`;
   const { error } = await clientOf(options)
     .storage.from(GEOMETRY_BUCKET)
-    .upload(path, new Blob([text], { type: "application/json" }), { upsert: true });
+    .upload(path, new Blob([text], { type: "application/json" }));
   if (error !== null) {
     throw new Error(error.message);
   }

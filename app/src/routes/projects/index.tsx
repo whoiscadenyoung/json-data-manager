@@ -29,6 +29,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { RouterButton } from "#/components/router-button";
+import { PgProjectsBrowser } from "#/features/publishing";
 import { errorMessage } from "#/lib/errors";
 
 import { api } from "../../../convex/_generated/api";
@@ -40,10 +41,25 @@ import { api } from "../../../convex/_generated/api";
  * catalog. The read is creator-scoped server-side (`projects.list` returns
  * the signed-in caller's own projects — other users' projects never enter
  * the payload), through the same light-query bridge the other browsers use.
+ *
+ * Stage 4 (#203): Postgres projects (the new native path, per-creator
+ * private) render as their own labeled section ABOVE the Convex page — the
+ * transitional split-brain: each store lists its own projects, badges mark
+ * the origin, and the Convex page keeps rendering exactly as it always has
+ * (design doc §14).
  */
 export const Route = createFileRoute("/projects/")({
-  component: ProjectsPage,
+  component: ProjectsRoutePage,
 });
+
+function ProjectsRoutePage() {
+  return (
+    <>
+      <PgProjectsBrowser />
+      <ProjectsPage />
+    </>
+  );
+}
 
 type ProjectSummary = FunctionReturnType<typeof api.publishing.projects.list>[number];
 

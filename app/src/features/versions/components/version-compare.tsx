@@ -46,6 +46,18 @@ export function DeltaTruncationNotice({ truncated }: { truncated: boolean }) {
 type PrecomputedDelta = VersionDelta | null | "pending";
 
 /**
+ * The selected pair, when the caller controls it: the Postgres edition of
+ * the compare (stage 4, #203) computes its delta client-side, so IT has to
+ * own which pair is selected (the delta is a function of the pair). Absent
+ * `pair`, the component seeds and holds its own selection exactly as it
+ * always has (the Convex path — untouched behavior).
+ */
+interface ComparePair {
+  aSchemaId: string | undefined;
+  bSchemaId: string | undefined;
+}
+
+/**
  * The tag-compare view (docs/bound-datasets-design.md §6, issue #77): pick
  * any two frozen versions and the delta between them renders as an
  * add/remove/modify overlay on either base. The delta computes on demand
@@ -58,25 +70,52 @@ type PrecomputedDelta = VersionDelta | null | "pending";
  * the ops themselves still come from the shipped delta path, so counts and
  * positions key identically (`version-rows.ts` is the one key rule both
  * sides share).
+ *
+ * `pair`/`onPairChange` (stage 4) make the selection CONTROLLED for callers
+ * that derive the delta themselves (the PG edition); the fallback queries
+ * stay skipped in that mode exactly as when `rows`/`delta` serve.
  */
 // oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 export function VersionCompare({
   versions,
   rows,
   delta: deltaProp,
+  pair,
+  onPairChange,
 }: {
   versions: Array<VersionOption>;
   rows?: globalThis.Map<string, VersionRow[]>;
   delta?: PrecomputedDelta;
+  pair?: ComparePair;
+  onPairChange?: (pair: ComparePair) => void;
 }) {
   const newest = versions.at(0),
     oldest = versions.at(1) ?? newest,
-    [aSchemaId, setASchemaId] = useState<string | undefined>(
+    [seededA, setSeededA] = useState<string | undefined>(
       oldest !== undefined ? oldest.schemaId : undefined,
     ),
-    [bSchemaId, setBSchemaId] = useState<string | undefined>(
+    [seededB, setSeededB] = useState<string | undefined>(
       newest !== undefined ? newest.schemaId : undefined,
     ),
+    // Controlled when the caller passes `pair`; the seeded states stand in
+    // otherwise (their setters are only reachable through that same branch).
+    aSchemaId = pair === undefined ? seededA : pair.aSchemaId,
+    bSchemaId = pair === undefined ? seededB : pair.bSchemaId,
+    selectPair = (patch: { aSchemaId?: string; bSchemaId?: string }): void => {
+      if (pair === undefined || onPairChange === undefined) {
+        if (patch.aSchemaId !== undefined) {
+          setSeededA(patch.aSchemaId);
+        }
+        if (patch.bSchemaId !== undefined) {
+          setSeededB(patch.bSchemaId);
+        }
+        return;
+      }
+      onPairChange({
+        aSchemaId: patch.aSchemaId ?? pair.aSchemaId,
+        bSchemaId: patch.bSchemaId ?? pair.bSchemaId,
+      });
+    },
     [base, setBase] = useState<"a" | "b">("b"),
     options = versions.map((version) => ({
       label: `${version.title} (${version.label})`,
@@ -150,7 +189,7 @@ export function VersionCompare({
           items={options}
           value={aSchemaId}
           onValueChange={(value) => {
-            setASchemaId(value ?? undefined);
+            selectPair({ aSchemaId: value ?? undefined });
           }}
         >
           <SelectTrigger className="w-56">
@@ -169,7 +208,7 @@ export function VersionCompare({
           items={options}
           value={bSchemaId}
           onValueChange={(value) => {
-            setBSchemaId(value ?? undefined);
+            selectPair({ bSchemaId: value ?? undefined });
           }}
         >
           <SelectTrigger className="w-56">

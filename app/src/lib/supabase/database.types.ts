@@ -93,6 +93,104 @@ export type Database = {
           },
         ];
       };
+      consumer_references: {
+        Row: {
+          consumer_id: string;
+          consumer_kind: string;
+          created_at: string;
+          id: string;
+          mode: string;
+          pinned_ref: string | null;
+          pinned_version_id: string | null;
+          source_dataset_id: string | null;
+        };
+        ComputedFields: never;
+        Insert: {
+          consumer_id: string;
+          consumer_kind: string;
+          created_at?: string;
+          id?: string;
+          mode?: string;
+          pinned_ref?: string | null;
+          pinned_version_id?: string | null;
+          source_dataset_id?: string | null;
+        };
+        Update: {
+          consumer_id?: string;
+          consumer_kind?: string;
+          created_at?: string;
+          id?: string;
+          mode?: string;
+          pinned_ref?: string | null;
+          pinned_version_id?: string | null;
+          source_dataset_id?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "consumer_references_pinned_version_id_fkey";
+            columns: ["pinned_version_id"];
+            isOneToOne: false;
+            referencedRelation: "dataset_versions";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "consumer_references_source_dataset_id_fkey";
+            columns: ["source_dataset_id"];
+            isOneToOne: false;
+            referencedRelation: "datasets";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      dataset_versions: {
+        Row: {
+          created_at: string;
+          created_by: string;
+          dataset_id: string;
+          id: string;
+          lineage: NonNullable<Json>;
+          publish_key: string | null;
+          ref: string;
+          version_label: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          created_at?: string;
+          created_by: string;
+          dataset_id: string;
+          id?: string;
+          lineage: NonNullable<Json>;
+          publish_key?: string | null;
+          ref: string;
+          version_label: string;
+        };
+        Update: {
+          created_at?: string;
+          created_by?: string;
+          dataset_id?: string;
+          id?: string;
+          lineage?: NonNullable<Json>;
+          publish_key?: string | null;
+          ref?: string;
+          version_label?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "dataset_versions_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "dataset_versions_dataset_id_fkey";
+            columns: ["dataset_id"];
+            isOneToOne: false;
+            referencedRelation: "datasets";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       datasets: {
         Row: {
           bbox: unknown;
@@ -204,6 +302,71 @@ export type Database = {
             columns: ["group_id"];
             isOneToOne: false;
             referencedRelation: "groups";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      derived_datasets: {
+        Row: {
+          created_at: string;
+          created_by: string;
+          depends_on: string[];
+          description: string | null;
+          id: string;
+          source_dataset_id: string | null;
+          source_derived_id: string | null;
+          spec: NonNullable<Json>;
+          status: string;
+          title: string;
+          updated_at: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          created_at?: string;
+          created_by?: string;
+          depends_on?: string[];
+          description?: string | null;
+          id?: string;
+          source_dataset_id?: string | null;
+          source_derived_id?: string | null;
+          spec: NonNullable<Json>;
+          status?: string;
+          title: string;
+          updated_at?: string;
+        };
+        Update: {
+          created_at?: string;
+          created_by?: string;
+          depends_on?: string[];
+          description?: string | null;
+          id?: string;
+          source_dataset_id?: string | null;
+          source_derived_id?: string | null;
+          spec?: NonNullable<Json>;
+          status?: string;
+          title?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "derived_datasets_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "derived_datasets_source_dataset_id_fkey";
+            columns: ["source_dataset_id"];
+            isOneToOne: false;
+            referencedRelation: "datasets";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "derived_datasets_source_derived_id_fkey";
+            columns: ["source_derived_id"];
+            isOneToOne: false;
+            referencedRelation: "derived_datasets";
             referencedColumns: ["id"];
           },
         ];
@@ -701,6 +864,329 @@ export type Database = {
         };
         Relationships: [];
       };
+      project_artifacts: {
+        Row: {
+          added_by: string;
+          artifact_id: string;
+          artifact_kind: string;
+          id: string;
+          project_id: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          added_by: string;
+          artifact_id: string;
+          artifact_kind: string;
+          id?: string;
+          project_id: string;
+        };
+        Update: {
+          added_by?: string;
+          artifact_id?: string;
+          artifact_kind?: string;
+          id?: string;
+          project_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "project_artifacts_added_by_fkey";
+            columns: ["added_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "project_artifacts_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      projects: {
+        Row: {
+          artifact_count: number;
+          created_at: string;
+          created_by: string;
+          description: string | null;
+          id: string;
+          title: string;
+          updated_at: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          artifact_count?: number;
+          created_at?: string;
+          created_by?: string;
+          description?: string | null;
+          id?: string;
+          title: string;
+          updated_at?: string;
+        };
+        Update: {
+          artifact_count?: number;
+          created_at?: string;
+          created_by?: string;
+          description?: string | null;
+          id?: string;
+          title?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "projects_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      publish_bundle_members: {
+        Row: {
+          attempt_id: string | null;
+          bundle_id: string;
+          dataset_key: string;
+          error: string | null;
+          group_id: string | null;
+          id: string;
+          kind: string;
+          layer_targets: string[] | null;
+          publish: boolean;
+          published_version_id: string | null;
+          status: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          attempt_id?: string | null;
+          bundle_id: string;
+          dataset_key: string;
+          error?: string | null;
+          group_id?: string | null;
+          id?: string;
+          kind: string;
+          layer_targets?: string[] | null;
+          publish?: boolean;
+          published_version_id?: string | null;
+          status?: string;
+        };
+        Update: {
+          attempt_id?: string | null;
+          bundle_id?: string;
+          dataset_key?: string;
+          error?: string | null;
+          group_id?: string | null;
+          id?: string;
+          kind?: string;
+          layer_targets?: string[] | null;
+          publish?: boolean;
+          published_version_id?: string | null;
+          status?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "publish_bundle_members_bundle_id_fkey";
+            columns: ["bundle_id"];
+            isOneToOne: false;
+            referencedRelation: "publish_bundles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "publish_bundle_members_published_version_id_fkey";
+            columns: ["published_version_id"];
+            isOneToOne: false;
+            referencedRelation: "dataset_versions";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      publish_bundles: {
+        Row: {
+          collection_id: string | null;
+          created_by: string;
+          error: string | null;
+          finished_at: string | null;
+          id: string;
+          last_progress_at: string;
+          project_description: string | null;
+          project_id: string;
+          started_at: string;
+          status: string;
+          title: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          collection_id?: string | null;
+          created_by: string;
+          error?: string | null;
+          finished_at?: string | null;
+          id?: string;
+          last_progress_at?: string;
+          project_description?: string | null;
+          project_id: string;
+          started_at?: string;
+          status?: string;
+          title: string;
+        };
+        Update: {
+          collection_id?: string | null;
+          created_by?: string;
+          error?: string | null;
+          finished_at?: string | null;
+          id?: string;
+          last_progress_at?: string;
+          project_description?: string | null;
+          project_id?: string;
+          started_at?: string;
+          status?: string;
+          title?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "publish_bundles_collection_id_fkey";
+            columns: ["collection_id"];
+            isOneToOne: false;
+            referencedRelation: "collections";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "publish_bundles_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "publish_bundles_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      tags: {
+        Row: {
+          created_at: string;
+          created_by: string;
+          dataset_id: string;
+          id: string;
+          name: string;
+          retired_at: string | null;
+          version_id: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          created_at?: string;
+          created_by?: string;
+          dataset_id: string;
+          id?: string;
+          name: string;
+          retired_at?: string | null;
+          version_id: string;
+        };
+        Update: {
+          created_at?: string;
+          created_by?: string;
+          dataset_id?: string;
+          id?: string;
+          name?: string;
+          retired_at?: string | null;
+          version_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "tags_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "tags_dataset_id_fkey";
+            columns: ["dataset_id"];
+            isOneToOne: false;
+            referencedRelation: "datasets";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "tags_version_id_fkey";
+            columns: ["version_id"];
+            isOneToOne: false;
+            referencedRelation: "dataset_versions";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      version_entries: {
+        Row: {
+          bbox: number[] | null;
+          data: NonNullable<Json>;
+          entry_id: string | null;
+          geometry: Json | null;
+          geometry_type: string | null;
+          id: string;
+          ordinal: number;
+          version_id: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          bbox?: number[] | null;
+          data: NonNullable<Json>;
+          entry_id?: string | null;
+          geometry?: Json | null;
+          geometry_type?: string | null;
+          id?: string;
+          ordinal: number;
+          version_id: string;
+        };
+        Update: {
+          bbox?: number[] | null;
+          data?: NonNullable<Json>;
+          entry_id?: string | null;
+          geometry?: Json | null;
+          geometry_type?: string | null;
+          id?: string;
+          ordinal?: number;
+          version_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "version_entries_entry_id_fkey";
+            columns: ["entry_id"];
+            isOneToOne: false;
+            referencedRelation: "entries";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "version_entries_version_id_fkey";
+            columns: ["version_id"];
+            isOneToOne: false;
+            referencedRelation: "dataset_versions";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      version_policies: {
+        Row: {
+          dataset_key: string;
+          keep_versions: number | null;
+          pinned_refs: string[];
+        };
+        ComputedFields: never;
+        Insert: {
+          dataset_key: string;
+          keep_versions?: number | null;
+          pinned_refs?: string[];
+        };
+        Update: {
+          dataset_key?: string;
+          keep_versions?: number | null;
+          pinned_refs?: string[];
+        };
+        Relationships: [];
+      };
     };
     Views: {
       [_ in never]: never;
@@ -708,6 +1194,7 @@ export type Database = {
     Functions: {
       can_edit_dataset: { Args: { p_dataset: string }; Returns: boolean };
       can_view_dataset: { Args: { p_dataset: string }; Returns: boolean };
+      consumer_reference_owner: { Args: { p_consumer: string; p_kind: string }; Returns: boolean };
       dataset_id_of_storage_path: { Args: { p_name: string }; Returns: string };
       dataset_rows_for_tiles: {
         Args: { p_cursor?: string; p_dataset: string; p_limit?: number };
@@ -721,6 +1208,7 @@ export type Database = {
           next_cursor: string;
         }[];
       };
+      enforce_version_retention: { Args: { p_dataset: string }; Returns: number };
       entries_in_bbox: {
         Args: { p_bbox: Json; p_dataset: string };
         Returns: {
@@ -744,6 +1232,17 @@ export type Database = {
         };
         Returns: boolean;
       };
+      project_artifact_owner: { Args: { p_project: string }; Returns: boolean };
+      publish_bundle_owner: { Args: { p_bundle: string }; Returns: boolean };
+      publish_version: {
+        Args: {
+          p_dataset: string;
+          p_lineage?: Json;
+          p_publish_key: string;
+          p_version_label: string;
+        };
+        Returns: string;
+      };
       search_entries: {
         Args: {
           p_cursor?: string;
@@ -761,6 +1260,7 @@ export type Database = {
           next_cursor: string;
         }[];
       };
+      version_policy_anchor_owner: { Args: { p_anchor: string }; Returns: boolean };
     };
     Enums: {
       [_ in never]: never;
