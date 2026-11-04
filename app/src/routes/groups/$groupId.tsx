@@ -36,6 +36,7 @@ import {
   exportExcelWorkbook,
   type ExportFormat,
   type ExportFormatOption,
+  PgGroupExport,
   slugify,
 } from "#/features/datasets";
 import {
@@ -136,11 +137,16 @@ export const Route = createFileRoute("/groups/$groupId")({
   component: GroupDetailPage,
 });
 
-/** The route's origin branch (design doc §14): Postgres groups (uuid ids, stage 3) mount the store-backed page; pre-migration Convex groups keep their Convex surface untouched. */
+/** The route's origin branch (design doc §14): Postgres groups (uuid ids, stage 3) mount the store-backed page; pre-migration Convex groups keep their Convex surface untouched. The route COMPOSES the stage-5 export control into the PG page — the datasets feature's dialog over the PG seam — because the route layer may import any feature while the catalog feature must not import `#/features/datasets` back (the cross-feature graph stays acyclic). */
 function GroupDetailPage() {
   const { groupId } = Route.useParams();
   if (isPostgresCatalogId(groupId)) {
-    return <PgGroupPage groupId={groupId} />;
+    return (
+      <PgGroupPage
+        groupId={groupId}
+        renderExport={(group) => <PgGroupExport groupName={group.name} members={group.members} />}
+      />
+    );
   }
   return <ConvexGroupDetailPage groupId={groupId} />;
 }

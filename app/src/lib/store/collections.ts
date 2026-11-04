@@ -11,6 +11,15 @@ import { CATALOG_READ_LIMIT, DATASET_FULL_SELECT, type DatasetRow } from "./data
  * / `addToCollection` / `removeFromCollection`, over the `public.collections`
  * and `public.collection_datasets` tables (DDL §3.4, migration 0007).
  *
+ * MODULE-NAME MAP (recorded for the §8.1 reader — the stage-3 review flagged
+ * the missing record): §8.1 sketches `catalog.ts` and `styles.ts`, but the
+ * shipped modules keep the domain names they already had — §8.1's
+ * `catalog.ts` (collections/groups/membership) is SPLIT into this file +
+ * `groups.ts` (+ membership in `collection_datasets` here, group assignment
+ * in `groups.ts`), its map-store bullet stays in `maps.ts`, and §8.1's
+ * `styles.ts` (layerStyles + markerSprites) is `layer-styles.ts`. The
+ * exports are the contract, not the file names.
+ *
  * Behavior parity notes (each traces to the component's
  * `packages/json-cms/src/component/collections.ts`):
  *   - Membership is MANY-TO-MANY (`collection_datasets`, PK

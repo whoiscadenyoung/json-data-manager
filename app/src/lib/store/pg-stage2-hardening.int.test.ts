@@ -78,7 +78,14 @@ describe.skipIf(!dbUp())("p_limit caps (0006)", () => {
     await dropDatasets(s(), [datasetId]);
   });
 
-  test("dataset_rows_for_tiles caps p_limit server-side at 1000", async () => {
+  // 0010 (stage-5 carry-over fix) UPDATED this pin: 0006 clamped
+  // dataset_rows_for_tiles to 1000, contradicting its own §5.5 signature
+  // default (5000) and the callers' requested widths (the row seam's 2000,
+  // the worker's 5000); the cap now IS the §5.5 default, so a 1005-row
+  // fixture with p_limit = 10^7 answers ALL 1005 rows in one uncapped page
+  // — the exact 5000 clamp is pinned by pg-stage5-derived.int.test.ts's
+  // 5201-row fixture.
+  test("dataset_rows_for_tiles clamps p_limit at the §5.5 default (5000), no longer 0006's 1000", async () => {
     const datasetId = await createDataset(s(), {
       createdBy: ALICE,
       properties: ["name"],
@@ -100,13 +107,16 @@ describe.skipIf(!dbUp())("p_limit caps (0006)", () => {
     const rows = await s().expectOk(
       `select entry_id, next_cursor from public.dataset_rows_for_tiles(${sqlLit(datasetId)}, null, 10000000)`,
     );
-    expect(rows.length).toBe(1000);
-    expect(rows[0].next_cursor as string).not.toBeNull();
+    expect(rows.length).toBe(1005);
+    expect(rows[0].next_cursor as string).toBeNull();
 
+    // The hardening's real point still holds: an absurd page width cannot
+    // materialize beyond the cap — exercised at exact scale by
+    // pg-stage5-derived.int.test.ts ("clamps p_limit = 10^7 ...").
     const nextRows = await s().expectOk(
-      `select entry_id, next_cursor from public.dataset_rows_for_tiles(${sqlLit(datasetId)}, ${sqlLit(rows[0].next_cursor)}, 10000000)`,
+      `select entry_id, next_cursor from public.dataset_rows_for_tiles(${sqlLit(datasetId)}, null, 5000)`,
     );
-    expect(nextRows.length).toBe(5);
+    expect(nextRows.length).toBe(1005);
     expect(nextRows[0].next_cursor as string).toBeNull();
     await s().rollback();
 

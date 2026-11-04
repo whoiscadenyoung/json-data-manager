@@ -14,6 +14,8 @@ export { GeospatialConversionPanel } from "./components/geospatial-conversion-pa
 export { PostgresCreateDatasetPage } from "./components/pg-create-flow";
 export { PostgresDatasetPage } from "./components/pg-dataset-page";
 export type { PgDatasetPageSearch } from "./components/pg-dataset-page";
+export { PgDatasetExport } from "./components/pg-dataset-export";
+export { PgGroupExport } from "./components/pg-group-export";
 export { PostgresEntryDetailsPage } from "./components/pg-entry-details";
 export { SchemaVisualizer } from "./components/schema-visualizer";
 export { SimplifyGeometryPanel } from "./components/simplify-geometry-panel";

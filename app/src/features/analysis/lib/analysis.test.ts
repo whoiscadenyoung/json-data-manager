@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// Stage 5 (#204) routed the PG token reply through the store's shared
+// client, whose import chain reaches `#/env` (which validates at import
+// time); CI has no .env.local — the stage-3-ci-tree-lessons mock, applied
+// before any import.
+vi.mock("#/env", () => ({
+  env: { VITE_SUPABASE_ANON_KEY: "test-anon-key", VITE_SUPABASE_URL: "http://127.0.0.1:54321" },
+}));
+
 import { runAnalysis } from "./analysis";
 import type { AnalysisRunResult, AnalysisWorkerInbound, AnalysisWorkerOutbound } from "./analysis";
 

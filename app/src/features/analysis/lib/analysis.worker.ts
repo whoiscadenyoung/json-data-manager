@@ -32,6 +32,15 @@ import { analysisSqlEngine } from "@caden/analysis/duckdb";
  *   are unreachable from here by construction.
  * - One run at a time: the CPU-bound WASM query serializes on the
  *   promise-chained queue (the tile-archive pattern).
+ *
+ * Stage 5 (#204) adds the Postgres run path: a run whose request carries
+ * `backend: "pg"` builds a worker-owned supabase client from a fresh access
+ * token (same handshake, source "supabase") and loads every table through
+ * `./analysis-pg` — the PG row-resolution seam, with the declared columns
+ * resolved main-thread so this path fetches rows only. Convex runs never
+ * construct that client (no GoTrue, no socket), and the engine — including
+ * its blob-worker `?url` absolutization in packages/analysis duckdb.ts — is
+ * shared and unchanged.
  */
 import { applySql, declaredColumnTypes } from "@caden/data-core/transform";
 import type { SqlColumnSpec, SqlOperation, SqlSideTable } from "@caden/data-core/transform";
@@ -42,7 +51,13 @@ import { setAuthReasserting } from "#/lib/convex-auth-token";
 import { entryDataRecord, forEachDatasetEntryPage } from "#/lib/dataset-rows";
 import { api } from "#convex/_generated/api";
 
-import type { AnalysisWorkerInbound, AnalysisWorkerOutbound } from "./analysis";
+import type {
+  AnalysisTableTarget,
+  AnalysisTokenSource,
+  AnalysisWorkerInbound,
+  AnalysisWorkerOutbound,
+} from "./analysis";
+import { loadPgTable, pgWorkerSupabaseClient } from "./analysis-pg";
 
 /** Worker scope (`DedicatedWorkerGlobalScope`) isn't available to name under the app's DOM-lib tsconfig, but `self.postMessage` / `self.addEventListener` used here are the same calls on the narrow worker surface this module uses — at runtime `self` IS the worker scope. */
 function post(message: AnalysisWorkerOutbound): void {
@@ -70,18 +85,18 @@ let client: ConvexClient | undefined;
 let tokenRequestSeq = 0;
 const pendingTokenRequests = new Map<number, (token: string | null) => void>();
 
-async function fetchTokenFromMain(): Promise<string | null> {
+async function fetchTokenFromMain(source: AnalysisTokenSource): Promise<string | null> {
   return new Promise((resolve) => {
     tokenRequestSeq += 1;
     pendingTokenRequests.set(tokenRequestSeq, resolve);
-    post({ requestId: tokenRequestSeq, type: "token-request" });
+    post({ requestId: tokenRequestSeq, source, type: "token-request" });
   });
 }
 
 function convexClient(): ConvexClient {
   if (client === undefined) {
     const created = new ConvexClient(env.VITE_CONVEX_URL);
-    setAuthReasserting(created, fetchTokenFromMain);
+    setAuthReasserting(created, async () => await fetchTokenFromMain("convex"));
     client = created;
   }
   return client;
@@ -161,11 +176,25 @@ async function runAnalysis(
     post({ phase: "loading-engine", requestId, type: "phase" });
     const engine = await analysisSqlEngine();
     post({ phase: "loading-rows", requestId, type: "phase" });
-    const source = await loadTable(request.source.schemaId),
+    // The transitional backend split rides the REQUEST (stage 5, #204): a PG
+    // run builds its own supabase client from a fresh token (the tile
+    // worker's rule) and loads every table through the PG seam
+    // (`loadPgTable` — declared columns arrive on the targets, so this path
+    // never fetches metadata); the Convex path below is byte-identical to
+    // stage 9's. The engine is shared and backend-agnostic.
+    const supabase =
+        request.backend === "pg"
+          ? await pgWorkerSupabaseClient(async () => await fetchTokenFromMain("supabase"))
+          : undefined,
+      loadTarget = async (target: AnalysisTableTarget): Promise<LoadedTable> =>
+        supabase === undefined
+          ? await loadTable(target.schemaId)
+          : await loadPgTable(target, supabase),
+      source = await loadTarget(request.source),
       sides = new Map<string, SqlSideTable>();
     for (const target of request.tables) {
       // oxlint-disable-next-line no-await-in-loop -- each table pages a dataset to exhaustion; sequential keeps memory bounded (the loadPublishTables precedent).
-      const loaded = await loadTable(target.schemaId);
+      const loaded = await loadTarget(target);
       sides.set(target.as, { columns: loaded.columns, rows: loaded.rows });
     }
     post({ phase: "running", requestId, type: "phase" });

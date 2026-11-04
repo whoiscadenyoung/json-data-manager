@@ -1,4 +1,5 @@
 import { ANALYSIS_RUN_TIMEOUT_MS } from "@caden/analysis/caps";
+import type { SqlColumnSpec } from "@caden/data-core/transform";
 
 /**
  * The analysis layer's main-thread half (roadmap stage 9, #105): the typed
@@ -20,6 +21,16 @@ import { ANALYSIS_RUN_TIMEOUT_MS } from "@caden/analysis/caps";
  * query (the doc's "one seam" invariant; a per-surface row path is the
  * recorded smell).
  *
+ * Stage 5 (Supabase migration, #204) adds the Postgres run path: the
+ * backend lives on the REQUEST (the caller knows the dataset's origin — the
+ * transitional split is keyed on where the dataset was created), and a PG
+ * target carries its declared columns + title resolved MAIN-THREAD from the
+ * store's dataset row, so the worker stays metadata-free on that path (its
+ * only fetch is the seam's row paging — the tile-archive worker is the
+ * precedent for a worker-owned supabase client; the engine itself,
+ * packages/analysis duckdb.ts with its blob-worker `?url` absolutization,
+ * is shared by both backends untouched).
+ *
  * Parquet sidecar note (doc §3:59-63): conditional, NOT built in v1. This
  * registration path is shaped so a sidecar can substitute for streaming —
  * a future DuckDB HTTP-range read over a per-version Parquet artifact
@@ -27,6 +38,13 @@ import { ANALYSIS_RUN_TIMEOUT_MS } from "@caden/analysis/caps";
  * side of the protocol changes.
  */
 import { fetchConvexToken } from "#/lib/convex-auth-token";
+import { sharedClient } from "#/lib/store/client";
+
+/** Which auth surface a worker token request is for — the Convex JWT the standalone client authenticates with, or the Supabase access token the PG path builds its own client from (the tile worker's `TileTokenSource` shape, kept identical so both workers speak the same handshake). */
+export type AnalysisTokenSource = "convex" | "supabase";
+
+/** Which backend feeds a run's rows: the Convex seam (the original path) or the Postgres seam (`dataset-rows-pg.ts`, design §8.3). */
+export type AnalysisBackend = "convex" | "pg";
 
 /** One resolved table target: the SQL name its rows register under + the component row the seam should page. */
 export interface AnalysisTableTarget {
@@ -34,10 +52,16 @@ export interface AnalysisTableTarget {
   as: string;
   /** The RESOLVED component dataset id (post stage-6 resolution — identity or float head). */
   schemaId: string;
+  /** PG runs only: the target's declared column types, resolved main-thread from the store's dataset row (`declaredColumnTypes(jsonSchema)`). Convex runs leave it undefined — the worker reads the structure off the component schema itself. */
+  columns?: SqlColumnSpec[];
+  /** PG runs only: the dataset's title (the source-row-cap error names it). Convex runs resolve it worker-side. */
+  title?: string;
 }
 
 /** One analysis run request: the query, the source table, the side tables, the result cap. */
 export interface AnalysisRequest {
+  /** Which backend feeds the rows (the transitional origin split — Convex datasets keep the original path byte-for-byte). Default "convex". */
+  backend?: AnalysisBackend;
   /** Hard cap on returned rows (truncation is reported in diagnostics, never silent). */
   limit?: number;
   /** Progress callback for the worker's transient phases (the first run downloads the WASM engine — worth surfacing). */
@@ -65,9 +89,9 @@ export type AnalysisWorkerInbound =
   | { requestId: number; token: string | null; type: "token" }
   | ({ requestId: number } & AnalysisRequest & { type: "analyze" });
 
-/** Worker → main thread: token requests, phases, then one terminal message. */
+/** Worker → main thread: token requests (the source names the auth surface), phases, then one terminal message. */
 export type AnalysisWorkerOutbound =
-  | { requestId: number; type: "token-request" }
+  | { requestId: number; source?: AnalysisTokenSource; type: "token-request" }
   | { phase: AnalysisRunPhase; requestId: number; type: "phase" }
   | ({ requestId: number; result: AnalysisRunResult } & { type: "done" })
   | { message: string; requestId: number; type: "error" };
@@ -91,11 +115,32 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-/** Answers the worker's Convex-token requests — its standalone client authenticates through here (the worker has no Better Auth session). */
-async function replyToken(requestId: number): Promise<void> {
+/**
+ * The current session's Supabase access token, for the PG path's worker-owned
+ * `createClient` (a worker has neither cookies nor the provider's storage —
+ * it asks the main thread, exactly like the Convex JWT handshake). Never
+ * rejects: null when signed out or the read fails, so the run fails loudly on
+ * the missing identity instead of silently reading zero RLS-visible rows
+ * (the tile worker's `fetchSupabaseAccessToken` shape).
+ */
+async function fetchSupabaseAccessToken(): Promise<string | null> {
+  try {
+    const { data } = await sharedClient().auth.getSession();
+    const session = data.session;
+    if (session === null || session === undefined) {
+      return null;
+    }
+    return typeof session.access_token === "string" ? session.access_token : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Answers the worker's token requests — its standalone client (Convex) or per-run supabase client (PG) authenticate through here (the worker has no session storage of its own). */
+async function replyToken(requestId: number, source: AnalysisTokenSource): Promise<void> {
   const worker = analysisWorker;
   if (worker === undefined) return;
-  const token = await fetchConvexToken();
+  const token = source === "supabase" ? await fetchSupabaseAccessToken() : await fetchConvexToken();
   // `Worker.postMessage` takes (message, transfer) — there is no
   // `targetOrigin` parameter to pass at the worker boundary.
   // oxlint-disable-next-line unicorn/require-post-message-target-origin
@@ -107,7 +152,8 @@ function handleWorkerTokenRequest(event: MessageEvent<unknown>): void {
   if (!isRecord(data) || typeof data.requestId !== "number" || data.type !== "token-request") {
     return;
   }
-  void replyToken(data.requestId);
+  const source: AnalysisTokenSource = data.source === "supabase" ? "supabase" : "convex";
+  void replyToken(data.requestId, source);
 }
 
 /** Runtime shape check for a done message's payload — the one narrowing the protocol's `unknown` transport needs (structured clone delivers exactly what the worker posts; the guard keeps the assumption in one audited place). */
@@ -256,6 +302,7 @@ export async function runAnalysis(request: AnalysisRequest): Promise<AnalysisRun
     // `targetOrigin` parameter to pass at the worker boundary.
     // oxlint-disable unicorn/require-post-message-target-origin -- see above; the rule anchors inside the multi-line call.
     getWorker().postMessage({
+      backend: request.backend,
       limit: request.limit,
       requestId,
       source: request.source,
