@@ -7,7 +7,7 @@
     "#convex/*": "./convex/*"
   },
   "scripts": {
-    "dev": "bunx convex dev --start 'vite dev'",
+    "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run"
