@@ -32,17 +32,21 @@ describe("geometries.uploadGeometrySource — the §10 oversized-payload upload"
       { datasetId: "d1", rowIndex: 7, source },
       { supabase: client },
     );
-    // The row INDEX keys the path — the entry id doesn't exist until the
-    // import_entries chunk generates one.
-    expect(result.path).toBe("d1/row-7.json");
+    // The path carries a PER-UPLOAD random token (the stage-4 storage-
+    // collision fix): `<datasetId>/<token>/row-<index>.json` — a Retry and
+    // another collaborator's attempt never PUT to the same object.
+    expect(result.path.startsWith("d1/")).toBe(true);
+    expect(result.path.endsWith("/row-7.json")).toBe(true);
+    const pathParts = result.path.split("/");
+    expect(pathParts.length).toBe(3);
     expect(result.bytes).toBe(JSON.stringify(source).length);
     expect(uploads.length).toBe(1);
     const upload = onlyUpload(uploads);
     expect(upload.bucket).toBe("geometries");
-    expect(upload.path).toBe("d1/row-7.json");
-    // Upsert: a Retry regenerates the same row-indexed paths, so the failed
-    // attempt's leftover copies are overwritten, not rejected.
-    expect(upload.upsert).toBe(true);
+    expect(upload.path).toBe(result.path);
+    // No upsert: a per-upload path never collides, so the write is a fresh
+    // object (the 0006 update policy never comes into play).
+    expect(upload.upsert).toBe(false);
   });
 
   it("propagates storage failures (the import aborts before any chunk is sent)", async () => {
@@ -54,19 +58,24 @@ describe("geometries.uploadGeometrySource — the §10 oversized-payload upload"
       { datasetId: "d1", rowIndex: 0, source: { type: "Point", coordinates: [0, 0] } },
       { supabase: client },
     );
-    expect(result.path).toBe("d1/row-0.json");
+    // The per-upload token path shape: <datasetId>/<token>/row-<index>.json.
+    expect(result.path.startsWith("d1/")).toBe(true);
+    expect(result.path.endsWith("/row-0.json")).toBe(true);
+    expect(result.bytes).toBe(JSON.stringify({ type: "Point", coordinates: [0, 0] }).length);
   });
 });
 
 describe("datasets.uploadSourceFile — the §10 source-file retention", () => {
-  it("uploads the original file, records name/size/path on the dataset row, and answers the path", async () => {
+  it("uploads the original file, records name/size/path on the dataset row, and answers path + affected rows", async () => {
     const { client, queries, uploads } = stubSupabase(() => ({
       data: [{ id: "d1" }],
       error: null,
     }));
     const file = new File(["csv,data\n1,2"], "streets.csv", { type: "text/csv" });
-    const path = await uploadSourceFile({ datasetId: "d1", file }, { supabase: client });
-    expect(path).toBe("d1/streets.csv");
+    const result = await uploadSourceFile({ datasetId: "d1", file }, { supabase: client });
+    expect(result.path).toBe("d1/streets.csv");
+    // The rows-affected answer (the stage-4 silent-denial rule): 1 row here.
+    expect(result.affected).toBe(1);
     expect(uploads.length).toBe(1);
     const upload = onlyUpload(uploads);
     expect(upload.bucket).toBe("source-files");

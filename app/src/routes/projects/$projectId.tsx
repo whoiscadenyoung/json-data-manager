@@ -39,8 +39,9 @@ import { toast } from "sonner";
 
 import { DatasetTypeTags, DerivedDatasetBadge } from "#/components/dataset-type-tags";
 import { RouterButton } from "#/components/router-button";
-import { publishProjectBundle } from "#/features/publishing";
+import { PgProjectWorkspace, publishProjectBundle } from "#/features/publishing";
 import { errorMessage } from "#/lib/errors";
+import { isPostgresDatasetId } from "@/lib/dataset-source";
 
 import { api } from "../../../convex/_generated/api";
 
@@ -60,10 +61,23 @@ import { api } from "../../../convex/_generated/api";
  * The read is `projects.get` — creator-scoped server-side; null renders the
  * not-found card, so another user's project (and the drafts it carries) is
  * indistinguishable from a missing one.
+ *
+ * Stage 4 (#203): the id says where the project was created — Postgres
+ * uuid ids (dashed) mount the store-backed PG workspace; every pre-migration
+ * Convex project keeps rendering exactly as it does today, through its
+ * Convex surface (the dataset page's origin split, `dataset-source.ts`).
  */
 export const Route = createFileRoute("/projects/$projectId")({
-  component: ProjectWorkspacePage,
+  component: ProjectRoutePage,
 });
+
+function ProjectRoutePage() {
+  const { projectId } = Route.useParams();
+  if (isPostgresDatasetId(projectId)) {
+    return <PgProjectWorkspace projectId={projectId} />;
+  }
+  return <ProjectWorkspacePage />;
+}
 
 type Workspace = FunctionReturnType<typeof api.publishing.projects.get>;
 type WorkspaceData = NonNullable<Workspace>;

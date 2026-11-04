@@ -6,6 +6,7 @@ export {
   SourceDriftCard,
 } from "./components/dataset-consumption";
 export { DatasetHistoryPanel } from "./components/dataset-history-panel";
+export { PgConsumersCard, PgVersionsCard } from "./components/pg-versions-card";
 export { RemoteSourceControls } from "./components/remote-source-controls";
 export { VersionCompare } from "./components/version-compare";
 export { isSyncStale } from "./lib/sync-staleness";

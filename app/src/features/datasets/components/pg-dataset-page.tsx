@@ -60,11 +60,13 @@ import {
   LockOpen,
   PencilOff,
   Plus,
+  Rocket,
   Workflow,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { PgPublishDialog, mintPublishKey } from "#/features/publishing";
 import { QueryErrorBoundary } from "@/components/query-error-boundary";
 import { useSession } from "@/integrations/supabase/provider";
 import type { DatasetEntryRow } from "@/lib/dataset-rows";
@@ -310,7 +312,12 @@ function PostgresDatasetBody({
       enabled: dataset !== undefined && dataset !== null && dataset.groupId !== null,
     }),
     [deleteTarget, setDeleteTarget] = useState<DatasetEntryRow | undefined>(undefined),
-    [jsonDefinitionOpen, setJsonDefinitionOpen] = useState(false);
+    [jsonDefinitionOpen, setJsonDefinitionOpen] = useState(false),
+    // Stage 4 (#203): the publish-version dialog. The idempotency key mints
+    // at OPEN time (not submit), so every submit inside one dialog session
+    // re-selects the same frozen version instead of forking a second one.
+    [publishOpen, setPublishOpen] = useState(false),
+    [publishKey, setPublishKey] = useState("");
 
   if (datasetQuery.isPending) {
     return (
@@ -457,6 +464,22 @@ function PostgresDatasetBody({
           >
             <Plus className="h-4 w-4 mr-2" />
             Create Entry
+          </Button>
+          <Button
+            disabled={lockedForViewer}
+            onClick={() => {
+              setPublishKey(mintPublishKey());
+              setPublishOpen(true);
+            }}
+            title={
+              lockedForViewer
+                ? LOCKED_DATASET_HINT
+                : "Freeze the current rows as an immutable version"
+            }
+            variant="outline"
+          >
+            <Rocket className="h-4 w-4 mr-2" />
+            Publish version
           </Button>
           {isCreator && (
             <DropdownMenu>
@@ -649,6 +672,15 @@ function PostgresDatasetBody({
         rows={rows}
         schemaId={schemaId}
         search={search}
+      />
+
+      {/* Stage 4 (#203): the PG publish flow — freeze the current rows as an
+          immutable version (drafts flip into the catalog with it). */}
+      <PgPublishDialog
+        dataset={dataset}
+        onOpenChange={setPublishOpen}
+        open={publishOpen}
+        publishKey={publishKey}
       />
 
       <AlertDialog

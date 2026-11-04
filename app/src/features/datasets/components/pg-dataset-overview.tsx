@@ -36,6 +36,7 @@ import {
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { PgConsumersCard, PgVersionsCard } from "#/features/versions";
 import { useSession } from "@/integrations/supabase/provider";
 import { errorMessage } from "@/lib/errors";
 import * as collectionsStore from "@/lib/store/collections";
@@ -917,6 +918,12 @@ export function PgDatasetOverview({
   return (
     <div className="space-y-6">
       <PgDetailsCard dataset={dataset} />
+      {/* Stage 4 (#203): the version chain, tags, and consumers — the Convex
+          overview's version cards, PG edition. Mounted here (not on the
+          versions feature's own page) because the Convex overview is where
+          the version cards live. */}
+      <PgVersionsCard datasetId={dataset.id} datasetTitle={dataset.title} />
+      <PgConsumersCard datasetId={dataset.id} />
       <PgCollectionsSection dataset={dataset} lockedHint={effectiveLockedHint} />
       <PgGroupSection dataset={dataset} lockedHint={effectiveLockedHint} />
     </div>

@@ -214,7 +214,7 @@ export function listQueryOptions(options?: StoreOptions) {
   });
 }
 
-/** The published-view summary projection — `api.cms.schemas.listSummaries` parity. Drafts are RLS-invisible here (they read as absent, the recorded lifecycle rule). */
+/** The published-view summary projection — `api.cms.schemas.listSummaries` parity. The `lifecycle eq 'published'` filter is LOAD-BEARING, not RLS: can_view_dataset ADMITS a draft to its creator, so without the filter the creator's own drafts would ride the browser/summary projection and the opt-in drafts toggle (listDraftSummariesQueryOptions + withPgDrafts) would double-count them. The Convex listSummaries genuinely gated drafts; this filter restores that gate (the stage-4 review's drafts-leak fix). */
 export function listSummariesQueryOptions(options?: StoreOptions) {
   return queryOptions({
     queryKey: ["pg:datasets", "listSummaries", CATALOG_READ_LIMIT],
@@ -223,6 +223,7 @@ export function listSummariesQueryOptions(options?: StoreOptions) {
         clientOf(options)
           .from("datasets")
           .select(SUMMARY_SELECT)
+          .eq("lifecycle", "published")
           .order("created_at", { ascending: false })
           .limit(CATALOG_READ_LIMIT),
       );
@@ -435,8 +436,13 @@ export interface UpdateDatasetArgs {
  * rewrites `title`/`description` from the payload and re-derives the
  * declared `properties` (the search vector and key validation follow the
  * schema), mirroring `buildSchemaUpdatePatch`.
+ *
+ * Returns the affected row count — the stage-4 silent-denial rule: an
+ * RLS-filtered write (a locked dataset's non-creator, a frozen row's
+ * anyone) answers 0 rows instead of throwing, and the caller must surface
+ * that as the not-found/locked denial it is, never as success.
  */
-export async function update(args: UpdateDatasetArgs, options?: StoreOptions): Promise<void> {
+export async function update(args: UpdateDatasetArgs, options?: StoreOptions): Promise<number> {
   const patch: Record<string, unknown> = {};
   if (args.schema !== undefined) {
     assertValidSchemaPayload(args.schema);
@@ -452,65 +458,72 @@ export async function update(args: UpdateDatasetArgs, options?: StoreOptions): P
       patch.description = args.description;
     }
   }
-  await queryRows<unknown>(
+  const rows = await queryRows<unknown>(
     clientOf(options).from("datasets").update(patch).eq("id", args.datasetId).select("id"),
   );
+  return rows.length;
 }
 
-/** Creator-side edit policy (ADR 0010) — `api.cms.schemas.setEditPolicy` parity; the creator-only flip rule is RLS's (design §4 policy matrix). */
+/** Creator-side edit policy (ADR 0010) — `api.cms.schemas.setEditPolicy` parity; the creator-only flip rule is RLS's (design §4 policy matrix). Returns the affected row count (0 = denied — the stage-4 silent-denial rule). */
 export async function setEditPolicy(
   args: { datasetId: string; editPolicy: "open" | "locked" },
   options?: StoreOptions,
-): Promise<void> {
-  await queryRows<unknown>(
+): Promise<number> {
+  const rows = await queryRows<unknown>(
     clientOf(options)
       .from("datasets")
       .update({ edit_policy: args.editPolicy })
       .eq("id", args.datasetId)
       .select("id"),
   );
+  return rows.length;
 }
 
-/** Creator-side published visibility (stage 8, #104) — `api.cms.schemas.setVisibility` parity. */
+/** Creator-side published visibility (stage 8, #104) — `api.cms.schemas.setVisibility` parity. Returns the affected row count (0 = denied). */
 export async function setVisibility(
   args: { datasetId: string; visibility: "everyone" | "author" },
   options?: StoreOptions,
-): Promise<void> {
-  await queryRows<unknown>(
+): Promise<number> {
+  const rows = await queryRows<unknown>(
     clientOf(options)
       .from("datasets")
       .update({ published_visibility: args.visibility })
       .eq("id", args.datasetId)
       .select("id"),
   );
+  return rows.length;
 }
 
 /**
  * Flips an import-created draft to published once its import completes —
- * `api.cms.schemas.markImportComplete` parity (issue #129).
+ * `api.cms.schemas.markImportComplete` parity (issue #129). Returns the
+ * affected row count (0 = denied).
  */
 export async function markImportComplete(
   args: { datasetId: string },
   options?: StoreOptions,
-): Promise<void> {
-  await queryRows<unknown>(
+): Promise<number> {
+  const rows = await queryRows<unknown>(
     clientOf(options)
       .from("datasets")
       .update({ lifecycle: "published" })
       .eq("id", args.datasetId)
       .select("id"),
   );
+  return rows.length;
 }
 
 /**
  * Deletes a dataset. Every child (entries, geometries, references, imports,
- * memberships) goes with it by ON DELETE CASCADE — the component's explicit
- * delete walks become foreign keys (design §3.4 note).
+ * memberships, versions) goes with it by ON DELETE CASCADE — the component's
+ * explicit delete walks become foreign keys (design §3.4 note). Returns the
+ * affected row count (0 = denied — the frozen-row delete denies everyone).
  */
-export async function remove(args: { datasetId: string }, options?: StoreOptions): Promise<void> {
-  await queryRows<unknown>(
+export async function remove(args: { datasetId: string }, options?: StoreOptions): Promise<number> {
+  const rows = await queryRows<unknown>(
     clientOf(options).from("datasets").delete().eq("id", args.datasetId).select("id"),
   );
+  return rows.length;
 }
 
 // ---------------------------------------------------------------------------
@@ -526,12 +539,16 @@ export const SOURCE_FILE_BUCKET = "source-files";
  * Uploads the original import file into the dataset's `source-files/`
  * folder and records `source_file_name`/`source_file_size`/`source_file_path`
  * on the dataset row in one go. The path is the storage key
- * `getSourceFileUrlQueryOptions` signs later.
+ * `getSourceFileUrlQueryOptions` signs later. The dataset-row update is
+ * gated by can_edit_dataset, so its affected count is the honest denial
+ * answer (0 = not the editor) — the object already uploaded is then an
+ * orphan, and the caller should say the write failed rather than toast
+ * success.
  */
 export async function uploadSourceFile(
   args: { datasetId: string; file: File },
   options?: StoreOptions,
-): Promise<string> {
+): Promise<{ path: string; affected: number }> {
   const client = clientOf(options);
   const path = `${args.datasetId}/${encodeURIComponent(args.file.name)}`;
   const { error } = await client.storage.from(SOURCE_FILE_BUCKET).upload(path, args.file, {
@@ -540,7 +557,7 @@ export async function uploadSourceFile(
   if (error !== null) {
     throw new Error(error.message);
   }
-  await queryRows<unknown>(
+  const rows = await queryRows<unknown>(
     client
       .from("datasets")
       .update({
@@ -551,5 +568,5 @@ export async function uploadSourceFile(
       .eq("id", args.datasetId)
       .select("id"),
   );
-  return path;
+  return { affected: rows.length, path };
 }

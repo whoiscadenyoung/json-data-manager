@@ -77,6 +77,10 @@ describe("datasets.listSummaries", () => {
     const select = String(firstArg(queryAt(queries, 0), "select"));
     expect(select).not.toContain("jsonSchema");
     expect(select).toContain("properties");
+    // The published-only gate (the stage-4 drafts-leak fix): can_view_dataset
+    // ADMITS a creator's own draft, so the filter — not RLS — is what keeps
+    // the summary projection matching the Convex listSummaries.
+    expect(argsOf(queryAt(queries, 0), "eq")).toStrictEqual(["lifecycle", "published"]);
   });
 
   it("keys and bounds like the catalog read (newest first, CATALOG_READ_LIMIT)", async () => {
