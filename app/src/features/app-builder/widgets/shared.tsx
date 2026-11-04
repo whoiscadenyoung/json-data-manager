@@ -11,10 +11,9 @@ import {
 import { Spinner } from "@caden/ui/components/spinner";
 import type { ReactNode } from "react";
 
-import type { Aggregate, Widget, WidgetKind } from "#convex/appBuilder/validators";
-
 import { useAppDataset, useAppDatasets, datasetTitle, type DatasetState } from "../data";
 import { AGGREGATE_LABELS } from "../lib/aggregate";
+import type { Aggregate, Widget, WidgetKind } from "../lib/content";
 import type { DatasetField } from "../lib/fields";
 
 /** One widget kind's narrowed config. */

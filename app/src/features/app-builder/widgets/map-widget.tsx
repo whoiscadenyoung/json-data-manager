@@ -15,13 +15,14 @@ import { useState } from "react";
 import {
   colorForIndex,
   LayersMap,
+  pgSummaryToDatasetSummary,
   splitSchemaIdsByDecision,
+  useGeometriesByPgDatasets,
   useTileArchiveSources,
 } from "#/features/maps";
-import { useGeometriesBySchemas } from "#/lib/dataset-rows-react";
-import { APP_LIMITS } from "#convex/appBuilder/validators";
 
 import { useAppDatasets, datasetTitle, type DatasetDoc, type DatasetState } from "../data";
+import { APP_LIMITS } from "../lib/content";
 import { WidgetMessage, type WidgetSettingsProps, type WidgetViewProps } from "./shared";
 
 /**
@@ -33,7 +34,7 @@ import { WidgetMessage, type WidgetSettingsProps, type WidgetViewProps } from ".
  */
 
 function isGeospatial(state: DatasetState | undefined): boolean {
-  return state !== undefined && state.status === "ready" && state.doc.kind === "geospatial";
+  return state !== undefined && state.status === "ready" && state.doc.isGeospatial;
 }
 
 function withArrived(prev: Set<string>, schemaId: string): Set<string> {
@@ -41,15 +42,26 @@ function withArrived(prev: Set<string>, schemaId: string): Set<string> {
 }
 
 function LayersBody({ docs, layerOrder }: { docs: DatasetDoc[]; layerOrder: readonly string[] }) {
-  const ids = docs.map((doc) => doc._id),
-    sourceBySchema = useTileArchiveSources(docs),
-    split = splitSchemaIdsByDecision(ids, sourceBySchema),
-    { geometries, servedGeometries, loaders } = useGeometriesBySchemas(split.rowSchemaIds),
+  const ids = docs.map((doc) => doc.id),
+    // The tile-vs-row decision rides the RAW store rows (the workspace's
+    // decision inputs — the adapter's projection is for rendering only);
+    // every id here is a Postgres uuid (PG apps reference PG datasets).
+    split = splitSchemaIdsByDecision(ids, useTileArchiveSources(docs)),
+    { geometries, servedGeometries, loaders } = useGeometriesByPgDatasets(split.rowSchemaIds),
     [arrived, setArrived] = useState<Set<string>>(() => new Set()),
     // Colors follow the layer's slot in the widget, never its rank among
     // the datasets that happen to be available.
     colorBySchema = new globalThis.Map(
       ids.map((id) => [id, colorForIndex(layerOrder.indexOf(id))]),
+    ),
+    // LayersMap reads the shared pipeline's summary shape (titles + stored
+    // extents) — the same adaptation the maps workspace renders through.
+    // The adapter's input is the summary projection (`DatasetSummaryRow`,
+    // whose `fieldCount` derives from the declared properties column); the
+    // full row carries every other summary column, so the projection is one
+    // field away.
+    summaries = docs.map((doc) =>
+      pgSummaryToDatasetSummary({ fieldCount: doc.properties.length, ...doc }),
     ),
     complete =
       geometries !== undefined &&
@@ -64,7 +76,7 @@ function LayersBody({ docs, layerOrder }: { docs: DatasetDoc[]; layerOrder: read
       {loaders}
       {shouldMount ? (
         <LayersMap
-          datasets={docs}
+          datasets={summaries}
           geometries={servedGeometries ?? []}
           visibleSchemaIds={new Set(ids)}
           colorBySchema={colorBySchema}
@@ -91,9 +103,7 @@ export function MapWidgetView({ widget }: WidgetViewProps<"map">) {
   const states = useAppDatasets(),
     layerStates = widget.datasetIds.map((id) => states.get(id)),
     docs = layerStates.flatMap((state) =>
-      state !== undefined && state.status === "ready" && state.doc.kind === "geospatial"
-        ? [state.doc]
-        : [],
+      state !== undefined && state.status === "ready" && state.doc.isGeospatial ? [state.doc] : [],
     );
   if (widget.datasetIds.length === 0) {
     return <WidgetMessage>Choose datasets to show on this map.</WidgetMessage>;
@@ -107,7 +117,7 @@ export function MapWidgetView({ widget }: WidgetViewProps<"map">) {
   }
   return (
     <LayersBody
-      key={docs.map((doc) => doc._id).join(",")}
+      key={docs.map((doc) => doc.id).join(",")}
       docs={docs}
       layerOrder={widget.datasetIds}
     />

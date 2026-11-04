@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { AppPage } from "#convex/appBuilder/validators";
-
+import type { AppPage } from "./content";
 import {
   nextPageTitle,
   pagesWithoutDataset,

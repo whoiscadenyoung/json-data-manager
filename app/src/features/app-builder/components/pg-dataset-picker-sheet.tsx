@@ -1,0 +1,129 @@
+import { Badge } from "@caden/ui/components/badge";
+import { Button } from "@caden/ui/components/button";
+import { Empty, EmptyDescription, EmptyTitle } from "@caden/ui/components/empty";
+import { Input } from "@caden/ui/components/input";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@caden/ui/components/sheet";
+import { Plus, Search } from "lucide-react";
+import { useState } from "react";
+
+import type { DatasetSummaryRow } from "#/lib/store/datasets";
+
+/**
+ * Side panel listing PG datasets so the user can pick one for the app — the
+ * builder's Postgres picker (the core `DatasetPickerSheet` is typed on the
+ * Convex summary; the two id spaces can't share a prop — the catalog
+ * feature's `PgDatasetPickerSheet` precedent). Rows carry the same kind tag
+ * as the app's own data list (info parity).
+ */
+export function PgDatasetPickerSheet({
+  title,
+  description,
+  candidates,
+  open,
+  onOpenChange,
+  onPick,
+}: {
+  title: string;
+  description: string;
+  candidates: DatasetSummaryRow[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onPick: (dataset: DatasetSummaryRow) => Promise<void>;
+}) {
+  const [search, setSearch] = useState(""),
+    [pendingId, setPendingId] = useState<string | undefined>(),
+    normalizedSearch = search.trim().toLowerCase(),
+    visible = normalizedSearch
+      ? candidates.filter((dataset) => dataset.title.toLowerCase().includes(normalizedSearch))
+      : candidates,
+    handlePick = async (dataset: DatasetSummaryRow) => {
+      setPendingId(dataset.id);
+      try {
+        await onPick(dataset);
+        onOpenChange(false);
+      } finally {
+        setPendingId(undefined);
+      }
+    };
+
+  return (
+    <Sheet
+      open={open}
+      onOpenChange={(next) => {
+        if (next) {
+          setSearch("");
+        }
+        onOpenChange(next);
+      }}
+    >
+      <SheetContent className="w-full sm:max-w-md">
+        <SheetHeader className="border-b">
+          <SheetTitle>{title}</SheetTitle>
+          <SheetDescription>{description}</SheetDescription>
+        </SheetHeader>
+        <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-6">
+          <div className="relative">
+            <Search className="pointer-events-none absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+              }}
+              placeholder="Search datasets…"
+              className="pl-7"
+            />
+          </div>
+
+          {visible.length === 0 ? (
+            <Empty className="min-h-32 border">
+              <EmptyTitle>No datasets to add</EmptyTitle>
+              <EmptyDescription>
+                {candidates.length === 0
+                  ? "Every dataset already lives in this app."
+                  : "No datasets match your search."}
+              </EmptyDescription>
+            </Empty>
+          ) : (
+            <ul className="flex flex-col gap-1">
+              {visible.map((dataset) => (
+                <li
+                  key={dataset.id}
+                  className="flex items-center justify-between gap-2 rounded-md border px-3 py-2"
+                >
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <Badge variant="secondary">
+                      {dataset.isGeospatial ? (dataset.geometryType ?? "Geospatial") : "Table"}
+                    </Badge>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{dataset.title}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {dataset.description}
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={pendingId !== undefined}
+                    onClick={() => {
+                      void handlePick(dataset);
+                    }}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    {pendingId === dataset.id ? "Adding…" : "Add"}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}

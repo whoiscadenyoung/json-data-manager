@@ -1,13 +1,12 @@
-import { useMutation } from "convex/react";
-import type { FunctionReturnType } from "convex/server";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { errorMessage } from "#/lib/errors";
-import { api } from "#convex/_generated/api";
-import type { AppContent } from "#convex/appBuilder/validators";
+import * as appsStore from "#/lib/store/apps";
 
-export type AppDoc = NonNullable<FunctionReturnType<typeof api.appBuilder.apps.get>>;
+import type { AppDoc } from "./lib/app-doc";
+import type { AppContent } from "./lib/content";
 
 export type SaveStatus = "saved" | "pending" | "saving" | "error" | "invalid";
 
@@ -23,14 +22,15 @@ const AUTOSAVE_MS = 700;
  * The builder's working copy of an app's content, autosaved. Edits apply to
  * local state immediately (the canvas never waits on the network); a
  * debounced save sends the whole content with the revision it was based on,
- * and the server refuses a save built on a stale revision (another tab).
+ * and the store refuses a save built on a stale revision (another tab) —
+ * the optimistic-concurrency contract of `apps.revision` (DDL §3.6).
  *
  * The debounce lives in refs driven from the edit handlers — never in an
  * effect keyed on content, whose cleanup would cancel a pending save on any
  * unrelated re-render (the transform-preview lesson, docs/memory).
  */
 export function useAppEditor(app: AppDoc) {
-  const saveContent = useMutation(api.appBuilder.apps.saveContent),
+  const queryClient = useQueryClient(),
     [content, setContent] = useState<AppContent>(() => ({
       datasetIds: app.datasetIds,
       pages: app.pages,
@@ -54,11 +54,22 @@ export function useAppEditor(app: AppDoc) {
     dirty.current = false;
     setStatus("saving");
     try {
-      revision.current = await saveContent({
-        appId: app._id,
-        content: latest.current,
+      // The store writes `revision = expected + 1` behind the compare-and-set
+      // and answers the new revision; 0 matched rows (a stale revision —
+      // another tab saved first, or a non-creator) throw the stale-save
+      // error instead of reporting success.
+      revision.current = await appsStore.saveContent({
+        appId: app.id,
+        // The store carries widget payloads as opaque jsonb
+        // (`AppWidgetConfig`'s index signature); this feature's typed
+        // `AppPage[]` (lib/content.ts) is the only writer shape, so the
+        // boundary cast is the agreed contract — the same posture as the
+        // store seam's row assertions.
+        content: latest.current as unknown as appsStore.AppContent,
         expectedRevision: revision.current,
       });
+      // The saved row feeds the viewer and the lists (titles, counts).
+      void queryClient.invalidateQueries({ queryKey: ["pg:apps"] });
       setStatus(dirty.current ? "pending" : "saved");
     } catch (error) {
       dirty.current = true;

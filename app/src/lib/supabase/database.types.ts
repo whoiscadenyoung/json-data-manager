@@ -23,6 +23,57 @@ export type Database = {
   };
   public: {
     Tables: {
+      apps: {
+        Row: {
+          created_at: string;
+          created_by: string;
+          dataset_ids: string[];
+          description: string | null;
+          example: boolean;
+          id: string;
+          pages: NonNullable<Json>;
+          revision: number;
+          sharing: string;
+          title: string;
+          updated_at: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          created_at?: string;
+          created_by?: string;
+          dataset_ids?: string[];
+          description?: string | null;
+          example?: boolean;
+          id?: string;
+          pages?: NonNullable<Json>;
+          revision?: number;
+          sharing?: string;
+          title: string;
+          updated_at?: string;
+        };
+        Update: {
+          created_at?: string;
+          created_by?: string;
+          dataset_ids?: string[];
+          description?: string | null;
+          example?: boolean;
+          id?: string;
+          pages?: NonNullable<Json>;
+          revision?: number;
+          sharing?: string;
+          title?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "apps_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       binding_entries: {
         Row: {
           binding_id: string;
@@ -1723,6 +1774,7 @@ export type Database = {
           next_cursor: string;
         }[];
       };
+      system_examples_owner: { Args: Record<PropertyKey, never>; Returns: string };
       version_policy_anchor_owner: { Args: { p_anchor: string }; Returns: boolean };
     };
     Enums: {

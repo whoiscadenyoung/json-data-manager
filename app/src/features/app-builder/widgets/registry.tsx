@@ -2,9 +2,9 @@ import { BarChart3, Hash, MapIcon, Table2, Type, type LucideIcon } from "lucide-
 import { lazy, Suspense } from "react";
 
 import { QueryErrorBoundary } from "#/components/query-error-boundary";
-import type { Widget, WidgetKind } from "#convex/appBuilder/validators";
 
 import type { DatasetState } from "../data";
+import type { Widget, WidgetKind } from "../lib/content";
 import { numericFields } from "../lib/fields";
 import { DEFAULT_SIZES, newWidgetId } from "../lib/layout";
 import { WidgetMessage } from "./shared";
@@ -92,8 +92,7 @@ function firstMatching(
   });
 }
 
-const isGeospatial = (state: DatasetState) =>
-  state.status === "ready" && state.doc.kind === "geospatial";
+const isGeospatial = (state: DatasetState) => state.status === "ready" && state.doc.isGeospatial;
 
 /** A sensible starting group-by: the preferred dataset's first text field, else its first field. */
 function firstField(state: DatasetState | undefined): string | undefined {

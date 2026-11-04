@@ -40,7 +40,6 @@ import {
 import { Separator } from "@caden/ui/components/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@caden/ui/components/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@caden/ui/components/toggle-group";
-import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
@@ -59,8 +58,10 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import { DatasetPickerSheet } from "#/components/dataset-picker-sheet";
-import { api } from "#convex/_generated/api";
+import { errorMessage } from "#/lib/errors";
+import { listSummariesQueryOptions } from "#/lib/store/datasets";
+
+import { datasetTitle, useAppDatasets, type DatasetState } from "../data";
 import {
   APP_LIMITS,
   widgetDatasetIds,
@@ -69,12 +70,11 @@ import {
   type PageLayout,
   type Widget,
   type WidgetKind,
-} from "#convex/appBuilder/validators";
-
-import { datasetTitle, useAppDatasets, type DatasetState } from "../data";
+} from "../lib/content";
 import { MAX_HEIGHT, WIDTH_PRESETS } from "../lib/layout";
 import { allWidgets, pagesWithoutDataset, removePage, shiftPage, updatePage } from "../lib/pages";
 import { createWidget, WIDGET_KINDS, widgetKindInfo, WidgetSettings } from "../widgets/registry";
+import { PgDatasetPickerSheet } from "./pg-dataset-picker-sheet";
 
 /**
  * The builder's side panel: Add (widget palette), Data (the app's sources),
@@ -155,18 +155,18 @@ function kindLabel(state: DatasetState): string | undefined {
   if (state.status !== "ready") {
     return undefined;
   }
-  return state.doc.kind === "geospatial" ? (state.doc.geometryType ?? "Geospatial") : "Table";
+  return state.doc.isGeospatial ? (state.doc.geometryType ?? "Geospatial") : "Table";
 }
 
 function sizeLabel(state: DatasetState): string | undefined {
   if (state.status !== "ready") {
     return undefined;
   }
-  const count = state.doc.kind === "geospatial" ? state.doc.featureCount : state.doc.entryCount;
+  const count = state.doc.isGeospatial ? state.doc.featureCount : state.doc.entryCount;
   if (count === undefined) {
     return undefined;
   }
-  return `${count.toLocaleString()} ${state.doc.kind === "geospatial" ? "features" : "rows"}`;
+  return `${count.toLocaleString()} ${state.doc.isGeospatial ? "features" : "rows"}`;
 }
 
 /** Confirms removing a dataset that widgets still use (they go with it). */
@@ -294,9 +294,12 @@ function DataPanel({
 }) {
   const states = useAppDatasets(),
     [pickerOpen, setPickerOpen] = useState(false),
-    summaries = useQuery({ ...convexQuery(api.cms.schemas.listSummaries, { limit: 500 }) }).data,
+    summaries = useQuery(listSummariesQueryOptions()),
     inApp = new Set(content.datasetIds),
-    candidates = (summaries ?? []).filter((summary) => !inApp.has(summary._id)),
+    candidates =
+      summaries.data === undefined
+        ? []
+        : summaries.data.filter((summary) => !inApp.has(summary.id)),
     full = content.datasetIds.length >= APP_LIMITS.datasets;
   return (
     <div className="flex flex-col gap-3">
@@ -333,15 +336,23 @@ function DataPanel({
           ))}
         </ItemGroup>
       )}
+      {summaries.isError && (
+        <Alert>
+          <Info />
+          <AlertDescription>
+            Couldn't load the catalog: {errorMessage(summaries.error, "unknown error")}
+          </AlertDescription>
+        </Alert>
+      )}
       <Button
         type="button"
-        disabled={full || summaries === undefined}
+        disabled={full || summaries.isPending}
         onClick={() => {
           setPickerOpen(true);
         }}
       >
         <Plus data-icon="inline-start" />
-        {summaries === undefined ? "Loading catalog…" : "Add dataset"}
+        {summaries.isPending ? "Loading catalog…" : "Add dataset"}
       </Button>
       {full && (
         <p className="text-xs text-muted-foreground">
@@ -352,14 +363,14 @@ function DataPanel({
         <Upload data-icon="inline-start" />
         Import new data into the catalog
       </Button>
-      <DatasetPickerSheet
+      <PgDatasetPickerSheet
         title="Add a dataset"
         description="Pick a catalog dataset for this app's widgets to use."
         candidates={candidates}
         open={pickerOpen}
         onOpenChange={setPickerOpen}
         onPick={async (dataset) => {
-          onAddDataset(dataset._id);
+          onAddDataset(dataset.id);
         }}
       />
     </div>

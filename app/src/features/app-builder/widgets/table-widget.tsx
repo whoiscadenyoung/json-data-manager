@@ -15,10 +15,10 @@ import {
 } from "@caden/ui/niko-table/core/data-table-virtualized-structure";
 import type { DataTableColumnDef } from "@caden/ui/niko-table/types";
 
-import { entryDataRecord, type DatasetEntryRow } from "#/lib/dataset-rows";
-import { useDatasetEntryPages } from "#/lib/dataset-rows-react";
+import { entryDataRecord, type DatasetEntryRow } from "#/lib/dataset-rows-pg";
 import { formatPropertyValue } from "#/lib/format";
 
+import { useAppEntryPages } from "../data";
 import type { DatasetField } from "../lib/fields";
 import {
   DatasetSelect,
@@ -33,7 +33,8 @@ import {
 /**
  * A read-only, searchable, sortable table of one dataset — the same niko-table
  * kit as the dataset page's Entries tab, without its edit actions, streaming
- * pages in as the viewer scrolls (the seam's `useDatasetEntryPages`).
+ * cursor-chained pages in as the viewer scrolls (the feature's
+ * `useAppEntryPages` over the PG entries store).
  */
 
 const COLUMN_SIZE = 180,
@@ -91,9 +92,13 @@ function TableBody({
   entryCount: number | undefined;
   height: number;
 }) {
-  const { entries, isLoading, isLoadingMore, canLoadMore, loadMore } = useDatasetEntryPages(
-      widget.datasetId,
-    ),
+  const {
+      rows: entries,
+      isLoading,
+      isLoadingMore,
+      canLoadMore,
+      loadMore,
+    } = useAppEntryPages(widget.datasetId),
     columns = buildColumns(visibleColumns(widget, fields));
   if (isLoading) {
     return <WidgetMessage loading>Loading rows…</WidgetMessage>;
@@ -108,7 +113,7 @@ function TableBody({
         data={entries}
         columns={columns}
         config={{ enableFilters: true, enableSorting: true }}
-        getRowId={(entry) => entry._id}
+        getRowId={(entry) => entry.id}
       >
         <DataTableToolbarSection className="pb-2">
           <DataTableSearchFilter placeholder="Search rows…" />
