@@ -5,16 +5,33 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // The manager's collaborators: the toast surface, the worker's auth token,
 // and the summaries query the manager hook reads.
 const mocks = vi.hoisted(() => ({
+  invalidateQueries: vi.fn<(args: { queryKey: string[] }) => void>(),
+  pgSummaries: undefined as Array<Record<string, unknown>> | undefined,
   schemas: [] as Array<Record<string, unknown>>,
   toastError: vi.fn<(message: string) => void>(),
 }));
 
 vi.mock("sonner", () => ({ toast: { error: mocks.toastError } }));
+vi.mock("#/env", () => ({
+  env: {
+    VITE_CONVEX_URL: "http://127.0.0.1:3212",
+    VITE_SUPABASE_ANON_KEY: "test-anon-key",
+    VITE_SUPABASE_URL: "http://127.0.0.1:54321",
+  },
+}));
 vi.mock("#/lib/convex-auth-token", () => ({ fetchConvexToken: async () => null }));
+vi.mock("#/integrations/tanstack-query/root-provider", () => ({
+  getContext: () => ({ queryClient: { invalidateQueries: mocks.invalidateQueries } }),
+}));
 vi.mock("#convex/_generated/api", () => ({
   api: { cms: { schemas: { listSummaries: "listSummaries" } } },
 }));
 vi.mock("convex/react", () => ({ useQuery: () => mocks.schemas }));
+// The PG feed: summaries scripted per test, metas irrelevant to the manager.
+vi.mock("./pg-tile-archives-react", () => ({
+  usePgDatasetSummaries: () => mocks.pgSummaries,
+  usePgTileArchiveMetas: () => new globalThis.Map(),
+}));
 
 type TileArchiveModule = typeof import("./tile-archive");
 
@@ -68,6 +85,8 @@ beforeEach(async () => {
   vi.stubGlobal("Worker", FakeWorker);
   FakeWorker.instances = [];
   mocks.schemas = [];
+  mocks.pgSummaries = undefined;
+  mocks.invalidateQueries.mockReset();
   mocks.toastError.mockReset();
   // The manager logs every state change in dev; keep test output readable.
   vi.spyOn(console, "debug").mockImplementation(() => undefined);
@@ -195,5 +214,101 @@ describe("tile-archive failure store (#184)", () => {
     expect(FakeWorker.instances).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(1);
     expect(worker().posted).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The Postgres loop (stage 2, issue #201): same scheduler, uuid ids, the
+// store summaries feed, and the post-install cache invalidation that stands
+// in for Convex's push until realtime lands (stage 6).
+// ---------------------------------------------------------------------------
+
+const PG_ID = "a4882d70-0000-4000-8000-000000000001";
+
+function pgSummaryRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    featureCount: 10,
+    geometryType: "Point",
+    id: PG_ID,
+    isGeospatial: true,
+    mapTileArchiveBuiltVersion: null,
+    mapTileArchiveFormat: 2,
+    mapTileCacheVersion: 3,
+    ...overrides,
+  };
+}
+
+describe("the manager's PG summaries loop", () => {
+  it("schedules a build for a stale PG dataset and posts it to the shared worker", async () => {
+    mocks.pgSummaries = [pgSummaryRow()];
+    renderHook(() => {
+      tiles.useMapTileArchiveManager();
+    });
+    await vi.advanceTimersByTimeAsync(5000);
+    const posted = worker().posted.filter(
+      (message) =>
+        typeof message === "object" &&
+        message !== null &&
+        "type" in message &&
+        message.type === "build",
+    );
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toStrictEqual({ schemaId: PG_ID, type: "build" });
+  });
+
+  it("a current PG dataset never schedules, and clears a prior failure", async () => {
+    // Seed a failure first (ensure spawns the worker; a current summaries
+    // loop never would — that is the point).
+    tiles.ensureMapTileArchive(PG_ID);
+    worker().reply({ message: "pg rows failed", schemaId: PG_ID, type: "error" });
+    await flush();
+    expect(tiles.getTileArchiveBuildFailure(PG_ID)).toBeDefined();
+    const buildsBefore = worker().posted.length;
+
+    // The next (fresh-array) summaries show it current: the failure and its
+    // armed retry are dropped (#184 review), and NO new build is scheduled.
+    mocks.pgSummaries = [pgSummaryRow({ mapTileArchiveBuiltVersion: 3, mapTileCacheVersion: 3 })];
+    renderHook(() => {
+      tiles.useMapTileArchiveManager();
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(tiles.getTileArchiveBuildFailure(PG_ID)).toBeUndefined();
+    // The armed 30 m backoff retry never rebuilds the fresh archive.
+    await vi.advanceTimersByTimeAsync(1_800_000);
+    expect(worker().posted.length).toBe(buildsBefore);
+  });
+
+  it("a PG done message invalidates the pg:datasets queries (no push for Postgres)", async () => {
+    mocks.pgSummaries = [pgSummaryRow()];
+    renderHook(() => {
+      tiles.useMapTileArchiveManager();
+    });
+    await vi.advanceTimersByTimeAsync(5000);
+    worker().reply({ builtVersion: 3, bytes: 1, maxZoom: 14, schemaId: PG_ID, type: "done" });
+    await flush();
+    expect(mocks.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["pg:datasets"] });
+    // The signed-archive-URL metas feed goes stale with the install: its key
+    // (["pg:tile-archives","metas",datasetIds]) is structurally unchanged, so
+    // without the prefix invalidation the feed would keep reporting "no
+    // servable archive" and the OPFS pin would drop until an unrelated
+    // refetch.
+    expect(mocks.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["pg:tile-archives"] });
+  });
+
+  it("a PG stale-discarded message also invalidates; a Convex one does not", async () => {
+    mocks.pgSummaries = [pgSummaryRow()];
+    renderHook(() => {
+      tiles.useMapTileArchiveManager();
+    });
+    await vi.advanceTimersByTimeAsync(5000);
+    worker().reply({ schemaId: PG_ID, type: "stale-discarded" });
+    await flush();
+    // Both PG feeds per settlement: summaries + the metas prefix.
+    expect(mocks.invalidateQueries).toHaveBeenCalledTimes(2);
+    expect(mocks.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["pg:tile-archives"] });
+
+    worker().reply({ builtVersion: 1, bytes: 1, maxZoom: 14, schemaId: SCHEMA, type: "done" });
+    await flush();
+    expect(mocks.invalidateQueries).toHaveBeenCalledTimes(2);
   });
 });

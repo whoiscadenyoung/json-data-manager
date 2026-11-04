@@ -1,6 +1,8 @@
 import type { BoundingBox, Geometry, GeometryType } from "@caden/json-cms/react";
 import type * as GeoJSON from "geojson";
 
+import type { DatasetBoundingBox } from "#/lib/store/datasets";
+
 /**
  * `Point` and `MultiPoint` are the "point-like" geometry types. MapLibre's
  * `fill`/`line` layers (what `MapGeoJSON` renders) draw nothing for them —
@@ -69,6 +71,48 @@ export function asBoundingBox(value: number[] | undefined): BoundingBox | undefi
   }
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- always written as a 4-tuple server-side; the array validator can't express that statically.
   return value as BoundingBox;
+}
+
+/**
+ * The Postgres dataset's stored extent (`datasets.bbox`, design §3.2 — the
+ * trigger-maintained expand-only envelope, the stage-1 counterpart of
+ * `schemas.boundingBox`), as PostgREST hands it back: the GeoJSON Polygon
+ * the PostGIS envelope renders to. Unfolds the outer ring into the same
+ * `[minLon, minLat, maxLon, maxLat]` tuple the Convex summaries carry, so a
+ * map surface can instant-open either backend's dataset from its stored
+ * extent — zero geometry loads on collection open (the ui-polish rule:
+ * stored extent + corner "Loading features…" spinner + one exact refit at
+ * completion) — with ONE conversion helper instead of per-surface
+ * re-derivations. `st_envelope` always writes an axis-aligned closed ring,
+ * so the ring's coordinate extremes ARE the envelope; a malformed/absent
+ * bbox reads as no stored extent (the full-skeleton fallback path).
+ */
+export function pgBboxBounds(value: DatasetBoundingBox | undefined): BoundingBox | undefined {
+  if (value === undefined || value.type !== "Polygon") {
+    return undefined;
+  }
+  const ring = value.coordinates[0];
+  if (!Array.isArray(ring) || ring.length === 0) {
+    return undefined;
+  }
+  let minLon = Number.POSITIVE_INFINITY,
+    minLat = Number.POSITIVE_INFINITY,
+    maxLon = Number.NEGATIVE_INFINITY,
+    maxLat = Number.NEGATIVE_INFINITY;
+  for (const point of ring) {
+    if (!Array.isArray(point) || point.length < 2) {
+      return undefined;
+    }
+    const [lon, lat] = point;
+    if (typeof lon !== "number" || typeof lat !== "number") {
+      return undefined;
+    }
+    minLon = Math.min(minLon, lon);
+    minLat = Math.min(minLat, lat);
+    maxLon = Math.max(maxLon, lon);
+    maxLat = Math.max(maxLat, lat);
+  }
+  return [minLon, minLat, maxLon, maxLat];
 }
 
 /**

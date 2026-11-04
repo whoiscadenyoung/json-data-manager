@@ -46,8 +46,9 @@ $$;
 -- them here would collide with the service's own migrations on first boot in
 -- local dev. So the bucket rows and object policies apply only where the
 -- service actually exists (local dev via the CLI, any real deployment); the
--- CI store job verifies 0001–0003 + PostGIS directly and skips this section
--- loudly, with full-stack CI coverage owned by stage 2's ci.yml work.
+-- CI store job boots the storage-api container against its postgres service
+-- (stage 2's ci.yml work) so this section applies there too, and asserts the
+-- buckets + object policies after the apply.
 do $do$
 begin
   if to_regclass('storage.objects') is null then

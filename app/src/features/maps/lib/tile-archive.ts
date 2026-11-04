@@ -24,8 +24,22 @@ import { useQuery } from "convex/react";
 import { useEffect, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
+import { getContext } from "#/integrations/tanstack-query/root-provider";
 import { fetchConvexToken } from "#/lib/convex-auth-token";
+import { isPostgresDatasetId } from "#/lib/dataset-source";
+import { sharedClient } from "#/lib/store/client";
 import { api } from "#convex/_generated/api";
+
+import { isPgTileArchiveStale } from "./pg-tile-archives";
+import { usePgDatasetSummaries } from "./pg-tile-archives-react";
+
+/**
+ * Which auth surface a worker token request is for: the Convex JWT the
+ * standalone ConvexClient `setAuth`s with, or the Supabase access token the
+ * worker's own `createClient` rides (RLS applies to every PG read/write the
+ * PG build path makes). Omitted = "convex" (the only kind before stage 2).
+ */
+export type TileTokenSource = "convex" | "supabase";
 
 /** Main thread → worker: one build per message, plus token-fetch replies. */
 export type TileArchiveWorkerInbound =
@@ -34,7 +48,7 @@ export type TileArchiveWorkerInbound =
 
 /** Worker → main thread: token requests, transient `phase` messages, then one terminal message. */
 export type TileArchiveWorkerOutbound =
-  | { requestId: number; type: "token-request" }
+  | { requestId: number; source?: TileTokenSource; type: "token-request" }
   | { schemaId: string; type: "phase"; phase: TileArchiveBuildPhase }
   | { done: number; schemaId: string; total: number; type: "progress" }
   | {
@@ -283,29 +297,80 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * The current session's Supabase access token, for the tile worker's own
+ * `createClient` (a worker has neither cookies nor the provider's storage —
+ * it asks the main thread, exactly like the Convex JWT handshake). Never
+ * rejects: null when signed out or the read fails, so a request never hangs
+ * and the PG build fails loudly on the missing identity instead of silently
+ * reading zero RLS-visible rows.
+ */
+async function fetchSupabaseAccessToken(): Promise<string | null> {
+  try {
+    const { data } = await sharedClient().auth.getSession();
+    const session = data.session;
+    if (session === null || session === undefined) {
+      return null;
+    }
+    return typeof session.access_token === "string" ? session.access_token : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Answers the worker's token requests on the same message channel the build
  * protocol rides: the worker's standalone ConvexClient authenticates through
  * here (its `setAuth` fetcher), since the sign-in gate (roadmap 0.1) rejects
- * every unauthenticated data call. `fetchConvexToken` never rejects — null
- * when signed out or the fetch fails — so a request never hangs.
+ * every unauthenticated data call — and stage 2's PG build path authenticates
+ * its own `createClient` the same way (source: "supabase"). Both fetchers
+ * never reject — null when signed out or the fetch fails — so a request
+ * never hangs.
  */
-async function replyToken(requestId: number): Promise<void> {
+async function replyToken(requestId: number, source: TileTokenSource): Promise<void> {
   const worker = archiveWorker;
   if (worker === undefined) return;
-  const token = await fetchConvexToken();
+  const token = source === "supabase" ? await fetchSupabaseAccessToken() : await fetchConvexToken();
   // `Worker.postMessage` takes (message, transfer) — there is no
   // `targetOrigin` parameter to pass at the worker boundary.
   // oxlint-disable-next-line unicorn/require-post-message-target-origin
   worker.postMessage({ requestId, token, type: "token" } satisfies TileArchiveWorkerInbound);
 }
 
-/** Replies to the worker's Convex-token requests; other messages pass it by. */
+/** Replies to the worker's token requests (Convex default, PG opt-in); other messages pass it by. */
 function handleWorkerTokenRequest(event: MessageEvent<unknown>): void {
   const data: unknown = event.data;
   if (!isRecord(data) || typeof data.requestId !== "number" || data.type !== "token-request") {
     return;
   }
-  void replyToken(data.requestId);
+  const source: TileTokenSource = data.source === "supabase" ? "supabase" : "convex";
+  void replyToken(data.requestId, source);
+}
+
+/**
+ * Refetches the PG queries a settled build changes: the install RPC runs
+ * OUTSIDE the TanStack cache (there is no Convex-style push for Postgres
+ * until stage 6's realtime), so without this the summaries — and with them
+ * every layer-source decision and the OPFS pin feed — would stay on the
+ * stale pre-build state until an unrelated refetch. Both feeds go stale
+ * together on an install: the dataset summaries (`pg:datasets`, the
+ * decision's fresh-candidate input) AND the signed-archive-URL metas
+ * (`pg:tile-archives`, `usePgTileArchiveMetas`'s feed — its key's dataset
+ * ids are unchanged by the install, so the query would keep answering "no
+ * servable archive" and the OPFS pin would drop/prune until an unrelated
+ * refetch otherwise). Fires for `done` (archive installed: decision flips
+ * to tiles) and `stale-discarded` (the row moved under the build:
+ * staleness re-evaluates).
+ */
+function invalidatePgQueries(): void {
+  try {
+    const { queryClient } = getContext();
+    void queryClient.invalidateQueries({ queryKey: ["pg:datasets"] });
+    // Prefix match: hits every ["pg:tile-archives", "metas", datasetIds]
+    // key the maps page has mounted (pg-tile-archives-react.tsx).
+    void queryClient.invalidateQueries({ queryKey: ["pg:tile-archives"] });
+  } catch {
+    // No client yet (SSR render, early mount): nothing cached to invalidate.
+  }
 }
 
 /** Records a below-threshold skip against the version the worker read (kept
@@ -344,6 +409,48 @@ function isBuildStateMessage(data: unknown): data is Record<string, unknown> {
   return isRecord(data) && typeof data.schemaId === "string" && data.type !== "progress";
 }
 
+/** Settles one terminal build message (kept out of {@link handleWorkerMessage} for the complexity budget). */
+function settleTerminalBuild(
+  data: Record<string, unknown>,
+  schemaId: string,
+  pending: { reject: (error: Error) => void; resolve: (outcome: TileArchiveBuildOutcome) => void },
+): void {
+  const pgDataset = isPostgresDatasetId(schemaId);
+  if (data.type === "done") {
+    setBuildState(schemaId, "done");
+    clearBuildFailure(schemaId);
+    noteInstalledVersion(data, schemaId);
+    if (pgDataset) {
+      invalidatePgQueries();
+    }
+    pending.resolve("installed");
+    return;
+  }
+  if (data.type === "stale-discarded") {
+    setBuildState(schemaId, "stale-discarded");
+    if (pgDataset) {
+      invalidatePgQueries();
+    }
+    pending.resolve("discarded");
+    return;
+  }
+  if (data.type === "skipped") {
+    // Memo first: the idle notification re-evaluates layer-source decisions,
+    // which read the memo (#185).
+    recordSkipMemo(data, schemaId);
+    setBuildState(schemaId, "idle");
+    clearBuildFailure(schemaId);
+    pending.resolve("skipped");
+    return;
+  }
+  setBuildState(schemaId, "error");
+  const message = typeof data.message === "string" ? data.message : DEFAULT_FAILURE_MESSAGE;
+  // Issue #71 added the toast (the one surface that follows the user
+  // across pages); #184 keeps the failure on the map until a build succeeds.
+  recordBuildFailure(schemaId, message);
+  pending.reject(new Error(message));
+}
+
 function handleWorkerMessage(event: MessageEvent<unknown>): void {
   const data: unknown = event.data;
   if (!isBuildStateMessage(data)) return;
@@ -355,29 +462,7 @@ function handleWorkerMessage(event: MessageEvent<unknown>): void {
   const pending = pendingBuilds.get(schemaId);
   if (pending === undefined) return;
   pendingBuilds.delete(schemaId);
-  if (data.type === "done") {
-    setBuildState(schemaId, "done");
-    clearBuildFailure(schemaId);
-    noteInstalledVersion(data, schemaId);
-    pending.resolve("installed");
-  } else if (data.type === "stale-discarded") {
-    setBuildState(schemaId, "stale-discarded");
-    pending.resolve("discarded");
-  } else if (data.type === "skipped") {
-    // Memo first: the idle notification re-evaluates layer-source decisions,
-    // which read the memo (#185).
-    recordSkipMemo(data, schemaId);
-    setBuildState(schemaId, "idle");
-    clearBuildFailure(schemaId);
-    pending.resolve("skipped");
-  } else {
-    setBuildState(schemaId, "error");
-    const message = typeof data.message === "string" ? data.message : DEFAULT_FAILURE_MESSAGE;
-    // Issue #71 added the toast (the one surface that follows the user
-    // across pages); #184 keeps the failure on the map until a build succeeds.
-    recordBuildFailure(schemaId, message);
-    pending.reject(new Error(message));
-  }
+  settleTerminalBuild(data, schemaId, pending);
 }
 
 function isBuildPhase(value: unknown): value is TileArchiveBuildPhase {
@@ -438,9 +523,13 @@ function getScheduler(): TileArchiveScheduler {
 // --- Triggers ---
 
 /**
- * Mounted once at the app root: watches every geospatial dataset and
- * schedules a debounced rebuild whenever one is observably stale. Correctness
- * rides on part 2's guard — this only decides when to attempt.
+ * Mounted once at the app root: watches every geospatial dataset — Convex
+ * via `api.cms.schemas.listSummaries` (reactive push) and Postgres via the
+ * store summaries (refetched by {@link invalidatePgQueries} when a
+ * build settles; realtime cross-tab push is stage 6) — and schedules a
+ * debounced rebuild whenever one is observably stale. Correctness rides on
+ * the expectedVersion guard (the component's, SQL edition for PG) — this
+ * only decides when to attempt.
  *
  * Import completions additionally call `ensureMapTileArchive` for immediacy;
  * the manager catches everything else (simplification workflows, geospatial
@@ -449,6 +538,7 @@ function getScheduler(): TileArchiveScheduler {
  */
 export function useMapTileArchiveManager(): void {
   const schemas = useQuery(api.cms.schemas.listSummaries, { limit: 1000 });
+  const pgSummaries = usePgDatasetSummaries();
   useEffect(() => {
     if (schemas === undefined) return;
     const scheduler = getScheduler();
@@ -465,6 +555,21 @@ export function useMapTileArchiveManager(): void {
       }
     }
   }, [schemas]);
+  useEffect(() => {
+    if (pgSummaries === undefined) return;
+    const scheduler = getScheduler();
+    for (const summary of pgSummaries) {
+      const currentVersion = summary.mapTileCacheVersion;
+      if (isPgTileArchiveStale(summary)) {
+        scheduler.schedule(summary.id, currentVersion);
+      } else {
+        // Current without our help (another tab or user built it): drop the
+        // failure and its armed retry (#184 review), same as the Convex loop.
+        scheduler.clear(summary.id);
+        clearBuildFailure(summary.id);
+      }
+    }
+  }, [pgSummaries]);
 }
 
 /** Render-once app-shell component mounting the manager (renders nothing). */

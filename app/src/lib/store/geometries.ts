@@ -6,6 +6,7 @@ import {
   nextPageCursor,
   queryRow,
   queryRows,
+  queryScalar,
   STORAGE_SIGNED_URL_TTL_SECONDS,
   type PagedRpcRow,
   type StoreOptions,
@@ -31,6 +32,11 @@ import type { DatasetGeometryType } from "./datasets";
  *
  * NOTE: narrow local interfaces typed from the design doc's DDL/RPC
  * signatures, not the generated `database.types.ts` (see `./client`).
+ *
+ * The module also hosts the stage-2 TILE-ARCHIVE store functions (§5.6/§6):
+ * the worker's pre-build dataset read, the archive-pointer read, signed
+ * read/upload URLs, and the `install_tile_archive` CAS — see the marked
+ * section near the bottom for why they live here.
  */
 
 /**
@@ -354,4 +360,179 @@ export async function createGeometrySourceUrl(
     throw new Error(`Geometry payload ${sourcePath} has no signed URL.`);
   }
   return data.signedUrl;
+}
+
+// ---------------------------------------------------------------------------
+// Tile archives (design §5.6/§6 — stage 2)
+//
+// The PG counterparts of the component's tile-archive machinery
+// (`api.cms.tile_archives.*` + the `setMapTileArchive` guard): the build
+// worker's pre-build read, the archive-pointer reads the layer-source
+// decision and the OPFS pin feed sign, and the `install_tile_archive`
+// compare-and-set install. They live in THIS module rather than a dedicated
+// tile-archive store because the §8.1 layout defines no such module and this
+// stage's scope pins the store edits to `geometries.ts` — the design's
+// `maps.ts` (the maps workstream's own module) must not become the dumping
+// ground either. A later stage may re-home them wholesale; the exports are
+// the contract, not the file.
+// ---------------------------------------------------------------------------
+
+/** The Storage bucket holding built PMTiles archives (design §6). */
+export const TILE_ARCHIVE_BUCKET = "tile-archives";
+
+/**
+ * Signed-URL lifetime for archive reads. This is the §16 stage-2 pick: keep
+ * `tile-archives` PRIVATE (the design §6 table — never a public-read bucket)
+ * and sign for 24 h instead of the geometry-payload hour, because the OPFS
+ * pin's re-backfill path (an LRU-evicted archive re-fetching over the wire)
+ * replays a URL captured at wire time, and an hourly URL could 403 a tab
+ * that outlives it. Self-hosted Storage caps signed-URL TTLs well above 24 h.
+ */
+export const TILE_ARCHIVE_SIGNED_URL_TTL_SECONDS = 86_400;
+
+/**
+ * The tile-relevant fields of the dataset row, read by the build worker
+ * BEFORE it fetches any geometry (the expected-version snapshot — the guard's
+ * liveness depends on capturing `mapTileCacheVersion` before paging). Mirrors
+ * the fields the Convex worker read off `api.cms.schemas.get`.
+ */
+export interface TileDatasetInfo {
+  featureCount: number;
+  geometryType: DatasetGeometryType | null;
+  isGeospatial: boolean;
+  mapTileCacheVersion: number;
+}
+
+/**
+ * Reads one dataset's tile-relevant row (the worker's pre-build read), or
+ * null when RLS hides the dataset. Deliberately imperative (not a
+ * `queryOptions` wrapper): the worker is a plain function context.
+ */
+export async function tileDatasetInfo(
+  args: { datasetId: string },
+  options?: StoreOptions,
+): Promise<TileDatasetInfo | null> {
+  return await queryRow<TileDatasetInfo>(
+    clientOf(options)
+      .from("datasets")
+      .select(
+        "isGeospatial:is_geospatial,geometryType:geometry_type,featureCount:feature_count,mapTileCacheVersion:map_tile_cache_version",
+      )
+      .eq("id", args.datasetId)
+      .limit(1),
+  );
+}
+
+/**
+ * The raw archive-pointer columns for a set of datasets — what the layer-source
+ * decision and the OPFS pin feed read. `mapTileArchiveFormat` comes back RAW
+ * on purpose (the store never mirrors the format constant; the comparison is
+ * the tile workstream's job — see `DatasetSummaryRow`'s field comment).
+ */
+export interface TileArchivePointer {
+  id: string;
+  mapTileArchiveBuiltVersion: number | null;
+  mapTileArchiveBytes: number | null;
+  mapTileArchiveFormat: number | null;
+  mapTileArchivePath: string | null;
+  mapTileCacheVersion: number;
+}
+
+/** Reads the archive-pointer columns for the given dataset ids (one `in` select). */
+export async function tileArchivePointers(
+  args: { datasetIds: ReadonlyArray<string> },
+  options?: StoreOptions,
+): Promise<TileArchivePointer[]> {
+  if (args.datasetIds.length === 0) {
+    return [];
+  }
+  return await queryRows<TileArchivePointer>(
+    clientOf(options)
+      .from("datasets")
+      .select(
+        "id,mapTileCacheVersion:map_tile_cache_version,mapTileArchivePath:map_tile_archive_path,mapTileArchiveBytes:map_tile_archive_bytes,mapTileArchiveBuiltVersion:map_tile_archive_built_version,mapTileArchiveFormat:map_tile_archive_format",
+      )
+      .in("id", [...args.datasetIds]),
+  );
+}
+
+/** A short-lived signed read URL for a built archive in the `tile-archives` bucket (the §6 "range-read signed URLs" access shape). */
+export async function createTileArchiveUrl(
+  client: SupabaseClient,
+  archivePath: string,
+): Promise<string> {
+  const { data, error } = await client.storage
+    .from(TILE_ARCHIVE_BUCKET)
+    .createSignedUrl(archivePath, TILE_ARCHIVE_SIGNED_URL_TTL_SECONDS);
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+  if (data === null) {
+    throw new Error(`Tile archive ${archivePath} has no signed URL.`);
+  }
+  return data.signedUrl;
+}
+
+/**
+ * Issues a signed UPLOAD URL for one archive object (design §6's upload
+ * shape: "browser requests a signed URL, PUTs the bytes, then writes the
+ * row/RPC"). The caller PUTs the bytes to `signedUrl` and passes `path` to
+ * {@link installTileArchive}, which claims the object — a path that never
+ * received its bytes installs an archive nobody can read, so callers upload
+ * FIRST and install second.
+ */
+export async function createTileArchiveUploadUrl(
+  args: { path: string },
+  options?: StoreOptions,
+): Promise<{ path: string; signedUrl: string }> {
+  const { data, error } = await clientOf(options)
+    .storage.from(TILE_ARCHIVE_BUCKET)
+    .createSignedUploadUrl(args.path);
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+  if (data === null) {
+    throw new Error(`Tile archive upload URL for ${args.path} could not be issued.`);
+  }
+  return { path: data.path, signedUrl: data.signedUrl };
+}
+
+/** The {@link installTileArchive} argument set — the §5.6 RPC's parameters, camelCase. */
+export interface InstallTileArchiveArgs {
+  datasetId: string;
+  /** Storage path the upload landed at (the RPC claims it into the dataset row). */
+  path: string;
+  bytes: number;
+  maxZoom: number;
+  /** The version the build STARTED at — the CAS guard value. */
+  expectedVersion: number;
+  /** Recorded alongside the install (the built-at snapshot the staleness check compares). */
+  builtVersion: number;
+  /** The builder layout generation this archive was produced by (the #125 archive-FORMAT gate). */
+  format: number;
+}
+
+/**
+ * Installs a built archive with the `setMapTileArchive expectedVersion`
+ * guard, SQL edition (§5.6): returns true when `expectedVersion` matched the
+ * dataset's live `map_tile_cache_version` (install recorded), false when a
+ * geometry write raced the build (stale — the caller reports
+ * `stale-discarded`; a queued/stale-on-view rebuild converges to fresh).
+ * Returns false WITHOUT touching the row, exactly like the component guard.
+ */
+export async function installTileArchive(
+  args: InstallTileArchiveArgs,
+  options?: StoreOptions,
+): Promise<boolean> {
+  return await queryScalar<boolean>(
+    clientOf(options).rpc("install_tile_archive", {
+      p_built_version: args.builtVersion,
+      p_bytes: args.bytes,
+      p_dataset: args.datasetId,
+      p_expected_version: args.expectedVersion,
+      p_format: args.format,
+      p_max_zoom: args.maxZoom,
+      p_path: args.path,
+    }),
+  );
 }

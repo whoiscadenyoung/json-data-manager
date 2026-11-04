@@ -10,12 +10,14 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@caden/ui/components/sheet";
+import { useQuery as useStoreQuery, useQueryClient } from "@tanstack/react-query";
 import { useMutation, useQuery } from "convex/react";
-import { Check, MapIcon, Plus, Search } from "lucide-react";
+import { Check, Database, MapIcon, Plus, Search } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { errorMessage } from "#/lib/errors";
+import * as mapsStore from "#/lib/store/maps";
 import { api } from "#convex/_generated/api";
 
 import type { LayerTargetType, MapLayerDoc } from "../lib/map-layers";
@@ -30,12 +32,19 @@ type AddToMapTargetType = Exclude<LayerTargetType, "derived">;
 
 type AddToMapTarget = { targetId: string; targetType: AddToMapTargetType; targetName: string };
 
-type MapSummary = { _id: string; name: string };
+/** One offered map — either backend's, with the origin that routes its writes (§14.6's split-brain catalog). */
+type MapSummary = { _id: string; name: string; origin: "convex" | "pg" };
+
+/** Per-origin layer feeds the badges/counts read. */
+type MapLayerFeeds = {
+  convexLayers: MapLayerDoc[];
+  pgLayers: mapsStore.MapLayerRow[];
+};
 
 /** The searchable list of existing maps, with per-map add buttons ("Added" badge when the target is already a layer). */
 function ExistingMapsSection({
   maps,
-  layers,
+  feeds,
   target,
   search,
   onSearchChange,
@@ -43,20 +52,32 @@ function ExistingMapsSection({
   onAdd,
 }: {
   maps: MapSummary[];
-  layers: MapLayerDoc[];
+  feeds: MapLayerFeeds;
   target: AddToMapTarget;
   search: string;
   onSearchChange: (value: string) => void;
   pendingKey: string | undefined;
   onAdd: (map: MapSummary) => void;
 }) {
+  // Layer counts and the "Added" badge read BOTH stores' layer feeds — a
+  // Convex target can already be a layer of a Postgres map (the §14.6
+  // cross-store layer), and vice versa at stage 3.
   const layerCountByMap = new globalThis.Map<string, number>();
-  for (const layer of layers) {
+  for (const layer of feeds.convexLayers) {
+    layerCountByMap.set(layer.mapId, (layerCountByMap.get(layer.mapId) ?? 0) + 1);
+  }
+  for (const layer of feeds.pgLayers) {
     layerCountByMap.set(layer.mapId, (layerCountByMap.get(layer.mapId) ?? 0) + 1);
   }
 
   const alreadyLayered = (mapId: string) =>
-      layers.some(
+      feeds.convexLayers.some(
+        (layer) =>
+          layer.mapId === mapId &&
+          layer.targetType === target.targetType &&
+          layer.targetId === target.targetId,
+      ) ||
+      feeds.pgLayers.some(
         (layer) =>
           layer.mapId === mapId &&
           layer.targetType === target.targetType &&
@@ -98,7 +119,15 @@ function ExistingMapsSection({
                 <div className="flex min-w-0 items-center gap-2.5">
                   <MapIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{map.name}</p>
+                    <p className="flex items-center gap-1.5 truncate text-sm font-medium">
+                      {map.name}
+                      {map.origin === "pg" && (
+                        <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                          <Database className="h-2.5 w-2.5" />
+                          PG
+                        </span>
+                      )}
+                    </p>
                     <p className="truncate text-xs text-muted-foreground">
                       {layerCount} {layerCount === 1 ? "layer" : "layers"}
                     </p>
@@ -147,21 +176,34 @@ export function AddToMapSheet({
 }) {
   const maps = useQuery(api.cms.maps.list, { limit: 500 }),
     layers = useQuery(api.cms.maps.listLayers, { limit: 500 }),
-    createMap = useMutation(api.cms.maps.create),
+    // The OTHER store's maps (stage 2's split-brain catalog): a Convex
+    // target can join a Postgres map as a layer, and new maps are
+    // Postgres-native from stage 2.
+    pgMaps = usePostgresMaps(),
     addLayer = useMutation(api.cms.maps.addLayer),
     [search, setSearch] = useState(""),
     [newName, setNewName] = useState(""),
     // Which add is in flight — a map id, or "__new__" for create-and-add.
     [pendingKey, setPendingKey] = useState<string | undefined>(),
     isPending = pendingKey !== undefined,
+    allMaps = unionWithPg(maps, pgMaps.maps),
     handleAddToExisting = async (map: MapSummary) => {
       setPendingKey(map._id);
       try {
-        await addLayer({
-          mapId: map._id,
-          targetId: target.targetId,
-          targetType: target.targetType,
-        });
+        if (map.origin === "pg") {
+          await mapsStore.addLayer({
+            mapId: map._id,
+            targetId: target.targetId,
+            targetType: target.targetType,
+          });
+          pgMaps.invalidate();
+        } else {
+          await addLayer({
+            mapId: map._id,
+            targetId: target.targetId,
+            targetType: target.targetType,
+          });
+        }
         toast.success(`Added "${target.targetName}" to map "${map.name}".`);
         onOpenChange(false);
       } catch (error) {
@@ -178,12 +220,13 @@ export function AddToMapSheet({
       }
       setPendingKey("__new__");
       try {
-        const mapId = await createMap({ name });
-        await addLayer({
+        const mapId = await mapsStore.create({ name });
+        await mapsStore.addLayer({
           mapId,
           targetId: target.targetId,
           targetType: target.targetType,
         });
+        pgMaps.invalidate();
         toast.success(`Created map "${name}" with "${target.targetName}" as its first layer.`);
         onOpenChange(false);
       } catch (error) {
@@ -239,19 +282,19 @@ export function AddToMapSheet({
             </div>
           </section>
 
-          {maps === undefined || layers === undefined ? (
+          {allMaps === undefined || layers === undefined ? (
             <div className="flex justify-center py-8">
               <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-primary" />
             </div>
-          ) : maps.length === 0 ? (
+          ) : allMaps.length === 0 ? (
             <Empty className="min-h-32 border">
               <EmptyTitle>No maps yet</EmptyTitle>
               <EmptyDescription>Name your first map above to get started.</EmptyDescription>
             </Empty>
           ) : (
             <ExistingMapsSection
-              maps={maps}
-              layers={layers}
+              maps={allMaps}
+              feeds={{ convexLayers: layers, pgLayers: pgMaps.layers ?? [] }}
               target={target}
               search={search}
               onSearchChange={setSearch}
@@ -265,4 +308,44 @@ export function AddToMapSheet({
       </SheetContent>
     </Sheet>
   );
+}
+
+/** The Postgres half of the sheet's map list (the store, with its layer feed for the badges). */
+function usePostgresMaps(): {
+  invalidate: () => void;
+  layers: mapsStore.MapLayerRow[] | undefined;
+  maps: mapsStore.MapRow[] | undefined;
+} {
+  const queryClient = useQueryClient();
+  return {
+    invalidate: () => {
+      void queryClient.invalidateQueries({ queryKey: ["pg:maps"] });
+    },
+    layers: useMapsStoreLayers(),
+    maps: useMapsStoreMaps(),
+  };
+}
+
+function useMapsStoreMaps(): mapsStore.MapRow[] | undefined {
+  const query = useStoreQuery(mapsStore.listQueryOptions());
+  return query.data;
+}
+
+function useMapsStoreLayers(): mapsStore.MapLayerRow[] | undefined {
+  const query = useStoreQuery(mapsStore.listAllLayersQueryOptions());
+  return query.data;
+}
+
+/** Convex maps first (their historical order), then the Postgres ones. */
+function unionWithPg(
+  convexMaps: ReadonlyArray<{ _id: string; name: string }> | undefined,
+  pgMaps: mapsStore.MapRow[] | undefined,
+): MapSummary[] | undefined {
+  if (convexMaps === undefined || pgMaps === undefined) {
+    return undefined;
+  }
+  return [
+    ...convexMaps.map((row) => ({ _id: row._id, name: row.name, origin: "convex" as const })),
+    ...pgMaps.map((row) => ({ _id: row.id, name: row.name, origin: "pg" as const })),
+  ];
 }

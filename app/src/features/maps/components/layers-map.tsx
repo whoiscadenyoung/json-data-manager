@@ -9,6 +9,7 @@ import type { ReactNode } from "react";
 
 import type { DatasetEntryRow, DatasetGeometryRow } from "#/lib/dataset-rows";
 import { useEnrichedDatasetEntryRow } from "#/lib/dataset-rows-react";
+import { isPostgresDatasetId } from "#/lib/dataset-source";
 import { formatPropertyValue } from "#/lib/format";
 
 import type { DatasetSummary } from "../lib/map-layers";
@@ -19,6 +20,7 @@ import {
   buildPointFeatureCollection,
   splitPointLikeGeometries,
 } from "../lib/point-geometry";
+import { usePgEnrichedDatasetEntryRow } from "./pg-entry-popup";
 
 type EntryDoc = DatasetEntryRow;
 
@@ -365,6 +367,7 @@ function geometryRowsBySchema(
  * deriving bounds from rows (row-derived bounds would understate the extent
  * mid-stream — the exact bug the stored extents exist to prevent).
  */
+// oxlint-disable-next-line eslint/complexity -- the render paths (row/tile/extension/popup split) are the component's real shape; the deferred #82 phase-2 cleanup owns the decomposition, as in the route workspaces.
 export function LayersMap({
   datasets,
   derivedLayers = NO_DERIVED_LAYERS,
@@ -446,7 +449,19 @@ export function LayersMap({
     // only when the dataset has saved, healthy transform specs — the spec
     // and lookup-row reads that join the namespaced fields in. All of it
     // lives only while the popup is open; closing drops every subscription.
-    popup = useEnrichedDatasetEntryRow(selected === null ? undefined : selected),
+    //
+    // The transitional split (design §14): the executor is per-backend — a
+    // Convex dataset streams its saved specs and lookup rows through the
+    // Convex seam (below); a Postgres dataset takes the store point-read
+    // with the seam's spec pass (pg-entry-popup). The id says which —
+    // exactly one of the two hooks is live for a selection.
+    convexPopup = useEnrichedDatasetEntryRow(
+      selected !== null && !isPostgresDatasetId(selected.schemaId) ? selected : undefined,
+    ),
+    pgPopup = usePgEnrichedDatasetEntryRow(
+      selected !== null && isPostgresDatasetId(selected.schemaId) ? selected : undefined,
+    ),
+    popup = selected !== null && isPostgresDatasetId(selected.schemaId) ? pgPopup : convexPopup,
     selectedDatasetTitle = selected
       ? getDatasetTitle(datasetById, titlesById, selected.schemaId, "")
       : "";

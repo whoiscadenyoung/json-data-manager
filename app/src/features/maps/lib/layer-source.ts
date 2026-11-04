@@ -25,15 +25,29 @@
  * pre-3a behavior silently dropped any id without a decision); the tile
  * REBUILD side is structurally out too — the rebuild manager subscribes
  * `api.cms.schemas.listSummaries`, which derived ids never appear in.
+ *
+ * STAGE 2 (Supabase migration, issue #201): Postgres-native datasets join
+ * the decision. The split is keyed explicitly on the dataset id's origin
+ * (`isPostgresDatasetId`, `#/lib/dataset-source.ts` — the one place the
+ * transitional split is defined): a uuid id takes `selectPgLayerSource`
+ * (freshness read off the store summary's raw archive columns, URL from the
+ * signed-URL metas feed), a Convex id keeps the EXACT code path below,
+ * byte-for-byte (design §14 — existing datasets render exactly as they do).
+ * Both paths share the #185 pending rule (`awaitsFirstArchive`) and the
+ * below-threshold skip memo (ids never collide across backends).
  */
 import { isBelowThresholdSkipMemoized } from "@caden/maps/build-scheduler";
 import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { useSyncExternalStore } from "react";
 
+import { isPostgresDatasetId } from "#/lib/dataset-source";
 import { api } from "#convex/_generated/api";
 
 import type { DatasetSummary } from "./map-layers";
+import type { PgTileArchiveMeta, PgTileSummaryRow } from "./pg-tile-archives";
+import { isPgFreshArchiveCandidate } from "./pg-tile-archives";
+import { usePgTileArchiveMetas } from "./pg-tile-archives-react";
 import { hasTileArchiveBuildFailure, subscribeTileArchiveBuildState } from "./tile-archive";
 
 /**
@@ -121,6 +135,58 @@ export function selectLayerSource(
 }
 
 /**
+ * The Postgres decision (`selectLayerSource`'s PG twin): same three states,
+ * same #185 hold, same failure fallback — freshness read off the summary
+ * row's raw archive columns (built version, live version, and the format
+ * gate the PG path carries itself — the Convex projection pre-computes its
+ * format gate into `mapTileArchiveFormatCurrent`, while PG stores the raw
+ * `map_tile_archive_format` this app stamps at install), and the URL state
+ * rides the signed-URL metas feed with the SAME two-valued signal: undefined
+ * = still loading (hold pending for a fresh candidate), null = loaded and
+ * nothing servable (rows).
+ */
+export function selectPgLayerSource(
+  row: PgTileSummaryRow,
+  archive: PgTileArchiveMetaView,
+  buildFailed = false,
+): TileSourceDecision {
+  if (!row.isGeospatial || row.geometryType === null) return ROWS;
+  if (!buildFailed && pgAwaitsFirstArchive(row)) return PENDING;
+  if (!isPgFreshArchiveCandidate(row)) return ROWS;
+  if (archive === undefined) return PENDING;
+  if (archive === null) return ROWS;
+  return { kind: "vector", url: `pmtiles://${archive.url}` };
+}
+
+/**
+ * The #185 rule for a PG row, via the SAME shared helpers the Convex path
+ * uses (`awaitsFirstArchive` + the shared skip memo): map the row's fields
+ * onto the decision input shape — the id spaces are disjoint, so the memo
+ * keys can never collide across backends.
+ */
+function pgAwaitsFirstArchive(row: PgTileSummaryRow): boolean {
+  return awaitsFirstArchive({
+    _id: row.id,
+    featureCount: row.featureCount,
+    geometryType: row.geometryType === null ? undefined : row.geometryType,
+    kind: row.isGeospatial ? "geospatial" : "standard",
+    mapTileArchiveBuiltVersion: row.mapTileArchiveBuiltVersion ?? undefined,
+    mapTileCacheVersion: row.mapTileCacheVersion,
+  });
+}
+
+/** The signed-URL state for one PG dataset: loading (undefined) / none (null) / servable. */
+export type PgTileArchiveMetaView = PgTileArchiveMeta | null | undefined;
+
+/**
+ * One decision input row: a component (Convex) schema summary — `_id` keyed —
+ * or a Postgres dataset summary (`#/lib/store/datasets`' `DatasetSummaryRow`
+ * passes structurally), `id` keyed. Which backend a row belongs to is read
+ * from the id's ORIGIN (`isPostgresDatasetId`), never from shape sniffing.
+ */
+export type TileDecisionRow = TileSourceSchemaRow | PgTileSummaryRow;
+
+/**
  * Decisions for a list of dataset docs, keyed by schema id. Subscribes to ONE
  * `api.cms.tile_archives.metas` query covering every geospatial dataset — the
  * hook-rules-safe fan-out (one reactive subscription for N datasets, instead
@@ -133,27 +199,36 @@ export function selectLayerSource(
  *
  * Inputs are component schema rows only (pass them through
  * `geospatialDatasetsFor`) — a derived registry id has no schemas row and
- * must never enter this decision (3a, #96).
+ * must never enter this decision (3a, #96). Postgres summaries (uuid `id`)
+ * join at stage 2 and take `selectPgLayerSource`; the Convex rows keep the
+ * exact decision code below (design §14's transitional rule).
  */
 export function useTileArchiveSources(
-  datasets: TileSourceSchemaRow[] | undefined,
+  datasets: ReadonlyArray<TileDecisionRow> | undefined,
 ): globalThis.Map<string, TileSourceDecision> {
-  const datasetsOrEmpty = datasets ?? [],
-    geospatialIds = datasetsOrEmpty
+  const datasetsOrEmpty: ReadonlyArray<TileDecisionRow> = datasets ?? [],
+    // The origin split: partition ONCE, then each backend runs its own path —
+    // the Convex block below is the pre-stage-2 code, unchanged.
+    { convexRows, pgRows } = partitionByOrigin(datasetsOrEmpty),
+    geospatialIds = convexRows
       .filter((schema) => schema.kind === "geospatial" && schema.geometryType !== undefined)
       .map((schema) => schema._id),
     metas = useQuery(
       api.cms.tile_archives.metas,
       geospatialIds.length > 0 ? { schemaIds: geospatialIds } : "skip",
     ),
+    pgGeospatialIds = pgRows
+      .filter((row) => row.isGeospatial && row.geometryType !== null)
+      .map((row) => row.id),
+    pgMetas = usePgTileArchiveMetas(pgGeospatialIds),
     // Re-evaluates when a build fails or is skipped (the build-state store
     // notifies on both); a primitive snapshot keeps it referentially stable.
     failedKey = useSyncExternalStore(
       subscribeTileArchiveBuildState,
       () =>
         datasetsOrEmpty
-          .filter((schema) => hasTileArchiveBuildFailure(schema._id))
-          .map((schema) => schema._id)
+          .map(tileDecisionIdOf)
+          .filter((id) => id !== undefined && hasTileArchiveBuildFailure(id))
           .join(","),
       () => "",
     ),
@@ -168,18 +243,63 @@ export function useTileArchiveSources(
     }
   }
   const decisions = new globalThis.Map<string, TileSourceDecision>();
-  for (const schema of datasetsOrEmpty) {
+  for (const schema of convexRows) {
     decisions.set(
       schema._id,
       selectLayerSource(schema, metaBySchemaId.get(schema._id), failedIds.has(schema._id)),
     );
   }
+  decidePgRows(pgRows, pgMetas, failedIds, decisions);
   return decisions;
 }
 
-/** The single-dataset variant of `useTileArchiveSources` — the same decision for one schema row (or `undefined` while the row is still loading). */
+/**
+ * Partitions the decision inputs by dataset-id ORIGIN (`isPostgresDatasetId` —
+ * the one split key): a row keyed `_id` is Convex, a uuid-keyed row is PG,
+ * and a row that is neither (no `_id`, non-uuid id) is not a dataset either
+ * backend knows — dropped (the derived-registry shape under the 3a rule).
+ */
+function partitionByOrigin(rows: ReadonlyArray<TileDecisionRow>): {
+  convexRows: TileSourceSchemaRow[];
+  pgRows: PgTileSummaryRow[];
+} {
+  const convexRows: TileSourceSchemaRow[] = [],
+    pgRows: PgTileSummaryRow[] = [];
+  for (const row of rows) {
+    if ("_id" in row) {
+      convexRows.push(row);
+    } else if (isPostgresDatasetId(row.id)) {
+      pgRows.push(row);
+    }
+  }
+  return { convexRows, pgRows };
+}
+
+/** Fills the PG rows' decisions (kept out of the hook for the complexity budget). */
+function decidePgRows(
+  pgRows: ReadonlyArray<PgTileSummaryRow>,
+  pgMetas: globalThis.Map<string, PgTileArchiveMeta> | undefined,
+  failedIds: globalThis.Set<string>,
+  decisions: globalThis.Map<string, TileSourceDecision>,
+): void {
+  for (const row of pgRows) {
+    const archive: PgTileArchiveMetaView =
+      pgMetas === undefined ? undefined : (pgMetas.get(row.id) ?? null);
+    decisions.set(row.id, selectPgLayerSource(row, archive, failedIds.has(row.id)));
+  }
+}
+
+/** A decision row's id, whichever key its backend uses; undefined for a row with neither. */
+function tileDecisionIdOf(row: TileDecisionRow): string | undefined {
+  if ("_id" in row) {
+    return row._id;
+  }
+  return row.id;
+}
+
+/** The single-dataset variant of `useTileArchiveSources` — the same decision for one schema row (either backend's summary shape), or `undefined` while the row is still loading. */
 export function useTileArchiveSource(
-  schema: TileSourceSchemaRow | null | undefined,
+  schema: TileDecisionRow | null | undefined,
   schemaId: string,
 ): TileSourceDecision | undefined {
   return useTileArchiveSources(schema === null || schema === undefined ? [] : [schema]).get(

@@ -1,13 +1,13 @@
 import type * as MapLibreGL from "maplibre-gl";
 
-import type { Id } from "#convex/_generated/dataModel";
-
 /**
  * Point-marker images in the browser (docs/layer-styles.md "Point markers"):
  * the built-in SDF sprite served from our own origin
  * (`public/sprites/layer-styles/`, built by `sprite/build.ts`), the icon
- * catalog the picker searches, and uploaded icons from Convex storage. All
- * of it loads lazily, on the first style or picker that needs an icon.
+ * catalog the picker searches, and uploaded icons from marker storage
+ * (Convex file storage for pre-migration maps, the `marker-sprites` bucket
+ * for Postgres maps — the transitional split). All of it loads lazily, on
+ * the first style or picker that needs an icon.
  */
 
 export type IconFamily = "shape" | "lucide" | "maki";
@@ -19,9 +19,9 @@ export interface IconCatalogEntry {
   keywords: string[];
 }
 
-/** An uploaded icon as `api.layerStyles.icons.list` returns it. */
+/** An uploaded icon as the uploads list hands it back (either backend's list — the fields agree). */
 export interface UploadedIcon {
-  iconId: Id<"layerStyleIcons">;
+  iconId: string;
   name: string;
   label: string;
   url: string | null;

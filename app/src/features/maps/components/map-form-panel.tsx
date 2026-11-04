@@ -19,15 +19,21 @@ import { api } from "#convex/_generated/api";
 
 type MapDoc = { _id: string; name: string; description?: string };
 
+/** The name/description submit, injected per backend (Convex by default; the maps store for Postgres maps). */
+export type MapFormSubmit = (args: { description?: string; name: string }) => Promise<void>;
+
 /** Side panel for creating or editing a map (name + description). */
 export function MapFormPanel({
   map,
   open,
   onOpenChange,
+  onSubmit,
 }: {
   map?: MapDoc;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Omit for the pre-migration Convex flow; pass for a Postgres map. */
+  onSubmit?: MapFormSubmit;
 }) {
   const isEditing = map !== undefined,
     createMap = useMutation(api.cms.maps.create),
@@ -44,7 +50,16 @@ export function MapFormPanel({
 
       setIsSubmitting(true);
       try {
-        if (isEditing) {
+        if (onSubmit !== undefined) {
+          await onSubmit({ description: description.trim() || undefined, name: name.trim() });
+          if (isEditing) {
+            toast.success("Map updated.");
+          } else {
+            toast.success("Map created.");
+            setName("");
+            setDescription("");
+          }
+        } else if (isEditing) {
           await updateMap({
             description: description.trim() || undefined,
             mapId: map._id,
