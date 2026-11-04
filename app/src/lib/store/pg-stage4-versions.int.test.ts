@@ -17,8 +17,8 @@
 // constraint. Statements expected to RAISE (RPC gates, the #126 trigger,
 // FK restrict) run savepoint-wrapped: a bare error aborts the transaction.
 //
-// Coverage: publish idempotency on publish_key; the global by-ref
-// short-circuit; frozen-row immutability (no grants — the negative test);
+// Coverage: publish idempotency on publish_key; the dataset-scoped by-ref
+// short-circuit (0011's parity patch); frozen-row immutability (no grants — the negative test);
 // materialization shape; version-table RLS; the #126 retire-pin refusal
 // (trigger + FK restrict via the retention path); keep-N retention with pin
 // exemptions; consumer_reference fork-edge ownership; creator-only
@@ -207,19 +207,38 @@ describe.skipIf(!dbUp())("stage 4 — publish_version (§5.4)", () => {
     }
   });
 
-  test("a ref never freezes twice: the global by-ref lookup answers the existing version", async () => {
+  test("a ref never freezes twice: the SAME chain's refreeze short-circuits; a foreign chain's colliding ref is refused", async () => {
     const datasetA = await createDataset(s(), { createdBy: ALICE });
     const datasetB = await createDataset(s(), { createdBy: BOB });
     try {
       await beginAs(ALICE);
-      const ref = `ref-global-${datasetA.slice(0, 8)}`;
+      const ref = `ref-scope-${datasetA.slice(0, 8)}`;
       const existingId = await publish(datasetA, "v1", ref);
+      // The SAME dataset refreezing its own ref answers the existing row —
+      // the freeze short-circuit, now scoped to the caller's chain (the
+      // stage-6 parity patch on 0009's global lookup).
+      const refrozenId = await publish(datasetA, "v2", ref);
+      expect(refrozenId).toBe(existingId);
       // A DIFFERENT user publishing a DIFFERENT dataset under the SAME ref
-      // is short-circuited to the EXISTING row — the Convex
-      // alreadyFrozenByRef behavior, global across chains.
+      // is NOT answered with the foreign row. publish_key = ref by
+      // construction, so the collision flows past the scoped by-ref lookup
+      // into ON CONFLICT (publish_key) — and the race re-select is scoped
+      // TOO (0011, both existing-row returns): the RPC answers NULL, the
+      // caller's "no version id" error, instead of someone else's row.
+      // 0009's global lookups handed back datasetA's version id here —
+      // exactly the cross-chain leak the patch removes (proven on the live
+      // stack: the by-ref guard alone still leaked through the race arm).
       await s().asUser(BOB);
-      const clashId = await publish(datasetB, "v1", ref);
-      expect(clashId).toBe(existingId);
+      const clash = await s().query(
+        `select public.publish_version(${sqlLit(datasetB)}, 'v1', ${sqlLit(ref)}, null) as id`,
+      );
+      expect(clash.error).toBeUndefined();
+      expect(firstRow(clash.rows).id).toBeNull();
+      // Nothing froze on dataset B — no version answered, none created.
+      const bVersions = await s().count(
+        `select count(*) as n from public.dataset_versions where dataset_id = ${sqlLit(datasetB)}`,
+      );
+      expect(bVersions).toBe(0);
       await s().rollback();
     } finally {
       await dropDatasets(s(), [datasetA, datasetB]);
@@ -796,6 +815,66 @@ describe.skipIf(!dbUp())("stage 4 — collection_datasets policies tightened (ca
       await s().rollback();
     } finally {
       await dropDatasets(s(), [lockedId, aliceDraftId, openId, frozenId, bobDraftId]);
+    }
+  });
+});
+
+describe.skipIf(!dbUp())("stage 6 — tags reads gate on dataset visibility (0011)", () => {
+  test("a foreign draft's tags leak nothing; viewable datasets' tags read; the creator's RETURNING passes", async () => {
+    // ALICE holds a DRAFT (private to her — can_view_dataset's lifecycle
+    // arm) and a PUBLISHED dataset, each with one tag on its frozen version.
+    const draftId = await createDataset(s(), { createdBy: ALICE, lifecycle: "draft" });
+    const openId = await createDataset(s(), { createdBy: ALICE });
+    try {
+      await beginAs(ALICE);
+      await addEntry(s(), draftId, { label: "draft-row" });
+      await addEntry(s(), openId, { label: "open-row" });
+      const draftVersion = await publish(draftId, "v1", `pk-draft-${draftId.slice(0, 8)}`);
+      const openVersion = await publish(openId, "v1", `pk-open-${openId.slice(0, 8)}`);
+      const draftTag = await createTag(draftId, "draft-pin", draftVersion);
+      await createTag(openId, "open-pin", openVersion);
+
+      // BOB — a signed-in outsider — reads NOTHING of the foreign draft's
+      // tags (the existence leak 0009's flat `authenticated` SELECT allowed:
+      // name, version pin state, and retired_at all leaked). The 0-row
+      // filtered-read shape.
+      await s().asUser(BOB);
+      const leaked = await s().count(
+        `select count(*) as n from public.tags where dataset_id = ${sqlLit(draftId)}`,
+      );
+      expect(leaked).toBe(0);
+      // The tag row by id is equally invisible (get-tag reads).
+      const byId = await s().count(
+        `select count(*) as n from public.tags where id = ${sqlLit(draftTag)}`,
+      );
+      expect(byId).toBe(0);
+      // The PUBLISHED dataset's tags read as before — visibility unchanged
+      // for datasets BOB can view.
+      const viewable = await s().count(
+        `select count(*) as n from public.tags where dataset_id = ${sqlLit(openId)}`,
+      );
+      expect(viewable).toBe(1);
+
+      // BOB's own insert on a viewable dataset reads STRAIGHT back through
+      // INSERT..RETURNING — the 0008 lesson's creator clause answers the new
+      // row (can_view_dataset reads datasets, whose row predates the
+      // statement; the clause covers every browser insert path).
+      const rows = await s().expectOk(
+        `insert into public.tags (dataset_id, name, version_id)
+         values (${sqlLit(openId)}, 'bob-pin', ${sqlLit(openVersion)}) returning id::text as id`,
+      );
+      expect(String(firstRow(rows).id)).toBeTruthy();
+
+      // The creator still reads her own tags on both datasets — the
+      // creator clause's day job.
+      await s().asUser(ALICE);
+      const hers = await s().count(
+        `select count(*) as n from public.tags where dataset_id = ${sqlLit(draftId)}`,
+      );
+      expect(hers).toBe(1);
+      await s().rollback();
+    } finally {
+      await dropDatasets(s(), [draftId, openId]);
     }
   });
 });

@@ -23,6 +23,7 @@ import {
   revertReference,
   setKeepVersions,
   setReferenceMode,
+  setVersionPinned,
   syncReference,
   versionDeltaQueryOptions,
   type ConsumerReferenceRow,
@@ -40,9 +41,11 @@ import { VersionCompare } from "./version-compare";
  *
  * - `PgVersionsCard`: the version chain (one immutable frozen row per
  *   publish), tag management (a tag names one exact version — the pin),
- *   keep-N retention (the store's set-and-enforce pass), and the pairwise
- *   compare fed by the store's delta query + the overlay's bounded position
- *   reads.
+ *   the policy pin toggle per row (setVersionPinned — a retention pin keeps
+ *   the version past keep-N; #126: a policy pin never blocks retire, a
+ *   CONSUMER pin does), keep-N retention (the store's set-and-enforce
+ *   pass), and the pairwise compare fed by the store's delta query + the
+ *   overlay's bounded position reads.
  * - `PgConsumersCard`: the consumed-by list with pin/float, sync-to-head,
  *   and revert (repin to the prior version — explained honestly at the
  *   first version instead of a silent no-op).
@@ -64,7 +67,7 @@ const CONSUMER_KIND_LABELS = {
 
 /** Tags grouped per version id, oldest first within a version — built mutation-free from pairs. */
 function groupTagsByVersion(tags: tagsStore.TagRow[]): globalThis.Map<string, tagsStore.TagRow[]> {
-  const pairs = [...tags].reverse().map((tag) => [tag.versionId, tag] as const);
+  const pairs = [...tags].toReversed().map((tag) => [tag.versionId, tag] as const);
   const grouped = new globalThis.Map<string, tagsStore.TagRow[]>();
   for (const [versionId, tag] of pairs) {
     const existing = grouped.get(versionId);
@@ -158,6 +161,11 @@ function TagCreateForm({
  * feeding the shared VersionCompare through its controlled-pair props.
  * Success IS complete for these single-shot reads — never an isLoading gate.
  */
+// The loader joins three reads (delta + both overlay sides) into the
+// compare's controlled props — the readiness branches are that join's
+// contract; extracting them would spread one feed across components no
+// other surface shares.
+// oxlint-disable-next-line eslint/complexity -- the three-read join IS the loader's contract, in one place.
 function PgVersionCompareLoader({
   datasetTitle,
   versions,
@@ -223,13 +231,20 @@ function PgVersionCompareLoader({
   );
 }
 
-/** One chain row: label, ref, frozen date, its tags, the tag-create form, and the retire confirm per live tag. */
+/** One chain row: label, ref, frozen date, its policy pin state, its tags, the tag-create form, and the retire confirm per live tag. */
+// The row renders the version's write surfaces — pin toggle, tag create,
+// per-tag retire — with their pending and denial states; each surface's
+// branches are its honest-state contract and render only here.
+// oxlint-disable-next-line eslint/complexity -- the three write surfaces' states are the row's whole contract, read top to bottom.
 function PgVersionRowItem({
   datasetId,
+  pinned,
   tagList,
   version,
 }: {
   datasetId: string;
+  /** The version's ref sits in the retention policy's pinned_refs. */
+  pinned: boolean;
   tagList: tagsStore.TagRow[] | undefined;
   version: DatasetVersionRow;
 }) {
@@ -237,8 +252,33 @@ function PgVersionRowItem({
     [tagFormOpen, setTagFormOpen] = useState(false),
     [retireTarget, setRetireTarget] = useState<tagsStore.TagRow | undefined>(undefined),
     [isRetiring, setIsRetiring] = useState(false),
+    [isPinning, setIsPinning] = useState(false),
     invalidate = (): void => {
       void queryClient.invalidateQueries({ queryKey: ["pg:tags"] });
+    },
+    handleTogglePin = async (): Promise<void> => {
+      setIsPinning(true);
+      try {
+        const written = await setVersionPinned({
+          datasetKey: datasetId,
+          pinned: !pinned,
+          ref: version.ref,
+        });
+        if (written === 0) {
+          toast.error("The pin didn't move — you may not have access.");
+          return;
+        }
+        toast.success(
+          pinned
+            ? `Unpinned ${version.versionLabel} — retention may retire it once it ages past keep-N.`
+            : `Pinned ${version.versionLabel} — retention keeps it past keep-N.`,
+        );
+        void queryClient.invalidateQueries({ queryKey: ["pg:versions"] });
+      } catch (error) {
+        toast.error(errorMessage(error, "Failed to update the pin."));
+      } finally {
+        setIsPinning(false);
+      }
     },
     liveTags = (tagList ?? []).filter((tag) => tag.retiredAt === null),
     handleCreateTag = async (name: string): Promise<void> => {
@@ -290,17 +330,45 @@ function PgVersionRowItem({
           <span className="text-xs text-muted-foreground">
             frozen {new Date(version.createdAt).toLocaleString()}
           </span>
+          {pinned && (
+            <Badge
+              title="Pinned into the retention policy — kept past keep-N. A policy pin never blocks retire (#126); a consumer pin does."
+              variant="secondary"
+            >
+              <Pin className="h-3 w-3" />
+              pinned
+            </Badge>
+          )}
         </div>
-        <Button
-          onClick={() => {
-            setTagFormOpen((open) => !open);
-          }}
-          size="sm"
-          variant="ghost"
-        >
-          <Tag className="h-3.5 w-3.5" />
-          Tag
-        </Button>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            aria-label={pinned ? `Unpin ${version.versionLabel}` : `Pin ${version.versionLabel}`}
+            disabled={isPinning}
+            onClick={() => {
+              void handleTogglePin();
+            }}
+            size="sm"
+            title={
+              pinned
+                ? "Remove the retention pin — the version ages out of keep-N normally again."
+                : "Policy pin — keep this version past keep-N. A policy pin never blocks retire (#126); a consumer pin does."
+            }
+            variant="ghost"
+          >
+            <Pin className="h-3.5 w-3.5" />
+            {isPinning ? (pinned ? "Unpinning…" : "Pinning…") : pinned ? "Unpin" : "Pin"}
+          </Button>
+          <Button
+            onClick={() => {
+              setTagFormOpen((open) => !open);
+            }}
+            size="sm"
+            variant="ghost"
+          >
+            <Tag className="h-3.5 w-3.5" />
+            Tag
+          </Button>
+        </div>
       </div>
       <VersionTagChips tags={tagList} />
       {tagFormOpen && (
@@ -350,9 +418,14 @@ function PgVersionRowItem({
 /**
  * The publish-chain Versions card for a Postgres dataset: the immutable
  * chain, tag management (create/retire with the #126 refusal surfaced
- * verbatim), keep-N retention (the store's set-and-enforce pass), and the
- * pairwise compare.
+ * verbatim), the per-row policy pin toggle, keep-N retention (the store's
+ * set-and-enforce pass), and the pairwise compare.
  */
+// The card joins the chain, tags, and retention reads into the row list and
+// the retention/compare controls — the readiness branches are that join's
+// contract; extracting them would scatter one card's states across
+// components no other surface shares.
+// oxlint-disable-next-line eslint/complexity -- the three-read join IS the card's contract, in one place.
 export function PgVersionsCard({
   datasetId,
   datasetTitle,
@@ -463,6 +536,7 @@ export function PgVersionsCard({
               <PgVersionRowItem
                 datasetId={datasetId}
                 key={version.id}
+                pinned={retention !== undefined && retention.pinnedRefs.includes(version.ref)}
                 tagList={tagsByVersion.get(version.id)}
                 version={version}
               />
@@ -475,6 +549,11 @@ export function PgVersionsCard({
 }
 
 /** One consumed-by row: who consumes, float/pin state, and the pin/sync/revert actions. */
+// The row renders the reference's two modes' action sets (float: pin; pin:
+// sync + revert) with their honest unavailable states — the branch per
+// state is the action contract; extracting them would split one row's
+// controls across components with no reuse.
+// oxlint-disable-next-line eslint/complexity -- the per-mode action ladder is the row's whole contract.
 function PgConsumerRowItem({
   consumer,
   versions,

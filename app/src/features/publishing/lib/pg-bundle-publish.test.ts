@@ -16,6 +16,15 @@ import {
 
 import { pgPublishProjectBundle } from "./pg-bundle-publish";
 
+/** The element at the index, or a loud failure (the no-optional-chaining test style). */
+function at<T>(rows: ReadonlyArray<T>, index: number): T {
+  const item = rows[index];
+  if (item === undefined) {
+    throw new Error(`Expected an item at index ${index} (have ${rows.length}).`);
+  }
+  return item;
+}
+
 /** The project both presses share. */
 const PROJECT = {
   artifactCount: 3,
@@ -96,6 +105,12 @@ const MEMBER_MAP = {
   layerTargets: ["dataset-a", "dataset-c"],
 };
 
+/** The full argument list of the query's first operation with `method`, or undefined. */
+function methodOf(query: RecordedQuery, method: string): unknown[] | undefined {
+  const op = query.operations.find((candidate) => candidate.method === method);
+  return op === undefined ? undefined : op.args;
+}
+
 /**
  * The stateful press responder: the member statuses UPDATE as the press
  * checkpoints them, so completeBundle's terminal-state read matches what
@@ -108,10 +123,11 @@ function pressResponder(state: {
   publishes: number;
   memberStatus: Map<string, string>;
 }): (query: RecordedQuery) => ScriptedResponse {
-  const methodOf = (query: RecordedQuery, method: string): unknown[] | undefined => {
-    const op = query.operations.find((candidate) => candidate.method === method);
-    return op === undefined ? undefined : op.args;
-  };
+  // The responder dispatches every table the press legs touch — one branch
+  // per table in leg order, each a two-line script; splitting it would
+  // scatter the run's scripted state across closures and the tests read it
+  // as one press.
+  // oxlint-disable-next-line eslint/complexity -- the branch-per-table dispatch IS the scripted run, kept in one readable place.
   return (query): ScriptedResponse => {
     if (query.rpc === "publish_version") {
       state.publishes += 1;
@@ -310,6 +326,107 @@ describe("pgPublishProjectBundle", () => {
     await expect(
       pgPublishProjectBundle({ projectId: "project-1", supabase: stub.client }),
     ).rejects.toThrow(/isn't yours/);
+  });
+
+  it("re-links an already-linked map member on a joined press and self-heals edges to the CURRENT layers", async () => {
+    // The press JOINS a running bundle whose map member an earlier leg
+    // already linked. Since then, the dataset-c layer was REMOVED from the
+    // map: the plan-time snapshot carries both targets, but the leg-time
+    // map_layers read returns only dataset-a — so the stale dataset-c edge
+    // must not survive the leg (bundles.ts:1060-1123), and the linked
+    // member must be re-walked at all (no skip leaves stale edges standing).
+    const layerReads: string[][] = [];
+    let layersReadCount = 0;
+    // The scripted run for the resume leg — one branch per table the join
+    // path touches (project, artifacts, heads, layers, edges, members,
+    // bundles), each a two-line answer; the tests read it as one press.
+    // oxlint-disable-next-line eslint/complexity -- the branch-per-table dispatch IS the scripted run, kept in one readable place.
+    const stub = stubSupabase((query) => {
+      if (query.table === "projects") {
+        return { data: [PROJECT] };
+      }
+      if (query.table === "project_artifacts") {
+        return { data: [ARTIFACTS[2]] };
+      }
+      if (query.table === "dataset_versions") {
+        // Both layer targets already published — they join referenced and
+        // the press runs only the map leg.
+        return { data: [{ id: "version-1", versionLabel: "v1" }] };
+      }
+      if (query.table === "map_layers") {
+        layersReadCount += 1;
+        // First read = plan time (both targets); second read = leg time
+        // (the dataset-c layer was removed in between).
+        const targets = layersReadCount === 1 ? ["dataset-a", "dataset-c"] : ["dataset-a"];
+        layerReads.push(targets);
+        return { data: targets.map((targetId) => ({ targetId })) };
+      }
+      if (query.table === "consumer_references") {
+        // A prior leg linked BOTH snapshot targets.
+        return {
+          data: [
+            { consumerId: "map-1", id: "edge-a", sourceDatasetId: "dataset-a" },
+            { consumerId: "map-1", id: "edge-c", sourceDatasetId: "dataset-c" },
+          ],
+        };
+      }
+      if (query.table === "publish_bundle_members") {
+        const isUpdate = query.operations.some((op) => op.method === "update");
+        if (isUpdate) {
+          return { data: [{ id: "member-map" }] };
+        }
+        // The joined run's member read: the map member is ALREADY linked.
+        return { data: [{ ...MEMBER_MAP, status: "linked" }] };
+      }
+      if (query.table === "publish_bundles") {
+        if (query.operations.some((op) => op.method === "insert")) {
+          return { data: [{ id: "bundle-2" }] };
+        }
+        if (query.operations.some((op) => op.method === "update")) {
+          return { data: [{ ...BUNDLE_ROW, status: "completed" }] };
+        }
+        // The join/latest read: a RUNNING press (the resume path).
+        return { data: [{ ...BUNDLE_ROW, collectionId: "collection-keep", status: "running" }] };
+      }
+      return { data: null };
+    });
+    const outcome = await pgPublishProjectBundle({ projectId: "project-1", supabase: stub.client });
+    expect(outcome.status).toBe("completed");
+    expect(outcome.bundleId).toBe("bundle-1");
+    // The leg re-read the layers (plan + leg), and reconciliation followed
+    // the LEG-TIME answer: the stale dataset-c edge deleted, no new edges.
+    expect(layersReadCount).toBe(2);
+    expect(layerReads[1]).toStrictEqual(["dataset-a"]);
+    const deletes = stub.queries.filter(
+      (query) =>
+        query.table === "consumer_references" &&
+        query.operations.some((op) => op.method === "delete"),
+    );
+    expect(deletes.length).toBe(1);
+    const deleteQuery = at(deletes, 0);
+    const deleteEq = deleteQuery.operations.find((op) => op.method === "eq");
+    expect(deleteEq === undefined ? undefined : deleteEq.args).toStrictEqual(["id", "edge-c"]);
+    expect(
+      stub.queries.some(
+        (query) =>
+          query.table === "consumer_references" &&
+          query.operations.some((op) => op.method === "insert"),
+      ),
+    ).toBe(false);
+    // The linked member was re-stamped ("linked" again), not skipped.
+    const stamps = stub.queries.filter(
+      (query) =>
+        query.table === "publish_bundle_members" &&
+        query.operations.some((op) => op.method === "update" && op.args[0] !== null),
+    );
+    expect(
+      stamps.some((query) =>
+        query.operations.some(
+          (op) =>
+            op.method === "update" && (op.args[0] as Record<string, unknown>).status === "linked",
+        ),
+      ),
+    ).toBe(true);
   });
 
   it("mints member rows through startBundle in the canonical plan order", async () => {

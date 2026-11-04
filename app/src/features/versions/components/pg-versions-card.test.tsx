@@ -28,24 +28,33 @@ vi.mock("sonner", () => ({
 
 // Write spies, hoisted beside the store mocks so the factories bind the SAME
 // instances the tests assert on. All the stores' writes answer a count.
-const { createTagMock, pinModeMock, revertRefMock, retireTagMock, setKeepMock, syncRefMock } =
-  vi.hoisted(() => ({
-    createTagMock:
-      vi.fn<(args: { datasetId: string; name: string; versionId: string }) => Promise<unknown>>(),
-    pinModeMock:
-      vi.fn<
-        (args: {
-          mode: "float" | "pin";
-          pinnedRef?: string;
-          pinnedVersionId?: string;
-          referenceId: string;
-        }) => Promise<number>
-      >(),
-    revertRefMock: vi.fn<(args: { referenceId: string; toRef: string }) => Promise<number>>(),
-    retireTagMock: vi.fn<(args: { tagId: string }) => Promise<number>>(),
-    setKeepMock: vi.fn<(args: { datasetKey: string; keep: number }) => Promise<number>>(),
-    syncRefMock: vi.fn<(args: { referenceId: string }) => Promise<{ affected: number }>>(),
-  }));
+const {
+  createTagMock,
+  pinModeMock,
+  revertRefMock,
+  retireTagMock,
+  setKeepMock,
+  setPinMock,
+  syncRefMock,
+} = vi.hoisted(() => ({
+  createTagMock:
+    vi.fn<(args: { datasetId: string; name: string; versionId: string }) => Promise<unknown>>(),
+  pinModeMock:
+    vi.fn<
+      (args: {
+        mode: "float" | "pin";
+        pinnedRef?: string;
+        pinnedVersionId?: string;
+        referenceId: string;
+      }) => Promise<number>
+    >(),
+  revertRefMock: vi.fn<(args: { referenceId: string; toRef: string }) => Promise<number>>(),
+  retireTagMock: vi.fn<(args: { tagId: string }) => Promise<number>>(),
+  setKeepMock: vi.fn<(args: { datasetKey: string; keep: number }) => Promise<number>>(),
+  setPinMock:
+    vi.fn<(args: { datasetKey: string; pinned: boolean; ref: string }) => Promise<number>>(),
+  syncRefMock: vi.fn<(args: { referenceId: string }) => Promise<{ affected: number }>>(),
+}));
 
 /**
  * The read fixtures, behind a MUTABLE state handle typed with the stores'
@@ -110,6 +119,7 @@ vi.mock("#/lib/store/versions", async (importOriginal) => {
     revertReference: revertRefMock,
     setKeepVersions: setKeepMock,
     setReferenceMode: pinModeMock,
+    setVersionPinned: setPinMock,
     syncReference: syncRefMock,
     versionDeltaQueryOptions: () => ({
       queryFn: async () => state.delta,
@@ -328,6 +338,61 @@ describe("PgVersionsCard", () => {
         "Keeping the newest 3 versions — 2 past it retired now.",
       );
     });
+  });
+
+  it("pins a version into the retention policy through setVersionPinned (#126: policy pins, not consumer pins)", async () => {
+    state.versions = THREE_CHAIN;
+    setPinMock.mockResolvedValueOnce(1);
+    renderWithProviders(
+      createElement(PgVersionsCard, { datasetId: "dataset-1", datasetTitle: "SMART" }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Pin v3" }));
+    await waitFor(() => {
+      expect(setPinMock).toHaveBeenCalledWith({
+        datasetKey: "dataset-1",
+        pinned: true,
+        ref: "ref-v3",
+      });
+      expect(toastMock.success).toHaveBeenCalledWith("Pinned v3 — retention keeps it past keep-N.");
+    });
+  });
+
+  it("unpins a policy-pinned version (the pinned_refs read drives the row's state)", async () => {
+    state.versions = THREE_CHAIN;
+    state.retention = { keepVersions: 10, pinnedRefs: ["ref-v1"] };
+    setPinMock.mockResolvedValueOnce(1);
+    renderWithProviders(
+      createElement(PgVersionsCard, { datasetId: "dataset-1", datasetTitle: "SMART" }),
+    );
+    await waitFor(() => {
+      expect(screen.getByText("pinned")).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Unpin v1" }));
+    await waitFor(() => {
+      expect(setPinMock).toHaveBeenCalledWith({
+        datasetKey: "dataset-1",
+        pinned: false,
+        ref: "ref-v1",
+      });
+      expect(toastMock.success).toHaveBeenCalledWith(
+        "Unpinned v1 — retention may retire it once it ages past keep-N.",
+      );
+    });
+  });
+
+  it("surfaces a 0-row pin denial honestly instead of toasting success", async () => {
+    state.versions = THREE_CHAIN;
+    setPinMock.mockResolvedValueOnce(0);
+    renderWithProviders(
+      createElement(PgVersionsCard, { datasetId: "dataset-1", datasetTitle: "SMART" }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Pin v2" }));
+    await waitFor(() => {
+      expect(toastMock.error).toHaveBeenCalledWith(
+        "The pin didn't move — you may not have access.",
+      );
+    });
+    expect(toastMock.success).not.toHaveBeenCalled();
   });
 });
 

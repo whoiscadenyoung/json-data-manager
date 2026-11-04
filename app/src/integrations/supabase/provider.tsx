@@ -9,6 +9,8 @@ import {
   type ReactNode,
 } from "react";
 
+import { attachDatasetRealtime } from "#/lib/store/realtime";
+
 import { supabase } from "./client";
 
 /**
@@ -116,6 +118,13 @@ export function SupabaseAuthProvider({ children }: { children: ReactNode }) {
       data.subscription.unsubscribe();
     };
   }, [queryClient]);
+
+  // Stage 6 (issue #205): the per-active-dataset realtime layer. Mounted ONCE
+  // here — inside the QueryClientProvider (cache side effects), browser-only
+  // (effects never run on the server) — and driven by the query cache itself:
+  // a dataset channel is open exactly while a mounted surface observes that
+  // dataset's queries (see lib/store/realtime.ts).
+  useEffect(() => attachDatasetRealtime(queryClient, supabase), [queryClient]);
 
   // Memoized identity: the session changes only on auth events, so unrelated
   // re-renders must not reconstruct the context value for every consumer.
