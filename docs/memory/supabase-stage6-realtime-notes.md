@@ -35,7 +35,7 @@ Four durable facts from the stage-6 review-fix run (PR #214, commit 5042f5d):
    VALUE, not the row id. Full-suite runs flood the shared slot: isolated
    delivery 132–398 ms, but under parallel int-test load give events 15 s.
 4. **Shared-stack reset collision.** A concurrent worktree's `supabase db
-   reset` silently replaces the applied migration set with ITS tree (stage-7's
+reset` silently replaces the applied migration set with ITS tree (stage-7's
    0012_bound wiped this branch's 0012 mid-verification; containers stay up,
    nothing logs it). 0012 is idempotent — re-applying its SQL restores
    publication membership without a reset war. Migration numbering: stage-6's
