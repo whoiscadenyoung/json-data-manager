@@ -47,11 +47,15 @@ import type { GeometryRow } from "./geometries";
  * row a fetch did not cache, so a patch can never surface an uncached page
  * or flip a complete surface's shape); INSERT bursts invalidate the owning
  * keys, coalesced to one refetch per key per tick (a 20k-row import is 20k
- * events and ONE refetch). Two exceptions where an UPDATE also invalidates:
- * `searchEntries` (server-side sort/filter can MOVE the row the patch pinned)
- * and the `pg:datasets` summary projections (the design doc's literal
+ * events and ONE refetch). Three exceptions where an UPDATE also invalidates:
+ * `searchEntries` (server-side sort/filter can MOVE the row the patch pinned),
+ * the `pg:datasets` summary projections (the design doc's literal
  * "setQueryData … invalidate for summaries" — a lifecycle flip moves a row
- * between the draft/published lists, which a patch cannot express).
+ * between the draft/published lists, which a patch cannot express), and the
+ * `pg:geometries` tiles feed (its rows carry `data` — the §5.5 RPC's JOINed
+ * `entries.data`, the tile feed's feature properties — a column the
+ * `geometries` table does not have, so a payload patch would wipe every
+ * feature property it touched).
  *
  * COMPLETENESS SURVIVES (ui-polish-expectations): patches only replace rows
  * inside loaded caches — status stays `success`, `fetchStatus` stays `idle`,
@@ -62,14 +66,14 @@ import type { GeometryRow } from "./geometries";
  * held — no OCC retry, no cell co-editing; the version machinery is where
  * consistency is enforced.
  *
- * PREREQUISITE (DB-side, outside this layer): `postgres_changes` delivers
- * nothing until the matrix tables join the `supabase_realtime` publication
- * (`alter publication supabase_realtime add table …`). No migration has done
- * so yet — flagged to the stage-6 integrator. DELETE payloads carry the
- * primary key only (the default replica identity): `entries`/`datasets`
- * deletes patch (their PK is the cached row's id); `geometries` deletes
- * invalidate (its PK is the geometry's own uuid, which cached rows don't
- * carry).
+ * ENABLEMENT (DB-side, migration 0012): `postgres_changes` reads the
+ * `supabase_realtime` publication's table list server-side and delivers
+ * nothing for tables outside it — `0012_realtime_publication.sql` adds
+ * exactly the eight matrix tables above (guarded, default replica identity).
+ * DELETE payloads carry the primary key only (the default replica identity):
+ * `entries`/`datasets` deletes patch (their PK is the cached row's id);
+ * `geometries` deletes invalidate (its PK is the geometry's own uuid, which
+ * cached rows don't carry).
  *
  * The persisted light state is untouched by construction: the persister only
  * dehydrates `convexQuery` hashes (`light-namespaces.isPersistableQueryHash`),
@@ -276,7 +280,18 @@ function entryRowOf(raw: Record<string, unknown>, datasetId: string): EntryRow |
   };
 }
 
-function geometryRowOf(raw: Record<string, unknown>, datasetId: string): GeometryRow | null {
+/**
+ * The point-read cached shape of a geometry (`pg:geometries getByEntry` —
+ * geometries.ts's queryFn selects `entry_id, dataset_id, geometry,
+ * source_path, bbox, type` and NO `data`). The tiles-feed shape (`GeometryRow`
+ * WITH `data`) is unreachable from realtime payloads: `data` is the §5.5
+ * tiles RPC's JOIN column (`entries.data`), not a `geometries` column, so a
+ * payload can never carry it — the tiles feed therefore reconciles by
+ * invalidation only (see `applyGeometriesChange`).
+ */
+type GeometryGetRow = Omit<GeometryRow, "data">;
+
+function geometryGetRowOf(raw: Record<string, unknown>, datasetId: string): GeometryGetRow | null {
   const entryId = columnString(raw, "entry_id");
   if (entryId === "") {
     return null;
@@ -287,7 +302,6 @@ function geometryRowOf(raw: Record<string, unknown>, datasetId: string): Geometr
   }
   return {
     bbox: columnBboxOrNull(raw, "bbox"),
-    data: columnJson(raw, "data"),
     datasetId,
     entryId,
     geometry: columnJson(raw, "source"),
@@ -627,20 +641,24 @@ function applyGeometriesChange(
     invalidations.add(["pg:geometries", "rowsForTiles", { datasetId }]);
     return;
   }
-  const row = geometryRowOf(raw, datasetId);
+  const row = geometryGetRowOf(raw, datasetId);
   if (row === null) {
     return;
   }
+  // Patch ONLY the point read: the payload mirrors the `geometries` table's
+  // own columns verbatim (the broker sends no columns the table lacks), and
+  // that is exactly the getByEntry queryFn's select list, so the replacement
+  // is byte-identical to what it caches. The rowsForTiles pages are NOT
+  // patchable from this payload — their rows carry `data` (the tile feed's
+  // feature properties, JOINed from `entries.data` by the §5.5 RPC), a
+  // column the payload can never carry; a patch here would replace cached
+  // rows with `data: null` (wiped feature properties until the refetch, and
+  // permanently corrupt if it fails) — the exact violation of the
+  // byte-identical contract above the review caught. The invalidation below
+  // is the whole feed's update.
   patchGetCache(queryClient, ["pg:geometries", "getByEntry", { entryId }], entryId, idOf, row);
-  patchRowCaches(
-    queryClient,
-    ["pg:geometries", "rowsForTiles", { datasetId }],
-    entryId,
-    idOf,
-    () => row,
-  );
-  // The reactive layer feeds redraw from these pages — reconcile after the
-  // instant patch (bbox/shape changed, so the rendered geometry must too).
+  // The reactive layer feeds redraw from these pages — reconcile by
+  // invalidation (bbox/shape changed, so the rendered geometry must too).
   invalidations.add(["pg:geometries", "rowsForTiles", { datasetId }]);
 }
 
