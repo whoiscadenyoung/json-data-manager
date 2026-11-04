@@ -244,6 +244,11 @@ const D3 = "33333333-3333-4333-8333-333333333333";
 const CREATOR = "99999999-9999-4999-8999-999999999999";
 const CREATED_AT = "2026-11-04T00:00:00.000Z";
 
+/**
+ * The realtime payload of an `entries` row: the TABLE's own columns verbatim
+ * (verified against the live broker in pg-realtime.int.test.ts) — including
+ * the `search` tsvector and `updated_at`.
+ */
 function rawEntry(
   id: string,
   datasetId: string,
@@ -251,10 +256,13 @@ function rawEntry(
 ): Record<string, unknown> {
   return {
     created_at: CREATED_AT,
+    created_by: CREATOR,
     data: { kind: id },
     dataset_id: datasetId,
     geometry_type: geometryType,
     id,
+    search: "'kind'",
+    updated_at: CREATED_AT,
   };
 }
 
@@ -266,23 +274,37 @@ function entryRow(
   return { createdAt: CREATED_AT, data: { kind: id }, datasetId, geometryType, id };
 }
 
+/**
+ * The realtime payload of a `geometries` row: the TABLE's own columns
+ * verbatim, captured live in pg-realtime.int.test.ts — including the
+ * generated `geom` (WKB hex on the wire) and `updated_at`. Notably NO
+ * `data`: that is `entries.data`, joined in by the §5.5 tiles RPC only,
+ * which is why the tiles feed reconciles by invalidation, never a patch.
+ */
 function rawGeometry(entryId: string, datasetId: string): Record<string, unknown> {
   return {
     bbox: [0, 0, 1, 1],
-    data: {},
+    created_at: CREATED_AT,
+    created_by: CREATOR,
     dataset_id: datasetId,
     entry_id: entryId,
+    geom: "0101000020E610000000000000000000000000000000000000",
+    id: `geom-${entryId}`,
     source: { coordinates: [0, 0], type: "Point" },
+    source_bytes: 57,
     source_path: null,
     type: "Point",
+    updated_at: CREATED_AT,
   };
 }
 
-/** The store shape a cached geometry row carries (inline Point with/without a bbox). */
-function geometryRow(entryId: string, overrides: Partial<GeometryRow> = {}): GeometryRow {
+/** The point-read cached shape (`getByEntry` — the queryFn selects no `data`). */
+type GeometryGetRow = Omit<GeometryRow, "data">;
+
+/** The cached shape `getByEntry` holds (inline Point with/without a bbox). */
+function geometryGetRow(entryId: string, overrides: Partial<GeometryGetRow> = {}): GeometryGetRow {
   return {
     bbox: null,
-    data: {},
     datasetId: D1,
     entryId,
     geometry: null,
@@ -292,7 +314,22 @@ function geometryRow(entryId: string, overrides: Partial<GeometryRow> = {}): Geo
   };
 }
 
-const PATCHED_GEOMETRY_ROW: GeometryRow = geometryRow("e1", {
+/** The cached shape the §5.5 tiles RPC holds (`GeometryRow` — `data` rides its JOIN). */
+function geometryTilesRow(entryId: string, overrides: Partial<GeometryRow> = {}): GeometryRow {
+  return {
+    bbox: null,
+    data: { kind: entryId },
+    datasetId: D1,
+    entryId,
+    geometry: null,
+    sourcePath: null,
+    type: "Point",
+    ...overrides,
+  };
+}
+
+/** The point-read row a patched geometry UPDATE must produce (no `data`). */
+const PATCHED_GET_ROW: GeometryGetRow = geometryGetRow("e1", {
   bbox: [0, 0, 1, 1],
   geometry: { coordinates: [0, 0], type: "Point" },
 });
@@ -718,24 +755,36 @@ describe("entries events (dataset table rows + entry details)", () => {
 });
 
 describe("geometries events (entry geometry + maps layer data)", () => {
-  it("patches an UPDATE into getByEntry and the rowsForTiles pages, then reconciles the feed", async () => {
+  it("patches an UPDATE into getByEntry only (shape the queryFn caches), leaving the tiles pages to the invalidation", async () => {
     const queryClient = newClient();
     const stub = stubRealtimeClient();
     const detach = attachDatasetRealtime(queryClient, stub.client);
     const getByEntry = getByEntryQueryOptions({ entryId: "e1" }).queryKey;
     const tiles = rowsForTilesQueryOptions({ cursor: null, datasetId: D1 }).queryKey;
-    queryClient.setQueryData(getByEntry, geometryRow("e1", { sourcePath: "d1/row-1.json" }));
-    queryClient.setQueryData<GeometryRowsPage>(tiles, page([geometryRow("e1")]));
+    // See the INSERT/DELETE test's seed note: the runtime cached shape omits `data`.
+    queryClient.setQueryData(
+      getByEntry,
+      geometryGetRow("e1", { sourcePath: "d1/row-1.json" }) as unknown as GeometryRow,
+    );
+    queryClient.setQueryData<GeometryRowsPage>(tiles, page([geometryTilesRow("e1")]));
     observe(queryClient, tiles);
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
 
     onlyChannel(stub.channels).deliver("geometries", {
       eventType: "UPDATE",
       new: rawGeometry("e1", D1),
-      old: { id: "geom-uuid" },
+      old: { id: "geom-e1" },
     });
 
-    expect(queryClient.getQueryData(getByEntry)).toStrictEqual(PATCHED_GEOMETRY_ROW);
+    // The point read patched in place — and BYTE-IDENTICAL to the queryFn's
+    // cached shape: no `data` prop (the payload cannot carry it, and the
+    // queryFn never selects it).
+    expect(queryClient.getQueryData(getByEntry)).toStrictEqual(PATCHED_GET_ROW);
+    // The tiles pages were NOT hand-patched: their rows carry `data` (the
+    // §5.5 RPC's JOIN column), which no `geometries` payload can supply — a
+    // patch would have zeroed it (the corrupt window the review caught).
+    // Byte-identical before the coalesced invalidation fires.
+    expect(queryClient.getQueryData(tiles)).toStrictEqual(page([geometryTilesRow("e1")]));
     await tick();
     expect(invalidatedKeys(invalidate)).toStrictEqual([
       ["pg:geometries", "rowsForTiles", { datasetId: D1 }],
@@ -749,7 +798,11 @@ describe("geometries events (entry geometry + maps layer data)", () => {
     const detach = attachDatasetRealtime(queryClient, stub.client);
     const getByEntry = getByEntryQueryOptions({ entryId: "e1" }).queryKey;
     const tiles = rowsForTilesQueryOptions({ cursor: null, datasetId: D1 }).queryKey;
-    queryClient.setQueryData<GeometryRow | null>(getByEntry, geometryRow("e1"));
+    // Test files allow the assertion (the override in .oxlintrc.json): the
+    // runtime cached shape omits `data` although the store's getByEntry
+    // return TYPE still claims a full GeometryRow — this seed mirrors the
+    // runtime shape, which is the one realtime must patch byte-identically.
+    queryClient.setQueryData(getByEntry, geometryGetRow("e1") as unknown as GeometryRow);
     observe(queryClient, tiles);
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     const channel = onlyChannel(stub.channels);
