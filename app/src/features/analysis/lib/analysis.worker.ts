@@ -44,10 +44,8 @@ import { analysisSqlEngine } from "@caden/analysis/duckdb";
  */
 import { applySql, declaredColumnTypes } from "@caden/data-core/transform";
 import type { SqlColumnSpec, SqlOperation, SqlSideTable } from "@caden/data-core/transform";
-import { ConvexClient } from "convex/browser";
+import type { ConvexClient } from "convex/browser";
 
-import { env } from "#/env";
-import { setAuthReasserting } from "#/lib/convex-auth-token";
 import { entryDataRecord, forEachDatasetEntryPage } from "#/lib/dataset-rows";
 import { api } from "#convex/_generated/api";
 
@@ -66,8 +64,6 @@ function post(message: AnalysisWorkerOutbound): void {
   // oxlint-disable-next-line unicorn/require-post-message-target-origin
   self.postMessage(message);
 }
-
-let client: ConvexClient | undefined;
 
 /**
  * The standalone client authenticates through the main thread: its setAuth
@@ -94,12 +90,16 @@ async function fetchTokenFromMain(source: AnalysisTokenSource): Promise<string |
 }
 
 function convexClient(): ConvexClient {
-  if (client === undefined) {
-    const created = new ConvexClient(env.VITE_CONVEX_URL);
-    setAuthReasserting(created, async () => await fetchTokenFromMain("convex"));
-    client = created;
-  }
-  return client;
+  // ARCHIVED at the stage-7 disconnect (issue #206): this branch built
+  // `new ConvexClient(env.VITE_CONVEX_URL)` with the re-asserting fetcher
+  // (`setAuthReasserting`, #133 item 6) — `VITE_CONVEX_URL` left `#/env`
+  // with the provider unmount, and no Convex-origin dataset exists to run
+  // SQL over, so the branch now fails loudly instead of dialing a deployment
+  // the shell no longer wires. The Postgres path runs on the store's
+  // supabase client ("supabase" token source) exactly as before.
+  throw new Error(
+    "Convex analyses are archived in this build (stage 7 disconnect): SQL runs on Postgres datasets only.",
+  );
 }
 
 // One heavy run at a time: async row paging may interleave, but the CPU-bound

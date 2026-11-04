@@ -6,6 +6,11 @@ export {
   SourceDriftCard,
 } from "./components/dataset-consumption";
 export { DatasetHistoryPanel } from "./components/dataset-history-panel";
+export {
+  DiffOverlayMap,
+  type DiffPoint,
+  type DiffPointStatus,
+} from "./components/diff-overlay-map";
 export { PgConsumersCard, PgVersionsCard } from "./components/pg-versions-card";
 export { RemoteSourceControls } from "./components/remote-source-controls";
 export { VersionCompare } from "./components/version-compare";

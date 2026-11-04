@@ -100,6 +100,11 @@ function writesDerived(query: RecordedQuery, method: string): boolean {
   return query.table === "derived_datasets" && methodsOf(query).includes(method);
 }
 
+/** The save/remove edge sync's consumer_references queries (the stage-7 parity fix). */
+function consumerRef(query: RecordedQuery, method: string): boolean {
+  return query.table === "consumer_references" && methodsOf(query).includes(method);
+}
+
 /** The payload of the first `method` operation as a record (insert/update args). */
 function payloadOf(query: RecordedQuery, method: string): Record<string, unknown> {
   const payload = firstArg(query, method);
@@ -401,6 +406,15 @@ describe("derived.save — insert path", () => {
       if (writesDerived(query, "insert")) {
         return { data: { id: "new-row-id" } };
       }
+      // The SAVED save's edge sync probes the datasets leg for the dep (a
+      // registry row is no DATASET — the FK makes derived-of-derived edges
+      // unrepresentable — so no edge insert follows).
+      if (selectsFrom(query, "consumer_references", "id")) {
+        return { data: [] };
+      }
+      if (selectsFrom(query, "datasets", "id")) {
+        return { data: null };
+      }
       throw new Error(`unexpected query: ${query.table ?? query.rpc} (${methodsOf(query)})`);
     });
 
@@ -409,14 +423,15 @@ describe("derived.save — insert path", () => {
       { supabase: stub.client },
     );
 
-    // Two queries: the registry probe (hit), the insert. The datasets probe
-    // never ran.
-    expect(stub.queries.length).toBe(2);
+    // Four queries: the registry probe (hit), the insert, then the edge
+    // sync's consumer_references select + datasets probe (which answers
+    // null — no edge). The source classification NEVER probed datasets.
     const insert = payloadOf(queryAt(stub.queries, 1), "insert");
     expect(insert.source_derived_id).toBe(derivedId);
     expect(insert.source_dataset_id).toBeNull();
     expect(insert.depends_on).toEqual([derivedId]);
-    expect(stub.queries.some((query) => query.table === "datasets")).toBe(false);
+    expect(stub.queries.slice(0, 2).some((query) => query.table === "datasets")).toBe(false);
+    expect(stub.queries.slice(3).some((query) => consumerRef(query, "insert"))).toBe(false);
   });
 
   it("refuses a source that resolves to neither a visible registry row nor a dataset", async () => {
@@ -432,7 +447,11 @@ describe("derived.save — insert path", () => {
         { spec: { operations: [], sourceDatasetId: randomUUID() }, status: "draft", title: "x" },
         { supabase: stub.client },
       ),
-    ).rejects.toThrow("That dataset doesn't exist or you don't have access to it.");
+    ).rejects.toThrow(
+      // Stage 7 (tranche-3 refusal-copy fix): the RLS-scoped store cannot
+      // tell WHICH table hides an invisible id, so the message names both.
+      "That dataset or transform doesn't exist or you don't have access to it.",
+    );
   });
 
   it("enforces the Convex title/description/spec gates before any query", async () => {
@@ -527,10 +546,16 @@ describe("derived.save — update path (cycle rejection + lockstep source)", () 
         return { data: null }; // [2] source leg 1: not a registry row
       }
       if (selectsFrom(query, "datasets", "id")) {
-        return { data: { id: newSourceId } }; // [3] source leg 2: a dataset
+        return { data: { id: newSourceId } }; // [3] source leg 2: a dataset — also the edge sync's dataset probe
       }
       if (writesDerived(query, "update")) {
         return { data: [{ id: rowId }] }; // [4] the write lands
+      }
+      if (selectsFrom(query, "consumer_references", "id")) {
+        return { data: [] }; // [5] the edge sync: no surviving edges
+      }
+      if (consumerRef(query, "insert")) {
+        return { data: [{ id: "edge-1" }] }; // [7] the float edge lands (after the datasets probe)
       }
       throw new Error(`unexpected query: ${query.table ?? query.rpc} (${methodsOf(query)})`);
     });
@@ -547,7 +572,10 @@ describe("derived.save — update path (cycle rejection + lockstep source)", () 
     );
     expect(saved).toBe(rowId);
 
-    expect(stub.queries.length).toBe(5);
+    // Stage 7: the SAVED save now also syncs the spec's consumer_references
+    // float edges (the tranche-3 parity fix) — select, datasets probe, and
+    // one insert follow the update.
+    expect(stub.queries.length).toBe(8);
     const update = payloadOf(queryAt(stub.queries, 4), "update");
     expect(update.source_dataset_id).toBe(newSourceId);
     expect(update.source_derived_id).toBeNull();
@@ -555,6 +583,13 @@ describe("derived.save — update path (cycle rejection + lockstep source)", () 
     expect(update.status).toBe("saved");
     expect(update.title).toBe("moved");
     expect(update.description).toBe("retargeted");
+    const edge = payloadOf(queryAt(stub.queries, 7), "insert");
+    expect(edge).toEqual({
+      consumer_id: rowId,
+      consumer_kind: "derived",
+      mode: "float",
+      source_dataset_id: newSourceId,
+    });
   });
 
   it("answers the missing-row message when the id reads as gone", async () => {
@@ -752,22 +787,31 @@ describe("derived.getQueryOptions", () => {
 });
 
 describe("derived.remove", () => {
-  it("returns the affected row count (0 = denied or gone)", async () => {
+  it("returns the affected row count (0 = denied or gone), edges first", async () => {
     const id = randomUUID();
+    // Stage 7 (tranche-3 parity fix): the row's consumer_references edges go
+    // FIRST — consumer_id is text with no FK, so the row cascade cannot
+    // reach them — then the row itself.
     const stub = stubSupabase((query) => {
+      if (consumerRef(query, "delete")) {
+        return { data: [{ id: "edge-1" }, { id: "edge-2" }] }; // [0] the edges go
+      }
       if (writesDerived(query, "delete")) {
-        return { data: [{ id }] };
+        return { data: [{ id }] }; // [1] the row lands
       }
       throw new Error(`unexpected query: ${query.table ?? query.rpc} (${methodsOf(query)})`);
     });
     const affected = await remove({ id }, { supabase: stub.client });
     expect(affected).toBe(1);
-    const del = queryAt(stub.queries, 0);
+    const edges = queryAt(stub.queries, 0);
+    expect(edges.table).toBe("consumer_references");
+    expect(argsOf(edges, "eq")).toEqual(["consumer_id", id]);
+    const del = queryAt(stub.queries, 1);
     expect(argsOf(del, "eq")).toEqual(["id", id]);
     expect(firstArg(del, "select")).toBe("id");
 
     const deniedStub = stubSupabase((query) => {
-      if (writesDerived(query, "delete")) {
+      if (consumerRef(query, "delete") || writesDerived(query, "delete")) {
         return { data: [] };
       }
       throw new Error(`unexpected query: ${query.table ?? query.rpc} (${methodsOf(query)})`);

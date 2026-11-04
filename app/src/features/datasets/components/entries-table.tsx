@@ -26,12 +26,10 @@ import {
 import type { DataTableColumnDef, GlobalFilter } from "@caden/ui/niko-table/types";
 import { Link } from "@tanstack/react-router";
 import type { ColumnFiltersState, SortingState, Updater } from "@tanstack/react-table";
-import { useQuery } from "convex/react";
 import { Copy, Eye, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import type { DatasetEntryRow } from "#/lib/dataset-rows";
-import { api } from "#convex/_generated/api";
 
 import {
   resolveUpdater,
@@ -40,11 +38,7 @@ import {
   type PgColumnFilter,
   type PgPropertyType,
 } from "../lib/pg-entries-table";
-import {
-  buildLabelsByField,
-  collectReferencedIds,
-  referencedEntryIds,
-} from "../lib/reference-labels";
+import { buildLabelsByField, referencedEntryIds } from "../lib/reference-labels";
 
 // One seam row (`entries.listPage` page item, via the row-resolution seam).
 type Entry = DatasetEntryRow;
@@ -331,6 +325,7 @@ function buildColumns(
 const ESTIMATED_ROW_HEIGHT = 37;
 
 /** A niko-table (TanStack Table v9) view of a dataset's entries: one column per schema property, with search/sort/filter/column-visibility. */
+// oxlint-disable-next-line eslint/complexity -- the table's origin-split render paths (client/server modes, reference labels, load-more, row actions) are its real shape; the decomposition is the deferred #82 phase-2 cleanup.
 export function EntriesTable({
   schemaId,
   schema,
@@ -391,19 +386,13 @@ export function EntriesTable({
 }) {
   const referenceFields = getReferenceFields(schema),
     referenceFieldsByName = new Map(referenceFields.map((f) => [f.name, f])),
-    // Server mode resolves labels OUTSIDE (the caller owns the store reads —
-    // see the prop doc); the Convex path keeps the internal query below.
-    externalLabels = labelsByField !== undefined,
-    // Derived per render (cheap row scan); convex `useQuery` hashes the args
-    // below, so an equal id list re-subscribes nothing. The list feeds the
-    // label-id query — exactly the referenced entries, not whole datasets.
-    referencedIds = collectReferencedIds(entries, referenceFields),
-    candidateEntries = useQuery(
-      api.cms.entries.listForIds,
-      !externalLabels && referencedIds.length > 0 ? { entryIds: referencedIds } : "skip",
-    ),
-    resolvedLabelsByField =
-      labelsByField ?? buildLabelsByField(referenceFields, candidateEntries ?? []),
+    // Labels resolve OUTSIDE in every live mode (the caller owns the store
+    // reads — see the prop doc; the PG page rides `useSplitReferenceLabels`).
+    // The internal Convex `listForIds` lookup this component used to run for
+    // its client-side mode is archived with the stage-7 disconnect (issue
+    // #206): without a passed-in map, reference links render their raw
+    // entry id rather than a live Convex read.
+    resolvedLabelsByField = labelsByField ?? buildLabelsByField(referenceFields, []),
     columns = buildColumns(
       schemaId,
       properties,

@@ -1,11 +1,18 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { z } from "zod";
 
-import { AppViewPage, pageSearch } from "#/features/app-builder";
+import { ArchivedConvexSurface } from "#/components/archived-convex-surface";
 
 /**
- * The builder's preview: the app exactly as viewers see it, full page, under a
- * toolbar whose X returns to the builder on the same page.
+ * ARCHIVED at the stage-7 disconnect (issue #206) — see routes/apps/index.tsx
+ * for the full note: the app builder's reads/writes ride `convex/react`
+ * against the retired backend. `?page=` still names the open tab for the
+ * eventual port.
  */
+
+/** The `?page=` search param — the open tab, kept for the eventual port. */
+const pageSearch = z.object({ page: z.string().optional() });
+
 export const Route = createFileRoute("/apps/$appId/preview")({
   component: AppPreviewRoute,
   staticData: { hideHeader: true },
@@ -13,21 +20,11 @@ export const Route = createFileRoute("/apps/$appId/preview")({
 });
 
 function AppPreviewRoute() {
-  const { appId } = Route.useParams(),
-    { page } = Route.useSearch(),
-    navigate = Route.useNavigate();
   return (
-    <AppViewPage
-      key={appId}
-      appId={appId}
-      mode="preview"
-      pageId={page}
-      onPageChange={(next) => {
-        void navigate({ search: (prev) => ({ ...prev, page: next }) });
-      }}
-      onExit={() => {
-        void navigate({ params: { appId }, search: { page }, to: "/apps/$appId/edit" });
-      }}
+    <ArchivedConvexSurface
+      description="App previews rode the pre-migration Convex backend. The builder is being ported to the Postgres apps store."
+      homeTo="/datasets"
+      title="Apps are archived in this build"
     />
   );
 }

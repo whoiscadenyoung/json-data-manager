@@ -7,7 +7,6 @@ import type {
 } from "@caden/json-cms/react/ui";
 import { DatasetImporter } from "@caden/json-cms/react/ui";
 import { Card, CardDescription, CardHeader, CardTitle } from "@caden/ui/components/card";
-import { convexQuery } from "@convex-dev/react-query";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, FilePlus2, Upload } from "lucide-react";
@@ -15,7 +14,6 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { RouterButton } from "#/components/router-button";
-import { api } from "#convex/_generated/api";
 import { errorMessage } from "@/lib/errors";
 import * as datasetsStore from "@/lib/store/datasets";
 import * as entriesStore from "@/lib/store/entries";
@@ -57,17 +55,16 @@ function createArgs(
 }
 
 /**
- * The datasets the schema editor's reference-field picker lists. The
- * transitional split-brain (§14.6): the picker lists the CONVEX catalog
- * (the Postgres browser lands in stage 3), so a fresh dataset's reference
- * fields target Convex datasets — and the entry-form/label reads resolve
- * candidates per backend, keyed on each field's target id.
+ * The datasets the schema editor's reference-field picker lists: the
+ * Postgres catalog's full rows (the `pg:datasets` list projection, which
+ * carries each dataset's `jsonSchema`). The picker's original Convex
+ * catalog read — the stage-1 transitional split that predated the PG
+ * browser — is archived with the stage-7 disconnect (issue #206); a fresh
+ * dataset's reference fields target Postgres datasets.
  */
 function useAvailableDatasets(): Array<{ id: string; schema: unknown; title: string }> {
-  // The TanStack bridge (not convex/react's useQuery) so a signed-out visit
-  // degrades to an empty picker — the same handling the Convex flow uses.
-  const schemas = useQuery({ ...convexQuery(api.cms.schemas.list, { limit: 1000 }) }).data;
-  return (schemas ?? []).map((row) => ({ id: row._id, schema: row.schema, title: row.title }));
+  const datasets = useQuery(datasetsStore.listQueryOptions()).data;
+  return (datasets ?? []).map((row) => ({ id: row.id, schema: row.jsonSchema, title: row.title }));
 }
 
 export function PostgresCreateDatasetPage() {

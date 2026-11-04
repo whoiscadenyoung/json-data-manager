@@ -6,7 +6,11 @@ export { EntriesMap } from "./components/entries-map";
 export { GroupMap } from "./components/group-map";
 export { LayersMap } from "./components/layers-map";
 export {
+  pgCollectionToCollectionDoc,
+  pgDerivedToDerivedSummary,
+  pgGroupToGroupSummary,
   pgLayerToLayerDoc,
+  pgMembershipToMembershipRow,
   pgOverrideToOverride,
   pgSummaryToDatasetSummary,
 } from "./components/pg-layer-rows";

@@ -17,14 +17,11 @@ import {
 } from "@caden/ui/components/empty";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { useMutation, useQuery as useConvexQuery } from "convex/react";
-import type { FunctionReturnType } from "convex/server";
 import { FolderOpen, Layers, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import {
-  CollectionFormPanel,
   PgCollectionFormPanel,
   SourceStoreBadge,
   collectionDatasetCount,
@@ -34,38 +31,26 @@ import * as collectionsStore from "#/lib/store/collections";
 import type { CollectionRow } from "#/lib/store/collections";
 import * as datasetsStore from "#/lib/store/datasets";
 import * as groupsStore from "#/lib/store/groups";
-import { api } from "#convex/_generated/api";
 
 export const Route = createFileRoute("/collections/")({
   component: CollectionsPage,
 });
 
-type Collection = FunctionReturnType<typeof api.cms.collections.list>[number];
-
-/** One row of the merged list — the store is what differs; everything else renders identically. */
+/** One row of the list — the store is the only origin left (stage 7). */
 interface CollectionListItem {
-  collection: { description: string | null | undefined; id: string; name: string };
+  collection: { description: string | null; id: string; name: string };
   count: number;
   createdTime: number;
-  store: "convex" | "postgres";
 }
-
-/** Which panel the open form sheet edits: a new/PG collection, or a legacy Convex one. */
-type FormTarget =
-  | { collection?: CollectionRow; store: "postgres" }
-  | { collection: Collection; store: "convex" }
-  | undefined;
 
 function CollectionCard({
   collection,
   datasetCount,
-  store,
   onEdit,
   onDelete,
 }: {
-  collection: { description: string | null | undefined; id: string; name: string };
+  collection: { description: string | null; id: string; name: string };
   datasetCount: number;
-  store: "convex" | "postgres";
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -77,7 +62,7 @@ function CollectionCard({
         className="flex min-w-0 flex-1 flex-col gap-1"
       >
         <div className="flex flex-wrap items-center gap-2">
-          <SourceStoreBadge store={store} />
+          <SourceStoreBadge store="postgres" />
           <Layers className="h-4 w-4 text-muted-foreground" />
           <h3 className="text-base font-semibold">{collection.name}</h3>
         </div>
@@ -119,86 +104,42 @@ function CollectionCard({
 }
 
 /**
- * How many datasets a CONVEX collection holds: direct joins plus every
- * dataset of a group living in the collection — a group joins as a single
- * unit and brings its members, so the card count reads the same as the
- * collection page. (The PG side's identical rule lives in
- * `collectionDatasetCount`, shared with the PG collection page.)
+ * The collections browser. Stage 7 (issue #206) collapsed the §14.6
+ * split-brain merge: the pre-migration Convex collections (their
+ * `api.cms.collections.*` reads, the Convex edit panel, and the Convex
+ * delete mutation) are archived with the provider, so the browser lists the
+ * Postgres store only. Newest-first order, the dataset counts (direct joins
+ * plus every dataset of a group living in the collection — a group joins as
+ * a single unit and brings its members), and the create/edit/delete flows
+ * carry over unchanged.
  */
-function countByCollection(
-  memberships: FunctionReturnType<typeof api.cms.collections.listSchemaCollections>,
-  datasets: FunctionReturnType<typeof api.cms.schemas.listSummaries>,
-  groups: FunctionReturnType<typeof api.cms.groups.list>,
-  collectionId: string,
-): number {
-  const memberGroupIds = new Set(
-    groups.filter((group) => group.collectionId === collectionId).map((group) => group._id),
-  );
-  return new Set([
-    ...memberships
-      .filter((membership) => membership.collectionId === collectionId)
-      .map((membership) => membership.schemaId),
-    ...datasets
-      .filter((dataset) => dataset.groupId !== undefined && memberGroupIds.has(dataset.groupId))
-      .map((dataset) => dataset._id),
-  ]).size;
-}
-
-// oxlint-disable-next-line eslint/complexity -- the split-brain merge reads both stores; ad hoc splitting risks these render paths.
+// oxlint-disable-next-line eslint/complexity -- the browser's list/edit/delete render paths are the page's real shape; the same disposition as the pre-disconnect split-brain page.
 function CollectionsPage() {
   const queryClient = useQueryClient(),
-    collections = useConvexQuery(api.cms.collections.list),
-    memberships = useConvexQuery(api.cms.collections.listSchemaCollections, { limit: 1000 }),
-    datasets = useConvexQuery(api.cms.schemas.listSummaries, { limit: 1000 }),
-    groups = useConvexQuery(api.cms.groups.list, { limit: 500 }),
     pgCollections = useQuery(collectionsStore.listQueryOptions()),
     pgMemberships = useQuery(collectionsStore.listMembershipsQueryOptions()),
     pgDatasets = useQuery(datasetsStore.listSummariesQueryOptions()),
     pgGroups = useQuery(groupsStore.listQueryOptions()),
-    deleteConvexCollection = useMutation(api.cms.collections.remove),
-    [formTarget, setFormTarget] = useState<FormTarget>(undefined),
+    [formCollection, setFormCollection] = useState<CollectionRow | undefined>(undefined),
+    [formOpen, setFormOpen] = useState(false),
     [pendingDelete, setPendingDelete] = useState<CollectionListItem | undefined>(),
     handleDelete = async () => {
       if (pendingDelete === undefined) {
         return;
       }
       try {
-        if (pendingDelete.store === "postgres") {
-          await collectionsStore.remove({ collectionId: pendingDelete.collection.id });
-          void queryClient.invalidateQueries({ queryKey: ["pg:collections"] });
-          void queryClient.invalidateQueries({ queryKey: ["pg:groups"] });
-        } else {
-          await deleteConvexCollection({ collectionId: pendingDelete.collection.id });
-        }
+        await collectionsStore.remove({ collectionId: pendingDelete.collection.id });
+        void queryClient.invalidateQueries({ queryKey: ["pg:collections"] });
+        void queryClient.invalidateQueries({ queryKey: ["pg:groups"] });
         toast.success("Collection deleted.");
       } catch (error) {
         toast.error(errorMessage(error, "Failed to delete collection."));
       }
     };
 
-  // The merged, newest-first list (§14.6: both stores, badged). Convex
-  // rows' `_creationTime` and PG rows' ISO `createdAt` reduce to the same
-  // millisecond key.
+  // The newest-first list: PG rows' ISO `createdAt` reduces to the
+  // millisecond key the merged list sorted on.
   const items: CollectionListItem[] = [];
-  if (
-    collections !== undefined &&
-    memberships !== undefined &&
-    datasets !== undefined &&
-    groups !== undefined
-  ) {
-    for (const collection of collections) {
-      items.push({
-        collection: {
-          description: collection.description,
-          id: collection._id,
-          name: collection.name,
-        },
-        count: countByCollection(memberships, datasets, groups, collection._id),
-        createdTime: collection._creationTime,
-        store: "convex",
-      });
-    }
-  }
   if (
     pgCollections.data !== undefined &&
     pgMemberships.data !== undefined &&
@@ -219,17 +160,12 @@ function CollectionsPage() {
           collection.id,
         ),
         createdTime: Date.parse(collection.createdAt),
-        store: "postgres",
       });
     }
   }
   items.sort((a, b) => b.createdTime - a.createdTime);
 
   if (
-    collections === undefined ||
-    memberships === undefined ||
-    datasets === undefined ||
-    groups === undefined ||
     pgCollections.isPending ||
     pgMemberships.isPending ||
     pgDatasets.isPending ||
@@ -251,7 +187,8 @@ function CollectionsPage() {
         </div>
         <Button
           onClick={() => {
-            setFormTarget({ store: "postgres" });
+            setFormCollection(undefined);
+            setFormOpen(true);
           }}
         >
           <Plus className="h-4 w-4 mr-2" />
@@ -273,7 +210,8 @@ function CollectionsPage() {
           <EmptyContent>
             <Button
               onClick={() => {
-                setFormTarget({ store: "postgres" });
+                setFormCollection(undefined);
+                setFormOpen(true);
               }}
             >
               <Plus className="h-4 w-4 mr-2" />
@@ -285,25 +223,16 @@ function CollectionsPage() {
         <div className="flex flex-col gap-3">
           {items.map((item) => (
             <CollectionCard
-              key={`${item.store}-${item.collection.id}`}
+              key={item.collection.id}
               collection={item.collection}
               datasetCount={item.count}
-              store={item.store}
               onEdit={() => {
-                if (item.store === "postgres") {
-                  const match = (pgCollections.data ?? []).find(
-                    (candidate) => candidate.id === item.collection.id,
-                  );
-                  if (match !== undefined) {
-                    setFormTarget({ collection: match, store: "postgres" });
-                  }
-                } else {
-                  const match = (collections ?? []).find(
-                    (candidate) => candidate._id === item.collection.id,
-                  );
-                  if (match !== undefined) {
-                    setFormTarget({ collection: match, store: "convex" });
-                  }
+                const match = (pgCollections.data ?? []).find(
+                  (candidate) => candidate.id === item.collection.id,
+                );
+                if (match !== undefined) {
+                  setFormCollection(match);
+                  setFormOpen(true);
                 }
               }}
               onDelete={() => {
@@ -314,35 +243,15 @@ function CollectionsPage() {
         </div>
       )}
 
-      {/* New collections are Postgres-native (the §14 transitional split —
-          a PG collection is the only kind that can hold PG datasets); the
-          Convex panel stays solely for the pre-migration rows' edits. */}
       <PgCollectionFormPanel
-        collection={
-          formTarget !== undefined && formTarget.store === "postgres"
-            ? formTarget.collection
-            : undefined
-        }
+        collection={formCollection}
         onOpenChange={(open) => {
           if (!open) {
-            setFormTarget(undefined);
+            setFormCollection(undefined);
           }
+          setFormOpen(open);
         }}
-        open={formTarget !== undefined && formTarget.store === "postgres"}
-      />
-
-      <CollectionFormPanel
-        collection={
-          formTarget !== undefined && formTarget.store === "convex"
-            ? formTarget.collection
-            : undefined
-        }
-        onOpenChange={(open) => {
-          if (!open) {
-            setFormTarget(undefined);
-          }
-        }}
-        open={formTarget !== undefined && formTarget.store === "convex"}
+        open={formOpen}
       />
 
       <ConfirmDialog
@@ -353,11 +262,7 @@ function CollectionsPage() {
           }
         }}
         title={pendingDelete === undefined ? "" : `Delete "${pendingDelete.collection.name}"?`}
-        description={
-          pendingDelete !== undefined && pendingDelete.store === "postgres"
-            ? "Its groups will become standalone. Datasets inside stay put — they just lose this collection."
-            : "Its groups will be deleted too. Datasets inside stay put — they just become uncategorized."
-        }
+        description="Its groups will become standalone. Datasets inside stay put — they just lose this collection."
         confirmLabel="Delete"
         destructive
         onConfirm={() => {

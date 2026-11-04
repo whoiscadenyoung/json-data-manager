@@ -3,14 +3,12 @@ import { withIconFallback } from "@caden/layer-styles/icons";
 import { legendClasses, singleMarkerIcon, swatchColor } from "@caden/layer-styles/legend";
 import type { LayerStyle } from "@caden/layer-styles/validators";
 import { useQuery as useStoreQuery, useQueryClient } from "@tanstack/react-query";
-import { useMutation, useQuery } from "convex/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
 
 import type { DatasetActionsSlot, LayersMapExtension, LayersMapLayerArgs } from "#/features/maps";
 import type { DatasetEntryRow } from "#/lib/dataset-rows";
-import { useEntryRowsBySchemas } from "#/lib/dataset-rows-react";
 import { isPostgresDatasetId } from "#/lib/dataset-source";
 import { errorMessage } from "#/lib/errors";
 import {
@@ -22,7 +20,6 @@ import {
   uploadIcon as uploadIconStore,
   type LayerStyleRow,
 } from "#/lib/store/layer-styles";
-import { api } from "#convex/_generated/api";
 
 import type { MarkerIcons } from "./components/marker-section";
 import type { MarkerIconActions, UploadIconMeta } from "./components/marker-section";
@@ -165,19 +162,18 @@ function isIconAvailable(
 /**
  * The layer-styles module's single integration hook (docs/layer-styles.md):
  * the map page calls it once and plugs its results into the two core
- * extension slots. Styles are PER MAP (`(mapId, renderId)` — ADR 0012), and
- * the map's id says where they live (design §14's transitional split, read
- * through the one split predicate): a Postgres map reads/writes
- * `layer_styles` + `marker_sprites` through the store; a pre-migration
- * Convex map keeps the exact `api.layerStyles.*` path it has always had.
+ * extension slots. Styles are PER MAP (`(mapId, renderId)` — ADR 0012) and
+ * live in Postgres: styles, icons, uploads and entry reads all ride the
+ * store modules. The pre-migration Convex half (`api.layerStyles.*`) is
+ * archived with the stage-7 disconnect (issue #206) — pre-migration maps
+ * render the archived state at the route, so this hook only ever runs for
+ * Postgres maps.
  *
- * Both backends' reads and loaders mount unconditionally (React's hook
- * rules — no hooks behind a branch); the id's origin SKIPs the idle one, so
- * a map pays only its own backend's subscriptions. Edits preview instantly
- * and save debounced (400 ms); field values load only for datasets whose
- * style reads fields (or that are open in the editor).
+ * Edits preview instantly and save debounced (400 ms); field values load
+ * only for datasets whose style reads fields (or that are open in the
+ * editor).
  */
-// oxlint-disable-next-line eslint/complexity -- the backend split doubles the wiring surface by design (the transitional rule); the real decomposition is the deferred phase-2 cleanup, as in the route workspaces.
+// oxlint-disable-next-line eslint/complexity -- the styling wiring (extension + datasetActions + panel + loaders) is the hook's real shape; the decomposition is the deferred phase-2 cleanup, as in the route workspaces.
 export function useLayerStyles({
   mapId,
   renderIds,
@@ -187,88 +183,38 @@ export function useLayerStyles({
   geometryTypeFor,
 }: UseLayerStylesOptions): UseLayerStylesResult {
   const pgMap = isPostgresDatasetId(mapId),
-    // ---- saved styles + uploads (one backend live per map) ----
-    convexSaved = useQuery(api.layerStyles.styles.listForMap, pgMap ? "skip" : { mapId }),
+    // ---- saved styles + uploads (the store) ----
     pgSaved = useStoreQuery({ ...listForMapQueryOptions({ mapId }), enabled: pgMap }),
-    convexUploadList = useQuery(api.layerStyles.icons.list, pgMap ? "skip" : {}),
     pgUploadList = useStoreQuery({ ...listIconsQueryOptions(), enabled: pgMap }),
-    // ---- the icon writes (the Convex mutations, built per backend below) ----
-    generateUploadUrl = useMutation(api.layerStyles.icons.generateUploadUrl),
-    createIcon = useMutation(api.layerStyles.icons.create),
-    removeIconMutation = useMutation(api.layerStyles.icons.remove),
     queryClient = useQueryClient(),
-    actions: MarkerIconActions = pgMap
-      ? {
-          removeUpload: async (iconId) => {
-            await removeIconStore({ iconId });
-            void queryClient.invalidateQueries({ queryKey: ["pg:layer-styles"] });
-          },
-          uploadIcon: async (png: Blob, meta: UploadIconMeta) => {
-            try {
-              const result = await uploadIconStore({
-                height: meta.height,
-                label: meta.label,
-                png,
-                pixelRatio: meta.pixelRatio,
-                sdf: meta.sdf,
-                width: meta.width,
-              });
-              if (!result.ok) {
-                return { error: result.error, ok: false };
-              }
-              void queryClient.invalidateQueries({ queryKey: ["pg:layer-styles"] });
-              return { name: result.name, ok: true };
-            } catch (error) {
-              return { error: errorMessage(error, "Couldn't upload the icon."), ok: false };
-            }
-          },
+    actions: MarkerIconActions = {
+      removeUpload: async (iconId) => {
+        await removeIconStore({ iconId });
+        void queryClient.invalidateQueries({ queryKey: ["pg:layer-styles"] });
+      },
+      uploadIcon: async (png: Blob, meta: UploadIconMeta) => {
+        try {
+          const result = await uploadIconStore({
+            height: meta.height,
+            label: meta.label,
+            png,
+            pixelRatio: meta.pixelRatio,
+            sdf: meta.sdf,
+            width: meta.width,
+          });
+          if (!result.ok) {
+            return { error: result.error, ok: false };
+          }
+          void queryClient.invalidateQueries({ queryKey: ["pg:layer-styles"] });
+          return { name: result.name, ok: true };
+        } catch (error) {
+          return { error: errorMessage(error, "Couldn't upload the icon."), ok: false };
         }
-      : {
-          removeUpload: async (iconId) => {
-            // The Convex list's icon ids are branded; the picker reads them
-            // as plain strings (the uploads feed is backend-agnostic), so
-            // the boundary cast lives HERE, in the Convex write.
-            await removeIconMutation({
-              // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- a `user-<id>` name carries the Convex layerStyleIcons id this mutation deletes.
-              iconId: iconId as Parameters<typeof removeIconMutation>[0]["iconId"],
-            });
-          },
-          uploadIcon: async (png: Blob, meta: UploadIconMeta) => {
-            try {
-              const url = await generateUploadUrl(),
-                response = await fetch(url, {
-                  body: png,
-                  headers: { "Content-Type": "image/png" },
-                  method: "POST",
-                });
-              if (!response.ok) {
-                return { error: "The upload failed. Try again.", ok: false };
-              }
-              // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Convex's upload endpoint answers { storageId } with the new file's id.
-              const { storageId } = (await response.json()) as { storageId: string },
-                result = await createIcon({
-                  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Convex's upload endpoint answers the storage id its `icons.create` consumes.
-                  storageId: storageId as Parameters<typeof createIcon>[0]["storageId"],
-                  height: meta.height,
-                  label: meta.label,
-                  pixelRatio: meta.pixelRatio,
-                  sdf: meta.sdf,
-                  width: meta.width,
-                });
-              if (!result.ok) {
-                return { error: result.error, ok: false };
-              }
-              return { name: result.name, ok: true };
-            } catch (error) {
-              return { error: errorMessage(error, "Couldn't upload the icon."), ok: false };
-            }
-          },
-        },
+      },
+    },
     // ---- the uploads list as the pickers read it ----
-    uploads = pgMap
-      ? new Map(uploadsOf(pgUploadList.data).map((icon) => [icon.name, icon]))
-      : new Map(uploadsOf(convexUploadList).map((icon) => [icon.name, icon])),
-    uploadsReady = pgMap ? pgUploadList.isSuccess : convexUploadList !== undefined,
+    uploads = new Map(uploadsOf(pgUploadList.data).map((icon) => [icon.name, icon])),
+    uploadsReady = pgUploadList.isSuccess,
     // ---- editor state (before the styles derivation the loaders need) ----
     [previews, setPreviews] = useState<Map<string, LayerStyle | null>>(() => new Map()),
     [editing, setEditing] = useState<{ renderId: string; title: string } | undefined>(undefined),
@@ -276,10 +222,7 @@ export function useLayerStyles({
     pendingRef = useRef<{ renderId: string; style: LayerStyle } | undefined>(undefined),
     timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined),
     // ---- styles + the entry sources whose field values they read ----
-    styles = effectiveStyles(
-      pgMap ? savedRowsOf(pgSaved.data) : savedRowsOf(convexSaved),
-      previews,
-    ),
+    styles = effectiveStyles(savedRowsOf(pgSaved.data), previews),
     neededBySource = neededFieldsBySource(styles, renderIds, entrySourceFor),
     editingSource = editing === undefined ? undefined : entrySourceFor(editing.renderId),
     loadSourceIds = [
@@ -288,13 +231,8 @@ export function useLayerStyles({
         ...(editingSource === undefined ? [] : [editingSource]),
       ]),
     ],
-    // ---- field-value loaders: both mounted, exactly one live ----
-    pgRows = usePgEntryRowsBySchemas(pgMap ? loadSourceIds : [], pgMap),
-    convexRows = useEntryRowsBySchemas(pgMap ? [] : loadSourceIds, !pgMap),
-    { loaders, reportsBySchema } = pgMap ? pgRows : convexRows,
-    // ---- style writes ----
-    saveStyle = useMutation(api.layerStyles.styles.set),
-    resetStyle = useMutation(api.layerStyles.styles.reset);
+    // ---- field-value loaders ----
+    { loaders, reportsBySchema } = usePgEntryRowsBySchemas(pgMap ? loadSourceIds : [], pgMap);
 
   const clearPreview = useCallback((renderId: string) => {
     setPreviews((prev) => {
@@ -309,10 +247,10 @@ export function useLayerStyles({
 
   // The unmount flush requires a stable callback; the compiler cannot prove
   // the QueryClient object stable (provider-created, never mutated in
-  // place). The PG write MUST invalidate post-save — the Convex mutation
-  // updates its subscription implicitly, and dropping the invalidation
-  // would revert the map to the pre-save cached style once the preview
-  // clears (the two suppressions below cover the callback and its deps).
+  // place). The store write MUST invalidate post-save — dropping the
+  // invalidation would revert the map to the pre-save cached style once the
+  // preview clears (the two suppressions below cover the callback and its
+  // deps).
   // oxlint-disable-next-line react/preserve-manual-memoization
   const flush = useCallback(
     async () => {
@@ -327,12 +265,8 @@ export function useLayerStyles({
       pendingRef.current = undefined;
       setSaving(true);
       try {
-        if (pgMap) {
-          await setStyleStore({ mapId, renderId: pending.renderId, style: pending.style });
-          void queryClient.invalidateQueries({ queryKey: ["pg:layer-styles"] });
-        } else {
-          await saveStyle({ mapId, renderId: pending.renderId, style: pending.style });
-        }
+        await setStyleStore({ mapId, renderId: pending.renderId, style: pending.style });
+        void queryClient.invalidateQueries({ queryKey: ["pg:layer-styles"] });
         // The saved row now carries this style; drop the preview unless a newer edit queued.
         if (pendingRef.current === undefined) {
           clearPreview(pending.renderId);
@@ -345,7 +279,7 @@ export function useLayerStyles({
       }
     },
     // oxlint-disable-next-line react/preserve-manual-memoization -- see the comment above.
-    [clearPreview, mapId, pgMap, queryClient, saveStyle],
+    [clearPreview, mapId, queryClient],
   );
 
   // Save anything queued when the page unmounts.
@@ -362,12 +296,8 @@ export function useLayerStyles({
       }
       setPreviews((prev) => new Map(prev).set(renderId, null));
       try {
-        if (pgMap) {
-          await resetStyleStore({ mapId, renderId });
-          void queryClient.invalidateQueries({ queryKey: ["pg:layer-styles"] });
-        } else {
-          await resetStyle({ mapId, renderId });
-        }
+        await resetStyleStore({ mapId, renderId });
+        void queryClient.invalidateQueries({ queryKey: ["pg:layer-styles"] });
         toast.success("Style reset to the map default.");
       } catch (error) {
         toast.error(errorMessage(error, "Couldn't reset the style."));
@@ -464,7 +394,7 @@ export function useLayerStyles({
       editing === undefined || geometryTypeFor === undefined
         ? undefined
         : geometryTypeFor(editing.renderId),
-    uploadList = pgMap ? uploadsOf(pgUploadList.data) : uploadsOf(convexUploadList),
+    uploadList = uploadsOf(pgUploadList.data),
     icons: MarkerIcons = { actions, uploadList, uploads },
     panel =
       editing === undefined ? null : (

@@ -12,7 +12,6 @@
  * keep bursts (an N-chunk import bumps the version N times) to one build.
  */
 import {
-  isTileArchiveStale,
   rememberBelowThresholdSkip,
   TileArchiveScheduler,
   type TileArchiveBackoff,
@@ -20,7 +19,6 @@ import {
   type TileArchiveBuildPhase,
   type TileArchiveBuildState,
 } from "@caden/maps/build-scheduler";
-import { useQuery } from "convex/react";
 import { useEffect, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
@@ -28,7 +26,6 @@ import { getContext } from "#/integrations/tanstack-query/root-provider";
 import { fetchConvexToken } from "#/lib/convex-auth-token";
 import { isPostgresDatasetId } from "#/lib/dataset-source";
 import { sharedClient } from "#/lib/store/client";
-import { api } from "#convex/_generated/api";
 
 import { isPgTileArchiveStale } from "./pg-tile-archives";
 import { usePgDatasetSummaries } from "./pg-tile-archives-react";
@@ -523,13 +520,14 @@ function getScheduler(): TileArchiveScheduler {
 // --- Triggers ---
 
 /**
- * Mounted once at the app root: watches every geospatial dataset — Convex
- * via `api.cms.schemas.listSummaries` (reactive push) and Postgres via the
- * store summaries (refetched by {@link invalidatePgQueries} when a
- * build settles; realtime cross-tab push is stage 6) — and schedules a
- * debounced rebuild whenever one is observably stale. Correctness rides on
- * the expectedVersion guard (the component's, SQL edition for PG) — this
- * only decides when to attempt.
+ * Mounted once at the app root: watches every geospatial dataset and
+ * schedules a debounced rebuild whenever one is observably stale. The
+ * stage-7 disconnect (issue #206) removed the Convex watch
+ * (`api.cms.schemas.listSummaries` reactive push) alongside the provider;
+ * Postgres datasets are the only watch: the store summaries, refetched by
+ * `invalidatePgQueries` when a build settles (realtime cross-tab push is
+ * stage 6). Correctness rides on the expectedVersion guard (the SQL edition:
+ * `install_tile_archive`) — this only decides when to attempt.
  *
  * Import completions additionally call `ensureMapTileArchive` for immediacy;
  * the manager catches everything else (simplification workflows, geospatial
@@ -537,24 +535,7 @@ function getScheduler(): TileArchiveScheduler {
  * `mapTileCacheVersion` server-side with no client hook.
  */
 export function useMapTileArchiveManager(): void {
-  const schemas = useQuery(api.cms.schemas.listSummaries, { limit: 1000 });
   const pgSummaries = usePgDatasetSummaries();
-  useEffect(() => {
-    if (schemas === undefined) return;
-    const scheduler = getScheduler();
-    for (const schema of schemas) {
-      const currentVersion = schema.mapTileCacheVersion ?? 0;
-      if (isTileArchiveStale(schema, currentVersion)) {
-        scheduler.schedule(schema._id, currentVersion);
-      } else {
-        // Current without our help (another tab or user built it): drop the
-        // failure and its armed retry, which would only rebuild a fresh
-        // archive (#184 review).
-        scheduler.clear(schema._id);
-        clearBuildFailure(schema._id);
-      }
-    }
-  }, [schemas]);
   useEffect(() => {
     if (pgSummaries === undefined) return;
     const scheduler = getScheduler();
@@ -564,7 +545,8 @@ export function useMapTileArchiveManager(): void {
         scheduler.schedule(summary.id, currentVersion);
       } else {
         // Current without our help (another tab or user built it): drop the
-        // failure and its armed retry (#184 review), same as the Convex loop.
+        // failure and its armed retry (#184 review), which would only rebuild
+        // a fresh archive.
         scheduler.clear(summary.id);
         clearBuildFailure(summary.id);
       }

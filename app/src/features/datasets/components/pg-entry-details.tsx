@@ -17,10 +17,8 @@ import {
 } from "@caden/ui/components/card";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useQuery as useConvexQuery } from "convex/react";
 import { ArrowLeft, Calendar, FileJson } from "lucide-react";
 
-import { api } from "#convex/_generated/api";
 import { resolveGeometryRows } from "@/lib/dataset-rows-pg";
 import { formatBytes, formatPropertyValue } from "@/lib/format";
 import * as datasetsStore from "@/lib/store/datasets";
@@ -35,10 +33,10 @@ import { GeometryCard } from "./geometry-card";
 /**
  * The Postgres edition of the entry-details page (design §14: surfaces split
  * on where the dataset was created). Reads ride the `#/lib/store/*` modules —
- * the entry row, its geometry, the reference labels (batched `listForIds`,
- * split per backend so a reference into a Convex dataset still resolves),
+ * the entry row, its geometry, the reference labels (batched `listForIds`),
  * and the trigger-maintained `entry_references` reverse lookup. Same layout
- * as the Convex page: properties, links, referenced-by, geometry rail.
+ * as the archived Convex page: properties, links, referenced-by, geometry
+ * rail.
  */
 
 /** The same card a null read gets — the denial fallback too (RLS: an invisible row reads as missing). */
@@ -199,10 +197,11 @@ function ReferencedByCard({
 }
 
 /**
- * The reference labels for the entry's fields — the shared split-brain hook
- * (`useSplitReferenceLabels`): PG targets via the store's batched lookup,
- * Convex targets via the component read.
+ * The reference labels for the entry's fields — the shared hook
+ * (`useSplitReferenceLabels`) over the store's batched lookup; Convex
+ * targets are archived with the stage-7 disconnect and render raw ids.
  */
+// oxlint-disable-next-line eslint/complexity -- the page's loading/not-found/geometry-rail render paths are its real shape; the decomposition is the deferred #82 phase-2 cleanup.
 export function PostgresEntryDetailsPage({
   entryId,
   schemaId,
@@ -247,11 +246,13 @@ export function PostgresEntryDetailsPage({
     ),
     referencingQuery = useQuery(referencesStore.listReferencingEntriesQueryOptions({ entryId })),
     pgTitlesQuery = useQuery(datasetsStore.listSummariesQueryOptions()),
-    convexTitles = useConvexQuery(api.cms.schemas.listSummaries, { limit: 1000 }),
-    titlesByDatasetId = new globalThis.Map<string, string>([
-      ...(pgTitlesQuery.data ?? []).map((row) => [row.id, row.title] as const),
-      ...(convexTitles ?? []).map((row) => [row._id, row.title] as const),
-    ]);
+    // The Convex-half titles of the old split-brain merge are archived with
+    // the stage-7 disconnect (issue #206): a reverse reference from a
+    // pre-migration Convex dataset renders "Entry" + its raw id, never a
+    // live Convex read.
+    titlesByDatasetId = new globalThis.Map<string, string>(
+      (pgTitlesQuery.data ?? []).map((row) => [row.id, row.title] as const),
+    );
 
   if (entryQuery.isPending || datasetQuery.isPending || geometryQuery.isPending) {
     return (

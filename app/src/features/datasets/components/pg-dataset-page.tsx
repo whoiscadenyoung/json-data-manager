@@ -60,6 +60,7 @@ import {
   LockOpen,
   PencilOff,
   Plus,
+  RefreshCw,
   Rocket,
   Workflow,
 } from "lucide-react";
@@ -73,6 +74,7 @@ import { useSession } from "@/integrations/supabase/provider";
 import type { DatasetEntryRow } from "@/lib/dataset-rows";
 import { resolveGeometryRows } from "@/lib/dataset-rows-pg";
 import { errorMessage } from "@/lib/errors";
+import * as bindingsStore from "@/lib/store/bindings";
 import * as datasetsStore from "@/lib/store/datasets";
 import type { DatasetRow } from "@/lib/store/datasets";
 import * as entriesStore from "@/lib/store/entries";
@@ -94,6 +96,8 @@ import {
 import { useSplitReferenceLabels } from "../lib/pg-reference-labels";
 import { EntriesTable } from "./entries-table";
 import { EntryFormPanel } from "./entry-form-panel";
+import { PgBindingCard } from "./pg-binding-card";
+import { PgBindingHistory } from "./pg-binding-history";
 import { PgDatasetExport } from "./pg-dataset-export";
 import { PgDatasetOverview } from "./pg-dataset-overview";
 import { SchemaVisualizer } from "./schema-visualizer";
@@ -109,9 +113,11 @@ import { SchemaVisualizer } from "./schema-visualizer";
  * schema rendering), the create/edit/delete row flows, the publish-version
  * dialog (stage 4), and — stage 5 — the Transform tab (lookup specs over
  * the store's derived registry) and the Analyze tab (SQL over the PG
- * row-resolution seam). History remains the Convex-side surface (its PG
- * reads belong to the versions workstream's UI slice); the map/tile path
- * landed with stage 2 and mounts from the maps feature.
+ * row-resolution seam). Stage 7 (#206) adds the bound-dataset surfaces for
+ * datasets carrying the `source` marker: the sync card (Overview) and the
+ * History tab (commit rail + per-sync feed over the store's bindings
+ * reads); ordinary datasets keep the tabs below. The map/tile path landed
+ * with stage 2 and mounts from the maps feature.
  */
 
 /** The route search the PG page reads (structural; the route owns the zod schema — the view union mirrors it exactly so the merge-form navigation typechecks). */
@@ -281,15 +287,25 @@ function PostgresDatasetBody({
     { session } = useSession(),
     datasetQuery = useQuery(datasetsStore.getQueryOptions({ datasetId: schemaId })),
     dataset = datasetQuery.data,
+    bindingQuery = useQuery({
+      ...bindingsStore.bindingForDatasetQueryOptions({ datasetId: schemaId }),
+      // Only a dataset carrying the `source` marker can have a binding (the
+      // marker is stamped by the definer bind RPC alongside the row).
+      enabled: dataset !== undefined && dataset !== null && dataset.source !== null,
+    }),
+    binding = bindingQuery.data,
+    isBound = dataset !== null && dataset !== undefined && dataset.source !== null,
     // The active tab rides ?view= (merge-form navigations only); "overview"
     // is the default and deliberately ABSENT from the URL (the ui-polish
-    // rule). Stage 5 mounts transform/analyze; "history" still degrades to
-    // overview (its PG reads belong to the versions workstream's UI slice).
+    // rule). Stage 5 mounts transform/analyze; stage 7 mounts "history" for
+    // BOUND datasets only (an ordinary dataset's ?view=history degrades to
+    // overview — the tab doesn't exist for it).
     view =
       search.view === "entries" ||
       search.view === "structure" ||
       search.view === "transform" ||
-      search.view === "analyze"
+      search.view === "analyze" ||
+      (search.view === "history" && isBound)
         ? search.view
         : "overview",
     // The RPC validates sort/filter keys against the dataset's declared
@@ -462,6 +478,17 @@ function PostgresDatasetBody({
                 Locked
               </Badge>
             )}
+            {/* Stage 7 (#206): the bound-dataset marker — read-only here; the
+                sync card (Overview) carries the live staleness state. */}
+            {dataset.source !== null && (
+              <Badge
+                variant="outline"
+                title="Bound to a source — this dataset is a read-only projection; sync applies the source's commits."
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Synced
+              </Badge>
+            )}
           </div>
           <p className="text-lg text-muted-foreground mt-2">{dataset.description}</p>
         </div>
@@ -561,9 +588,13 @@ function PostgresDatasetBody({
           <TabsTrigger value="structure">Structure</TabsTrigger>
           <TabsTrigger value="transform">Transform</TabsTrigger>
           <TabsTrigger value="analyze">Analyze</TabsTrigger>
+          {isBound && <TabsTrigger value="history">History</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6">
+          {/* Stage 7 (#206): the bound dataset's sync card leads its
+              Overview — status, Sync/Reconcile/Resume, retention, unbind. */}
+          {isBound && <PgBindingCard datasetId={schemaId} isCreator={isCreator} />}
           <PgDatasetOverview
             dataset={dataset}
             lockedHint={lockedForViewer ? LOCKED_DATASET_HINT : undefined}
@@ -655,6 +686,16 @@ function PostgresDatasetBody({
               DuckDB-WASM engine as the Convex tab, fed from the PG seam. */}
           <PgAnalysisPanel dataset={dataset} datasetTitle={dataset.title} schemaId={schemaId} />
         </TabsContent>
+
+        {/* Stage 7 (#206): the bound dataset's History tab — the applied
+            commit rail (with the diff overlay on selection) plus the
+            per-sync feed. BOUND datasets only; ?view=history degrades to
+            overview for ordinary ones (the view derivation above). */}
+        {isBound && binding !== null && binding !== undefined && (
+          <TabsContent value="history" className="space-y-6">
+            <PgBindingHistory binding={binding} isGeospatial={dataset.isGeospatial} />
+          </TabsContent>
+        )}
 
         <TabsContent value="structure" className="space-y-6">
           <Card>

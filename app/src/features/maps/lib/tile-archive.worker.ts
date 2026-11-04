@@ -39,7 +39,7 @@ import {
   type ResolvedGeometryRow,
 } from "@caden/maps/geometry-features";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { ConvexClient } from "convex/browser";
+import type { ConvexClient } from "convex/browser";
 
 import { env } from "#/env";
 import { forEachDatasetGeometryPage } from "#/lib/dataset-rows";
@@ -93,8 +93,6 @@ function postPhase(schemaId: string, phase: TileArchiveBuildPhase): void {
   post({ phase, schemaId, type: "phase" });
 }
 
-let client: ConvexClient | undefined;
-
 /**
  * The standalone client authenticates through the main thread: its setAuth
  * fetcher round-trips a token request over the message channel (the worker
@@ -120,11 +118,14 @@ async function fetchTokenFromMain(source: TileTokenSource): Promise<string | nul
 }
 
 function convexClient(): ConvexClient {
-  if (client === undefined) {
-    client = new ConvexClient(env.VITE_CONVEX_URL);
-    client.setAuth(async () => await fetchTokenFromMain("convex"));
-  }
-  return client;
+  // ARCHIVED at the stage-7 disconnect (issue #206): this branch built
+  // `new ConvexClient(env.VITE_CONVEX_URL)` with a main-thread token round
+  // trip — `VITE_CONVEX_URL` left `#/env` with the provider unmount, and no
+  // Convex-origin dataset exists to build for, so the branch now fails
+  // loudly instead of dialing a deployment the shell no longer wires.
+  throw new Error(
+    "Convex tile sources are archived in this build (stage 7 disconnect): only Postgres datasets build tile archives.",
+  );
 }
 
 // One heavy build at a time: async page fetches may interleave, but the

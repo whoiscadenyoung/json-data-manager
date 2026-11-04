@@ -165,33 +165,59 @@ export async function update(
   return rows.length;
 }
 
-/** Deletes the project; memberships cascade with it (and their fork edges go first — see removeArtifact). Returns the affected row count. */
+/**
+ * Deletes the project; memberships cascade with it (and their fork edges go
+ * first — see removeArtifact). Returns the affected row count.
+ *
+ * The membership walk PAGINATES (the stage-7 parity fix for the tranche-3
+ * finding): CATALOG_READ_LIMIT is a read cap, not a membership bound — a
+ * project past 1000 artifacts used to leave its tail's fork edges dangling
+ * (consumer_id is the membership row's id, a text column with no FK, so the
+ * project cascade cannot reach them). Keyset by membership id; each page's
+ * edges die before the next page is read.
+ */
 export async function remove(args: { projectId: string }, options?: StoreOptions): Promise<number> {
   const client = clientOf(options);
-  const members = await queryRows<{ id: string }>(
-    client
+  let cursorId: string | undefined;
+  for (;;) {
+    const pageQuery = client
       .from("project_artifacts")
       .select("id")
       .eq("project_id", args.projectId)
-      .limit(CATALOG_READ_LIMIT),
-  );
-  // The fork edges minted with each membership die with it (the
-  // removeArtifact walk) — consumer_id is the membership row's id, a text
-  // column with no FK, so the cascade cannot reach them. Independent
-  // deletes: parallel.
-  await Promise.all(
-    members.map(
-      async (member) =>
-        await queryRows<{ id: string }>(
-          client
-            .from("consumer_references")
-            .delete()
-            .eq("consumer_id", member.id)
-            .eq("consumer_kind", "fork")
-            .select("id"),
-        ),
-    ),
-  );
+      .order("id")
+      .limit(CATALOG_READ_LIMIT);
+    // oxlint-disable-next-line no-await-in-loop -- the walk paginates: each page's edges must die before the next page is read (the dangling-edge fix is the point).
+    const members = await queryRows<{ id: string }>(
+      cursorId === undefined ? pageQuery : pageQuery.gt("id", cursorId),
+    );
+    if (members.length === 0) {
+      break;
+    }
+    // The fork edges minted with each membership die with it (the
+    // removeArtifact walk). Independent deletes: parallel.
+    // oxlint-disable-next-line no-await-in-loop -- each page's edge deletes settle before the next page (the cascade cannot reach these rows; see the doc comment).
+    await Promise.all(
+      members.map(
+        async (member) =>
+          await queryRows<{ id: string }>(
+            client
+              .from("consumer_references")
+              .delete()
+              .eq("consumer_id", member.id)
+              .eq("consumer_kind", "fork")
+              .select("id"),
+          ),
+      ),
+    );
+    const last = members[members.length - 1];
+    if (last === undefined) {
+      break;
+    }
+    cursorId = last.id;
+    if (members.length < CATALOG_READ_LIMIT) {
+      break;
+    }
+  }
   const rows = await queryRows<{ id: string }>(
     client.from("projects").delete().eq("id", args.projectId).select("id"),
   );

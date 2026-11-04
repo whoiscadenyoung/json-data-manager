@@ -10,12 +10,10 @@ import {
   SheetTitle,
 } from "@caden/ui/components/sheet";
 import { Textarea } from "@caden/ui/components/textarea";
-import { useMutation } from "convex/react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { errorMessage } from "#/lib/errors";
-import { api } from "#convex/_generated/api";
 
 type MapDoc = { _id: string; name: string; description?: string };
 
@@ -32,12 +30,12 @@ export function MapFormPanel({
   map?: MapDoc;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Omit for the pre-migration Convex flow; pass for a Postgres map. */
+  /** Every live caller passes the store-backed submit; the pre-migration
+   * Convex flow that omitted it is archived with the stage-7 disconnect
+   * (issue #206) — omitting it now fails loudly instead of mutating Convex. */
   onSubmit?: MapFormSubmit;
 }) {
   const isEditing = map !== undefined,
-    createMap = useMutation(api.cms.maps.create),
-    updateMap = useMutation(api.cms.maps.update),
     [name, setName] = useState(isEditing ? map.name : ""),
     [description, setDescription] = useState(isEditing ? (map.description ?? "") : ""),
     [isSubmitting, setIsSubmitting] = useState(false),
@@ -59,21 +57,10 @@ export function MapFormPanel({
             setName("");
             setDescription("");
           }
-        } else if (isEditing) {
-          await updateMap({
-            description: description.trim() || undefined,
-            mapId: map._id,
-            name: name.trim(),
-          });
-          toast.success("Map updated.");
         } else {
-          await createMap({
-            description: description.trim() || undefined,
-            name: name.trim(),
-          });
-          toast.success("Map created.");
-          setName("");
-          setDescription("");
+          throw new Error(
+            "Convex maps are archived in this build (stage 7 disconnect): maps write through the Postgres store.",
+          );
         }
         onOpenChange(false);
       } catch (error) {

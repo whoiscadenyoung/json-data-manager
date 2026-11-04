@@ -51,6 +51,17 @@ import { clientOf, queryRow, queryRows, type StoreOptions } from "./client";
  * deletion goes straight through the FK cascades, so staleness is derived,
  * never stored.
  *
+ * Stage-7 parity fixes (the tranche-3 recorded-not-fixed findings, owned by
+ * this stage): the save now walks `specDependencies` through RLS-scoped
+ * reads (assertNewDependenciesVisible — the Convex
+ * assertSpecDependenciesVisible gate, closing the foreign-draft reference
+ * hole AND the cross-user cycle hole), and save/remove sync the saved spec's
+ * consumer_references float edges (syncConsumerReferenceEdges — the Convex
+ * syncRegistryReferenceEdges port). Deltas recorded inline: the refusal
+ * copy is table-neutral (RLS cannot name which table hides an id), and the
+ * edges cover dataset dependencies only (the PG FK on
+ * consumer_references.source_dataset_id cannot represent a registry row).
+ *
  * NOTE: narrow local interfaces typed from the design doc's DDL, not the
  * generated `database.types.ts` (see `./client`).
  */
@@ -804,8 +815,19 @@ export interface SaveDerivedDatasetArgs {
   status: "draft" | "saved";
 }
 
-/** The source id resolves to neither a visible registry row nor a visible dataset — the save refuses (the FK on both source columns would reject the insert anyway; the message is the Convex save's authoring-boundary shape). */
-const SOURCE_ACCESS_ERROR = "That dataset doesn't exist or you don't have access to it.";
+/** The source id resolves to neither a visible registry row nor a visible dataset — the save refuses (the FK on both source columns would reject the insert anyway; the message is the save's authoring-boundary shape). */
+const SOURCE_ACCESS_ERROR =
+  "That dataset or transform doesn't exist or you don't have access to it.";
+
+/**
+ * A dependency id resolves to nothing the author can read — the save refuses
+ * (the authoring-boundary gate below). RLS cannot tell WHICH table hides an
+ * id (a foreign draft of either kind reads exactly as a missing row), so the
+ * copy names both — the Convex save's table-flavored pair, collapsed into
+ * what the database will honestly say.
+ */
+const DEPENDENCY_ACCESS_ERROR =
+  "A dataset or transform this spec reads doesn't exist or you don't have access to it.";
 
 interface SourceLegs {
   sourceDatasetId: string | null;
@@ -819,7 +841,10 @@ interface SourceLegs {
  * as missing on both legs (RLS) and refuses here — the Convex save's
  * explicit authoring-boundary refusal (assertSpecDependenciesVisible's
  * registry leg), enforced by invisibility + the FKs instead of a privileged
- * read.
+ * read. (The refusal copy is table-neutral — see DEPENDENCY_ACCESS_ERROR: an
+ * RLS-scoped store cannot tell a foreign-draft transform from a foreign-draft
+ * dataset, which is exactly the privacy the row-level security buys; the
+ * Convex messages split only because its mutations read every row.)
  */
 async function sourceLegsOf(client: SupabaseClient, sourceDatasetId: string): Promise<SourceLegs> {
   if (!UUID_RE.test(sourceDatasetId)) {
@@ -854,6 +879,124 @@ function registryRowLookupOf(client: SupabaseClient) {
     }
     return { dependsOn: row.dependsOn ?? [] };
   };
+}
+
+/**
+ * The save gate's dependency leg (derivedDatasets.ts:208-239,
+ * assertSpecDependenciesVisible, PG edition): every dataset a spec reads —
+ * its source and each operation's lookup dataset / SQL table ref, exactly
+ * `specDependencies`' walk — must be VISIBLE to the author before the save
+ * may reference it. A spec authored over an invisible id would mint
+ * catalog-visible registry rows (and, once saved, consumer_references
+ * edges) naming data the author cannot read; it would also let the
+ * cross-user cycle hole reopen — a foreign draft B' over this author's saved
+ * row is invisible to the cycle walk's RLS-scoped lookup, so a lookup dep
+ * naming B' would persist an edge that closes into a cycle the moment B'
+ * saves (the tranche-3 finding). The walk reads RLS-scoped: an invisible
+ * dependency of EITHER kind refuses the save. Deps the row already
+ * persists are tolerated (a spec whose referenced dataset was deleted stays
+ * editable — it re-reads as orphaned by the health walk, never blocked;
+ * the Convex unknown-id tolerance, applied to the persisted edges since an
+ * RLS-scoped read cannot distinguish a deleted id from a foreign draft).
+ * Non-uuid ids skip the queries (the health system's domain, as on Convex).
+ */
+async function assertNewDependenciesVisible(
+  client: SupabaseClient,
+  persistedDeps: ReadonlySet<string>,
+  dependencies: string[],
+  sourceDatasetId: string,
+): Promise<void> {
+  // The SOURCE id is skipped — sourceLegsOf classifies it right after (its
+  // refusal is the save's authoring-boundary message), so the gate probes
+  // only the operation's lookup/sql-table dependencies.
+  const fresh = [...new Set(dependencies)].filter(
+    (id) => !persistedDeps.has(id) && UUID_RE.test(id) && id !== sourceDatasetId,
+  );
+  await Promise.all(
+    fresh.map(async (id) => {
+      const visible =
+        (await queryRow<{ id: string }>(
+          client.from("derived_datasets").select("id").eq("id", id).limit(1),
+        )) !== null ||
+        (await queryRow<{ id: string }>(
+          client.from("datasets").select("id").eq("id", id).limit(1),
+        )) !== null;
+      if (!visible) {
+        throw new Error(DEPENDENCY_ACCESS_ERROR);
+      }
+    }),
+  );
+}
+
+/**
+ * The saved spec's reference edges (derivedDatasets.ts:330-340 +
+ * consumption.ts:1429, syncRegistryReferenceEdges — the stage-7 parity fix
+ * for the recorded PG gap): one `consumer_references` row per dependency,
+ * surviving edges keep their mode, new edges land float, removed edges' rows
+ * go. SAVED writers only (the save path gates it — builder autosaves never
+ * surface as consumers), and the caller runs it on the same client so the
+ * edges stay as close to the save's commit as the two statements allow.
+ * Deltas against the Convex helper, both forced by the PG DDL: edges exist
+ * only for DATASET dependencies (consumer_references.source_dataset_id has
+ * an FK to datasets — a derived-of-derived edge is unrepresentable; the
+ * depends_on edges carry that relation), and only uuid-shaped deps are
+ * written (the FK makes anything else unrepresentable too).
+ */
+async function syncConsumerReferenceEdges(
+  client: SupabaseClient,
+  registryId: string,
+  dependencies: string[],
+): Promise<void> {
+  const existing = await queryRows<{ id: string; sourceDatasetId: string | null }>(
+    client
+      .from("consumer_references")
+      .select("id,sourceDatasetId:source_dataset_id")
+      .eq("consumer_id", registryId)
+      .eq("consumer_kind", "derived"),
+  );
+  // Only deps that resolve to a visible DATASET get edges (the FK limits
+  // source_dataset_id to datasets; registry-row deps are skipped here, not
+  // error'd — the FK would throw 23503 past RLS's 0-rows shape).
+  const datasetDeps = await Promise.all(
+    [...new Set(dependencies)].map(async (dependency) => {
+      if (!UUID_RE.test(dependency)) {
+        return null;
+      }
+      const dataset = await queryRow<{ id: string }>(
+        client.from("datasets").select("id").eq("id", dependency).limit(1),
+      );
+      return dataset === null ? null : dependency;
+    }),
+  );
+  for (const dependency of datasetDeps) {
+    if (dependency === null) {
+      continue;
+    }
+    if (existing.some((ref) => ref.sourceDatasetId === dependency)) {
+      continue;
+    }
+    // One edge per dependency, ordered like the spec's own walk.
+    // oxlint-disable-next-line no-await-in-loop -- the edge set must land in the spec's dependency order.
+    await queryRows<{ id: string }>(
+      client
+        .from("consumer_references")
+        .insert({
+          consumer_id: registryId,
+          consumer_kind: "derived",
+          mode: "float",
+          source_dataset_id: dependency,
+        })
+        .select("id"),
+    );
+  }
+  for (const ref of existing) {
+    if (!dependencies.includes(ref.sourceDatasetId ?? "")) {
+      // oxlint-disable-next-line no-await-in-loop -- see above; the edge set must leave in the same order.
+      await queryRows<{ id: string }>(
+        client.from("consumer_references").delete().eq("id", ref.id).select("id"),
+      );
+    }
+  }
 }
 
 /**
@@ -939,6 +1082,16 @@ export async function save(args: SaveDerivedDatasetArgs, options?: StoreOptions)
         "Saving this transform would create a circular dependency — it reads from a dataset that (through other derived datasets) reads from this one.",
       );
     }
+    // The authoring-boundary gate (assertNewDependenciesVisible) runs on the
+    // FRESH deps only — deps the row already persists are tolerated (they
+    // re-read as orphaned; refusing the save would strand the author with an
+    // uneditable stale spec).
+    await assertNewDependenciesVisible(
+      client,
+      new Set<string>(existing.dependsOn ?? []),
+      inputs.dependencies,
+      inputs.sourceDatasetId,
+    );
     const legs = await sourceLegsOf(client, inputs.sourceDatasetId);
     const rows = await queryRows<{ id: string }>(
       client
@@ -953,9 +1106,21 @@ export async function save(args: SaveDerivedDatasetArgs, options?: StoreOptions)
       // message is the Convex save's.
       throw new Error("That transform doesn't exist or you don't have access to it.");
     }
+    // The saved spec's reference edges (stage-7 parity fix): SAVED writers
+    // only — a saved→draft flip leaves the old edges, exactly the Convex
+    // helper's early return.
+    if (args.status === "saved") {
+      await syncConsumerReferenceEdges(client, args.id, inputs.dependencies);
+    }
     return args.id;
   }
 
+  await assertNewDependenciesVisible(
+    client,
+    new Set<string>(),
+    inputs.dependencies,
+    inputs.sourceDatasetId,
+  );
   const legs = await sourceLegsOf(client, inputs.sourceDatasetId);
   const row = await queryRow<{ id: string }>(
     client
@@ -967,20 +1132,37 @@ export async function save(args: SaveDerivedDatasetArgs, options?: StoreOptions)
   if (row === null) {
     throw new Error("Derived dataset insert returned no row.");
   }
+  if (args.status === "saved") {
+    await syncConsumerReferenceEdges(client, row.id, inputs.dependencies);
+  }
   return row.id;
 }
 
 /**
- * Deletes one registry row — a discarded draft or an obsolete spec.
- * Dependents (if any) re-read as orphaned on their next read. Returns the
- * affected row count: 0 = denied (not the creator — the 0010 delete policy)
- * or already gone; the caller surfaces that, never toasts success (the
- * stage-4 silent-denial rule; the Convex `remove` threw the equivalent
- * denial).
+ * Deletes one registry row — a discarded draft or an obsolete spec — and its
+ * consumer_references edges (the stage-7 parity fix for the recorded PG gap:
+ * a deleted row must not haunt its sources' consumed-by lists as a ghost
+ * consumer; consumer_id is text with no FK, so the cascade cannot reach
+ * them). Dependents (if any) re-read as orphaned on their next read.
+ * Returns the affected row count: 0 = denied (not the creator — the 0010
+ * delete policy) or already gone; the caller surfaces that, never toasts
+ * success (the stage-4 silent-denial rule; the Convex `remove` threw the
+ * equivalent denial).
  */
 export async function remove(args: { id: string }, options?: StoreOptions): Promise<number> {
+  const client = clientOf(options);
+  // The edges go first (the Convex remove's order) — a denied delete leaves
+  // the row intact and its edges untouched.
+  await queryRows<{ id: string }>(
+    client
+      .from("consumer_references")
+      .delete()
+      .eq("consumer_id", args.id)
+      .eq("consumer_kind", "derived")
+      .select("id"),
+  );
   const rows = await queryRows<{ id: string }>(
-    clientOf(options).from("derived_datasets").delete().eq("id", args.id).select("id"),
+    client.from("derived_datasets").delete().eq("id", args.id).select("id"),
   );
   return rows.length;
 }
