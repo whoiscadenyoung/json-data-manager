@@ -1,5 +1,11 @@
 # Supabase migration — handoff for the next session (2026-11-05)
 
+> **SUPERSEDED (2026-11-05)** by
+> [`migration-closeout-handoff.md`](migration-closeout-handoff.md): §1
+> (self-hosting) shipped via #218, §2's findings are filed as the closeout
+> issue train (#219, #220–#230), §4's worktree reconciliation is done.
+> This doc remains the per-stage migration record.
+
 The Convex → Supabase migration is **complete**: umbrella #198 closed, all
 eight stages plus the app-builder follow-up (#216) merged, the app runs
 entirely on Supabase (Postgres 17 + PostGIS, Auth, Realtime, Storage), and

@@ -27,7 +27,7 @@ Hard-won gotchas, in blast order:
   image's `migrate.sh`-driven init-scripts, so the password-pinning initdb
   script must sort AFTER it (`deploy/postgres/zz-supabase-roles.sh`; `01-`
   ran against zero roles). The image's default CMD is `postgres -D
-  /etc/postgresql` — overriding CMD drops `listen_addresses=*` (postgres binds
+/etc/postgresql` — overriding CMD drops `listen_addresses=*` (postgres binds
   loopback only); keep the `-D` flag when adding `-c` flags.
 - **The migrations runner polls `to_regclass('storage.objects')` via psql**,
   not HTTP — the nix bash in the postgres image has no `/dev/tcp`, and the
@@ -55,3 +55,20 @@ Hard-won gotchas, in blast order:
 - fmt:check on this tree still fails on the UNTRACKED `.zcode/plans/*.md`
   only (invisible to CI); `docs/supabase-handoff-2026-11-05.md` was
   committed unformatted and needed an oxfmt pass.
+
+**Closeout follow-ups (2026-11-05, same day)**: PR #218 MERGED (main
+3c3fb13). The first post-merge CI run exposed the one seam the db-name
+repair missed — the two storage-api boot steps' hardcoded
+`DATABASE_URL .../app` (fixed `ea1b2c0`, both now `/postgres`); confirm
+that run is green before trusting main. Remaining work is the closeout
+issue train: umbrella #219, ordered sub-issues #220–#230 (tracking table
+in #219's first comment). Worktrees/branches cleaned: CLI stack worktree
+`../jdm-supabase-backend` re-branched to `local/supabase-stack` ==
+origin/main (was stuck on merged `feat/supabase-stage-0`,
+0001–0002-only); `feat/project-workspace` PRESERVED + pushed (parked
+unmerged Convex-era feature, worktree has uncommitted `app/convex` edits —
+do not delete); superseded `feat/app-builder` archived at tag
+`archive/feat-app-builder`; six merged remote branches, two merged local
+branches, and the bogus `pr192` remote-tracking ref (it was a ref, not a
+remote) deleted. Next-session handoff:
+`docs/migration-closeout-handoff.md`.
