@@ -22,14 +22,15 @@ import {
   InputGroupInput,
 } from "@caden/ui/components/input-group";
 import { RadioGroup, RadioGroupItem } from "@caden/ui/components/radio-group";
-import { useMutation } from "convex/react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, Copy, Globe, Lock } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { errorMessage } from "#/lib/errors";
-import { api } from "#convex/_generated/api";
-import type { Sharing } from "#convex/appBuilder/validators";
+import * as appsStore from "#/lib/store/apps";
+
+import type { Sharing } from "../lib/content";
 
 /** The app's share URL — the viewer route, on whatever origin the app is served from. */
 export function shareUrlFor(appId: string): string {
@@ -77,7 +78,11 @@ export function ShareDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const updateDetails = useMutation(api.appBuilder.apps.updateDetails),
+  const queryClient = useQueryClient(),
+    updateDetails = useMutation({
+      mutationFn: async (args: { appId: string; sharing: Sharing }) =>
+        await appsStore.updateDetails(args),
+    }),
     [pending, setPending] = useState<Sharing | undefined>(),
     [copied, setCopied] = useState(false),
     setSharing = async (next: Sharing) => {
@@ -86,7 +91,14 @@ export function ShareDialog({
       }
       setPending(next);
       try {
-        await updateDetails({ appId, sharing: next });
+        const affected = await updateDetails.mutateAsync({ appId, sharing: next });
+        if (affected === 0) {
+          // RLS answered with 0 rows — this viewer cannot edit the app; the
+          // radio stays honest instead of pretending the flip landed.
+          toast.error("Couldn't change sharing — only the app's creator can edit it.");
+          return;
+        }
+        void queryClient.invalidateQueries({ queryKey: ["pg:apps"] });
       } catch (error) {
         toast.error(errorMessage(error, "Couldn't change sharing."));
       } finally {

@@ -1,9 +1,4 @@
-import {
-  APP_LIMITS,
-  widgetDatasetIds,
-  type Widget,
-  type WidgetKind,
-} from "#convex/appBuilder/validators";
+import { APP_LIMITS, widgetDatasetIds, type Widget, type WidgetKind } from "./content";
 
 /**
  * The app canvas's layout model — pure, React-free. An app is an ORDERED

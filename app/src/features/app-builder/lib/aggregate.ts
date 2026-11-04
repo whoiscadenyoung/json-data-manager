@@ -1,4 +1,4 @@
-import type { Aggregate } from "#convex/appBuilder/validators";
+import type { Aggregate } from "./content";
 
 /**
  * Client-side aggregation for chart and stat widgets — pure, React-free.

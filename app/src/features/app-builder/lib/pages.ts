@@ -1,5 +1,4 @@
-import { APP_LIMITS, type AppPage, type Widget } from "#convex/appBuilder/validators";
-
+import { APP_LIMITS, type AppPage, type Widget } from "./content";
 import { moveItem, withoutDataset } from "./layout";
 
 /**

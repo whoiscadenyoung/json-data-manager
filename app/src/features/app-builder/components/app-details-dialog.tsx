@@ -11,13 +11,14 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from "@caden/ui/compo
 import { Input } from "@caden/ui/components/input";
 import { Spinner } from "@caden/ui/components/spinner";
 import { Textarea } from "@caden/ui/components/textarea";
-import { useMutation } from "convex/react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { errorMessage } from "#/lib/errors";
-import { api } from "#convex/_generated/api";
-import { APP_LIMITS } from "#convex/appBuilder/validators";
+import * as appsStore from "#/lib/store/apps";
+
+import { APP_LIMITS } from "../lib/content";
 
 /** The required title — invalid (and saying so) while empty. */
 function TitleField({ value, onChange }: { value: string; onChange: (value: string) => void }) {
@@ -45,7 +46,10 @@ function TitleField({ value, onChange }: { value: string; onChange: (value: stri
 /**
  * Title + description, for both "New app" (no `appId`: creates, then hands
  * the new id to `onSaved`) and "Edit details" (patches the existing app).
- * The title is the only required field (the app-wide rule).
+ * The title is the only required field (the app-wide rule). A denied
+ * metadata write answers 0 rows affected (RLS — the silent-denial rule), and
+ * that is surfaced as the error it is: the dialog stays open, nothing is
+ * saved.
  */
 export function AppDetailsDialog({
   appId,
@@ -60,8 +64,15 @@ export function AppDetailsDialog({
   onOpenChange: (open: boolean) => void;
   onSaved?: (appId: string) => void | Promise<void>;
 }) {
-  const create = useMutation(api.appBuilder.apps.create),
-    updateDetails = useMutation(api.appBuilder.apps.updateDetails),
+  const queryClient = useQueryClient(),
+    create = useMutation({
+      mutationFn: async (args: { description: string; title: string }) =>
+        await appsStore.create(args),
+    }),
+    updateDetails = useMutation({
+      mutationFn: async (args: { appId: string; description: string; title: string }) =>
+        await appsStore.updateDetails(args),
+    }),
     [title, setTitle] = useState(initial === undefined ? "" : initial.title),
     [description, setDescription] = useState(
       initial === undefined ? "" : (initial.description ?? ""),
@@ -77,10 +88,17 @@ export function AppDetailsDialog({
     try {
       let savedId = appId;
       if (savedId === undefined) {
-        savedId = await create({ description, title });
+        // `create` answers the full new row (the insert's RETURNING).
+        savedId = (await create.mutateAsync({ description, title })).id;
       } else {
-        await updateDetails({ appId: savedId, description, title });
+        const affected = await updateDetails.mutateAsync({ appId: savedId, description, title });
+        if (affected === 0) {
+          // RLS answered with 0 rows — this viewer cannot edit the app.
+          toast.error("Couldn't save — only the app's creator can edit it.");
+          return;
+        }
       }
+      void queryClient.invalidateQueries({ queryKey: ["pg:apps"] });
       onOpenChange(false);
       if (onSaved !== undefined) {
         await onSaved(savedId);

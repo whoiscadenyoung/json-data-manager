@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { Widget } from "#convex/appBuilder/validators";
-
+import type { Widget } from "./content";
 import { moveItem, resizeWidget, spanFromDrag, withoutDataset } from "./layout";
 
 const text = (id: string): Widget => ({ body: "", h: 2, id, kind: "text", w: 12 });

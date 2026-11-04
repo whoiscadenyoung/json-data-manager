@@ -16,25 +16,23 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@caden/ui/components/empty";
-import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import type { FunctionReturnType } from "convex/server";
 import { Globe, LayoutDashboard, Lock, Plus, Sparkles } from "lucide-react";
 import { useState } from "react";
 
-import { api } from "#convex/_generated/api";
+import { useSession } from "#/integrations/supabase/provider";
+import { errorMessage } from "#/lib/errors";
+import * as appsStore from "#/lib/store/apps";
 
 import { AppDetailsDialog } from "../components/app-details-dialog";
 import { PageLoading } from "../components/page-loading";
-
-type AppSummary = FunctionReturnType<typeof api.appBuilder.apps.list>[number];
 
 function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }
 
-function AccessBadge({ app }: { app: AppSummary }) {
+function AccessBadge({ app }: { app: appsStore.AppSummary }) {
   if (app.example) {
     return (
       <Badge variant="secondary">
@@ -56,7 +54,7 @@ function AccessBadge({ app }: { app: AppSummary }) {
   );
 }
 
-function AppCard({ app }: { app: AppSummary }) {
+function AppCard({ app }: { app: appsStore.AppSummary }) {
   return (
     <Card className="relative transition-shadow hover:ring-primary/40">
       <CardHeader>
@@ -64,13 +62,13 @@ function AppCard({ app }: { app: AppSummary }) {
           {/* The stretched link makes the whole card the click target. */}
           <Link
             to="/apps/$appId"
-            params={{ appId: app._id }}
+            params={{ appId: app.id }}
             className="after:absolute after:inset-0 hover:underline"
           >
             {app.title}
           </Link>
         </CardTitle>
-        {app.description !== undefined && (
+        {app.description !== null && (
           <CardDescription className="line-clamp-2">{app.description}</CardDescription>
         )}
         <CardAction>
@@ -88,26 +86,65 @@ function AppCard({ app }: { app: AppSummary }) {
   );
 }
 
-function AppGrid({ apps }: { apps: readonly AppSummary[] }) {
+function AppGrid({ apps }: { apps: readonly appsStore.AppSummary[] }) {
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {apps.map((app) => (
-        <AppCard key={app._id} app={app} />
+        <AppCard key={app.id} app={app} />
       ))}
     </div>
   );
 }
 
+function LoadError({ message }: { message: string }) {
+  return (
+    <Empty className="min-h-64 border">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <LayoutDashboard />
+        </EmptyMedia>
+        <EmptyTitle>Couldn't load apps</EmptyTitle>
+        <EmptyDescription>{message}</EmptyDescription>
+      </EmptyHeader>
+    </Empty>
+  );
+}
+
 /** The creator's apps (/apps), plus the seeded examples anyone can open and copy. */
 export function AppsPage() {
-  const apps = useQuery({ ...convexQuery(api.appBuilder.apps.list, {}) }).data,
-    examples = useQuery({ ...convexQuery(api.appBuilder.apps.listExamples, {}) }).data,
+  const rows = useQuery(appsStore.listQueryOptions()),
+    exampleRows = useQuery(appsStore.listExamplesQueryOptions()),
+    { session } = useSession(),
     navigate = useNavigate(),
     [creating, setCreating] = useState(false);
 
-  if (apps === undefined || examples === undefined) {
+  if (rows.isPending || exampleRows.isPending) {
     return <PageLoading />;
   }
+  if (rows.isError || exampleRows.isError) {
+    const error = rows.isError ? rows.error : exampleRows.error;
+    return (
+      <main className="mx-auto flex max-w-6xl flex-col gap-10 px-4 py-8">
+        <div>
+          <h1 className="mb-1 text-3xl font-bold text-primary">Apps</h1>
+          <p className="text-muted-foreground">
+            Build pages of maps, charts and tables from your datasets — and share them by link
+          </p>
+        </div>
+        <LoadError message={errorMessage(error, "Something went wrong — try again.")} />
+      </main>
+    );
+  }
+
+  // The store's `list` rides the authenticated-open read (0014's flat SELECT
+  // policy), so it answers every app on the backend; "Your apps" is the
+  // CREATOR's list (the api.appBuilder.apps.list parity, by_createdBy), so
+  // the creator scoping happens here until the store scopes it.
+  const userId = session === null ? undefined : session.user.id,
+    apps = rows.data
+      .filter((row) => row.createdBy === userId)
+      .map((row) => appsStore.toSummary(row)),
+    examples = exampleRows.data.map((row) => appsStore.toSummary(row));
 
   const openNew = () => {
     setCreating(true);

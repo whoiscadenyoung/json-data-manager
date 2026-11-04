@@ -2,7 +2,7 @@ import { Tabs, TabsList, TabsTrigger } from "@caden/ui/components/tabs";
 import { Maximize2 } from "lucide-react";
 import type { ReactNode } from "react";
 
-import type { AppPage } from "#convex/appBuilder/validators";
+import type { AppPage } from "../lib/content";
 
 /**
  * An app's pages as tabs — the same strip in the builder and the viewer.

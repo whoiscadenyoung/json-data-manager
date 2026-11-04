@@ -28,8 +28,7 @@ import {
   type RefObject,
 } from "react";
 
-import type { PageLayout, Widget } from "#convex/appBuilder/validators";
-
+import type { PageLayout, Widget } from "../lib/content";
 import {
   GRID_COLUMNS,
   GRID_GAP,

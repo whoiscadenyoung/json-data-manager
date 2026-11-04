@@ -35,10 +35,8 @@ import {
 } from "@caden/ui/components/empty";
 import { Spinner } from "@caden/ui/components/spinner";
 import { cn } from "@caden/ui/lib/utils";
-import { convexQuery } from "@convex-dev/react-query";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useMutation } from "convex/react";
 import {
   AlertCircle,
   Check,
@@ -55,9 +53,9 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { RouterButton } from "#/components/router-button";
+import { useSession } from "#/integrations/supabase/provider";
 import { errorMessage } from "#/lib/errors";
-import { api } from "#convex/_generated/api";
-import type { Widget } from "#convex/appBuilder/validators";
+import * as appsStore from "#/lib/store/apps";
 
 import { AppCanvasEditor } from "../components/app-canvas";
 import { AppDetailsDialog } from "../components/app-details-dialog";
@@ -66,9 +64,11 @@ import { PageLoading } from "../components/page-loading";
 import { PageTabs } from "../components/page-tabs";
 import { ShareDialog } from "../components/share-dialog";
 import { AppDatasetsProvider } from "../data";
+import { appDocOf, type AppDoc } from "../lib/app-doc";
+import type { Widget } from "../lib/content";
 import { newWidgetId, resizeWidget } from "../lib/layout";
 import { canAddPage, newPage, resolvePage, updatePage } from "../lib/pages";
-import { useAppEditor, type AppDoc, type SaveStatus } from "../use-app-editor";
+import { useAppEditor, type SaveStatus } from "../use-app-editor";
 
 function SaveIndicator({ status, onRetry }: { status: SaveStatus; onRetry: () => void }) {
   if (status === "error") {
@@ -133,7 +133,10 @@ function EmptyCanvas({ hasData, onStart }: { hasData: boolean; onStart: (tab: Pa
 
 function BuilderMenu({ app }: { app: AppDoc }) {
   const navigate = useNavigate(),
-    remove = useMutation(api.appBuilder.apps.remove),
+    queryClient = useQueryClient(),
+    remove = useMutation({
+      mutationFn: async (args: { appId: string }) => await appsStore.remove(args),
+    }),
     [editing, setEditing] = useState(false),
     [deleting, setDeleting] = useState(false);
   return (
@@ -158,7 +161,7 @@ function BuilderMenu({ app }: { app: AppDoc }) {
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => {
-                void navigate({ params: { appId: app._id }, to: "/apps/$appId" });
+                void navigate({ params: { appId: app.id }, to: "/apps/$appId" });
               }}
             >
               <ExternalLink data-icon="inline-start" />
@@ -181,8 +184,8 @@ function BuilderMenu({ app }: { app: AppDoc }) {
       </DropdownMenu>
       {editing && (
         <AppDetailsDialog
-          appId={app._id}
-          initial={{ description: app.description, title: app.title }}
+          appId={app.id}
+          initial={{ description: app.description ?? undefined, title: app.title }}
           open={editing}
           onOpenChange={setEditing}
         />
@@ -204,7 +207,13 @@ function BuilderMenu({ app }: { app: AppDoc }) {
                 setDeleting(false);
                 void (async () => {
                   try {
-                    await remove({ appId: app._id });
+                    const affected = await remove.mutateAsync({ appId: app.id });
+                    if (affected === 0) {
+                      // RLS answered with 0 rows — the delete never landed.
+                      toast.error("Couldn't delete — only the app's creator can edit it.");
+                      return;
+                    }
+                    void queryClient.invalidateQueries({ queryKey: ["pg:apps"] });
                     toast.success("App deleted");
                     await navigate({ to: "/apps" });
                   } catch (error) {
@@ -268,7 +277,7 @@ function Builder({ app, initialPageId }: { app: AppDoc; initialPageId: string | 
           <div className="flex shrink-0 items-center gap-2">
             <RouterButton
               to="/apps/$appId/preview"
-              params={{ appId: app._id }}
+              params={{ appId: app.id }}
               search={{ page: page.id === content.pages[0].id ? undefined : page.id }}
               variant="outline"
             >
@@ -378,7 +387,7 @@ function Builder({ app, initialPageId }: { app: AppDoc; initialPageId: string | 
           </aside>
         </div>
         <ShareDialog
-          appId={app._id}
+          appId={app.id}
           sharing={app.sharing}
           open={sharing}
           onOpenChange={setSharing}
@@ -396,10 +405,30 @@ export function AppBuilderPage({
   appId: string;
   initialPageId: string | undefined;
 }) {
-  const app = useQuery({ ...convexQuery(api.appBuilder.apps.get, { appId }) }).data;
-  if (app === undefined) {
+  const row = useQuery(appsStore.getQueryOptions({ appId })),
+    { session } = useSession();
+  if (row.isPending) {
     return <PageLoading />;
   }
+  if (row.isError) {
+    return (
+      <main className="mx-auto max-w-3xl px-4 py-16">
+        <Empty className="min-h-80 border">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <LayoutDashboard />
+            </EmptyMedia>
+            <EmptyTitle>Couldn't open the app</EmptyTitle>
+            <EmptyDescription>
+              {errorMessage(row.error, "Something went wrong — try again.")}
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      </main>
+    );
+  }
+  const app =
+    row.data === null ? null : appDocOf(row.data, session === null ? undefined : session.user.id);
   if (app === null || !app.canEdit) {
     return (
       <main className="mx-auto max-w-3xl px-4 py-16">
@@ -424,5 +453,5 @@ export function AppBuilderPage({
     );
   }
   // Keyed by id: the editor's working copy initializes once per app.
-  return <Builder key={app._id} app={app} initialPageId={initialPageId} />;
+  return <Builder key={app.id} app={app} initialPageId={initialPageId} />;
 }

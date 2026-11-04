@@ -15,10 +15,8 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@caden/ui/components/empty";
-import { convexQuery } from "@convex-dev/react-query";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { useMutation } from "convex/react";
 import {
   Copy,
   Eye,
@@ -35,19 +33,24 @@ import { toast } from "sonner";
 
 import { RouterButton } from "#/components/router-button";
 import { ThemeToggle } from "#/components/theme-toggle";
+import { useSession } from "#/integrations/supabase/provider";
 import { errorMessage } from "#/lib/errors";
-import { api } from "#convex/_generated/api";
-import type { AppPage } from "#convex/appBuilder/validators";
+import * as appsStore from "#/lib/store/apps";
 
 import { AppCanvasView } from "../components/app-canvas";
 import { PageLoading } from "../components/page-loading";
 import { PageTabs } from "../components/page-tabs";
 import { copyShareUrl, ShareDialog } from "../components/share-dialog";
 import { AppDatasetsProvider } from "../data";
+import { appDocOf, type AppDoc } from "../lib/app-doc";
+import type { AppPage } from "../lib/content";
 import { resolvePage } from "../lib/pages";
-import type { AppDoc } from "../use-app-editor";
 
-/** Not found and not shared read the same — an id's existence never leaks. */
+/**
+ * A null row. Reads are authenticated-open (0014 — the maps-domain shape),
+ * so there is no sharing denial to hide behind: a null answer means the id
+ * names no app (a typed-wrong share link, a deleted app).
+ */
 function AppNotFound() {
   return (
     <main className="mx-auto max-w-3xl px-4 py-16">
@@ -57,9 +60,7 @@ function AppNotFound() {
             <LayoutDashboard />
           </EmptyMedia>
           <EmptyTitle>App not found</EmptyTitle>
-          <EmptyDescription>
-            This app doesn't exist, or its owner hasn't shared it with you.
-          </EmptyDescription>
+          <EmptyDescription>This app doesn't exist — check the link.</EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
           <RouterButton to="/apps">Go to your apps</RouterButton>
@@ -75,13 +76,21 @@ function AppNotFound() {
  */
 function AppMenu({ app }: { app: AppDoc }) {
   const navigate = useNavigate(),
-    duplicate = useMutation(api.appBuilder.apps.duplicate),
+    queryClient = useQueryClient(),
+    duplicate = useMutation({
+      mutationFn: async (args: { appId: string }) => await appsStore.duplicate(args),
+    }),
     [sharing, setSharing] = useState(false),
     makeCopy = async () => {
       try {
-        const copyId = await duplicate({ appId: app._id });
+        const copy = await duplicate.mutateAsync({ appId: app.id });
+        if (copy === null) {
+          toast.error("Couldn't copy — this app doesn't exist.");
+          return;
+        }
+        void queryClient.invalidateQueries({ queryKey: ["pg:apps"] });
         toast.success("Copied to your apps");
-        await navigate({ params: { appId: copyId }, to: "/apps/$appId/edit" });
+        await navigate({ params: { appId: copy.id }, to: "/apps/$appId/edit" });
       } catch (error) {
         toast.error(errorMessage(error, "Couldn't copy the app."));
       }
@@ -98,7 +107,7 @@ function AppMenu({ app }: { app: AppDoc }) {
           <DropdownMenuGroup>
             <DropdownMenuItem
               onClick={() => {
-                void copyShareUrl(app._id);
+                void copyShareUrl(app.id);
               }}
             >
               <Link2 data-icon="inline-start" />
@@ -116,7 +125,7 @@ function AppMenu({ app }: { app: AppDoc }) {
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => {
-                    void navigate({ params: { appId: app._id }, to: "/apps/$appId/edit" });
+                    void navigate({ params: { appId: app.id }, to: "/apps/$appId/edit" });
                   }}
                 >
                   <Pencil data-icon="inline-start" />
@@ -149,7 +158,7 @@ function AppMenu({ app }: { app: AppDoc }) {
       </DropdownMenu>
       {app.canEdit && (
         <ShareDialog
-          appId={app._id}
+          appId={app.id}
           sharing={app.sharing}
           open={sharing}
           onOpenChange={setSharing}
@@ -175,7 +184,7 @@ function EmptyPage({ app }: { app: AppDoc }) {
       </EmptyHeader>
       {app.canEdit && (
         <EmptyContent>
-          <RouterButton to="/apps/$appId/edit" params={{ appId: app._id }}>
+          <RouterButton to="/apps/$appId/edit" params={{ appId: app.id }}>
             <Pencil data-icon="inline-start" />
             Open the builder
           </RouterButton>
@@ -221,7 +230,7 @@ function PreviewBar({ app, onExit }: { app: AppDoc; onExit: () => void }) {
 function AppBar({ app, tabs, menu }: { app: AppDoc; tabs: ReactNode; menu: boolean }) {
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-1 border-b border-border bg-background px-4 py-2">
-      <h1 className="min-w-0 truncate text-base font-semibold" title={app.description}>
+      <h1 className="min-w-0 truncate text-base font-semibold" title={app.description ?? undefined}>
         {app.title}
       </h1>
       {tabs !== null && (
@@ -256,7 +265,7 @@ function ContainedPage({ app, page, bars }: { app: AppDoc; page: AppPage; bars: 
     <div className="flex min-h-dvh flex-col">
       <div className="sticky top-0 z-40">{bars}</div>
       <main className="mx-auto w-full max-w-7xl px-4 py-6">
-        {app.description !== undefined && (
+        {app.description !== null && (
           <p className="mb-4 max-w-3xl text-muted-foreground">{app.description}</p>
         )}
         <PageCanvas app={app} page={page} />
@@ -285,13 +294,35 @@ export function AppViewPage({
   onPageChange: (pageId: string | undefined) => void;
   onExit?: () => void;
 }) {
-  const app = useQuery({ ...convexQuery(api.appBuilder.apps.get, { appId }) }).data;
-  if (app === undefined) {
+  const row = useQuery(appsStore.getQueryOptions({ appId })),
+    { session } = useSession();
+  if (row.isPending) {
     return <PageLoading />;
   }
-  if (app === null) {
+  // A read error renders as "not found" only for the denial-shaped read:
+  // an RLS-hidden row IS a null row, but a network error is not a missing
+  // app — it gets its own honest message.
+  if (row.isError) {
+    return (
+      <main className="mx-auto max-w-3xl px-4 py-16">
+        <Empty className="min-h-80 border">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <LayoutDashboard />
+            </EmptyMedia>
+            <EmptyTitle>Couldn't open the app</EmptyTitle>
+            <EmptyDescription>
+              {errorMessage(row.error, "Something went wrong — try again.")}
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      </main>
+    );
+  }
+  if (row.data === null) {
     return <AppNotFound />;
   }
+  const app = appDocOf(row.data, session === null ? undefined : session.user.id);
   const page = resolvePage(app.pages, pageId),
     previewing = mode === "preview" && app.canEdit && onExit !== undefined,
     tabs =
