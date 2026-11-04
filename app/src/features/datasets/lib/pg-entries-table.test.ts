@@ -8,12 +8,13 @@ vi.mock("#/env", () => ({
   env: { VITE_SUPABASE_ANON_KEY: "test-anon-key", VITE_SUPABASE_URL: "http://127.0.0.1:54321" },
 }));
 
-import type { PgColumnFilter, PgPropertyType } from "./pg-entries-table";
+import type { PgColumnFilter, PgPropertyType, PgTableState } from "./pg-entries-table";
 import {
   filtersToSearchFilters,
   pgTableParamsFromState,
   pgTableStateFromParams,
   resolveUpdater,
+  sanitizePgTableState,
   searchArgsOf,
   servedVariantOf,
   sortingToSearchSort,
@@ -97,6 +98,51 @@ describe("pgTableStateFromParams / pgTableParamsFromState — the URL round trip
     expect(firstFilterId(state.filters)).toBe("name");
     expect(state.sorting.length).toBe(1);
     expect(firstSortId(state.sorting)).toBe("name");
+  });
+});
+
+describe("sanitizePgTableState — the undeclared-key degrade (the not-found-boundary defect)", () => {
+  const DECLARED = new Set(["name", "grant"]);
+
+  it("drops sort/filter rows whose key the dataset does not declare (default state for that concern)", () => {
+    const state: PgTableState = {
+      filters: [
+        columnFilter({}),
+        columnFilter({ filterId: "f2", id: "rogue_column", operator: "eq", value: "x" }),
+      ],
+      query: "park",
+      sorting: [
+        { desc: true, id: "rogue_column" },
+        { desc: false, id: "grant" },
+      ],
+    };
+    const sanitized = sanitizePgTableState(state, DECLARED);
+    expect(sanitized.sorting).toStrictEqual([{ desc: false, id: "grant" }]);
+    expect(sanitized.filters.length).toBe(1);
+    expect(firstFilterId(sanitized.filters)).toBe("name");
+    // Websearch TEXT passes through — the RPC parses it safely.
+    expect(sanitized.query).toBe("park");
+  });
+
+  it("degrades to the full default state when no keys are declared yet (the pre-load tick)", () => {
+    const state: PgTableState = {
+      filters: [columnFilter({})],
+      query: "park",
+      sorting: [{ desc: true, id: "name" }],
+    };
+    const sanitized = sanitizePgTableState(state, new Set<string>());
+    expect(sanitized.sorting).toStrictEqual([]);
+    expect(sanitized.filters).toStrictEqual([]);
+    expect(sanitized.query).toBe("park");
+  });
+
+  it("keeps declared rows byte-identical (a legit URL state round-trips untouched)", () => {
+    const state: PgTableState = {
+      filters: [columnFilter({ id: "grant" })],
+      query: "",
+      sorting: [{ desc: false, id: "name" }],
+    };
+    expect(sanitizePgTableState(state, DECLARED)).toStrictEqual(state);
   });
 });
 

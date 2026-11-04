@@ -12,6 +12,7 @@ import {
   CATALOG_READ_LIMIT,
   create,
   getQueryOptions,
+  listByCreatorQueryOptions,
   listDraftSummariesQueryOptions,
   listQueryOptions,
   listSummariesQueryOptions,
@@ -98,6 +99,24 @@ describe("datasets.listDraftSummaries", () => {
   });
 });
 
+describe("datasets.listByCreator — the profile page's per-creator listing", () => {
+  it("selects the summary projection filtered to created_by, newest first", async () => {
+    const { client, queries } = stubSupabase(() => ({
+      data: [datasetWire("d1")],
+      error: null,
+    }));
+    const rows = await runQueryOptions(
+      listByCreatorQueryOptions({ createdBy: "user-1" }, { supabase: client }),
+    );
+    expect(rows[0]).toMatchObject({ id: "d1", createdBy: "user-1" });
+    const first = queryAt(queries, 0);
+    expect(argsOf(first, "eq")).toStrictEqual(["created_by", "user-1"]);
+    expect(String(firstArg(first, "select"))).not.toContain("jsonSchema");
+    expect(allArgs(first, "order")).toStrictEqual([["created_at", { ascending: false }]]);
+    expect(firstArg(first, "limit")).toBe(CATALOG_READ_LIMIT);
+  });
+});
+
 describe("datasets.list / get", () => {
   it("list selects the FULL row (the heavy payload included)", async () => {
     const { client, queries } = stubSupabase(() => ({ data: [], error: null }));
@@ -159,7 +178,8 @@ describe("datasets.create", () => {
       published_visibility: "everyone",
       simplify_geometry: false,
       title: "Grants",
-      // `lineage`/`source` are absent for ordinary creates (host-flow-only).
+      // `source` is absent for ordinary creates (host-flow-only); `lineage`
+      // is not even an argument — the INSERT policy can never admit it.
     });
   });
 

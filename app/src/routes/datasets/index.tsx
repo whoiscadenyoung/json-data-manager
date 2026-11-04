@@ -25,7 +25,21 @@ import {
 } from "#/components/dataset-type-tags";
 import { RouterButton } from "#/components/router-button";
 import { UserAvatar } from "#/components/user-avatar";
+import {
+  PgDatasetCard,
+  PgGroupCard,
+  SourceStoreBadge,
+  buildPgBrowserItems,
+  filterPgBrowserItems,
+  mergeSortedItems,
+  sortPgBrowserItems,
+  withPgDrafts,
+  type PgBrowserItem,
+} from "#/features/catalog";
 import { withDrafts } from "#/features/datasets";
+import * as collectionsStore from "#/lib/store/collections";
+import * as datasetsStore from "#/lib/store/datasets";
+import * as groupsStore from "#/lib/store/groups";
 
 import { api } from "../../../convex/_generated/api";
 
@@ -37,6 +51,31 @@ type SourceBadge = FunctionReturnType<
 export const Route = createFileRoute("/datasets/")({
   component: DatasetsPage,
 });
+
+/** Both stores' items, interleaved by the merge (§14.6's split-brain browser) — the route's own `BrowserItem` union is the Convex half. */
+type MergedBrowserItem = BrowserItem | PgBrowserItem;
+
+/** True for a Postgres item: neither store's rows can carry the other's id field (Convex `_id` vs PG `id`). */
+function isPgBrowserItem(item: MergedBrowserItem): item is PgBrowserItem {
+  if (item.kind === "group") {
+    return !("_id" in item.group);
+  }
+  return !("_id" in item.dataset);
+}
+
+/** The merge comparator's key for either store's item — Convex rows carry millisecond `_creationTime`s, PG rows ISO `createdAt`s. */
+function mergedItemKey(item: MergedBrowserItem): { time: number; title: string } {
+  if (item.kind === "group") {
+    const group = item.group;
+    return "_creationTime" in group
+      ? { time: group._creationTime, title: group.name }
+      : { time: Date.parse(group.createdAt), title: group.name };
+  }
+  const dataset = item.dataset;
+  return "_creationTime" in dataset
+    ? { time: dataset._creationTime, title: dataset.title }
+    : { time: Date.parse(dataset.createdAt), title: dataset.title };
+}
 
 type SortOption = "newest" | "oldest" | "title-asc";
 
@@ -232,6 +271,8 @@ function DatasetCard({
         className="flex min-w-0 flex-1 flex-col gap-2 py-0"
       >
         <div className="flex flex-wrap items-center gap-2">
+          {/* §14.6: the split-brain browser badges every card with its store. */}
+          <SourceStoreBadge store="convex" />
           <DatasetTypeTags dataset={dataset} />
           <SourceDriftBadges badges={badges} />
           <span className="text-xs text-muted-foreground">
@@ -283,6 +324,7 @@ function DerivedDatasetCard({
   const body = (
     <>
       <div className="flex flex-wrap items-center gap-2">
+        <SourceStoreBadge store="convex" />
         <DerivedDatasetBadge />
         <DerivedHealthBadges health={dataset.health} reason={dataset.healthReason} />
         <SourceDriftBadges badges={badges} />
@@ -354,6 +396,7 @@ function GroupCard({
       >
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">
+            <SourceStoreBadge store="convex" />
             <Badge variant="outline">
               <Layers />
               Group
@@ -500,6 +543,26 @@ function useBrowserLightQueries(showDrafts: boolean) {
   };
 }
 
+/**
+ * The Postgres half of the browser's reads (design §14.6: the interim
+ * catalog is split-brain) — the store's summary projection (with the
+ * trigger-maintained entry/feature counts the PG cards' count labels read),
+ * the opt-in drafts view, the groups, and the collections (a group's
+ * "In {collection}" line). Creator chips resolve per id inside the cards,
+ * TanStack-deduped.
+ */
+function usePgBrowserQueries(showDrafts: boolean) {
+  return {
+    collections: useQuery(collectionsStore.listQueryOptions()).data,
+    datasets: useQuery(datasetsStore.listSummariesQueryOptions()).data,
+    drafts: useQuery({
+      ...datasetsStore.listDraftSummariesQueryOptions(),
+      enabled: showDrafts,
+    }).data,
+    groups: useQuery(groupsStore.listQueryOptions()).data,
+  };
+}
+
 // oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 function DatasetsPage() {
   const [search, setSearch] = useState(""),
@@ -508,15 +571,21 @@ function DatasetsPage() {
     [showDrafts, setShowDrafts] = useState(false),
     { datasets, drafts, groups, collections, profiles, derived } =
       useBrowserLightQueries(showDrafts),
+    pg = usePgBrowserQueries(showDrafts),
     collectionNames = new Map<string, string>();
   for (const collection of collections ?? []) {
     collectionNames.set(collection._id, collection.name);
+  }
+  const pgCollectionNames = new Map<string, string>();
+  for (const collection of pg.collections ?? []) {
+    pgCollectionNames.set(collection.id, collection.name);
   }
   const profilesByAuthId = new Map<string, UserProfile>();
   for (const profile of profiles ?? []) {
     profilesByAuthId.set(profile.authId, profile);
   }
-  const allDatasets = withDrafts(datasets, drafts, showDrafts);
+  const allDatasets = withDrafts(datasets, drafts, showDrafts),
+    pgAllDatasets = withPgDrafts(pg.datasets, pg.drafts, showDrafts);
   const componentById = new Map<string, DatasetSummary>();
   for (const dataset of allDatasets) {
     componentById.set(dataset._id, dataset);
@@ -544,6 +613,8 @@ function DatasetsPage() {
   }).data;
   const collectionName = (collectionId: string | undefined) =>
       collectionId === undefined ? undefined : collectionNames.get(collectionId),
+    pgCollectionName = (collectionId: string | null) =>
+      collectionId === null ? undefined : pgCollectionNames.get(collectionId),
     derivedSourceOf = (sourceDatasetId: string): DerivedCardSource | undefined => {
       const component = componentById.get(sourceDatasetId);
       if (component !== undefined) {
@@ -552,9 +623,22 @@ function DatasetsPage() {
       const derivedSource = derivedById.get(sourceDatasetId);
       return derivedSource === undefined ? undefined : { dataset: derivedSource, kind: "derived" };
     },
-    visible = filterBrowserItems(allDatasets, groups, derived, search, sort, typeFilter);
+    // Each store filters + sorts its OWN items (the comparators differ in
+    // shape), then the merge interleaves them (§14.6's split-brain order).
+    convexVisible = filterBrowserItems(allDatasets, groups, derived, search, sort, typeFilter),
+    pgVisible = sortPgBrowserItems(
+      filterPgBrowserItems(buildPgBrowserItems(pgAllDatasets, pg.groups ?? []), search, typeFilter),
+      sort,
+    ),
+    visible = mergeSortedItems(convexVisible, pgVisible, sort, mergedItemKey);
 
-  if (datasets === undefined || groups === undefined || derived === undefined) {
+  if (
+    datasets === undefined ||
+    groups === undefined ||
+    derived === undefined ||
+    pg.datasets === undefined ||
+    pg.groups === undefined
+  ) {
     return (
       <div className="flex justify-center items-center min-h-100">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
@@ -577,7 +661,11 @@ function DatasetsPage() {
         </RouterButton>
       </div>
 
-      {allDatasets.length === 0 && groups.length === 0 && derived.length === 0 ? (
+      {allDatasets.length === 0 &&
+      groups.length === 0 &&
+      derived.length === 0 &&
+      pgAllDatasets.length === 0 &&
+      (pg.groups ?? []).length === 0 ? (
         <Empty className="min-h-80 border">
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -629,7 +717,17 @@ function DatasetsPage() {
             ) : (
               <div className="flex flex-col gap-3">
                 {visible.map((item) =>
-                  item.kind === "group" ? (
+                  isPgBrowserItem(item) ? (
+                    item.kind === "group" ? (
+                      <PgGroupCard
+                        key={item.group.id}
+                        collectionName={pgCollectionName(item.group.collectionId)}
+                        item={item}
+                      />
+                    ) : (
+                      <PgDatasetCard key={item.dataset.id} dataset={item.dataset} />
+                    )
+                  ) : item.kind === "group" ? (
                     <GroupCard
                       key={item.group._id}
                       group={item.group}

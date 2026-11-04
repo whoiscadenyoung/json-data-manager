@@ -75,6 +75,18 @@ function encodeEntryCursor(createdAt: string, id: string): string {
   return btoa(JSON.stringify([createdAt, id]));
 }
 
+/**
+ * The only shapes the cursor's two slots may carry. Both are PostgREST wire
+ * values this store itself wrote: `created_at` is a `timestamptz` rendered by
+ * PostgREST's JSON (ISO-8601 with `Z` or a numeric offset), `id` a uuid.
+ * Pinning them here is the injection guard: the tuple feeds an `or=` filter
+ * STRING, so an unconstrained value (the cursor is URL-shareable) could
+ * smuggle filter grammar — `").or(id.eq.<row>),id.eq.` — past the builder's
+ * bound-parameter path and into the parsed filter.
+ */
+const CURSOR_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+const CURSOR_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function decodeEntryCursor(cursor: string): [string, string] {
   try {
     const decoded: unknown = JSON.parse(atob(cursor));
@@ -82,7 +94,9 @@ function decodeEntryCursor(cursor: string): [string, string] {
       Array.isArray(decoded) &&
       decoded.length === 2 &&
       typeof decoded[0] === "string" &&
-      typeof decoded[1] === "string"
+      typeof decoded[1] === "string" &&
+      CURSOR_TIMESTAMP_RE.test(decoded[0]) &&
+      CURSOR_UUID_RE.test(decoded[1])
     ) {
       return [decoded[0], decoded[1]];
     }
@@ -92,11 +106,17 @@ function decodeEntryCursor(cursor: string): [string, string] {
   throw new Error("Invalid entries page cursor.");
 }
 
-/** The strictly-after (created_at, id) keyset filter for one direction. */
+/**
+ * The strictly-after (created_at, id) keyset filter for one direction. Both
+ * values are DOUBLE-QUOTED (PostgREST's quoted-value form): a quoted token
+ * keeps any character the validated values could still carry (`.`/`+`/`:` in
+ * timestamps) out of the filter grammar's operator/comma delimiters, so the
+ * tuple stays one literal value per comparison.
+ */
 function entryKeysetFilter(createdAt: string, id: string, ascending: boolean): string {
   return ascending
-    ? `and(created_at.eq.${createdAt},id.gt.${id}),created_at.gt.${createdAt}`
-    : `and(created_at.eq.${createdAt},id.lt.${id}),created_at.lt.${createdAt}`;
+    ? `and(created_at.eq."${createdAt}",id.gt."${id}"),created_at.gt."${createdAt}"`
+    : `and(created_at.eq."${createdAt}",id.lt."${id}"),created_at.lt."${createdAt}"`;
 }
 
 /**

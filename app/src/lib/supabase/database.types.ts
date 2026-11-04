@@ -23,6 +23,76 @@ export type Database = {
   };
   public: {
     Tables: {
+      collection_datasets: {
+        Row: {
+          collection_id: string;
+          dataset_id: string;
+          kind: string | null;
+        };
+        ComputedFields: never;
+        Insert: {
+          collection_id: string;
+          dataset_id: string;
+          kind?: string | null;
+        };
+        Update: {
+          collection_id?: string;
+          dataset_id?: string;
+          kind?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "collection_datasets_collection_id_fkey";
+            columns: ["collection_id"];
+            isOneToOne: false;
+            referencedRelation: "collections";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "collection_datasets_dataset_id_fkey";
+            columns: ["dataset_id"];
+            isOneToOne: false;
+            referencedRelation: "datasets";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      collections: {
+        Row: {
+          created_at: string;
+          created_by: string;
+          description: string | null;
+          id: string;
+          name: string;
+          updated_at: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          created_at?: string;
+          created_by?: string;
+          description?: string | null;
+          id?: string;
+          name: string;
+          updated_at?: string;
+        };
+        Update: {
+          created_at?: string;
+          created_by?: string;
+          description?: string | null;
+          id?: string;
+          name?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "collections_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       datasets: {
         Row: {
           bbox: unknown;
@@ -33,6 +103,7 @@ export type Database = {
           entry_count: number;
           feature_count: number;
           geometry_type: string | null;
+          group_id: string | null;
           id: string;
           is_geospatial: boolean;
           json_schema: NonNullable<Json>;
@@ -65,6 +136,7 @@ export type Database = {
           entry_count?: number;
           feature_count?: number;
           geometry_type?: string | null;
+          group_id?: string | null;
           id?: string;
           is_geospatial?: boolean;
           json_schema?: NonNullable<Json>;
@@ -96,6 +168,7 @@ export type Database = {
           entry_count?: number;
           feature_count?: number;
           geometry_type?: string | null;
+          group_id?: string | null;
           id?: string;
           is_geospatial?: boolean;
           json_schema?: NonNullable<Json>;
@@ -124,6 +197,13 @@ export type Database = {
             columns: ["created_by"];
             isOneToOne: false;
             referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "datasets_group_id_fkey";
+            columns: ["group_id"];
+            isOneToOne: false;
+            referencedRelation: "groups";
             referencedColumns: ["id"];
           },
         ];
@@ -298,6 +378,52 @@ export type Database = {
             columns: ["entry_id"];
             isOneToOne: true;
             referencedRelation: "entries";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      groups: {
+        Row: {
+          collection_id: string | null;
+          created_at: string;
+          created_by: string;
+          description: string | null;
+          id: string;
+          name: string;
+          updated_at: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          collection_id?: string | null;
+          created_at?: string;
+          created_by?: string;
+          description?: string | null;
+          id?: string;
+          name: string;
+          updated_at?: string;
+        };
+        Update: {
+          collection_id?: string | null;
+          created_at?: string;
+          created_by?: string;
+          description?: string | null;
+          id?: string;
+          name?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "groups_collection_id_fkey";
+            columns: ["collection_id"];
+            isOneToOne: false;
+            referencedRelation: "collections";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "groups_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
             referencedColumns: ["id"];
           },
         ];

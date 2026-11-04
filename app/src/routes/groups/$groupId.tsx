@@ -23,7 +23,7 @@ import { Download, Layers, MapIcon, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { GroupFormPanel } from "#/features/catalog";
+import { GroupFormPanel, PgGroupPage, isPostgresCatalogId } from "#/features/catalog";
 import {
   applyJoinedFields,
   buildGeoJsonCollection,
@@ -136,6 +136,15 @@ export const Route = createFileRoute("/groups/$groupId")({
   component: GroupDetailPage,
 });
 
+/** The route's origin branch (design doc §14): Postgres groups (uuid ids, stage 3) mount the store-backed page; pre-migration Convex groups keep their Convex surface untouched. */
+function GroupDetailPage() {
+  const { groupId } = Route.useParams();
+  if (isPostgresCatalogId(groupId)) {
+    return <PgGroupPage groupId={groupId} />;
+  }
+  return <ConvexGroupDetailPage groupId={groupId} />;
+}
+
 /**
  * A group's own page: every member dataset's geometries rendered together
  * on one map — points and shapes layered directly, one color per dataset —
@@ -145,9 +154,8 @@ export const Route = createFileRoute("/groups/$groupId")({
  * a collection or standalone.
  */
 // oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
-function GroupDetailPage() {
-  const { groupId } = Route.useParams(),
-    navigate = useNavigate(),
+function ConvexGroupDetailPage({ groupId }: { groupId: string }) {
+  const navigate = useNavigate(),
     convex = useConvex(),
     group = useQuery(api.cms.groups.get, { groupId }),
     parentCollection = useQuery(

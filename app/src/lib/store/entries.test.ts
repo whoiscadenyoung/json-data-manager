@@ -43,6 +43,18 @@ function entryWire(id: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** A tampered cursor's first slot: a timestamp padded out with or= filter grammar (module scope — the lint scoping rule). */
+const INJECTED_TIMESTAMP =
+  '2026-11-03T00:00:00+00:00",id.gt.00000000-0000-4000-8000-000000000000).or(id.eq.00000000-0000-4000-8000-000000000001),created_at.gt.2020-01-01T00:00:00+00:00';
+
+/** A non-uuid second slot (what real row ids looked like before the store had uuid ids) — also rejected. */
+const SPOOFED_SHORT_ID = "e2";
+
+/** A deterministic uuid-shaped id for the fixtures that ride a cursor round trip (module scope — the lint scoping rule). */
+function uuidFixture(suffix: string): string {
+  return `00000000-0000-4000-8000-${suffix.padStart(12, "0")}`;
+}
+
 describe("entries.listPage — the PostgREST keyset pager", () => {
   it("pages newest-first by (created_at, id) and probes one row past the page for exhaustion", async () => {
     const { client, queries } = stubSupabase(() => ({
@@ -71,15 +83,19 @@ describe("entries.listPage — the PostgREST keyset pager", () => {
 
   it("chains the keyset filter from the cursor: strictly-after (created_at, id), no OFFSET", async () => {
     const { client, queries } = stubSupabase(() => ({ data: [entryWire("e9")], error: null }));
-    const cursor = btoa(JSON.stringify(["2026-11-03T00:00:00+00:00", "e2"]));
+    const cursor = btoa(
+      JSON.stringify(["2026-11-03T00:00:00+00:00", "00000000-0000-4000-8000-00000000000e"]),
+    );
     const result = await listPage(
       { cursor, datasetId: "d1", numItems: 2, order: "asc" },
       { supabase: client },
     );
     expect(result).toStrictEqual({ nextCursor: null, rows: [entryWire("e9")] });
     const first = queryAt(queries, 0);
+    // Both tuple values ride QUOTED (PostgREST's quoted-value form) — see
+    // entryKeysetFilter's injection note.
     expect(firstArg(first, "or")).toBe(
-      "and(created_at.eq.2026-11-03T00:00:00+00:00,id.gt.e2),created_at.gt.2026-11-03T00:00:00+00:00",
+      'and(created_at.eq."2026-11-03T00:00:00+00:00",id.gt."00000000-0000-4000-8000-00000000000e"),created_at.gt."2026-11-03T00:00:00+00:00"',
     );
     expect(allArgs(first, "order")).toStrictEqual([
       ["created_at", { ascending: true }],
@@ -90,7 +106,17 @@ describe("entries.listPage — the PostgREST keyset pager", () => {
   it("reports exhaustion after a full page that empties the table (no phantom cursor)", async () => {
     const { client, respond } = stubSupabase();
     // Three rows for a two-row page: the probe row is what proves "more".
-    respond(() => ({ data: [entryWire("e1"), entryWire("e2"), entryWire("e3")], error: null }));
+    // The ids ride the uuid wire shape — the continuation cursor round trips
+    // through the decode guard, which pins both slots to the store's own
+    // wire shapes (the injection note on entryKeysetFilter).
+    respond(() => ({
+      data: [
+        entryWire("e1", { id: uuidFixture("001") }),
+        entryWire("e2", { id: uuidFixture("002") }),
+        entryWire("e3", { id: uuidFixture("003") }),
+      ],
+      error: null,
+    }));
     const full = await listPage(
       { cursor: null, datasetId: "d1", numItems: 2 },
       { supabase: client },
@@ -110,6 +136,35 @@ describe("entries.listPage — the PostgREST keyset pager", () => {
     await expect(
       listPage({ cursor: "not-a-cursor", datasetId: "d1", numItems: 2 }, { supabase: client }),
     ).rejects.toThrowError("Invalid entries page cursor.");
+  });
+
+  it("rejects a tampered cursor whose values are not the store's own wire shapes (the or= injection guard)", async () => {
+    const { client, queries } = stubSupabase();
+    // The cursor is URL-shareable, so its decoded tuple is attacker-controlled
+    // input to a filter STRING. A non-timestamp slot / non-uuid slot — here
+    // smuggling an extra or= arm that would widen the page past the keyset —
+    // is rejected before any filter string is built.
+    const injection = btoa(
+      JSON.stringify([INJECTED_TIMESTAMP, "00000000-0000-4000-8000-00000000000e"]),
+    );
+    await expect(
+      listPage({ cursor: injection, datasetId: "d1", numItems: 2 }, { supabase: client }),
+    ).rejects.toThrowError("Invalid entries page cursor.");
+    const spoofedUuid = btoa(
+      JSON.stringify(["not-a-timestamp", "00000000-0000-4000-8000-00000000000e"]),
+    );
+    await expect(
+      listPage({ cursor: spoofedUuid, datasetId: "d1", numItems: 2 }, { supabase: client }),
+    ).rejects.toThrowError("Invalid entries page cursor.");
+    const spoofedTimestamp = btoa(JSON.stringify(["2026-11-03T00:00:00+00:00", SPOOFED_SHORT_ID]));
+    await expect(
+      listPage({ cursor: spoofedTimestamp, datasetId: "d1", numItems: 2 }, { supabase: client }),
+    ).rejects.toThrowError("Invalid entries page cursor.");
+    // Rejection happens at decode, before any or= filter is built: the
+    // constructed builders carry no `or` operation.
+    for (const query of queries) {
+      expect(query.operations.some((operation) => operation.method === "or")).toBe(false);
+    }
   });
 
   it("queryOptions carry the args in the key (the reactive layer keys pages by cursor)", () => {
