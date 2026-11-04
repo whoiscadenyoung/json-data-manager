@@ -24,12 +24,17 @@
 -- are uploader-owned (the storage service stamps owner/owner_id from the JWT).
 -- ---------------------------------------------------------------------------
 
-insert into storage.buckets (id, name, public)
+-- `public` is deliberately not set: every storage-api schema version defaults
+-- buckets to private, and these four MUST be private (design §6, signed
+-- reads only). Naming the column pinched the migration to one storage schema
+-- version — the CI image's storage.buckets has no `public` column — so the
+-- default carries the intent instead.
+insert into storage.buckets (id, name)
 values
-  ('geometries', 'geometries', false),
-  ('source-files', 'source-files', false),
-  ('tile-archives', 'tile-archives', false),
-  ('marker-sprites', 'marker-sprites', false)
+  ('geometries', 'geometries'),
+  ('source-files', 'source-files'),
+  ('tile-archives', 'tile-archives'),
+  ('marker-sprites', 'marker-sprites')
 on conflict (id) do nothing;
 
 -- The dataset id a bucket object's path belongs to: the first path segment as
