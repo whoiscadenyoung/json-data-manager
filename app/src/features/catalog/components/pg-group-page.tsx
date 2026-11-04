@@ -19,6 +19,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { Layers, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { toast } from "sonner";
 
 import { errorMessage } from "#/lib/errors";
@@ -35,13 +36,24 @@ import { PgMemberList } from "./pg-member-list";
  * The Postgres edition of `/groups/$groupId` (the route branches on the id's
  * origin): the group's member datasets — tags + trigger-maintained counts on
  * every row, per the browser's info parity — with the group's own management
- * (edit, delete, add datasets directly). Works whether the group floats
+ * (edit, delete, add datasets directly) and, since stage 5 (#204), the
+ * member export control — COMPOSED BY THE ROUTE (`renderExport`): the
+ * datasets feature's PgGroupExport over the PG seam, mounted by the route
+ * so the catalog feature never imports `#/features/datasets` back (the
+ * cross-feature import graph must stay acyclic — the route layer composes
+ * features, features never close cycles). Works whether the group floats
  * standalone or lives in a collection; the breadcrumb names the parent
  * collection when there is one.
  *
- * Absent on the PG page rather than broken: the combined member map and the
- * export flows (the maps/export workstreams' PG catalog-target slices).
+ * Absent on the PG page rather than broken: the combined member map (the
+ * maps workstream's PG catalog-target slice).
  */
+
+/** What the route-composed export control receives: the group's name and its member summary rows (the page computes both). */
+export interface PgGroupExportSlot {
+  members: DatasetSummaryRow[];
+  name: string;
+}
 
 function PgGroupNotFoundCard() {
   return (
@@ -61,7 +73,13 @@ function PgGroupNotFoundCard() {
 
 /** The group page's content, once the group read has landed. */
 // oxlint-disable-next-line eslint/complexity -- the page reads both stores' catalog rows and composes the store seams; ad hoc splitting risks these render paths (the same #82 phase-2 note the sibling Convex pages carry).
-function PgGroupPageBody({ groupId }: { groupId: string }) {
+function PgGroupPageBody({
+  groupId,
+  renderExport,
+}: {
+  groupId: string;
+  renderExport?: (group: PgGroupExportSlot) => ReactNode;
+}) {
   const queryClient = useQueryClient(),
     navigate = useNavigate(),
     groupQuery = useQuery(groupsStore.getQueryOptions({ groupId })),
@@ -204,6 +222,11 @@ function PgGroupPageBody({ groupId }: { groupId: string }) {
             <Plus className="mr-2 h-4 w-4" />
             Add dataset
           </Button>
+          {/* Stage 5 (#204): the member export control — composed by the
+              route (see the module doc's acyclic-graph note). */}
+          {renderExport === undefined
+            ? null
+            : renderExport({ members: datasetsOfGroup, name: group.name })}
         </div>
       </div>
 
@@ -259,6 +282,12 @@ function PgGroupPageBody({ groupId }: { groupId: string }) {
 }
 
 /** The Postgres edition of `/groups/$groupId`. */
-export function PgGroupPage({ groupId }: { groupId: string }) {
-  return <PgGroupPageBody groupId={groupId} />;
+export function PgGroupPage({
+  groupId,
+  renderExport,
+}: {
+  groupId: string;
+  renderExport?: (group: PgGroupExportSlot) => ReactNode;
+}) {
+  return <PgGroupPageBody groupId={groupId} renderExport={renderExport} />;
 }

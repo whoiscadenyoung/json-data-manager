@@ -66,7 +66,8 @@ import {
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { PgPublishDialog, mintPublishKey } from "#/features/publishing";
+import { PgAnalysisPanel } from "#/features/analysis";
+import { PgTransformBuilder, PgPublishDialog, mintPublishKey } from "#/features/publishing";
 import { QueryErrorBoundary } from "@/components/query-error-boundary";
 import { useSession } from "@/integrations/supabase/provider";
 import type { DatasetEntryRow } from "@/lib/dataset-rows";
@@ -93,6 +94,7 @@ import {
 import { useSplitReferenceLabels } from "../lib/pg-reference-labels";
 import { EntriesTable } from "./entries-table";
 import { EntryFormPanel } from "./entry-form-panel";
+import { PgDatasetExport } from "./pg-dataset-export";
 import { PgDatasetOverview } from "./pg-dataset-overview";
 import { SchemaVisualizer } from "./schema-visualizer";
 
@@ -100,13 +102,16 @@ import { SchemaVisualizer } from "./schema-visualizer";
  * The dataset detail page's Postgres edition (design §14: surfaces split on
  * where the dataset was created — uuid ids were minted by the new backend).
  *
- * Surface set: header (title/description, lock + visibility controls, the
+ * Surface set: header (title/description, lock + visibility, export, the
  * group breadcrumb), the Overview tab (details + collection/group management
  * — stage 3), the Data tab over `search_entries` (server-side
  * sort/filter/search in the URL, keyset pages), Structure (client-side
- * schema rendering), and the create/edit/delete row flows. The Convex-only
- * tabs (Transform, Analyze, History) and the map/tile path belong to stages
- * 2/4/5/7 and are absent here rather than broken.
+ * schema rendering), the create/edit/delete row flows, the publish-version
+ * dialog (stage 4), and — stage 5 — the Transform tab (lookup specs over
+ * the store's derived registry) and the Analyze tab (SQL over the PG
+ * row-resolution seam). History remains the Convex-side surface (its PG
+ * reads belong to the versions workstream's UI slice); the map/tile path
+ * landed with stage 2 and mounts from the maps feature.
  */
 
 /** The route search the PG page reads (structural; the route owns the zod schema — the view union mirrors it exactly so the merge-form navigation typechecks). */
@@ -278,9 +283,15 @@ function PostgresDatasetBody({
     dataset = datasetQuery.data,
     // The active tab rides ?view= (merge-form navigations only); "overview"
     // is the default and deliberately ABSENT from the URL (the ui-polish
-    // rule). The Convex-only tabs' tokens (analyze/history/transform) degrade
-    // to overview — the PG page doesn't mount them.
-    view = search.view === "entries" || search.view === "structure" ? search.view : "overview",
+    // rule). Stage 5 mounts transform/analyze; "history" still degrades to
+    // overview (its PG reads belong to the versions workstream's UI slice).
+    view =
+      search.view === "entries" ||
+      search.view === "structure" ||
+      search.view === "transform" ||
+      search.view === "analyze"
+        ? search.view
+        : "overview",
     // The RPC validates sort/filter keys against the dataset's declared
     // `properties` column — the SAME set here (the row's column, not a
     // schema re-derivation). Until the row lands the set is empty: one
@@ -465,6 +476,11 @@ function PostgresDatasetBody({
             <Plus className="h-4 w-4 mr-2" />
             Create Entry
           </Button>
+          {/* Stage 5 (#204): the export dialog over the PG seam — whole-dataset
+              reads through the row-resolution seam, signed URLs for the
+              oversized geometry payloads, joined fields from the store's
+              registry. */}
+          <PgDatasetExport dataset={dataset} />
           <Button
             disabled={lockedForViewer}
             onClick={() => {
@@ -543,6 +559,8 @@ function PostgresDatasetBody({
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="entries">Data ({displayCount})</TabsTrigger>
           <TabsTrigger value="structure">Structure</TabsTrigger>
+          <TabsTrigger value="transform">Transform</TabsTrigger>
+          <TabsTrigger value="analyze">Analyze</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6">
@@ -619,6 +637,23 @@ function PostgresDatasetBody({
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="transform">
+          {/* Stage 5 (#204): lookup transforms over the store's derived
+              registry — specs write through `#/lib/store/derived`, the
+              preview reads rows through the PG seam. */}
+          <PgTransformBuilder
+            columns={Object.keys(schemaPropertiesOf(dataset))}
+            datasetTitle={dataset.title}
+            schemaId={schemaId}
+          />
+        </TabsContent>
+
+        <TabsContent value="analyze">
+          {/* Stage 5 (#204): freeform read-only SQL — the same worker and
+              DuckDB-WASM engine as the Convex tab, fed from the PG seam. */}
+          <PgAnalysisPanel dataset={dataset} datasetTitle={dataset.title} schemaId={schemaId} />
         </TabsContent>
 
         <TabsContent value="structure" className="space-y-6">

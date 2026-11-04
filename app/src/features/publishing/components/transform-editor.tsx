@@ -69,8 +69,8 @@ interface InitialDraft {
 
 const EMPTY_DRAFT: InitialDraft = { description: "", operations: [], title: "" };
 
-/** A "pick a column" select that keeps a stale stored value visible (marked) so health issues are re-fixable, not invisible. */
-function ColumnSelect({
+/** A "pick a column" select that keeps a stale stored value visible (marked) so health issues are re-fixable, not invisible. Exported for the PG editor (stage 5), which reuses the form controls and wires its own store queries. */
+export function ColumnSelect({
   columns,
   id,
   label,
@@ -112,8 +112,8 @@ function ColumnSelect({
   );
 }
 
-/** A select's option list: the declared columns, with a stored-but-now-missing selection kept visible so it can be re-picked. */
-function withSelection(columns: string[], selected: string): string[] {
+/** A select's option list: the declared columns, with a stored-but-now-missing selection kept visible so it can be re-picked. Exported for the PG editor (stage 5), which shares the control row. */
+export function withSelection(columns: string[], selected: string): string[] {
   return selected === NO_COLUMN || columns.includes(selected) ? columns : [selected, ...columns];
 }
 
@@ -276,7 +276,7 @@ function RelatedDatasetPickerSheet({
 }
 
 /** The step's title row with its remove button. */
-function StepHeader({
+export function StepHeader({
   index,
   onRemove,
   removable,
@@ -304,7 +304,7 @@ function StepHeader({
 }
 
 /** The two join-key pickers: one column on this dataset, one on the related dataset (select when its structure is declared, free text when it is a derived dataset). */
-function KeyColumnsRow({
+export function KeyColumnsRow({
   index,
   lookupColumns,
   lookupKey,
@@ -367,7 +367,7 @@ function KeyColumnsRow({
 }
 
 /** The related-dataset row: the picker button, the derived-source marker, and the namespacing note. */
-function DatasetSourceRow({
+export function DatasetSourceRow({
   chosenTitle,
   loading,
   lookupDatasetId,
@@ -412,7 +412,7 @@ function DatasetSourceRow({
 }
 
 /** The free-text key column for datasets without a declared structure to suggest from. */
-function FreeTextKeyColumn({
+export function FreeTextKeyColumn({
   index,
   value,
   onChange,
@@ -437,7 +437,7 @@ function FreeTextKeyColumn({
 }
 
 /** Which enrichment fields arrive: every field but the join key (the engine's omit-means-all), or an explicit pick. */
-function FieldsPicker({
+export function FieldsPicker({
   fields,
   fieldsMode,
   loadingColumns,
@@ -507,7 +507,7 @@ function FieldsPicker({
 }
 
 /** The two §6 policy selects: the match policy and the duplicate-key policy (decided, not implicit). */
-function PolicySelects({
+export function PolicySelects({
   index,
   match,
   onChange,
@@ -953,8 +953,8 @@ function isRecordShaped(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** The stored spec's operation count, read structurally (the derivedSpec tolerance rule) — what the builder's drop-nothing check compares against. */
-function storedOperationCount(spec: unknown): number {
+/** The stored spec's operation count, read structurally (the derivedSpec tolerance rule) — what the builder's drop-nothing check compares against. Exported for the PG editor (stage 5), which enforces the same sql-step guard. */
+export function storedOperationCount(spec: unknown): number {
   if (!isRecordShaped(spec)) {
     return 0;
   }
