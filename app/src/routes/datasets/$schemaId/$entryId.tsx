@@ -1,6 +1,5 @@
-import type { Geometry, ReferenceField } from "@caden/json-cms/react";
-import { computeBbox, getReferenceFields, useResolvedGeometries } from "@caden/json-cms/react";
-import { Badge } from "@caden/ui/components/badge";
+import type { ReferenceField } from "@caden/json-cms/react";
+import { getReferenceFields, useResolvedGeometries } from "@caden/json-cms/react";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -16,24 +15,22 @@ import {
   CardHeader,
   CardTitle,
 } from "@caden/ui/components/card";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@caden/ui/components/collapsible";
-import { Map, MapClusterLayer, MapGeoJSON } from "@caden/ui/components/map";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
-import { ArrowLeft, Calendar, ChevronDown, Code2, FileJson, MapPinned } from "lucide-react";
-import { useState } from "react";
+import { ArrowLeft, Calendar, FileJson } from "lucide-react";
 
-import { buildLabelsByField, isRecord, referencedEntryIds } from "#/features/datasets";
-import { bboxFeature, buildPointFeatureCollection } from "#/features/maps";
+import {
+  buildLabelsByField,
+  GeometryCard,
+  isRecord,
+  PostgresEntryDetailsPage,
+  referencedEntryIds,
+} from "#/features/datasets";
 import { QueryErrorBoundary } from "@/components/query-error-boundary";
 import { RouterButton } from "@/components/router-button";
-import type { DatasetGeometryRow } from "@/lib/dataset-rows";
 import { useDatasetEntryGeometryRow, useDatasetEntryRow } from "@/lib/dataset-rows-react";
+import { isPostgresDatasetId } from "@/lib/dataset-source";
 import { formatBytes, formatPropertyValue } from "@/lib/format";
 
 import { api } from "../../../../convex/_generated/api";
@@ -42,22 +39,28 @@ export const Route = createFileRoute("/datasets/$schemaId/$entryId")({
   component: EntryDetailPage,
 });
 
+function EntryDetailPage() {
+  // Transitional split (design doc §14): uuid ids were minted by the
+  // Postgres backend — their entry details read through the store modules.
+  // Convex datasets keep this page's original Convex reads, unchanged.
+  const { entryId, schemaId } = Route.useParams();
+  if (isPostgresDatasetId(schemaId)) {
+    return <PostgresEntryDetailsPage entryId={entryId} schemaId={schemaId} />;
+  }
+  // Stage 8 (#104): a denied by-id read (a foreign entry, a draft dataset's
+  // row) THROWS from the raw subscription — the boundary renders the same
+  // card a deleted entry gets, never the router's error screen. `resetKey`
+  // clears it when either route param changes (issue #135, defect 6).
+  return (
+    <QueryErrorBoundary fallback={<EntryDetailNotFoundCard />} resetKey={`${schemaId}:${entryId}`}>
+      {/* oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup. */}
+      <EntryDetailBody />
+    </QueryErrorBoundary>
+  );
+}
+
 type ReferencingEntry = FunctionReturnType<typeof api.cms.entries.listReferencingEntries>[number];
-// The entry's own row and geometry row resolve through the seam's point reads.
-type GeometryRowDoc = DatasetGeometryRow;
 
-/** Paints matching the dataset map's feature styling, so an entry reads the same in both places. */
-const FEATURE_FILL_PAINT = { "fill-color": "#3b82f6", "fill-opacity": 0.2 },
-  FEATURE_LINE_PAINT = { "line-color": "#3b82f6", "line-width": 2 },
-  // Dashed rectangle framing the geometry's bounding box, matching the
-  // dataset map's extent outline.
-  BBOX_LINE_PAINT = {
-    "line-color": "#3b82f6",
-    "line-width": 1.5,
-    "line-dasharray": [2, 1.5] as number[],
-  };
-
-/** One reference field's resolved target link(s) — a dash when the field is empty. */
 function ReferenceFieldLinks({
   field,
   targetIds,
@@ -197,90 +200,6 @@ function PropertiesTable({ data }: { data: unknown }) {
   );
 }
 
-/**
- * The right rail for a geospatial entry: a minimap framing the geometry and
- * its bounding box, over a collapsible raw-GeoJSON view. `geometry` arrives
- * async (inline rows resolve instantly; storage-backed ones after a fetch) —
- * the frame renders immediately with the row's type badge and fills in.
- */
-function GeometryCard({ row, geometry }: { row: GeometryRowDoc; geometry: Geometry | undefined }) {
-  const [geoJsonOpen, setGeoJsonOpen] = useState(false),
-    bbox = geometry ? computeBbox(geometry) : undefined,
-    // Fill/line layers draw nothing for point geometries — those render via
-    // the circle-layer cluster component instead (same split as the dataset map).
-    isPointLike =
-      geometry !== undefined && (geometry.type === "Point" || geometry.type === "MultiPoint");
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <MapPinned className="h-5 w-5" />
-          Geometry
-        </CardTitle>
-        <CardDescription>
-          <Badge variant="outline">{row.type}</Badge>
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="relative h-56 overflow-hidden rounded-lg border border-border">
-          {geometry && (
-            <Map bounds={bbox} fitBoundsOptions={{ padding: 24 }} className="h-full w-full">
-              {bbox && (
-                <MapGeoJSON
-                  data={bboxFeature(bbox)}
-                  id="entry-bbox"
-                  fillPaint={false}
-                  linePaint={BBOX_LINE_PAINT}
-                />
-              )}
-              {isPointLike ? (
-                <MapClusterLayer<{ entryId: string }>
-                  data={buildPointFeatureCollection<{ entryId: string }>([
-                    { id: row._id, geometry, properties: { entryId: row.entryId } },
-                  ])}
-                />
-              ) : (
-                <MapGeoJSON
-                  data={geometry}
-                  fillPaint={FEATURE_FILL_PAINT}
-                  linePaint={FEATURE_LINE_PAINT}
-                />
-              )}
-            </Map>
-          )}
-        </div>
-        <Collapsible
-          open={geoJsonOpen}
-          onOpenChange={(next) => {
-            setGeoJsonOpen(next);
-          }}
-        >
-          <CollapsibleTrigger className="flex w-full cursor-pointer items-center justify-between rounded-md border px-3 py-2 text-sm font-medium transition-colors hover:bg-muted/50">
-            <span className="flex items-center gap-2">
-              <Code2 className="h-4 w-4" />
-              GeoJSON
-            </span>
-            <ChevronDown
-              className="size-4 text-muted-foreground transition-transform"
-              style={{ rotate: geoJsonOpen ? "180deg" : undefined }}
-            />
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="mt-2 max-h-96 overflow-auto rounded-md bg-muted p-3">
-              {geometry === undefined ? (
-                <p className="text-xs text-muted-foreground">Loading geometry…</p>
-              ) : (
-                <pre className="text-xs">{JSON.stringify(geometry, null, 2)}</pre>
-              )}
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
-      </CardContent>
-    </Card>
-  );
-}
-
 /** The same card a null read gets — the denial fallback too (stage 8: a foreign draft/author-only id reads exactly as a missing one). */
 function EntryDetailNotFoundCard() {
   return (
@@ -293,20 +212,6 @@ function EntryDetailNotFoundCard() {
         <RouterButton to="/datasets">Back to Datasets</RouterButton>
       </CardContent>
     </Card>
-  );
-}
-
-function EntryDetailPage() {
-  // Stage 8 (#104): a denied by-id read (a foreign entry, a draft dataset's
-  // row) THROWS from the raw subscription — the boundary renders the same
-  // card a deleted entry gets, never the router's error screen. `resetKey`
-  // clears it when either route param changes (issue #135, defect 6).
-  const { entryId, schemaId } = Route.useParams();
-  return (
-    <QueryErrorBoundary fallback={<EntryDetailNotFoundCard />} resetKey={`${schemaId}:${entryId}`}>
-      {/* oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup. */}
-      <EntryDetailBody />
-    </QueryErrorBoundary>
   );
 }
 

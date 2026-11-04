@@ -1,0 +1,527 @@
+import type { GeometryTypeArg } from "@caden/data-core/geojson";
+import { queryOptions } from "@tanstack/react-query";
+
+import {
+  clientOf,
+  queryRow,
+  queryRows,
+  STORAGE_SIGNED_URL_TTL_SECONDS,
+  type StoreOptions,
+} from "./client";
+
+/**
+ * The datasets store (design doc §8.1) — the PG counterpart of today's
+ * `api.cms.schemas.*` reads/writes: `list` / `listSummaries` /
+ * `listDraftSummaries` / `get` / `create` / `update` / `setEditPolicy` /
+ * `setVisibility` / `remove` / `markImportComplete` / `getSourceFileUrl` /
+ * `maxTileCacheVersion`, over the `public.datasets` table (DDL §3.2).
+ *
+ * Identity and authorization live in the database, not here: RLS filters
+ * every read (`can_view_dataset` — drafts and author-only rows are invisible
+ * to non-creators, so "not found" is a clean empty/null) and gates every
+ * write (`can_edit_dataset`). The creator-only edit-policy/visibility FLIP
+ * rule (ADR 0010) is enforced by the RLS layer per the design's policy
+ * matrix — this module is a plain table writer.
+ *
+ * NOTE: the row interfaces here are narrow locals typed from the design
+ * doc's DDL, not the generated `database.types.ts` (see `./client`).
+ *
+ * NOTE (reconciliation): the DDL sketch defines no `ui_schema` column, so
+ * the component's RJSF ui-schema payload has nowhere to land yet — `create`
+ * and `update` deliberately don't accept it. The entry-form surface needs
+ * that column (or a documented fold into `json_schema`) before it migrates;
+ * flagged for the schema/RPC workstream.
+ */
+
+/**
+ * The geometry type names the `datasets.geometry_type` check constraint
+ * allows (design §3.2) — data-core's six plus GeometryCollection, which the
+ * DDL keeps legal even though the app never writes one (data-core excludes
+ * it: different geometry types go in different datasets).
+ */
+export type DatasetGeometryType = GeometryTypeArg | "GeometryCollection";
+
+/**
+ * The dataset's expand-only bbox envelope (`datasets.bbox`, design §3.2).
+ * PostgREST renders the PostGIS polygon as GeoJSON; only consumers in the
+ * map workstream (stage 2) read it, and they decide the final projection
+ * shape — until then it stays this honest passthrough.
+ */
+export interface DatasetBoundingBox {
+  type: "Polygon";
+  coordinates: number[][][];
+}
+
+/** The `datasets` wire shape — camelCase aliases over the DDL's columns (§3.2). */
+export interface DatasetRow {
+  id: string;
+  title: string;
+  description: string | null;
+  /** The stored JSON Schema object (the component's `schema` payload). */
+  jsonSchema: unknown;
+  /** Declared property keys (array of strings) — the search trigger's and `search_entries` key validation's source of truth (§3.2). Maintained by the write functions below from the schema's `properties`. */
+  properties: string[];
+  isGeospatial: boolean;
+  geometryType: DatasetGeometryType | null;
+  entryCount: number;
+  featureCount: number;
+  bbox: DatasetBoundingBox | null;
+  maxGeometryRowBytes: number | null;
+  editPolicy: "open" | "locked";
+  publishedVisibility: "everyone" | "author";
+  lifecycle: "draft" | "published";
+  lineage: unknown;
+  source: unknown;
+  simplifyGeometry: boolean;
+  sourceFileName: string | null;
+  sourceFileSize: number | null;
+  sourceFilePath: string | null;
+  mapTileCacheVersion: number;
+  mapTileArchivePath: string | null;
+  mapTileArchiveBytes: number | null;
+  mapTileArchiveMaxZoom: number | null;
+  mapTileArchiveBuiltVersion: number | null;
+  mapTileArchiveFormat: number | null;
+  groupId: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * The list-page projection (the `toSchemaSummary` shape, issue #53 parity):
+ * everything the browser cards, pickers, and lists read — NOT the heavy
+ * `json_schema` payload. `fieldCount` is derived from the declared
+ * `properties` column exactly as the component derived it from the payload.
+ * `mapTileArchiveFormat` is exposed RAW: the current-format comparison is
+ * the tile workstream's job (stage 2), which owns the format constant —
+ * mirroring it here would risk the drift the #125 note warns about.
+ */
+export interface DatasetSummaryRow {
+  id: string;
+  title: string;
+  description: string | null;
+  fieldCount: number;
+  isGeospatial: boolean;
+  geometryType: DatasetGeometryType | null;
+  entryCount: number;
+  featureCount: number;
+  bbox: DatasetBoundingBox | null;
+  editPolicy: "open" | "locked";
+  publishedVisibility: "everyone" | "author";
+  lifecycle: "draft" | "published";
+  lineage: unknown;
+  source: unknown;
+  groupId: string | null;
+  createdBy: string;
+  createdAt: string;
+  mapTileCacheVersion: number;
+  mapTileArchiveBuiltVersion: number | null;
+  mapTileArchiveBytes: number | null;
+  mapTileArchiveMaxZoom: number | null;
+  mapTileArchiveFormat: number | null;
+}
+
+const SUMMARY_SELECT = [
+  "id",
+  "title",
+  "description",
+  "properties",
+  "isGeospatial:is_geospatial",
+  "geometryType:geometry_type",
+  "entryCount:entry_count",
+  "featureCount:feature_count",
+  "bbox",
+  "editPolicy:edit_policy",
+  "publishedVisibility:published_visibility",
+  "lifecycle",
+  "lineage",
+  "source",
+  "groupId:group_id",
+  "createdBy:created_by",
+  "createdAt:created_at",
+  "mapTileCacheVersion:map_tile_cache_version",
+  "mapTileArchiveBuiltVersion:map_tile_archive_built_version",
+  "mapTileArchiveBytes:map_tile_archive_bytes",
+  "mapTileArchiveMaxZoom:map_tile_archive_max_zoom",
+  "mapTileArchiveFormat:map_tile_archive_format",
+].join(",");
+
+/** The full row: the summary columns plus the heavy payload and archive bookkeeping. */
+const FULL_SELECT = [
+  "id",
+  "title",
+  "description",
+  "jsonSchema:json_schema",
+  "properties",
+  "isGeospatial:is_geospatial",
+  "geometryType:geometry_type",
+  "entryCount:entry_count",
+  "featureCount:feature_count",
+  "bbox",
+  "maxGeometryRowBytes:max_geometry_row_bytes",
+  "editPolicy:edit_policy",
+  "publishedVisibility:published_visibility",
+  "lifecycle",
+  "lineage",
+  "source",
+  "simplifyGeometry:simplify_geometry",
+  "sourceFileName:source_file_name",
+  "sourceFileSize:source_file_size",
+  "sourceFilePath:source_file_path",
+  "mapTileCacheVersion:map_tile_cache_version",
+  "mapTileArchivePath:map_tile_archive_path",
+  "mapTileArchiveBytes:map_tile_archive_bytes",
+  "mapTileArchiveMaxZoom:map_tile_archive_max_zoom",
+  "mapTileArchiveBuiltVersion:map_tile_archive_built_version",
+  "mapTileArchiveFormat:map_tile_archive_format",
+  "groupId:group_id",
+  "createdBy:created_by",
+  "createdAt:created_at",
+  "updatedAt:updated_at",
+].join(",");
+
+/** Widest bound one catalog list read may ask for (the `CATALOG_READ_LIMIT` parity — Convex's per-execution cap is gone, but an unbounded catalog select is still an unbounded read). */
+export const CATALOG_READ_LIMIT = 1000;
+
+interface DatasetSummaryWire extends Omit<DatasetSummaryRow, "fieldCount"> {
+  properties: string[] | null;
+}
+
+/** Derives `fieldCount` from the declared `properties` column (the #53 projection rule). */
+function summaryOf(row: DatasetSummaryWire): DatasetSummaryRow {
+  const { properties, ...rest } = row;
+  return { fieldCount: properties === null ? 0 : properties.length, ...rest };
+}
+
+// ---------------------------------------------------------------------------
+// Reads (TanStack Query `queryOptions` per function, design §8.1)
+// ---------------------------------------------------------------------------
+
+/** The full catalog rows, newest first — `api.cms.schemas.list` parity. */
+export function listQueryOptions(options?: StoreOptions) {
+  return queryOptions({
+    queryKey: ["pg:datasets", "list", CATALOG_READ_LIMIT],
+    queryFn: async () =>
+      await queryRows<DatasetRow>(
+        clientOf(options)
+          .from("datasets")
+          .select(FULL_SELECT)
+          .order("created_at", { ascending: false })
+          .limit(CATALOG_READ_LIMIT),
+      ),
+  });
+}
+
+/** The published-view summary projection — `api.cms.schemas.listSummaries` parity. Drafts are RLS-invisible here (they read as absent, the recorded lifecycle rule). */
+export function listSummariesQueryOptions(options?: StoreOptions) {
+  return queryOptions({
+    queryKey: ["pg:datasets", "listSummaries", CATALOG_READ_LIMIT],
+    queryFn: async () => {
+      const rows = await queryRows<DatasetSummaryWire>(
+        clientOf(options)
+          .from("datasets")
+          .select(SUMMARY_SELECT)
+          .order("created_at", { ascending: false })
+          .limit(CATALOG_READ_LIMIT),
+      );
+      return rows.map(summaryOf);
+    },
+  });
+}
+
+/** The opt-in drafts view — `api.cms.schemas.listDraftSummaries` parity; creator scoping rides RLS. */
+export function listDraftSummariesQueryOptions(options?: StoreOptions) {
+  return queryOptions({
+    queryKey: ["pg:datasets", "listDraftSummaries", CATALOG_READ_LIMIT],
+    queryFn: async () => {
+      const rows = await queryRows<DatasetSummaryWire>(
+        clientOf(options)
+          .from("datasets")
+          .select(SUMMARY_SELECT)
+          .eq("lifecycle", "draft")
+          .order("created_at", { ascending: false })
+          .limit(CATALOG_READ_LIMIT),
+      );
+      return rows.map(summaryOf);
+    },
+  });
+}
+
+/** One dataset's full row, or null when RLS hides it — `api.cms.schemas.get` parity. */
+export function getQueryOptions(args: { datasetId: string }, options?: StoreOptions) {
+  return queryOptions({
+    queryKey: ["pg:datasets", "get", args],
+    queryFn: async () =>
+      await queryRow<DatasetRow>(
+        clientOf(options).from("datasets").select(FULL_SELECT).eq("id", args.datasetId).limit(1),
+      ),
+  });
+}
+
+/**
+ * A fetchable URL for the dataset's retained import source file
+ * (`source-files` bucket), or null when there is none —
+ * `api.cms.schemas.getSourceFileUrl` parity (source-file retention, §3.2).
+ */
+export function getSourceFileUrlQueryOptions(args: { datasetId: string }, options?: StoreOptions) {
+  return queryOptions({
+    queryKey: ["pg:datasets", "getSourceFileUrl", args],
+    queryFn: async () => {
+      const row = await queryRow<{ sourceFilePath: string | null }>(
+        clientOf(options)
+          .from("datasets")
+          .select("sourceFilePath:source_file_path")
+          .eq("id", args.datasetId)
+          .limit(1),
+      );
+      if (row === null || row.sourceFilePath === null) {
+        return null;
+      }
+      const { data, error } = await clientOf(options)
+        .storage.from("source-files")
+        .createSignedUrl(row.sourceFilePath, STORAGE_SIGNED_URL_TTL_SECONDS);
+      if (error !== null) {
+        throw new Error(error.message);
+      }
+      return data === null ? null : data.signedUrl;
+    },
+  });
+}
+
+/**
+ * The largest `map_tile_cache_version` across the VISIBLE datasets — the
+ * persisted-light-state cache buster (`api.cms.schemas.maxTileCacheVersion`
+ * parity, issue #58 part 5). One indexed row instead of a fold.
+ */
+export function maxTileCacheVersionQueryOptions(options?: StoreOptions) {
+  return queryOptions({
+    queryKey: ["pg:datasets", "maxTileCacheVersion"],
+    queryFn: async () => {
+      const row = await queryRow<{ mapTileCacheVersion: number }>(
+        clientOf(options)
+          .from("datasets")
+          .select("mapTileCacheVersion:map_tile_cache_version")
+          .order("map_tile_cache_version", { ascending: false })
+          .limit(1),
+      );
+      return row === null ? 0 : row.mapTileCacheVersion;
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Writes (plain functions; features wrap them in useMutation + invalidation)
+// ---------------------------------------------------------------------------
+
+/** What a dataset write may set at create time — the component `createSchema` arg set, PG column names. */
+export interface CreateDatasetArgs {
+  /** The JSON Schema object. `title` is the only required field (the ui-polish rule); `description` rides the schema as it does in the component. Typed `object` (what the schema editor's parsed payload is); `create` validates + narrows it. */
+  schema: object;
+  /** Catalog kind; omit for a standard dataset. */
+  kind?: "standard" | "geospatial";
+  geometryType?: DatasetGeometryType;
+  simplifyGeometry?: boolean;
+  /** Host-flow-only, as in the component: only the import flow may create a draft. */
+  lifecycle?: "draft" | "published";
+  /** Frozen-version lineage (host flows only). */
+  lineage?: unknown;
+  /** Bound-dataset marker (host flows only). */
+  source?: { name: string };
+  publishedVisibility?: "everyone" | "author";
+}
+
+/** The declared property keys of a stored JSON Schema — `Object.keys(schema.properties)`, the same derivation the entries table's columns use. */
+function declaredProperties(schema: Record<string, unknown>): string[] {
+  const properties = schema.properties;
+  if (typeof properties !== "object" || properties === null || Array.isArray(properties)) {
+    return [];
+  }
+  return Object.keys(properties);
+}
+
+/** The component's create-time schema validation (issue #129's two client-facing errors). */
+function assertValidSchemaPayload(schema: unknown): asserts schema is Record<string, unknown> {
+  if (typeof schema !== "object" || schema === null || Array.isArray(schema)) {
+    throw new Error("Schema must be an object with a non-empty 'title' property.");
+  }
+  if (!("title" in schema) || schema.title === undefined || schema.title === "") {
+    throw new Error("Schema must have a non-empty 'title' property");
+  }
+}
+
+/** The description a schema payload carries, or null to clear it (a present-but-non-string value clears — the component's `in`-check reads as "no description"). */
+function schemaDescription(schema: Record<string, unknown>): string | null {
+  return typeof schema.description === "string" ? schema.description : null;
+}
+
+/**
+ * Creates a dataset. Returns the new row's id (`createSchema` parity).
+ * `title`/`description` fold out of the schema payload exactly as the
+ * component does; `properties` derives from the schema's declared keys
+ * (§3.2 — the search trigger and `search_entries` key validation read this
+ * column, so a schema without a matching `properties` array would leave
+ * every sort/filter key "undeclared").
+ */
+export async function create(args: CreateDatasetArgs, options?: StoreOptions): Promise<string> {
+  assertValidSchemaPayload(args.schema);
+  // `source`/`lineage` stay ABSENT when not given (host-flow-only fields —
+  // the component's create omits them for ordinary datasets too).
+  const insert: Record<string, unknown> = {
+    description: schemaDescription(args.schema),
+    geometry_type: args.geometryType ?? null,
+    is_geospatial: args.kind === "geospatial",
+    json_schema: args.schema,
+    lifecycle: args.lifecycle ?? "published",
+    properties: declaredProperties(args.schema),
+    published_visibility: args.publishedVisibility ?? "everyone",
+    simplify_geometry: args.simplifyGeometry ?? false,
+    title: args.schema.title,
+  };
+  if (args.lineage !== undefined) {
+    insert.lineage = args.lineage;
+  }
+  if (args.source !== undefined) {
+    insert.source = args.source;
+  }
+  const row = await queryRow<{ id: string }>(
+    clientOf(options).from("datasets").insert(insert).select("id").single(),
+  );
+  if (row === null) {
+    throw new Error("Dataset insert returned no row.");
+  }
+  return row.id;
+}
+
+/** Metadata/structure update — the `updateSchema` arg set (see the header's ui-schema reconciliation note). */
+export interface UpdateDatasetArgs {
+  datasetId: string;
+  title?: string;
+  description?: string;
+  /** Replaces the stored JSON Schema; title/description fold out of it as at create time. */
+  schema?: object;
+}
+
+/**
+ * Updates a dataset's metadata and/or schema. A schema replacement also
+ * rewrites `title`/`description` from the payload and re-derives the
+ * declared `properties` (the search vector and key validation follow the
+ * schema), mirroring `buildSchemaUpdatePatch`.
+ */
+export async function update(args: UpdateDatasetArgs, options?: StoreOptions): Promise<void> {
+  const patch: Record<string, unknown> = {};
+  if (args.schema !== undefined) {
+    assertValidSchemaPayload(args.schema);
+    patch.json_schema = args.schema;
+    patch.title = args.schema.title;
+    patch.description = schemaDescription(args.schema);
+    patch.properties = declaredProperties(args.schema);
+  } else {
+    if (args.title !== undefined) {
+      patch.title = args.title;
+    }
+    if (args.description !== undefined) {
+      patch.description = args.description;
+    }
+  }
+  await queryRows<unknown>(
+    clientOf(options).from("datasets").update(patch).eq("id", args.datasetId).select("id"),
+  );
+}
+
+/** Creator-side edit policy (ADR 0010) — `api.cms.schemas.setEditPolicy` parity; the creator-only flip rule is RLS's (design §4 policy matrix). */
+export async function setEditPolicy(
+  args: { datasetId: string; editPolicy: "open" | "locked" },
+  options?: StoreOptions,
+): Promise<void> {
+  await queryRows<unknown>(
+    clientOf(options)
+      .from("datasets")
+      .update({ edit_policy: args.editPolicy })
+      .eq("id", args.datasetId)
+      .select("id"),
+  );
+}
+
+/** Creator-side published visibility (stage 8, #104) — `api.cms.schemas.setVisibility` parity. */
+export async function setVisibility(
+  args: { datasetId: string; visibility: "everyone" | "author" },
+  options?: StoreOptions,
+): Promise<void> {
+  await queryRows<unknown>(
+    clientOf(options)
+      .from("datasets")
+      .update({ published_visibility: args.visibility })
+      .eq("id", args.datasetId)
+      .select("id"),
+  );
+}
+
+/**
+ * Flips an import-created draft to published once its import completes —
+ * `api.cms.schemas.markImportComplete` parity (issue #129).
+ */
+export async function markImportComplete(
+  args: { datasetId: string },
+  options?: StoreOptions,
+): Promise<void> {
+  await queryRows<unknown>(
+    clientOf(options)
+      .from("datasets")
+      .update({ lifecycle: "published" })
+      .eq("id", args.datasetId)
+      .select("id"),
+  );
+}
+
+/**
+ * Deletes a dataset. Every child (entries, geometries, references, imports,
+ * memberships) goes with it by ON DELETE CASCADE — the component's explicit
+ * delete walks become foreign keys (design §3.4 note).
+ */
+export async function remove(args: { datasetId: string }, options?: StoreOptions): Promise<void> {
+  await queryRows<unknown>(
+    clientOf(options).from("datasets").delete().eq("id", args.datasetId).select("id"),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Source-file retention (design §10 step 4) — the original import file rides
+// the `source-files` bucket; the dataset row records its name/size/path so
+// `getSourceFileUrlQueryOptions` can sign a re-download URL.
+// ---------------------------------------------------------------------------
+
+/** The `source-files` bucket holding retained import source files (design §6). */
+export const SOURCE_FILE_BUCKET = "source-files";
+
+/**
+ * Uploads the original import file into the dataset's `source-files/`
+ * folder and records `source_file_name`/`source_file_size`/`source_file_path`
+ * on the dataset row in one go. The path is the storage key
+ * `getSourceFileUrlQueryOptions` signs later.
+ */
+export async function uploadSourceFile(
+  args: { datasetId: string; file: File },
+  options?: StoreOptions,
+): Promise<string> {
+  const client = clientOf(options);
+  const path = `${args.datasetId}/${encodeURIComponent(args.file.name)}`;
+  const { error } = await client.storage.from(SOURCE_FILE_BUCKET).upload(path, args.file, {
+    upsert: true,
+  });
+  if (error !== null) {
+    throw new Error(error.message);
+  }
+  await queryRows<unknown>(
+    client
+      .from("datasets")
+      .update({
+        source_file_name: args.file.name,
+        source_file_size: args.file.size,
+        source_file_path: path,
+      })
+      .eq("id", args.datasetId)
+      .select("id"),
+  );
+  return path;
+}

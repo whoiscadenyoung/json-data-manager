@@ -170,7 +170,14 @@ jobs:
         # supabase/postgres ships PostGIS + the supabase extensions on top of
         # Postgres 15 (docs/supabase-migration-design.md §12). Tag bumped
         # deliberately, never casually — migrations must re-apply against it.
-        image: supabase/postgres:15.8.1.049
+        # Pinned to the SAME image the local stack runs
+        # (public.ecr.aws/supabase/postgres:15.19.0.016, §17): the
+        # docker-hub 15.8.1.049 tag ships an older storage schema whose
+        # storage.buckets lacks `public` and storage.objects lacks `owner_id`,
+        # so stage-1's storage migration cannot apply against it (both
+        # failures hit on 2026-11-03/04). Aligning CI to the local image
+        # kills the drift class; migrations target ONE storage schema.
+        image: public.ecr.aws/supabase/postgres:15.19.0.016
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: app

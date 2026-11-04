@@ -47,3 +47,35 @@ export function referencedEntryIds(value: unknown): string[] {
   }
   return typeof value === "string" && value.length > 0 ? [value] : [];
 }
+
+/** Upper bound on ids sent to a batched label lookup (the component's read rejects more); links beyond the cap render their raw id as today. */
+export const LABEL_IDS_CAP = 200;
+
+/**
+ * Collects the union of entry ids the given rows reference across all
+ * reference fields — exactly the entries whose labels are worth fetching.
+ * Used to be "every row of every referenced dataset" via
+ * `listEntriesForSchemas`, which quietly loaded whole other datasets just to
+ * label a handful of links (issue #54). Shared by the entries table (Convex
+ * mode) and the Postgres table host, which splits the result per backend
+ * before looking the labels up.
+ */
+export function collectReferencedIds(
+  entries: ReadonlyArray<{ data: unknown }>,
+  referenceFields: ReferenceField[],
+): string[] {
+  const ids = new Set<string>();
+  if (referenceFields.length === 0) {
+    return [];
+  }
+  for (const entry of entries) {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- `data` is `v.any()` in the component schema; reference values were validated at write time.
+    const data = entry.data as Record<string, unknown>;
+    for (const field of referenceFields) {
+      for (const id of referencedEntryIds(data[field.name])) {
+        ids.add(id);
+      }
+    }
+  }
+  return [...ids].slice(0, LABEL_IDS_CAP);
+}

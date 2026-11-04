@@ -23,13 +23,414 @@ export type Database = {
   };
   public: {
     Tables: {
-      [_ in never]: never;
+      datasets: {
+        Row: {
+          bbox: unknown;
+          created_at: string;
+          created_by: string;
+          description: string | null;
+          edit_policy: string;
+          entry_count: number;
+          feature_count: number;
+          geometry_type: string | null;
+          id: string;
+          is_geospatial: boolean;
+          json_schema: NonNullable<Json>;
+          lifecycle: string;
+          lineage: Json | null;
+          map_tile_archive_built_version: number | null;
+          map_tile_archive_bytes: number | null;
+          map_tile_archive_format: number | null;
+          map_tile_archive_max_zoom: number | null;
+          map_tile_archive_path: string | null;
+          map_tile_cache_version: number;
+          max_geometry_row_bytes: number | null;
+          properties: NonNullable<Json>;
+          published_visibility: string;
+          simplify_geometry: boolean;
+          source: Json | null;
+          source_file_name: string | null;
+          source_file_path: string | null;
+          source_file_size: number | null;
+          title: string;
+          updated_at: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          bbox?: unknown;
+          created_at?: string;
+          created_by?: string;
+          description?: string | null;
+          edit_policy?: string;
+          entry_count?: number;
+          feature_count?: number;
+          geometry_type?: string | null;
+          id?: string;
+          is_geospatial?: boolean;
+          json_schema?: NonNullable<Json>;
+          lifecycle?: string;
+          lineage?: Json | null;
+          map_tile_archive_built_version?: number | null;
+          map_tile_archive_bytes?: number | null;
+          map_tile_archive_format?: number | null;
+          map_tile_archive_max_zoom?: number | null;
+          map_tile_archive_path?: string | null;
+          map_tile_cache_version?: number;
+          max_geometry_row_bytes?: number | null;
+          properties?: NonNullable<Json>;
+          published_visibility?: string;
+          simplify_geometry?: boolean;
+          source?: Json | null;
+          source_file_name?: string | null;
+          source_file_path?: string | null;
+          source_file_size?: number | null;
+          title: string;
+          updated_at?: string;
+        };
+        Update: {
+          bbox?: unknown;
+          created_at?: string;
+          created_by?: string;
+          description?: string | null;
+          edit_policy?: string;
+          entry_count?: number;
+          feature_count?: number;
+          geometry_type?: string | null;
+          id?: string;
+          is_geospatial?: boolean;
+          json_schema?: NonNullable<Json>;
+          lifecycle?: string;
+          lineage?: Json | null;
+          map_tile_archive_built_version?: number | null;
+          map_tile_archive_bytes?: number | null;
+          map_tile_archive_format?: number | null;
+          map_tile_archive_max_zoom?: number | null;
+          map_tile_archive_path?: string | null;
+          map_tile_cache_version?: number;
+          max_geometry_row_bytes?: number | null;
+          properties?: NonNullable<Json>;
+          published_visibility?: string;
+          simplify_geometry?: boolean;
+          source?: Json | null;
+          source_file_name?: string | null;
+          source_file_path?: string | null;
+          source_file_size?: number | null;
+          title?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "datasets_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      entries: {
+        Row: {
+          created_at: string;
+          created_by: string | null;
+          data: NonNullable<Json>;
+          dataset_id: string;
+          geometry_type: string | null;
+          id: string;
+          search: unknown;
+          updated_at: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          created_at?: string;
+          created_by?: string | null;
+          data: NonNullable<Json>;
+          dataset_id: string;
+          geometry_type?: string | null;
+          id?: string;
+          search?: unknown;
+          updated_at?: string;
+        };
+        Update: {
+          created_at?: string;
+          created_by?: string | null;
+          data?: NonNullable<Json>;
+          dataset_id?: string;
+          geometry_type?: string | null;
+          id?: string;
+          search?: unknown;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "entries_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "entries_dataset_id_fkey";
+            columns: ["dataset_id"];
+            isOneToOne: false;
+            referencedRelation: "datasets";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      entry_references: {
+        Row: {
+          field_name: string;
+          id: string;
+          source_dataset_id: string;
+          source_entry_id: string;
+          target_dataset_id: string;
+          target_entry_id: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          field_name: string;
+          id?: string;
+          source_dataset_id: string;
+          source_entry_id: string;
+          target_dataset_id: string;
+          target_entry_id: string;
+        };
+        Update: {
+          field_name?: string;
+          id?: string;
+          source_dataset_id?: string;
+          source_entry_id?: string;
+          target_dataset_id?: string;
+          target_entry_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "entry_references_source_dataset_id_fkey";
+            columns: ["source_dataset_id"];
+            isOneToOne: false;
+            referencedRelation: "datasets";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "entry_references_source_entry_id_fkey";
+            columns: ["source_entry_id"];
+            isOneToOne: false;
+            referencedRelation: "entries";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "entry_references_target_dataset_id_fkey";
+            columns: ["target_dataset_id"];
+            isOneToOne: false;
+            referencedRelation: "datasets";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "entry_references_target_entry_id_fkey";
+            columns: ["target_entry_id"];
+            isOneToOne: false;
+            referencedRelation: "entries";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      geometries: {
+        Row: {
+          bbox: number[] | null;
+          created_at: string;
+          created_by: string | null;
+          dataset_id: string;
+          entry_id: string;
+          geom: unknown;
+          id: string;
+          source: Json | null;
+          source_bytes: number | null;
+          source_path: string | null;
+          type: string;
+          updated_at: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          bbox?: number[] | null;
+          created_at?: string;
+          created_by?: string | null;
+          dataset_id: string;
+          entry_id: string;
+          geom?: never;
+          id?: string;
+          source?: Json | null;
+          source_bytes?: number | null;
+          source_path?: string | null;
+          type: string;
+          updated_at?: string;
+        };
+        Update: {
+          bbox?: number[] | null;
+          created_at?: string;
+          created_by?: string | null;
+          dataset_id?: string;
+          entry_id?: string;
+          geom?: never;
+          id?: string;
+          source?: Json | null;
+          source_bytes?: number | null;
+          source_path?: string | null;
+          type?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "geometries_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "geometries_dataset_id_fkey";
+            columns: ["dataset_id"];
+            isOneToOne: false;
+            referencedRelation: "datasets";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "geometries_entry_id_fkey";
+            columns: ["entry_id"];
+            isOneToOne: true;
+            referencedRelation: "entries";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      imports: {
+        Row: {
+          created_at: string;
+          created_by: string | null;
+          dataset_id: string;
+          error: string | null;
+          id: string;
+          processed: number;
+          skipped: number;
+          status: string;
+          total: number;
+          updated_at: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          created_at?: string;
+          created_by?: string | null;
+          dataset_id: string;
+          error?: string | null;
+          id?: string;
+          processed?: number;
+          skipped?: number;
+          status?: string;
+          total?: number;
+          updated_at?: string;
+        };
+        Update: {
+          created_at?: string;
+          created_by?: string | null;
+          dataset_id?: string;
+          error?: string | null;
+          id?: string;
+          processed?: number;
+          skipped?: number;
+          status?: string;
+          total?: number;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "imports_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "imports_dataset_id_fkey";
+            columns: ["dataset_id"];
+            isOneToOne: false;
+            referencedRelation: "datasets";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      profiles: {
+        Row: {
+          created_at: string;
+          email: string;
+          email_verified: boolean;
+          id: string;
+          image: string | null;
+          name: string | null;
+        };
+        ComputedFields: never;
+        Insert: {
+          created_at?: string;
+          email: string;
+          email_verified?: boolean;
+          id: string;
+          image?: string | null;
+          name?: string | null;
+        };
+        Update: {
+          created_at?: string;
+          email?: string;
+          email_verified?: boolean;
+          id?: string;
+          image?: string | null;
+          name?: string | null;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       [_ in never]: never;
     };
     Functions: {
-      [_ in never]: never;
+      can_edit_dataset: { Args: { p_dataset: string }; Returns: boolean };
+      can_view_dataset: { Args: { p_dataset: string }; Returns: boolean };
+      dataset_rows_for_tiles: {
+        Args: { p_cursor?: string; p_dataset: string; p_limit?: number };
+        Returns: {
+          bbox: number[];
+          data: Json;
+          entry_id: string;
+          geometry: Json;
+          geometry_source_path: string;
+          geometry_type: string;
+        }[];
+      };
+      entries_in_bbox: {
+        Args: { p_bbox: Json; p_dataset: string };
+        Returns: {
+          bbox: number[];
+          data: Json;
+          geometry: Json;
+          geometry_type: string;
+          id: string;
+        }[];
+      };
+      import_entries: { Args: { p_dataset: string; p_rows: Json }; Returns: number };
+      search_entries: {
+        Args: {
+          p_cursor?: string;
+          p_dataset: string;
+          p_filters?: Json;
+          p_limit?: number;
+          p_query?: string;
+          p_sort?: Json;
+        };
+        Returns: {
+          created_at: string;
+          data: Json;
+          geometry_type: string;
+          id: string;
+          next_cursor: string;
+        }[];
+      };
     };
     Enums: {
       [_ in never]: never;

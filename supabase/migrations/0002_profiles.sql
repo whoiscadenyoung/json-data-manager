@@ -1,21 +1,13 @@
--- Stage 0 / 0002 — profiles (design doc §3.1).
+-- Stage 1 prerequisite backfill — profiles (docs/supabase-migration-design.md §3.1).
 --
--- The stage-0 contract (§13) names "extensions postgis/pg_trgm + profiles +
--- helper functions"; 0001 shipped the extensions, this is the profiles
--- half: the table, the handle_new_user trigger, and the RLS projection.
---
--- The trigger is INSERT-time on auth.users, so every account the §9 recipe
--- admin-creates during stage 0 (service-role key / local Studio) lands with
--- a profiles row. It must ship WITH stage 0 for exactly that reason: the
--- trigger never replays history, so any account created before it lands
--- would permanently lack a profiles row and force a backfill. It mirrors
--- the component's user mirror (app/convex/schema.ts "users", maintained by
--- the Better Auth component triggers today).
---
--- SECURITY DEFINER with a pinned search_path: the insert runs as the
--- migration owner regardless of which role inserted into auth.users (the
--- GoTrue role holds no grants on public), and the pinned search_path keeps
--- the definer body from being re-pointed by a hostile search_path.
+-- §13's stage 0 names "first migration: extensions postgis/pg_trgm + profiles
+-- + helper functions", but the stage-0 work committed to this tree shipped
+-- only `0001_extensions.sql` (verified: migrations/ has no profiles file and
+-- `public` was empty — the stage-0 record, §17, shows the same). The stage-1
+-- core schema cannot land without it: every attribution column
+-- (`created_by ... references public.profiles(id)`, §3) and the §4 helpers
+-- assume the table exists. This file implements §3.1 exactly as written;
+-- if a later stage-0 completion adds its own copy, keep exactly one.
 
 create table public.profiles (
   id             uuid primary key references auth.users(id) on delete cascade,
@@ -25,51 +17,48 @@ create table public.profiles (
   image          text,
   created_at     timestamptz not null default now()
 );
-
 create index profiles_by_email on public.profiles (email);
 
+-- Trigger-maintained from auth.users (mirrors app/convex/schema.ts:42-50
+-- "users", maintained today by the component's user triggers).
+-- The supabase/postgres image bakes the auth schema
+-- (/docker-entrypoint-initdb.d/init-scripts/00000000000001-auth-schema.sql),
+-- and `postgres` may create triggers on auth.users (verified against the
+-- local stack; CI's bare service container of the same image behaves
+-- identically), so no DO-block guard is needed here.
 create function public.handle_new_user() returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
+language plpgsql security definer set search_path = public as $$
 begin
   insert into public.profiles (id, email, email_verified, name, image)
-  values (
-    new.id,
-    new.email,
-    -- confirmed_at, not email_confirmed_at: §3.1's sketch names
-    -- email_confirmed_at, but the pinned CI image (supabase/postgres
-    -- 15.8.1.049) carries only confirmed_at, while the local CLI 3.0.0
-    -- stack has both — confirmed_at exists everywhere in this stack and is
-    -- set whenever GoTrue marks the account confirmed (the §9 recipe
-    -- creates users with email_confirm: true), so it is the portable
-    -- signal for email_verified.
-    coalesce(new.confirmed_at is not null, false),
-    new.raw_user_meta_data->>'name',
-    new.raw_user_meta_data->>'avatar_url'
-  );
+  values (new.id, new.email, coalesce(new.email_confirmed_at is not null, false),
+          new.raw_user_meta_data->>'name', new.raw_user_meta_data->>'avatar_url');
   return new;
-end;
-$$;
-
-create trigger on_auth_user_created
-  after insert on auth.users
+end $$;
+create trigger on_auth_user_created after insert on auth.users
   for each row execute function public.handle_new_user();
 
--- The ADR 0009 addendum's public projection (authId/name/image public to
--- the signed-in app, email only ever reaching its own row's owner through
--- the self-scoped read): SELECT for all authenticated, UPDATE only the row
--- owner. No INSERT/DELETE policies — rows are born only from the trigger
--- above and die with their auth.users row (on delete cascade).
+-- §3.1 policy note: "SELECT for all authenticated; UPDATE only
+-- `id = auth.uid()`". No INSERT/DELETE policies — profiles rows are born
+-- from the trigger above (SECURITY DEFINER) and die with auth.users
+-- (on delete cascade); clients never create or destroy them directly.
 alter table public.profiles enable row level security;
 
-create policy "profiles readable by any authenticated user"
+create policy "profiles select: authenticated (public projection)"
   on public.profiles for select
   to authenticated
   using (true);
 
-create policy "profiles updatable by the row owner only"
+-- The ADR 0009 addendum's projection is column-level too: whole-row select
+-- would hand every authenticated reader every user's email (the policy gates
+-- ROWS; privileges gate COLUMNS). The public projection is
+-- id/name/image/created_at; email stays server-side — the signed-in user
+-- reads their own email from the auth session (the header's
+-- `session.user.email`), and a later stage can expose a self-scoped view or
+-- definer function if a UI surface ever needs the column.
+revoke select on public.profiles from authenticated;
+grant select (id, name, image, created_at) on public.profiles to authenticated;
+
+create policy "profiles update: self only"
   on public.profiles for update
   to authenticated
   using (id = auth.uid())
