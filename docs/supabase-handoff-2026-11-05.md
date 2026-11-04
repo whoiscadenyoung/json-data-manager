@@ -23,7 +23,7 @@ DevContainers / Apple Containers), ending in `docker-compose.yml` +
    origin fronting app + `/rest/v1` `/auth/v1` `/realtime/v1` `/storage/v1`);
    backups; VPS sizing.
 2. App image: multi-stage `Dockerfile` — bun install → `bun --cwd app run
-   build` (nitro `bun` preset) → runtime serving `.output`.
+build` (nitro `bun` preset) → runtime serving `.output`.
 3. `docker-compose.yml` + `.env.example` (generated keys), app on :3000.
 4. **Known trap**: migration `0004`'s storage section is gated on the
    storage-api tables existing (the service owns them, not the postgres
@@ -92,7 +92,7 @@ PR comments):
 - The local stack (Docker Desktop) is managed from the
   `../jdm-supabase-backend` worktree's `supabase/` dir (that worktree must
   stay); `bunx supabase status -o env` from there prints keys. `supabase db
-  reset` from any checkout with the same config reapplies ALL migrations and
+reset` from any checkout with the same config reapplies ALL migrations and
   WIPES data.
 - Bench fixtures: `/tmp/jdm-ab/` (gen-points.ts, serve.ts, bench-import.ts,
   points20k.geojson); bench user `bench@jdm.test` /
