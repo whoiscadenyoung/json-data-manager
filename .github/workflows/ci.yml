@@ -40,7 +40,13 @@ jobs:
         image: public.ecr.aws/supabase/postgres:15.19.0.016
         env:
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: app
+          # The image-default database name, deliberately: 0012 creates
+          # pg_cron, whose extension may only be created in the database
+          # named by cron.database_name (a postmaster-context GUC — GitHub
+          # service containers cannot pass postgres server args to change
+          # it). The compose self-host keeps `app` and boots the flag
+          # instead (docs/self-hosting-design.md §6).
+          POSTGRES_DB: postgres
         ports:
           - "5432:5432"
         options: >-
@@ -50,9 +56,9 @@ jobs:
           --health-retries 10
 
     env:
-      # The *.int.test.ts files connect here (and skip-with-message where the
+      # The app's PG integration tests (*.int.test.ts) connect here (and skip-with-message where the
       # DB is unreachable); same URL shape as the store job's.
-      SUPABASE_DB_URL: postgresql://supabase_admin:postgres@localhost:5432/app
+      SUPABASE_DB_URL: postgresql://supabase_admin:postgres@localhost:5432/postgres
 
     steps:
       # Same commit the repo's existing workflow pins.
@@ -244,11 +250,14 @@ jobs:
       # stage-1 PG integration tests read this same variable
       # (docs/supabase-migration-design.md §12). Connected as supabase_admin,
       # not postgres: in the supabase/postgres image the postgres role is NOT
-      # a superuser and schema public is owned by pg_database_owner (=
-      # supabase_admin, which ran CREATE DATABASE "app"), so `create table`
-      # in public fails for postgres (verified against 15.8.1.049) — the
-      # superuser applies migrations of any stage; same POSTGRES_PASSWORD.
-      SUPABASE_DB_URL: postgresql://supabase_admin:postgres@localhost:5432/app
+      # a superuser and schema public is owned by pg_database_owner, so
+      # `create table` in public fails for postgres (verified against
+      # 15.8.1.049) — the superuser applies migrations of any stage; same
+      # POSTGRES_PASSWORD. The database stays the image-default `postgres`:
+      # 0012's pg_cron extension can only be created in the database named
+      # by cron.database_name (postmaster context — service containers cannot
+      # pass server args; see the ci job's POSTGRES_DB comment).
+      SUPABASE_DB_URL: postgresql://supabase_admin:postgres@localhost:5432/postgres
 
     services:
       postgres:
@@ -265,7 +274,7 @@ jobs:
         image: public.ecr.aws/supabase/postgres:15.19.0.016
         env:
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: app
+          POSTGRES_DB: postgres
         ports:
           - "5432:5432"
         options: >-
@@ -370,16 +379,18 @@ jobs:
       # 0004/0006 MUST have applied — a missing bucket or policy here is a
       # real migration defect, not an environment limitation (the bare
       # container skip in those files no longer has a legitimate reason to
-      # trigger in this job). Exactly 8 policies: the 0006 replacement set —
+      # trigger in this job). Five buckets: 0004's four §6 private buckets +
+      # sync-chunks (0012 §3.6). Exactly 8 policies: the 0012 replacement
+      # set (it restates the 0006 set with sync-chunks added) —
       # can_view_dataset SELECT + editor+owner INSERT/UPDATE/DELETE on the
       # dataset buckets, and the 4 per-kind marker-sprites policies.
       - name: Assert storage buckets and object policies
         run: |
           set -euo pipefail
           buckets="$(psql "$SUPABASE_DB_URL" -X -tA -c 'select id from storage.buckets order by id;')"
-          expected=$'geometries\nmarker-sprites\nsource-files\ntile-archives'
+          expected=$'geometries\nmarker-sprites\nsource-files\nsync-chunks\ntile-archives'
           if [ "${buckets}" != "${expected}" ]; then
-            echo "::error::storage.buckets rows are '${buckets//$'\n'/,}' — expected the four §6 private buckets (geometries,marker-sprites,source-files,tile-archives)" >&2
+            echo "::error::storage.buckets rows are '${buckets//$'\n'/,}' — expected the §6 private buckets + sync-chunks (geometries,marker-sprites,source-files,sync-chunks,tile-archives)" >&2
             exit 1
           fi
           n="$(psql "$SUPABASE_DB_URL" -X -tA -c "select count(*) from pg_policies where schemaname = 'storage' and tablename = 'objects';")"
