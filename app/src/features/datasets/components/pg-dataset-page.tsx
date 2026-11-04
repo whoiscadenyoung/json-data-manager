@@ -78,7 +78,7 @@ import * as geometriesStore from "@/lib/store/geometries";
 
 import { isLockedForViewer, LOCKED_DATASET_HINT } from "../lib/edit-policy";
 import type { JsonSchemaNode } from "../lib/json-schema";
-import { isSchemaNode } from "../lib/json-schema";
+import { declaredPropertyTypes, isSchemaNode } from "../lib/json-schema";
 import {
   pgTableStateFromParams,
   resolveUpdater,
@@ -268,7 +268,14 @@ function PostgresDatasetBody({
     dataset = datasetQuery.data,
     view = search.view === "structure" ? "structure" : "entries",
     tableState = pgTableStateFromParams(search),
-    pages = useSearchEntriesPages(schemaId, tableState),
+    // The declared property types: the server-mode filter menus read them for
+    // their variant + served-operator restriction, and the RPC args coerce
+    // filter values to the column's type (eq is jsonb containment — the text
+    // "5" never matches a numeric cell).
+    columnTypes = declaredPropertyTypes(
+      dataset === undefined || dataset === null ? {} : dataset.jsonSchema,
+    ),
+    pages = useSearchEntriesPages(schemaId, tableState, columnTypes),
     rows: DatasetEntryRow[] = pages.rows.map(tableRowOf),
     referenceFields =
       dataset === undefined || dataset === null ? [] : getReferenceFields(dataset.jsonSchema),
@@ -467,7 +474,11 @@ function PostgresDatasetBody({
           <Card>
             <CardHeader>
               <CardTitle>Data ({displayCount})</CardTitle>
-              <CardDescription>Data entries created from this schema</CardDescription>
+              <CardDescription>
+                Data entries created from this schema. Search, sorting, and filters run on the
+                database, so the filter menu offers the operators it serves — "contains", "is", and
+                "is not" on text, typed comparisons on number and boolean columns.
+              </CardDescription>
             </CardHeader>
             <CardContent>
               {isEmpty ? (
@@ -499,6 +510,7 @@ function PostgresDatasetBody({
                 </div>
               ) : (
                 <EntriesTable
+                  columnTypes={columnTypes}
                   entryCount={displayCount}
                   entries={rows}
                   hasMore={pages.canLoadMore}

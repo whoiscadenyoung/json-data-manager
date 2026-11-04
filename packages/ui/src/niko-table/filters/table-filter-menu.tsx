@@ -52,10 +52,28 @@ import type {
   DataTableInstance,
   ExtendedColumnFilter,
   FilterOperator,
+  FilterVariant,
   JoinOperator,
   Option,
 } from "../types";
 import { TableRangeFilter } from "./table-range-filter";
+
+/**
+ * The default operator for a NEW filter row on a column: the first entry of
+ * the column's `meta.filterOperators` restriction when it sets one, else the
+ * variant's default — so a restricted column never opens on an operator its
+ * own menu doesn't offer.
+ */
+function defaultFilterOperator(
+  variant: FilterVariant,
+  operators?: FilterOperator[],
+): FilterOperator {
+  const first = operators?.[0];
+  if (first !== undefined) {
+    return first;
+  }
+  return getDefaultFilterOperator(variant);
+}
 
 /* ---------- Precomputed options context (avoids per-column row walks) ---------- */
 const PrecomputedOptionsContext = React.createContext<Record<string, Option[]> | undefined>(
@@ -777,7 +795,10 @@ export function TableFilterMenu<TData extends RowData>({
       id: column.id as Extract<keyof TData, string>,
       value: "",
       variant: column.columnDef.meta?.variant ?? FILTER_VARIANTS.TEXT,
-      operator: getDefaultFilterOperator(column.columnDef.meta?.variant ?? FILTER_VARIANTS.TEXT),
+      operator: defaultFilterOperator(
+        column.columnDef.meta?.variant ?? FILTER_VARIANTS.TEXT,
+        column.columnDef.meta?.filterOperators,
+      ),
       joinOperator: JOIN_OPERATORS.AND, // Default to AND for new filters
     };
 
@@ -1030,6 +1051,7 @@ function TableFilterItem<TData extends RowData>({
         <FilterOperatorSelector
           filter={filter}
           filterItemId={filterItemId}
+          columnFilterOperators={columnMeta?.filterOperators}
           onFilterUpdate={onFilterUpdate}
           showOperatorSelector={showOperatorSelector}
           setShowOperatorSelector={setShowOperatorSelector}
@@ -1574,8 +1596,9 @@ function FilterFieldSelector<TData extends RowData>({
                     onFilterUpdate(filter.filterId, {
                       id: value as Extract<keyof TData, string>,
                       variant: column.columnDef.meta?.variant ?? FILTER_VARIANTS.TEXT,
-                      operator: getDefaultFilterOperator(
+                      operator: defaultFilterOperator(
                         column.columnDef.meta?.variant ?? FILTER_VARIANTS.TEXT,
+                        column.columnDef.meta?.filterOperators,
                       ),
                       value: "",
                     });
@@ -1604,12 +1627,15 @@ FilterFieldSelector.displayName = "FilterFieldSelector";
 function FilterOperatorSelector<TData extends RowData>({
   filter,
   filterItemId,
+  columnFilterOperators,
   onFilterUpdate,
   showOperatorSelector,
   setShowOperatorSelector,
 }: {
   filter: ExtendedColumnFilter<TData>;
   filterItemId: string;
+  /** The column's `meta.filterOperators` restriction, when it sets one. */
+  columnFilterOperators?: FilterOperator[];
   onFilterUpdate: (
     filterId: string,
     updates: Partial<Omit<ExtendedColumnFilter<TData>, "filterId">>,
@@ -1618,7 +1644,19 @@ function FilterOperatorSelector<TData extends RowData>({
   setShowOperatorSelector: (value: boolean) => void;
 }) {
   const operatorListboxId = `${filterItemId}-operator-listbox`;
-  const filterOperators = getFilterOperators(filter.variant);
+  const defaultOperators = getFilterOperators(filter.variant);
+  // A column's `meta.filterOperators` restriction lists bare operators —
+  // borrow each one's display label from the variant's default list.
+  const filterOperators =
+    columnFilterOperators && columnFilterOperators.length > 0
+      ? columnFilterOperators.map(
+          (operator) =>
+            defaultOperators.find((entry) => entry.value === operator) ?? {
+              label: operator,
+              value: operator,
+            },
+        )
+      : defaultOperators;
 
   return (
     <Select

@@ -1,4 +1,10 @@
-import type { ExtendedColumnFilter } from "@caden/ui/niko-table/types";
+import {
+  FILTER_OPERATORS,
+  FILTER_VARIANTS,
+  type ExtendedColumnFilter,
+  type FilterOperator,
+  type FilterVariant,
+} from "@caden/ui/niko-table/types";
 import { useQueries, type UseQueryResult } from "@tanstack/react-query";
 import type { SortingState, Updater } from "@tanstack/react-table";
 import { useState } from "react";
@@ -124,17 +130,110 @@ export function sortingToSearchSort(sorting: SortingState): SearchSort | undefin
 }
 
 /**
- * The filter-menu rows as `search_entries` filters (§5.1's op set). Menu
- * operators without an RPC counterpart — "does not contain" (`not.ilike`),
- * `not.in`, `between`, empty/not-empty, relative dates — are dropped: the
- * §5.1 contract fixes the op list, and an AND-only list is all it accepts
- * (see the stage-1 deviations note on the dataset page).
+ * The filter type of a server-mode column — the declared JSON Schema property
+ * type (`declaredPropertyTypes` derives it). Drives the menu's variant and
+ * the §5.1 filter-value coercion: the RPC's `eq` is jsonb CONTAINMENT, so a
+ * numeric column filtered by the text "5" matches nothing (5 ≠ "5").
  */
-export function filtersToSearchFilters(filters: ReadonlyArray<PgColumnFilter>): SearchFilter[] {
+export type PgPropertyType = "boolean" | "number" | "string";
+
+/**
+ * The operators each server-mode variant's menu offers: exactly the §5.1 op
+ * set the RPC serves, narrowed per variant. `contains` is the text variant's
+ * `ilike`; ranges are number-only (the RPC casts both sides to numeric, so
+ * they mean nothing on text/boolean columns); `in` needs no menu row —
+ * repeated `is` rows on a column collapse into one, the niko-table equality
+ * merge. The menu cannot offer an operator this table doesn't map
+ * (no-optional-chaining of controls), and `filtersToSearchFilters` still
+ * drops anything unserved that arrives out of band (a hand-edited URL), the
+ * same degrade-to-fewer-filters rule its malformed rows follow.
+ */
+export const SERVED_FILTER_OPERATORS: ReadonlyMap<FilterVariant, readonly FilterOperator[]> =
+  new Map<FilterVariant, readonly FilterOperator[]>([
+    [FILTER_VARIANTS.TEXT, [FILTER_OPERATORS.ILIKE, FILTER_OPERATORS.EQ, FILTER_OPERATORS.NEQ]],
+    [
+      FILTER_VARIANTS.NUMBER,
+      [
+        FILTER_OPERATORS.EQ,
+        FILTER_OPERATORS.NEQ,
+        FILTER_OPERATORS.LT,
+        FILTER_OPERATORS.LTE,
+        FILTER_OPERATORS.GT,
+        FILTER_OPERATORS.GTE,
+      ],
+    ],
+    [FILTER_VARIANTS.BOOLEAN, [FILTER_OPERATORS.EQ, FILTER_OPERATORS.NEQ]],
+  ]);
+
+/** The filter variant a declared property type's column uses in server mode. */
+export function servedVariantOf(type: PgPropertyType): FilterVariant {
+  if (type === "number") {
+    return FILTER_VARIANTS.NUMBER;
+  }
+  return type === "boolean" ? FILTER_VARIANTS.BOOLEAN : FILTER_VARIANTS.TEXT;
+}
+
+/**
+ * One filter value coerced to the declared column type, or undefined when it
+ * can't be — a non-numeric value on a number column (or anything on a boolean
+ * one) would produce a §5.1 predicate that matches nothing, so the row drops
+ * instead of silently filtering everything out (the Convex client's NaN-guard
+ * semantics). Without schema info the value passes through as the string the
+ * menu produced.
+ */
+function coerceToColumnValue(value: string, type: PgPropertyType | undefined): unknown {
+  if (type === undefined) {
+    return value;
+  }
+  if (type === "number") {
+    const parsed = Number(value);
+    return value !== "" && Number.isFinite(parsed) ? parsed : undefined;
+  }
+  if (type === "boolean") {
+    return value === "true" ? true : value === "false" ? false : undefined;
+  }
+  return value;
+}
+
+/** One eq/neq payload: each member coerced to the column's type, or undefined when any member can't be. */
+function coerceEqualityValue(value: string | string[], type: PgPropertyType | undefined): unknown {
+  if (Array.isArray(value)) {
+    const coerced: unknown[] = [];
+    for (const member of value) {
+      const one = coerceToColumnValue(member, type);
+      if (one === undefined) {
+        return undefined;
+      }
+      coerced.push(one);
+    }
+    return coerced;
+  }
+  return coerceToColumnValue(value, type);
+}
+
+/**
+ * The filter-menu rows as `search_entries` filters (§5.1's op set). Values
+ * coerce to the column's declared type (`columnTypes`, derived from the
+ * dataset's JSON Schema) — the typed `eq` containment needs the CELL's type,
+ * not the input's text. Menu operators without an RPC counterpart — "does
+ * not contain" (`not.ilike`), `not.in`, `between`, empty/not-empty, relative
+ * dates — are dropped: the server-mode menu only OFFERS served operators
+ * (`SERVED_FILTER_OPERATORS`, via the columns' `meta.filterOperators`), so a
+ * dropped row here means it arrived out of band (a hand-edited URL), the same
+ * degrade-to-fewer-filters rule the malformed-param parse follows.
+ */
+export function filtersToSearchFilters(
+  filters: ReadonlyArray<PgColumnFilter>,
+  columnTypes?: ReadonlyMap<string, PgPropertyType>,
+): SearchFilter[] {
   const out: SearchFilter[] = [];
   for (const filter of filters) {
+    const type = columnTypes === undefined ? undefined : columnTypes.get(filter.id);
     if (Array.isArray(filter.value)) {
       if (filter.operator === "in" && filter.value.length > 0) {
+        // `in` is exact TEXT membership over data->>key: numbers/booleans
+        // text-ify to the same members their strings would, so the array
+        // passes through as the menu produced it.
         out.push({ key: filter.id, op: "in", value: filter.value });
       }
       continue;
@@ -145,14 +244,22 @@ export function filtersToSearchFilters(filters: ReadonlyArray<PgColumnFilter>): 
     if (filter.operator === "ilike") {
       out.push({ key: filter.id, op: "contains", value: filter.value });
     } else if (filter.operator === "eq" || filter.operator === "neq") {
-      out.push({ key: filter.id, op: filter.operator, value: filter.value });
+      const coerced = coerceEqualityValue(filter.value, type);
+      if (coerced !== undefined) {
+        out.push({ key: filter.id, op: filter.operator, value: coerced });
+      }
     } else if (
       filter.operator === "gt" ||
       filter.operator === "gte" ||
       filter.operator === "lt" ||
       filter.operator === "lte"
     ) {
-      out.push({ key: filter.id, op: filter.operator, value: filter.value });
+      // Ranges ride the RPC's numeric casts, which accept the text form too —
+      // coercion only matters when the column is numeric and the text isn't.
+      const coerced = type === "number" ? coerceEqualityValue(filter.value, type) : filter.value;
+      if (coerced !== undefined) {
+        out.push({ key: filter.id, op: filter.operator, value: coerced });
+      }
     }
   }
   return out;
@@ -163,11 +270,12 @@ export function searchArgsOf(
   datasetId: string,
   state: PgTableState,
   cursor: string | null,
+  columnTypes?: ReadonlyMap<string, PgPropertyType>,
 ): SearchEntriesArgs {
   return {
     cursor,
     datasetId,
-    filters: filtersToSearchFilters(state.filters),
+    filters: filtersToSearchFilters(state.filters, columnTypes),
     limit: SEARCH_ENTRIES_DEFAULT_LIMIT,
     query: state.query === "" ? undefined : state.query,
     sort: sortingToSearchSort(state.sorting),
@@ -207,9 +315,15 @@ function pageCursorOf(result: UseQueryResult<SearchEntriesPage> | undefined): st
  * keyset cursor, chained on `nextCursor` (null = exhausted — the §8.3
  * completeness semantics). `loadMore` appends the next cursor once the last
  * page has resolved; a change to the server-driven state restarts the chain
- * (same shape as `useDatasetEntryPages`' dataset-keyed reset).
+ * (same shape as `useDatasetEntryPages`' dataset-keyed reset). `columnTypes`
+ * (the declared property types) drives the filter-value coercion — see
+ * `filtersToSearchFilters`.
  */
-export function useSearchEntriesPages(datasetId: string, state: PgTableState) {
+export function useSearchEntriesPages(
+  datasetId: string,
+  state: PgTableState,
+  columnTypes?: ReadonlyMap<string, PgPropertyType>,
+) {
   const stateKey = stateKeyOf(state),
     // Keyed on the state so navigating between datasets (or a changed
     // filter/sort/search) restarts the chain instead of replaying old cursors.
@@ -223,7 +337,7 @@ export function useSearchEntriesPages(datasetId: string, state: PgTableState) {
     // matches the cached page.
     results = useQueries({
       queries: cursors.map((cursor) =>
-        searchEntriesQueryOptions(searchArgsOf(datasetId, state, cursor)),
+        searchEntriesQueryOptions(searchArgsOf(datasetId, state, cursor, columnTypes)),
       ),
     }),
     firstResult = results[0],

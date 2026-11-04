@@ -8,14 +8,16 @@ vi.mock("#/env", () => ({
   env: { VITE_SUPABASE_ANON_KEY: "test-anon-key", VITE_SUPABASE_URL: "http://127.0.0.1:54321" },
 }));
 
-import type { PgColumnFilter } from "./pg-entries-table";
+import type { PgColumnFilter, PgPropertyType } from "./pg-entries-table";
 import {
   filtersToSearchFilters,
   pgTableParamsFromState,
   pgTableStateFromParams,
   resolveUpdater,
   searchArgsOf,
+  servedVariantOf,
   sortingToSearchSort,
+  SERVED_FILTER_OPERATORS,
 } from "./pg-entries-table";
 
 /** The first filter row's column id, or a loud failure (the no-optional-chaining test style). */
@@ -133,6 +135,79 @@ describe("filtersToSearchFilters — the menu ops → search_entries §5.1 ops",
       [],
     );
   });
+
+  it("coerces eq/neq values to the declared column type (§5.1 eq is jsonb containment)", () => {
+    const types = new Map<string, PgPropertyType>([
+      ["active", "boolean"],
+      ["count", "number"],
+    ]);
+    expect(
+      filtersToSearchFilters(
+        [
+          // "5" the string never matches a numeric cell (5 ≠ "5").
+          columnFilter({ id: "count", operator: "eq", value: "5" }),
+          columnFilter({ filterId: "f2", id: "active", operator: "eq", value: "true" }),
+          columnFilter({ filterId: "f3", id: "count", operator: "neq", value: "10" }),
+        ],
+        types,
+      ),
+    ).toStrictEqual([
+      { key: "count", op: "eq", value: 5 },
+      { key: "active", op: "eq", value: true },
+      { key: "count", op: "neq", value: 10 },
+    ]);
+  });
+
+  it("drops rows whose value cannot be the column's type (the NaN-guard semantics)", () => {
+    const types = new Map<string, PgPropertyType>([["count", "number"]]);
+    expect(
+      filtersToSearchFilters(
+        [
+          columnFilter({ id: "count", operator: "eq", value: "abc" }),
+          columnFilter({ filterId: "f2", id: "count", operator: "gte", value: "7" }),
+          columnFilter({ filterId: "f3", id: "count", operator: "lt", value: "nope" }),
+        ],
+        types,
+      ),
+    ).toStrictEqual([{ key: "count", op: "gte", value: 7 }]);
+  });
+
+  it("passes the in array through as the menu produced it (the RPC text-ifies members)", () => {
+    const types = new Map<string, PgPropertyType>([["count", "number"]]);
+    expect(
+      filtersToSearchFilters(
+        [columnFilter({ id: "count", operator: "in", value: ["5", "7"] })],
+        types,
+      ),
+    ).toStrictEqual([{ key: "count", op: "in", value: ["5", "7"] }]);
+  });
+
+  it("leaves values untouched without schema info (string columns, the menu's own form)", () => {
+    expect(
+      filtersToSearchFilters([columnFilter({ operator: "eq", value: "5" })], new Map()),
+    ).toStrictEqual([{ key: "name", op: "eq", value: "5" }]);
+  });
+});
+
+describe("servedVariantOf / SERVED_FILTER_OPERATORS — the menu offers only served ops", () => {
+  it("maps declared types to typed variants", () => {
+    expect(servedVariantOf("number")).toBe("number");
+    expect(servedVariantOf("boolean")).toBe("boolean");
+    expect(servedVariantOf("string")).toBe("text");
+  });
+
+  it("offers exactly the §5.1 op set per variant (contains/ilike, eq, neq, numeric ranges)", () => {
+    expect(SERVED_FILTER_OPERATORS.get("text")).toStrictEqual(["ilike", "eq", "neq"]);
+    expect(SERVED_FILTER_OPERATORS.get("number")).toStrictEqual([
+      "eq",
+      "neq",
+      "lt",
+      "lte",
+      "gt",
+      "gte",
+    ]);
+    expect(SERVED_FILTER_OPERATORS.get("boolean")).toStrictEqual(["eq", "neq"]);
+  });
 });
 
 describe("sortingToSearchSort — one key, one direction (§5.1 sorts by ONE key)", () => {
@@ -170,6 +245,16 @@ describe("searchArgsOf — the RPC args one table state produces", () => {
       query: "park",
       sort: { dir: "asc", key: "name" },
     });
+  });
+
+  it("threads the declared column types into the filter translation", () => {
+    const state = {
+        filters: [columnFilter({ id: "count", operator: "eq", value: "5" })],
+        query: "",
+        sorting: [],
+      },
+      args = searchArgsOf("d1", state, null, new Map([["count", "number" as PgPropertyType]]));
+    expect(args.filters).toStrictEqual([{ key: "count", op: "eq", value: 5 }]);
   });
 
   it("leaves the search and sort unset for the default state", () => {

@@ -251,6 +251,43 @@ describe.skipIf(!dbUp())("search_entries (§5.1)", () => {
     }
   });
 
+  test("keyset pagination walks duplicated sort values exactly once (asc ties ride the id-desc tiebreak)", async () => {
+    // Three counts x four rows each: every page boundary falls ON duplicate
+    // values, which a permutation walk key ((i*7919)%25 — no duplicates) can
+    // never exercise. The asc predicate must resolve "strictly after" a tie
+    // as id DESC (smaller id), or page 2+ re-returns shown rows and skips
+    // their lower-id siblings forever.
+    const rows = ["a", "b", "c", "d"].flatMap((suffix) =>
+      [1, 2, 3].map((count) => ({ data: { count, name: `${count}-${suffix}` } })),
+    );
+    const datasetId = await seedDataset(rows);
+    try {
+      const seen: string[] = [];
+      let cursor: string | null = null;
+      for (;;) {
+        const page = await s().expectOk(
+          `select data->>'name' as name, next_cursor from public.search_entries(
+             '${datasetId}', null, null, '{"key":"count","dir":"asc"}',
+             ${cursor === null ? "null" : sqlLit(cursor)}, 2)`,
+        );
+        seen.push(...page.map((r) => r.name as string));
+        const first = page[0];
+        const next = first === undefined ? null : (first.next_cursor ?? null);
+        if (next === null) break;
+        cursor = next;
+        expect(seen.length).toBeLessThanOrEqual(rows.length);
+      }
+      expect(seen).toHaveLength(rows.length);
+      expect(new Set(seen).size).toBe(rows.length);
+      // Counts arrive non-decreasing across the whole walk.
+      const counts = seen.map((name) => Number(name.split("-")[0]));
+      expect(counts.toSorted((a, b) => a - b)).toEqual(counts);
+      await s().rollback();
+    } finally {
+      await dropDatasets(s(), [datasetId]);
+    }
+  });
+
   test("keyset pagination is stable under concurrent inserts (no duplicates, no skips)", async () => {
     const datasetId = await seedDataset();
     try {

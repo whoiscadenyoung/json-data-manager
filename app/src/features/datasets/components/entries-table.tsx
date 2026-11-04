@@ -33,7 +33,13 @@ import { toast } from "sonner";
 import type { DatasetEntryRow } from "#/lib/dataset-rows";
 import { api } from "#convex/_generated/api";
 
-import { resolveUpdater, type PgColumnFilter } from "../lib/pg-entries-table";
+import {
+  resolveUpdater,
+  SERVED_FILTER_OPERATORS,
+  servedVariantOf,
+  type PgColumnFilter,
+  type PgPropertyType,
+} from "../lib/pg-entries-table";
 import {
   buildLabelsByField,
   collectReferencedIds,
@@ -228,6 +234,7 @@ function buildColumns(
   referenceFieldsByName: Map<string, ReferenceField>,
   labelsByField: Map<string, Map<string, string>>,
   surfaces: ColumnSurfaces,
+  columnTypes: ReadonlyMap<string, PgPropertyType>,
 ): DataTableColumnDef<Entry>[] {
   const server = surfaces === "server",
     // The Postgres filter menu's field selector lists data columns only (see
@@ -235,7 +242,15 @@ function buildColumns(
     dataFilterable = !server;
 
   const propertyColumns: DataTableColumnDef<Entry>[] = properties.map((name) => {
-    const referenceField = referenceFieldsByName.get(name);
+    const referenceField = referenceFieldsByName.get(name),
+      // Server mode derives the filter control from the DECLARED property
+      // type: a numeric column gets the number input (so eq arrives as a
+      // number and the RPC's jsonb containment matches) and only the §5.1
+      // operators the RPC serves — a control the server answers wrong would
+      // be a silently no-op control (the ui-polish rule). The client-side
+      // Convex table keeps its original text control and full operator set.
+      propertyType = server ? columnTypes.get(name) : undefined,
+      variant = propertyType === undefined ? "text" : servedVariantOf(propertyType);
     return {
       accessorFn: (entry) => entry.data[name],
       cell: (info) =>
@@ -251,7 +266,14 @@ function buildColumns(
       enableColumnFilter: true,
       header: () => <SortableHeader title={name} />,
       id: name,
-      meta: { label: name, variant: "text" },
+      meta:
+        propertyType === undefined
+          ? { label: name, variant: "text" }
+          : {
+              filterOperators: [...(SERVED_FILTER_OPERATORS.get(variant) ?? [])],
+              label: name,
+              variant,
+            },
       size: PROPERTY_COLUMN_SIZE,
     };
   });
@@ -323,6 +345,7 @@ export function EntriesTable({
   onDelete,
   labelsByField,
   server,
+  columnTypes,
 }: {
   schemaId: string;
   /** The dataset's JSON schema — used to detect which of `properties` are reference fields (see `@caden/json-cms/react`). */
@@ -345,6 +368,12 @@ export function EntriesTable({
    * referenced entries may live in either backend).
    */
   labelsByField?: Map<string, Map<string, string>>;
+  /**
+   * The declared property types (`declaredPropertyTypes` of the dataset's
+   * schema). Server mode reads it for the per-column filter variant and the
+   * served-operator restriction; the client-side Convex table ignores it.
+   */
+  columnTypes?: ReadonlyMap<string, PgPropertyType>;
   /**
    * Server-driven mode (design §8.4): sort/filter/search state is hoisted
    * into the caller's hands (URL search params → the `search_entries` RPC),
@@ -384,6 +413,7 @@ export function EntriesTable({
       referenceFieldsByName,
       resolvedLabelsByField,
       server === undefined ? "client" : "server",
+      columnTypes ?? new Map(),
     ),
     // The controlled-state projection: server mode mirrors the URL-owned
     // state into the table so the toolbar's Reset button sees it (and its

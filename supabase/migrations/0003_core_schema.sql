@@ -439,6 +439,26 @@ create trigger geometries_set_updated_at before update on public.geometries
 create trigger imports_set_updated_at before update on public.imports
   for each row execute function public.set_updated_at();
 
+-- §3 attribution (the ADR 0007 pattern): created_by is stamped from the
+-- request's identity, never claimed from a client payload — a direct
+-- PostgREST insert can neither omit nor spoof it (import_entries already
+-- stamps auth.uid() explicitly; the trigger makes the table path hold to the
+-- same rule). Runs BEFORE the RLS WITH CHECK, so the checked row carries the
+-- invoker's id.
+create function public.stamp_created_by() returns trigger
+language plpgsql as $$
+begin
+  new.created_by := auth.uid();
+  return new;
+end $$;
+
+create trigger entries_stamp_created_by before insert on public.entries
+  for each row execute function public.stamp_created_by();
+create trigger geometries_stamp_created_by before insert on public.geometries
+  for each row execute function public.stamp_created_by();
+create trigger imports_stamp_created_by before insert on public.imports
+  for each row execute function public.stamp_created_by();
+
 -- ---------------------------------------------------------------------------
 -- §4 — RLS helpers (SECURITY DEFINER + pinned search_path: the datasets
 -- policies themselves call these, so they must not recurse; STABLE so they
@@ -492,11 +512,14 @@ create policy "datasets select: can_view_dataset"
 -- table, and the row being inserted is not there yet (WITH CHECK sees the
 -- proposed row, not a stored one). The same §4 predicate applied to the new
 -- row's own values: authenticated, never born frozen, and creator-only when
--- the row declares edit_policy 'locked'.
+-- the row declares edit_policy 'locked' — plus the §3 identity pin (the ADR
+-- 0007 pattern): created_by is STAMPED to the invoker, never claimed from a
+-- client payload, so a dataset can never be attributed to another profile.
 create policy "datasets insert: can_edit_dataset semantics on the new row"
   on public.datasets for insert to authenticated
   with check (
     auth.uid() is not null
+    and created_by = auth.uid()
     and lineage is null
     and (edit_policy = 'open' or created_by = auth.uid())
   );
@@ -522,6 +545,24 @@ create policy "datasets update: edit_policy flips are creator-only"
 create policy "datasets delete: can_edit_dataset"
   on public.datasets for delete to authenticated
   using (public.can_edit_dataset(id));
+
+-- §4: "the client never needs the direct UPDATE right on maintained columns
+-- — but dataset UPDATE remains available for real fields". Column-level
+-- grants make that literal: the summary/tile bookkeeping is trigger-maintained
+-- (entry_count, feature_count, bbox, max_geometry_row_bytes,
+-- map_tile_cache_version), and lineage/created_by/created_at/updated_at plus
+-- the archive columns are server- or host-flow-owned — a client-writable
+-- lineage would freeze a dataset read-only for everyone with no unfreeze
+-- path, and map_tile_cache_version is the CAS value install_tile_archive
+-- compares (§5.6). The SECURITY DEFINER triggers/RPCs run as the owner and
+-- keep their full access; a rejected column surfaces as a PostgREST
+-- permission error, not a silent no-op.
+revoke update on public.datasets from authenticated;
+grant update (title, description, json_schema, properties,
+              is_geospatial, geometry_type, simplify_geometry,
+              edit_policy, published_visibility, lifecycle,
+              source_file_name, source_file_size, source_file_path)
+  on public.datasets to authenticated;
 
 create policy "entries select: can_view_dataset"
   on public.entries for select to authenticated
@@ -751,9 +792,19 @@ begin
     if v_sort_dir = 'asc' then
       v_order := v_keyexpr || ' asc, e.id desc';
       if p_cursor is not null then
+        -- Ascending is NULLS LAST, and the tiebreak runs id DESC, so
+        -- "strictly after" the cursor row means: a LARGER key value, or the
+        -- SAME value with a SMALLER id — plus every null-key row once the
+        -- cursor carried a value (and, when the cursor itself was a null-key
+        -- row, the null-key rows after it in id-desc order). A row comparison
+        -- `(key, id) > ($5, $6)` would be wrong here: it resolves ties as
+        -- `id > cursor_id`, which against the id-desc tiebreak re-returns
+        -- already-shown rows and permanently skips the lower-id rows that
+        -- share the sort value.
         v_where := v_where || format(
-          ' and ((%1$s is not null and (%1$s, e.id) > ($5, $6))'
-          || ' or (%1$s is null and ($5 is not null or e.id > $6)))',
+          ' and ((%1$s is not null and $5 is not null'
+          || ' and (%1$s > $5 or (%1$s = $5 and e.id < $6)))'
+          || ' or (%1$s is null and ($5 is not null or e.id < $6)))',
           v_keyexpr);
       end if;
     else
@@ -987,7 +1038,7 @@ create function public.dataset_rows_for_tiles(
 )
 returns table (
   entry_id uuid, data jsonb, geometry jsonb, geometry_source_path text,
-  geometry_type text, bbox double precision[]
+  geometry_type text, bbox double precision[], next_cursor text
 )
 language plpgsql
 security invoker
@@ -995,10 +1046,20 @@ set search_path = public, extensions
 as $$
 declare
   v_cursor_id uuid;
+  v_limit     integer;
+  v_ids       uuid[];
+  v_datas     jsonb[];
+  v_sources   jsonb[];
+  v_paths     text[];
+  v_gtypes    text[];
+  v_bboxes    double precision[][];
+  v_next_id   uuid;
+  v_next      text;
 begin
-  -- Keyset by entry id; the exact §5.5 signature has no next_cursor column,
-  -- so the caller chains by the last row's entry_id and detects exhaustion
-  -- by the short page (rows returned < p_limit).
+  -- Keyset by entry id. next_cursor follows the §5 intro blanket rule
+  -- ("every RPC that pages returns next_cursor, null = exhausted") — the
+  -- store's PagedRpcRow reads it off the last row, so exhaustion can never
+  -- depend on the short-page convention alone.
   if p_cursor is not null then
     begin
       v_cursor_id := (convert_from(decode(p_cursor, 'base64'), 'utf8')::jsonb ->> 'i')::uuid;
@@ -1010,12 +1071,43 @@ begin
     end if;
   end if;
 
-  return query
-  select e.id, e.data, g.source, g.source_path, e.geometry_type, g.bbox
-  from public.entries e
-  join public.geometries g on g.entry_id = e.id
-  where e.dataset_id = p_dataset
-    and (v_cursor_id is null or e.id > v_cursor_id)
-  order by e.id
-  limit greatest(1, coalesce(p_limit, 5000));
+  -- One extra row beyond p_limit decides exhaustion, exactly like §5.1; the
+  -- cursor payload is the same opaque base64 {"i": "<entry uuid>"} shape.
+  v_limit := greatest(1, coalesce(p_limit, 5000));
+
+  select array_agg(q.entry_id), array_agg(q.data), array_agg(q.geometry),
+         array_agg(q.geometry_source_path), array_agg(q.geometry_type), array_agg(q.bbox),
+         (array_agg(q.entry_id))[v_limit + 1]
+  into v_ids, v_datas, v_sources, v_paths, v_gtypes, v_bboxes, v_next_id
+  from (
+    select e.id as entry_id, e.data, g.source as geometry,
+           g.source_path as geometry_source_path, e.geometry_type, g.bbox
+    from public.entries e
+    join public.geometries g on g.entry_id = e.id
+    where e.dataset_id = p_dataset
+      and (v_cursor_id is null or e.id > v_cursor_id)
+    order by e.id
+    limit v_limit + 1
+  ) q;
+
+  -- The (p_limit+1)th row only decides exhaustion; the cursor encodes the
+  -- LAST EMITTED row's id (the p_limit-th), exactly as §5.1's
+  -- "next_cursor is the LAST RETURNED row's sort tuple" rule does — encoding
+  -- the probe row would swallow one real row per page.
+  if v_next_id is not null then
+    v_next := encode(
+      convert_to(jsonb_build_object('i', v_ids[v_limit])::text, 'utf8'), 'base64');
+  end if;
+
+  -- Emit at most p_limit rows: the (p_limit+1)th only decided exhaustion.
+  for i in 1 .. least(v_limit, coalesce(array_length(v_ids, 1), 0)) loop
+    entry_id             := v_ids[i];
+    data                 := v_datas[i];
+    geometry             := v_sources[i];
+    geometry_source_path := v_paths[i];
+    geometry_type        := v_gtypes[i];
+    bbox                 := v_bboxes[i];
+    next_cursor          := v_next;
+    return next;
+  end loop;
 end $$;

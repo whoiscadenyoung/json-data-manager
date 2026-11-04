@@ -39,16 +39,18 @@ import { runPgImport } from "../lib/pg-import-pipeline";
 
 type Mode = "choose" | "schema" | "import";
 
-/** The create args both paths send — the store's `create` arg set. */
+/** The create args both paths send — the store's `create` arg set. The import path passes `lifecycle: "draft"` (issue #129): the dataset is born invisible to everyone but its creator and flips to published only when `markImportComplete` runs. */
 function createArgs(
   datasetKind: "standard" | "geospatial",
   geometryType: GeometryType | undefined,
   schema: object,
   simplifyGeometry: boolean | undefined,
+  lifecycle?: "draft",
 ): datasetsStore.CreateDatasetArgs {
   return {
     geometryType: datasetKind === "geospatial" ? geometryType : undefined,
     kind: datasetKind === "geospatial" ? "geospatial" : undefined,
+    lifecycle,
     schema,
     simplifyGeometry: datasetKind === "geospatial" ? simplifyGeometry : undefined,
   };
@@ -241,6 +243,10 @@ function ImportFirst() {
           await entriesStore.clearDatasetRows({ datasetId });
           setProgress(null);
           await runImport(datasetId, rows, options);
+          // The first attempt failed before `markImportComplete`, so the draft
+          // is still draft — the successful retry is the import completing
+          // (issue #129): publish it, or it stays invisible to its creator.
+          await datasetsStore.markImportComplete({ datasetId });
           await navigateToDataset(datasetId);
         },
         // Delete the dataset the failed import created — nothing left behind
@@ -271,9 +277,9 @@ function ImportFirst() {
         options,
       ) => {
         // The dataset is created as a lifecycle DRAFT and flips to published
-        // only when the import completes (issue #129) — a failed import
-        // leaves an invisible draft for Retry/Discard instead of an empty,
-        // published dataset in the catalog.
+        // only when the import completes (issue #129) — a failed or in-flight
+        // import leaves an invisible draft for Retry/Discard instead of an
+        // empty, published dataset in the catalog.
         setProgress(null);
         const newDatasetId = await datasetsStore.create(
           createArgs(
@@ -281,6 +287,7 @@ function ImportFirst() {
             geometryType,
             parsedSchema,
             kind === "geospatial" ? options.simplifyGeometry : undefined,
+            "draft",
           ),
         );
         setDatasetId(newDatasetId);

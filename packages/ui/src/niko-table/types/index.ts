@@ -44,6 +44,14 @@ declare module "@tanstack/react-table" {
 
     // Filtering
     variant?: FilterVariant;
+    /**
+     * Restricts the operators a column's filter rows offer, in menu order
+     * (the first entry is the default operator for new rows on the column).
+     * For server-driven tables whose RPC serves a subset of the variant's
+     * default list — offered-but-unserved operators would silently filter
+     * nothing. Absent = the variant's full default list.
+     */
+    filterOperators?: FilterOperator[];
     options?: Option[];
     range?: [number, number];
     /**
@@ -225,6 +233,9 @@ export type DataTableInstance<TData extends RowData> = ReactTable<DataTableFeatu
 export type JoinOperatorValues = typeof JOIN_OPERATORS;
 export type FilterOperatorValues = typeof FILTER_OPERATORS;
 export type FilterVariantValues = typeof FILTER_VARIANTS;
+
+/** The operator/variant constants, for callers configuring column meta (`filterOperators`, `variant`) without reaching into the package's internals. */
+export { FILTER_OPERATORS, FILTER_VARIANTS };
 
 /**
  * Utility type to get the literal values from constant objects

@@ -48,6 +48,16 @@ create policy "profiles select: authenticated (public projection)"
   to authenticated
   using (true);
 
+-- The ADR 0009 addendum's projection is column-level too: whole-row select
+-- would hand every authenticated reader every user's email (the policy gates
+-- ROWS; privileges gate COLUMNS). The public projection is
+-- id/name/image/created_at; email stays server-side — the signed-in user
+-- reads their own email from the auth session (the header's
+-- `session.user.email`), and a later stage can expose a self-scoped view or
+-- definer function if a UI surface ever needs the column.
+revoke select on public.profiles from authenticated;
+grant select (id, name, image, created_at) on public.profiles to authenticated;
+
 create policy "profiles update: self only"
   on public.profiles for update
   to authenticated

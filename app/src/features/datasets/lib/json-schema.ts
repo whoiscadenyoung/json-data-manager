@@ -44,6 +44,36 @@ export function fieldCount(schema: unknown): number {
   return Object.keys(schema.properties).length;
 }
 
+/** The filter type of one declared property: number, boolean, or everything else as string. */
+export type DeclaredPropertyType = "boolean" | "number" | "string";
+
+/**
+ * The filter type of each declared property, read from the stored JSON
+ * Schema's `properties[name].type` (`["string", "null"]` unions read as their
+ * base type). Drives the PG table's server-mode filter controls and the
+ * `search_entries` filter-value coercion (§5.1's `eq` is jsonb containment,
+ * so a numeric column must be filtered by a NUMBER — its text "5" matches
+ * nothing).
+ */
+export function declaredPropertyTypes(schema: unknown): Map<string, DeclaredPropertyType> {
+  const types = new Map<string, DeclaredPropertyType>();
+  if (!isSchemaNode(schema) || !isSchemaNode(schema.properties)) {
+    return types;
+  }
+  for (const [name, raw] of Object.entries(schema.properties)) {
+    const node = isSchemaNode(raw) ? raw : {},
+      base = Array.isArray(node.type) ? node.type.find((t) => t !== "null") : node.type;
+    if (base === "number" || base === "integer") {
+      types.set(name, "number");
+    } else if (base === "boolean") {
+      types.set(name, "boolean");
+    } else {
+      types.set(name, "string");
+    }
+  }
+  return types;
+}
+
 /**
  * A single field, parsed out of a JSON Schema `properties` entry into the same
  * shape the visual schema builder edits — so the read-only viewer and the

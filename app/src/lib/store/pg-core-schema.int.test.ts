@@ -332,4 +332,62 @@ describe.skipIf(!dbUp())("core schema (§3.2)", () => {
       await dropDatasets(s(), [datasetId]);
     }
   });
+
+  test("dataset_rows_for_tiles pages on next_cursor (the §5 intro blanket rule; null = exhausted)", async () => {
+    const datasetId = await createDataset(s(), {
+      createdBy: ALICE,
+      properties: ["name"],
+    });
+    try {
+      await s().begin();
+      await s().asUser(ALICE);
+      await s().expectOk(`select public.import_entries('${datasetId}', ${sqlLit(POINTS)}::jsonb)`);
+
+      // Walk the whole feed one row at a time: every page carries the next
+      // page's continuation (the store's PagedRpcRow reads the last row's
+      // next_cursor), and the final page's null is the exhaustion signal the
+      // seam's completeness loop rides.
+      const seen: string[] = [];
+      const cursors: Array<string | null> = [];
+      let cursor: string | null = null;
+      for (;;) {
+        const page = await s().expectOk(
+          `select entry_id::text as entry_id, data->>'name' as name, next_cursor
+           from public.dataset_rows_for_tiles('${datasetId}',
+             ${cursor === null ? "null" : sqlLit(cursor)}, 1)`,
+        );
+        expect(page).toHaveLength(1);
+        const first = page[0];
+        if (first === undefined) throw new Error("empty page mid-walk");
+        seen.push(first.name as string);
+        cursors.push(first.next_cursor === null ? null : String(first.next_cursor));
+        if (first.next_cursor === null) break;
+        cursor = String(first.next_cursor);
+        expect(seen.length).toBeLessThanOrEqual(POINTS.length);
+      }
+
+      expect(seen).toHaveLength(POINTS.length);
+      expect(new Set(seen).size).toBe(POINTS.length);
+      expect(cursors[cursors.length - 1]).toBeNull();
+      // Every non-final page handed back a resumable cursor.
+      expect(cursors.slice(0, -1).every((c) => typeof c === "string" && c.length > 0)).toBe(true);
+
+      // A cursor at the LAST row also exhausts (no phantom page).
+      const lastId = (
+        await s().expectOk(
+          `select id::text as id from public.entries
+           where dataset_id = '${datasetId}' order by id desc limit 1`,
+        )
+      )[0].id as string;
+      const tail = await s().expectOk(
+        `select next_cursor from public.dataset_rows_for_tiles('${datasetId}',
+           encode(convert_to(jsonb_build_object('i', '${lastId}')::text, 'utf8'), 'base64'), 1)`,
+      );
+      expect(tail).toHaveLength(0);
+
+      await s().rollback();
+    } finally {
+      await dropDatasets(s(), [datasetId]);
+    }
+  });
 });
