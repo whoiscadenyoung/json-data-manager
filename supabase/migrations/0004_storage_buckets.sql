@@ -24,21 +24,9 @@
 -- are uploader-owned (the storage service stamps owner/owner_id from the JWT).
 -- ---------------------------------------------------------------------------
 
--- `public` is deliberately not set: every storage-api schema version defaults
--- buckets to private, and these four MUST be private (design §6, signed
--- reads only). Naming the column pinched the migration to one storage schema
--- version — the CI image's storage.buckets has no `public` column — so the
--- default carries the intent instead.
-insert into storage.buckets (id, name)
-values
-  ('geometries', 'geometries'),
-  ('source-files', 'source-files'),
-  ('tile-archives', 'tile-archives'),
-  ('marker-sprites', 'marker-sprites')
-on conflict (id) do nothing;
-
 -- The dataset id a bucket object's path belongs to: the first path segment as
--- a uuid, or null when the shape doesn't match (fail closed).
+-- a uuid, or null when the shape doesn't match (fail closed). Unconditional —
+-- it touches no storage tables, and stage-1's app code may reference it.
 create function public.dataset_id_of_storage_path(p_name text) returns uuid
 language sql
 stable
@@ -50,59 +38,90 @@ as $$
   end
 $$;
 
--- One policy per statement kind on storage.objects. The supabase base image
--- ships storage.objects with no policies, so these are the only grants;
--- `drop policy if exists` keeps the file re-runnable the same way the bucket
--- inserts are.
-drop policy if exists "migrated buckets: authenticated insert" on storage.objects;
-drop policy if exists "migrated buckets: authenticated select" on storage.objects;
-drop policy if exists "migrated buckets: authenticated update" on storage.objects;
-drop policy if exists "migrated buckets: authenticated delete" on storage.objects;
-drop policy if exists "migrated dataset buckets: insert requires can_edit_dataset" on storage.objects;
-drop policy if exists "migrated dataset buckets: select requires can_view_dataset" on storage.objects;
-drop policy if exists "migrated dataset buckets: update requires can_edit_dataset" on storage.objects;
-drop policy if exists "migrated dataset buckets: delete requires can_edit_dataset" on storage.objects;
-drop policy if exists "marker-sprites: uploader-owned" on storage.objects;
+-- The storage schema's TABLES belong to the storage-api service: it creates
+-- and migrates storage.buckets/storage.objects at runtime (the supabase
+-- postgres image's own initdb only creates the empty schema and guards its
+-- grants on "if the table exists"). A bare postgres service container — what
+-- the CI store job boots — has the schema but not the tables, and pre-creating
+-- them here would collide with the service's own migrations on first boot in
+-- local dev. So the bucket rows and object policies apply only where the
+-- service actually exists (local dev via the CLI, any real deployment); the
+-- CI store job verifies 0001–0003 + PostGIS directly and skips this section
+-- loudly, with full-stack CI coverage owned by stage 2's ci.yml work.
+do $do$
+begin
+  if to_regclass('storage.objects') is null then
+    raise notice '0004: storage tables absent (no storage-api service in this environment) — buckets and object policies skipped';
+  else
+  -- `public` is deliberately not set: every storage-api schema version
+  -- defaults buckets to private, and these four MUST be private (design §6,
+  -- signed reads only). Naming the column pinched the migration to one
+  -- storage schema version — some images' storage.buckets has no `public`
+  -- column — so the default carries the intent instead.
+  insert into storage.buckets (id, name)
+  values
+    ('geometries', 'geometries'),
+    ('source-files', 'source-files'),
+    ('tile-archives', 'tile-archives'),
+    ('marker-sprites', 'marker-sprites')
+  on conflict (id) do nothing;
 
-create policy "migrated dataset buckets: insert requires can_edit_dataset"
-  on storage.objects for insert to authenticated
-  with check (
-    bucket_id in ('geometries', 'source-files', 'tile-archives')
-    and public.can_edit_dataset(public.dataset_id_of_storage_path(name))
-  );
+  -- One policy per statement kind on storage.objects. The supabase base image
+  -- ships storage.objects with no policies, so these are the only grants;
+  -- `drop policy if exists` keeps the file re-runnable the same way the bucket
+  -- inserts are.
+  drop policy if exists "migrated buckets: authenticated insert" on storage.objects;
+  drop policy if exists "migrated buckets: authenticated select" on storage.objects;
+  drop policy if exists "migrated buckets: authenticated update" on storage.objects;
+  drop policy if exists "migrated buckets: authenticated delete" on storage.objects;
+  drop policy if exists "migrated dataset buckets: insert requires can_edit_dataset" on storage.objects;
+  drop policy if exists "migrated dataset buckets: select requires can_view_dataset" on storage.objects;
+  drop policy if exists "migrated dataset buckets: update requires can_edit_dataset" on storage.objects;
+  drop policy if exists "migrated dataset buckets: delete requires can_edit_dataset" on storage.objects;
+  drop policy if exists "marker-sprites: uploader-owned" on storage.objects;
 
-create policy "migrated dataset buckets: select requires can_view_dataset"
-  on storage.objects for select to authenticated
-  using (
-    bucket_id in ('geometries', 'source-files', 'tile-archives')
-    and public.can_view_dataset(public.dataset_id_of_storage_path(name))
-  );
+  create policy "migrated dataset buckets: insert requires can_edit_dataset"
+    on storage.objects for insert to authenticated
+    with check (
+      bucket_id in ('geometries', 'source-files', 'tile-archives')
+      and public.can_edit_dataset(public.dataset_id_of_storage_path(name))
+    );
 
-create policy "migrated dataset buckets: update requires can_edit_dataset"
-  on storage.objects for update to authenticated
-  using (
-    bucket_id in ('geometries', 'source-files', 'tile-archives')
-    and public.can_edit_dataset(public.dataset_id_of_storage_path(name))
-  )
-  with check (
-    bucket_id in ('geometries', 'source-files', 'tile-archives')
-    and public.can_edit_dataset(public.dataset_id_of_storage_path(name))
-  );
+  create policy "migrated dataset buckets: select requires can_view_dataset"
+    on storage.objects for select to authenticated
+    using (
+      bucket_id in ('geometries', 'source-files', 'tile-archives')
+      and public.can_view_dataset(public.dataset_id_of_storage_path(name))
+    );
 
-create policy "migrated dataset buckets: delete requires can_edit_dataset"
-  on storage.objects for delete to authenticated
-  using (
-    bucket_id in ('geometries', 'source-files', 'tile-archives')
-    and public.can_edit_dataset(public.dataset_id_of_storage_path(name))
-  );
+  create policy "migrated dataset buckets: update requires can_edit_dataset"
+    on storage.objects for update to authenticated
+    using (
+      bucket_id in ('geometries', 'source-files', 'tile-archives')
+      and public.can_edit_dataset(public.dataset_id_of_storage_path(name))
+    )
+    with check (
+      bucket_id in ('geometries', 'source-files', 'tile-archives')
+      and public.can_edit_dataset(public.dataset_id_of_storage_path(name))
+    );
 
-create policy "marker-sprites: uploader-owned"
-  on storage.objects for all to authenticated
-  using (
-    bucket_id = 'marker-sprites'
-    and (owner = auth.uid() or owner_id = auth.uid()::text)
-  )
-  with check (
-    bucket_id = 'marker-sprites'
-    and (owner = auth.uid() or owner_id = auth.uid()::text)
-  );
+  create policy "migrated dataset buckets: delete requires can_edit_dataset"
+    on storage.objects for delete to authenticated
+    using (
+      bucket_id in ('geometries', 'source-files', 'tile-archives')
+      and public.can_edit_dataset(public.dataset_id_of_storage_path(name))
+    );
+
+  create policy "marker-sprites: uploader-owned"
+    on storage.objects for all to authenticated
+    using (
+      bucket_id = 'marker-sprites'
+      and (owner = auth.uid() or owner_id = auth.uid()::text)
+    )
+    with check (
+      bucket_id = 'marker-sprites'
+      and (owner = auth.uid() or owner_id = auth.uid()::text)
+    );
+  end if;
+end
+$do$;
