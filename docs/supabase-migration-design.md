@@ -93,7 +93,7 @@ Conventions for all migrations:
   `timestamptz not null default now()`; a shared
   `set_updated_at()` trigger maintains `updated_at` where present.
 - Attribution columns are `created_by uuid not null default auth.uid()
-  references public.profiles(id)` — the RLS layer stamps identity (the
+references public.profiles(id)` — the RLS layer stamps identity (the
   ADR 0007 pattern, SQL edition).
 - Foreign keys to user-owned rows cascade; organizational links
   (`group_id`, collection membership) use `set null` / join tables.
@@ -121,7 +121,11 @@ create function public.handle_new_user() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
   insert into public.profiles (id, email, email_verified, name, image)
-  values (new.id, new.email, coalesce(new.email_confirmed_at is not null, false),
+  -- confirmed_at, not email_confirmed_at: the pinned CI image
+  -- (supabase/postgres 15.8.1.049) carries only confirmed_at; the local
+  -- CLI 3.0.0 stack has both. confirmed_at is set whenever GoTrue marks
+  -- the account confirmed, so it is the portable signal.
+  values (new.id, new.email, coalesce(new.confirmed_at is not null, false),
           new.raw_user_meta_data->>'name', new.raw_user_meta_data->>'avatar_url');
   return new;
 end $$;
@@ -549,7 +553,7 @@ create table public.publish_bundle_members (         -- component bundleRunMembe
 create index bundle_members_by_bundle on public.publish_bundle_members (bundle_id);
 ```
 
-(Publish *attempts* — the per-member publish durability row, component
+(Publish _attempts_ — the per-member publish durability row, component
 `publishAttempts` — collapse into `publish_bundle_members.attempt_id` plus
 `imports`-style progress on the version RPC; stage 4 details the
 chunk-resume port, reusing the import pipeline of §10.)
@@ -712,24 +716,24 @@ into the four combinations exactly as the ADR requires.
 
 **Policy matrix** (all `TO authenticated`; the `anon` role gets nothing):
 
-| Table | SELECT | INSERT / UPDATE / DELETE |
-| --- | --- | --- |
-| profiles | authenticated (public projection; self sees email) | UPDATE self only |
-| datasets | `can_view_dataset(id)` | `can_edit_dataset(id)` (UPDATE also re-checks it — flipping `edit_policy` is itself a gated write, the setEditPolicy rule) |
-| entries | `can_view_dataset(dataset_id)` | `can_edit_dataset(dataset_id)` |
-| geometries | `can_view_dataset(dataset_id)` | `can_edit_dataset(dataset_id)` |
-| entry_references | viewable when either side is viewable | write only through entry writes (trigger-owned; no direct grant) |
-| imports | `can_view_dataset(dataset_id)` | `can_edit_dataset(dataset_id)` |
-| collections, groups, maps, map_layers, map_layer_overrides, layer_styles, marker_sprites | authenticated (shared catalog artifacts — ADR 0009, maps stay open) | authenticated |
-| collection_datasets | authenticated | authenticated |
-| derived_datasets | authenticated (drafts invisible to consumers by the status column, component parity) | authenticated; UPDATE may not change `created_by` |
-| dataset_versions, version_entries | `can_view_dataset(dataset_id)` / via version join | NO direct grants — written only by `publish_version()` (owner/definer path); immutable |
-| tags | authenticated | authenticated + retire guard trigger |
-| consumer_references, version_policies | authenticated | authenticated |
-| projects, project_artifacts | creator only (`created_by = auth.uid()`) — the stage-8 private exception | creator only |
-| publish_bundles (+ members) | creator only (they are project state) | creator only |
-| remote_sources, dataset_bindings, binding_entries, sync_runs, commit_mirror, dataset_activity | authenticated (read) | sync engine only (service_role / definer RPCs); bindings' CRUD via can_edit_dataset of the bound dataset |
-| apps | sharing per row (`sharing` jsonb: creator-edit; examples readable by all authenticated) | creator only (`created_by`), seeded examples excepted |
+| Table                                                                                         | SELECT                                                                                  | INSERT / UPDATE / DELETE                                                                                                   |
+| --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| profiles                                                                                      | authenticated (public projection; self sees email)                                      | UPDATE self only                                                                                                           |
+| datasets                                                                                      | `can_view_dataset(id)`                                                                  | `can_edit_dataset(id)` (UPDATE also re-checks it — flipping `edit_policy` is itself a gated write, the setEditPolicy rule) |
+| entries                                                                                       | `can_view_dataset(dataset_id)`                                                          | `can_edit_dataset(dataset_id)`                                                                                             |
+| geometries                                                                                    | `can_view_dataset(dataset_id)`                                                          | `can_edit_dataset(dataset_id)`                                                                                             |
+| entry_references                                                                              | viewable when either side is viewable                                                   | write only through entry writes (trigger-owned; no direct grant)                                                           |
+| imports                                                                                       | `can_view_dataset(dataset_id)`                                                          | `can_edit_dataset(dataset_id)`                                                                                             |
+| collections, groups, maps, map_layers, map_layer_overrides, layer_styles, marker_sprites      | authenticated (shared catalog artifacts — ADR 0009, maps stay open)                     | authenticated                                                                                                              |
+| collection_datasets                                                                           | authenticated                                                                           | authenticated                                                                                                              |
+| derived_datasets                                                                              | authenticated (drafts invisible to consumers by the status column, component parity)    | authenticated; UPDATE may not change `created_by`                                                                          |
+| dataset_versions, version_entries                                                             | `can_view_dataset(dataset_id)` / via version join                                       | NO direct grants — written only by `publish_version()` (owner/definer path); immutable                                     |
+| tags                                                                                          | authenticated                                                                           | authenticated + retire guard trigger                                                                                       |
+| consumer_references, version_policies                                                         | authenticated                                                                           | authenticated                                                                                                              |
+| projects, project_artifacts                                                                   | creator only (`created_by = auth.uid()`) — the stage-8 private exception                | creator only                                                                                                               |
+| publish_bundles (+ members)                                                                   | creator only (they are project state)                                                   | creator only                                                                                                               |
+| remote_sources, dataset_bindings, binding_entries, sync_runs, commit_mirror, dataset_activity | authenticated (read)                                                                    | sync engine only (service_role / definer RPCs); bindings' CRUD via can_edit_dataset of the bound dataset                   |
+| apps                                                                                          | sharing per row (`sharing` jsonb: creator-edit; examples readable by all authenticated) | creator only (`created_by`), seeded examples excepted                                                                      |
 
 Trigger-maintained columns (`entry_count`, `feature_count`, `bbox`,
 `map_tile_cache_version`, `search`, `entry_references`) are updated by
@@ -883,12 +887,12 @@ it.
 
 ## 6. Storage
 
-| Bucket | Contents | Access |
-| --- | --- | --- |
-| `geometries` | Oversized geometry `source` payloads (above `INLINE_GEOMETRY_SOURCE_BYTES`, set at 256 KB — the Convex INLINE_GEOMETRY_BYTE_LIMIT concept) | private; reads via short-lived signed URLs (the `fetchGeometryPayload` path) |
-| `marker-sprites` | Uploaded point-marker icons — PNG only, rasterized in the uploader's browser; SVG is never stored or served (ADR 0013) | private, signed reads |
-| `tile-archives` | Built PMTiles archives (`install_tile_archive` claims them) | private, range-read signed URLs (the OPFS pin + range requests carry over) |
-| `source-files` | Original import files (`source_file_*` retention) | private |
+| Bucket           | Contents                                                                                                                                   | Access                                                                       |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| `geometries`     | Oversized geometry `source` payloads (above `INLINE_GEOMETRY_SOURCE_BYTES`, set at 256 KB — the Convex INLINE_GEOMETRY_BYTE_LIMIT concept) | private; reads via short-lived signed URLs (the `fetchGeometryPayload` path) |
+| `marker-sprites` | Uploaded point-marker icons — PNG only, rasterized in the uploader's browser; SVG is never stored or served (ADR 0013)                     | private, signed reads                                                        |
+| `tile-archives`  | Built PMTiles archives (`install_tile_archive` claims them)                                                                                | private, range-read signed URLs (the OPFS pin + range requests carry over)   |
+| `source-files`   | Original import files (`source_file_*` retention)                                                                                          | private                                                                      |
 
 Uploads: browser requests a signed URL, PUTs the bytes, then writes the
 row/RPC (the pendingUploads provenance problem disappears — signed URLs are
@@ -1000,7 +1004,7 @@ manual mode for the server concerns:
 - `DataTableSearchFilter` / `DataTableFilterMenu` /
   `DataTableColumnHeader` sort controls hoist their state into
   `{query, filters, sort}` → one `useQuery(store.entries.searchEntries(
-  {datasetId, query, filters, sort, cursor}))` per state (keyset pages
+{datasetId, query, filters, sort, cursor}))` per state (keyset pages
   accumulate for the virtualized body + load-more).
 - Column visibility stays **client-side** (`DataTableViewMenu` untouched).
 - Reference-label lookup (`listForIds`) stays as-is, now a PostgREST `in`
@@ -1021,18 +1025,44 @@ manual mode for the server concerns:
   `integrations/convex/provider.tsx` STAYS MOUNTED until stage 7 — both
   auth halves coexist; `useConvexAuth` keeps answering for Convex surfaces
   while the new `useSession` answers for PG surfaces.
-- **Rewired at stage 0:** `components/auth-gate.tsx` (useConvexAuth →
-  `useSession`; the gate keeps its exact shape — spinner while resolving,
-  redirect remembering `?redirect=`), `components/header.tsx` (user chip
-  from `store/profiles.self`), `routes/signin.tsx`
-  (`authClient.signInWithPassword({email, password})`; same
-  busy-state/redirect/safeRedirect semantics).
+- **Rewired at stage 0:** `components/auth-gate.tsx`, `components/header.tsx`
+  (user chip from the GoTrue user metadata at stage 0; a profiles read
+  replaces it when the store modules land, §3.1/§8.1), `routes/signin.tsx`
+  (same busy-state/redirect/safeRedirect semantics), and sign-out in
+  `components/header.tsx` (below).
+- **Stage-0 session bridge (review-mandated).** The still-mounted Convex
+  provider is fed SOLELY by its Better Auth session
+  (`ConvexBetterAuthProvider authClient`), and `app/convex/auth.ts` rejects
+  unauthenticated callers on every exposed read AND write — so a sign-in
+  that wrote only a Supabase session would open the gate over a fully
+  unauthenticated Convex backend (the endless-skeleton failure mode #135
+  built the gate to prevent). Stage 0 is therefore a two-session world:
+  - `routes/signin.tsx` signs the same credentials into BOTH stores —
+    `supabase.auth.signInWithPassword` first, then the bridge
+    `authClient.signIn.email` for the Better Auth session. If the bridge
+    half fails, the Supabase half is rolled back (`signOut`) so neither
+    session is left live, and the reason is surfaced — the usual cause is
+    an account minted on only one side.
+  - `components/auth-gate.tsx` opens only when BOTH halves resolved
+    signed-in (`useSession` session AND `useConvexAuth` authenticated);
+    the spinner/redirect shape is unchanged. The routed tree still queries
+    only Convex at stage 0, so the Convex half is load-bearing; the
+    Supabase half must also be up or the PG surfaces (stage 1+) and the
+    header chip would hang half-signed-in. `/signin` auto-redirects only
+    on both, so a half-signed-in visitor cannot loop.
+  - Sign-out ends both sessions (`supabase.auth.signOut()` +
+    `authClient.signOut()`), so no legacy Better Auth cookie outlives it.
 - **Signup gating carries (ADR 0009 addendum):** Supabase Auth has "Disable
   new user signups" enabled (`config.toml` / dashboard) — the public surface
-  is sign-in only; accounts are admin-created via the service-role key
-  (`auth.admin.createUser` with `email_confirm: true`) by the operator.
-  Local recipe: `supabase admin create-user` or a Dashboard action;
-  the design keeps the "ask the maintainer for an account" UX copy.
+  is sign-in only; accounts are admin-created by the operator AS A PAIR with
+  matching credentials (the bridge signs the same email/password into both):
+  the Supabase user via the service-role key (`auth.admin.createUser` with
+  `email_confirm: true` — local recipe: `supabase admin create-user` or a
+  Dashboard action) AND the Better Auth account via
+  `bunx convex run auth:createAccount '{"email": …, "password": …, "name":
+…}'` (local backend: add `--url http://127.0.0.1:3212 --admin-key …`;
+  password ≥ 8 chars, app/convex/auth.ts). The design keeps the
+  "ask the maintainer for an account" UX copy.
 - **Token plumbing retired:** `lib/convex-auth-token.ts` and the
   Better-Auth→Convex JWT feed die at stage 7; until then they serve only
   the still-mounted Convex half.
@@ -1078,10 +1108,10 @@ tree — at stage 7).
 
 ```yaml
 services:
-  postgres:                       # supabase/postgres ships PostGIS + the supabase extensions
+  postgres: # supabase/postgres ships PostGIS + the supabase extensions
     image: supabase/postgres:15.8.1.049
     env: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: app }
-    ports: ['5432:5432']
+    ports: ["5432:5432"]
     options: >-
       --health-cmd "pg_isready -U postgres" --health-interval 5s
       --health-timeout 5s --health-retries 10
@@ -1114,7 +1144,7 @@ disabled, first migration: extensions postgis/pg_trgm + profiles + helper
 functions); `integrations/supabase/` (client/server/provider/types); auth
 swap of auth-gate/header/signin alongside the still-mounted Convex provider;
 env vars; CI postgres service + migrations step.
-*Accept:* sign-in works against local Supabase; the app still runs end-to-end
+_Accept:_ sign-in works against local Supabase; the app still runs end-to-end
 on Convex with Supabase mounted beside it; CI green with migrations applied;
 `git grep` shows zero edits under `app/convex/` or `packages/json-cms/`.
 
@@ -1122,7 +1152,7 @@ on Convex with Supabase mounted beside it; CI green with migrations applied;
 import pipeline (§10); row CRUD; `search_entries` wired into the table
 (§8.4); reference labels; `dataset-rows-pg.ts` + store modules for the core
 domains; new datasets are Postgres-native from here (transitional rule).
-*Accept:* 20k import lands in seconds; table sort/filter/search are
+_Accept:_ 20k import lands in seconds; table sort/filter/search are
 server-side round-trips (<100 ms warm, network tab shows RPC calls only);
 row read via the seam ~1 s; locked-dataset writes denied with the
 not-found/locked shapes; vitest integration tests cover RLS (anon denied;
@@ -1134,19 +1164,19 @@ reference-trigger round-trip.
 tile-archive build fed from `dataset_rows_for_tiles`; Storage-backed
 oversized geometries; popups (on-demand point reads); layer styles +
 point markers via Storage + `marker_sprites`; `install_tile_archive` CAS.
-*Accept:* 20k-point dataset renders from a PG-fed archive; OPFS repeat-open
+_Accept:_ 20k-point dataset renders from a PG-fed archive; OPFS repeat-open
 still fetches 0 archive bytes; stale-rebuild guard demonstrably rejects a
 `p_expected_version` behind the current; bbox query plan uses the GiST
 index (`explain` attached in the PR); markers upload + render.
 
 **Stage 3 — catalog.** Collections/groups/joins, datasets browser, profiles.
-*Accept:* membership ops match today's behaviors (many-to-many, standalone
+_Accept:_ membership ops match today's behaviors (many-to-many, standalone
 groups, kind denormalization); browser counts read from summary columns,
 never scans; profile pages render from `profiles`.
 
 **Stage 4 — versioning + publishing.** Versions/tags/frozen materialization
 (§5.4), projects, bundles, publish flow.
-*Accept:* publish is idempotent on `publish_key` (double-submit test);
+_Accept:_ publish is idempotent on `publish_key` (double-submit test);
 version rows immutable (no grants — negative test); tag retire refuses while
 pinned (#126 shape); bundle press re-runs members exactly (per-member
 status); frozen popups read materialized rows.
@@ -1154,12 +1184,12 @@ status); frozen popups read materialized rows.
 **Stage 5 — derived datasets + analysis + exports.** Registry rows,
 seam-integrated transform application (already pure), SQL analyses,
 exports.
-*Accept:* derived specs save with cycle rejection; popup enrichment
+_Accept:_ derived specs save with cycle rejection; popup enrichment
 semantics byte-match the Convex executor (the pinned tests pass unchanged
 against PG rows); exports byte-faithful (verbatim `source` round-trip).
 
 **Stage 6 — realtime multi-user.** §7 channels on every active surface.
-*Accept:* two browsers editing one dataset see each other's rows < 1 s;
+_Accept:_ two browsers editing one dataset see each other's rows < 1 s;
 RLS-filtered channels never leak an invisible dataset; tile-cache live
 signal updates without page subscriptions.
 
@@ -1167,7 +1197,7 @@ signal updates without page subscriptions.
 sync engine port (pg_cron reconcile weekly), app-builder tables, then the
 shell disconnect: Convex provider, `convex-auth-token.ts`, Convex env vars,
 and the light-query `PERSIST_KEY` bump to v3; files preserved in-tree.
-*Accept:* bound dataset syncs end-to-end against a stand-in source; the app
+_Accept:_ bound dataset syncs end-to-end against a stand-in source; the app
 boots and runs every surface with zero Convex network calls (devtools
 network inspection); `git grep convex` finds only preserved reference code
 and the untouched `app/convex/` + `packages/json-cms/`.
@@ -1202,7 +1232,7 @@ in `app/`. The migration-specific recipe:
 
 1. **Stack up:** `supabase start` → `supabase db reset` (applies all
    migrations) → `supabase gen types typescript --local >
-   app/src/integrations/supabase/types.ts` (committed types refreshed;
+app/src/integrations/supabase/types.ts` (committed types refreshed;
    CI's service container applies the same files).
 2. **The 20k A/B** (adapted from `docs/map-performance-handoff-2026-10-29.md`
    steps 5–8, Convex-backend steps dropped): generate the 20k-point
@@ -1241,3 +1271,86 @@ The Convex A/B numbers being compared against are the recorded measurements
   with 10+ concurrent tabs before relying on broad channel use.
 - Storage signed-URL TTL vs the OPFS pin's long-lived reads — pick at
   stage 2 (a longer TTL or a public-read bucket for archives).
+
+---
+
+## 17. Local bring-up status (stage 0, recorded 2026-11-03)
+
+Recorded by the stage-0 scaffold run in the `jdm-supabase-backend` worktree.
+
+**The stack is up.** `supabase start` → `supabase db reset` both completed,
+and the bring-up checks passed:
+
+- CLI is not installed natively — everything ran as `bunx supabase`
+  (**CLI 3.0.0**; note `--local` on `gen types` is deprecated, dropped in
+  v4). Docker Desktop was installed but not running; `open -a Docker`
+  started it (daemon 29.4.1 → 29.9.2 after a mid-bring-up crash-restart).
+- `supabase init` generated `supabase/config.toml`; edited for this
+  migration: `major_version = 15` (the CLI 3.0.0 default is 17 — pinned to
+  15 to match §2 and the §12 CI image `supabase/postgres:15.8.1.049`),
+  `[auth] enable_signup = false` (§9), and `[analytics] enabled = false`.
+- First two `supabase start` attempts failed their health checks on the
+  logflare+vector analytics containers (the realtime VM also raised a
+  `system_memory_high_watermark` alarm) and a third attempt crashed Docker
+  Desktop itself. Disabling the analytics stack (not part of §2's runtime
+  topology; only Studio's log explorer is lost) resolved it — fourth start
+  succeeded. `supabase db reset` then re-applied migrations cleanly
+  (it skips `migrations/README.md` by filename pattern, as intended).
+- Verified in the database (`psql` inside `supabase_db`):
+  `postgis 3.3.2` (`postgis_full_version()` reports `PGSQL="150"` — PG 15),
+  `pg_trgm 1.6`. All core containers healthy: db, auth (GoTrue
+  `/auth/v1/health` → 200), rest (`/rest/v1/` with the publishable key →
+  200), realtime, storage, studio, kong, pg_meta, inbucket. Stopped by
+  design: analytics, vector, imgproxy, edge_runtime, pooler.
+- Typed bindings generated: `supabase gen types typescript --local >
+app/src/lib/supabase/database.types.ts` (oxfmt-formatted). `public` is
+  empty (`Tables: { [_ in never]: never } …`) as expected before the
+  core-schema migration — regenerate after each schema stage lands.
+- Local values for the app integrator's `app/.env.local`:
+  `VITE_SUPABASE_URL=http://127.0.0.1:54321`,
+  `VITE_SUPABASE_ANON_KEY=sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH`
+  (CLI 3 prints new-format keys; `bunx supabase status` prints the rest,
+  including the local-only secret key for §9's admin user creation). The
+  DB URL is `postgresql://postgres:postgres@127.0.0.1:54322/postgres`.
+- Runtime dirs `.branches/`/`.temp/`/`.logs/` are ignored via
+  `supabase/.gitignore` (the CLI's own generated file covers the first two;
+  `.logs` added).
+- Restart recipe after a reboot or Docker quit: `open -a Docker`, wait for
+  the daemon, then `bunx supabase start` in the repo root (stack state
+  persists in the Docker volumes; no reset needed unless schema changed —
+  then `bunx supabase db reset`).
+
+**Review-fix addendum (2026-11-03, PR #207).** The stage-0 review found two
+must-fix gaps; both are fixed and verified as below.
+
+- `supabase/migrations/0002_profiles.sql` now ships the §3.1 half of the
+  stage-0 contract (table, `handle_new_user`, RLS projection). One
+  deliberate deviation from the §3.1 sketch, recorded there too: the
+  trigger reads `confirmed_at`, not `email_confirmed_at` — the pinned CI
+  image (supabase/postgres 15.8.1.049) carries only `confirmed_at` (checked
+  in `information_schema.columns`), while the local CLI 3.0.0 stack has
+  both; `confirmed_at` is set whenever GoTrue marks the account confirmed.
+- Verified in a throwaway `supabase/postgres:15.8.1.049` container
+  replicating the §12 CI store gate (both migrations applied in lexical
+  order as `supabase_admin`, `ON_ERROR_STOP=1`, both clean), plus smoke
+  tests in that container: an `auth.users` insert mints the matching
+  profiles row (confirmed → `email_verified true`, unconfirmed → false;
+  `raw_user_meta_data` name/avatar projected); RLS as a signed-in user
+  reads every profile and updates ONLY the self row (`auth.uid()` via
+  `request.jwt.claim.sub` — this image's `auth.uid()` reads that GUC, not
+  the whole-claims JSON); anon sees 0 rows; deleting the auth user removes
+  the profile (cascade).
+- NOT verified here: the live sign-in flow end-to-end (the app dev server
+  and the local Convex backend were not running during this fix run). The
+  §9 account-pair recipe (service-role/Studio user + matching
+  `auth:createAccount`) and the two-session bridge's runtime behavior are
+  to be exercised by the §15 step-3 verification before the stage is
+  declared done.
+- Local-stack note: the running local DB already carries a hand-applied
+  profiles schema (matches §3.1 modulo policy names, `confirmed_at`-era
+  trigger body) plus §3.2-sketch tables (datasets/entries/geometries/
+  imports/entry_references) that were applied outside `supabase/migrations/`
+  (§17 recorded `public` as empty at scaffold time — this arrived after).
+  0002 was therefore NOT applied to the running local DB; it applies
+  cleanly on a fresh database, and the next `supabase db reset` rebuilds
+  the local stack from the shipped migration set.

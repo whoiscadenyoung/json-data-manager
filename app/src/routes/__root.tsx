@@ -8,6 +8,7 @@ import { AuthGate, SignedInOnly } from "#/components/auth-gate";
 import { Header } from "#/components/header";
 import { TileArchiveCacheManager, TileArchiveManager } from "#/features/maps/tiles";
 import { AppConvexProvider } from "#/integrations/convex/provider";
+import { SupabaseAuthProvider } from "#/integrations/supabase/provider";
 import { tanStackQueryDevtools } from "#/integrations/tanstack-query/devtools";
 import { TanStackQueryProvider } from "#/integrations/tanstack-query/root-provider";
 
@@ -52,35 +53,40 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       </head>
       <body className="font-sans antialiased wrap-anywhere selection:bg-[rgba(79,184,178,0.24)]">
         <AppConvexProvider>
+          {/* The Supabase session provider sits beside the still-mounted
+              Convex one (stage 0 auth swap, design doc §9) — it needs the
+              query client for its sign-out cache clear. */}
           <TanStackQueryProvider>
-            {/* The catalog watchers query the moment they mount — they ride
+            <SupabaseAuthProvider>
+              {/* The catalog watchers query the moment they mount — they ride
                 SignedInOnly so a signed-out visitor's gate redirect can't be
                 replaced by their "You're signed out" failures (#135). */}
-            <SignedInOnly>
-              <TileArchiveManager />
-              <TileArchiveCacheManager />
-            </SignedInOnly>
-            <Header />
-            {/* The app-wide sign-in gate (issue #135): nothing routed renders
+              <SignedInOnly>
+                <TileArchiveManager />
+                <TileArchiveCacheManager />
+              </SignedInOnly>
+              <Header />
+              {/* The app-wide sign-in gate (issue #135): nothing routed renders
                 — or queries — until the session resolves as signed in. */}
-            <AuthGate>{children}</AuthGate>
-            <Toaster />
-            {/* Devtools stay a dev-only render — they shipped into production
+              <AuthGate>{children}</AuthGate>
+              <Toaster />
+              {/* Devtools stay a dev-only render — they shipped into production
                 builds until #135's review caught it. */}
-            {import.meta.env.PROD ? null : (
-              <TanStackDevtools
-                config={{
-                  position: "bottom-right",
-                }}
-                plugins={[
-                  {
-                    name: "Tanstack Router",
-                    render: <TanStackRouterDevtoolsPanel />,
-                  },
-                  tanStackQueryDevtools,
-                ]}
-              />
-            )}
+              {import.meta.env.PROD ? null : (
+                <TanStackDevtools
+                  config={{
+                    position: "bottom-right",
+                  }}
+                  plugins={[
+                    {
+                      name: "Tanstack Router",
+                      render: <TanStackRouterDevtoolsPanel />,
+                    },
+                    tanStackQueryDevtools,
+                  ]}
+                />
+              )}
+            </SupabaseAuthProvider>
           </TanStackQueryProvider>
         </AppConvexProvider>
         <Scripts />

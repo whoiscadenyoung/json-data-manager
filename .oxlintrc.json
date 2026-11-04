@@ -101,7 +101,15 @@
     "builtin": true
   },
   "globals": {},
-  "ignorePatterns": ["packages/ui/src/components", "packages/ui/src/niko-table"],
+  // app/src/lib/supabase/database.types.ts is generated (`supabase gen types
+  // typescript --local`, refreshed after every schema stage) and its
+  // `keyof … | { schema: … }` unions trip typescript/no-redundant-type-constituents
+  // — ignore the generator's output, same treatment as the shadcn registry dirs.
+  "ignorePatterns": [
+    "packages/ui/src/components",
+    "packages/ui/src/niko-table",
+    "app/src/lib/supabase/database.types.ts"
+  ],
   "overrides": [
     {
       "files": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx"],

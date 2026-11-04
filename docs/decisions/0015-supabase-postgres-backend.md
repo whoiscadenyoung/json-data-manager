@@ -28,16 +28,16 @@ frontend. Measured on the isolated local backend with fresh 20k-point data
   dominated by per-document writes chunked through workflow steps.
 - Every search, sort, and filter on the dataset table is **client-side**
   (TanStack Table over fetched rows — `app/src/features/datasets/components/
-  entries-table.tsx`), because the component `entries` table carries only a
+entries-table.tsx`), because the component `entries` table carries only a
   `by_schema` index (`packages/json-cms/src/component/schema.ts:329-340`).
   There is no server-side search surface at all, so every table interaction
   pays the full per-document row read.
 - The escape hatches were tried: the server-side archive build (#187, phase
-  1) was built and measured, then dropped — the V8 action OOMs at its 64 MB
-  limit on 20k points and a `"use node"` action made the cold open 28.6 s
-  against 16.5 s for the browser worker. The packed-snapshot design
-  (`docs/map-geometry-snapshot-design-2026-10-29.md`) was designed and
-  shelved.
+  1. was built and measured, then dropped — the V8 action OOMs at its 64 MB
+     limit on 20k points and a `"use node"` action made the cold open 28.6 s
+     against 16.5 s for the browser worker. The packed-snapshot design
+     (`docs/map-geometry-snapshot-design-2026-10-29.md`) was designed and
+     shelved.
 
 `docs/postgres-supabase-backend-notes-2026-10-29.md` recorded the
 Postgres/Supabase option with a revisit trigger: "the Convex per-document
@@ -83,7 +83,7 @@ and Supabase Realtime carries it.
   `entries` (jsonb `data` with GIN `jsonb_path_ops`, trigger-built `search`
   tsvector over the dataset's declared property keys), `geometries` (original
   GeoJSON in `source` jsonb for round-trip fidelity; `geom
-  geometry(Geometry,4326)` GENERATED with GiST), `entry_references`
+geometry(Geometry,4326)` GENERATED with GiST), `entry_references`
   (trigger-maintained), plus `collections`, `collection_datasets`, `groups`,
   `maps`, `map_layers`, `map_layer_overrides`, `layer_styles`, marker-sprite
   metadata, `imports`, `derived_datasets`, `dataset_versions` +
