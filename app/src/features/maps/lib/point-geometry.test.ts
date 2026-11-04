@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildPointFeatureCollection,
   isPointLikeGeometryType,
+  pgBboxBounds,
   splitPointLikeGeometries,
 } from "./point-geometry";
 
@@ -139,5 +140,55 @@ describe("buildPointFeatureCollection", () => {
       "entry-2:0",
       "entry-2:1",
     ]);
+  });
+});
+
+describe("pgBboxBounds — the datasets.bbox stored extent (design §3.2)", () => {
+  it("unfolds the trigger-maintained envelope polygon into a bounds tuple", () => {
+    expect(
+      pgBboxBounds({
+        coordinates: [
+          [
+            [-122.5, 37.1],
+            [-122.2, 37.1],
+            [-122.2, 37.9],
+            [-122.5, 37.9],
+            [-122.5, 37.1],
+          ],
+        ],
+        type: "Polygon",
+      }),
+    ).toStrictEqual([-122.5, 37.1, -122.2, 37.9]);
+  });
+
+  it("answers the tuple the instant-open surfaces fit once (ui-polish rule)", () => {
+    // Ring winding must not matter: st_envelope's ring runs counterclockwise
+    // in RFC 7946 order, but the extremes are winding-invariant.
+    expect(
+      pgBboxBounds({
+        coordinates: [
+          [
+            [0, 0],
+            [10, 0],
+            [10, 20],
+            [0, 20],
+            [0, 0],
+          ],
+        ],
+        type: "Polygon",
+      }),
+    ).toStrictEqual([0, 0, 10, 20]);
+  });
+
+  it("reads absent or malformed extents as no stored extent (the skeleton fallback)", () => {
+    expect(pgBboxBounds(undefined)).toBeUndefined();
+    expect(pgBboxBounds({ coordinates: [[]], type: "Polygon" })).toBeUndefined();
+    expect(
+      // A wrong-typed payload (PostgREST returning something unexpected)
+      // degrades to the fallback instead of throwing mid-render.
+      pgBboxBounds({ coordinates: "nope", type: "Polygon" } as unknown as Parameters<
+        typeof pgBboxBounds
+      >[0]),
+    ).toBeUndefined();
   });
 });

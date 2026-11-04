@@ -43,6 +43,12 @@ export interface RecordedSignedUrl {
   ttlSeconds: number;
 }
 
+/** One `storage.from(...).createSignedUploadUrl` request in call order. */
+export interface RecordedSignedUploadUrl {
+  bucket: string;
+  path: string;
+}
+
 /** One `storage.from(...).upload` request, with the body's size for byte-count assertions. */
 export interface RecordedUpload {
   bucket: string;
@@ -57,6 +63,8 @@ export interface StubSupabase {
   queries: RecordedQuery[];
   /** Every `storage.from(...).createSignedUrl` request in call order. */
   signedUrls: RecordedSignedUrl[];
+  /** Every `storage.from(...).createSignedUploadUrl` request in call order. */
+  signedUploadUrls: RecordedSignedUploadUrl[];
   /** Every `storage.from(...).upload` request in call order. */
   uploads: RecordedUpload[];
   /** Stack the next responder (the top of the stack answers the next query). */
@@ -144,15 +152,28 @@ class StubBuilder extends Promise<PostgrestResult> {
   }
 }
 
+/** Opt-in failure scripting for storage calls the responder cannot reach. */
+export interface StubStorageFailures {
+  /** Paths whose `createSignedUrl` rejects with this error instead of signing. */
+  signedUrlPaths?: ReadonlyArray<string>;
+}
+
 /**
  * Builds the stub client. Without a responder every query resolves
  * `{ data: null, error: null }`; pass one up front or stack more via
  * `respond` (each query is answered by the LAST stacked responder).
  */
-export function stubSupabase(initial?: QueryResponder): StubSupabase {
+export function stubSupabase(
+  initial?: QueryResponder,
+  storageFailures?: StubStorageFailures,
+): StubSupabase {
   const queries: RecordedQuery[] = [];
   const signedUrls: RecordedSignedUrl[] = [];
+  const signedUploadUrls: RecordedSignedUploadUrl[] = [];
   const uploads: RecordedUpload[] = [];
+  const failurePaths = storageFailures === undefined ? undefined : storageFailures.signedUrlPaths;
+  const failSignedUrlFor = (path: string): boolean =>
+    failurePaths !== undefined && failurePaths.includes(path);
   const stack: QueryResponder[] = initial === undefined ? [] : [initial];
   const respond = (query: RecordedQuery): ScriptedResponse => {
     const responder = stack[stack.length - 1];
@@ -175,8 +196,25 @@ export function stubSupabase(initial?: QueryResponder): StubSupabase {
       from(bucket: string) {
         return {
           createSignedUrl: async (path: string, ttlSeconds: number) => {
+            if (failSignedUrlFor(path)) {
+              return {
+                data: null,
+                error: { code: "404", details: "", hint: "", message: "Object not found" },
+              };
+            }
             signedUrls.push({ bucket, path, ttlSeconds });
             return { data: { signedUrl: `https://signed.test/${bucket}/${path}` }, error: null };
+          },
+          createSignedUploadUrl: async (path: string) => {
+            signedUploadUrls.push({ bucket, path });
+            return {
+              data: {
+                path,
+                signedUrl: `https://signed-upload.test/${bucket}/${path}`,
+                token: `token-${path}`,
+              },
+              error: null,
+            };
           },
           upload: async (path: string, body: unknown, options?: { upsert?: boolean }) => {
             const bytes =
@@ -203,6 +241,7 @@ export function stubSupabase(initial?: QueryResponder): StubSupabase {
     respond: (responder: QueryResponder) => {
       stack.push(responder);
     },
+    signedUploadUrls,
     signedUrls,
     uploads,
   };

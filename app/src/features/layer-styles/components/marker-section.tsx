@@ -9,14 +9,11 @@ import { Popover, PopoverContent, PopoverTrigger } from "@caden/ui/components/po
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@caden/ui/components/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@caden/ui/components/toggle-group";
 import { cn } from "@caden/ui/lib/utils";
-import { useMutation } from "convex/react";
 import { Info, Search, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { errorMessage } from "#/lib/errors";
-import { api } from "#convex/_generated/api";
-import type { Id } from "#convex/_generated/dataModel";
 
 import { loadCatalog, type IconCatalogEntry, type UploadedIcon } from "../lib/icon-images";
 import { RangeField, Section } from "./controls";
@@ -25,8 +22,30 @@ import { MarkerSwatch } from "./marker-swatch";
 /** Grid cells rendered at once — a search narrows the rest. */
 const MAX_GRID_ICONS = 120;
 
-/** Uploaded icons and their list (undefined while loading), threaded to every picker. */
+/** The metadata of one rasterized icon upload (from `rasterizeIcon`, plus the label derived from the file name). */
+export interface UploadIconMeta {
+  height: number;
+  label: string;
+  pixelRatio: number;
+  /** Stored as an SDF when tintable, so the style's colors apply. */
+  sdf: boolean;
+  width: number;
+}
+
+/** The backend-injected marker-icon writes (Convex storage or Supabase Storage — the transitional split; `useLayerStyles` builds them). */
+export interface MarkerIconActions {
+  /** Deletes one uploaded icon for every map (the icon id from `UploadedIcon`). */
+  removeUpload: (iconId: string) => Promise<void>;
+  /** Stores one rasterized PNG; the result contract mirrors the Convex `icons.create` shape. */
+  uploadIcon: (
+    png: Blob,
+    meta: UploadIconMeta,
+  ) => Promise<{ name: string; ok: true } | { error: string; ok: false }>;
+}
+
+/** Uploaded icons, their list (undefined while loading), and the icon writes, threaded to every picker. */
 export interface MarkerIcons {
+  actions: MarkerIconActions;
   uploads: ReadonlyMap<string, UploadedIcon>;
   uploadList: readonly UploadedIcon[] | undefined;
 }
@@ -156,36 +175,30 @@ function IconGrid({
   );
 }
 
-function UploadForm({ onUploaded }: { onUploaded: (name: string) => void }) {
-  const generateUploadUrl = useMutation(api.layerStyles.icons.generateUploadUrl),
-    createIcon = useMutation(api.layerStyles.icons.create),
-    inputRef = useRef<HTMLInputElement>(null),
+function UploadForm({
+  icons,
+  onUploaded,
+}: {
+  icons: MarkerIcons;
+  onUploaded: (name: string) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null),
     [tintable, setTintable] = useState(true),
     [busy, setBusy] = useState(false);
 
   const upload = async (file: File) => {
     setBusy(true);
     try {
+      // Rasterize here, store through the injected backend (the marker
+      // uploads are PNG-only and browser-rasterized either way — ADR 0013).
       const icon = await rasterizeIcon(file, tintable),
-        url = await generateUploadUrl(),
-        response = await fetch(url, {
-          body: icon.png,
-          headers: { "Content-Type": "image/png" },
-          method: "POST",
+        result = await icons.actions.uploadIcon(icon.png, {
+          height: icon.height,
+          label: iconLabelFromFileName(file.name),
+          pixelRatio: icon.pixelRatio,
+          sdf: tintable,
+          width: icon.width,
         });
-      if (!response.ok) {
-        throw new Error("The upload failed. Try again.");
-      }
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Convex's upload endpoint answers { storageId } with the new file's id.
-      const { storageId } = (await response.json()) as { storageId: Id<"_storage"> };
-      const result = await createIcon({
-        height: icon.height,
-        label: iconLabelFromFileName(file.name),
-        pixelRatio: icon.pixelRatio,
-        sdf: icon.sdf,
-        storageId,
-        width: icon.width,
-      });
       if (!result.ok) {
         throw new Error(result.error);
       }
@@ -261,8 +274,7 @@ function UploadedTab({
   query: string;
   onPick: (name: string) => void;
 }) {
-  const removeIcon = useMutation(api.layerStyles.icons.remove),
-    [confirming, setConfirming] = useState<string | undefined>(undefined),
+  const [confirming, setConfirming] = useState<string | undefined>(undefined),
     list = icons.uploadList,
     entries = (list === undefined ? [] : list).filter((icon) =>
       matches({ keywords: [], label: icon.label, name: icon.name }, query),
@@ -270,7 +282,7 @@ function UploadedTab({
     selected = list === undefined ? undefined : list.find((icon) => icon.name === value);
   return (
     <div className="flex flex-col gap-2">
-      <UploadForm onUploaded={onPick} />
+      <UploadForm icons={icons} onUploaded={onPick} />
       {list === undefined ? (
         <p className="text-xs text-muted-foreground">Loading uploaded icons…</p>
       ) : (
@@ -297,7 +309,8 @@ function UploadedTab({
                 variant="destructive"
                 onClick={() => {
                   setConfirming(undefined);
-                  removeIcon({ iconId: selected.iconId })
+                  icons.actions
+                    .removeUpload(selected.iconId)
                     .then(() => {
                       toast.success("Icon deleted. Styles that used it draw circles.");
                     })

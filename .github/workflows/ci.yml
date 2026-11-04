@@ -31,6 +31,29 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    # Serves the app's PG integration tests (see the migration-apply step
+    # below). Identical config to the store job's service: migrations must
+    # re-apply against ONE image, and the docker-hub 15.8.1.049 tag's older
+    # storage schema broke 0004 twice (2026-11-03/04).
+    services:
+      postgres:
+        image: public.ecr.aws/supabase/postgres:15.19.0.016
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: app
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # The *.int.test.ts files connect here (and skip-with-message where the
+      # DB is unreachable); same URL shape as the store job's.
+      SUPABASE_DB_URL: postgresql://supabase_admin:postgres@localhost:5432/app
+
     steps:
       # Same commit the repo's existing workflow pins.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -51,6 +74,66 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      # The app's PG integration tests (*.int.test.ts) connect to this job's
+      # own postgres service — the store job's env cannot cross jobs, so this
+      # job boots an identical service and applies the same migration set
+      # before `bun --filter=app run test` (design §12: the int tests read
+      # SUPABASE_DB_URL and skip-with-message when unreachable). Without a
+      # reachable DB the files still pass as skips; with it, they run for
+      # real on every PR. Same script as the store job's apply step below.
+      - name: Wait for postgres and apply supabase migrations
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          export LC_ALL=C
+          migrations=(supabase/migrations/*.sql)
+          if [ "${#migrations[@]}" -eq 0 ]; then
+            echo "::error::No migrations found under supabase/migrations/" >&2
+            exit 1
+          fi
+          for i in $(seq 1 30); do
+            psql "$SUPABASE_DB_URL" -X -c 'select 1;' >/dev/null 2>&1 && break
+            echo "waiting for postgres (attempt ${i}/30)..."; sleep 2
+          done
+          psql "$SUPABASE_DB_URL" -X -c 'select 1;' >/dev/null 2>&1 \
+            || { echo "::error::postgres never became reachable at \$SUPABASE_DB_URL" >&2; exit 1; }
+          for f in "${migrations[@]}"; do
+            echo "Applying ${f}"
+            psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -X -f "$f"
+          done
+          echo "Applied ${#migrations[@]} migration(s)."
+
+      # The pg-storage-policies.int.test.ts suite exercises the 0004/0006
+      # object policies' BEHAVIOR (owner stamps, dataset-scoped reads), which
+      # needs the storage schema to exist — same step-booted container as the
+      # store job (identical script; see that job for the full rationale).
+      - name: Boot storage-api against the postgres service
+        run: |
+          set -euo pipefail
+          pg_cid="$(docker ps --filter ancestor=public.ecr.aws/supabase/postgres:15.19.0.016 -q | head -1)"
+          if [ -z "${pg_cid}" ]; then
+            echo "::error::postgres service container not found" >&2
+            exit 1
+          fi
+          net="$(docker inspect "${pg_cid}" --format '{{range $k,$_ := .NetworkSettings.Networks}}{{$k}}{{end}}')"
+          docker run -d --name storage-api-verify --network "${net}" \
+            -p 5000:5000 \
+            -e DATABASE_URL=postgresql://supabase_admin:postgres@postgres:5432/app \
+            -e ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0 \
+            -e SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU \
+            -e AUTH_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long \
+            -e STORAGE_BACKEND=file \
+            -e FILE_STORAGE_BACKEND_PATH=/tmp/storage-data \
+            -e FILE_SIZE_LIMIT=52428800 \
+            public.ecr.aws/supabase/storage-api:v1.88.0
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:5000/status >/dev/null 2>&1 && break
+            echo "waiting for storage-api (attempt ${i}/30)..."; sleep 2
+            docker start storage-api-verify >/dev/null 2>&1 || true
+          done
+          curl -fsS http://localhost:5000/status \
+            || { echo "::error::storage-api never became healthy at :5000/status" >&2; docker logs storage-api-verify; exit 1; }
 
       # app consumes @caden/json-cms, @caden/data-core, @caden/importers and
       # @caden/geometry-archive only through their built dist (each package's
@@ -146,9 +229,11 @@ jobs:
 
   # Supabase store gate (stage 0 — docs/supabase-migration-design.md §12).
   # Independent of `ci` on purpose: it only needs the checked-out tree plus a
-  # Postgres service, so it stays fast and never holds the main signal's
-  # runner hostage. A red here means the migration set no longer applies
-  # cleanly, in lexical order, against the pinned supabase/postgres image.
+  # Postgres service (plus the storage-api container it boots, so the storage
+  # sections of 0004/0006 apply and get asserted), so it stays fast and never
+  # holds the main signal's runner hostage. A red here means the migration set
+  # no longer applies cleanly, in lexical order, against the pinned
+  # supabase/postgres image.
   store:
     name: Supabase store (migrations + PostGIS)
     runs-on: ubuntu-latest
@@ -192,6 +277,48 @@ jobs:
     steps:
       # Same commit the repo's existing workflow pins.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # The storage schema's TABLES belong to the storage-api service, not the
+      # postgres image (0004's comment): without it, migrations 0004/0006 skip
+      # their storage sections loudly and the bucket/object-policy SQL is
+      # never CI-verified. Boot the SAME storage-api build the local stack
+      # runs (v1.88.0), pointed at this job's postgres service, BEFORE the
+      # migrations apply. It cannot be a `services:` entry: GitHub starts
+      # services concurrently and storage-api v1.88.0 treats the first
+      # refused connection during the postgres image's initdb as fatal
+      # (ECONNREFUSED -> startupError, no retry — measured 2026-11-04), so it
+      # boots here, after the postgres health gate, attached to the postgres
+      # service's network where the service alias is `postgres`. Keys below
+      # are the supabase local-dev demo JWTs (public, same values the CLI
+      # stack prints; only boot validation reads them).
+      - name: Boot storage-api against the postgres service
+        run: |
+          set -euo pipefail
+          pg_cid="$(docker ps --filter ancestor=public.ecr.aws/supabase/postgres:15.19.0.016 -q | head -1)"
+          if [ -z "${pg_cid}" ]; then
+            echo "::error::postgres service container not found" >&2
+            exit 1
+          fi
+          net="$(docker inspect "${pg_cid}" --format '{{range $k,$_ := .NetworkSettings.Networks}}{{$k}}{{end}}')"
+          echo "attaching storage-api to network ${net}"
+          docker run -d --name storage-api-verify --network "${net}" \
+            -p 5000:5000 \
+            -e DATABASE_URL=postgresql://supabase_admin:postgres@postgres:5432/app \
+            -e ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0 \
+            -e SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU \
+            -e AUTH_JWT_SECRET=super-secret-jwt-token-with-at-least-32-characters-long \
+            -e STORAGE_BACKEND=file \
+            -e FILE_STORAGE_BACKEND_PATH=/tmp/storage-data \
+            -e FILE_SIZE_LIMIT=52428800 \
+            public.ecr.aws/supabase/storage-api:v1.88.0
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:5000/status >/dev/null 2>&1 && break
+            echo "waiting for storage-api (attempt ${i}/30)..."; sleep 2
+            docker start storage-api-verify >/dev/null 2>&1 || true
+          done
+          curl -fsS http://localhost:5000/status \
+            || { echo "::error::storage-api never became healthy at :5000/status" >&2; docker logs storage-api-verify; exit 1; }
+          echo "storage-api healthy; storage schema present for the migration apply"
 
       # psql ships preinstalled on the ubuntu-latest runner image (postgresql-client).
       - name: Apply supabase migrations in lexical order
@@ -238,3 +365,26 @@ jobs:
               exit 1
               ;;
           esac
+
+      # With the storage-api container booted above, the storage sections of
+      # 0004/0006 MUST have applied — a missing bucket or policy here is a
+      # real migration defect, not an environment limitation (the bare
+      # container skip in those files no longer has a legitimate reason to
+      # trigger in this job). Exactly 8 policies: the 0006 replacement set —
+      # can_view_dataset SELECT + editor+owner INSERT/UPDATE/DELETE on the
+      # dataset buckets, and the 4 per-kind marker-sprites policies.
+      - name: Assert storage buckets and object policies
+        run: |
+          set -euo pipefail
+          buckets="$(psql "$SUPABASE_DB_URL" -X -tA -c 'select id from storage.buckets order by id;')"
+          expected=$'geometries\nmarker-sprites\nsource-files\ntile-archives'
+          if [ "${buckets}" != "${expected}" ]; then
+            echo "::error::storage.buckets rows are '${buckets//$'\n'/,}' — expected the four §6 private buckets (geometries,marker-sprites,source-files,tile-archives)" >&2
+            exit 1
+          fi
+          n="$(psql "$SUPABASE_DB_URL" -X -tA -c "select count(*) from pg_policies where schemaname = 'storage' and tablename = 'objects';")"
+          if [ "${n}" -ne 8 ]; then
+            echo "::error::storage.objects carries ${n} policies — expected exactly the 8 the migration set installs (0004/0006)" >&2
+            exit 1
+          fi
+          echo "storage verified: 4 private buckets, 8 object policies"

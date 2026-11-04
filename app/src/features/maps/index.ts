@@ -5,6 +5,12 @@ export { CollectionExtentMap } from "./components/datasets-map";
 export { EntriesMap } from "./components/entries-map";
 export { GroupMap } from "./components/group-map";
 export { LayersMap } from "./components/layers-map";
+export {
+  pgLayerToLayerDoc,
+  pgOverrideToOverride,
+  pgSummaryToDatasetSummary,
+} from "./components/pg-layer-rows";
+export { useGeometriesByPgDatasets } from "./components/pg-geometries-loader";
 export type { LayersMapExtension, LayersMapLayerArgs } from "./components/layers-map";
 export { MapFormPanel } from "./components/map-form-panel";
 export { MapLayerPanel } from "./components/map-layer-panel";
@@ -29,5 +35,6 @@ export {
   renderTargetsForDerivedLayers,
   resolveVisibleSchemaIds,
 } from "./lib/map-layers";
+export type { DatasetSummary, MapLayerOverride } from "./lib/map-layers";
 export type { DerivedDatasetSummary, MapLayerDoc, MembershipRow } from "./lib/map-layers";
 export { bboxFeature, buildPointFeatureCollection } from "./lib/point-geometry";

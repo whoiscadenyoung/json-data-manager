@@ -654,6 +654,7 @@ export function StylePanel({
   mayHavePoints,
   uploads,
   uploadList,
+  actions,
   missingIcons,
   onChange,
   onReset,
@@ -673,6 +674,8 @@ export function StylePanel({
   /** Uploaded icons by name, and the list (undefined while loading). */
   uploads: MarkerIcons["uploads"];
   uploadList: MarkerIcons["uploadList"];
+  /** The backend-injected icon writes (the hook's per-map-origin actions). */
+  actions: MarkerIcons["actions"];
   /** Uploaded icons the style names that were deleted (those points draw circles). */
   missingIcons: readonly string[];
   onChange: (style: LayerStyle) => void;
@@ -686,7 +689,7 @@ export function StylePanel({
       onChange(compileStyle(next));
     },
     tileNote = style !== undefined && rendersFromTiles && hasTileLimitations(style),
-    icons: MarkerIcons = { uploadList, uploads };
+    icons: MarkerIcons = { actions, uploadList, uploads };
   return (
     <Card className="h-fit gap-0 py-0" aria-label={`Style for ${title}`}>
       <CardHeader className="border-b py-4">

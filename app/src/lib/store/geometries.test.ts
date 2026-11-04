@@ -11,13 +11,20 @@ vi.mock("#/env", () => ({
 import {
   create,
   createGeometrySourceUrl,
+  createTileArchiveUploadUrl,
+  createTileArchiveUrl,
   DEFAULT_GEOMETRY_ROWS_LIMIT,
   getByEntry,
+  installTileArchive,
   list,
   remove,
   replace,
   rowsForTiles,
   rowsForTilesQueryOptions,
+  TILE_ARCHIVE_BUCKET,
+  TILE_ARCHIVE_SIGNED_URL_TTL_SECONDS,
+  tileArchivePointers,
+  tileDatasetInfo,
 } from "./geometries";
 import {
   allArgs,
@@ -257,5 +264,172 @@ describe("createGeometrySourceUrl", () => {
     expect(signedUrls).toStrictEqual([
       { bucket: "geometries", path: "d1/e1.json", ttlSeconds: 3600 },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The tile-archive section (design §5.6/§6 — stage 2)
+// ---------------------------------------------------------------------------
+
+describe("tileDatasetInfo — the worker's pre-build read", () => {
+  it("reads the tile-relevant columns for one dataset", async () => {
+    const { client, queries } = stubSupabase(() => ({
+      data: [
+        {
+          featureCount: 42,
+          geometryType: "Point",
+          isGeospatial: true,
+          mapTileCacheVersion: 7,
+        },
+      ],
+      error: null,
+    }));
+    const info = await tileDatasetInfo({ datasetId: "d1" }, { supabase: client });
+    expect(info).toStrictEqual({
+      featureCount: 42,
+      geometryType: "Point",
+      isGeospatial: true,
+      mapTileCacheVersion: 7,
+    });
+    const first = queryAt(queries, 0);
+    expect(first.table).toBe("datasets");
+    expect(argsOf(first, "eq")).toStrictEqual(["id", "d1"]);
+    expect(firstArg(first, "select")).toBe(
+      "isGeospatial:is_geospatial,geometryType:geometry_type,featureCount:feature_count,mapTileCacheVersion:map_tile_cache_version",
+    );
+  });
+
+  it("answers null when RLS hides the dataset", async () => {
+    const { client } = stubSupabase(() => ({ data: [], error: null }));
+    expect(await tileDatasetInfo({ datasetId: "d1" }, { supabase: client })).toBeNull();
+  });
+});
+
+describe("tileArchivePointers — the raw archive-pointer columns", () => {
+  it("answers nothing for an empty id list without issuing a query", async () => {
+    const { client, queries } = stubSupabase();
+    expect(await tileArchivePointers({ datasetIds: [] }, { supabase: client })).toStrictEqual([]);
+    expect(queries).toStrictEqual([]);
+  });
+
+  it("selects the pointer columns with an `in` filter", async () => {
+    const { client, queries } = stubSupabase(() => ({
+      data: [
+        {
+          id: "d1",
+          mapTileArchiveBuiltVersion: 3,
+          mapTileArchiveBytes: 1024,
+          mapTileArchiveFormat: 2,
+          mapTileArchivePath: "d1/v3-a.pmtiles",
+          mapTileCacheVersion: 3,
+        },
+      ],
+      error: null,
+    }));
+    const pointers = await tileArchivePointers({ datasetIds: ["d1", "d2"] }, { supabase: client });
+    expect(pointers).toHaveLength(1);
+    expect(pointers[0]).toStrictEqual({
+      id: "d1",
+      mapTileArchiveBuiltVersion: 3,
+      mapTileArchiveBytes: 1024,
+      mapTileArchiveFormat: 2,
+      mapTileArchivePath: "d1/v3-a.pmtiles",
+      mapTileCacheVersion: 3,
+    });
+    const first = queryAt(queries, 0);
+    expect(argsOf(first, "in")).toStrictEqual(["id", ["d1", "d2"]]);
+    expect(firstArg(first, "select")).toContain("mapTileArchiveFormat:map_tile_archive_format");
+  });
+});
+
+describe("tile-archive signed URLs (§6 — the §16 TTL pick)", () => {
+  it("signs archive reads for 24 h in the tile-archives bucket", async () => {
+    expect(TILE_ARCHIVE_BUCKET).toBe("tile-archives");
+    expect(TILE_ARCHIVE_SIGNED_URL_TTL_SECONDS).toBe(86_400);
+    const { client, signedUrls } = stubSupabase();
+    const url = await createTileArchiveUrl(client, "d1/v3-a.pmtiles");
+    expect(url).toBe("https://signed.test/tile-archives/d1/v3-a.pmtiles");
+    expect(signedUrls).toStrictEqual([
+      { bucket: "tile-archives", path: "d1/v3-a.pmtiles", ttlSeconds: 86_400 },
+    ]);
+  });
+
+  it("issues signed upload URLs (the upload-first, install-second flow)", async () => {
+    const { client, signedUploadUrls } = stubSupabase();
+    const issued = await createTileArchiveUploadUrl(
+      { path: "d1/v3-b.pmtiles" },
+      { supabase: client },
+    );
+    expect(issued.path).toBe("d1/v3-b.pmtiles");
+    expect(issued.signedUrl).toContain("signed-upload.test");
+    expect(signedUploadUrls).toStrictEqual([{ bucket: "tile-archives", path: "d1/v3-b.pmtiles" }]);
+  });
+});
+
+describe("installTileArchive — the §5.6 compare-and-set", () => {
+  it("calls install_tile_archive with the full guard argument set", async () => {
+    const { client, queries } = stubSupabase(() => ({ data: true, error: null }));
+    const installed = await installTileArchive(
+      {
+        builtVersion: 4,
+        bytes: 22_678_460,
+        datasetId: "d1",
+        expectedVersion: 4,
+        format: 2,
+        maxZoom: 14,
+        path: "d1/v4-c.pmtiles",
+      },
+      { supabase: client },
+    );
+    expect(installed).toBe(true);
+    const first = queryAt(queries, 0);
+    expect(first.rpc).toBe("install_tile_archive");
+    expect(first.rpcArgs).toStrictEqual({
+      p_built_version: 4,
+      p_bytes: 22_678_460,
+      p_dataset: "d1",
+      p_expected_version: 4,
+      p_format: 2,
+      p_max_zoom: 14,
+      p_path: "d1/v4-c.pmtiles",
+    });
+  });
+
+  it("returns false when the guard rejects a behind expected version (stale rebuild)", async () => {
+    const { client } = stubSupabase(() => ({ data: false, error: null }));
+    const installed = await installTileArchive(
+      {
+        builtVersion: 3,
+        bytes: 1,
+        datasetId: "d1",
+        expectedVersion: 3,
+        format: 2,
+        maxZoom: 14,
+        path: "d1/v3-d.pmtiles",
+      },
+      { supabase: client },
+    );
+    expect(installed).toBe(false);
+  });
+
+  it("throws the PostgREST error on denial", async () => {
+    const { client } = stubSupabase(() => ({
+      data: null,
+      error: postgrestError("dataset not found or not visible"),
+    }));
+    await expect(
+      installTileArchive(
+        {
+          builtVersion: 1,
+          bytes: 1,
+          datasetId: "d1",
+          expectedVersion: 1,
+          format: 2,
+          maxZoom: 14,
+          path: "p",
+        },
+        { supabase: client },
+      ),
+    ).rejects.toThrowError("dataset not found or not visible");
   });
 });

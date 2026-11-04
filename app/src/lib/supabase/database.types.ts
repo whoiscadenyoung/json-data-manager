@@ -357,6 +357,196 @@ export type Database = {
           },
         ];
       };
+      layer_styles: {
+        Row: {
+          id: string;
+          map_id: string;
+          render_id: string;
+          style: NonNullable<Json>;
+          updated_at: string;
+          updated_by: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          id?: string;
+          map_id: string;
+          render_id: string;
+          style: NonNullable<Json>;
+          updated_at?: string;
+          updated_by: string;
+        };
+        Update: {
+          id?: string;
+          map_id?: string;
+          render_id?: string;
+          style?: NonNullable<Json>;
+          updated_at?: string;
+          updated_by?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "layer_styles_map_id_fkey";
+            columns: ["map_id"];
+            isOneToOne: false;
+            referencedRelation: "maps";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "layer_styles_updated_by_fkey";
+            columns: ["updated_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      map_layer_overrides: {
+        Row: {
+          child_key: string;
+          id: string;
+          layer_id: string;
+          visible: boolean;
+        };
+        ComputedFields: never;
+        Insert: {
+          child_key: string;
+          id?: string;
+          layer_id: string;
+          visible: boolean;
+        };
+        Update: {
+          child_key?: string;
+          id?: string;
+          layer_id?: string;
+          visible?: boolean;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "map_layer_overrides_layer_id_fkey";
+            columns: ["layer_id"];
+            isOneToOne: false;
+            referencedRelation: "map_layers";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      map_layers: {
+        Row: {
+          id: string;
+          map_id: string;
+          order: number;
+          target_id: string;
+          target_type: string;
+          visible: boolean;
+        };
+        ComputedFields: never;
+        Insert: {
+          id?: string;
+          map_id: string;
+          order: number;
+          target_id: string;
+          target_type: string;
+          visible?: boolean;
+        };
+        Update: {
+          id?: string;
+          map_id?: string;
+          order?: number;
+          target_id?: string;
+          target_type?: string;
+          visible?: boolean;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "map_layers_map_id_fkey";
+            columns: ["map_id"];
+            isOneToOne: false;
+            referencedRelation: "maps";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      maps: {
+        Row: {
+          created_at: string;
+          created_by: string;
+          description: string | null;
+          id: string;
+          name: string;
+          updated_at: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          created_at?: string;
+          created_by?: string;
+          description?: string | null;
+          id?: string;
+          name: string;
+          updated_at?: string;
+        };
+        Update: {
+          created_at?: string;
+          created_by?: string;
+          description?: string | null;
+          id?: string;
+          name?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "maps_created_by_fkey";
+            columns: ["created_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      marker_sprites: {
+        Row: {
+          height: number;
+          id: string;
+          label: string;
+          pixel_ratio: number;
+          sdf: boolean;
+          storage_path: string;
+          uploaded_at: string;
+          uploaded_by: string;
+          width: number;
+        };
+        ComputedFields: never;
+        Insert: {
+          height: number;
+          id?: string;
+          label: string;
+          pixel_ratio?: number;
+          sdf?: boolean;
+          storage_path: string;
+          uploaded_at?: string;
+          uploaded_by: string;
+          width: number;
+        };
+        Update: {
+          height?: number;
+          id?: string;
+          label?: string;
+          pixel_ratio?: number;
+          sdf?: boolean;
+          storage_path?: string;
+          uploaded_at?: string;
+          uploaded_by?: string;
+          width?: number;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "marker_sprites_uploaded_by_fkey";
+            columns: ["uploaded_by"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       profiles: {
         Row: {
           created_at: string;
@@ -392,6 +582,7 @@ export type Database = {
     Functions: {
       can_edit_dataset: { Args: { p_dataset: string }; Returns: boolean };
       can_view_dataset: { Args: { p_dataset: string }; Returns: boolean };
+      dataset_id_of_storage_path: { Args: { p_name: string }; Returns: string };
       dataset_rows_for_tiles: {
         Args: { p_cursor?: string; p_dataset: string; p_limit?: number };
         Returns: {
@@ -401,6 +592,7 @@ export type Database = {
           geometry: Json;
           geometry_source_path: string;
           geometry_type: string;
+          next_cursor: string;
         }[];
       };
       entries_in_bbox: {
@@ -414,6 +606,18 @@ export type Database = {
         }[];
       };
       import_entries: { Args: { p_dataset: string; p_rows: Json }; Returns: number };
+      install_tile_archive: {
+        Args: {
+          p_built_version: number;
+          p_bytes: number;
+          p_dataset: string;
+          p_expected_version: number;
+          p_format: number;
+          p_max_zoom: number;
+          p_path: string;
+        };
+        Returns: boolean;
+      };
       search_entries: {
         Args: {
           p_cursor?: string;
