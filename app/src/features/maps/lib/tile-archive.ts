@@ -347,18 +347,27 @@ function handleWorkerTokenRequest(event: MessageEvent<unknown>): void {
 }
 
 /**
- * Refetches the PG dataset queries after a PG build settles: the install
- * RPC runs OUTSIDE the TanStack cache (there is no Convex-style push for
- * Postgres until stage 6's realtime), so without this the summaries — and
- * with them every layer-source decision and the OPFS pin feed — would stay
- * on the stale pre-build state until an unrelated refetch. Fires for
- * `done` (archive installed: decision flips to tiles) and `stale-discarded`
- * (the row moved under the build: staleness re-evaluates).
+ * Refetches the PG queries a settled build changes: the install RPC runs
+ * OUTSIDE the TanStack cache (there is no Convex-style push for Postgres
+ * until stage 6's realtime), so without this the summaries — and with them
+ * every layer-source decision and the OPFS pin feed — would stay on the
+ * stale pre-build state until an unrelated refetch. Both feeds go stale
+ * together on an install: the dataset summaries (`pg:datasets`, the
+ * decision's fresh-candidate input) AND the signed-archive-URL metas
+ * (`pg:tile-archives`, `usePgTileArchiveMetas`'s feed — its key's dataset
+ * ids are unchanged by the install, so the query would keep answering "no
+ * servable archive" and the OPFS pin would drop/prune until an unrelated
+ * refetch otherwise). Fires for `done` (archive installed: decision flips
+ * to tiles) and `stale-discarded` (the row moved under the build:
+ * staleness re-evaluates).
  */
-function invalidatePgDatasetQueries(): void {
+function invalidatePgQueries(): void {
   try {
     const { queryClient } = getContext();
     void queryClient.invalidateQueries({ queryKey: ["pg:datasets"] });
+    // Prefix match: hits every ["pg:tile-archives", "metas", datasetIds]
+    // key the maps page has mounted (pg-tile-archives-react.tsx).
+    void queryClient.invalidateQueries({ queryKey: ["pg:tile-archives"] });
   } catch {
     // No client yet (SSR render, early mount): nothing cached to invalidate.
   }
@@ -412,7 +421,7 @@ function settleTerminalBuild(
     clearBuildFailure(schemaId);
     noteInstalledVersion(data, schemaId);
     if (pgDataset) {
-      invalidatePgDatasetQueries();
+      invalidatePgQueries();
     }
     pending.resolve("installed");
     return;
@@ -420,7 +429,7 @@ function settleTerminalBuild(
   if (data.type === "stale-discarded") {
     setBuildState(schemaId, "stale-discarded");
     if (pgDataset) {
-      invalidatePgDatasetQueries();
+      invalidatePgQueries();
     }
     pending.resolve("discarded");
     return;
@@ -516,7 +525,7 @@ function getScheduler(): TileArchiveScheduler {
 /**
  * Mounted once at the app root: watches every geospatial dataset — Convex
  * via `api.cms.schemas.listSummaries` (reactive push) and Postgres via the
- * store summaries (refetched by {@link invalidatePgDatasetQueries} when a
+ * store summaries (refetched by {@link invalidatePgQueries} when a
  * build settles; realtime cross-tab push is stage 6) — and schedules a
  * debounced rebuild whenever one is observably stale. Correctness rides on
  * the expectedVersion guard (the component's, SQL edition for PG) — this

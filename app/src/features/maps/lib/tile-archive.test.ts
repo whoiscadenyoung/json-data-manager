@@ -287,6 +287,12 @@ describe("the manager's PG summaries loop", () => {
     worker().reply({ builtVersion: 3, bytes: 1, maxZoom: 14, schemaId: PG_ID, type: "done" });
     await flush();
     expect(mocks.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["pg:datasets"] });
+    // The signed-archive-URL metas feed goes stale with the install: its key
+    // (["pg:tile-archives","metas",datasetIds]) is structurally unchanged, so
+    // without the prefix invalidation the feed would keep reporting "no
+    // servable archive" and the OPFS pin would drop until an unrelated
+    // refetch.
+    expect(mocks.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["pg:tile-archives"] });
   });
 
   it("a PG stale-discarded message also invalidates; a Convex one does not", async () => {
@@ -297,10 +303,12 @@ describe("the manager's PG summaries loop", () => {
     await vi.advanceTimersByTimeAsync(5000);
     worker().reply({ schemaId: PG_ID, type: "stale-discarded" });
     await flush();
-    expect(mocks.invalidateQueries).toHaveBeenCalledTimes(1);
+    // Both PG feeds per settlement: summaries + the metas prefix.
+    expect(mocks.invalidateQueries).toHaveBeenCalledTimes(2);
+    expect(mocks.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["pg:tile-archives"] });
 
     worker().reply({ builtVersion: 1, bytes: 1, maxZoom: 14, schemaId: SCHEMA, type: "done" });
     await flush();
-    expect(mocks.invalidateQueries).toHaveBeenCalledTimes(1);
+    expect(mocks.invalidateQueries).toHaveBeenCalledTimes(2);
   });
 });
