@@ -1,0 +1,39 @@
+# Build context for the app image (Dockerfile at repo root). Everything the
+# vite/nitro build doesn't consume, plus anything that must never leak into
+# an image (local env files, the dev backend's storage).
+#
+# NOTE: `demo/*` stays IN the context — it is a bun workspace in the root
+# package.json, and excluding its manifests changes workspace resolution
+# ("lockfile had changes, but lockfile is frozen").
+.git
+.zcode
+.github
+.agents
+.claude
+agent
+docs
+exports
+deploy
+
+# dependency + build artifacts (rebuilt inside the image)
+**/node_modules
+**/dist
+app/.output
+app/.tanstack
+# incremental-compile state: a shipped tsbuildinfo makes the in-image `tsc`
+# consider inputs unchanged and emit NOTHING (json-cms keeps its state in
+# .cache/, outside dist/ — found the hard way, 2026-11-05)
+**/*.tsbuildinfo
+**/.cache
+
+# local env — the image's VITE_* values come from build args only
+.env
+app/.env
+app/.env.*
+*.local
+
+# dev backend droppings (never wanted in an image)
+app/convex_local_storage
+app/convex/better_auth
+supabase/.temp
+supabase/.branches

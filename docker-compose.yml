@@ -1,0 +1,299 @@
+# Self-hosted stack (docs/self-hosting-design.md; ADR 0016).
+#
+# Local demo:   cp .env.example .env && deploy/scripts/generate-keys.sh
+#               (paste the block into .env) && docker compose up -d --build
+# VPS:          same .env, APP_IMAGE pinned to the GHCR build,
+#               `docker compose pull && docker compose up -d` (no --build).
+#
+# Everything is behind kong on one published port; the app itself is not
+# published. Studio is opt-in (--profile studio) and binds host loopback
+# only. `migrations` is a one-shot service: postgres healthy → wait for
+# storage-api /status (0004's storage tables belong to that service) →
+# apply + assert, mirroring the CI store job.
+name: jdm
+
+services:
+  db:
+    container_name: jdm-db
+    image: public.ecr.aws/supabase/postgres:15.19.0.016
+    restart: unless-stopped
+    # pg_cron (0012's weekly bindings reconcile) may only be created in the
+    # database named by cron.database_name — the image defaults it to
+    # `postgres`, and this stack's database is `app` (CI parity: ci.yml's
+    # services carry the same flag; without it 0012 fails on a cold apply).
+    # -D /etc/postgresql is the image's default CMD (its baked config sets
+    # listen_addresses='*' — overriding the CMD drops it otherwise).
+    command: ["postgres", "-D", "/etc/postgresql", "-c", "cron.database_name=app"]
+    environment:
+      POSTGRES_USER: supabase_admin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: app
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      # pins the service-role passwords to POSTGRES_PASSWORD + creates the
+      # _realtime schema (once, on first volume init; zz- = runs after the
+      # image's own migrate.sh, which is what creates those roles)
+      - ./deploy/postgres/zz-supabase-roles.sh:/docker-entrypoint-initdb.d/zz-supabase-roles.sh:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "supabase_admin", "-d", "app"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  auth:
+    container_name: jdm-auth
+    image: supabase/gotrue:v2.197.0
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:9999/health"]
+      timeout: 5s
+      interval: 5s
+      retries: 3
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: ${SITE_ORIGIN:?set SITE_ORIGIN in .env}/auth/v1
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgresql://supabase_auth_admin:${POSTGRES_PASSWORD}@db:5432/app
+      GOTRUE_SITE_URL: ${SITE_ORIGIN}
+      GOTRUE_URI_ALLOW_LIST: ${SITE_ORIGIN}/**
+      # ADR 0009 addendum: signup closed, accounts are admin-created with the
+      # service key (POST /auth/v1/admin/users)
+      GOTRUE_DISABLE_SIGNUP: "true"
+      # classic HS256 self-host: this secret signs user tokens; the anon and
+      # service_role keys are minted from it (deploy/scripts/generate-keys.sh)
+      GOTRUE_JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_ISSUER: ${SITE_ORIGIN}/auth/v1
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "false"
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      # no SMTP container in this stack — password sign-in only
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_MAILER_URLPATHS_INVITE: ${SITE_ORIGIN}/auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: ${SITE_ORIGIN}/auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_RECOVERY: ${SITE_ORIGIN}/auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: ${SITE_ORIGIN}/auth/v1/verify
+      GOTRUE_PASSWORD_MIN_LENGTH: "6"
+      GOTRUE_MFA_TOTP_ENROLL_ENABLED: "false"
+      GOTRUE_MFA_TOTP_VERIFY_ENABLED: "false"
+      GOTRUE_SECURITY_MANUAL_LINKING_ENABLED: "false"
+      GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED: "true"
+      GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL: "10"
+      GOTRUE_RATE_LIMIT_EMAIL_SENT: "30"
+      GOTRUE_RATE_LIMIT_TOKEN_REFRESH: "150"
+      GOTRUE_RATE_LIMIT_VERIFY: "30"
+
+  rest:
+    container_name: jdm-rest
+    image: postgrest/postgrest:v16.5
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgresql://authenticator:${POSTGRES_PASSWORD}@db:5432/app
+      PGRST_DB_SCHEMAS: public,graphql_public
+      PGRST_DB_EXTRA_SEARCH_PATH: public,extensions
+      PGRST_DB_MAX_ROWS: "1000"
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      # admin API stays loopback inside the container; the gateway does not
+      # route it (deploy/kong.yml)
+      PGRST_ADMIN_SERVER_PORT: "3001"
+      PGRST_ADMIN_SERVER_HOST: localhost
+
+  realtime:
+    container_name: jdm-realtime
+    image: supabase/realtime:v2.151.3
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: "4000"
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: supabase_admin
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: app
+      DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime"
+      DB_ENC_KEY: supabaserealtime
+      API_JWT_SECRET: ${JWT_SECRET}
+      METRICS_JWT_SECRET: ${JWT_SECRET}
+      SECRET_KEY_BASE: ${JWT_SECRET}
+      APP_NAME: realtime
+      ERL_AFLAGS: -proto_dist inet_tcp
+      DNS_NODES: "''"
+      RLIMIT_NOFILE: "10000"
+      SEED_SELF_HOST: "true"
+      RUN_JANITOR: "true"
+      MAX_HEADER_LENGTH: "4096"
+
+  storage:
+    container_name: jdm-storage
+    image: supabase/storage-api:v1.88.0
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_started
+    environment:
+      ANON_KEY: ${ANON_KEY:?set ANON_KEY in .env (deploy/scripts/generate-keys.sh)}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY:?set SERVICE_ROLE_KEY in .env}
+      AUTH_JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: postgresql://supabase_storage_admin:${POSTGRES_PASSWORD}@db:5432/app
+      POSTGREST_URL: http://rest:3000
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      FILE_SIZE_LIMIT: "52428800" # 50 MiB — supabase/config.toml [storage]
+      GLOBAL_S3_BUCKET: stub
+      TENANT_ID: stub
+      REGION: local
+      STORAGE_PUBLIC_URL: ${SITE_ORIGIN}
+      ENABLE_IMAGE_TRANSFORMATION: "false"
+      IMAGE_TRANSFORMATION_ENABLED: "false"
+      S3_PROTOCOL_ENABLED: "false"
+      VECTOR_ENABLED: "false"
+      VECTOR_STORE_MIGRATIONS_ENABLED: "false"
+    volumes:
+      - storage-data:/var/lib/storage
+
+  # One-shot: the CI store job's recipe. Waits for db (TCP), waits for
+  # storage-api /status (storage owns storage.objects — the 0004 trap),
+  # applies supabase/migrations in lexical order with bookkeeping in
+  # supabase_migrations.schema_migrations, then asserts buckets + policies.
+  migrations:
+    container_name: jdm-migrations
+    image: public.ecr.aws/supabase/postgres:15.19.0.016
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+      storage:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql://supabase_admin:${POSTGRES_PASSWORD}@db:5432/app
+      STORAGE_HOST: storage
+      STORAGE_PORT: "5000"
+      MIGRATIONS_DIR: /migrations
+    volumes:
+      - ./supabase/migrations:/migrations:ro
+      - ./deploy/scripts/apply-migrations.sh:/apply-migrations.sh:ro
+    entrypoint: ["bash", "/apply-migrations.sh"]
+
+  # The single published container: the app and /rest/v1 /auth/v1
+  # /realtime/v1 /storage/v1 share this origin (deploy/kong.yml).
+  kong:
+    container_name: jdm-kong
+    image: ghcr.io/supabase/kong:2.8.1
+    restart: unless-stopped
+    depends_on:
+      auth:
+        condition: service_started
+      rest:
+        condition: service_started
+      realtime:
+        condition: service_started
+      storage:
+        condition: service_started
+      app:
+        condition: service_started
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
+      # "bundled" (not an explicit list — a partial list silently disables
+      # every bundled plugin the config references, cors included)
+      KONG_PLUGINS: bundled
+      KONG_DNS_NOT_FOUND_TTL: "1"
+      KONG_DNS_VALID_TTL: "5"
+      KONG_NGINX_PROXY_PROXY_BUFFERS: "64 160k"
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: "160k"
+      KONG_PORT_MAPS: ${JDM_ORIGIN_PORT:-8000}:8000
+    ports:
+      - "${JDM_ORIGIN_PORT:-8000}:8000"
+    volumes:
+      - ./deploy/kong.yml:/home/kong/kong.yml:ro
+
+  # The app itself (nitro bun preset). On the VPS the `image` is pulled from
+  # GHCR and never built; locally `docker compose up -d --build` builds it
+  # with the baked VITE_* values.
+  app:
+    container_name: jdm-app
+    image: ${APP_IMAGE:-ghcr.io/whoiscadenyoung/json-data-manager:latest}
+    restart: unless-stopped
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-${SITE_ORIGIN}}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-${ANON_KEY}}
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3000"
+      NODE_ENV: production
+
+  # --- optional ops UI: docker compose --profile studio up -d -----------
+  # Loopback-only; reach it through an SSH tunnel. Not routed by kong.
+  studio:
+    container_name: jdm-studio
+    profiles: ["studio"]
+    image: supabase/studio:2026.11.02-sha-a05e7ec
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      meta:
+        condition: service_started
+      kong:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${STUDIO_PORT:-54323}:3000"
+    environment:
+      HOSTNAME: 0.0.0.0
+      STUDIO_PG_META_URL: http://meta:8080
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_USER_READ_WRITE: postgres
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_PUBLIC_URL: ${SITE_ORIGIN}
+      SUPABASE_ANON_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_KEY: ${SERVICE_ROLE_KEY}
+      AUTH_JWT_SECRET: ${JWT_SECRET}
+      PGRST_DB_SCHEMAS: public,graphql_public
+      DEFAULT_ORGANIZATION_NAME: jdm
+      DEFAULT_PROJECT_NAME: jdm
+      ENABLED_FEATURES_LOGS_ALL: "false"
+
+  meta:
+    container_name: jdm-meta
+    profiles: ["studio"]
+    image: supabase/postgres-meta:v0.100.0
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PG_META_PORT: "8080"
+      PG_META_DB_HOST: db
+      PG_META_DB_PORT: "5432"
+      PG_META_DB_NAME: app
+      PG_META_DB_USER: postgres
+      PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD}
+
+volumes:
+  db-data:
+  storage-data:

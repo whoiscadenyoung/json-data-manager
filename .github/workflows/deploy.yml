@@ -1,0 +1,108 @@
+# Self-host CI/CD — docs/self-hosting-design.md §9 (ADR 0016): build and push
+# the app image to GHCR on every main push, then run the deploy hook when the
+# deployment variables are configured.
+#
+# The image bakes VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY at build time
+# (§4: both are publishable values — the anon key ships in the client bundle
+# by design). They come from repository VARIABLES; the deployment's real
+# secrets (JWT_SECRET, SERVICE_ROLE_KEY, POSTGRES_PASSWORD) live only in the
+# VPS .env and never enter CI.
+#
+# The deploy job is a no-op until configured: it requires the repository
+# variables DEPLOY_SSH_HOST / DEPLOY_SSH_USER / DEPLOY_PATH and the secrets
+# DEPLOY_SSH_KEY / DEPLOY_KNOWN_HOSTS. Without them the workflow stops after
+# the build (the hook target is deliberately not hardcoded). On the VPS the
+# hook is exactly: docker compose pull && docker compose up -d — the one-shot
+# migrations service runs inside that `up`, so schema changes ride the same
+# deploy. If the GHCR package is private, pre-authorize the VPS with
+# `docker login ghcr.io` (or make the package public).
+#
+# Repo note: pushes touching .github/workflows/ go through the SSH host alias
+# github.com-whoiscadenyoung (the gh token lacks the `workflow` scope).
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "packages/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "docker-compose.yml"
+      - ".env.example"
+      - "deploy/**"
+      - "supabase/migrations/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+# The build-and-push job needs packages:write for GHCR; everything else stays
+# read-only.
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/json-data-manager
+
+jobs:
+  build-and-push:
+    name: Build and push app image (GHCR)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # Same commit the repo's workflows pin.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+          build-args: |
+            VITE_SUPABASE_URL=${{ vars.PUBLIC_SUPABASE_URL || 'http://localhost:8000' }}
+            VITE_SUPABASE_ANON_KEY=${{ vars.PUBLIC_SUPABASE_ANON_KEY }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to VPS (docker compose pull && up)
+    needs: build-and-push
+    # Guarded: no-op until the deployment variables exist.
+    if: vars.DEPLOY_SSH_HOST != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Set up SSH
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Pull and restart the stack
+        run: |
+          set -euo pipefail
+          host="${{ vars.DEPLOY_SSH_USER }}@${{ vars.DEPLOY_SSH_HOST }}"
+          path="${{ vars.DEPLOY_PATH }}"
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes \
+            "${host}" "cd '${path}' && docker compose pull && docker compose up -d --remove-orphans"
