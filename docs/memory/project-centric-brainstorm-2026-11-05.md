@@ -1,35 +1,38 @@
 ---
 name: project-centric-brainstorm-2026-11-05
-description: Project-centric experience brainstorm — feat/project-workspace branch is the Convex-era spec, PG-era successor design drafted, awaiting user convergence on D1–D7
+description: Project-centric experience train FILED — umbrella #254 + ordered sub-issues #255–#262; design approved @ 2e49e86; next work starts at #255
 metadata:
   type: project
 ---
 
-2026-11-05 brainstorm kickoff (user): make **projects the primary working
-context** — datasets/maps/apps/collections tabs become exploratory views;
-inside a project users manage a catalog, relate/join datasets, build maps
-from layers, and publish apps; cross-project reuse must be reference-based
-(National Parks → State Tourism scenario).
+2026-11-05 brainstorm CONVERGED same day. **Projects are now the primary
+working context** (datasets/maps/apps/collections tabs = exploratory views).
+Design APPROVED: `docs/project-centric-experience-design.md` (committed
+@ 2e49e86 with resolved decisions D1–D7 + the no-migration-steps posture).
 
-Key finding: **`feat/project-workspace` (unmerged, pushed, Convex-era Oct 2026) already implemented half the vision** — members/roles (ADR 0011),
-owned-vs-linked artifacts w/ pin/float, first-class layers, project-owned
-maps (standalone retired), in-project editor, bundle closure. It is a SPEC
-now, never a merge source (backend was rewritten to Postgres). Design doc:
-`docs/project-workspace-design.md` (Convex era).
+**Train FILED: umbrella #254, ordered sub-issues #255 → #262** (attached as
+native GitHub sub-issues; one PR per issue, in order):
 
-The PG-era successor draft: `docs/project-centric-experience-design.md` —
-adds apps-in-projects (app `map` widget currently embeds ad-hoc datasetIds,
-never saved maps — two parallel map stacks), catalog-level
-`dataset_relations` (key|spatial; PostGIS runtime click→highlight→popup),
-and a unified visibility ladder `members|signed-in|link|public` w/ the
-ArcGIS **closure rule** (share validates/widens the whole reference chain;
-bundle press already walks versions — must learn visibility promotion).
+1. #255 membership & roles (owner/editor/viewer RLS rewrite)
+2. #256 project catalog: owned vs linked (pin/float/sync/revert)
+3. #257 layers + project-owned maps (/maps → explorer; standalone creation retires)
+4. #258 dataset_relations (key|spatial) + click→highlight→popup runtime
+5. #259 apps in projects; map widgets → STORED maps (inline datasetIds mode dies)
+6. #260 unified visibility ladder members|signed-in|link|public + closure preflight
+7. #261 anon/link/public serving (frozen-rows-only anon RLS, public routes)
+8. #262 explorers + cross-project UX + collections dual-role; tourism walkthrough = train's acceptance test
 
-**Awaiting user decisions D1–D7** (doc §7: dataset global-vs-owned, maps
-explorer, relations scope, ladder adoption steps, collections' fate,
-publish granularity, app↔map snapshot coupling). After convergence: ADRs +
-ordered issue train (user's standard). Sources for comparables research are
-in the doc §9.
+Key decisions: datasets stay GLOBAL (D1); relations catalog-level (D3);
+full visibility ladder in ONE train, no adoption steps — app not in
+production, breaking changes fine (D4); app-builder maps persist as real
+maps (D7). User's app-builder note: creating maps inside the builder is
+fine as long as they're stored as maps and existing maps can be pulled in.
+
+Predecessor context: `feat/project-workspace` (Convex-era, unmerged) is the
+SPEC for phases 1–3 (`docs/project-workspace-design.md`); never a merge
+source. The app map widget's ad-hoc datasetIds mode = the "two parallel map
+stacks" finding. ADRs to write along the way: roles (re-issue of 0011),
+visibility model — next numbers from docs/decisions/ (0017+).
 
 Related: [[supabase-migration-2026-11-03]], [[derived-datasets-brainstorm]],
-[[gis-feature-initiative]].
+[[break-initiatives-into-ordered-agent-issues]].
