@@ -88,32 +88,18 @@ jobs:
       # SUPABASE_DB_URL and skip-with-message when unreachable). Without a
       # reachable DB the files still pass as skips; with it, they run for
       # real on every PR. Same script as the store job's apply step below.
-      - name: Wait for postgres and apply supabase migrations
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          export LC_ALL=C
-          migrations=(supabase/migrations/*.sql)
-          if [ "${#migrations[@]}" -eq 0 ]; then
-            echo "::error::No migrations found under supabase/migrations/" >&2
-            exit 1
-          fi
-          for i in $(seq 1 30); do
-            psql "$SUPABASE_DB_URL" -X -c 'select 1;' >/dev/null 2>&1 && break
-            echo "waiting for postgres (attempt ${i}/30)..."; sleep 2
-          done
-          psql "$SUPABASE_DB_URL" -X -c 'select 1;' >/dev/null 2>&1 \
-            || { echo "::error::postgres never became reachable at \$SUPABASE_DB_URL" >&2; exit 1; }
-          for f in "${migrations[@]}"; do
-            echo "Applying ${f}"
-            psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -X -f "$f"
-          done
-          echo "Applied ${#migrations[@]} migration(s)."
-
-      # The pg-storage-policies.int.test.ts suite exercises the 0004/0006
-      # object policies' BEHAVIOR (owner stamps, dataset-scoped reads), which
-      # needs the storage schema to exist — same step-booted container as the
-      # store job (identical script; see that job for the full rationale).
+      #
+      # ORDER (#234/#248 follow-up, the real root cause of the storage RLS
+      # flake): storage-api boots BEFORE the migrations apply. The bare
+      # supabase/postgres image initializes WITHOUT a storage schema, so a
+      # migration-first order let 0004/0006 silently skip their storage
+      # sections (their to_regclass guards); storage-api's own boot then
+      # created storage.objects with ZERO policies and no buckets, and every
+      # storage.objects INSERT in the storage int tests was denied — 5 tests,
+      # stable once the schema existed, "passing" only in runs whose probe
+      # raced ahead of storage-api's boot and skipped the files. This is the
+      # store job's order already; reproduced and verified locally against
+      # the bare image (5 failed pre-reorder → 18/18 post-reorder, 2026-11-05).
       - name: Boot storage-api against the postgres service
         run: |
           set -euo pipefail
@@ -140,6 +126,28 @@ jobs:
           done
           curl -fsS http://localhost:5000/status \
             || { echo "::error::storage-api never became healthy at :5000/status" >&2; docker logs storage-api-verify; exit 1; }
+
+      - name: Wait for postgres and apply supabase migrations
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          export LC_ALL=C
+          migrations=(supabase/migrations/*.sql)
+          if [ "${#migrations[@]}" -eq 0 ]; then
+            echo "::error::No migrations found under supabase/migrations/" >&2
+            exit 1
+          fi
+          for i in $(seq 1 30); do
+            psql "$SUPABASE_DB_URL" -X -c 'select 1;' >/dev/null 2>&1 && break
+            echo "waiting for postgres (attempt ${i}/30)..."; sleep 2
+          done
+          psql "$SUPABASE_DB_URL" -X -c 'select 1;' >/dev/null 2>&1 \
+            || { echo "::error::postgres never became reachable at \$SUPABASE_DB_URL" >&2; exit 1; }
+          for f in "${migrations[@]}"; do
+            echo "Applying ${f}"
+            psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -X -f "$f"
+          done
+          echo "Applied ${#migrations[@]} migration(s)."
 
       # app consumes @caden/json-cms, @caden/data-core, @caden/importers and
       # @caden/geometry-archive only through their built dist (each package's
