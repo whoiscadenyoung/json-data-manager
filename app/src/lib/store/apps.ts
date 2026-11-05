@@ -140,12 +140,19 @@ export function toSummary(app: AppRow): AppSummary {
   };
 }
 
-/** The caller's own apps, newest first — the /apps browser (RLS scopes the read; list is the width cap). */
-export async function list(options?: StoreOptions): Promise<AppRow[]> {
+/**
+ * The creator's own apps, newest first — the /apps browser (the Convex
+ * `list`'s by_createdBy index scope, server-side; MAX_APPS is the width cap).
+ * RLS leaves these reads authenticated-open, so the creator filter is
+ * explicit here — the browser asks for the signed-in user's id (issue #220:
+ * the newest-200 sweep across ALL users rode the flat policy).
+ */
+export async function list(args: { createdBy: string }, options?: StoreOptions): Promise<AppRow[]> {
   return await queryRows<AppRow>(
     clientOf(options)
       .from("apps")
       .select(APP_SELECT)
+      .eq("created_by", args.createdBy)
       .order("created_at", { ascending: false })
       .limit(MAX_APPS),
   );
@@ -179,10 +186,10 @@ export async function get(args: { appId: string }, options?: StoreOptions): Prom
 // TanStack Query options (reads; design §8.1 — every read a queryOptions)
 // ---------------------------------------------------------------------------
 
-export function listQueryOptions(options?: StoreOptions) {
+export function listQueryOptions(args: { createdBy: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:apps", "list"],
-    queryFn: async () => await list(options),
+    queryKey: ["pg:apps", "list", args],
+    queryFn: async () => await list(args, options),
   });
 }
 

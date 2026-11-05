@@ -89,14 +89,15 @@ function script(stub: StubSupabase, responders: QueryResponder[]): void {
 }
 
 describe("apps.list / apps.listExamples — the /apps browser and gallery", () => {
-  it("selects the caller's apps newest-first (the list width caps at MAX_APPS)", async () => {
+  it("selects the creator's apps server-side, newest first (issue #220; capped at MAX_APPS)", async () => {
     const { client, queries } = stubSupabase(() => ({
       data: [appRow("a2", { createdAt: "2026-11-04T01:00:00Z" }), appRow("a1")],
       error: null,
     }));
-    const rows = await list({ supabase: client });
+    const rows = await list({ createdBy: "user-1" }, { supabase: client });
     const query = queryAt(queries, 0);
     expect(query.table).toBe("apps");
+    expect(allArgs(query, "eq")[0]).toStrictEqual(["created_by", "user-1"]);
     expect(firstArg(query, "order")).toBe("created_at");
     expect(argsOf(query, "order")[1]).toStrictEqual({ ascending: false });
     expect(allArgs(query, "limit")[0]).toStrictEqual([MAX_APPS]);
@@ -114,7 +115,12 @@ describe("apps.list / apps.listExamples — the /apps browser and gallery", () =
 
   it("queryOptions carry the store namespace and args in the key", () => {
     const { client } = stubSupabase();
-    expect(listQueryOptions({ supabase: client }).queryKey).toStrictEqual(["pg:apps", "list"]);
+    const listArgs = { createdBy: "user-1" };
+    expect(listQueryOptions(listArgs, { supabase: client }).queryKey).toStrictEqual([
+      "pg:apps",
+      "list",
+      listArgs,
+    ]);
     expect(listExamplesQueryOptions({ supabase: client }).queryKey).toStrictEqual([
       "pg:apps",
       "listExamples",
@@ -129,7 +135,9 @@ describe("apps.list / apps.listExamples — the /apps browser and gallery", () =
 
   it("throws the PostgREST error shape on failure", async () => {
     const { client } = stubSupabase(() => ({ data: null, error: postgrestError() }));
-    await expect(list({ supabase: client })).rejects.toThrow("permission denied (42501)");
+    await expect(list({ createdBy: "user-1" }, { supabase: client })).rejects.toThrow(
+      "permission denied (42501)",
+    );
   });
 });
 
