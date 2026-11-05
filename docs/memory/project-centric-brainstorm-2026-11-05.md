@@ -9,6 +9,7 @@ metadata:
 working context** (datasets/maps/apps/collections tabs = exploratory views).
 Design APPROVED: `docs/project-centric-experience-design.md` (committed
 @ 2e49e86 with resolved decisions D1–D7 + the no-migration-steps posture).
+**Agent handoff for executing the train: `docs/project-centric-train-handoff.md`.**
 
 **Train FILED: umbrella #254, ordered sub-issues #255 → #262** (attached as
 native GitHub sub-issues; one PR per issue, in order):
