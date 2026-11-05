@@ -596,7 +596,7 @@ async function applyFromRun(
     for (;;) {
       // oxlint-disable-next-line no-await-in-loop -- the sweep resumes batch by batch; a short batch ends it.
       const removed = await queryScalar<number>(
-        client.rpc("binding_sweep_batch", { p_run_id: runId }),
+        client.rpc("binding_sweep_batch", { p_claim: claim, p_run_id: runId }),
       );
       if (removed < SWEEP_BATCH) {
         break;

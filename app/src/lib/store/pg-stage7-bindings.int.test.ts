@@ -345,7 +345,11 @@ describe("stage 7 — the keyed/resumable engine (the RPC surface)", () => {
     await s().expectOk(`select public.binding_finalize_run(${sqlLit(runId)}, ${sqlLit(claim)})`);
     const swept = Number(
       cell(
-        (await s().expectOk(`select public.binding_sweep_batch(${sqlLit(runId)}) as n`))[0],
+        (
+          await s().expectOk(
+            `select public.binding_sweep_batch(${sqlLit(runId)}, ${sqlLit(claim)}) as n`,
+          )
+        )[0],
         "n",
       ),
     );
@@ -404,7 +408,9 @@ describe("stage 7 — the keyed/resumable engine (the RPC surface)", () => {
     await s().expectOk(
       `select public.binding_finalize_run(${sqlLit(first.runId)}, ${sqlLit(first.claim)})`,
     );
-    await s().expectOk(`select public.binding_sweep_batch(${sqlLit(first.runId)})`);
+    await s().expectOk(
+      `select public.binding_sweep_batch(${sqlLit(first.runId)}, ${sqlLit(first.claim)})`,
+    );
 
     const { claim, runId } = await startRun("commit-tail");
     await s().expectOk(
@@ -609,6 +615,128 @@ describe("stage 7 — the keyed/resumable engine (the RPC surface)", () => {
     await s().rollback();
   });
 
+  test("the sweep invariant restated (#223): only the owning claim in the sweeping state sweeps", async () => {
+    await s().begin();
+    await s().asUser(ALICE);
+    const { datasetId, bindingId } = await bindStandIn();
+
+    // A run in the sweeping state under claim-1, holding one stale mapping.
+    await s().asAdmin();
+    const ghostEntry = cell(
+      (
+        await s().expectOk(
+          `insert into public.entries (dataset_id, data) values (${sqlLit(datasetId)}, '{"label":"Ghost"}'::jsonb) returning id::text as id`,
+        )
+      )[0],
+      "id",
+    );
+    const runId = cell(
+      (
+        await s().expectOk(
+          `insert into public.sync_runs (binding_id, mode, status, claim, collect_attempts)
+         select id, 'sync', 'sweeping', 'claim-1', 1 from public.dataset_bindings where source = 'int.stand-in'
+         returning id::text as id`,
+        )
+      )[0],
+      "id",
+    );
+    await s().expectOk(
+      `insert into public.binding_entries (binding_id, entry_key, entry_id, seen_run)
+       values (${sqlLit(bindingId)}, 'ghost-key', ${sqlLit(ghostEntry ?? "")}, 'previous-run')`,
+    );
+
+    // sweep under a FOREIGN claim: 0, nothing deleted.
+    await s().begin();
+    await s().asUser(ALICE);
+    const refused = Number(
+      cell(
+        (
+          await s().expectOk(
+            `select public.binding_sweep_batch(${sqlLit(runId ?? "")}, 'not-the-claim') as n`,
+          )
+        )[0],
+        "n",
+      ),
+    );
+    expect(refused).toBe(0);
+    const ghostAlive = await s().expectOk(
+      `select count(*) as n from public.entries where id = ${sqlLit(ghostEntry ?? "")}`,
+    );
+    expect(Number(cell(ghostAlive[0], "n"))).toBe(1);
+    // The owning claim sweeps — the gate was the only blocker.
+    const swept = Number(
+      cell(
+        (
+          await s().expectOk(
+            `select public.binding_sweep_batch(${sqlLit(runId ?? "")}, 'claim-1') as n`,
+          )
+        )[0],
+        "n",
+      ),
+    );
+    expect(swept).toBe(1);
+    await s().rollback();
+  });
+
+  test("the fail invariant restated (#223): fail_run answers only to the owning claim of an active run", async () => {
+    await s().begin();
+    await s().asUser(ALICE);
+    await bindStandIn();
+
+    await s().asAdmin();
+    const failMe = cell(
+      (
+        await s().expectOk(
+          `insert into public.sync_runs (binding_id, mode, status, claim, collect_attempts)
+         select id, 'sync', 'applying', 'claim-2', 1 from public.dataset_bindings where source = 'int.stand-in'
+         returning id::text as id`,
+        )
+      )[0],
+      "id",
+    );
+    const unclaimed = cell(
+      (
+        await s().expectOk(
+          `insert into public.sync_runs (binding_id, mode, status, claim, collect_attempts)
+         select id, 'reconcile', 'collecting', null, 0 from public.dataset_bindings where source = 'int.stand-in'
+         returning id::text as id`,
+        )
+      )[0],
+      "id",
+    );
+    await s().begin();
+    await s().asUser(ALICE);
+    await s().expectOk(
+      `select public.binding_fail_run(${sqlLit(failMe ?? "")}, 'not-the-claim', 'nope')`,
+    );
+    let failedRow = await s().expectOk(
+      `select status from public.sync_runs where id = ${sqlLit(failMe ?? "")}`,
+    );
+    expect(cell(failedRow[0], "status")).toBe("applying");
+    await s().expectOk(`select public.binding_fail_run(${sqlLit(unclaimed ?? "")}, null, 'nope')`);
+    const unclaimedRow = await s().expectOk(
+      `select status from public.sync_runs where id = ${sqlLit(unclaimed ?? "")}`,
+    );
+    expect(cell(unclaimedRow[0], "status")).toBe("collecting");
+    // The owning claim fails its run; the terminal state keeps the FIRST
+    // error (a second fail is a no-op).
+    await s().expectOk(
+      `select public.binding_fail_run(${sqlLit(failMe ?? "")}, 'claim-2', 'engine poison')`,
+    );
+    failedRow = await s().expectOk(
+      `select status, error from public.sync_runs where id = ${sqlLit(failMe ?? "")}`,
+    );
+    expect(cell(failedRow[0], "status")).toBe("failed");
+    await s().expectOk(
+      `select public.binding_fail_run(${sqlLit(failMe ?? "")}, 'claim-2', 'second error')`,
+    );
+    failedRow = await s().expectOk(
+      `select error from public.sync_runs where id = ${sqlLit(failMe ?? "")}`,
+    );
+    expect(cell(failedRow[0], "error")).toBe("engine poison");
+    await s().rollback();
+  });
+
   test("the weekly reconcile: the cron job is registered, and the scheduler creates unclaimed work items", async () => {
     await s().begin();
     // The job row (cron lives in its own schema; read as admin).
@@ -685,7 +813,7 @@ describe("stage 7 — the keyed/resumable engine (the RPC surface)", () => {
       `select public.binding_apply_rows_batch(${sqlLit(runId)}, ${sqlLit(claim)}, 0, 0, '[]'::jsonb)`,
     );
     await s().expectOk(`select public.binding_finalize_run(${sqlLit(runId)}, ${sqlLit(claim)})`);
-    await s().expectOk(`select public.binding_sweep_batch(${sqlLit(runId)})`);
+    await s().expectOk(`select public.binding_sweep_batch(${sqlLit(runId)}, ${sqlLit(claim)})`);
     const policy = await s().expectOk(
       `select keep_versions from public.version_policies where dataset_key = ${sqlLit(datasetId)}`,
     );
