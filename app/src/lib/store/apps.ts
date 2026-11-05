@@ -174,7 +174,7 @@ export async function list(args: { createdBy: string }, options?: StoreOptions):
   );
 }
 
-/** The seeded example apps, oldest first — the /apps gallery (the Convex listExamples order). */
+/** The seeded example apps, oldest first — the /apps gallery (the Convex listExamples order; `id` breaks created_at ties so identical stamps render stably). */
 export async function listExamples(options?: StoreOptions): Promise<AppRow[]> {
   return await queryRows<AppRow>(
     clientOf(options)
@@ -182,6 +182,7 @@ export async function listExamples(options?: StoreOptions): Promise<AppRow[]> {
       .select(APP_SELECT)
       .eq("example", true)
       .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
       .limit(MAX_APPS),
   );
 }

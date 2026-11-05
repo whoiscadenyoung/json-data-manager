@@ -106,7 +106,9 @@ async function mapLayerTargets(mapId: string, options?: StoreOptions): Promise<s
       .select("targetId:target_id")
       .eq("map_id", mapId)
       .eq("target_type", "dataset")
-      .limit(500),
+      // The Convex leg-time width (bundles.ts linkMapLayers reads
+      // CATALOG_READ_LIMIT = 1000); 500 was an under-parity first cut.
+      .limit(1000),
   );
   return rows.flatMap((row) => (row.targetId === null ? [] : [row.targetId]));
 }

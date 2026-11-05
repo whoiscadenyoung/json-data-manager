@@ -345,10 +345,13 @@ begin
     [2022, 311.9], [2023, 325.5]
   ]$visits$::jsonb) as r;
 
-  -- The two example apps (examples.ts explorerPages/atlasPages, verbatim
-  -- widget-for-widget; the page JSON's dataset tokens are swapped for the
-  -- seeded ids — uuid text is JSON-safe, so the nested replace() composes
-  -- the literal).
+  -- The two example apps (examples.ts explorerPages/atlasPages,
+  -- widget-for-widget with ONE deliberate repair: the visits charts'
+  -- valueField reads `visitors_millions` — the seeded schema's field —
+  -- where examples.ts still said `visits_millions`; the seed is the
+  -- source of truth for the field name). The page JSON's dataset tokens
+  -- are swapped for the seeded ids — uuid text is JSON-safe, so the
+  -- nested replace() composes the literal.
   insert into public.apps
     (id, title, description, sharing, dataset_ids, pages, example, revision, created_by)
   values

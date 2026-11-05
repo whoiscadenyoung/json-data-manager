@@ -127,6 +127,9 @@ describe("apps.list / apps.listExamples — the /apps browser and gallery", () =
     expect(query.table).toBe("apps");
     expect(allArgs(query, "eq")[0]).toStrictEqual(["example", true]);
     expect(argsOf(query, "order")[1]).toStrictEqual({ ascending: true });
+    // The tiebreaker: identical created_at stamps (the seed writes both
+    // examples in one statement) order by id, never by insertion chance.
+    expect(allArgs(query, "order")[1]).toStrictEqual(["id", { ascending: true }]);
   });
 
   it("queryOptions carry the store namespace and args in the key", () => {

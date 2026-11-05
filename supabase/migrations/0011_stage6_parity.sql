@@ -101,6 +101,10 @@ begin
 
   -- The idempotency point (§5.4): ON CONFLICT (publish_key) DO NOTHING +
   -- re-select — a retried/killed publish cannot fork two v1s.
+  -- The INVARIANT this table pair runs on: publish_key = ref BY
+  -- CONSTRUCTION (the stage-6 review asked for the line) — every by-ref
+  -- lookup and the ON CONFLICT target can treat the two columns as one
+  -- identity only because this insert always writes them equal.
   insert into public.dataset_versions
     (dataset_id, ref, publish_key, version_label, lineage, created_by)
   values
