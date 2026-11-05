@@ -110,8 +110,8 @@ services:
 
   ## Realtime websocket + REST
   - name: realtime-v1-ws
-    _comment: "Realtime: /realtime/v1/* -> ws://realtime:4000/socket/*"
-    url: http://realtime:4000/socket
+    _comment: "Realtime: /realtime/v1/* -> ws://realtime-dev:4000/socket/*"
+    url: http://realtime-dev:4000/socket
     protocol: ws
     routes:
       - name: realtime-v1-ws
@@ -122,8 +122,8 @@ services:
       - name: cors
 
   - name: realtime-v1-rest
-    _comment: "Realtime: /realtime/v1/api/* -> http://realtime:4000/api/*"
-    url: http://realtime:4000/api
+    _comment: "Realtime: /realtime/v1/api/* -> http://realtime-dev:4000/api/*"
+    url: http://realtime-dev:4000/api
     protocol: http
     routes:
       - name: realtime-v1-rest
@@ -144,7 +144,7 @@ services:
   # Block realtime's admin surface on a public origin (the local CLI stack
   # leaves these open; official self-host terminates them).
   - name: realtime-v1-rest-openapi
-    url: http://realtime:4000/api/openapi
+    url: http://realtime-dev:4000/api/openapi
     protocol: http
     routes:
       - name: realtime-v1-rest-openapi
@@ -157,7 +157,7 @@ services:
           status_code: 403
           message: "Access is forbidden."
   - name: realtime-v1-rest-tenants
-    url: http://realtime:4000/api/tenants
+    url: http://realtime-dev:4000/api/tenants
     protocol: http
     routes:
       - name: realtime-v1-rest-tenants

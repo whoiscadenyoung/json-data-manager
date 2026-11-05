@@ -136,6 +136,15 @@ services:
       SEED_SELF_HOST: "true"
       RUN_JANITOR: "true"
       MAX_HEADER_LENGTH: "4096"
+    networks:
+      default:
+        # kong forwards with the upstream host as the Host header, and
+        # realtime derives its tenant lookup from that host (issue #233) —
+        # SEED_SELF_HOST seeds exactly one tenant, external_id `realtime-dev`,
+        # so the container must answer to that name (the official
+        # supabase/docker stack does the same alias).
+        aliases:
+          - realtime-dev
 
   storage:
     container_name: jdm-storage
