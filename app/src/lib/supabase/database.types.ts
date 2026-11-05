@@ -1687,7 +1687,7 @@ export type Database = {
           run_id: string;
         }[];
       };
-      binding_sweep_batch: { Args: { p_run_id: string }; Returns: number };
+      binding_sweep_batch: { Args: { p_claim: string; p_run_id: string }; Returns: number };
       binding_sweep_batch_size: { Args: Record<PropertyKey, never>; Returns: number };
       binding_tally_bump: { Args: { p_by: number; p_field: string; p_tally: Json }; Returns: Json };
       binding_unbind: { Args: { p_binding_id: string }; Returns: undefined };
