@@ -67,9 +67,11 @@ const SUPABASE_KEY = process.env.SUPABASE_KEY ?? "sb_publishable_ACJWlzQHlZjBrEg
 const JWT_SECRET =
   process.env.SUPABASE_JWT_SECRET ?? "super-secret-jwt-token-with-at-least-32-characters-long";
 
-/** The eight matrix tables migration 0012 adds to the publication. */
+/** The eleven published tables: 0013's eight matrix tables + 0015's completion (apps, consumer_references, version_policies). */
 const MATRIX_TABLES = [
+  "apps",
   "collection_datasets",
+  "consumer_references",
   "dataset_versions",
   "datasets",
   "entries",
@@ -77,6 +79,7 @@ const MATRIX_TABLES = [
   "layer_styles",
   "map_layers",
   "tags",
+  "version_policies",
 ];
 
 let probed = false;
@@ -92,7 +95,7 @@ try {
   if (JSON.stringify(published) === JSON.stringify(MATRIX_TABLES)) {
     probed = true;
   } else {
-    probeReason = `supabase_realtime publication has [${published.join(", ")}], expected the 0012 matrix — re-apply 0012_realtime_publication.sql or reset from a current tree`;
+    probeReason = `supabase_realtime publication has [${published.join(", ")}], expected the 0013+0015 matrix — re-apply 0013_realtime_publication.sql and 0015_realtime_matrix_completion.sql or reset from a current tree`;
     console.log(`skipping: ${probeReason}`);
   }
 } catch (error) {

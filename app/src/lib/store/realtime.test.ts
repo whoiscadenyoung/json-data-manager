@@ -49,9 +49,12 @@ import {
 import { attachDatasetRealtime, DATASET_CHANNEL_TABLES, datasetChannelTopic } from "./realtime";
 import { getQueryOptions as tagsGetOptions, listQueryOptions as tagsListOptions } from "./tags";
 import {
+  consumedByQueryOptions,
   getVersionQueryOptions as versionsGetOptions,
   headOfChainQueryOptions,
+  listConsumerReferencesQueryOptions,
   listVersionsQueryOptions,
+  retentionPolicyQueryOptions,
   versionEntriesQueryOptions,
 } from "./versions";
 
@@ -972,6 +975,63 @@ describe("versions / tags / catalog / maps events (invalidate-only surfaces)", (
     const keys = invalidatedKeys(invalidate);
     expect(keys).toContainEqual(["pg:tags", "list", { datasetId: D1 }]);
     expect(keys).toContainEqual(["pg:tags", "get", { tagId: "tag-1" }]);
+    detach();
+  });
+
+  it("invalidates consumption edges — source side exact, consumer side from the row image (#222)", async () => {
+    const queryClient = newClient();
+    const stub = stubRealtimeClient();
+    const detach = attachDatasetRealtime(queryClient, stub.client);
+    observe(queryClient, consumedByQueryOptions({ sourceDatasetId: D1 }).queryKey);
+    observe(queryClient, listConsumerReferencesQueryOptions({ consumerId: "derived-1" }).queryKey);
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const channel = onlyChannel(stub.channels);
+
+    channel.deliver("consumer_references", {
+      eventType: "INSERT",
+      new: { consumer_id: "derived-1", id: "ref-1", mode: "float", source_dataset_id: D1 },
+      old: {},
+    });
+    await tick();
+    let keys = invalidatedKeys(invalidate);
+    expect(keys).toContainEqual(["pg:versions", "consumedBy", { sourceDatasetId: D1 }]);
+    expect(keys).toContainEqual(["pg:versions", "consumerReferences", { consumerId: "derived-1" }]);
+
+    // DELETE carries the PK only (default replica identity): the source-side
+    // key stays exact, the consumer-side key is not nameable.
+    invalidate.mockClear();
+    channel.deliver("consumer_references", {
+      eventType: "DELETE",
+      new: {},
+      old: { id: "ref-1" },
+    });
+    await tick();
+    keys = invalidatedKeys(invalidate);
+    expect(keys).toContainEqual(["pg:versions", "consumedBy", { sourceDatasetId: D1 }]);
+    expect(keys).not.toContainEqual([
+      "pg:versions",
+      "consumerReferences",
+      { consumerId: "derived-1" },
+    ]);
+    detach();
+  });
+
+  it("invalidates the retention policy on version_policies edits (#222)", async () => {
+    const queryClient = newClient();
+    const stub = stubRealtimeClient();
+    const detach = attachDatasetRealtime(queryClient, stub.client);
+    observe(queryClient, retentionPolicyQueryOptions({ datasetKey: D1 }).queryKey);
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const channel = onlyChannel(stub.channels);
+
+    channel.deliver("version_policies", {
+      eventType: "UPDATE",
+      new: { dataset_key: D1, keep_versions: 3, pinned_refs: ["v2"] },
+      old: { dataset_key: D1 },
+    });
+    await tick();
+    const keys = invalidatedKeys(invalidate);
+    expect(keys).toContainEqual(["pg:versions", "retentionPolicy", { datasetKey: D1 }]);
     detach();
   });
 
