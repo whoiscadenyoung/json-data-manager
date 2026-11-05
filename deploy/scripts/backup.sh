@@ -27,7 +27,6 @@ echo "[backup] dumping ${PROJECT}-db (app) -> app-${STAMP}.dump"
 docker exec "${PROJECT}-db" pg_dump -U supabase_admin -d app -Fc \
   > "${BACKUP_DIR}/app-${STAMP}.dump"
 
-echo "[backup] archiving ${STORAGE_VOLUME} -> storage-${STAMP}.tgz"
 # The compose volume's REAL name: compose normalizes the project name
 # (lowercase, invalid chars dropped) and joins with an UNDERSCORE —
 # `jdm` + `storage-data` -> `jdm_storage-data`. A hyphen guess silently
@@ -39,6 +38,8 @@ if ! docker volume inspect "${STORAGE_VOLUME}" >/dev/null 2>&1; then
   echo "[backup] FATAL: volume ${STORAGE_VOLUME} does not exist — is the stack up, and is the project name right?" >&2
   exit 1
 fi
+
+echo "[backup] archiving ${STORAGE_VOLUME} -> storage-${STAMP}.tgz"
 docker run --rm \
   -v "${STORAGE_VOLUME}:/data:ro" \
   -v "${BACKUP_DIR}:/backup" \
