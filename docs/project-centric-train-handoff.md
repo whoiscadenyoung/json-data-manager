@@ -1,6 +1,7 @@
 # Project-centric experience train — agent handoff
 
-Written 2026-11-05, main @ 55a3fa7. **Nothing started yet — next work is #255.**
+Written 2026-11-05, main @ 55a3fa7. Updated 2026-11-05 after [project 1]:
+**#255 DONE (PR #263, main @ 55c7e5c + docs @ de075b4) — next work is #256.**
 
 ## What this train is
 
@@ -53,10 +54,17 @@ resolved decisions D1–D7; §5 = the scenario that is the train's exit test).
 
 ## Per-phase pointers
 
-- **#255 roles** — RLS rewrite of creator-private tables (0009). Keep policy
-  helpers INVOKER + `stable`; non-members see not-found (no existence leak).
+- **#255 roles** — ✅ DONE (PR #263): `project_members` + role-based RLS
+  rewrite of the four project tables, `project_invite_resolve` RPC, realtime
+  publication join (REPLICA IDENTITY FULL on project_members), members
+  dialog + seat-role badges + viewer gating. ADR 0017. Migration/RLS
+  authoring gotchas: `docs/memory/project-membership-0018-lessons.md`.
 - **#256 catalog** — reuse `consumer_references` float/pin + publish chains;
-  build no new pin machinery. Linked add pins at head; `auto` floats.
+  build no new pin machinery. Linked add pins at head; `auto` floats. When
+  the create/import-in-project flow can put a DRAFT into a project, extend
+  `can_view_dataset`/`can_edit_dataset` with the ADR 0017 deferred clause
+  (project-held drafts become member-visible/editable — the "adding a draft
+  to a project IS sharing" rule from the predecessor ADR 0011).
 - **#257 layers/maps** — port the branch design §3 to PG; `layer_styles` /
   `marker_sprites` already exist; one in-migration backfill folds standalone
   maps into per-creator projects; `needsAttention` on style/schema drift.
