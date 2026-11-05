@@ -36,14 +36,19 @@ ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
 
 RUN bun --filter=app run build
 
-# NOTE on server runtime deps, after 2026-11-05's experiments: the output
-# must ship ALONE. Bundling react into the SSR graph (ssr.noExternal) or
-# shipping real node_modules beside it splits react into two instances —
-# the inlined nitro copy renders, the external copy's hooks dispatcher is
-# never set → "ReactSharedInternals.H" null on every route. With NOTHING
-# resolvable, nitro's __require fallback serves the one inlined copy, and
-# the route-tree chunk pin (vite.config.ts) keeps the static graph
-# acyclic. Verified end-to-end through kong in the same session.
+# NOTE on server runtime deps (rewritten for #243): the output ships ALONE
+# except for the react-family runtime packages that
+# app/scripts/finalize-ssr-output.ts materializes INSIDE
+# .output/server/node_modules (react/react-dom/scheduler — they come with the
+# .output copy below). react stays EXTERNAL through the whole SSR pipeline
+# (app/vite.config.ts) so a process has exactly one react instance, and both
+# of rolldown's interop flavors for an external react — an ESM import or a
+# bare `__require` createRequire shim, chosen per platform build — resolve
+# against those real packages. The earlier arrangement (react bundled into a
+# nitro `_libs` chunk, no node_modules at all) silently depended on the
+# linux build's codegen flavor: the copy disappeared and every route served
+# ResolveMessage JSON (#243). The finalize script now fails the build when
+# the output isn't self-contained.
 
 FROM oven/bun:1.3.5-slim AS runtime
 # The nitro (bun preset) output is self-contained: server/index.mjs +
