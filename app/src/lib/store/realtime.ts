@@ -105,7 +105,13 @@ export interface DatasetChannelTable {
 /**
  * The channel's `postgres_changes` subscriptions (§7: "events for
  * `entries`/`geometries` filtered `dataset_id=eq.<id>`", extended per the
- * stage-6 ask's matrix: datasets/maps/collections/groups/versions). Order is
+ * stage-6 ask's matrix: datasets/maps/collections/groups/versions, then
+ * completed per the closeout review (#222): consumer_references and
+ * version_policies — the versions card's consumption and retention
+ * surfaces — so pin flips and keep-N edits broadcast like every other
+ * per-dataset table. `apps` is publication-only (0015): it has no
+ * dataset-scoped filter column, so it cannot ride this per-dataset channel;
+ * a builder-collaboration channel is feature work, not closeout. Order is
  * the delivery contract of the tests, not of the broker.
  */
 export const DATASET_CHANNEL_TABLES: readonly DatasetChannelTable[] = [
@@ -117,6 +123,16 @@ export const DATASET_CHANNEL_TABLES: readonly DatasetChannelTable[] = [
   { filterColumn: "dataset_id", surface: "catalog memberships", table: "collection_datasets" },
   { filterColumn: "target_id", surface: "maps layer data (layer set)", table: "map_layers" },
   { filterColumn: "render_id", surface: "maps layer styles", table: "layer_styles" },
+  {
+    filterColumn: "source_dataset_id",
+    surface: "consumption edges (consumed-by list / drift badges)",
+    table: "consumer_references",
+  },
+  {
+    filterColumn: "dataset_key",
+    surface: "versions retention policy (keep-N / pinned refs)",
+    table: "version_policies",
+  },
 ];
 
 /** The channel topic for one active dataset (§7's `dataset:<id>`). */
@@ -760,6 +776,39 @@ function applyTagsChange(
   }
 }
 
+/**
+ * Consumption edges (issue #222): the source-side consumed-by list is exact
+ * (the channel filter IS source_dataset_id); the consumer-side edge list
+ * rides the row image, which DELETE payloads don't carry (default replica
+ * identity — PK only), so a deleted edge invalidates the source side
+ * precisely and the consumer side not at all (the next badge read resolves
+ * it honestly).
+ */
+function applyConsumerReferencesChange(
+  _queryClient: QueryClient,
+  invalidations: PendingInvalidations,
+  change: RealtimeChange,
+  datasetId: string,
+): void {
+  invalidations.add(["pg:versions", "consumedBy", { sourceDatasetId: datasetId }]);
+  if (change.eventType !== "DELETE" && change.new !== null) {
+    const consumerId = columnString(change.new, "consumer_id");
+    if (consumerId !== "") {
+      invalidations.add(["pg:versions", "consumerReferences", { consumerId }]);
+    }
+  }
+}
+
+/** The retention row (issue #222): the channel filter IS the policy's PK (dataset_key). */
+function applyVersionPoliciesChange(
+  _queryClient: QueryClient,
+  invalidations: PendingInvalidations,
+  _change: RealtimeChange,
+  datasetId: string,
+): void {
+  invalidations.add(["pg:versions", "retentionPolicy", { datasetKey: datasetId }]);
+}
+
 function applyCollectionDatasetsChange(
   _queryClient: QueryClient,
   invalidations: PendingInvalidations,
@@ -821,6 +870,7 @@ function applyLayerStylesChange(
 
 const TABLE_HANDLERS: Record<string, ChangeHandler> = {
   collection_datasets: applyCollectionDatasetsChange,
+  consumer_references: applyConsumerReferencesChange,
   dataset_versions: applyDatasetVersionsChange,
   datasets: applyDatasetsChange,
   entries: applyEntriesChange,
@@ -828,6 +878,7 @@ const TABLE_HANDLERS: Record<string, ChangeHandler> = {
   layer_styles: applyLayerStylesChange,
   map_layers: applyMapLayersChange,
   tags: applyTagsChange,
+  version_policies: applyVersionPoliciesChange,
 };
 
 /** The PK of a non-INSERT payload under the default replica identity. */
@@ -860,8 +911,25 @@ function datasetIdOfKey(key: readonly unknown[]): string | null {
   if (args === null) {
     return null;
   }
-  const datasetId = args["datasetId"];
-  return typeof datasetId === "string" ? datasetId : null;
+  return datasetIdOfArgs(args);
+}
+
+/**
+ * The dataset-scoped arg names, first match wins: `datasetId` (every
+ * dataset-keyed family), plus the two #222 versions surfaces — consumedBy
+ * keys on `sourceDatasetId`, retentionPolicy on `datasetKey` (the chain
+ * anchor). `consumerId` deliberately does NOT activate: it names a derived
+ * row, a map-layer leg, or an artifact membership (0009's consumer id
+ * space), not necessarily a datasets row.
+ */
+function datasetIdOfArgs(args: Record<string, unknown>): string | null {
+  for (const field of ["datasetId", "sourceDatasetId", "datasetKey"]) {
+    const value = args[field];
+    if (typeof value === "string") {
+      return value;
+    }
+  }
+  return null;
 }
 
 /**
