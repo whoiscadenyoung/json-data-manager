@@ -37,14 +37,13 @@ import type { SqlColumnSpec } from "@caden/data-core/transform";
  * replaces `fetchDatasetEntryRows` inside the worker, and nothing on this
  * side of the protocol changes.
  */
-import { fetchConvexToken } from "#/lib/convex-auth-token";
 import { sharedClient } from "#/lib/store/client";
 
-/** Which auth surface a worker token request is for — the Convex JWT the standalone client authenticates with, or the Supabase access token the PG path builds its own client from (the tile worker's `TileTokenSource` shape, kept identical so both workers speak the same handshake). */
-export type AnalysisTokenSource = "convex" | "supabase";
+/** Which auth surface a worker token request is for — the Supabase access token the PG path builds its own client from (the tile worker's `TileTokenSource` shape, kept identical so both workers speak the same handshake). Single-member since #226: the Convex arm of the handshake was archived at the stage-7 disconnect and removed. */
+export type AnalysisTokenSource = "supabase";
 
-/** Which backend feeds a run's rows: the Convex seam (the original path) or the Postgres seam (`dataset-rows-pg.ts`, design §8.3). */
-export type AnalysisBackend = "convex" | "pg";
+/** Which backend feeds a run's rows — the Postgres seam (`dataset-rows-pg.ts`, design §8.3). Single-member since #226: the Convex seam arm was archived at the stage-7 disconnect and removed. */
+export type AnalysisBackend = "pg";
 
 /** One resolved table target: the SQL name its rows register under + the component row the seam should page. */
 export interface AnalysisTableTarget {
@@ -60,7 +59,7 @@ export interface AnalysisTableTarget {
 
 /** One analysis run request: the query, the source table, the side tables, the result cap. */
 export interface AnalysisRequest {
-  /** Which backend feeds the rows (the transitional origin split — Convex datasets keep the original path byte-for-byte). Default "convex". */
+  /** Which backend feeds the rows — always the Postgres seam since #226. */
   backend?: AnalysisBackend;
   /** Hard cap on returned rows (truncation is reported in diagnostics, never silent). */
   limit?: number;
@@ -118,7 +117,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * The current session's Supabase access token, for the PG path's worker-owned
  * `createClient` (a worker has neither cookies nor the provider's storage —
- * it asks the main thread, exactly like the Convex JWT handshake). Never
+ * it asks the main thread — the worker-handshake shape). Never
  * rejects: null when signed out or the read fails, so the run fails loudly on
  * the missing identity instead of silently reading zero RLS-visible rows
  * (the tile worker's `fetchSupabaseAccessToken` shape).
@@ -136,11 +135,12 @@ async function fetchSupabaseAccessToken(): Promise<string | null> {
   }
 }
 
-/** Answers the worker's token requests — its standalone client (Convex) or per-run supabase client (PG) authenticate through here (the worker has no session storage of its own). */
+/** Answers the worker's token requests — its per-run supabase client authenticates through here (the worker has no session storage of its own). */
 async function replyToken(requestId: number, source: AnalysisTokenSource): Promise<void> {
+  void source;
   const worker = analysisWorker;
   if (worker === undefined) return;
-  const token = source === "supabase" ? await fetchSupabaseAccessToken() : await fetchConvexToken();
+  const token = await fetchSupabaseAccessToken();
   // `Worker.postMessage` takes (message, transfer) — there is no
   // `targetOrigin` parameter to pass at the worker boundary.
   // oxlint-disable-next-line unicorn/require-post-message-target-origin
@@ -152,7 +152,7 @@ function handleWorkerTokenRequest(event: MessageEvent<unknown>): void {
   if (!isRecord(data) || typeof data.requestId !== "number" || data.type !== "token-request") {
     return;
   }
-  const source: AnalysisTokenSource = data.source === "supabase" ? "supabase" : "convex";
+  const source: AnalysisTokenSource = "supabase";
   void replyToken(data.requestId, source);
 }
 

@@ -1,8 +1,4 @@
-import {
-  MAX_ANALYSIS_RESULT_ROWS,
-  MAX_ANALYSIS_SOURCE_ROWS,
-  sourceRowCapError,
-} from "@caden/analysis/caps";
+import { MAX_ANALYSIS_RESULT_ROWS } from "@caden/analysis/caps";
 import { analysisSqlEngine } from "@caden/analysis/duckdb";
 /**
  * The analysis worker (roadmap stage 9, #105; docs/analysis-layer-design.md
@@ -42,12 +38,8 @@ import { analysisSqlEngine } from "@caden/analysis/duckdb";
  * its blob-worker `?url` absolutization in packages/analysis duckdb.ts — is
  * shared and unchanged.
  */
-import { applySql, declaredColumnTypes } from "@caden/data-core/transform";
+import { applySql } from "@caden/data-core/transform";
 import type { SqlColumnSpec, SqlOperation, SqlSideTable } from "@caden/data-core/transform";
-import type { ConvexClient } from "convex/browser";
-
-import { entryDataRecord, forEachDatasetEntryPage } from "#/lib/dataset-rows";
-import { api } from "#convex/_generated/api";
 
 import type {
   AnalysisTableTarget,
@@ -89,19 +81,6 @@ async function fetchTokenFromMain(source: AnalysisTokenSource): Promise<string |
   });
 }
 
-function convexClient(): ConvexClient {
-  // ARCHIVED at the stage-7 disconnect (issue #206): this branch built
-  // `new ConvexClient(env.VITE_CONVEX_URL)` with the re-asserting fetcher
-  // (`setAuthReasserting`, #133 item 6) — `VITE_CONVEX_URL` left `#/env`
-  // with the provider unmount, and no Convex-origin dataset exists to run
-  // SQL over, so the branch now fails loudly instead of dialing a deployment
-  // the shell no longer wires. The Postgres path runs on the store's
-  // supabase client ("supabase" token source) exactly as before.
-  throw new Error(
-    "Convex analyses are archived in this build (stage 7 disconnect): SQL runs on Postgres datasets only.",
-  );
-}
-
 // One heavy run at a time: async row paging may interleave, but the CPU-bound
 // WASM SQL serializes on this worker's single thread.
 let runQueue: Promise<void> = Promise.resolve();
@@ -129,45 +108,6 @@ interface LoadedTable {
   title?: string;
 }
 
-/**
- * Streams one dataset's seam pages into the engine records, capping the
- * source rows (#133 item 7): each page's rows adapt once —
- * `entryDataRecord` per row — and the raw `DatasetEntryRow`s are dropped as
- * the next page loads, instead of the whole entry set and its record copy
- * being held at once. Past `MAX_ANALYSIS_SOURCE_ROWS` the run fails with
- * the cap's message; a larger analysis belongs behind a rollup.
- */
-async function loadTable(schemaId: string): Promise<LoadedTable> {
-  const convex = convexClient();
-  // Metadata read for the declared structure (NOT a row path): the typed
-  // end-to-end invariant registers columns from the DECLARED structure and
-  // lets materializeSqlTable infer only what the rows carry beyond it.
-  const schema = await convex.query(api.cms.schemas.get, { schemaId });
-  if (schema === null) {
-    // The auth choke point's indistinguishable denial (a foreign draft, an
-    // author-visibility row) and a deleted dataset read the same here.
-    throw new Error("A dataset in this analysis doesn't exist or you don't have access to it.");
-  }
-  const rows: Array<Record<string, unknown>> = [];
-  await forEachDatasetEntryPage(
-    schemaId,
-    (page) => {
-      if (rows.length + page.length > MAX_ANALYSIS_SOURCE_ROWS) {
-        throw new Error(sourceRowCapError(schema.title));
-      }
-      for (const row of page) {
-        rows.push(entryDataRecord(row));
-      }
-    },
-    { convex },
-  );
-  return {
-    columns: declaredColumnTypes(schema.schema),
-    rows,
-    title: schema.title,
-  };
-}
-
 async function runAnalysis(
   requestId: number,
   request: Extract<AnalysisWorkerInbound, { type: "analyze" }>,
@@ -176,22 +116,16 @@ async function runAnalysis(
     post({ phase: "loading-engine", requestId, type: "phase" });
     const engine = await analysisSqlEngine();
     post({ phase: "loading-rows", requestId, type: "phase" });
-    // The transitional backend split rides the REQUEST (stage 5, #204): a PG
-    // run builds its own supabase client from a fresh token (the tile
+    // A run builds its own supabase client from a fresh token (the tile
     // worker's rule) and loads every table through the PG seam
     // (`loadPgTable` — declared columns arrive on the targets, so this path
-    // never fetches metadata); the Convex path below is byte-identical to
-    // stage 9's. The engine is shared and backend-agnostic.
-    const supabase =
-        request.backend === "pg"
-          ? await pgWorkerSupabaseClient(async () => await fetchTokenFromMain("supabase"))
-          : undefined,
-      loadTarget = async (target: AnalysisTableTarget): Promise<LoadedTable> =>
-        supabase === undefined
-          ? await loadTable(target.schemaId)
-          : await loadPgTable(target, supabase),
-      source = await loadTarget(request.source),
-      sides = new Map<string, SqlSideTable>();
+    // never fetches metadata). The engine is backend-agnostic; the Convex
+    // loader arm was archived at the stage-7 disconnect and removed (#226).
+    const supabase = await pgWorkerSupabaseClient(async () => await fetchTokenFromMain("supabase"));
+    const loadTarget = async (target: AnalysisTableTarget): Promise<LoadedTable> =>
+      await loadPgTable(target, supabase);
+    const source = await loadTarget(request.source);
+    const sides = new Map<string, SqlSideTable>();
     for (const target of request.tables) {
       // oxlint-disable-next-line no-await-in-loop -- each table pages a dataset to exhaustion; sequential keeps memory bounded (the loadPublishTables precedent).
       const loaded = await loadTarget(target);
