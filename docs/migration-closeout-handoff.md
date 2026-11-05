@@ -28,11 +28,16 @@ now the launch-state record; the next action is the VPS cutover.
     no longer surfaces through the query boundary as "Dataset Not
     Found"), **#244 resolved works-as-designed** (the sort control is a
     dropdown menu; asc/desc verified riding `?sort=` server-side).
-  - **#234 FIXED** (PR #248 — `fileParallelism: false`: the
-    shared-service-DB int-test interference class is structurally
-    impossible; suite green serialized, 98 files / 1142 tests, ~zero
-    wall-time cost). CI on main should finally run green end to end —
-    confirm on the next push.
+  - **#234 FIXED in two parts** — PR #248 (`fileParallelism: false`,
+    ~zero wall-time cost) removed the concurrency suspect, and PR #250
+    found + fixed the real root cause: the `ci` job applied migrations
+    BEFORE booting storage-api, so on the bare image the 0004/0006
+    storage sections silently skipped (no storage schema yet), and
+    storage-api then created `storage.objects` with zero policies →
+    stable RLS denials whose run-to-run variance was a probe/boot race.
+    The ci job now mirrors the store job's boot-first order.
+    **CI on main is GREEN end to end** (run 42075309635 @ fd43ff5,
+    both jobs success — first fully-green main run since 2026-11-04).
 - **Compose stack (:8000)**: rebuilt from merged main, all services
   healthy, `/signin` `/dashboard` `/datasets` verified HTML 200, zero
   ResolveMessage/require_shim errors. Demo user

@@ -35,11 +35,18 @@ served ResolveMessage JSON):
    removed in PR #246. Chunk-shape claims must be verified against the built
    output (`ls .output/server/_chunks _ssr _libs`), never against config.
 
-Also: `app/vitest.config.ts` runs with `fileParallelism: false` (#234, PR
-#248) — the int tests share one Postgres service DB per CI job and
-concurrent files under runner load produced cross-file RLS denials that
-moved between file sets per rerun. Serialization is free (setup-dominated
-suite). Both signals verified on merged main via the compose stack.
+Also: `app/vitest.config.ts` runs with `fileParallelism: false` (PR #248)
+— but the int-test "flake"'s REAL root cause was CI step ORDER (PR #250):
+the `ci` job applied migrations BEFORE booting storage-api, and the bare
+`supabase/postgres:15.19.0.016` image initializes WITHOUT a storage
+schema — 0004/0006's storage sections silently skip (their
+`to_regclass` guards), storage-api's boot then creates `storage.objects`
+with ZERO policies and no buckets, and every storage INSERT is denied.
+The migration-apply step must ALWAYS follow a storage-api boot (the
+store job's order; the compose stack's order too). Run-to-run variance
+in such failures = a race between the tests' storage probe and the
+boot, not flaky tests. CI green end to end on main @ fd43ff5
+(run 42075309635, 2026-11-05).
 
 Related: [[self-hosting-stack-2026-11-05]], [[closeout-train-2026-11-05]],
 [[supabase-stage1-sql-gotchas]].
