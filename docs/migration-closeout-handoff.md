@@ -9,7 +9,10 @@ now the launch-state record; the next action is the VPS cutover.
 
 ## 0. Launch state (updated 2026-11-05, closing session)
 
-- **main @ b5155da** — closeout train executed and closed:
+- **main @ d8a84aa** — closeout train executed and closed, plus one
+  post-closeout removal (PR #252): the archived demo-source Dashboard
+  nav item, route, and orphaned feature folder are gone (PG side needed
+  nothing — the demo source was never carried; #241 keeps the seam):
   - #220–#226 + #230 merged (PRs #231/#232/#235–#240/#242), #228/#229
     closed with verdicts (#182 umbrella closed, #188 re-targeted to the
     GIS track #158; #78/#72 closed as superseded, Postgres-era successor
@@ -44,8 +47,9 @@ now the launch-state record; the next action is the VPS cutover.
   (`demo@jdm.test` / `demo-password-1`), dataset "self-host demo".
   Studio: `docker compose --profile studio up -d` → :54323.
   `docker compose down -v` wipes it.
-- **Local gates all green** at b5155da (fmt, lint 0 errors, all package
-  typechecks + tests, app tests serialized, app build incl. the new
+- **Local gates all green** at b5155da and re-run green on every
+  closeout PR since, incl. #252 (fmt, lint 0 errors, all package
+  typechecks + tests, app tests serialized, app build incl. the
   guard). fmt:check locally still flags only the untracked
   `.zcode/plans/*.md` (CI never sees them).
 
@@ -57,7 +61,7 @@ backup/restore path. Any time the VPS exists:
 
 1. Follow §11a end to end (docker login ghcr — the image is private).
 2. The image to deploy is `ghcr.io/whoiscadenyoung/json-data-manager`
-   built from b5155da+ (CI/CD builds it; or build locally).
+   built from d8a84aa+ (CI/CD builds it; or build locally).
 3. §11a step 9's "sign in" check now works — #243 was the blocker.
 
 ## 2. Working agreements (carry over)
