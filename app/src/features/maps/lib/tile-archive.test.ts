@@ -19,7 +19,6 @@ vi.mock("#/env", () => ({
 }));
 // The dormant Convex token branch stays mocked (the module still imports it
 // for the archived worker path); nothing live reaches it.
-vi.mock("#/lib/convex-auth-token", () => ({ fetchConvexToken: async () => null }));
 vi.mock("#/integrations/tanstack-query/root-provider", () => ({
   getContext: () => ({ queryClient: { invalidateQueries: mocks.invalidateQueries } }),
 }));

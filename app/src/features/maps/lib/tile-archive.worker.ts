@@ -34,15 +34,12 @@ import {
   feature,
   fetchGeometry,
   parseGeometry,
-  resolveRow,
   utf8ByteLength,
   type ResolvedGeometryRow,
 } from "@caden/maps/geometry-features";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import type { ConvexClient } from "convex/browser";
 
 import { env } from "#/env";
-import { forEachDatasetGeometryPage } from "#/lib/dataset-rows";
 import type { DatasetGeometryRow } from "#/lib/dataset-rows-pg";
 import { forEachDatasetGeometryPage as forEachPgGeometryPage } from "#/lib/dataset-rows-pg";
 import { isPostgresDatasetId } from "#/lib/dataset-source";
@@ -52,7 +49,6 @@ import {
   installTileArchive,
   tileDatasetInfo,
 } from "#/lib/store/geometries";
-import { api } from "#convex/_generated/api";
 
 import { MAP_TILE_ARCHIVE_FORMAT, pgTileArchiveUploadPath } from "./pg-tile-archives";
 import type {
@@ -117,17 +113,6 @@ async function fetchTokenFromMain(source: TileTokenSource): Promise<string | nul
   });
 }
 
-function convexClient(): ConvexClient {
-  // ARCHIVED at the stage-7 disconnect (issue #206): this branch built
-  // `new ConvexClient(env.VITE_CONVEX_URL)` with a main-thread token round
-  // trip — `VITE_CONVEX_URL` left `#/env` with the provider unmount, and no
-  // Convex-origin dataset exists to build for, so the branch now fails
-  // loudly instead of dialing a deployment the shell no longer wires.
-  throw new Error(
-    "Convex tile sources are archived in this build (stage 7 disconnect): only Postgres datasets build tile archives.",
-  );
-}
-
 // One heavy build at a time: async page fetches may interleave, but the
 // CPU-bound geojson-vt indexing serializes on this worker's single thread.
 let buildQueue: Promise<void> = Promise.resolve();
@@ -152,161 +137,16 @@ self.addEventListener("message", (event: MessageEvent<TileArchiveWorkerInbound>)
     buildQueue = buildQueue.then(async () => runPgBuild(schemaId)).catch(() => undefined);
     return;
   }
-  // Re-assert auth per build so a client first created signed out
-  // authenticates as soon as a session exists (sign-out reloads the page,
-  // but sign-in does not).
-  convexClient().setAuth(async () => await fetchTokenFromMain("convex"));
-  buildQueue = buildQueue.then(async () => runBuild(schemaId)).catch(() => undefined); // runBuild reports its own error message; the queue keeps draining.
+  // Non-PG ids cannot occur in a Postgres-only deployment — the Convex
+  // build path was archived at the stage-7 disconnect and removed in
+  // #226. The arm reports loudly instead of silently dropping the build.
+  post({
+    message:
+      "Only Postgres datasets build tile archives (the Convex path was removed in the stage-7 disconnect).",
+    schemaId,
+    type: "error",
+  });
 });
-
-/**
- * Pages the dataset to exhaustion (`isDone`) and accumulates its features —
- * the cursor chain, page size, and completeness semantics live in the
- * row-resolution seam (`forEachDatasetGeometryPage`, run here on this
- * worker's own client). Rows resolve through {@link BoundedPool} so at most
- * {@link GEOMETRY_FETCH_POOL_SIZE} fetches are ever in flight, across pages
- * too: a page's fetches run while the next page's query is still in flight.
- * Exported for the pool-contract test (issue #134).
- */
-export async function fetchAllGeometryFeatures(
-  convex: ConvexClient,
-  schemaId: string,
-  onProgress?: (fetchedRows: number) => void,
-): Promise<{ features: Array<GeoJSONFeature>; payloadBytes: number }> {
-  const features: Array<GeoJSONFeature> = [];
-  const pool = new BoundedPool(GEOMETRY_FETCH_POOL_SIZE);
-  const rowTasks: Array<Promise<ResolvedGeometryRow | null>> = [];
-  let fetchedRows = 0;
-  await forEachDatasetGeometryPage(
-    schemaId,
-    (rows) => {
-      fetchedRows += rows.length;
-      if (onProgress !== undefined) onProgress(fetchedRows);
-      for (const row of rows) {
-        rowTasks.push(
-          pool.run(async () => {
-            return await resolveRow(row);
-          }),
-        );
-      }
-    },
-    { convex },
-  );
-  const resolvedRows = await Promise.all(rowTasks);
-  let payloadBytes = 0;
-  for (const resolved of resolvedRows) {
-    if (resolved === null) continue;
-    features.push(feature(resolved.entryId, resolved.geometry));
-    payloadBytes += resolved.bytes;
-  }
-  return { features, payloadBytes };
-}
-
-/**
- * Uploads the archive through the app's storage upload-url flow, issued for
- * THIS dataset (`scope`) — the install then presents the issuance token, and
- * an id that didn't come from a server-issued upload for this dataset is
- * rejected at `tile_archives.install` (issue #131).
- */
-async function uploadArchive(
-  convex: ConvexClient,
-  schemaId: string,
-  archive: Uint8Array,
-): Promise<{ storageId: string; uploadId: string }> {
-  const { storageUrl, uploadId } = await convex.mutation(api.cms.imports.generateUploadUrl, {
-    scope: schemaId,
-  });
-  // The archive is one fresh buffer from `assembleArchive`, so an
-  // ArrayBuffer-backed copy for the Blob part is the honest typing.
-  const response = await fetch(storageUrl, {
-    body: new Blob([new Uint8Array(archive)], { type: "application/octet-stream" }),
-    headers: { "Content-Type": "application/octet-stream" },
-    method: "POST",
-  });
-  if (!response.ok) {
-    throw new Error(`Archive upload failed with HTTP ${response.status}`);
-  }
-  const body: unknown = await response.json();
-  if (
-    typeof body !== "object" ||
-    body === null ||
-    !("storageId" in body) ||
-    typeof body.storageId !== "string"
-  ) {
-    throw new Error("Archive upload did not return a storageId.");
-  }
-  return { storageId: body.storageId, uploadId };
-}
-
-async function buildAndInstall(
-  convex: ConvexClient,
-  schemaId: string,
-  expectedVersion: number,
-  features: Array<GeoJSONFeature>,
-): Promise<void> {
-  postPhase(schemaId, "building");
-  const archive = await buildGeometryArchive({
-    features,
-    maxZoom: DEFAULT_MAX_ZOOM,
-  });
-
-  postPhase(schemaId, "uploading");
-  const { storageId, uploadId } = await uploadArchive(convex, schemaId, archive);
-
-  postPhase(schemaId, "installing");
-  const outcome = await convex.mutation(api.cms.tile_archives.install, {
-    bytes: archive.byteLength,
-    expectedVersion,
-    maxZoom: DEFAULT_MAX_ZOOM,
-    schemaId,
-    storageId,
-    uploadId,
-  });
-  if (outcome === "installed") {
-    post({
-      builtVersion: expectedVersion,
-      bytes: archive.byteLength,
-      maxZoom: DEFAULT_MAX_ZOOM,
-      schemaId,
-      type: "done",
-    });
-  } else {
-    // Edits landed during the build — the guard deleted the incoming blob;
-    // a queued/stale-on-view rebuild converges to fresh.
-    post({ schemaId, type: "stale-discarded" });
-  }
-}
-
-async function runBuild(schemaId: string): Promise<void> {
-  try {
-    const convex = convexClient();
-    postPhase(schemaId, "fetching");
-    const schema = await convex.query(api.cms.schemas.get, { schemaId });
-    if (schema === null || schema.kind !== "geospatial" || schema.geometryType === undefined) {
-      post({ reason: "not-geospatial", schemaId, type: "skipped", version: 0 });
-      return;
-    }
-    const expectedVersion = schema.mapTileCacheVersion ?? 0;
-    const total = schema.featureCount ?? 0,
-      { features, payloadBytes } = await fetchAllGeometryFeatures(convex, schemaId, (done) => {
-        if (total > 0) post({ done: Math.min(done, total), schemaId, total, type: "progress" });
-      });
-    if (payloadBytes < MAP_TILE_ARCHIVE_MIN_BYTES) {
-      // The version rides along so the manager can memoize the skip —
-      // without it a below-threshold dataset reads as stale forever and
-      // refetches on every summaries update (issue #134).
-      post({ reason: "below-threshold", schemaId, type: "skipped", version: expectedVersion });
-      return;
-    }
-    await buildAndInstall(convex, schemaId, expectedVersion, features);
-  } catch (error) {
-    post({
-      message: error instanceof Error ? error.message : String(error),
-      schemaId,
-      type: "error",
-    });
-  }
-}
 
 // ---------------------------------------------------------------------------
 // The Postgres path (stage 2, issue #201): same phases, same threshold, same

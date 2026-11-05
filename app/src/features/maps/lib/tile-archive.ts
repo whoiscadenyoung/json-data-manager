@@ -2,7 +2,7 @@
  * Tile-archive rebuild manager (issue #58 part 3) — decides WHEN a dataset's
  * tile archive gets rebuilt and runs exactly one build at a time per dataset.
  * The build itself runs in {@link ./tile-archive.worker.ts} (a web worker that
- * owns a standalone ConvexClient): one build = one message round trip.
+ * builds its own client): one build = one message round trip.
  *
  * Correctness does NOT live here. A rebuild races edits by design; part 2's
  * `setMapTileArchive` `expectedVersion` guard makes a build that started
@@ -23,7 +23,6 @@ import { useEffect, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
 import { getContext } from "#/integrations/tanstack-query/root-provider";
-import { fetchConvexToken } from "#/lib/convex-auth-token";
 import { isPostgresDatasetId } from "#/lib/dataset-source";
 import { sharedClient } from "#/lib/store/client";
 
@@ -31,12 +30,12 @@ import { isPgTileArchiveStale } from "./pg-tile-archives";
 import { usePgDatasetSummaries } from "./pg-tile-archives-react";
 
 /**
- * Which auth surface a worker token request is for: the Convex JWT the
- * standalone ConvexClient `setAuth`s with, or the Supabase access token the
- * worker's own `createClient` rides (RLS applies to every PG read/write the
- * PG build path makes). Omitted = "convex" (the only kind before stage 2).
+ * Which auth surface a worker token request is for: the Supabase access
+ * token the worker's own `createClient` rides (RLS applies to every PG
+ * read/write the build path makes). Single-member since #226 — the Convex
+ * arm of the handshake was archived at the stage-7 disconnect and removed.
  */
-export type TileTokenSource = "convex" | "supabase";
+export type TileTokenSource = "supabase";
 
 /** Main thread → worker: one build per message, plus token-fetch replies. */
 export type TileArchiveWorkerInbound =
@@ -296,7 +295,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * The current session's Supabase access token, for the tile worker's own
  * `createClient` (a worker has neither cookies nor the provider's storage —
- * it asks the main thread, exactly like the Convex JWT handshake). Never
+ * it asks the main thread — the worker-handshake shape). Never
  * rejects: null when signed out or the read fails, so a request never hangs
  * and the PG build fails loudly on the missing identity instead of silently
  * reading zero RLS-visible rows.
@@ -316,36 +315,37 @@ async function fetchSupabaseAccessToken(): Promise<string | null> {
 
 /**
  * Answers the worker's token requests on the same message channel the build
- * protocol rides: the worker's standalone ConvexClient authenticates through
+ * protocol rides: the worker's own client authenticates through
  * here (its `setAuth` fetcher), since the sign-in gate (roadmap 0.1) rejects
- * every unauthenticated data call — and stage 2's PG build path authenticates
- * its own `createClient` the same way (source: "supabase"). Both fetchers
- * never reject — null when signed out or the fetch fails — so a request
- * never hangs.
+ * every unauthenticated data call — and the PG build path authenticates its
+ * own `createClient` the same way (source: "supabase"). The fetcher never
+ * rejects — null when signed out or the fetch fails — so a request never
+ * hangs.
  */
 async function replyToken(requestId: number, source: TileTokenSource): Promise<void> {
+  void source;
   const worker = archiveWorker;
   if (worker === undefined) return;
-  const token = source === "supabase" ? await fetchSupabaseAccessToken() : await fetchConvexToken();
+  const token = await fetchSupabaseAccessToken();
   // `Worker.postMessage` takes (message, transfer) — there is no
   // `targetOrigin` parameter to pass at the worker boundary.
   // oxlint-disable-next-line unicorn/require-post-message-target-origin
   worker.postMessage({ requestId, token, type: "token" } satisfies TileArchiveWorkerInbound);
 }
 
-/** Replies to the worker's token requests (Convex default, PG opt-in); other messages pass it by. */
+/** Replies to the worker's token requests; other messages pass it by. */
 function handleWorkerTokenRequest(event: MessageEvent<unknown>): void {
   const data: unknown = event.data;
   if (!isRecord(data) || typeof data.requestId !== "number" || data.type !== "token-request") {
     return;
   }
-  const source: TileTokenSource = data.source === "supabase" ? "supabase" : "convex";
+  const source: TileTokenSource = "supabase";
   void replyToken(data.requestId, source);
 }
 
 /**
  * Refetches the PG queries a settled build changes: the install RPC runs
- * OUTSIDE the TanStack cache (there is no Convex-style push for Postgres
+ * OUTSIDE the TanStack cache (there is no push channel for Postgres
  * until stage 6's realtime), so without this the summaries — and with them
  * every layer-source decision and the OPFS pin feed — would stay on the
  * stale pre-build state until an unrelated refetch. Both feeds go stale
@@ -522,7 +522,7 @@ function getScheduler(): TileArchiveScheduler {
 /**
  * Mounted once at the app root: watches every geospatial dataset and
  * schedules a debounced rebuild whenever one is observably stale. The
- * stage-7 disconnect (issue #206) removed the Convex watch
+ * stage-7 disconnect (issue #206) removed the watch
  * (`api.cms.schemas.listSummaries` reactive push) alongside the provider;
  * Postgres datasets are the only watch: the store summaries, refetched by
  * `invalidatePgQueries` when a build settles (realtime cross-tab push is
