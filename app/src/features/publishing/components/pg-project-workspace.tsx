@@ -28,6 +28,7 @@ import {
   Rocket,
   Search,
   Trash2,
+  Users,
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -38,29 +39,39 @@ import { useSession } from "@/integrations/supabase/provider";
 import { errorMessage } from "@/lib/errors";
 import * as datasetsStore from "@/lib/store/datasets";
 import * as mapsStore from "@/lib/store/maps";
+import { listMineQueryOptions, resolveMyRole, ROLE_LABELS } from "@/lib/store/project-members";
 import * as projectsStore from "@/lib/store/projects";
 import { latestBundleQueryOptions, listMembersQueryOptions } from "@/lib/store/publishing";
 
 import { pgPublishProjectBundle } from "../lib/pg-bundle-publish";
+import { PgProjectMembersDialog } from "./pg-project-members-dialog";
+
+/** The viewer-facing reason every disabled write control carries (the UI-polish rule: a reason, never a silent no-op). */
+const VIEWER_REASON =
+  "Viewers have read-only access to this project — ask an owner for editor access.";
 
 /**
- * The Postgres project workspace (stage 4, #203; lifecycle doc §3) — the
- * working layer's container for PG-created projects: everything in the
- * project listed by kind, the add-reference action ("fork = add-to-project":
- * a reference, never a copy), and the one-press BUNDLE PUBLISH (collection
- * + maps + every referenced dataset through `publish_version`).
+ * The Postgres project workspace (stage 4, #203; lifecycle doc §3; now
+ * collaborative per #255 / ADR 0017) — the working layer's container for
+ * PG-created projects: everything in the project listed by kind, the
+ * add-reference action ("fork = add-to-project": a reference, never a
+ * copy), and the one-press BUNDLE PUBLISH (collection + maps + every
+ * referenced dataset through `publish_version`).
  *
- * Projects are per-creator PRIVATE (the shared-artifact exception): another
- * user's project reads exactly as a missing one, and this page renders the
- * same not-found card for both. Derived artifacts (the third kind the table
- * allows) have no PG publishing until stage 5 — the section renders with
- * that note when one is referenced, never silently skipped.
+ * Access is the membership row (owner manages, editor works, viewer reads —
+ * ADR 0017): the header badges the seat's role, the Members dialog handles
+ * invites/roles/removal, and a viewer's write controls render disabled with
+ * the reason. A non-member's project reads exactly as a missing one, and
+ * this page renders the same not-found card for both. Derived artifacts
+ * (the third kind the table allows) have no PG publishing until stage 5 —
+ * the section renders with that note when one is referenced, never silently
+ * skipped.
  */
 
 /** The stale-press window (the syncRuns/publishAttempts value): a press whose checkpoint hasn't moved this long was abandoned by its browser, and pressing again RESUMES it (joining the running bundle). */
 const STALE_PRESS_MS = 2 * 60 * 1000;
 
-/** The not-found card — a foreign project (creator-only RLS) reads exactly as a missing one. */
+/** The not-found card — a foreign project (no membership row) reads exactly as a missing one. */
 function PgProjectNotFound() {
   return (
     <main className="mx-auto max-w-3xl px-4 py-8">
@@ -113,12 +124,14 @@ function PgProjectSignInPrompt() {
 // oxlint-disable-next-line eslint/complexity -- the state ladder is the row's whole contract, read top to bottom.
 function PgArtifactRow({
   artifact,
+  canEdit,
   datasetsById,
   mapsById,
   onRemoved,
   projectId,
 }: {
   artifact: { artifactId: string; artifactKind: "dataset" | "derived" | "map" };
+  canEdit: boolean;
   datasetsById: globalThis.Map<string, { lifecycle: string; title: string }>;
   mapsById: globalThis.Map<string, { name: string }>;
   onRemoved: () => void;
@@ -209,12 +222,12 @@ function PgArtifactRow({
       <Button
         aria-label="Remove from project"
         className="shrink-0 text-muted-foreground hover:text-destructive"
-        disabled={removing}
+        disabled={removing || !canEdit}
         onClick={() => {
           void remove();
         }}
         size="icon"
-        title="Remove from project (the artifact itself is not deleted)"
+        title={canEdit ? "Remove from project (the artifact itself is not deleted)" : VIEWER_REASON}
         variant="ghost"
       >
         {removing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
@@ -459,11 +472,15 @@ function PgBundleStatusLine({ projectId }: { projectId: string }) {
 // oxlint-disable-next-line eslint/complexity -- the section ladder is the workspace's whole contract, read top to bottom.
 function PgProjectWorkspaceBody({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient(),
+    { session } = useSession(),
+    userId = session === null ? "" : session.user.id,
     projectQuery = useQuery(projectsStore.getQueryOptions({ projectId })),
     artifactsQuery = useQuery(projectsStore.listArtifactsQueryOptions({ projectId })),
+    myMembershipQuery = useQuery(listMineQueryOptions({ userId })),
     datasetsQuery = useQuery(datasetsStore.listSummariesQueryOptions()),
     mapsQuery = useQuery(mapsStore.listQueryOptions()),
     [addOpen, setAddOpen] = useState(false),
+    [membersOpen, setMembersOpen] = useState(false),
     [pressing, setPressing] = useState(false),
     invalidateAll = (): void => {
       void queryClient.invalidateQueries({ queryKey: ["pg:projects"] });
@@ -505,6 +522,8 @@ function PgProjectWorkspaceBody({ projectId }: { projectId: string }) {
     return <PgProjectNotFound />;
   }
   const project = projectQuery.data,
+    myRole = resolveMyRole(myMembershipQuery.data, projectId, project.createdBy, userId),
+    canEdit = myRole !== "viewer",
     artifacts = artifactsQuery.data ?? [],
     datasetsById = new globalThis.Map(
       (datasetsQuery.data ?? []).map((dataset) => [
@@ -539,6 +558,12 @@ function PgProjectWorkspaceBody({ projectId }: { projectId: string }) {
           <div>
             <h1 className="mb-1 text-3xl font-bold text-primary">{project.title}</h1>
             <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+              <Badge
+                title={`Your access to this project (${ROLE_LABELS[myRole]}).`}
+                variant="outline"
+              >
+                {ROLE_LABELS[myRole]}
+              </Badge>
               <span>
                 {artifacts.length} {artifacts.length === 1 ? "artifact" : "artifacts"}
               </span>
@@ -550,14 +575,16 @@ function PgProjectWorkspaceBody({ projectId }: { projectId: string }) {
           </div>
           <div className="flex gap-2">
             <Button
-              disabled={pressing || artifacts.length === 0}
+              disabled={pressing || artifacts.length === 0 || !canEdit}
               onClick={() => {
                 void press();
               }}
               title={
-                artifacts.length === 0
-                  ? "Nothing to publish yet — add a dataset or a map with layers first."
-                  : undefined
+                !canEdit
+                  ? VIEWER_REASON
+                  : artifacts.length === 0
+                    ? "Nothing to publish yet — add a dataset or a map with layers first."
+                    : undefined
               }
               type="button"
             >
@@ -565,14 +592,26 @@ function PgProjectWorkspaceBody({ projectId }: { projectId: string }) {
               {pressing ? "Publishing…" : "Publish bundle"}
             </Button>
             <Button
+              disabled={!canEdit}
               onClick={() => {
                 setAddOpen(true);
               }}
+              title={canEdit ? undefined : VIEWER_REASON}
               type="button"
               variant="outline"
             >
               <ListPlus className="mr-2 h-4 w-4" />
               Add existing
+            </Button>
+            <Button
+              onClick={() => {
+                setMembersOpen(true);
+              }}
+              type="button"
+              variant="outline"
+            >
+              <Users className="mr-2 h-4 w-4" />
+              Members
             </Button>
           </div>
         </div>
@@ -591,9 +630,11 @@ function PgProjectWorkspaceBody({ projectId }: { projectId: string }) {
           </EmptyHeader>
           <EmptyContent>
             <Button
+              disabled={!canEdit}
               onClick={() => {
                 setAddOpen(true);
               }}
+              title={canEdit ? undefined : VIEWER_REASON}
               type="button"
             >
               <ListPlus className="mr-2 h-4 w-4" />
@@ -615,6 +656,7 @@ function PgProjectWorkspaceBody({ projectId }: { projectId: string }) {
                 {datasetSection.map((artifact) => (
                   <PgArtifactRow
                     artifact={artifact}
+                    canEdit={canEdit}
                     datasetsById={datasetsById}
                     key={artifact.id}
                     mapsById={mapsById}
@@ -640,6 +682,7 @@ function PgProjectWorkspaceBody({ projectId }: { projectId: string }) {
                 {derivedSection.map((artifact) => (
                   <PgArtifactRow
                     artifact={artifact}
+                    canEdit={canEdit}
                     datasetsById={datasetsById}
                     key={artifact.id}
                     mapsById={mapsById}
@@ -662,6 +705,7 @@ function PgProjectWorkspaceBody({ projectId }: { projectId: string }) {
                 {mapSection.map((artifact) => (
                   <PgArtifactRow
                     artifact={artifact}
+                    canEdit={canEdit}
                     datasetsById={datasetsById}
                     key={artifact.id}
                     mapsById={mapsById}
@@ -682,6 +726,12 @@ function PgProjectWorkspaceBody({ projectId }: { projectId: string }) {
         onOpenChange={setAddOpen}
         open={addOpen}
         projectId={projectId}
+      />
+      <PgProjectMembersDialog
+        isOpen={membersOpen}
+        myRole={myRole}
+        onOpenChange={setMembersOpen}
+        project={project}
       />
     </main>
   );
