@@ -271,6 +271,44 @@ describe.skipIf(!dbUp())("stage 4 — publish_version (§5.4)", () => {
     }
   });
 
+  test("the oversized guard (#224): storage-backed geometry refuses the freeze loudly — nothing frozen, nothing prunable", async () => {
+    const datasetId = await createDataset(s(), { createdBy: ALICE });
+    try {
+      await addEntry(s(), datasetId, { label: "inline", lat: 1.0 });
+      // A storage-backed oversized geometry: source_path set, source null —
+      // the > 256 KB import path's shape. Whether the object behind the
+      // path exists is irrelevant: the guard is catalog-level (0009's
+      // recorded reason — no SQL path can read Storage bytes), which is
+      // exactly why a prune of the live objects can never 404 a frozen
+      // read (issue #224's consumer criterion).
+      await s().asAdmin();
+      const entryRows = await s().expectOk(
+        `select id::text as id from public.entries where dataset_id = ${sqlLit(datasetId)} limit 1`,
+      );
+      await s().expectOk(
+        `insert into public.geometries (dataset_id, entry_id, source_path, type, created_by)
+         values (${sqlLit(datasetId)}, ${sqlLit(String(firstRow(entryRows).id))}, '/objects/oversized/row-0.geojson', 'Point', ${sqlLit(ALICE)})`,
+      );
+      await beginAs(ALICE);
+      const refused = await expectRaises(
+        `select public.publish_version(${sqlLit(datasetId)}, 'v1', ${sqlLit(`pk-${datasetId}`)}, null) as id`,
+      );
+      // The actionable copy, verbatim (0012's guard).
+      expect(refused).toMatch(/storage-backed oversized geometry/i);
+      expect(refused).toMatch(/Simplify or re-import/);
+      // Loud refusal means NOTHING froze — no version row, no frozen
+      // entries — so no version surface can silently render a missing
+      // payload.
+      const versions = await s().count(
+        `select count(*) as n from public.dataset_versions where dataset_id = ${sqlLit(datasetId)}`,
+      );
+      expect(versions).toBe(0);
+      await s().rollback();
+    } finally {
+      await dropDatasets(s(), [datasetId]);
+    }
+  });
+
   test("frozen rows are immutable by construction: no authenticated role can write them", async () => {
     const datasetId = await createDataset(s(), { createdBy: ALICE });
     try {
