@@ -24,8 +24,10 @@ import {
   saveContent,
   toSummary,
   updateDetails,
+  type AppContent,
   type AppPageConfig,
   type AppRow,
+  type AppWidgetConfig,
 } from "./apps";
 import {
   allArgs,
@@ -69,6 +71,20 @@ function statPage(widgetDatasetId: string): AppPageConfig {
       { datasetIds: [widgetDatasetId], h: 6, id: "map-1", kind: "map", w: 8 },
     ],
   };
+}
+
+/** `0..n-1` ids/indices for bound-violation fixtures. */
+function range(n: number): number[] {
+  return Array.from({ length: n }, (_, i) => i);
+}
+
+/** A valid stat widget with overridable bounds (the refusal fixtures' base). */
+function widgetOf(
+  id: string,
+  datasetId: string,
+  overrides: Record<string, unknown> = {},
+): AppWidgetConfig {
+  return { datasetId, h: 2, id, kind: "stat", w: 4, ...overrides };
 }
 
 /**
@@ -250,19 +266,28 @@ describe("apps writes — rows-affected returns", () => {
   });
 
   it("saveContent writes content + revision+1 gated on the expected revision", async () => {
-    const { client, queries } = stubSupabase(() => ({
-      data: [{ revision: 7 }],
-      error: null,
-    }));
+    const stub = stubSupabase();
+    script(stub, [
+      // 1: the current-sources read (added-only visibility needs it).
+      () => ({ data: [{ datasetIds: ["d1"] }], error: null }),
+      // 2: the conditional update — all sources already in the app, so the
+      // visibility read is skipped.
+      () => ({ data: [{ revision: 7 }], error: null }),
+    ]);
     const revision = await saveContent(
       {
         appId: "a1",
         content: { datasetIds: ["d1"], pages: [statPage("d1")] },
         expectedRevision: 6,
       },
-      { supabase: client },
+      { supabase: stub.client },
     );
-    const query = queryAt(queries, 0);
+    const sourcesRead = queryAt(stub.queries, 0);
+    expect(sourcesRead.table).toBe("apps");
+    expect(firstArg(sourcesRead, "select")).toContain("datasetIds:dataset_ids");
+    expect(argsOf(sourcesRead, "eq")[1]).toBe("a1");
+    expect(stub.queries.length).toBe(2);
+    const query = queryAt(stub.queries, 1);
     const payload = firstArg(query, "update") as Record<string, unknown>;
     expect(payload["dataset_ids"]).toStrictEqual(["d1"]);
     expect(payload["pages"]).toStrictEqual([statPage("d1")]);
@@ -273,11 +298,15 @@ describe("apps writes — rows-affected returns", () => {
   });
 
   it("saveContent throws the stale-save error when 0 rows matched", async () => {
-    const { client } = stubSupabase(() => ({ data: [], error: null }));
+    const stub = stubSupabase();
+    script(stub, [
+      () => ({ data: [{ datasetIds: [] }], error: null }),
+      () => ({ data: [], error: null }),
+    ]);
     await expect(
       saveContent(
         { appId: "a1", content: { datasetIds: [], pages: [firstPage()] }, expectedRevision: 6 },
-        { supabase: client },
+        { supabase: stub.client },
       ),
     ).rejects.toThrow("changed in another tab or window");
   });
@@ -289,6 +318,232 @@ describe("apps writes — rows-affected returns", () => {
     ).rejects.toThrow("An app has 1 to 12 pages.");
     expect(queries.length).toBe(0);
   });
+
+  it("saveContent refuses added sources that are invisible or deleted (Dataset not found.)", async () => {
+    const stub = stubSupabase();
+    script(stub, [
+      // 1: the app currently holds no sources — both ids are additions.
+      () => ({ data: [{ datasetIds: [] }], error: null }),
+      // 2: the visibility read answers only the visible id under RLS.
+      () => ({ data: [{ id: "d1" }], error: null }),
+    ]);
+    await expect(
+      saveContent(
+        {
+          appId: "a1",
+          content: { datasetIds: ["d1", "d-gone"], pages: [statPage("d1")] },
+          expectedRevision: 6,
+        },
+        { supabase: stub.client },
+      ),
+    ).rejects.toThrow("Dataset not found.");
+    expect(queryAt(stub.queries, 1).table).toBe("datasets");
+    expect(allArgs(queryAt(stub.queries, 1), "in")[0]).toStrictEqual(["id", ["d1", "d-gone"]]);
+    // The write never fired.
+    expect(stub.queries.length).toBe(2);
+  });
+
+  it("saveContent keeps sources already in the app even when they have since gone away", async () => {
+    const stub = stubSupabase();
+    script(stub, [
+      // 1: the app already carries the deleted dataset — no addition, no
+      // visibility read (the kept-datasets parity).
+      () => ({ data: [{ datasetIds: ["d-gone"] }], error: null }),
+      // 2: the conditional update succeeds.
+      () => ({ data: [{ revision: 7 }], error: null }),
+    ]);
+    const revision = await saveContent(
+      {
+        appId: "a1",
+        content: { datasetIds: ["d-gone"], pages: [firstPage()] },
+        expectedRevision: 6,
+      },
+      { supabase: stub.client },
+    );
+    expect(stub.queries.length).toBe(2);
+    expect(queryAt(stub.queries, 1).table).toBe("apps");
+    expect(revision).toBe(7);
+  });
+
+  /** A valid save payload; each refusal case perturbs exactly one field. */
+  function validContent(): AppContent {
+    return { datasetIds: ["d1"], pages: [statPage("d1")] };
+  }
+
+  const refusedShapes: Array<[string, AppContent, string]> = [
+    [
+      "too many datasets",
+      { ...validContent(), datasetIds: Array.from({ length: 21 }, (_, i) => `d${i}`) },
+      "An app holds at most 20 datasets.",
+    ],
+    [
+      "a dataset listed twice",
+      { ...validContent(), datasetIds: ["d1", "d1"] },
+      "A dataset is listed twice.",
+    ],
+    [
+      "too many pages",
+      { ...validContent(), pages: range(13).map(() => firstPage()) },
+      "An app has 1 to 12 pages.",
+    ],
+    [
+      "two pages sharing an id",
+      { ...validContent(), pages: [firstPage(), firstPage()] },
+      "Two pages share an id.",
+    ],
+    [
+      "two widgets sharing an id",
+      {
+        ...validContent(),
+        pages: [statPage("d1"), { ...statPage("d1"), id: "page-2" }],
+      },
+      "Two widgets share an id.",
+    ],
+    [
+      "a page without a title",
+      { ...validContent(), pages: [{ ...firstPage(), title: "   ", widgets: [] }] },
+      "Give every page a title of up to 60 characters.",
+    ],
+    [
+      "a page with an over-long title",
+      { ...validContent(), pages: [{ ...firstPage(), title: "x".repeat(61), widgets: [] }] },
+      "Give every page a title of up to 60 characters.",
+    ],
+    [
+      "a page holding too many widgets",
+      {
+        ...validContent(),
+        pages: [{ ...firstPage(), widgets: range(41).map((i) => widgetOf(`w${i}`, "d1")) }],
+      },
+      "A page holds at most 40 widgets.",
+    ],
+    [
+      "a widget wider than the grid",
+      {
+        ...validContent(),
+        pages: [{ ...firstPage(), widgets: [widgetOf("w1", "d1", { w: 13 })] }],
+      },
+      "A widget's width must be a whole number from 1 to 12.",
+    ],
+    [
+      "a widget taller than the grid",
+      {
+        ...validContent(),
+        pages: [{ ...firstPage(), widgets: [widgetOf("w1", "d1", { h: 0 })] }],
+      },
+      "A widget's height must be a whole number from 1 to 12.",
+    ],
+    [
+      "a widget with an over-long title",
+      {
+        ...validContent(),
+        pages: [{ ...firstPage(), widgets: [widgetOf("w1", "d1", { title: "x".repeat(121) })] }],
+      },
+      "Keep widget titles under 120 characters.",
+    ],
+    [
+      "an over-long text block",
+      {
+        ...validContent(),
+        pages: [
+          {
+            ...firstPage(),
+            widgets: [
+              { kind: "text", h: 2, id: "t1", w: 4, body: "x".repeat(APP_LIMITS.text + 1) },
+            ],
+          },
+        ],
+      },
+      "Keep text blocks under 10000 characters.",
+    ],
+    [
+      "a map with too many layers",
+      {
+        ...validContent(),
+        pages: [
+          {
+            ...firstPage(),
+            widgets: [
+              {
+                kind: "map",
+                h: 6,
+                id: "m1",
+                w: 8,
+                datasetIds: range(9).map((i) => `d${i}`),
+              },
+            ],
+          },
+        ],
+      },
+      "A map shows at most 8 datasets.",
+    ],
+    [
+      "a table with too many columns",
+      {
+        ...validContent(),
+        pages: [
+          {
+            ...firstPage(),
+            widgets: [
+              {
+                kind: "table",
+                h: 6,
+                id: "tb1",
+                w: 8,
+                columns: range(51).map((i) => `c${i}`),
+                datasetId: "d1",
+              },
+            ],
+          },
+        ],
+      },
+      "A table shows at most 50 columns.",
+    ],
+    [
+      "a chart group limit out of range",
+      {
+        ...validContent(),
+        pages: [
+          {
+            ...firstPage(),
+            widgets: [
+              {
+                aggregate: "count",
+                chartType: "bar",
+                datasetId: "d1",
+                h: 6,
+                id: "ch1",
+                kind: "chart",
+                limit: 51,
+                sort: "value-desc",
+                w: 8,
+              },
+            ],
+          },
+        ],
+      },
+      "A chart's group limit must be a whole number from 1 to 50.",
+    ],
+    [
+      "a widget referencing a dataset outside the app's sources",
+      {
+        ...validContent(),
+        pages: [{ ...firstPage(), widgets: [widgetOf("w1", "d-other")] }],
+      },
+      "A widget uses a dataset that isn't in this app — add it first.",
+    ],
+  ];
+
+  it.each(refusedShapes)(
+    "%s — refused with the Convex error, before any query",
+    async (_name, content, message) => {
+      const { client, queries } = stubSupabase();
+      await expect(
+        saveContent({ appId: "a1", content, expectedRevision: 0 }, { supabase: client }),
+      ).rejects.toThrow(message);
+      expect(queries.length).toBe(0);
+    },
+  );
 
   it("remove deletes by id and returns the affected count", async () => {
     const { client, queries } = stubSupabase(() => ({ data: [{ id: "a1" }], error: null }));

@@ -40,11 +40,27 @@ import { clientOf, queryRow, queryRows, type StoreOptions } from "./client";
  * generated `database.types.ts` (see `./client`).
  */
 
-/** Hard bounds — keep an app row small (validators.ts APP_LIMITS parity; the subset the store enforces server-side today). */
+/**
+ * Hard bounds — keep an app row small (validators.ts APP_LIMITS parity, the
+ * full set the save path enforces; issue #221 restored the slices the first
+ * PG cut dropped).
+ */
 export const APP_LIMITS = {
+  datasets: 20,
   description: 2000,
-  pages: 12,
+  /** Grid columns — a widget's `w` spans 1..columns. */
+  columns: 12,
+  /** Tallest widget, in grid row units. */
+  maxHeight: 12,
+  mapDatasets: 8,
+  tableColumns: 50,
+  text: 10_000,
   title: 120,
+  /** Pages (tabs) per app. */
+  pages: 12,
+  pageTitle: 60,
+  /** Widgets on one page. */
+  widgets: 40,
   /** Widgets across every page. */
   totalWidgets: 80,
 } as const;
@@ -237,14 +253,143 @@ function cleanDescription(description: string | undefined): string | null {
   return trimmed === "" ? null : trimmed;
 }
 
-/** Shape rules the DB can't express — the page/widget bounds (assertContentShape's server subset). */
+/**
+ * Shape rules the DB can't express — the full assertContentShape parity
+ * (issue #221): bounds, unique ids, and dataset references closed over the
+ * app's sources, checked in the Convex module's order so a multi-violation
+ * blob draws the same refusal it always drew.
+ */
 function assertContent(content: AppContent): void {
+  if (content.datasetIds.length > APP_LIMITS.datasets) {
+    throw new Error(`An app holds at most ${APP_LIMITS.datasets} datasets.`);
+  }
+  assertUnique(content.datasetIds, "A dataset is listed twice.");
   if (content.pages.length === 0 || content.pages.length > APP_LIMITS.pages) {
     throw new Error(`An app has 1 to ${APP_LIMITS.pages} pages.`);
   }
-  if (content.pages.reduce((sum, page) => sum + page.widgets.length, 0) > APP_LIMITS.totalWidgets) {
+  assertUnique(
+    content.pages.map((page) => page.id),
+    "Two pages share an id.",
+  );
+  const widgets = content.pages.flatMap((page) => page.widgets);
+  if (widgets.length > APP_LIMITS.totalWidgets) {
     throw new Error(`An app holds at most ${APP_LIMITS.totalWidgets} widgets in all.`);
   }
+  assertUnique(
+    widgets.map((widget) => widget.id),
+    "Two widgets share an id.",
+  );
+  for (const page of content.pages) {
+    assertPageShape(page);
+  }
+  const sources = new Set(content.datasetIds);
+  for (const widget of widgets) {
+    assertWidgetShape(widget, sources);
+  }
+}
+
+/** Per-page bounds (assertPage parity): a trimmed non-empty title and the per-page widget cap. */
+function assertPageShape(page: AppPageConfig): void {
+  // The trim target rides an unknown binding: the wire is jsonb and the
+  // interface's `string` can't vouch for it (assertInteger's posture).
+  const titleValue: unknown = page.title,
+    title = typeof titleValue === "string" ? titleValue.trim() : "";
+  if (title === "" || title.length > APP_LIMITS.pageTitle) {
+    throw new Error(`Give every page a title of up to ${APP_LIMITS.pageTitle} characters.`);
+  }
+  if (page.widgets.length > APP_LIMITS.widgets) {
+    throw new Error(`A page holds at most ${APP_LIMITS.widgets} widgets.`);
+  }
+}
+
+/** The Convex assertUnique: every id in the list distinct. */
+function assertUnique(ids: readonly string[], message: string): void {
+  if (new Set(ids).size !== ids.length) {
+    throw new Error(message);
+  }
+}
+
+/** The Convex assertInteger, widened to unknown — malformed jsonb refuses with the same message a bound violation draws. */
+function assertInteger(value: unknown, min: number, max: number, label: string): void {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`${label} must be a whole number from ${min} to ${max}.`);
+  }
+}
+
+/** Every dataset id one widget reads (content.ts widgetDatasetIds parity over the store's opaque payload). */
+function widgetDatasetIdsOf(widget: AppWidgetConfig): string[] {
+  if (widget.kind === "map") {
+    const datasetIds = widget["datasetIds"];
+    return Array.isArray(datasetIds)
+      ? datasetIds.filter((id): id is string => typeof id === "string")
+      : [];
+  }
+  if (widget.kind === "text") {
+    return [];
+  }
+  const datasetId = widget["datasetId"];
+  return typeof datasetId === "string" ? [datasetId] : [];
+}
+
+/** Per-widget bounds then the source closure (assertWidget parity, messages verbatim). */
+function assertWidgetShape(widget: AppWidgetConfig, sources: ReadonlySet<string>): void {
+  assertInteger(widget.w, 1, APP_LIMITS.columns, "A widget's width");
+  assertInteger(widget.h, 1, APP_LIMITS.maxHeight, "A widget's height");
+  if (
+    widget.title !== undefined &&
+    (typeof widget.title !== "string" || widget.title.length > APP_LIMITS.title)
+  ) {
+    throw new Error(`Keep widget titles under ${APP_LIMITS.title} characters.`);
+  }
+  assertWidgetBoundsOf(widget);
+  if (widgetDatasetIdsOf(widget).some((id) => !sources.has(id))) {
+    throw new Error("A widget uses a dataset that isn't in this app — add it first.");
+  }
+}
+
+/** Per-kind bounds (assertWidgetBounds parity), one guard function per kind. */
+function assertWidgetBoundsOf(widget: AppWidgetConfig): void {
+  assertTextWidgetOf(widget);
+  assertMapWidgetOf(widget);
+  assertTableWidgetOf(widget);
+  assertChartWidgetOf(widget);
+}
+
+function assertTextWidgetOf(widget: AppWidgetConfig): void {
+  if (widget.kind !== "text") {
+    return;
+  }
+  const body = widget["body"];
+  if (typeof body !== "string" || body.length > APP_LIMITS.text) {
+    throw new Error(`Keep text blocks under ${APP_LIMITS.text} characters.`);
+  }
+}
+
+function assertMapWidgetOf(widget: AppWidgetConfig): void {
+  if (widget.kind !== "map") {
+    return;
+  }
+  const datasetIds = widget["datasetIds"];
+  if (!Array.isArray(datasetIds) || datasetIds.length > APP_LIMITS.mapDatasets) {
+    throw new Error(`A map shows at most ${APP_LIMITS.mapDatasets} datasets.`);
+  }
+}
+
+function assertTableWidgetOf(widget: AppWidgetConfig): void {
+  if (widget.kind !== "table") {
+    return;
+  }
+  const columns = widget["columns"];
+  if (!Array.isArray(columns) || columns.length > APP_LIMITS.tableColumns) {
+    throw new Error(`A table shows at most ${APP_LIMITS.tableColumns} columns.`);
+  }
+}
+
+function assertChartWidgetOf(widget: AppWidgetConfig): void {
+  if (widget.kind !== "chart") {
+    return;
+  }
+  assertInteger(widget["limit"], 1, 50, "A chart's group limit");
 }
 
 /**
@@ -312,14 +457,35 @@ export async function updateDetails(
  * (another tab saved first) or a non-creator's write, which are
  * indistinguishable by design (the Convex appForWrite shape answered "App
  * not found." for both).
+ *
+ * Sources gate on visibility (issue #221, saveContent parity): only the
+ * ADDED ids answer to RLS — the datasets already in the app are kept even
+ * if they have since gone away, so a deleted dataset never wedges the
+ * editor (the Convex module's added-only walk; one `.in` read instead of
+ * one per id, the duplicate() precedent). An invisible or deleted addition
+ * refuses as "Dataset not found." — the Convex error verbatim.
  */
 export async function saveContent(
   args: { appId: string; expectedRevision: number; content: AppContent },
   options?: StoreOptions,
 ): Promise<number> {
   assertContent(args.content);
+  const client = clientOf(options);
+  const current = await queryRow<{ datasetIds: string[] }>(
+    client.from("apps").select("datasetIds:dataset_ids").eq("id", args.appId).limit(1),
+  );
+  const existing = new Set(current === null ? [] : current.datasetIds),
+    added = args.content.datasetIds.filter((datasetId) => !existing.has(datasetId));
+  if (added.length > 0) {
+    const visible = await queryRows<{ id: string }>(
+      client.from("datasets").select("id").in("id", added),
+    );
+    if (visible.length !== added.length) {
+      throw new Error("Dataset not found.");
+    }
+  }
   const rows = await queryRows<{ revision: number }>(
-    clientOf(options)
+    client
       .from("apps")
       .update({
         dataset_ids: args.content.datasetIds,
