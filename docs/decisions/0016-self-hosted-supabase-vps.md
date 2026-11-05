@@ -1,6 +1,6 @@
 # 16. The app self-hosts on a single VPS as a pruned official Supabase stack behind one Kong origin, deployed from GHCR images
 
-- Status: accepted
+- Status: deployed (local compose deployment rehearsed 2026-11-05 — db + storage restore verified end-to-end, issue #230; the VPS cutover follows the §11 handoff checklist in the companion design)
 - Date: 2026-11-05
 - Companion design (the implementation contract):
   [`../self-hosting-design.md`](../self-hosting-design.md)

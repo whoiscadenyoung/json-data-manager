@@ -336,6 +336,46 @@ the dump, untar the storage volume, `docker compose up -d`. Keep N nights
 on-host; `rclone`/rsync off-box is the operator's choice (design leaves the
 off-box copy to the VPS's existing backup habit).
 
+### Restore rehearsal (executed 2026-11-05, issue #230)
+
+- `backup.sh` produced the dump + storage tar; the dump restored into a
+  scratch database (`app_rehearsal`) with identical row counts (users 3,
+  datasets 3, apps 2) and intact demo rows; the storage tar untarred into a
+  scratch volume with an identical file-hash set (md5 over all files).
+  Both scratch targets were dropped after verification — the live stack
+  was never touched.
+- Two rehearsal defects found and fixed in `backup.sh` itself: the volume
+  name must be compose-normalized (`${PROJECT}_storage-data`, UNDERSCORE —
+  a hyphen guess silently auto-creates an EMPTY named volume), with a
+  `docker volume inspect` guard and an empty-volume tripwire so both
+  failures are loud.
+- `--clean` restore notes: pg_restore reports ~20 non-fatal errors dropping
+  partition-inherited PK constraints (`auth.messages_*` daily partitions —
+  inherited constraints cannot be dropped standalone); the data restore
+  completes and counts verify. A same-db `--clean` cutover should drop the
+  partitions' parent first (or restore into a fresh db and rename, the
+  rehearsal's shape).
+
+## 11a. VPS go-live handoff (the remaining cutover, post-rehearsal)
+
+The local compose deployment is the verified reference; the VPS cutover is
+the same commands with operator inputs:
+
+1. Provision the host (§11 sizing), install Docker + compose.
+2. Copy the repo (or just `deploy/`, `supabase/migrations/`, `docker-compose.yml`,
+   `.env.example`) to `/srv/jdm`.
+3. `.env`: `cp .env.example .env` then `deploy/scripts/generate-keys.sh`
+   (fresh keys — do NOT reuse local secrets; note `SITE_URL`/origin).
+4. `docker login ghcr.io` (the app image is private GHCR).
+5. `docker compose up -d` — the migrations runner applies the numbered set
+   idempotently; verify `curl :8000/status` (kong) and sign in.
+6. Cron the backup: `15 4 * * * /srv/jdm/deploy/scripts/backup.sh /srv/jdm`.
+7. Off-box: rsync/rclone `backups/` to a second location nightly.
+8. DNS + TLS: terminate TLS in front of kong (Caddy/nginx/traefik) or add a
+   kong cert; set the origin in `.env` to the public URL.
+9. Verify: sign-in, an import, a map open, a realtime second tab, one
+   backup + restore rehearsal on the VPS.
+
 ## 11. VPS sizing and runtime portability
 
 - **Floor**: 2 vCPU / 4 GB RAM. The five supabase containers idle well

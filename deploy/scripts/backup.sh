@@ -17,6 +17,7 @@ set -euo pipefail
 COMPOSE_DIR="${1:-$(pwd)}"
 BACKUP_DIR="${COMPOSE_DIR}/backups"
 STAMP="$(date +%Y%m%d-%H%M%S)"
+export STAMP
 KEEP="${KEEP:-14}"
 PROJECT="${COMPOSE_PROJECT_NAME:-jdm}" # compose `name:` in docker-compose.yml
 
@@ -26,11 +27,23 @@ echo "[backup] dumping ${PROJECT}-db (app) -> app-${STAMP}.dump"
 docker exec "${PROJECT}-db" pg_dump -U supabase_admin -d app -Fc \
   > "${BACKUP_DIR}/app-${STAMP}.dump"
 
-echo "[backup] archiving ${PROJECT}-storage-data -> storage-${STAMP}.tgz"
+# The compose volume's REAL name: compose normalizes the project name
+# (lowercase, invalid chars dropped) and joins with an UNDERSCORE —
+# `jdm` + `storage-data` -> `jdm_storage-data`. A hyphen guess silently
+# auto-creates an EMPTY volume here (docker run -v creates missing named
+# volumes), which is how the first rehearsal archived 30 bytes of nothing
+# (#230). The inspect guard makes that failure loud instead.
+STORAGE_VOLUME="${PROJECT}_storage-data"
+if ! docker volume inspect "${STORAGE_VOLUME}" >/dev/null 2>&1; then
+  echo "[backup] FATAL: volume ${STORAGE_VOLUME} does not exist — is the stack up, and is the project name right?" >&2
+  exit 1
+fi
+
+echo "[backup] archiving ${STORAGE_VOLUME} -> storage-${STAMP}.tgz"
 docker run --rm \
-  -v "${PROJECT}-storage-data:/data:ro" \
+  -v "${STORAGE_VOLUME}:/data:ro" \
   -v "${BACKUP_DIR}:/backup" \
-  alpine tar czf "/backup/storage-${STAMP}.tgz" -C / data
+  alpine sh -c 'set -e; [ "$(find /data -type f | head -1)" ] || { echo "[backup] FATAL: storage volume is EMPTY" >&2; exit 1; }; tar czf "/backup/storage-${STAMP}.tgz" -C / data'
 
 # keep the last $KEEP of each kind on disk (off-box copy is the operator's
 # habit — rclone/rsync as desired)
