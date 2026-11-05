@@ -20,5 +20,15 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // One test file at a time (#234): the int tests share one Postgres
+    // service DB per CI job, and under runner load two files' wire-client
+    // sessions interleaved against the shared DB — RLS denials on
+    // storage.objects that moved between file sets on every rerun, plus the
+    // standing load-flaky pair (convex/versions/consumption,
+    // pg-realtime). Serializing files makes the class structurally
+    // impossible and costs nothing: the suite is setup-dominated
+    // (112 s serialized vs 114 s parallel, measured 2026-11-05), so no
+    // wall-time is traded for the determinism.
+    fileParallelism: false,
   },
 });
