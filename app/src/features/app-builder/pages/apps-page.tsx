@@ -112,9 +112,12 @@ function LoadError({ message }: { message: string }) {
 
 /** The creator's apps (/apps), plus the seeded examples anyone can open and copy. */
 export function AppsPage() {
-  const rows = useQuery(appsStore.listQueryOptions()),
+  // The AuthGate holds every route until the session resolves, so the id is
+  // always here at mount — the defensive branch only types the empty case.
+  const { session } = useSession(),
+    userId = session === null ? "" : session.user.id,
+    rows = useQuery(appsStore.listQueryOptions({ createdBy: userId })),
     exampleRows = useQuery(appsStore.listExamplesQueryOptions()),
-    { session } = useSession(),
     navigate = useNavigate(),
     [creating, setCreating] = useState(false);
 
@@ -136,14 +139,9 @@ export function AppsPage() {
     );
   }
 
-  // The store's `list` rides the authenticated-open read (0014's flat SELECT
-  // policy), so it answers every app on the backend; "Your apps" is the
-  // CREATOR's list (the api.appBuilder.apps.list parity, by_createdBy), so
-  // the creator scoping happens here until the store scopes it.
-  const userId = session === null ? undefined : session.user.id,
-    apps = rows.data
-      .filter((row) => row.createdBy === userId)
-      .map((row) => appsStore.toSummary(row)),
+  // The store's `list` scopes to the creator server-side (issue #220 — the
+  // by_createdBy filter rides the query); the rows come back ready to project.
+  const apps = rows.data.map((row) => appsStore.toSummary(row)),
     examples = exampleRows.data.map((row) => appsStore.toSummary(row));
 
   const openNew = () => {
