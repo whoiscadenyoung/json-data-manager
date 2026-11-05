@@ -28,6 +28,12 @@ import { toast } from "sonner";
 
 import { useSession } from "@/integrations/supabase/provider";
 import { errorMessage } from "@/lib/errors";
+import {
+  listMineQueryOptions,
+  resolveMyRole,
+  ROLE_LABELS,
+  type ProjectRole,
+} from "@/lib/store/project-members";
 import * as projectsStore from "@/lib/store/projects";
 import type { ProjectRow } from "@/lib/store/projects";
 
@@ -144,7 +150,8 @@ function PgNewProjectDialog({
 }
 
 /** One project card — the Convex browser's card shape, over the PG row. */
-function PgProjectCard({ project }: { project: ProjectRow }) {
+
+function PgProjectCard({ project, role }: { project: ProjectRow; role: ProjectRole }) {
   return (
     <Card className="flex-row items-center gap-4 px-4 transition-shadow hover:shadow-md">
       <Link
@@ -156,6 +163,9 @@ function PgProjectCard({ project }: { project: ProjectRow }) {
           <Badge title="Created on the Postgres backend — the new native path." variant="outline">
             <Database className="h-3 w-3" />
             Postgres
+          </Badge>
+          <Badge title={`Your access to this project (${ROLE_LABELS[role]}).`} variant="secondary">
+            {ROLE_LABELS[role]}
           </Badge>
           <span className="text-xs text-muted-foreground">
             {project.artifactCount} {project.artifactCount === 1 ? "artifact" : "artifacts"}
@@ -187,6 +197,10 @@ export function PgProjectsBrowser() {
   const { isLoading, session } = useSession(),
     projectsQuery = useQuery({
       ...projectsStore.listQueryOptions(),
+      enabled: !isLoading && session !== null,
+    }),
+    membershipsQuery = useQuery({
+      ...listMineQueryOptions({ userId: session === null ? "" : session.user.id }),
       enabled: !isLoading && session !== null,
     }),
     [formOpen, setFormOpen] = useState(false);
@@ -248,7 +262,16 @@ export function PgProjectsBrowser() {
       ) : (
         <div className="flex flex-col gap-3">
           {projects.map((project) => (
-            <PgProjectCard key={project.id} project={project} />
+            <PgProjectCard
+              key={project.id}
+              project={project}
+              role={resolveMyRole(
+                membershipsQuery.data,
+                project.id,
+                project.createdBy,
+                session === null ? "" : session.user.id,
+              )}
+            />
           ))}
         </div>
       )}

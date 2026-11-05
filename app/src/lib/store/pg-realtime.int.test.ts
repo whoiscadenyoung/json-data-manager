@@ -47,6 +47,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "vitest"
 import {
   ALICE,
   BOB,
+  CAROL,
   createDataset,
   DB_URL,
   dbUp,
@@ -67,7 +68,7 @@ const SUPABASE_KEY = process.env.SUPABASE_KEY ?? "sb_publishable_ACJWlzQHlZjBrEg
 const JWT_SECRET =
   process.env.SUPABASE_JWT_SECRET ?? "super-secret-jwt-token-with-at-least-32-characters-long";
 
-/** The eleven published tables: 0013's eight matrix tables + 0015's completion (apps, consumer_references, version_policies). */
+/** The thirteen published tables: 0013's eight matrix tables + 0015's completion (apps, consumer_references, version_policies) + 0018's project pair (project_members, projects). */
 const MATRIX_TABLES = [
   "apps",
   "collection_datasets",
@@ -78,6 +79,8 @@ const MATRIX_TABLES = [
   "geometries",
   "layer_styles",
   "map_layers",
+  "project_members",
+  "projects",
   "tags",
   "version_policies",
 ];
@@ -95,7 +98,7 @@ try {
   if (JSON.stringify(published) === JSON.stringify(MATRIX_TABLES)) {
     probed = true;
   } else {
-    probeReason = `supabase_realtime publication has [${published.join(", ")}], expected the 0013+0015 matrix — re-apply 0013_realtime_publication.sql and 0015_realtime_matrix_completion.sql or reset from a current tree`;
+    probeReason = `supabase_realtime publication has [${published.join(", ")}], expected the 0013+0015+0018 matrix — re-apply the publication migrations (0013/0015/0018) or reset from a current tree`;
     console.log(`skipping: ${probeReason}`);
   }
 } catch (error) {
@@ -302,7 +305,7 @@ async function listenOn(
 async function nextEvent(
   events: RecordedEvent[],
   table: string,
-  match: { eventType: "UPDATE"; field: string; id: string; value: unknown },
+  match: { eventType: "DELETE" | "INSERT" | "UPDATE"; field: string; id: string; value: unknown },
   // Generous: in the FULL suite the other int tests run in parallel and
   // flood the shared replication slot — delivery drains that backlog first
   // (poll_max_changes per poll). Isolated runs deliver in well under 1 s.
@@ -325,6 +328,34 @@ async function nextEvent(
           candidate.eventType === match.eventType &&
           candidate.new["id"] === match.id &&
           JSON.stringify(candidate.new[match.field]) === expected,
+      );
+      if (event !== undefined) {
+        clearInterval(interval);
+        clearTimeout(timer);
+        resolve(event);
+      }
+    }, 10);
+  });
+}
+
+/** Resolves with the first DELETE event whose `old` PK matches (DELETE payloads carry the primary key only — the default replica identity). */
+async function nextDelete(
+  events: RecordedEvent[],
+  table: string,
+  id: string,
+  timeoutMs = 15_000,
+): Promise<RecordedEvent> {
+  return await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      clearInterval(interval);
+      reject(new Error(`no ${table} DELETE for ${id} within ${timeoutMs} ms`));
+    }, timeoutMs);
+    const interval = setInterval(() => {
+      const event = events.find(
+        (candidate) =>
+          candidate.table === table &&
+          candidate.eventType === "DELETE" &&
+          candidate.old["id"] === id,
       );
       if (event !== undefined) {
         clearInterval(interval);
@@ -414,6 +445,132 @@ describe.skipIf(!dbUp() || !probed)(
       await sleep(1_500);
       expect(bobEvents.length).toBe(0);
     }, 30_000);
+
+    test("membership changes broadcast to members and stay silent for outsiders (0018)", async () => {
+      // The project fixture is born as ALICE: the stamp trigger fills
+      // created_by from the invoker's claims (an admin-path insert would
+      // null it), and the birth trigger mints her owner row with the row.
+      const projectId = crypto.randomUUID();
+      await s().begin();
+      await s().asUser(ALICE);
+      await s().expectOk(
+        `insert into public.projects (id, title) values (${sqlLit(projectId)}, 'realtime members')`,
+      );
+      await s().commit();
+
+      const aliceEvents: RecordedEvent[] = [];
+      const bobEvents: RecordedEvent[] = [];
+      const carolEvents: RecordedEvent[] = [];
+      const alice = await subscriber(ALICE);
+      const bob = await subscriber(BOB);
+      const carol = await subscriber(CAROL);
+      try {
+        // The OWNER subscribes before the invite — nothing can slip past.
+        const ownerChannel = await listen(
+          alice,
+          `project:${projectId}:owner`,
+          "project_members",
+          `project_id=eq.${projectId}`,
+          aliceEvents,
+        );
+        subscribedChannels.push(ownerChannel);
+        channelToClient.set(ownerChannel, alice);
+
+        // The invite, COMMITTED (events ride committed rows only). The
+        // owner-level insert rides RLS (0018's owner-only policy).
+        await s().begin();
+        await s().asUser(ALICE);
+        const invited = await s().query(
+          `insert into public.project_members (project_id, user_id, role)
+           values (${sqlLit(projectId)}, ${sqlLit(BOB)}, 'editor') returning id::text as id`,
+        );
+        expect(invited.error).toBeUndefined();
+        const firstInvited = invited.rows[0];
+        if (firstInvited === undefined || firstInvited.id === null) {
+          throw new Error("membership insert returned no id");
+        }
+        const memberId = firstInvited.id;
+        await s().commit();
+
+        const insertEvent = await nextEvent(aliceEvents, "project_members", {
+          eventType: "INSERT",
+          field: "role",
+          id: memberId,
+          value: "editor",
+        });
+        expect(insertEvent.new["user_id"]).toBe(BOB);
+
+        // BOB is now a member (his SELECT policy admits the rows); CAROL —
+        // an outsider — subscribes to the same topic+filter and must
+        // receive nothing (per-subscriber RLS, the 0013 delivery rule).
+        const bobChannel = await listen(
+          bob,
+          `project:${projectId}:bob`,
+          "project_members",
+          `project_id=eq.${projectId}`,
+          bobEvents,
+        );
+        subscribedChannels.push(bobChannel);
+        channelToClient.set(bobChannel, bob);
+        const carolChannel = await listen(
+          carol,
+          `project:${projectId}:carol`,
+          "project_members",
+          `project_id=eq.${projectId}`,
+          carolEvents,
+        );
+        subscribedChannels.push(carolChannel);
+        channelToClient.set(carolChannel, carol);
+
+        await s().begin();
+        await s().asUser(ALICE);
+        await s().expectOk(
+          `update public.project_members set role = 'viewer' where id = ${sqlLit(memberId)}`,
+        );
+        await s().commit();
+
+        const aliceUpdate = await nextEvent(aliceEvents, "project_members", {
+          eventType: "UPDATE",
+          field: "role",
+          id: memberId,
+          value: "viewer",
+        });
+        expect(aliceUpdate.new["user_id"]).toBe(BOB);
+        await nextEvent(bobEvents, "project_members", {
+          eventType: "UPDATE",
+          field: "role",
+          id: memberId,
+          value: "viewer",
+        });
+        await sleep(1_500);
+        expect(carolEvents.length).toBe(0);
+
+        // The removal reaches the owner with the PK in `old`. KNOWN
+        // PLATFORM BOUNDARY (verified live, and the reason there is no
+        // outsider assertion here): realtime cannot re-verify a DELETED row
+        // against a subscriber's SELECT policy — the row is gone by the time
+        // the check runs — so DELETEs fail open and reach topic subscribers
+        // regardless of membership. The app-side boundary holds anyway: the
+        // project channel is opened only by member-visible surfaces (the
+        // workspace and members dialog; an outsider's project reads as
+        // not-found and never mounts them), so no surface ever subscribes a
+        // non-member. INSERT/UPDATE ARE policy-filtered — asserted above.
+        await s().begin();
+        await s().asUser(ALICE);
+        await s().expectOk(`delete from public.project_members where id = ${sqlLit(memberId)}`);
+        await s().commit();
+        await nextDelete(aliceEvents, "project_members", memberId);
+      } finally {
+        // The fixture project dies with its memberships (the cascade passes
+        // the guarded owner row via depth).
+        await s().rollbackIfOpen();
+        await s().asAdmin();
+        await s().expectOk(`delete from public.projects where id = ${sqlLit(projectId)}`);
+        for (const client of [alice, bob, carol]) {
+          if (!clients.includes(client)) clients.push(client);
+        }
+      }
+    }, 60_000);
 
     test("the datasets row event reaches the owner (the tile live signal's single subscription)", async () => {
       const events: RecordedEvent[] = [];

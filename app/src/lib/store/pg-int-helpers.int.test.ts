@@ -35,6 +35,7 @@ export const DB_URL =
 /** Fixed fixture users (created idempotently by `ensureUsers`). */
 export const ALICE = "a0000000-0000-4000-8000-000000000001";
 export const BOB = "a0000000-0000-4000-8000-000000000002";
+export const CAROL = "a0000000-0000-4000-8000-000000000003";
 
 let probed: boolean | undefined;
 /** One connectivity probe per worker; tests gate on this via skipIf. */
@@ -507,7 +508,8 @@ export async function ensureUsers(session: PgSession): Promise<void> {
   await session.expectOk(
     `insert into auth.users (id, email, encrypted_password, aud, role${confirmed === undefined ? "" : `, ${confirmed}`}, created_at, updated_at)
      values (${sqlLit(ALICE)}, 'alice@pg-int.test', '', 'authenticated', 'authenticated'${confirmed === undefined ? "" : ", now()"}, now(), now()),
-            (${sqlLit(BOB)}, 'bob@pg-int.test', '', 'authenticated', 'authenticated'${confirmed === undefined ? "" : ", now()"}, now(), now())
+            (${sqlLit(BOB)}, 'bob@pg-int.test', '', 'authenticated', 'authenticated'${confirmed === undefined ? "" : ", now()"}, now(), now()),
+            (${sqlLit(CAROL)}, 'carol@pg-int.test', '', 'authenticated', 'authenticated'${confirmed === undefined ? "" : ", now()"}, now(), now())
      on conflict (id) do nothing`,
   );
 }

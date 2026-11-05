@@ -1099,3 +1099,67 @@ export function attachDatasetRealtime(
     channels.closeAll();
   };
 }
+
+// ---------------------------------------------------------------------------
+// Project channels (issue #255; ADR 0017) — one channel per open project
+// surface, the per-dataset matrix's sibling. Projects are not dataset-
+// filterable (no dataset column anywhere on the row), so they cannot join
+// DATASET_CHANNEL_TABLES' cache-driven activation; the workspace and its
+// members dialog open one explicitly-scoped channel while mounted instead.
+// Delivery is per-subscriber RLS (0018's publication join — a non-member
+// subscriber receives nothing). The consumer contract is intentionally
+// INVALIDATE-not-patch: membership rows are tiny, the members projection
+// embeds profiles a payload does not carry, and a refetch cannot drift from
+// the embed shape the way a partial patch could.
+// ---------------------------------------------------------------------------
+
+/** One table a project channel subscribes, with the row column that scopes it to the project. */
+interface ProjectChannelTable {
+  filterColumn: "id" | "project_id";
+  table: string;
+}
+
+/** The two published tables a project channel carries (0018's join). */
+export const PROJECT_CHANNEL_TABLES: readonly ProjectChannelTable[] = [
+  { filterColumn: "id", table: "projects" },
+  { filterColumn: "project_id", table: "project_members" },
+];
+
+/** The channel topic for one open project surface (the §7 `dataset:<id>` shape). */
+export function projectChannelTopic(projectId: string): string {
+  return `project:${projectId}`;
+}
+
+/**
+ * Opens one `postgres_changes` channel over the project's row and its
+ * membership rows, invoking `onChange` per delivered event until the
+ * returned detacher runs (which also leaves the channel). Subscribe is
+ * fire-and-forget like the dataset layer's: a channel that never finishes
+ * joining delivers nothing, which surfaces as the stale-then-refetch state
+ * the surface's own mutation invalidations already cover.
+ */
+export function attachProjectRealtime(
+  client: SupabaseClient,
+  projectId: string,
+  onChange: () => void,
+): () => void {
+  const channel = client.channel(projectChannelTopic(projectId));
+  for (const entry of PROJECT_CHANNEL_TABLES) {
+    channel.on(
+      "postgres_changes",
+      {
+        event: "*",
+        filter: `${entry.filterColumn}=eq.${projectId}`,
+        schema: "public",
+        table: entry.table,
+      },
+      () => {
+        onChange();
+      },
+    );
+  }
+  channel.subscribe();
+  return () => {
+    void client.removeChannel(channel);
+  };
+}
