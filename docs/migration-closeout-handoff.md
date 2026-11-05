@@ -1,104 +1,98 @@
-# Migration closeout — handoff for the next session (2026-11-05)
+# Migration closeout — COMPLETE; launch-ready (2026-11-05)
 
 Supersedes [`supabase-handoff-2026-11-05.md`](supabase-handoff-2026-11-05.md)
-(kept for the per-stage record). The migration is complete and deployed
-locally; this handoff covers exactly one thing: **finishing the closeout —
-no new features** — as tracked in the issue train below. When the train is
-empty, the app is launch-ready.
+(kept for the per-stage record). **The closeout train (#219) is empty and
+closed** — every sub-issue #220–#230 carries a merged PR or a verdict
+comment, the launch blockers are fixed and verified, and the compose
+stack on :8000 serves from a current merged-main image. This document is
+now the launch-state record; the next action is the VPS cutover.
 
-## 0. State of the world (updated 2026-11-05, end of the closeout session)
+## 0. Launch state (updated 2026-11-05, closing session)
 
-- **main @ 41bbf16+** — the closeout train EXECUTED: #220–#226 and #228–#230
-  all merged (PRs #231/#232/#235/#236/#237/#238/#239/#240/#242) and closed.
-  #229's re-scope decision filed as
-  [#241](https://github.com/whoiscadenyoung/json-data-manager/issues/241)
-  (Postgres-era bound sources; #78/#72 closed as superseded). ADR 0016
-  status flipped to **deployed** (local restore rehearsal in
-  [self-hosting-design.md §10](self-hosting-design.md); the VPS cutover is
-  the §11a handoff checklist).
-- **CI on main**: the storage-api boot repair is VERIFIED (the rerun got
-  past the seam for the first time). CI remains red via `Test (app)`
-  flaking across DIFFERENT int-test files per run — **#234** (suspect: the
-  JWT-claims GUC interleaving across the shared service DB under runner
-  load; retry is not a remedy). Main is effectively red until #234 is
-  triaged; merges still gate on the local suite per the working agreement.
-- **Launch blockers found by #227's live pass** (all filed, none fixed):
-  **#243** prod-image SSR serves ResolveMessage JSON on every route (the
-  route-tree chunk pin silently stopped matching — no inlined react copy),
-  **#244** Data-tab column sort does not sort, **#245** Compare versions
-  flips the page to Dataset Not Found in place. #227's checklist itself is
-  the only open train item: its four measurements are recorded (20k import
-  4.05 s, cold-open 2.77 s vs 16.5 s, realtime 6 ms/527 ms + UI flip,
-  zero-Convex network) with two sub-items unexercised (filter menus, Export
-  dialog) pending #243/#244/#245.
-- **Remaining work lives in one place**: the closeout issue train,
-  umbrella **#219** with ordered sub-issues **#220–#230** (tracking table in
-  #219's first comment). Sequence note there: #227's measurements feed
-  #228's verdicts; #224's decision constrains one line of #225; #230 (ops)
-  can run in parallel with #228–#229. Nothing else is outstanding: #137 is
-  a parked do-not-implement record, #82 is reference-only, the two
-  load-flaky tests (`convex/versions/consumption.test.ts`,
-  `pg-realtime.int.test.ts`) carry a standing do-not-fix directive, and the
-  Parquet sidecar stays parked.
+- **main @ b5155da** — closeout train executed and closed:
+  - #220–#226 + #230 merged (PRs #231/#232/#235–#240/#242), #228/#229
+    closed with verdicts (#182 umbrella closed, #188 re-targeted to the
+    GIS track #158; #78/#72 closed as superseded, Postgres-era successor
+    = [#241](https://github.com/whoiscadenyoung/json-data-manager/issues/241)).
+  - #227's live checklist fully evidenced (filter menus + Export dialog
+    included) and closed.
+  - Launch blockers: **#243 FIXED** (PR #246 — prod SSR is
+    self-contained: react/react-dom/scheduler stay external and are
+    materialized into `.output/server/node_modules` by
+    `app/scripts/finalize-ssr-output.ts`, which also FAILS THE BUILD on
+    any unresolvable bare external; the vite-service output folds into
+    one server chunk, killing the `require_shim` cycle class; the old
+    route-tree advancedChunks pin was proven dead code and removed),
+    **#245 FIXED** (PR #247 — the PG compare renders the pure
+    `VersionCompareView`; the convex `useQuery` throw without a provider
+    no longer surfaces through the query boundary as "Dataset Not
+    Found"), **#244 resolved works-as-designed** (the sort control is a
+    dropdown menu; asc/desc verified riding `?sort=` server-side).
+  - **#234 FIXED** (PR #248 — `fileParallelism: false`: the
+    shared-service-DB int-test interference class is structurally
+    impossible; suite green serialized, 98 files / 1142 tests, ~zero
+    wall-time cost). CI on main should finally run green end to end —
+    confirm on the next push.
+- **Compose stack (:8000)**: rebuilt from merged main, all services
+  healthy, `/signin` `/dashboard` `/datasets` verified HTML 200, zero
+  ResolveMessage/require_shim errors. Demo user
+  (`demo@jdm.test` / `demo-password-1`), dataset "self-host demo".
+  Studio: `docker compose --profile studio up -d` → :54323.
+  `docker compose down -v` wipes it.
+- **Local gates all green** at b5155da (fmt, lint 0 errors, all package
+  typechecks + tests, app tests serialized, app build incl. the new
+  guard). fmt:check locally still flags only the untracked
+  `.zcode/plans/*.md` (CI never sees them).
 
-## 1. Working agreements (carry over)
+## 1. The only remaining step: VPS cutover
+
+§11a of [`self-hosting-design.md`](self-hosting-design.md) is the
+runbook; the local restore rehearsal (#230) already proved the
+backup/restore path. Any time the VPS exists:
+
+1. Follow §11a end to end (docker login ghcr — the image is private).
+2. The image to deploy is `ghcr.io/whoiscadenyoung/json-data-manager`
+   built from b5155da+ (CI/CD builds it; or build locally).
+3. §11a step 9's "sign in" check now works — #243 was the blocker.
+
+## 2. Working agreements (carry over)
 
 - Commits via the `/commit` skill; bun, not node; per-package dists are
   built in CI order (`data-core`, `importers` → `json-cms`,
   `geometry-archive`, `data-export`) before anything resolves them.
-- Merges gated on the local gate suite (the ci.yml command set), never on
-  waiting for CI. Stacked PRs must be retargeted to main before merging.
+- Merges gated on the local gate suite (the ci.yml command set), never
+  on waiting for CI. Stacked PRs must be retargeted to main before
+  merging.
 - Pushes touching `.github/workflows/` need the SSH host alias
   `github.com-whoiscadenyoung` (the gh token lacks `workflow` scope).
-- Verification evidence goes ON the issue (screenshots, timings, devtools
-  output); defects found while verifying file NEW issues — don't fix inline.
-- fmt:check locally still fails only on the untracked `.zcode/plans/*.md`
-  (CI never sees them; leave them untracked).
+- Verification evidence goes ON the issue; defects found while verifying
+  file NEW issues — don't fix inline.
+- App tests now run with `fileParallelism: false` (vitest.config.ts) —
+  don't "optimize" this back to parallel without re-reading #234: the
+  int tests share one Postgres service DB per CI job.
 
-## 2. Local environment (cleaned 2026-11-05)
+## 3. Environment notes (unchanged unless listed)
 
-- **Primary checkout** (`~/Developer/json-data-manager`, branch `main`):
-  the compose self-host stack runs from here — `cp .env.example .env`,
-  `deploy/scripts/generate-keys.sh` (already done; `.env` is local-only),
-  `docker compose up -d --build`. Currently up on
-  **:8000** with migrations applied and a demo user
-  (`demo@jdm.test` / `demo-password-1`, dataset "self-host demo" +
-  `geometries/<id>/row-0.json`). `docker compose down -v` wipes it.
-  Studio: `docker compose --profile studio up -d` → host :54323.
-- **CLI stack worktree** (`../jdm-supabase-backend`): re-branched to
-  `local/supabase-stack` == origin/main (tracks it; was stuck on the merged
-  `feat/supabase-stage-0` whose set is only 0001–0002). `bunx supabase
-status -o env` and `supabase db reset` are SAFE from there now — all 14
-  migrations present, `config.toml` byte-identical to main. The CLI stack
-  keeps ports 54321–54323; the compose stack deliberately uses only :8000
-  so they coexist.
+- **CLI stack worktree** (`../jdm-supabase-backend`, branch
+  `local/supabase-stack` == origin/main): `bunx supabase status -o env`
+  and `supabase db reset` are safe there; ports 54321–54323 coexist with
+  the compose stack (:8000 only). The bench user
+  (`bench@jdm.test` / `bench-password-1`) and the 20k fixtures
+  (`/tmp/jdm-ab/`) live against that stack — used for the browser
+  verification passes.
 - **Parked work, preserved**: `feat/project-workspace` (worktree
-  `../jdm-project-workspace`, now pushed to origin) holds ~8+ unmerged
-  commits (in-project map editor, five-tab workspace, project-owned maps)
-  from 2026-10-08, Convex-era, with uncommitted edits in
-  `app/convex/layers.ts` + `app/convex/schema.ts`. Do NOT delete; it needs
-  a Postgres-port-or-retire decision that belongs to feature planning, not
-  this closeout. The superseded Convex-era `feat/app-builder` branch is
-  archived at tag `archive/feat-app-builder`.
-- **Branch hygiene** (as of this handoff): remotes are `main` +
-  `feat/project-workspace` only; six merged remote branches, two merged
-  local branches, and the stale `pr192` tracking ref were deleted.
-- Bench fixtures: `/tmp/jdm-ab/` (gen-points.ts, serve.ts, bench-import.ts,
-  points20k.geojson); bench user `bench@jdm.test` / `bench-password-1`
-  (recreate via the gotrue **admin** API with the service key — signup is
-  disabled everywhere).
+  `../jdm-project-workspace`, pushed to origin) holds ~8+ unmerged
+  Convex-era commits with uncommitted edits. Do NOT delete; a
+  Postgres-port-or-retire decision belongs to feature planning. The
+  superseded `feat/app-builder` branch is archived at tag
+  `archive/feat-app-builder`.
+- Local branches cleaned through the closeout: only `main` (plus the
+  parked worktree branches above) remains.
 
-## 3. What the next session does
+## 4. Open strands (all deliberate, none launch-blocking)
 
-1. Fix the three launch blockers — **#243** (prod SSR: restore the
-   route-tree chunk pin's inlined react copy or guard it so a pin miss
-   fails the build), **#245** (compare-versions state race), **#244**
-   (sort wiring) — each verified in the browser per #227's repro.
-2. Triage **#234** (CI int-test flake) — likely per-file DB isolation or
-   serial int execution; then confirm CI green on main.
-3. Finish **#227**'s two unexercised sub-items (filter menus, Export
-   dialog) on a healthy stack; close it with the final evidence comment.
-4. Close **#219** with a closeout comment (it holds only #227 now), then
-   update this handoff — or replace it with the launch announcement. The
-   VPS cutover (§11a) can run any time after #243; the local rehearsal
-   already proved the backup/restore path.
+- [#241](https://github.com/whoiscadenyoung/json-data-manager/issues/241)
+  — Postgres-era bound sources (feature work, future).
+- #158 GIS basic-tier track (+ #188 clustering re-targeted there).
+- #137 parked do-not-implement record; #82 reference-only.
+- Parquet sidecar — parked (analysis layer).

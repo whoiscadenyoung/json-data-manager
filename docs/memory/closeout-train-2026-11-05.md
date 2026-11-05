@@ -8,6 +8,7 @@ metadata:
 2026-11-05 closeout session: **#220–#226 all merged same-day** (PRs #231/#232/#235/#236/#237/#238/#239/#240; main @ b43c6ac; issues #220–#226 + #233 closed). One PR per issue, all locally gated, merged bottom-up as a main-based stack.
 
 **Defects found while verifying (filed, not fixed inline):**
+
 - #233 (FIXED same-day, PR #235): compose realtime was dead by construction — kong forwards with the upstream host as the Host header and realtime derives its tenant from it; `SEED_SELF_HOST` seeds external_id `realtime-dev`, so the upstream must be named `realtime-dev` (network alias), matching the official supabase/docker stack. Symptom: `TenantNotFound: Tenant not found: realtime` + `CHANNEL_ERROR` on subscribe.
 - #234 (OPEN): CI `Test (app)` flakes across DIFFERENT int-test files per run (first the named do-not-fix pair, rerun `pg-storage-policies` + `pg-stage7-bindings` with storage.objects RLS denials). Suspect: claims GUC (`set_config request.jwt.claims`) interleaving across the shared service DB under runner load. Two reruns both red — retry is not a remedy; needs triage (per-file DB isolation or serial int execution).
 
