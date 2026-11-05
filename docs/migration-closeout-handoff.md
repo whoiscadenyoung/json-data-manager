@@ -6,18 +6,31 @@ locally; this handoff covers exactly one thing: **finishing the closeout —
 no new features** — as tracked in the issue train below. When the train is
 empty, the app is launch-ready.
 
-## 0. State of the world
+## 0. State of the world (updated 2026-11-05, end of the closeout session)
 
-- **main @ `ea1b2c0`** — migration complete (ADR 0015, stages 0–7 +
-  app-builder #216/#217), self-hosting stack landed via #218
-  ([ADR 0016](decisions/0016-self-hosted-supabase-vps.md),
-  [design](self-hosting-design.md)), prod-SSR chunk-cycle fix in
-  `app/vite.config.ts`.
-- **CI on main**: the pg_cron red (unbroken since 0012 landed) is repaired —
-  CI now runs the image-default `postgres` database, the store assert knows
-  0012's `sync-chunks` bucket (5 total), and the storage-api boot steps'
-  `DATABASE_URL` follows. Verify the run triggered by `ea1b2c0` is green
-  first thing; that is the last untested seam of the repair.
+- **main @ 41bbf16+** — the closeout train EXECUTED: #220–#226 and #228–#230
+  all merged (PRs #231/#232/#235/#236/#237/#238/#239/#240/#242) and closed.
+  #229's re-scope decision filed as
+  [#241](https://github.com/whoiscadenyoung/json-data-manager/issues/241)
+  (Postgres-era bound sources; #78/#72 closed as superseded). ADR 0016
+  status flipped to **deployed** (local restore rehearsal in
+  [self-hosting-design.md §10](self-hosting-design.md); the VPS cutover is
+  the §11a handoff checklist).
+- **CI on main**: the storage-api boot repair is VERIFIED (the rerun got
+  past the seam for the first time). CI remains red via `Test (app)`
+  flaking across DIFFERENT int-test files per run — **#234** (suspect: the
+  JWT-claims GUC interleaving across the shared service DB under runner
+  load; retry is not a remedy). Main is effectively red until #234 is
+  triaged; merges still gate on the local suite per the working agreement.
+- **Launch blockers found by #227's live pass** (all filed, none fixed):
+  **#243** prod-image SSR serves ResolveMessage JSON on every route (the
+  route-tree chunk pin silently stopped matching — no inlined react copy),
+  **#244** Data-tab column sort does not sort, **#245** Compare versions
+  flips the page to Dataset Not Found in place. #227's checklist itself is
+  the only open train item: its four measurements are recorded (20k import
+  4.05 s, cold-open 2.77 s vs 16.5 s, realtime 6 ms/527 ms + UI flip,
+  zero-Convex network) with two sub-items unexercised (filter menus, Export
+  dialog) pending #243/#244/#245.
 - **Remaining work lives in one place**: the closeout issue train,
   umbrella **#219** with ordered sub-issues **#220–#230** (tracking table in
   #219's first comment). Sequence note there: #227's measurements feed
@@ -75,13 +88,17 @@ status -o env` and `supabase db reset` are SAFE from there now — all 14
   (recreate via the gotrue **admin** API with the service key — signup is
   disabled everywhere).
 
-## 3. Suggested session plan for the next agent
+## 3. What the next session does
 
-1. Confirm the CI run for `ea1b2c0` is green on main (both jobs).
-2. Work the train in order — #220 → #226 are code (small; #225 is one PR,
-   #224 needs its decision recorded first), then #227 verification with
-   evidence-on-issue, then the #228/#229 decisions, then #230 go-live.
-3. #230 ends with the ADR 0016 status line flipped to "deployed" and a
-   recorded restore rehearsal.
-4. When #219 has no open sub-issues: close it with a closeout comment, and
-   update this handoff (or replace it with the launch announcement).
+1. Fix the three launch blockers — **#243** (prod SSR: restore the
+   route-tree chunk pin's inlined react copy or guard it so a pin miss
+   fails the build), **#245** (compare-versions state race), **#244**
+   (sort wiring) — each verified in the browser per #227's repro.
+2. Triage **#234** (CI int-test flake) — likely per-file DB isolation or
+   serial int execution; then confirm CI green on main.
+3. Finish **#227**'s two unexercised sub-items (filter menus, Export
+   dialog) on a healthy stack; close it with the final evidence comment.
+4. Close **#219** with a closeout comment (it holds only #227 now), then
+   update this handoff — or replace it with the launch announcement. The
+   VPS cutover (§11a) can run any time after #243; the local rehearsal
+   already proved the backup/restore path.
