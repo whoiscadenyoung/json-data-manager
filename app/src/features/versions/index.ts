@@ -13,5 +13,5 @@ export {
 } from "./components/diff-overlay-map";
 export { PgConsumersCard, PgVersionsCard } from "./components/pg-versions-card";
 export { RemoteSourceControls } from "./components/remote-source-controls";
-export { VersionCompare } from "./components/version-compare";
+export { VersionCompare, VersionCompareView } from "./components/version-compare";
 export { isSyncStale } from "./lib/sync-staleness";

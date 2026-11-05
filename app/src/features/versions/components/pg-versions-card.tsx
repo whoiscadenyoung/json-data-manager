@@ -33,7 +33,13 @@ import {
 import type { VersionRow } from "@/lib/version-rows";
 
 import { headVersionOf, overlayRowsQueryOptions, priorVersionOf } from "../lib/pg-versioning";
-import { VersionCompare } from "./version-compare";
+// The pure view, NOT the convex wrapper: the wrapper's convex `useQuery`
+// fallbacks throw on render without a ConvexProvider (gone at the stage-7
+// disconnect) and that throw surfaced through the page's QueryErrorBoundary
+// as the "Dataset Not Found" card — the #245 in-place flip on Compare
+// versions. The loader resolves delta + rows itself; nothing here reads
+// convex.
+import { VersionCompareView } from "./version-compare";
 
 /**
  * The Postgres dataset page's versioning surfaces (stage 4, #203) — the
@@ -158,7 +164,7 @@ function TagCreateForm({
  * The compare's data feed (the PG "diff view inputs"): the store's delta
  * query (one delta definition — the store's, bounded with the exact
  * #126 truncation flag) plus the overlay's bounded position reads per side,
- * feeding the shared VersionCompare through its controlled-pair props.
+ * feeding the pure VersionCompareView through its controlled-pair props.
  * Success IS complete for these single-shot reads — never an isLoading gate.
  */
 // The loader joins three reads (delta + both overlay sides) into the
@@ -214,8 +220,8 @@ function PgVersionCompareLoader({
         : [],
     );
   return (
-    <VersionCompare
-      delta={complete ? delta : "pending"}
+    <VersionCompareView
+      delta={complete ? delta : undefined}
       onPairChange={(pair) => {
         setAId(pair.aSchemaId);
         setBId(pair.bSchemaId);

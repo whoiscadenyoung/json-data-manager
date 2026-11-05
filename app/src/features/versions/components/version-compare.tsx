@@ -49,7 +49,7 @@ type PrecomputedDelta = VersionDelta | null | "pending";
  * The selected pair, when the caller controls it: the Postgres edition of
  * the compare (stage 4, #203) computes its delta client-side, so IT has to
  * own which pair is selected (the delta is a function of the pair). Absent
- * `pair`, the component seeds and holds its own selection exactly as it
+ * `pair`, the wrapper seeds and holds its own selection exactly as it
  * always has (the Convex path — untouched behavior).
  */
 interface ComparePair {
@@ -58,99 +58,40 @@ interface ComparePair {
 }
 
 /**
- * The tag-compare view (docs/bound-datasets-design.md §6, issue #77): pick
- * any two frozen versions and the delta between them renders as an
- * add/remove/modify overlay on either base. The delta computes on demand
- * (tags.getVersionDelta) into the commits' ops shape; positions come from
- * whichever version still has the feature.
- *
- * `rows` (stage 6, #101) hands the overlay's positioning rows in from the
- * row-resolution seam (`useDatasetVersionRows` — byte-budgeted pages through
- * the one seam) instead of the server's bounded `tags.versionEntries` read;
- * the ops themselves still come from the shipped delta path, so counts and
- * positions key identically (`version-rows.ts` is the one key rule both
- * sides share).
- *
- * `pair`/`onPairChange` (stage 4) make the selection CONTROLLED for callers
- * that derive the delta themselves (the PG edition); the fallback queries
- * stay skipped in that mode exactly as when `rows`/`delta` serve.
+ * The compare body — selects, the delta counts, and the diff overlay — as a
+ * PURE view: every datum arrives as a prop (a resolved delta, the
+ * positioning rows keyed per version, and a controlled pair). It mounts no
+ * data reads of its own, which is what makes it safe for the Postgres
+ * dataset page (#245): the convex `useQuery` fallback in `VersionCompare`
+ * throws on render without a ConvexProvider (gone since the stage-7
+ * disconnect), and that throw landed in the page's QueryErrorBoundary —
+ * whose fallback is the "Dataset Not Found" card — flipping the whole page
+ * in place on the Compare versions click. Callers that can't resolve the
+ * delta and rows themselves use `VersionCompare`, which owns the reads.
  */
-// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
-export function VersionCompare({
+// oxlint-disable-next-line eslint/complexity -- the compare body's readiness branches ARE its contract (the same note the convex wrapper carries); ad hoc splitting risks these render paths.
+export function VersionCompareView({
   versions,
   rows,
-  delta: deltaProp,
+  delta,
   pair,
   onPairChange,
 }: {
   versions: Array<VersionOption>;
-  rows?: globalThis.Map<string, VersionRow[]>;
-  delta?: PrecomputedDelta;
-  pair?: ComparePair;
-  onPairChange?: (pair: ComparePair) => void;
+  rows: globalThis.Map<string, VersionRow[]>;
+  delta: VersionDelta | undefined;
+  pair: ComparePair;
+  onPairChange: (pair: ComparePair) => void;
 }) {
-  const newest = versions.at(0),
-    oldest = versions.at(1) ?? newest,
-    [seededA, setSeededA] = useState<string | undefined>(
-      oldest !== undefined ? oldest.schemaId : undefined,
-    ),
-    [seededB, setSeededB] = useState<string | undefined>(
-      newest !== undefined ? newest.schemaId : undefined,
-    ),
-    // Controlled when the caller passes `pair`; the seeded states stand in
-    // otherwise (their setters are only reachable through that same branch).
-    aSchemaId = pair === undefined ? seededA : pair.aSchemaId,
-    bSchemaId = pair === undefined ? seededB : pair.bSchemaId,
-    selectPair = (patch: { aSchemaId?: string; bSchemaId?: string }): void => {
-      if (pair === undefined || onPairChange === undefined) {
-        if (patch.aSchemaId !== undefined) {
-          setSeededA(patch.aSchemaId);
-        }
-        if (patch.bSchemaId !== undefined) {
-          setSeededB(patch.bSchemaId);
-        }
-        return;
-      }
-      onPairChange({
-        aSchemaId: patch.aSchemaId ?? pair.aSchemaId,
-        bSchemaId: patch.bSchemaId ?? pair.bSchemaId,
-      });
-    },
+  const aSchemaId = pair.aSchemaId,
+    bSchemaId = pair.bSchemaId,
     [base, setBase] = useState<"a" | "b">("b"),
     options = versions.map((version) => ({
       label: `${version.title} (${version.label})`,
       value: version.schemaId,
-    }));
-
-  // The delta: the caller's precomputed one when handed in ("pending" shows
-  // the computing state without firing the fallback), else the shipped
-  // on-demand read. The query stays mounted either way ("skip" keeps it
-  // unsubscribed while the prop serves) — hooks can't be conditional.
-  const fallbackDelta = useQuery(
-      api.versions.tags.getVersionDelta,
-      deltaProp === undefined || deltaProp === null
-        ? aSchemaId !== undefined && bSchemaId !== undefined && aSchemaId !== bSchemaId
-          ? { aSchemaId, bSchemaId }
-          : "skip"
-        : "skip",
-    ),
-    delta =
-      deltaProp === "pending" || deltaProp === undefined || deltaProp === null
-        ? fallbackDelta
-        : deltaProp,
-    // Positioning rows: the seam-provided rows when handed in, else the
-    // shipped server read. The queries stay mounted either way ("skip" keeps
-    // them unsubscribed while `rows` serves) — hooks can't be conditional.
-    aServerEntries = useQuery(
-      api.versions.tags.versionEntries,
-      rows !== undefined || aSchemaId === undefined ? "skip" : { schemaId: aSchemaId },
-    ),
-    bServerEntries = useQuery(
-      api.versions.tags.versionEntries,
-      rows !== undefined || bSchemaId === undefined ? "skip" : { schemaId: bSchemaId },
-    ),
-    aEntries = rows === undefined ? aServerEntries : rows.get(aSchemaId ?? ""),
-    bEntries = rows === undefined ? bServerEntries : rows.get(bSchemaId ?? "");
+    })),
+    aEntries = rows.get(aSchemaId ?? ""),
+    bEntries = rows.get(bSchemaId ?? "");
 
   const points = useMemo<DiffPoint[]>(() => {
     if (delta === undefined || aEntries === undefined || bEntries === undefined) {
@@ -189,7 +130,7 @@ export function VersionCompare({
           items={options}
           value={aSchemaId}
           onValueChange={(value) => {
-            selectPair({ aSchemaId: value ?? undefined });
+            onPairChange({ aSchemaId: value ?? undefined, bSchemaId });
           }}
         >
           <SelectTrigger className="w-56">
@@ -208,7 +149,7 @@ export function VersionCompare({
           items={options}
           value={bSchemaId}
           onValueChange={(value) => {
-            selectPair({ bSchemaId: value ?? undefined });
+            onPairChange({ aSchemaId, bSchemaId: value ?? undefined });
           }}
         >
           <SelectTrigger className="w-56">
@@ -262,5 +203,129 @@ export function VersionCompare({
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * The tag-compare view (docs/bound-datasets-design.md §6, issue #77): pick
+ * any two frozen versions and the delta between them renders as an
+ * add/remove/modify overlay on either base. The delta computes on demand
+ * (tags.getVersionDelta) into the commits' ops shape; positions come from
+ * whichever version still has the feature.
+ *
+ * `rows` (stage 6, #101) hands the overlay's positioning rows in from the
+ * row-resolution seam (`useDatasetVersionRows` — byte-budgeted pages through
+ * the one seam) instead of the server's bounded `tags.versionEntries` read;
+ * the ops themselves still come from the shipped delta path, so counts and
+ * positions key identically (`version-rows.ts` is the one key rule both
+ * sides share).
+ *
+ * `pair`/`onPairChange` (stage 4) make the selection CONTROLLED for callers
+ * that derive the delta themselves (the PG edition — which renders
+ * `VersionCompareView` directly, never this wrapper); absent `pair`, the
+ * wrapper seeds and holds its own selection. The convex fallback queries
+ * stay skipped whenever `rows`/`delta` serve — and this wrapper is ONLY for
+ * callers that can mount under a ConvexProvider: its `useQuery` calls throw
+ * without one (#245).
+ */
+// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
+export function VersionCompare({
+  versions,
+  rows,
+  delta: deltaProp,
+  pair,
+  onPairChange,
+}: {
+  versions: Array<VersionOption>;
+  rows?: globalThis.Map<string, VersionRow[]>;
+  delta?: PrecomputedDelta;
+  pair?: ComparePair;
+  onPairChange?: (pair: ComparePair) => void;
+}) {
+  const newest = versions.at(0),
+    oldest = versions.at(1) ?? newest,
+    [seededA, setSeededA] = useState<string | undefined>(
+      oldest !== undefined ? oldest.schemaId : undefined,
+    ),
+    [seededB, setSeededB] = useState<string | undefined>(
+      newest !== undefined ? newest.schemaId : undefined,
+    ),
+    // Controlled when the caller passes `pair`; the seeded states stand in
+    // otherwise (their setters are only reachable through that same branch).
+    aSchemaId = pair === undefined ? seededA : pair.aSchemaId,
+    bSchemaId = pair === undefined ? seededB : pair.bSchemaId,
+    selectPair = (patch: { aSchemaId?: string; bSchemaId?: string }): void => {
+      if (pair === undefined || onPairChange === undefined) {
+        if (patch.aSchemaId !== undefined) {
+          setSeededA(patch.aSchemaId);
+        }
+        if (patch.bSchemaId !== undefined) {
+          setSeededB(patch.bSchemaId);
+        }
+        return;
+      }
+      onPairChange({
+        aSchemaId: patch.aSchemaId ?? pair.aSchemaId,
+        bSchemaId: patch.bSchemaId ?? pair.bSchemaId,
+      });
+    };
+
+  // The delta: the caller's precomputed one when handed in ("pending" shows
+  // the computing state without firing the fallback), else the shipped
+  // on-demand read. The query stays mounted either way ("skip" keeps it
+  // unsubscribed while the prop serves) — hooks can't be conditional.
+  const fallbackDelta = useQuery(
+      api.versions.tags.getVersionDelta,
+      deltaProp === undefined || deltaProp === null
+        ? aSchemaId !== undefined && bSchemaId !== undefined && aSchemaId !== bSchemaId
+          ? { aSchemaId, bSchemaId }
+          : "skip"
+        : "skip",
+    ),
+    delta =
+      deltaProp === "pending" || deltaProp === undefined || deltaProp === null
+        ? fallbackDelta
+        : deltaProp,
+    // Positioning rows: the seam-provided rows when handed in, else the
+    // shipped server reads, merged into the keyed map the view consumes.
+    // The queries stay mounted either way ("skip" keeps them unsubscribed
+    // while `rows` serves) — hooks can't be conditional.
+    aServerEntries = useQuery(
+      api.versions.tags.versionEntries,
+      rows !== undefined || aSchemaId === undefined ? "skip" : { schemaId: aSchemaId },
+    ),
+    bServerEntries = useQuery(
+      api.versions.tags.versionEntries,
+      rows !== undefined || bSchemaId === undefined ? "skip" : { schemaId: bSchemaId },
+    ),
+    viewRows = rows ?? mergedRowsOf(aSchemaId, bSchemaId, aServerEntries, bServerEntries);
+
+  return (
+    <VersionCompareView
+      delta={delta}
+      onPairChange={selectPair}
+      pair={{ aSchemaId, bSchemaId }}
+      rows={viewRows}
+      versions={versions}
+    />
+  );
+}
+
+/** The fallback rows map: the server reads keyed by their version, skipping the sides still in flight. */
+function mergedRowsOf(
+  aSchemaId: string | undefined,
+  bSchemaId: string | undefined,
+  aEntries: VersionRow[] | undefined,
+  bEntries: VersionRow[] | undefined,
+): globalThis.Map<string, VersionRow[]> {
+  return new globalThis.Map(
+    (
+      [
+        [aSchemaId, aEntries],
+        [bSchemaId, bEntries],
+      ] as Array<[string | undefined, VersionRow[] | undefined]>
+    ).filter(
+      (entry): entry is [string, VersionRow[]] => entry[0] !== undefined && entry[1] !== undefined,
+    ),
   );
 }
