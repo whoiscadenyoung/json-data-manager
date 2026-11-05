@@ -781,6 +781,7 @@ describe("stage 7 — the keyed/resumable engine (the RPC surface)", () => {
       // the retention ranking's recency order (created_at desc) actual.
       const id = cell(
         // oxlint-disable-next-line no-await-in-loop -- one seeded version per ref, in recency order.
+        // oxlint-disable-next-line no-await-in-loop -- each backdated insert depends on the previous one's created_at ordering (the wire client pipelines one statement at a time).
         (
           await s().expectOk(
             `insert into public.dataset_versions (dataset_id, ref, publish_key, version_label, lineage, created_by, created_at)
