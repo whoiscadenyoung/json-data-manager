@@ -109,7 +109,8 @@ export const VERSION_DIFF_LIMIT = 2000;
 
 const VERSION_SELECT =
   "id,datasetId:dataset_id,ref,publishKey:publish_key,versionLabel:version_label,lineage,createdBy:created_by,createdAt:created_at";
-const REFERENCE_SELECT =
+/** The consumer_references projection — shared with the projects catalog's multi-consumer read (projects.ts). */
+export const REFERENCE_SELECT =
   "id,consumerId:consumer_id,consumerKind:consumer_kind,sourceDatasetId:source_dataset_id,mode,pinnedVersionId:pinned_version_id,pinnedRef:pinned_ref,createdAt:created_at";
 const ENTRY_SELECT =
   "id,versionId:version_id,entryId:entry_id,data,geometry,geometryType:geometry_type,bbox,ordinal";

@@ -55,6 +55,7 @@ import {
   Code2,
   Ellipsis,
   FilePlus,
+  FolderKanban,
   Globe,
   Lock,
   LockOpen,
@@ -68,7 +69,12 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { PgAnalysisPanel } from "#/features/analysis";
-import { PgTransformBuilder, PgPublishDialog, mintPublishKey } from "#/features/publishing";
+import {
+  PgAddToProjectSheet,
+  PgTransformBuilder,
+  PgPublishDialog,
+  mintPublishKey,
+} from "#/features/publishing";
 import { QueryErrorBoundary } from "@/components/query-error-boundary";
 import { useSession } from "@/integrations/supabase/provider";
 import type { DatasetEntryRow } from "@/lib/dataset-rows";
@@ -344,7 +350,10 @@ function PostgresDatasetBody({
     // at OPEN time (not submit), so every submit inside one dialog session
     // re-selects the same frozen version instead of forking a second one.
     [publishOpen, setPublishOpen] = useState(false),
-    [publishKey, setPublishKey] = useState("");
+    [publishKey, setPublishKey] = useState(""),
+    // #256: the add-to-project sheet — the dataset referenced (linked, a pin
+    // at head) from a project the viewer can edit.
+    [addToProjectOpen, setAddToProjectOpen] = useState(false);
 
   if (datasetQuery.isPending) {
     return (
@@ -508,6 +517,18 @@ function PostgresDatasetBody({
               oversized geometry payloads, joined fields from the store's
               registry. */}
           <PgDatasetExport dataset={dataset} />
+          {/* #256: reference this dataset from a project — a linked pin at
+              head, never a copy (D1/ADR 0018). */}
+          <Button
+            onClick={() => {
+              setAddToProjectOpen(true);
+            }}
+            title="Add this dataset to one of your projects (a linked reference — nothing is copied)"
+            variant="outline"
+          >
+            <FolderKanban className="h-4 w-4 mr-2" />
+            Add to project
+          </Button>
           <Button
             disabled={lockedForViewer}
             onClick={() => {
@@ -757,6 +778,13 @@ function PostgresDatasetBody({
         onOpenChange={setPublishOpen}
         open={publishOpen}
         publishKey={publishKey}
+      />
+
+      {/* #256: the add-to-project sheet over this dataset. */}
+      <PgAddToProjectSheet
+        artifactId={schemaId}
+        onOpenChange={setAddToProjectOpen}
+        open={addToProjectOpen}
       />
 
       <AlertDialog
