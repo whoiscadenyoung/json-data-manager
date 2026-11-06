@@ -32,7 +32,7 @@ resolved decisions D1–D7; §5 = the scenario that is the train's exit test).
 
 - **No back-compat or adoption steps anywhere.** App not in production, PG
   data disposable — every phase ships its final shape. Breaking migrations
-  fine (next migration number: 0018+; ADRs: 0017+).
+  fine (next migration number: 0019+; ADRs: 0018+).
 - Branch off fresh `main` (`git fetch --prune` first). One PR per issue;
   merge with the standard flow (see `docs/memory/pr-merge-sync-flow.md`).
 - Gates before every PR, run **bare** (pipelines mask exit codes): app tests,
