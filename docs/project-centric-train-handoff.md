@@ -2,8 +2,8 @@
 
 Written 2026-11-05, main @ 55a3fa7. Updated 2026-11-05 after [project 1]
 (#255, PR #263). Updated 2026-11-06 after [project 2] (#256, PR #264),
-[project 3] (#257, PR #265), and [project 4]: **#258 DONE (PR #266, main @
-6458b1e) — next work is #259.**
+[project 3] (#257, PR #265), [project 4] (#258, PR #266), and [project 5]:
+**#259 DONE (PR #267, main @ dc5cbaf) — next work is #260.**
 
 ## What this train is
 
@@ -103,10 +103,29 @@ resolved decisions D1–D7; §5 = the scenario that is the train's exit test).
   masking, migration-session auth.uid() vs the stamp trigger,
   NULL-vacuous CHECKs, page-cut-in-window paging, fixture
   is_geospatial/bbox flags, in-test ANALYZE churns shared stats).
-- **#259 apps** — `apps.project_id` NOT NULL; update the two seeded example
-  apps in the same migration; keep the `revision` CAS save flow.
-- **#259 apps** — `apps.project_id` NOT NULL; update the two seeded example
-  apps in the same migration; keep the `revision` CAS save flow.
+- **#259 apps** — ✅ DONE (PR #267, ADR 0021, migration 0022):
+  `apps.project_id` NOT NULL (per-creator backfill, the 0020 pattern);
+  member-wide reads + project-editor writes with the one `example` SELECT
+  arm (the 0014 creator gate died; `revision` CAS unchanged); the inline
+  `datasetIds` map widget RETIRED — widgets carry `mapId` into stored
+  project maps (live render via `StoredMapCanvas` in features/maps; the
+  builder's picker lists project maps, create-from-builder persists the
+  map row + links + opens the editor); the freeze is an `app_versions`
+  chain whose self-contained snapshot (datasetPins + mapSnapshots +
+  flattened layerVersions) renders the published viewer from frozen data +
+  immutable `version_entries` only (owned draft layers publish first;
+  published layers freeze their existing head); /apps = explorer with
+  project chips + start-from-here; the workspace's Apps section receives
+  its create-app dialog through a ROUTE-LEVEL slot (`CreateAppSlot`) —
+  app-builder stays route-wired (ADR 0011/0014), and layer-styles LEFT the
+  optional-module lint list (D7). The seed re-owned both examples into a
+  "System examples" project and published them (v1 snapshots) — verified
+  in-browser as a signed-in NON-MEMBER. Lessons:
+  `docs/memory/project-apps-0022-lessons.md` (the artifacts stamp
+  overwrites added_by with auth.uid() — claims GUC per row in migration
+  loops; version rows carry no kind — infer from dataset/frozenChildren;
+  app_versions denial reads as RLS 0-rows; stable onLoaded or the frozen
+  loaders OOM-loop).
 - **#260 ladder** — replaces `published_visibility`/`apps.sharing`; closure
   preflight never widens without explicit review; effective access =
   `min(closure)` incl. foreign pinned members blocking wider shares.
