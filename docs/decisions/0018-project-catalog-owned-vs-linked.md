@@ -12,7 +12,7 @@
 
 `project_artifacts` (0009) held one flat membership list — every add was a
 reference with a float consumer edge — and nothing could create a dataset
-*inside* a project. The design's data line makes projects hold two kinds of
+_inside_ a project. The design's data line makes projects hold two kinds of
 membership: datasets **created in-project** (owned) and datasets **added from
 the global catalog** (linked, "a pin, never a copy"), with per-member
 sync/revert over the existing `consumer_references` pin machinery. The ADR
@@ -56,12 +56,12 @@ first flow that can put a draft into a project, so it lands with this phase.
   while owned — the visibility ladder, #260, owns widening published rows).
   Deliberately narrower
   than the clause's letter: **linked drafts are not covered** — D1 makes
-  linked a reference to a *catalog-visible* dataset, and a draft is by
+  linked a reference to a _catalog-visible_ dataset, and a draft is by
   definition not catalog-visible, so a linked draft stays governed by its
   creator's row alone. The only route to a member-visible draft is
   ownership, which is exactly the flow this phase ships. The published
   `author` visibility gate also stays creator-only: project sharing never
-  widens a *published* row (that is the #260 ladder's job).
+  widens a _published_ row (that is the #260 ladder's job).
 - **In-project create/import births owned drafts that stay drafts.** The
   project-bound create flow creates the dataset with `lifecycle: 'draft'`
   and binds it as an owned artifact in the same flow; the import-completion
@@ -72,13 +72,13 @@ first flow that can put a draft into a project, so it lands with this phase.
   FK would clean it up).
 - **The catalogs' read model is three store reads merged client-side:**
   memberships, their fork edges, and the source chains' heads —
-  "update available" is computed as *pinned & pinned_ref ≠ head ref* (the
+  "update available" is computed as _pinned & pinned_ref ≠ head ref_ (the
   same decision the versions card's badge makes), sync advances the pin to
   head, revert repins an earlier version, float/pin flips go through
   `setSyncMode`. No new DB machinery: 0009's `consumer_references`
   float/pin, the publish chains, and the badge semantics are reused whole.
 - **Duplicate adds stay the 23505 constraint** — the `(project_id,
-  artifact_kind, artifact_id)` unique answers a double add honestly (the
+artifact_kind, artifact_id)` unique answers a double add honestly (the
   message surfaces verbatim; no pre-check, no silent dedupe).
 
 ## Consequences
@@ -91,6 +91,6 @@ first flow that can put a draft into a project, so it lands with this phase.
   the 0017 editor arm of `consumer_reference_owner`; viewers are refused.
 - The bundle press loses its map membership legs until [project 3] re-owns
   maps as project artifacts of their own kind.
-- Sync/revert actions are per member *project* (the edge belongs to the
+- Sync/revert actions are per member _project_ (the edge belongs to the
   membership row): two projects holding the same source dataset pin and
   advance independently.

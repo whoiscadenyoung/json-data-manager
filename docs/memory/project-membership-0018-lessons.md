@@ -10,11 +10,11 @@ migration/RLS facts, each caught live:
 
 - **A policy on table T must be row-local or read OTHER tables.** An INVOKER
   helper reading T from a policy ON T recurses to `stack depth limit
-  exceeded` (the policy subquery re-applies itself); a WITH CHECK helper
+exceeded` (the policy subquery re-applies itself); a WITH CHECK helper
   reading T can't see the INSERT's own new row (the 0008 lesson's INSERT
   arm). `publish_bundles` policies are row-local through `project_id`
   (`can_view/edit_project`); the bundle helpers (`publish_bundle_viewable/
-  owner`) are only for `publish_bundle_members`.
+owner`) are only for `publish_bundle_members`.
 - **INSERT..RETURNING evaluates the SELECT policy BEFORE AFTER triggers
   fire.** The birth trigger's owner-membership row does not exist yet when
   RETURNING checks visibility — `projects` SELECT needed the row-local
