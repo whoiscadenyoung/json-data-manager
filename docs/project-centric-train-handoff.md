@@ -1,8 +1,8 @@
 # Project-centric experience train — agent handoff
 
 Written 2026-11-05, main @ 55a3fa7. Updated 2026-11-05 after [project 1]
-(#255, PR #263). Updated 2026-11-06 after [project 2]:
-**#256 DONE (PR #264, main @ 0f8d2e2) — next work is #257.**
+(#255, PR #263). Updated 2026-11-06 after [project 2] (#256, PR #264) and
+[project 3]: **#257 DONE (PR #265, main @ 3bc7236) — next work is #258.**
 
 ## What this train is
 
@@ -33,7 +33,7 @@ resolved decisions D1–D7; §5 = the scenario that is the train's exit test).
 
 - **No back-compat or adoption steps anywhere.** App not in production, PG
   data disposable — every phase ships its final shape. Breaking migrations
-  fine (next migration number: 0020+; ADRs: 0019+).
+  fine (next migration number: 0021+; ADRs: 0020+).
 - Branch off fresh `main` (`git fetch --prune` first). One PR per issue;
   merge with the standard flow (see `docs/memory/pr-merge-sync-flow.md`).
 - Gates before every PR, run **bare** (pipelines mask exit codes): app tests,
@@ -73,14 +73,19 @@ resolved decisions D1–D7; §5 = the scenario that is the train's exit test).
   memberships + their edges were deleted, and the bundle press lost its map
   legs until [project 3] re-owns maps. RLS authoring gotchas:
   `docs/memory/project-catalog-0019-lessons.md`.
-- **#257 layers/maps** — port the branch design §3 to PG; `layer_styles` /
-  `marker_sprites` already exist; one in-migration backfill folds standalone
-  maps into per-creator projects; `needsAttention` on style/schema drift.
-  NOTE from [project 2]: project_artifacts' kind check is
-  `dataset|derived` — [project 3]'s migration re-adds `map` and re-lands
-  the bundle press's map membership legs (removed in pg-bundle-publish.ts;
-  `linkMapLayers` still lives in the publishing store).
+- **#257 layers/maps** — ✅ DONE (PR #265, ADR 0019, migration 0020):
+  `layers`/`layer_children`/`layer_versions` (style on the layer row;
+  layer_styles/map_layer_overrides retired); maps project-owned ROWS with
+  the per-creator backfill — kind `map` did NOT return to memberships
+  (correcting this doc's earlier note); the in-project editor at
+  `/projects/$projectId/maps/$mapId` (auto-layer, restyle, groups +
+  cycle guard, publish/link/clone); /maps = explorer; the workspace's
+  Maps view; realtime joined layers/layer_children and RE-ENABLED RLS on
+  the recreated map_layers (the DROP-table-takes-the-enablement trap —
+  `docs/memory/project-layers-0020-lessons.md`). Rendering stays live;
+  frozen-row rendering is [project 5]'s.
 - **#258 relations** — `dataset_relations` (key|spatial, catalog-level);
+  migrations now 0021+, ADRs 0020+;
   runtime queries GiST-backed, viewport-scoped, hard cap ~200 + "show more".
   Perf lessons: `docs/memory/map-performance-audit-2026-10.md`.
 - **#259 apps** — `apps.project_id` NOT NULL; update the two seeded example
