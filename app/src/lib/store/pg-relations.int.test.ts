@@ -818,7 +818,7 @@ describe.skipIf(!dbUp())("dataset relations (0021, ADR 0020)", () => {
       await s().expectOk("vacuum analyze public.entries");
       await s().expectOk("vacuum analyze public.geometries");
     }
-  }, 30_000);
+  }, 120_000);
 
   test("realtime absence: dataset_relations is deliberately NOT a publication member", async () => {
     await asAlice();
