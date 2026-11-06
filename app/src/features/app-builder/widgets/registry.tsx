@@ -47,11 +47,12 @@ export interface WidgetKindInfo {
 
 export const WIDGET_KINDS: readonly WidgetKindInfo[] = [
   {
-    description: "Geospatial layers",
+    // Maps read stored project maps now (issue #259) — no app dataset needed.
+    description: "A stored project map",
     icon: MapIcon,
     kind: "map",
     label: "Map",
-    needsData: true,
+    needsData: false,
   },
   {
     description: "Bar, line, area, donut",
@@ -80,19 +81,6 @@ export const WIDGET_KINDS: readonly WidgetKindInfo[] = [
 export function widgetKindInfo(kind: WidgetKind): WidgetKindInfo {
   return WIDGET_KINDS.find((info) => info.kind === kind) ?? WIDGET_KINDS[0];
 }
-
-function firstMatching(
-  datasetIds: readonly string[],
-  states: ReadonlyMap<string, DatasetState>,
-  predicate: (state: DatasetState) => boolean,
-): string | undefined {
-  return datasetIds.find((id) => {
-    const state = states.get(id);
-    return state !== undefined && predicate(state);
-  });
-}
-
-const isGeospatial = (state: DatasetState) => state.status === "ready" && state.doc.isGeospatial;
 
 /** A sensible starting group-by: the preferred dataset's first text field, else its first field. */
 function firstField(state: DatasetState | undefined): string | undefined {
@@ -128,8 +116,9 @@ export function createWidget(
       return { ...base, body: "## Section title\nDescribe what this part of the app shows.", kind };
     }
     case "map": {
-      const geo = firstMatching(datasetIds.toReversed(), states, isGeospatial);
-      return { ...base, datasetIds: geo === undefined ? [] : [geo], kind };
+      // The map links to a project map via the picker (issue #259) — start
+      // unset; the settings prompt picks or creates one.
+      return { ...base, kind, mapId: "" };
     }
     case "chart": {
       return {
@@ -197,10 +186,12 @@ export function WidgetView({ widget, height }: { widget: Widget; height: number 
 export function WidgetSettings({
   widget,
   datasetIds,
+  projectId,
   onChange,
 }: {
   widget: Widget;
   datasetIds: readonly string[];
+  projectId?: string;
   onChange: (next: Widget) => void;
 }) {
   const settings = (() => {
@@ -218,7 +209,14 @@ export function WidgetSettings({
         return <ChartWidgetSettings widget={widget} datasetIds={datasetIds} onChange={onChange} />;
       }
       case "map": {
-        return <MapWidgetSettings widget={widget} datasetIds={datasetIds} onChange={onChange} />;
+        return (
+          <MapWidgetSettings
+            widget={widget}
+            datasetIds={datasetIds}
+            projectId={projectId}
+            onChange={onChange}
+          />
+        );
       }
     }
   })();

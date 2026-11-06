@@ -35,6 +35,7 @@ import {
   GitBranch,
   History,
   Import,
+  LayoutDashboard,
   Link2,
   ListPlus,
   Map as MapIcon,
@@ -46,13 +47,15 @@ import {
   Upload,
   Users,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, type ComponentType } from "react";
 import { toast } from "sonner";
 
 import { PgDatasetTagsWithCount } from "#/features/catalog";
 import { RouterButton } from "@/components/router-button";
 import { useSession } from "@/integrations/supabase/provider";
 import { errorMessage } from "@/lib/errors";
+import * as appVersionsStore from "@/lib/store/app-versions";
+import * as appsStore from "@/lib/store/apps";
 import * as datasetsStore from "@/lib/store/datasets";
 import * as derivedStore from "@/lib/store/derived";
 import * as mapsStore from "@/lib/store/maps";
@@ -873,13 +876,137 @@ function PgProjectMapsSection({ canEdit, projectId }: { canEdit: boolean; projec
   );
 }
 
+/** One app card's publish chip: the head version's label, or Draft (never published). */
+function PgAppPublishChip({ appId }: { appId: string }) {
+  const head = useQuery(appVersionsStore.headQueryOptions({ appId }));
+  if (head.isPending) {
+    return null;
+  }
+  return head.data !== null && head.data !== undefined ? (
+    <Badge
+      title="The published snapshot — /apps opens it; edits don't change it until republish."
+      variant="secondary"
+    >
+      <Rocket className="h-3 w-3" />
+      {head.data.versionLabel}
+    </Badge>
+  ) : (
+    <Badge variant="outline">Draft</Badge>
+  );
+}
+
+/** The project's Apps view (issue #259; D7 — apps are project-owned and their map widgets reference this project's stored maps): the project's apps with their publish state, and the create affordance the /apps explorer no longer carries. */
+function PgProjectAppsSection({
+  canEdit,
+  createAppDialog,
+  projectId,
+}: {
+  canEdit: boolean;
+  projectId: string;
+  createAppDialog?: CreateAppSlot;
+}) {
+  const queryClient = useQueryClient(),
+    navigate = useNavigate(),
+    appsQuery = useQuery({ ...appsStore.listForProjectQueryOptions({ projectId }) }),
+    [createOpen, setCreateOpen] = useState(false),
+    apps = appsQuery.data ?? [];
+  return (
+    <section className="mt-2">
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-muted-foreground">
+          Apps{" "}
+          <span className="font-normal">
+            ({apps.length} {apps.length === 1 ? "app" : "apps"})
+          </span>
+        </h2>
+        <Button
+          disabled={!canEdit}
+          onClick={() => {
+            setCreateOpen(true);
+          }}
+          size="sm"
+          title={canEdit ? "Create an app in this project" : VIEWER_REASON}
+          variant="outline"
+        >
+          <LayoutDashboard className="mr-1 h-3.5 w-3.5" />
+          Create app
+        </Button>
+      </div>
+      {apps.length === 0 ? (
+        <p className="rounded-lg border px-4 py-3 text-sm text-muted-foreground">
+          No apps yet — create one and compose this project&apos;s maps and datasets into pages.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {apps.map((app) => (
+            <Card
+              className="flex-row items-center gap-4 px-4 py-3 transition-shadow hover:shadow-md"
+              key={app.id}
+            >
+              <Link
+                className="flex min-w-0 flex-1 flex-col gap-1 py-0"
+                params={{ appId: app.id }}
+                to="/apps/$appId"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline">
+                    <LayoutDashboard className="h-3 w-3" />
+                    App
+                  </Badge>
+                  <PgAppPublishChip appId={app.id} />
+                  <span className="text-xs text-muted-foreground">
+                    {app.pages.reduce((sum, page) => sum + page.widgets.length, 0)} widgets
+                  </span>
+                </div>
+                <p className="truncate text-sm font-medium">{app.title}</p>
+              </Link>
+              <RouterButton
+                params={{ appId: app.id }}
+                size="sm"
+                to="/apps/$appId/edit"
+                variant="outline"
+              >
+                Open builder
+              </RouterButton>
+            </Card>
+          ))}
+        </div>
+      )}
+      {(() => {
+        // Rendered as an element, never called as a function (hooks inside).
+        if (createAppDialog === undefined) {
+          return null;
+        }
+        const CreateAppDialog = createAppDialog;
+        return (
+          <CreateAppDialog
+            onSaved={async (appId) => {
+              void queryClient.invalidateQueries({ queryKey: ["pg:apps"] });
+              await navigate({ params: { appId }, to: "/apps/$appId/edit" });
+            }}
+            open={createOpen}
+            onOpenChange={setCreateOpen}
+            projectId={projectId}
+          />
+        );
+      })()}
+    </section>
+  );
+}
+
 /** The workspace body: the project's facts, the catalog's datasets + derived sections, add/import/create actions, the press. */
 // The body joins the project's reads and renders the catalog's sections
 // with their actions — the flat sequence the press lifecycle doc states;
 // the branches are the sections' load/denied states, each rendered once,
 // here.
 // oxlint-disable-next-line eslint/complexity -- the section ladder is the workspace's whole contract, read top to bottom.
-function PgProjectWorkspaceBody({ projectId }: { projectId: string }) {
+function PgProjectWorkspaceBody({
+  createAppDialog,
+  projectId,
+}: {
+  projectId: string;
+  createAppDialog?: CreateAppSlot;
+}) {
   const queryClient = useQueryClient(),
     { session } = useSession(),
     userId = session === null ? "" : session.user.id,
@@ -1125,6 +1252,12 @@ function PgProjectWorkspaceBody({ projectId }: { projectId: string }) {
 
       <PgProjectMapsSection canEdit={canEdit} projectId={projectId} />
 
+      <PgProjectAppsSection
+        canEdit={canEdit}
+        createAppDialog={createAppDialog}
+        projectId={projectId}
+      />
+
       <PgAddReferenceSheet
         addedDatasetIds={addedDatasetIds}
         addedDerivedIds={addedDerivedIds}
@@ -1144,7 +1277,21 @@ function PgProjectWorkspaceBody({ projectId }: { projectId: string }) {
 }
 
 /** The Postgres edition of `/projects/$projectId` — the project catalog. */
-export function PgProjectWorkspace({ projectId }: { projectId: string }) {
+/** The create-app dialog, wired by the route (the app-builder module is route-wired — ADR 0011/0014; the extension-slot pattern applied). */
+export type CreateAppSlot = ComponentType<{
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSaved: (appId: string) => void | Promise<void>;
+  projectId: string;
+}>;
+
+export function PgProjectWorkspace({
+  createAppDialog,
+  projectId,
+}: {
+  projectId: string;
+  createAppDialog?: CreateAppSlot;
+}) {
   const { isLoading, session } = useSession();
   if (isLoading) {
     return (
@@ -1156,5 +1303,5 @@ export function PgProjectWorkspace({ projectId }: { projectId: string }) {
   if (session === null) {
     return <PgProjectSignInPrompt />;
   }
-  return <PgProjectWorkspaceBody projectId={projectId} />;
+  return <PgProjectWorkspaceBody createAppDialog={createAppDialog} projectId={projectId} />;
 }

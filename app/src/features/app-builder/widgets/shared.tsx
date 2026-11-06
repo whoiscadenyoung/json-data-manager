@@ -29,6 +29,11 @@ export interface WidgetSettingsProps<K extends WidgetKind> {
   widget: WidgetOf<K>;
   /** The app's data sources, in order. */
   datasetIds: readonly string[];
+  /**
+   * The app's owning project — present in the builder only. The map widget's
+   * picker reads the project's stored maps; other kinds ignore it.
+   */
+  projectId?: string;
   onChange: (next: WidgetOf<K>) => void;
 }
 

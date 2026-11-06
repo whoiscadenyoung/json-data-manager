@@ -25,7 +25,6 @@ export const APP_LIMITS = {
   columns: 12,
   /** Tallest widget, in grid row units. */
   maxHeight: 12,
-  mapDatasets: 8,
   tableColumns: 50,
   text: 10_000,
   title: 120,
@@ -98,8 +97,12 @@ export interface TableWidget extends WidgetBase {
 
 export interface MapWidget extends WidgetBase {
   kind: "map";
-  /** The datasets drawn as layers, bottom to top. */
-  datasetIds: string[];
+  /**
+   * The stored project map this widget shows (issue #259, D7 — a map built
+   * anywhere in the app is a map row; the inline `datasetIds` map mode
+   * retired). Empty string = not chosen yet (the settings prompt).
+   */
+  mapId: string;
 }
 
 export type Widget = TextWidget | StatWidget | ChartWidget | TableWidget | MapWidget;
@@ -120,11 +123,11 @@ export interface AppContent {
   pages: AppPage[];
 }
 
-/** Every dataset id one widget reads (the save gate's reference check and the client share it). */
+/** Every dataset id one widget reads (the save gate's reference check and the client share it) — maps read stored maps now, not the app's datasets. */
 export function widgetDatasetIds(widget: Widget): string[] {
   switch (widget.kind) {
     case "map": {
-      return widget.datasetIds;
+      return [];
     }
     case "text": {
       return [];

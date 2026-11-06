@@ -4,9 +4,9 @@ import { APP_LIMITS, appPagesOf, firstPage, widgetDatasetIds } from "./content";
 import type { AppPage, Widget } from "./content";
 
 describe("widgetDatasetIds", () => {
-  it("reads a map's layer list", () => {
-    const widget: Widget = { datasetIds: ["a", "b"], h: 1, id: "w1", kind: "map", w: 4 };
-    expect(widgetDatasetIds(widget)).toStrictEqual(["a", "b"]);
+  it("reads a map as referencing no dataset — it draws a stored project map (issue #259)", () => {
+    const widget: Widget = { h: 1, id: "w1", kind: "map", mapId: "m1", w: 4 };
+    expect(widgetDatasetIds(widget)).toStrictEqual([]);
   });
 
   it("reads a text block as referencing nothing", () => {

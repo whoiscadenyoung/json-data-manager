@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 import { ArchivedConvexSurface } from "#/components/archived-convex-surface";
+import { AppDetailsDialog } from "#/features/app-builder";
 import { PgProjectWorkspace } from "#/features/publishing";
 import { isPostgresDatasetId } from "#/lib/dataset-source";
 
@@ -20,10 +21,32 @@ export const Route = createFileRoute("/projects/$projectId/")({
   component: ProjectIndexPage,
 });
 
+/** The workspace's create-app dialog (the app-builder module is route-wired — ADR 0011/0014): the slot pins the dialog to THIS project. */
+function CreateAppDialogSlot({
+  onSaved,
+  open,
+  onOpenChange,
+  projectId,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSaved: (appId: string) => void | Promise<void>;
+  projectId: string;
+}) {
+  return (
+    <AppDetailsDialog
+      onSaved={onSaved}
+      open={open}
+      onOpenChange={onOpenChange}
+      projectId={projectId}
+    />
+  );
+}
+
 function ProjectIndexPage() {
   const { projectId } = Route.useParams();
   if (isPostgresDatasetId(projectId)) {
-    return <PgProjectWorkspace projectId={projectId} />;
+    return <PgProjectWorkspace createAppDialog={CreateAppDialogSlot} projectId={projectId} />;
   }
   return (
     <ArchivedConvexSurface

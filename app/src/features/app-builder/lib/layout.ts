@@ -101,8 +101,9 @@ export function spanFromDrag(
  */
 export function withoutDataset(widgets: readonly Widget[], datasetId: string): Widget[] {
   return widgets.flatMap((widget): Widget[] => {
+    // Maps draw stored project maps now — removing a dataset never touches them.
     if (widget.kind === "map") {
-      return [{ ...widget, datasetIds: widget.datasetIds.filter((id) => id !== datasetId) }];
+      return [widget];
     }
     return widgetDatasetIds(widget).includes(datasetId) ? [] : [widget];
   });

@@ -1,3 +1,4 @@
+import { Badge } from "@caden/ui/components/badge";
 import { Button } from "@caden/ui/components/button";
 import {
   DropdownMenu,
@@ -15,7 +16,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@caden/ui/components/empty";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
   Copy,
@@ -25,31 +26,34 @@ import {
   Link2,
   MoreHorizontal,
   Pencil,
+  Rocket,
   Share2,
   X,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { toast } from "sonner";
 
 import { RouterButton } from "#/components/router-button";
 import { ThemeToggle } from "#/components/theme-toggle";
 import { useSession } from "#/integrations/supabase/provider";
 import { errorMessage } from "#/lib/errors";
+import * as appVersionsStore from "#/lib/store/app-versions";
 import * as appsStore from "#/lib/store/apps";
+import { listMineQueryOptions, resolveMyRole } from "#/lib/store/project-members";
 
 import { AppCanvasView } from "../components/app-canvas";
+import { CopyAppDialog } from "../components/copy-app-dialog";
 import { PageLoading } from "../components/page-loading";
 import { PageTabs } from "../components/page-tabs";
 import { copyShareUrl, ShareDialog } from "../components/share-dialog";
-import { AppDatasetsProvider } from "../data";
+import { AppDatasetsProvider, AppFrozenProvider } from "../data";
 import { appDocOf, type AppDoc } from "../lib/app-doc";
-import type { AppPage } from "../lib/content";
+import { appPagesOf, type AppPage } from "../lib/content";
 import { resolvePage } from "../lib/pages";
 
 /**
- * A null row. Reads are authenticated-open (0014 — the maps-domain shape),
- * so there is no sharing denial to hide behind: a null answer means the id
- * names no app (a typed-wrong share link, a deleted app).
+ * A null row. Reads are member-wide + the example arm (0022), so a null
+ * answer means the id names no app the viewer can see (a typed-wrong share
+ * link, a deleted app).
  */
 function AppNotFound() {
   return (
@@ -63,7 +67,7 @@ function AppNotFound() {
           <EmptyDescription>This app doesn't exist — check the link.</EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
-          <RouterButton to="/apps">Go to your apps</RouterButton>
+          <RouterButton to="/apps">Browse apps</RouterButton>
         </EmptyContent>
       </Empty>
     </main>
@@ -77,24 +81,8 @@ function AppNotFound() {
 function AppMenu({ app }: { app: AppDoc }) {
   const navigate = useNavigate(),
     queryClient = useQueryClient(),
-    duplicate = useMutation({
-      mutationFn: async (args: { appId: string }) => await appsStore.duplicate(args),
-    }),
     [sharing, setSharing] = useState(false),
-    makeCopy = async () => {
-      try {
-        const copy = await duplicate.mutateAsync({ appId: app.id });
-        if (copy === null) {
-          toast.error("Couldn't copy — this app doesn't exist.");
-          return;
-        }
-        void queryClient.invalidateQueries({ queryKey: ["pg:apps"] });
-        toast.success("Copied to your apps");
-        await navigate({ params: { appId: copy.id }, to: "/apps/$appId/edit" });
-      } catch (error) {
-        toast.error(errorMessage(error, "Couldn't copy the app."));
-      }
-    };
+    [copying, setCopying] = useState(false);
   return (
     <>
       <DropdownMenu>
@@ -132,16 +120,15 @@ function AppMenu({ app }: { app: AppDoc }) {
                   Edit app
                 </DropdownMenuItem>
               </>
-            ) : (
-              <DropdownMenuItem
-                onClick={() => {
-                  void makeCopy();
-                }}
-              >
-                <Copy data-icon="inline-start" />
-                Make a copy
-              </DropdownMenuItem>
-            )}
+            ) : null}
+            <DropdownMenuItem
+              onClick={() => {
+                setCopying(true);
+              }}
+            >
+              <Copy data-icon="inline-start" />
+              Make a copy
+            </DropdownMenuItem>
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
           <DropdownMenuGroup>
@@ -151,7 +138,7 @@ function AppMenu({ app }: { app: AppDoc }) {
               }}
             >
               <LayoutGrid data-icon="inline-start" />
-              Go to your apps
+              Browse apps
             </DropdownMenuItem>
           </DropdownMenuGroup>
         </DropdownMenuContent>
@@ -164,6 +151,15 @@ function AppMenu({ app }: { app: AppDoc }) {
           onOpenChange={setSharing}
         />
       )}
+      <CopyAppDialog
+        app={app}
+        open={copying}
+        onOpenChange={setCopying}
+        onCopied={async (copyId) => {
+          void queryClient.invalidateQueries({ queryKey: ["pg:apps"] });
+          await navigate({ params: { appId: copyId }, to: "/apps/$appId/edit" });
+        }}
+      />
     </>
   );
 }
@@ -227,12 +223,31 @@ function PreviewBar({ app, onExit }: { app: AppDoc; onExit: () => void }) {
 }
 
 /** The app's own top bar: its title, its pages, and a small menu — no product navigation. */
-function AppBar({ app, tabs, menu }: { app: AppDoc; tabs: ReactNode; menu: boolean }) {
+function AppBar({
+  app,
+  tabs,
+  menu,
+  publishedLabel,
+}: {
+  app: AppDoc;
+  tabs: ReactNode;
+  menu: boolean;
+  publishedLabel: string | null;
+}) {
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-1 border-b border-border bg-background px-4 py-2">
       <h1 className="min-w-0 truncate text-base font-semibold" title={app.description ?? undefined}>
         {app.title}
       </h1>
+      {publishedLabel !== null && (
+        <Badge
+          variant="secondary"
+          title="The published snapshot — edits to the live app don't change this until republish."
+        >
+          <Rocket data-icon="inline-start" />
+          {publishedLabel}
+        </Badge>
+      )}
       {tabs !== null && (
         // Phones: title and menu share the first row, the tabs take the next.
         <div className="order-last basis-full sm:order-none sm:basis-auto">{tabs}</div>
@@ -274,13 +289,113 @@ function ContainedPage({ app, page, bars }: { app: AppDoc; page: AppPage; bars: 
   );
 }
 
+/** The frozen branch's body: pages from the snapshot, datasets from the pins, maps from the mapSnapshots. */
+function FrozenAppBody({
+  app,
+  definition,
+  publishedLabel,
+  initialPageId,
+  onPageChange,
+  previewing,
+  onExit,
+}: {
+  app: AppDoc;
+  definition: appVersionsStore.AppVersionDefinition;
+  publishedLabel: string;
+  initialPageId: string | undefined;
+  onPageChange: (pageId: string | undefined) => void;
+  previewing: boolean;
+  onExit?: () => void;
+}) {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the snapshot's pages jsonb is this feature's writer shape (the AppWidgetConfig boundary cast, app-doc.ts posture).
+  const pages = appPagesOf(definition.pages as unknown as AppPage[]),
+    page = resolvePage(pages, initialPageId),
+    tabs =
+      pages.length > 1 ? (
+        <PageTabs
+          pages={pages}
+          activeId={page.id}
+          onChange={(next) => {
+            // The first page is the default and stays out of the URL.
+            onPageChange(next === pages[0].id ? undefined : next);
+          }}
+        />
+      ) : null,
+    bars = (
+      <>
+        {previewing && onExit !== undefined && <PreviewBar app={app} onExit={onExit} />}
+        <AppBar app={app} menu={!previewing} publishedLabel={publishedLabel} tabs={tabs} />
+      </>
+    );
+  return (
+    <AppFrozenProvider definition={definition}>
+      <AppDatasetsProvider datasetIds={definition.datasetPins.map((pin) => pin.datasetId)}>
+        {page.layout === "fullscreen" ? (
+          <FullscreenPage app={app} page={page} bars={bars} />
+        ) : (
+          <ContainedPage app={app} page={page} bars={bars} />
+        )}
+      </AppDatasetsProvider>
+    </AppFrozenProvider>
+  );
+}
+
+/** The live branch's body: the app as configured right now (drafts, previews, never-published apps). */
+function LiveAppBody({
+  app,
+  initialPageId,
+  onPageChange,
+  previewing,
+  onExit,
+}: {
+  app: AppDoc;
+  initialPageId: string | undefined;
+  onPageChange: (pageId: string | undefined) => void;
+  previewing: boolean;
+  onExit?: () => void;
+}) {
+  const page = resolvePage(app.pages, initialPageId),
+    tabs =
+      app.pages.length > 1 ? (
+        <PageTabs
+          pages={app.pages}
+          activeId={page.id}
+          onChange={(next) => {
+            // The first page is the default and stays out of the URL.
+            onPageChange(next === app.pages[0].id ? undefined : next);
+          }}
+        />
+      ) : null,
+    bars = (
+      <>
+        {previewing && onExit !== undefined && <PreviewBar app={app} onExit={onExit} />}
+        <AppBar app={app} menu={!previewing} publishedLabel={null} tabs={tabs} />
+      </>
+    );
+  return (
+    <AppDatasetsProvider datasetIds={app.datasetIds}>
+      {page.layout === "fullscreen" ? (
+        <FullscreenPage app={app} page={page} bars={bars} />
+      ) : (
+        <ContainedPage app={app} page={page} bars={bars} />
+      )}
+    </AppDatasetsProvider>
+  );
+}
+
 /**
  * A published app (/apps/$appId, what a share link opens) or the builder's
  * preview of it (/apps/$appId/preview). Both draw the app standalone — the
  * routes hide the product header — and each page in its own layout (contained
  * or full screen); `pageId` is the `?page=` param. Preview adds a toolbar with
  * an exit; it falls back to the published view for anyone who can't edit.
+ *
+ * Published mode renders the HEAD app_version when one exists (the frozen
+ * snapshot — D7), else the live config; preview always renders live.
  */
+// The page joins the app read, the role resolution, and the head-version
+// gate — the branches are the view's states, each rendered once, here.
+// oxlint-disable-next-line eslint/complexity -- the state ladder is the contract.
 export function AppViewPage({
   appId,
   mode,
@@ -295,7 +410,14 @@ export function AppViewPage({
   onExit?: () => void;
 }) {
   const row = useQuery(appsStore.getQueryOptions({ appId })),
-    { session } = useSession();
+    { session } = useSession(),
+    userId = session === null ? "" : session.user.id,
+    membershipsQuery = useQuery(listMineQueryOptions({ userId })),
+    headVersion = useQuery({
+      ...appVersionsStore.headQueryOptions({ appId }),
+      // Preview always shows the live config; only the published view freezes.
+      enabled: mode === "published",
+    });
   if (row.isPending) {
     return <PageLoading />;
   }
@@ -322,33 +444,37 @@ export function AppViewPage({
   if (row.data === null) {
     return <AppNotFound />;
   }
-  const app = appDocOf(row.data, session === null ? undefined : session.user.id);
-  const page = resolvePage(app.pages, pageId),
-    previewing = mode === "preview" && app.canEdit && onExit !== undefined,
-    tabs =
-      app.pages.length > 1 ? (
-        <PageTabs
-          pages={app.pages}
-          activeId={page.id}
-          onChange={(next) => {
-            // The first page is the default and stays out of the URL.
-            onPageChange(next === app.pages[0].id ? undefined : next);
-          }}
-        />
-      ) : null,
-    bars = (
-      <>
-        {previewing && <PreviewBar app={app} onExit={onExit} />}
-        <AppBar app={app} tabs={tabs} menu={!previewing} />
-      </>
+  const project = row.data.project,
+    app = appDocOf(
+      row.data,
+      resolveMyRole(
+        membershipsQuery.data,
+        row.data.projectId,
+        project === null ? "" : project.createdBy,
+        userId,
+      ),
     );
+  const previewing = mode === "preview" && app.canEdit && onExit !== undefined;
+  if (mode === "published" && headVersion.data !== null && headVersion.data !== undefined) {
+    return (
+      <FrozenAppBody
+        app={app}
+        definition={headVersion.data.definition}
+        publishedLabel={`Published ${headVersion.data.versionLabel}`}
+        initialPageId={pageId}
+        onPageChange={onPageChange}
+        previewing={previewing}
+        onExit={onExit}
+      />
+    );
+  }
   return (
-    <AppDatasetsProvider datasetIds={app.datasetIds}>
-      {page.layout === "fullscreen" ? (
-        <FullscreenPage app={app} page={page} bars={bars} />
-      ) : (
-        <ContainedPage app={app} page={page} bars={bars} />
-      )}
-    </AppDatasetsProvider>
+    <LiveAppBody
+      app={app}
+      initialPageId={pageId}
+      onPageChange={onPageChange}
+      previewing={previewing}
+      onExit={onExit}
+    />
   );
 }

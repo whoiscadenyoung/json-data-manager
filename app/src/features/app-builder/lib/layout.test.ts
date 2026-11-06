@@ -21,14 +21,14 @@ describe("layout", () => {
     expect(spanFromDrag(6, -1000, 80, 12)).toBe(1);
   });
 
-  it("removing a dataset drops its widgets and map layers", () => {
+  it("removing a dataset drops its widgets and keeps map widgets whole (maps draw stored maps)", () => {
     const widgets: Widget[] = [
-      { datasetIds: ["d1", "d2"], h: 6, id: "m", kind: "map", w: 8 },
+      { h: 6, id: "m", kind: "map", mapId: "m1", w: 8 },
       { columns: [], datasetId: "d1", h: 6, id: "t", kind: "table", w: 12 },
       text("x"),
     ];
     expect(withoutDataset(widgets, "d1")).toEqual([
-      { datasetIds: ["d2"], h: 6, id: "m", kind: "map", w: 8 },
+      { h: 6, id: "m", kind: "map", mapId: "m1", w: 8 },
       text("x"),
     ]);
   });
