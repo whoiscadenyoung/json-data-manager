@@ -1,8 +1,9 @@
 # Project-centric experience train — agent handoff
 
 Written 2026-11-05, main @ 55a3fa7. Updated 2026-11-05 after [project 1]
-(#255, PR #263). Updated 2026-11-06 after [project 2] (#256, PR #264) and
-[project 3]: **#257 DONE (PR #265, main @ 3bc7236) — next work is #258.**
+(#255, PR #263). Updated 2026-11-06 after [project 2] (#256, PR #264),
+[project 3] (#257, PR #265), and [project 4]: **#258 DONE (PR #266, main @
+6458b1e) — next work is #259.**
 
 ## What this train is
 
@@ -84,20 +85,26 @@ resolved decisions D1–D7; §5 = the scenario that is the train's exit test).
   the recreated map_layers (the DROP-table-takes-the-enablement trap —
   `docs/memory/project-layers-0020-lessons.md`). Rendering stays live;
   frozen-row rendering is [project 5]'s.
-- **#258 relations** — `dataset_relations` (kind `key|spatial`,
-  cardinality, config jsonb; unique (from, to, kind)) — CATALOG-LEVEL rows
-  (D3: data truth, reusable by any project holding both datasets), with
-  the creation UX living in the project catalog. Migration 0021+; ADRs
-  0020+. The relation-aware MAP RUNTIME (feature click → bounded
-  PostGIS/key query → highlight related + "related records" popup section)
-  mounts in the IN-PROJECT editor's rendering path
-  (`/projects/$projectId/maps/$mapId` — placements→layers→datasets now;
-  the old `/maps/$mapId` is just a redirect). GiST-backed spatial queries,
-  viewport-scoped, hard cap ~200 rows + "show more". Perf lessons:
-  `docs/memory/map-performance-audit-2026-10.md`. Authoring gotchas that
-  still apply: `docs/memory/project-layers-0020-lessons.md` (RLS on
-  recreated tables, publication joins) + the wire-client int-test pattern
-  in `pg-maps-domain.int.test.ts`.
+- **#258 relations** — ✅ DONE (PR #266, ADR 0020, migration 0021):
+  `dataset_relations` catalog-level rows (D3; both ends' own dataset gates
+  ARE the RLS — view to read, edit to write, a project seat grants
+  nothing); the `dataset_relation_records` bounded runtime RPC (index-
+  backed, viewport-scoped, 200/500 cap, page-cut-INNERMOST paging, the
+  other side resolves through its membership pin's frozen version); the
+  catalog Relations section (declare key/spatial, one-click lookup-join →
+  saved derived dataset); the opt-in map runtime in the in-project editor
+  (`LayersMap relationRuntime` prop — amber highlight overlay + related-
+  records popup section, drill-in on highlighted points; surfaces without
+  the prop pay nothing). ALSO FIXED a live main bug: `$projectId.tsx`
+  (workspace, no Outlet) masked its children — `/create` and
+  `/maps/$mapId` rendered the workspace at their own URLs; now
+  `route.tsx` (layout + archive gate) + `index.tsx` (workspace).
+  Lessons: `docs/memory/project-relations-0021-lessons.md` (Outlet
+  masking, migration-session auth.uid() vs the stamp trigger,
+  NULL-vacuous CHECKs, page-cut-in-window paging, fixture
+  is_geospatial/bbox flags, in-test ANALYZE churns shared stats).
+- **#259 apps** — `apps.project_id` NOT NULL; update the two seeded example
+  apps in the same migration; keep the `revision` CAS save flow.
 - **#259 apps** — `apps.project_id` NOT NULL; update the two seeded example
   apps in the same migration; keep the `revision` CAS save flow.
 - **#260 ladder** — replaces `published_visibility`/`apps.sharing`; closure
