@@ -3,12 +3,9 @@ import { describe, expect, it } from "vitest";
 import type { DatasetSummaryRow } from "#/lib/store/datasets";
 
 import {
-  isPostgresLayerTarget,
   pgBboxTuple,
   pgEntryToEntryRow,
   pgGeometryToLayerRow,
-  pgLayerToLayerDoc,
-  pgOverrideToOverride,
   pgSummaryToDatasetSummary,
 } from "./pg-layer-rows";
 
@@ -106,42 +103,6 @@ describe("pgBboxTuple — the envelope unfold", () => {
   });
 });
 
-describe("pgLayerToLayerDoc / pgOverrideToOverride — the catalog rows", () => {
-  it("re-keys a layer row onto the MapLayerDoc shape", () => {
-    const doc = pgLayerToLayerDoc({
-      id: "l1",
-      mapId: "m1",
-      order: 2,
-      targetType: "dataset",
-      targetId: "a44cba20-2b31-4d61-a1f2-0f6b56ca92de",
-      visible: true,
-    });
-    expect(doc).toMatchObject({
-      _id: "l1",
-      mapId: "m1",
-      order: 2,
-      targetType: "dataset",
-      targetId: "a44cba20-2b31-4d61-a1f2-0f6b56ca92de",
-      visible: true,
-    });
-  });
-
-  it("re-keys an override row (childKey/layerId camelCase, doc bookkeeping filled)", () => {
-    const override = pgOverrideToOverride({
-      childKey: "dataset:d1",
-      id: "o1",
-      layerId: "l1",
-      visible: false,
-    });
-    expect(override).toMatchObject({
-      _id: "o1",
-      childKey: "dataset:d1",
-      layerId: "l1",
-      visible: false,
-    });
-  });
-});
-
 describe("pgGeometryToLayerRow — the seam row lift", () => {
   it("keys the row by its ENTRY (1:1), names the dataset as schemaId, embeds the resolved payload", () => {
     const row = pgGeometryToLayerRow(
@@ -199,12 +160,5 @@ describe("pgEntryToEntryRow — the popup/field-join lift", () => {
       data: { name: "x" },
       schemaId: "d1",
     });
-  });
-});
-
-describe("isPostgresLayerTarget — the split predicate", () => {
-  it("uuid targets take the PG surface; Convex ids do not", () => {
-    expect(isPostgresLayerTarget("a44cba20-2b31-4d61-a1f2-0f6b56ca92de")).toBe(true);
-    expect(isPostgresLayerTarget("jx78knwxh0aqmnj2jgfg80st318efn5j")).toBe(false);
   });
 });

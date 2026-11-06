@@ -1,24 +1,12 @@
 import type { GeometryType } from "@caden/json-cms/react";
 
 import type { DatasetEntryRow, DatasetGeometryRow } from "#/lib/dataset-rows";
-import { isPostgresDatasetId } from "#/lib/dataset-source";
-import type { CollectionMembershipRow, CollectionRow } from "#/lib/store/collections";
 import type { DatasetSummaryRow, DatasetBoundingBox } from "#/lib/store/datasets";
 import type { DerivedDatasetSummaryRow } from "#/lib/store/derived";
 import type { EntryRow } from "#/lib/store/entries";
 import type { GeometryRow } from "#/lib/store/geometries";
-import type { GroupRow } from "#/lib/store/groups";
-import type { MapLayerOverrideRow, MapLayerRow } from "#/lib/store/maps";
 
-import type {
-  DatasetSummary,
-  DerivedDatasetSummary,
-  GroupSummary,
-  LayerChainResolution,
-  MapLayerDoc,
-  MapLayerOverride,
-  MembershipRow,
-} from "../lib/map-layers";
+import type { DatasetSummary, DerivedDatasetSummary } from "../lib/map-layers";
 
 /**
  * The workspace's PG → pipeline adapters (the transitional split, design
@@ -124,29 +112,7 @@ export function pgBboxTuple(bbox: DatasetBoundingBox | null): number[] | undefin
  * Convex bookkeeping field the PG row has no counterpart for — 0 is the
  * honest placeholder (nothing in the pipeline reads it).
  */
-export function pgLayerToLayerDoc(row: MapLayerRow): MapLayerDoc {
-  return {
-    _creationTime: 0,
-    _id: row.id,
-    mapId: row.mapId,
-    order: row.order,
-    targetType: row.targetType,
-    targetId: row.targetId,
-    visible: row.visible,
-  };
-}
-
 /** One PG override row as the pipeline's `MapLayerOverride` (`child_key` → `childKey`; the doc bookkeeping fields are 0-filled placeholders, nothing reads them). */
-export function pgOverrideToOverride(row: MapLayerOverrideRow): MapLayerOverride {
-  return {
-    _creationTime: 0,
-    _id: row.id,
-    childKey: row.childKey,
-    layerId: row.layerId,
-    visible: row.visible,
-  };
-}
-
 /**
  * One PG geometry row as the seam's `DatasetGeometryRow` — the row shape
  * LayersMap's whole rendering path (keying, point split, feature building,
@@ -198,59 +164,19 @@ export function pgEntryToEntryRow(row: EntryRow): DatasetEntryRow {
  * split predicate). Layers targeting Convex datasets keep their Convex
  * reads; layers targeting PG datasets take the store-backed loader.
  */
-export function isPostgresLayerTarget(targetId: string): boolean {
-  return isPostgresDatasetId(targetId);
-}
-
-/**
- * A `LayerChainResolution`-shaped record does not exist for PG datasets in
- * stage 2 (version chains are a Convex-catalog concept until stage 4's
- * publishing lands) — the workspace passes its Convex resolutions only, and
- * this constant documents that the PG side contributes none.
- */
-export const NO_PG_CHAIN_RESOLUTIONS: readonly LayerChainResolution[] = [];
 
 /**
  * One PG collection as the pipeline's `CollectionDoc` (the component's
  * collections doc): `id` → `_id`, null → absent for the optional columns;
  * the `_creationTime` placeholder follows the adapters' house rule.
  */
-export function pgCollectionToCollectionDoc(row: CollectionRow) {
-  return {
-    _creationTime: 0,
-    _id: row.id,
-    description: row.description ?? undefined,
-    name: row.name,
-  };
-}
-
 /** One PG group as the pipeline's `GroupSummary` (the component's groups doc). */
-export function pgGroupToGroupSummary(row: GroupRow): GroupSummary {
-  return {
-    _creationTime: 0,
-    _id: row.id,
-    collectionId: row.collectionId ?? undefined,
-    description: row.description ?? undefined,
-    name: row.name,
-  };
-}
-
 /**
  * One PG membership row as the pipeline's `MembershipRow` (the component's
  * schemaCollections doc): `datasetId` → `schemaId`; the synthetic `_id` is
  * the pair (the pipeline reads memberships by collection/schemaId only —
  * nothing consumes the row id).
  */
-export function pgMembershipToMembershipRow(row: CollectionMembershipRow): MembershipRow {
-  return {
-    _creationTime: 0,
-    _id: `${row.collectionId}:${row.datasetId}`,
-    collectionId: row.collectionId,
-    kind: row.kind ?? undefined,
-    schemaId: row.datasetId,
-  };
-}
-
 /** One PG derived-registry summary as the pipeline's `DerivedDatasetSummary`. */
 export function pgDerivedToDerivedSummary(row: DerivedDatasetSummaryRow): DerivedDatasetSummary {
   return {

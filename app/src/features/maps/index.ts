@@ -1,25 +1,12 @@
 // Public API of the maps feature (ADR 0014). Code outside `features/maps/`
 // imports from here, never from its subfolders.
-export { AddToMapSheet } from "./components/add-to-map-sheet";
 export { CollectionExtentMap } from "./components/datasets-map";
 export { EntriesMap } from "./components/entries-map";
 export { GroupMap } from "./components/group-map";
 export { LayersMap } from "./components/layers-map";
-export {
-  pgCollectionToCollectionDoc,
-  pgDerivedToDerivedSummary,
-  pgGroupToGroupSummary,
-  pgLayerToLayerDoc,
-  pgMembershipToMembershipRow,
-  pgOverrideToOverride,
-  pgSummaryToDatasetSummary,
-} from "./components/pg-layer-rows";
+export { pgDerivedToDerivedSummary, pgSummaryToDatasetSummary } from "./components/pg-layer-rows";
 export { useGeometriesByPgDatasets } from "./components/pg-geometries-loader";
 export type { LayersMapExtension, LayersMapLayerArgs } from "./components/layers-map";
-export { MapFormPanel } from "./components/map-form-panel";
-export { MapLayerPanel } from "./components/map-layer-panel";
-export type { DatasetActionsSlot } from "./components/map-layer-panel";
-export { MapLayerPickerSheet } from "./components/map-layer-picker";
 export { TileBuildStatus } from "./components/tile-build-status";
 export {
   geospatialDatasetsFor,

@@ -31,6 +31,7 @@ import { Route as DatasetsSchemaIdEntryIdRouteImport } from './routes/datasets/$
 import { Route as DatasetsSchemaIdBulkUploadRouteImport } from './routes/datasets/$schemaId/bulk-upload'
 import { Route as DatasetsSchemaIdEditRouteImport } from './routes/datasets/$schemaId/edit'
 import { Route as ProjectsProjectIdCreateRouteImport } from './routes/projects/$projectId/create'
+import { Route as ProjectsProjectIdMapsMapIdRouteImport } from './routes/projects/$projectId/maps/$mapId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -144,6 +145,12 @@ const ProjectsProjectIdCreateRoute = ProjectsProjectIdCreateRouteImport.update({
   path: '/create',
   getParentRoute: () => ProjectsProjectIdRoute,
 } as any)
+const ProjectsProjectIdMapsMapIdRoute =
+  ProjectsProjectIdMapsMapIdRouteImport.update({
+    id: '/maps/$mapId',
+    path: '/maps/$mapId',
+    getParentRoute: () => ProjectsProjectIdRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -168,6 +175,7 @@ export interface FileRoutesByFullPath {
   '/apps/$appId/': typeof AppsAppIdIndexRoute
   '/collections/$collectionId/': typeof CollectionsCollectionIdIndexRoute
   '/datasets/$schemaId/': typeof DatasetsSchemaIdIndexRoute
+  '/projects/$projectId/maps/$mapId': typeof ProjectsProjectIdMapsMapIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -192,6 +200,7 @@ export interface FileRoutesByTo {
   '/apps/$appId': typeof AppsAppIdIndexRoute
   '/collections/$collectionId': typeof CollectionsCollectionIdIndexRoute
   '/datasets/$schemaId': typeof DatasetsSchemaIdIndexRoute
+  '/projects/$projectId/maps/$mapId': typeof ProjectsProjectIdMapsMapIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -217,6 +226,7 @@ export interface FileRoutesById {
   '/apps/$appId/': typeof AppsAppIdIndexRoute
   '/collections/$collectionId/': typeof CollectionsCollectionIdIndexRoute
   '/datasets/$schemaId/': typeof DatasetsSchemaIdIndexRoute
+  '/projects/$projectId/maps/$mapId': typeof ProjectsProjectIdMapsMapIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -243,6 +253,7 @@ export interface FileRouteTypes {
     | '/apps/$appId/'
     | '/collections/$collectionId/'
     | '/datasets/$schemaId/'
+    | '/projects/$projectId/maps/$mapId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -267,6 +278,7 @@ export interface FileRouteTypes {
     | '/apps/$appId'
     | '/collections/$collectionId'
     | '/datasets/$schemaId'
+    | '/projects/$projectId/maps/$mapId'
   id:
     | '__root__'
     | '/'
@@ -291,6 +303,7 @@ export interface FileRouteTypes {
     | '/apps/$appId/'
     | '/collections/$collectionId/'
     | '/datasets/$schemaId/'
+    | '/projects/$projectId/maps/$mapId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -473,15 +486,24 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdCreateRouteImport
       parentRoute: typeof ProjectsProjectIdRoute
     }
+    '/projects/$projectId/maps/$mapId': {
+      id: '/projects/$projectId/maps/$mapId'
+      path: '/maps/$mapId'
+      fullPath: '/projects/$projectId/maps/$mapId'
+      preLoaderRoute: typeof ProjectsProjectIdMapsMapIdRouteImport
+      parentRoute: typeof ProjectsProjectIdRoute
+    }
   }
 }
 
 interface ProjectsProjectIdRouteChildren {
   ProjectsProjectIdCreateRoute: typeof ProjectsProjectIdCreateRoute
+  ProjectsProjectIdMapsMapIdRoute: typeof ProjectsProjectIdMapsMapIdRoute
 }
 
 const ProjectsProjectIdRouteChildren: ProjectsProjectIdRouteChildren = {
   ProjectsProjectIdCreateRoute: ProjectsProjectIdCreateRoute,
+  ProjectsProjectIdMapsMapIdRoute: ProjectsProjectIdMapsMapIdRoute,
 }
 
 const ProjectsProjectIdRouteWithChildren =

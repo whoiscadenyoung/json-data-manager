@@ -1,5 +1,5 @@
-// Integration tests — stage 2's maps domain (docs/supabase-migration-design.md
-// §3.4 maps block + §4 matrix row + §5.6) against the local Supabase Postgres.
+// Integration tests — the maps + layers domain (issue #257, migration 0020,
+// ADR 0019) against the local Supabase Postgres.
 //
 // Same wire-client pattern as the stage-1 pg-*.int.test.ts files: SQL spoken
 // directly, roles switched inside a test-scoped transaction (`set local role
@@ -7,9 +7,20 @@
 // Works against CI's service container (SUPABASE_DB_URL) and the local stack
 // unchanged. Skips with a one-line message when the stack is unreachable.
 //
-// Maps fixtures are created INSIDE the test transaction: their attribution
-// columns are stamped from auth.uid() (NOT NULL), so they cannot be created
-// by the admin connection the way dataset fixtures are.
+// Fixtures are created INSIDE the test transaction: the attribution columns
+// are stamped from auth.uid() (NOT NULL), so they cannot be created by the
+// admin connection the way dataset fixtures are.
+//
+// The matrix (ADR 0019; owner > editor > viewer, the 0018 helpers):
+//   * maps/layers/layer_children/layer_versions — reads member-wide,
+//     content writes editor+; a non-member reads zero rows (the
+//     no-existence-leak posture) and anon is denied everywhere.
+//   * placements CASCADE with their layer MEMBERSHIP; a dataset membership's
+//     removal cascades its layers (and their children).
+//   * layer_versions rows are append-only — no UPDATE/DELETE policies at
+//     all (the dataset_versions posture).
+//   * the realtime publication carries layers + layer_children + map_layers;
+//     layer_styles left it (the table died with 0020).
 
 import crypto from "node:crypto";
 
@@ -18,6 +29,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "vitest"
 import {
   ALICE,
   BOB,
+  CAROL,
   createDataset,
   DB_URL,
   dbUp,
@@ -58,178 +70,289 @@ async function asAlice(): Promise<void> {
   await s().asUser(ALICE);
 }
 
-async function createMap(name = "pg-int map"): Promise<string> {
+/** One project with the fixture members: ALICE owner (the birth trigger), BOB editor, CAROL viewer — plus a second ALICE-only project for the outsider lens. */
+async function seedProject(): Promise<{ projectA: string; projectB: string }> {
+  const projectA = crypto.randomUUID();
+  const projectB = crypto.randomUUID();
+  await s().expectOk(
+    `insert into public.projects (id, title, created_by) values (${sqlLit(projectA)}, 'maps A', ${sqlLit(ALICE)})`,
+  );
+  await s().expectOk(
+    `insert into public.projects (id, title, created_by) values (${sqlLit(projectB)}, 'maps B', ${sqlLit(ALICE)})`,
+  );
+  await s().expectOk(
+    `insert into public.project_members (project_id, user_id, role) values (${sqlLit(projectA)}, ${sqlLit(BOB)}, 'editor')`,
+  );
+  await s().expectOk(
+    `insert into public.project_members (project_id, user_id, role) values (${sqlLit(projectA)}, ${sqlLit(CAROL)}, 'viewer')`,
+  );
+  return { projectA, projectB };
+}
+
+async function createMap(projectId: string, name = "pg-int map"): Promise<string> {
   const id = crypto.randomUUID();
-  await s().expectOk(`insert into public.maps (id, name) values (${sqlLit(id)}, ${sqlLit(name)})`);
+  await s().expectOk(
+    `insert into public.maps (id, name, project_id) values (${sqlLit(id)}, ${sqlLit(name)}, ${sqlLit(projectId)})`,
+  );
   return id;
 }
 
-async function addLayer(mapId: string, targetId: string, order = 0): Promise<string> {
-  const rows = await s().expectOk(
-    `insert into public.map_layers (map_id, "order", target_type, target_id, visible)
-     values (${sqlLit(mapId)}, ${order}, 'dataset', ${sqlLit(targetId)}, true) returning id::text as id`,
+/** One dataset membership + the owned data layer styling it + the layer's kind-'layer' membership — the create flow's row set. */
+async function seedDataLayer(
+  projectId: string,
+  datasetId: string,
+): Promise<{ layerId: string; layerMembershipId: string }> {
+  const memberRows = await s().expectOk(
+    `insert into public.project_artifacts (project_id, artifact_id, artifact_kind, role, sync_mode)
+     values (${sqlLit(projectId)}, ${sqlLit(datasetId)}, 'dataset', 'linked', 'manual') returning id::text as id`,
   );
-  return rows[0].id as string;
+  const memberRow = memberRows[0];
+  if (memberRow === undefined || memberRow.id === null) throw new Error("no membership");
+  const datasetMemberId: string = memberRow.id;
+  const layerId = crypto.randomUUID();
+  await s().expectOk(
+    `insert into public.layers (id, project_id, kind, name, dataset_member_id)
+     values (${sqlLit(layerId)}, ${sqlLit(projectId)}, 'data', 'Parks', ${sqlLit(datasetMemberId)})`,
+  );
+  const lmRows = await s().expectOk(
+    `insert into public.project_artifacts (project_id, artifact_id, artifact_kind, role, sync_mode)
+     values (${sqlLit(projectId)}, ${sqlLit(layerId)}, 'layer', 'owned', 'manual') returning id::text as id`,
+  );
+  const lmRow = lmRows[0];
+  if (lmRow === undefined || lmRow.id === null) throw new Error("no layer membership");
+  return { layerId, layerMembershipId: lmRow.id };
 }
 
-describe.skipIf(!dbUp())("maps domain (§3.4/§4)", () => {
-  test("authenticated users CRUD the shared catalog; anon is denied everywhere", async () => {
-    await asAlice();
-    const mapId = await createMap();
+async function place(mapId: string, layerMembershipId: string, order = 0): Promise<string> {
+  const rows = await s().expectOk(
+    `insert into public.map_layers (map_id, "order", layer_member_id, visible)
+     values (${sqlLit(mapId)}, ${order}, ${sqlLit(layerMembershipId)}, true) returning id::text as id`,
+  );
+  const row = rows[0];
+  if (row === undefined || row.id === null) throw new Error("no placement");
+  return row.id;
+}
 
-    // A second user (BOB) reads and writes ALICE's map — "maps stay open"
-    // (§4: shared catalog artifacts, ADR 0009).
+describe.skipIf(!dbUp())("maps + layers domain (0020, ADR 0019)", () => {
+  test("role matrix: members read the workspace, editors write it, viewers can't, outsiders stay blind; anon denied everywhere", async () => {
+    await asAlice();
+    const seed = await seedProject();
+    const mapId = await createMap(seed.projectA);
+    const datasetId = await createDataset(s(), { createdBy: ALICE });
+    const { layerMembershipId } = await seedDataLayer(seed.projectA, datasetId);
+
+    // EDITOR (BOB): reads the map + places layers.
     await s().asUser(BOB);
     expect(
       await s().count(`select count(*) as n from public.maps where id = ${sqlLit(mapId)}`),
     ).toBe(1);
-    const layerId = await addLayer(mapId, crypto.randomUUID());
+    const placementId = await place(mapId, layerMembershipId, 0);
     await s().expectOk(
-      `update public.map_layers set visible = false where id = ${sqlLit(layerId)}`,
+      `update public.map_layers set visible = false where id = ${sqlLit(placementId)}`,
+    );
+    // The editor restyles the layer (style lives on the layer row now).
+    await s().expectOk(
+      `update public.layers set style = '{"layers":[]}'::jsonb where project_id = ${sqlLit(seed.projectA)}`,
     );
 
+    // VIEWER (CAROL): reads everything; every write answers the denial
+    // shapes — INSERTs raise, UPDATE/DELETE filter to 0 rows.
+    await s().asUser(CAROL);
+    expect(
+      await s().count(`select count(*) as n from public.maps where id = ${sqlLit(mapId)}`),
+    ).toBe(1);
+    expect(
+      await s().count(
+        `select count(*) as n from public.layers where project_id = ${sqlLit(seed.projectA)}`,
+      ),
+    ).toBe(1);
+    await expect(
+      s().denied(
+        `insert into public.maps (id, name, project_id) values ('${crypto.randomUUID()}', 'carol', ${sqlLit(seed.projectA)})`,
+      ),
+    ).resolves.toMatch(/row-level security/i);
+    await expect(
+      s().denied(
+        `update public.layers set name = 'carol was here' where project_id = ${sqlLit(seed.projectA)}`,
+      ),
+    ).resolves.toMatch(/0 rows/);
+    await expect(
+      s().denied(`update public.map_layers set visible = false where id = ${sqlLit(placementId)}`),
+    ).resolves.toMatch(/0 rows/);
+
+    // OUTSIDER (BOB against project B's map): blind. (Back to ALICE first —
+    // the datasets INSERT lesson applies to maps too: the fixture creator
+    // must hold the seat.)
+    await s().asUser(ALICE);
+    const foreignMap = await createMap(seed.projectB, "private map");
+    await s().asUser(BOB);
+    expect(
+      await s().count(`select count(*) as n from public.maps where id = ${sqlLit(foreignMap)}`),
+    ).toBe(0);
+
+    // ANON: denied everywhere (the §4 matrix rule).
     await s().asAnon();
     expect(await s().count("select count(*) as n from public.maps")).toBe(0);
+    expect(await s().count("select count(*) as n from public.layers")).toBe(0);
+    expect(await s().count("select count(*) as n from public.layer_children")).toBe(0);
+    expect(await s().count("select count(*) as n from public.layer_versions")).toBe(0);
     expect(await s().count("select count(*) as n from public.map_layers")).toBe(0);
-    expect(await s().count("select count(*) as n from public.map_layer_overrides")).toBe(0);
-    expect(await s().count("select count(*) as n from public.layer_styles")).toBe(0);
     expect(await s().count("select count(*) as n from public.marker_sprites")).toBe(0);
     await expect(
-      s().denied(`insert into public.maps (id, name) values ('${crypto.randomUUID()}', 'anon')`),
+      s().denied(
+        `insert into public.maps (id, name, project_id) values ('${crypto.randomUUID()}', 'anon', ${sqlLit(seed.projectA)})`,
+      ),
     ).resolves.toMatch(/row-level security/i);
     await s().rollback();
+    await dropDatasets(s(), [datasetId]);
   });
 
-  test("created_by / updated_by / uploaded_by are stamped to the invoker, never claimed", async () => {
+  test("created_by is stamped to the invoker, never claimed (maps + layers)", async () => {
     await asAlice();
-
+    const seed = await seedProject();
     const mapId = crypto.randomUUID();
     await s().expectOk(
-      `insert into public.maps (id, name, created_by) values (${sqlLit(mapId)}, 'spoofed', ${sqlLit(BOB)})`,
+      `insert into public.maps (id, name, project_id, created_by) values (${sqlLit(mapId)}, 'spoofed', ${sqlLit(seed.projectA)}, ${sqlLit(BOB)})`,
     );
     const rows = await s().expectOk(
       `select created_by::text as by from public.maps where id = ${sqlLit(mapId)}`,
     );
+    const row = rows[0];
+    if (row === undefined) throw new Error("no map row");
     // ALICE is the invoker; BOB was claimed in the payload and dropped.
-    expect(rows[0].by as string).toBe(ALICE);
+    expect(row.by).toBe(ALICE);
 
-    // layer_styles.updated_by follows the LAST writer.
-    const styleId = crypto.randomUUID();
+    const layerId = crypto.randomUUID();
     await s().expectOk(
-      `insert into public.layer_styles (id, map_id, render_id, style)
-       values (${sqlLit(styleId)}, ${sqlLit(mapId)}, 'render-1', '{"layers":[]}'::jsonb)`,
+      `insert into public.layers (id, project_id, kind, name, created_by)
+       values (${sqlLit(layerId)}, ${sqlLit(seed.projectA)}, 'group', 'spoofed layer', ${sqlLit(BOB)})`,
     );
-    await s().asUser(BOB);
-    await s().expectOk(
-      `update public.layer_styles set style = '{"layers":[1]}'::jsonb where id = ${sqlLit(styleId)}`,
+    const layerRows = await s().expectOk(
+      `select created_by::text as by from public.layers where id = ${sqlLit(layerId)}`,
     );
-    const styleRows = await s().expectOk(
-      `select updated_by::text as by from public.layer_styles where id = ${sqlLit(styleId)}`,
-    );
-    expect(styleRows[0].by as string).toBe(BOB);
-
-    await s().asUser(ALICE);
-    const spriteId = crypto.randomUUID();
-    await s().expectOk(
-      `insert into public.marker_sprites (id, label, storage_path, width, height)
-       values (${sqlLit(spriteId)}, 'pin', ${sqlLit(`marker-sprites/${ALICE}/${spriteId}.png`)}, 24, 24)`,
-    );
-    const spriteRows = await s().expectOk(
-      `select uploaded_by::text as by from public.marker_sprites where id = ${sqlLit(spriteId)}`,
-    );
-    expect(spriteRows[0].by as string).toBe(ALICE);
+    const layerRow = layerRows[0];
+    if (layerRow === undefined) throw new Error("no layer row");
+    expect(layerRow.by).toBe(ALICE);
     await s().rollback();
   });
 
-  test("deleting a map cascades through layers, overrides and styles", async () => {
+  test("the membership cascades: removing the layer membership removes its placements; removing the dataset membership removes its layers", async () => {
     await asAlice();
-    const mapId = await createMap();
-    const layerId = await addLayer(mapId, crypto.randomUUID());
-    await s().expectOk(
-      `insert into public.map_layer_overrides (layer_id, child_key, visible)
-       values (${sqlLit(layerId)}, ${sqlLit(`dataset:${crypto.randomUUID()}`)}, false)`,
-    );
-    await s().expectOk(
-      `insert into public.layer_styles (id, map_id, render_id, style)
-       values ('${crypto.randomUUID()}', ${sqlLit(mapId)}, 'render-2', '{}'::jsonb)`,
-    );
+    const seed = await seedProject();
+    const mapId = await createMap(seed.projectA);
+    const datasetId = await createDataset(s(), { createdBy: ALICE });
+    const { layerId, layerMembershipId } = await seedDataLayer(seed.projectA, datasetId);
+    const placementId = await place(mapId, layerMembershipId, 0);
 
-    await s().expectOk(`delete from public.maps where id = ${sqlLit(mapId)}`);
+    // Removing the layer's kind-'layer' membership removes its placement
+    // through the FK cascade, but NOT the layer row.
+    await s().expectOk(
+      `delete from public.project_artifacts where id = ${sqlLit(layerMembershipId)}`,
+    );
     expect(
       await s().count(
-        `select count(*) as n from public.map_layers where map_id = ${sqlLit(mapId)}`,
+        `select count(*) as n from public.map_layers where id = ${sqlLit(placementId)}`,
       ),
     ).toBe(0);
     expect(
-      await s().count(
-        `select count(*) as n from public.layer_styles where map_id = ${sqlLit(mapId)}`,
-      ),
-    ).toBe(0);
+      await s().count(`select count(*) as n from public.layers where id = ${sqlLit(layerId)}`),
+    ).toBe(1);
+
+    // Removing the dataset membership cascades the layers styling it
+    // (layers.dataset_member_id ON DELETE CASCADE).
+    const memberRows = await s().expectOk(
+      `select id::text as id from public.project_artifacts
+       where artifact_id = ${sqlLit(datasetId)} and artifact_kind = 'dataset'`,
+    );
+    const memberRow = memberRows[0];
+    if (memberRow === undefined || memberRow.id === null) throw new Error("no dataset membership");
+    await s().expectOk(`delete from public.project_artifacts where id = ${sqlLit(memberRow.id)}`);
     expect(
-      await s().count(
-        `select count(*) as n from public.map_layer_overrides where layer_id = ${sqlLit(layerId)}`,
-      ),
+      await s().count(`select count(*) as n from public.layers where id = ${sqlLit(layerId)}`),
     ).toBe(0);
     await s().rollback();
+    await dropDatasets(s(), [datasetId]);
   });
 
-  test("structure parity: layer order+target index, override uniqueness, style uniqueness", async () => {
+  test("structure: placement draw order + layer kind/child constraints + version append-only", async () => {
     await asAlice();
-    const mapId = await createMap();
-    const target = crypto.randomUUID();
-    const l1 = await addLayer(mapId, target, 0);
-    const l2Rows = await s().expectOk(
-      `insert into public.map_layers (map_id, "order", target_type, target_id, visible)
-       values (${sqlLit(mapId)}, 7, 'dataset', ${sqlLit(target)}, false) returning id::text as id`,
+    const seed = await seedProject();
+    const mapId = await createMap(seed.projectA);
+    const datasetId = await createDataset(s(), { createdBy: ALICE });
+    const { layerId, layerMembershipId } = await seedDataLayer(seed.projectA, datasetId);
+    const p1 = await place(mapId, layerMembershipId, 0);
+    // Gaps allowed; only relative order renders; ids tie-break.
+    const p2Rows = await s().expectOk(
+      `insert into public.map_layers (map_id, "order", layer_member_id, visible)
+       values (${sqlLit(mapId)}, 7, ${sqlLit(layerMembershipId)}, false) returning id::text as id`,
     );
-    const l2 = l2Rows[0].id as string;
-
-    // by_map (map_id, "order"): an index scan yields draw order — gaps allowed.
+    const p2 = p2Rows[0];
+    if (p2 === undefined || p2.id === null) throw new Error("no placement");
     const ordered = await s().expectOk(
       `select id::text as id from public.map_layers where map_id = ${sqlLit(mapId)} order by "order"`,
     );
-    expect(ordered.map((r) => r.id)).toEqual([l1, l2]);
+    expect(ordered.map((r) => r.id)).toEqual([p1, p2.id]);
 
-    // by_target: rows findable by target alone (expansion reads).
-    expect(
-      await s().count(
-        `select count(*) as n from public.map_layers where target_id = ${sqlLit(target)}`,
-      ),
-    ).toBe(2);
-
-    // One override row per {layer_id, child_key} (unique constraint).
-    const childKey = `dataset:${crypto.randomUUID()}`;
-    await s().expectOk(
-      `insert into public.map_layer_overrides (layer_id, child_key, visible)
-       values (${sqlLit(l1)}, ${sqlLit(childKey)}, true)`,
-    );
+    // The layer kind domain (data | group).
     await expect(
       s().denied(
-        `insert into public.map_layer_overrides (layer_id, child_key, visible)
-         values (${sqlLit(l1)}, ${sqlLit(childKey)}, false)`,
-      ),
-    ).resolves.toMatch(/duplicate key|unique/i);
-
-    // One style row per {map_id, render_id} (unique constraint).
-    await s().expectOk(
-      `insert into public.layer_styles (id, map_id, render_id, style)
-       values ('${crypto.randomUUID()}', ${sqlLit(mapId)}, 'render-3', '{}'::jsonb)`,
-    );
-    await expect(
-      s().denied(
-        `insert into public.layer_styles (id, map_id, render_id, style)
-         values ('${crypto.randomUUID()}', ${sqlLit(mapId)}, 'render-3', '{}'::jsonb)`,
-      ),
-    ).resolves.toMatch(/duplicate key|unique/i);
-
-    // target_type is constrained to the component's four literals.
-    await expect(
-      s().denied(
-        `insert into public.map_layers (map_id, "order", target_type, target_id)
-         values (${sqlLit(mapId)}, 0, 'schema', ${sqlLit(target)})`,
+        `insert into public.layers (project_id, kind, name) values (${sqlLit(seed.projectA)}, 'schema', 'x')`,
       ),
     ).resolves.toMatch(/check/i);
+
+    // A group's children: rows, not arrays; one child placement per (group, kind, child).
+    const childId = crypto.randomUUID();
+    await s().expectOk(
+      `insert into public.layers (id, project_id, kind, name) values (${sqlLit(childId)}, ${sqlLit(seed.projectA)}, 'data', 'Child')`,
+    );
+    await s().expectOk(
+      `insert into public.layer_children (group_id, child_kind, child_layer_id, "order")
+       values (${sqlLit(layerId)}, 'owned', ${sqlLit(childId)}, 0)`,
+    );
+    await expect(
+      s().denied(
+        `insert into public.layer_children (group_id, child_kind, child_layer_id, "order")
+         values (${sqlLit(layerId)}, 'owned', ${sqlLit(childId)}, 1)`,
+      ),
+    ).resolves.toMatch(/duplicate key|unique/i);
+
+    // layer_versions are append-only: INSERT lands; UPDATE and DELETE
+    // answer 0 rows (no policies at all — the dataset_versions posture).
+    const versionRows = await s().expectOk(
+      `insert into public.layer_versions (layer_id, version_label, definition)
+       values (${sqlLit(layerId)}, 'v1', '{"name":"Parks"}'::jsonb) returning id::text as id`,
+    );
+    const versionRow = versionRows[0];
+    if (versionRow === undefined || versionRow.id === null) throw new Error("no version");
+    const versionId: string = versionRow.id;
+    await expect(
+      s().denied(
+        `update public.layer_versions set version_label = 'v9' where id = ${sqlLit(versionId)}`,
+      ),
+    ).resolves.toMatch(/0 rows/);
+    await expect(
+      s().denied(`delete from public.layer_versions where id = ${sqlLit(versionId)}`),
+    ).resolves.toMatch(/0 rows/);
     await s().rollback();
+    await dropDatasets(s(), [datasetId]);
+  });
+
+  test("the realtime publication carries layers, layer_children, map_layers — and layer_styles is gone", async () => {
+    await s().asAdmin();
+    for (const table of ["layers", "layer_children", "map_layers"]) {
+      // oxlint-disable-next-line no-await-in-loop -- one wire session; statements must settle in order (the desync lesson).
+      const rows = await s().expectOk(
+        `select 1 from pg_publication_tables
+         where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = ${sqlLit(table)}`,
+      );
+      expect(rows.length, `${table} must join supabase_realtime`).toBe(1);
+    }
+    expect(
+      await s().count(
+        `select count(*) as n from pg_publication_tables
+         where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'layer_styles'`,
+      ),
+    ).toBe(0);
   });
 });
 

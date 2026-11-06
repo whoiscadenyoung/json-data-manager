@@ -39,12 +39,10 @@ import {
   type GeometryRow,
   type GeometryRowsPage,
 } from "./geometries";
-import { listForMapQueryOptions } from "./layer-styles";
 import {
   getQueryOptions as mapsGetOptions,
-  listAllLayersQueryOptions,
-  listLayersQueryOptions,
-  listOverridesQueryOptions,
+  listAllPlacementsQueryOptions,
+  listPlacementsQueryOptions,
 } from "./maps";
 import { attachDatasetRealtime, DATASET_CHANNEL_TABLES, datasetChannelTopic } from "./realtime";
 import { getQueryOptions as tagsGetOptions, listQueryOptions as tagsListOptions } from "./tags";
@@ -1064,56 +1062,61 @@ describe("versions / tags / catalog / maps events (invalidate-only surfaces)", (
     // The channel rides the dataset's layer-data query (a map workspace's
     // layer rows keep its dataset active — pg-entries-loader's listPage keys).
     observe(queryClient, ["pg:geometries", "rowsForTiles", { cursor: null, datasetId: D1 }]);
-    observe(queryClient, ["pg:maps", "listLayers", { mapId: "m1" }]);
+    observe(queryClient, ["pg:maps", "listPlacements", { mapId: "m1" }]);
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     const channel = onlyChannel(stub.channels);
 
+    // The 0020 placement shape: layer_member_id names the layer membership.
     channel.deliver("map_layers", {
       eventType: "UPDATE",
       new: {
-        id: "layer-1",
+        id: "placement-1",
+        layer_member_id: "mem-1",
         map_id: "m1",
         order: 1,
-        target_id: D1,
-        target_type: "dataset",
         visible: true,
       },
-      old: { id: "layer-1" },
+      old: { id: "placement-1" },
     });
     await tick();
     let keys = invalidatedKeys(invalidate);
-    expect(keys).toContainEqual(["pg:maps", "listAllLayers"]);
-    expect(keys).toContainEqual(["pg:maps", "listLayers", { mapId: "m1" }]);
-    expect(keys).toContainEqual(["pg:maps", "listOverrides", { mapId: "m1" }]);
+    expect(keys).toContainEqual(["pg:maps", "listAllPlacements"]);
+    expect(keys).toContainEqual(["pg:maps", "listPlacements", { mapId: "m1" }]);
 
-    channel.deliver("map_layers", { eventType: "DELETE", new: {}, old: { id: "layer-1" } });
+    channel.deliver("map_layers", { eventType: "DELETE", new: {}, old: { id: "placement-1" } });
     await tick();
     keys = invalidatedKeys(invalidate);
-    expect(keys).toContainEqual(["pg:maps", "listLayers"]);
-    expect(keys).toContainEqual(["pg:maps", "listOverrides"]);
+    expect(keys).toContainEqual(["pg:maps", "listPlacements"]);
     detach();
   });
 
-  it("invalidates the style feed for the style's map", async () => {
+  it("invalidates the layers keys broadly (project-scoped tables — no dataset filter matches)", async () => {
     const queryClient = newClient();
     const stub = stubRealtimeClient();
     const detach = attachDatasetRealtime(queryClient, stub.client);
     observe(queryClient, ["pg:geometries", "rowsForTiles", { cursor: null, datasetId: D1 }]);
-    observe(queryClient, listForMapQueryOptions({ mapId: "m1" }).queryKey);
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     const channel = onlyChannel(stub.channels);
 
-    channel.deliver("layer_styles", {
+    channel.deliver("layers", {
       eventType: "UPDATE",
-      new: { id: "s1", map_id: "m1", render_id: D1, style: {}, updated_at: CREATED_AT },
-      old: { id: "s1" },
+      new: { id: "layer-row-1", name: "Parks", project_id: "p1", style: {}, visible: true },
+      old: { id: "layer-row-1" },
+    });
+    channel.deliver("layer_children", {
+      eventType: "INSERT",
+      new: {
+        child_kind: "owned",
+        child_layer_id: "l2",
+        group_id: "layer-row-1",
+        id: "c1",
+        order: 0,
+      },
+      old: null,
     });
     await tick();
-    expect(invalidatedKeys(invalidate)).toContainEqual([
-      "pg:layer-styles",
-      "listForMap",
-      { mapId: "m1" },
-    ]);
+    const keys = invalidatedKeys(invalidate);
+    expect(keys).toContainEqual(["pg:layers"]);
     detach();
   });
 });
@@ -1318,20 +1321,13 @@ describe("matcher mirror (invalidation matchers find the store modules' queries)
       "get",
       { mapId: "m1" },
     ]);
-    expect(listAllLayersQueryOptions().queryKey).toStrictEqual(["pg:maps", "listAllLayers"]);
-    expect(listLayersQueryOptions({ mapId: "m1" }).queryKey).toStrictEqual([
+    expect(listAllPlacementsQueryOptions().queryKey).toStrictEqual([
       "pg:maps",
-      "listLayers",
-      { mapId: "m1" },
+      "listAllPlacements",
     ]);
-    expect(listOverridesQueryOptions({ mapId: "m1" }).queryKey).toStrictEqual([
+    expect(listPlacementsQueryOptions({ mapId: "m1" }).queryKey).toStrictEqual([
       "pg:maps",
-      "listOverrides",
-      { mapId: "m1" },
-    ]);
-    expect(listForMapQueryOptions({ mapId: "m1" }).queryKey).toStrictEqual([
-      "pg:layer-styles",
-      "listForMap",
+      "listPlacements",
       { mapId: "m1" },
     ]);
   });
