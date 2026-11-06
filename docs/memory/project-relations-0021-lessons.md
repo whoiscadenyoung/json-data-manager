@@ -25,7 +25,7 @@ metadata:
   0020's per-creator map backfill died on `projects.created_by NOT NULL`
   the first time it met real legacy data (the compose demo stack; CI's
   fresh DBs never see it). Fix: `set_config('request.jwt.claims'/'claim.sub',
-  owner)` PER ITERATION around each birth-INSERT (and clear after). Same
+owner)` PER ITERATION around each birth-INSERT (and clear after). Same
   applies to ANY migration-seeded row on a table carrying the stamp trigger
   (projects/entries/geometries/imports/layers/dataset_relations).
 
