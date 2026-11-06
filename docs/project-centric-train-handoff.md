@@ -1,7 +1,8 @@
 # Project-centric experience train — agent handoff
 
-Written 2026-11-05, main @ 55a3fa7. Updated 2026-11-05 after [project 1]:
-**#255 DONE (PR #263, main @ 55c7e5c + docs @ de075b4) — next work is #256.**
+Written 2026-11-05, main @ 55a3fa7. Updated 2026-11-05 after [project 1]
+(#255, PR #263). Updated 2026-11-06 after [project 2]:
+**#256 DONE (PR #264, main @ 0f8d2e2) — next work is #257.**
 
 ## What this train is
 
@@ -32,7 +33,7 @@ resolved decisions D1–D7; §5 = the scenario that is the train's exit test).
 
 - **No back-compat or adoption steps anywhere.** App not in production, PG
   data disposable — every phase ships its final shape. Breaking migrations
-  fine (next migration number: 0019+; ADRs: 0018+).
+  fine (next migration number: 0020+; ADRs: 0019+).
 - Branch off fresh `main` (`git fetch --prune` first). One PR per issue;
   merge with the standard flow (see `docs/memory/pr-merge-sync-flow.md`).
 - Gates before every PR, run **bare** (pipelines mask exit codes): app tests,
@@ -59,15 +60,26 @@ resolved decisions D1–D7; §5 = the scenario that is the train's exit test).
   publication join (REPLICA IDENTITY FULL on project_members), members
   dialog + seat-role badges + viewer gating. ADR 0017. Migration/RLS
   authoring gotchas: `docs/memory/project-membership-0018-lessons.md`.
-- **#256 catalog** — reuse `consumer_references` float/pin + publish chains;
-  build no new pin machinery. Linked add pins at head; `auto` floats. When
-  the create/import-in-project flow can put a DRAFT into a project, extend
-  `can_view_dataset`/`can_edit_dataset` with the ADR 0017 deferred clause
-  (project-held drafts become member-visible/editable — the "adding a draft
-  to a project IS sharing" rule from the predecessor ADR 0011).
+- **#256 catalog** — ✅ DONE (PR #264, ADR 0018, migration 0019):
+  `project_artifacts` role owned|linked + sync_mode manual|auto; linked adds
+  pin at head (versionless chains float honestly); owned drafts carry no
+  edge; the deferred clause landed DRAFT-SCOPED in the gate (owned drafts
+  member-visible/editor-writable; linked drafts share nothing; publishing
+  returns a row to the catalog's own rules); in-project create/import
+  (`/projects/$projectId/create`) births owned drafts that never auto-
+  publish; catalog workspace with provenance chips + sync/revert/float/pin;
+  add-existing picker (datasets + derived, D1); add-to-project affordances
+  on the browser/detail pages. Kind domain is now `dataset|derived` — map
+  memberships + their edges were deleted, and the bundle press lost its map
+  legs until [project 3] re-owns maps. RLS authoring gotchas:
+  `docs/memory/project-catalog-0019-lessons.md`.
 - **#257 layers/maps** — port the branch design §3 to PG; `layer_styles` /
   `marker_sprites` already exist; one in-migration backfill folds standalone
   maps into per-creator projects; `needsAttention` on style/schema drift.
+  NOTE from [project 2]: project_artifacts' kind check is
+  `dataset|derived` — [project 3]'s migration re-adds `map` and re-lands
+  the bundle press's map membership legs (removed in pg-bundle-publish.ts;
+  `linkMapLayers` still lives in the publishing store).
 - **#258 relations** — `dataset_relations` (key|spatial, catalog-level);
   runtime queries GiST-backed, viewport-scoped, hard cap ~200 + "show more".
   Perf lessons: `docs/memory/map-performance-audit-2026-10.md`.
