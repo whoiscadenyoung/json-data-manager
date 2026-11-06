@@ -57,8 +57,11 @@
     "react/syntax": "error",
     "react/unsupported-syntax": "warn",
     "typescript/use-unknown-in-catch-callback-variable": "error",
-    // Module boundaries (ADR 0014): feature subfolders are private, and
-    // optional modules (app-builder, layer-styles) are wired only by routes.
+    // Module boundaries (ADR 0014): feature subfolders are private, and the
+    // app-builder module is wired only by routes. (layer-styles left the
+    // optional list with #259: apps' map widgets render stored maps, whose
+    // styles live in layer-styles fragments — D7 makes it a feature other
+    // features build on, per ADR 0014's amended two-tier rule.)
     "no-restricted-imports": [
       "error",
       {
@@ -68,8 +71,8 @@
             "message": "Feature subfolders are private: import from the feature's root entry files (#/features/<name> or #/features/<name>/<entry>) (ADR 0014)."
           },
           {
-            "regex": "^#/features/(app-builder|layer-styles)(/|$)",
-            "message": "Optional modules are wired only by routes; core and other features expose extension slots instead (ADR 0011, 0012, 0014)."
+            "regex": "^#/features/app-builder(/|$)",
+            "message": "The app-builder module is wired only by routes; other features expose extension slots instead (ADR 0011, 0014)."
           }
         ]
       }

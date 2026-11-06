@@ -47,10 +47,10 @@ describe("pages", () => {
         ...page("a"),
         widgets: [{ columns: [], datasetId: "d", h: 4, id: "t", kind: "table", w: 6 }],
       },
-      { ...page("b"), widgets: [{ datasetIds: ["d", "e"], h: 6, id: "m", kind: "map", w: 6 }] },
+      { ...page("b"), widgets: [{ h: 6, id: "m", kind: "map", mapId: "m1", w: 6 }] },
     ];
     const next = pagesWithoutDataset(pages, "d");
     expect(next[0].widgets).toEqual([]);
-    expect(next[1].widgets).toEqual([{ datasetIds: ["e"], h: 6, id: "m", kind: "map", w: 6 }]);
+    expect(next[1].widgets).toEqual([{ h: 6, id: "m", kind: "map", mapId: "m1", w: 6 }]);
   });
 });

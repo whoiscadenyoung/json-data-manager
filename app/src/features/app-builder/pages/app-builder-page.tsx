@@ -46,6 +46,7 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
+  Rocket,
   Share2,
   Trash2,
 } from "lucide-react";
@@ -56,12 +57,14 @@ import { RouterButton } from "#/components/router-button";
 import { useSession } from "#/integrations/supabase/provider";
 import { errorMessage } from "#/lib/errors";
 import * as appsStore from "#/lib/store/apps";
+import { listMineQueryOptions, resolveMyRole } from "#/lib/store/project-members";
 
 import { AppCanvasEditor } from "../components/app-canvas";
 import { AppDetailsDialog } from "../components/app-details-dialog";
 import { BuilderPanel, type PanelTab } from "../components/builder-panel";
 import { PageLoading } from "../components/page-loading";
 import { PageTabs } from "../components/page-tabs";
+import { PublishDialog } from "../components/publish-dialog";
 import { ShareDialog } from "../components/share-dialog";
 import { AppDatasetsProvider } from "../data";
 import { appDocOf, type AppDoc } from "../lib/app-doc";
@@ -114,17 +117,17 @@ function EmptyCanvas({ hasData, onStart }: { hasData: boolean; onStart: (tab: Pa
         <EmptyDescription>
           {hasData
             ? "Add a map, chart, table, number or text block from the panel. Drag widgets to reorder them and pull their corners to resize."
-            : "First add a dataset — every map, chart and table in the app reads from the app's datasets."}
+            : "Add a map from a project map, or a dataset on the Data tab for charts, tables and numbers."}
         </EmptyDescription>
       </EmptyHeader>
       <EmptyContent>
         <Button
           type="button"
           onClick={() => {
-            onStart(hasData ? "add" : "data");
+            onStart(hasData ? "add" : "add");
           }}
         >
-          {hasData ? "Add a widget" : "Add a dataset"}
+          Add a widget
         </Button>
       </EmptyContent>
     </Empty>
@@ -195,8 +198,8 @@ function BuilderMenu({ app }: { app: AppDoc }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this app?</AlertDialogTitle>
             <AlertDialogDescription>
-              The app and its layout are deleted for everyone with the link. Its datasets are not
-              affected.
+              The app and its layout are deleted for everyone with the link. Its datasets and the
+              project's maps are not affected.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -210,7 +213,7 @@ function BuilderMenu({ app }: { app: AppDoc }) {
                     const affected = await remove.mutateAsync({ appId: app.id });
                     if (affected === 0) {
                       // RLS answered with 0 rows — the delete never landed.
-                      toast.error("Couldn't delete — only the app's creator can edit it.");
+                      toast.error("Couldn't delete — editors of the app's project can delete it.");
                       return;
                     }
                     void queryClient.invalidateQueries({ queryKey: ["pg:apps"] });
@@ -236,8 +239,9 @@ function Builder({ app, initialPageId }: { app: AppDoc; initialPageId: string | 
     { content, update } = editor,
     [pageId, setPageId] = useState(() => resolvePage(app.pages, initialPageId).id),
     [selectedId, setSelectedId] = useState<string | undefined>(),
-    [tab, setTab] = useState<PanelTab>(app.datasetIds.length === 0 ? "data" : "add"),
+    [tab, setTab] = useState<PanelTab>("add"),
     [sharing, setSharing] = useState(false),
+    [publishing, setPublishing] = useState(false),
     page = resolvePage(content.pages, pageId),
     selected = page.widgets.find((widget) => widget.id === selectedId),
     setWidgets = (change: (widgets: Widget[]) => Widget[]) => {
@@ -264,6 +268,20 @@ function Builder({ app, initialPageId }: { app: AppDoc; initialPageId: string | 
                 <BreadcrumbItem>
                   <BreadcrumbLink render={<Link to="/apps" />}>Apps</BreadcrumbLink>
                 </BreadcrumbItem>
+                {app.projectTitle !== null && (
+                  <>
+                    <BreadcrumbSeparator />
+                    <BreadcrumbItem>
+                      <BreadcrumbLink
+                        render={
+                          <Link params={{ projectId: app.projectId }} to="/projects/$projectId" />
+                        }
+                      >
+                        <span className="max-w-40 truncate">{app.projectTitle}</span>
+                      </BreadcrumbLink>
+                    </BreadcrumbItem>
+                  </>
+                )}
                 <BreadcrumbSeparator />
                 <BreadcrumbItem className="min-w-0">
                   <BreadcrumbPage className="truncate">
@@ -284,6 +302,16 @@ function Builder({ app, initialPageId }: { app: AppDoc; initialPageId: string | 
               <Eye data-icon="inline-start" />
               Preview
             </RouterButton>
+            <Button
+              type="button"
+              onClick={() => {
+                setPublishing(true);
+              }}
+              variant="outline"
+            >
+              <Rocket data-icon="inline-start" />
+              Publish
+            </Button>
             <Button
               type="button"
               onClick={() => {
@@ -380,6 +408,7 @@ function Builder({ app, initialPageId }: { app: AppDoc; initialPageId: string | 
               content={content}
               page={page}
               selected={selected}
+              projectId={app.projectId}
               onUpdate={update}
               onSelect={setSelectedId}
               onSelectPage={showPage}
@@ -392,12 +421,13 @@ function Builder({ app, initialPageId }: { app: AppDoc; initialPageId: string | 
           open={sharing}
           onOpenChange={setSharing}
         />
+        <PublishDialog app={app} open={publishing} onOpenChange={setPublishing} />
       </div>
     </AppDatasetsProvider>
   );
 }
 
-/** The builder (/apps/$appId/edit) — creator only; anyone else is sent to the viewer. */
+/** The builder (/apps/$appId/edit) — an editor of the app's project; anyone else is sent to the viewer. */
 export function AppBuilderPage({
   appId,
   initialPageId,
@@ -406,7 +436,9 @@ export function AppBuilderPage({
   initialPageId: string | undefined;
 }) {
   const row = useQuery(appsStore.getQueryOptions({ appId })),
-    { session } = useSession();
+    { session } = useSession(),
+    userId = session === null ? "" : session.user.id,
+    membershipsQuery = useQuery(listMineQueryOptions({ userId }));
   if (row.isPending) {
     return <PageLoading />;
   }
@@ -428,7 +460,17 @@ export function AppBuilderPage({
     );
   }
   const app =
-    row.data === null ? null : appDocOf(row.data, session === null ? undefined : session.user.id);
+    row.data === null
+      ? null
+      : appDocOf(
+          row.data,
+          resolveMyRole(
+            membershipsQuery.data,
+            row.data.projectId,
+            row.data.project === null ? "" : row.data.project.createdBy,
+            userId,
+          ),
+        );
   if (app === null || !app.canEdit) {
     return (
       <main className="mx-auto max-w-3xl px-4 py-16">
@@ -439,8 +481,8 @@ export function AppBuilderPage({
             </EmptyMedia>
             <EmptyTitle>You can't edit this app</EmptyTitle>
             <EmptyDescription>
-              Only an app's creator can edit it. You can still open it, or make your own copy from
-              there.
+              Editors of the app's project can edit it. You can still open it, or make your own copy
+              from there.
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>

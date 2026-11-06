@@ -142,8 +142,8 @@ function AddPanel({
         <Alert>
           <Info />
           <AlertDescription>
-            Maps, charts, tables and numbers read from the app's datasets — add one on the Data tab
-            first.
+            Charts, tables and numbers read from the app's datasets — add one on the Data tab first.
+            Maps show a stored project map.
           </AlertDescription>
         </Alert>
       )}
@@ -449,10 +449,12 @@ function SizeControls({ widget, onChange }: { widget: Widget; onChange: (next: W
 function WidgetPanel({
   widget,
   datasetIds,
+  projectId,
   onChange,
 }: {
   widget: Widget | undefined;
   datasetIds: readonly string[];
+  projectId?: string;
   onChange: (next: Widget) => void;
 }) {
   if (widget === undefined) {
@@ -489,7 +491,12 @@ function WidgetPanel({
           }}
         />
       </Field>
-      <WidgetSettings widget={widget} datasetIds={datasetIds} onChange={onChange} />
+      <WidgetSettings
+        widget={widget}
+        datasetIds={datasetIds}
+        projectId={projectId}
+        onChange={onChange}
+      />
       <Separator />
       <SizeControls widget={widget} onChange={onChange} />
     </FieldGroup>
@@ -658,6 +665,7 @@ export function BuilderPanel({
   content,
   page,
   selected,
+  projectId,
   onUpdate,
   onSelect,
   onSelectPage,
@@ -668,6 +676,8 @@ export function BuilderPanel({
   /** The page the canvas is showing — widgets are added to and edited on it. */
   page: AppPage;
   selected: Widget | undefined;
+  /** The app's owning project (the map widget's picker reads the project's maps). */
+  projectId?: string;
   onUpdate: (change: (prev: AppContent) => AppContent) => void;
   onSelect: (id: string | undefined) => void;
   onSelectPage: (pageId: string) => void;
@@ -727,6 +737,7 @@ export function BuilderPanel({
           <WidgetPanel
             widget={selected}
             datasetIds={content.datasetIds}
+            projectId={projectId}
             onChange={(next) => {
               updateThisPage((current) => ({
                 ...current,

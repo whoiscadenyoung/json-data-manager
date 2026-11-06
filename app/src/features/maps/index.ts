@@ -4,7 +4,12 @@ export { CollectionExtentMap } from "./components/datasets-map";
 export { EntriesMap } from "./components/entries-map";
 export { GroupMap } from "./components/group-map";
 export { LayersMap } from "./components/layers-map";
-export { pgDerivedToDerivedSummary, pgSummaryToDatasetSummary } from "./components/pg-layer-rows";
+export { StoredMapCanvas } from "./components/stored-map-canvas";
+export {
+  pgDerivedToDerivedSummary,
+  pgGeometryToLayerRow,
+  pgSummaryToDatasetSummary,
+} from "./components/pg-layer-rows";
 export { useGeometriesByPgDatasets } from "./components/pg-geometries-loader";
 export type { LayersMapExtension, LayersMapLayerArgs } from "./components/layers-map";
 export { TileBuildStatus } from "./components/tile-build-status";

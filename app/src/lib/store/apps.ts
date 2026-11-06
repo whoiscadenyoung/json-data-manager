@@ -3,30 +3,34 @@ import { queryOptions } from "@tanstack/react-query";
 import { clientOf, queryRow, queryRows, type StoreOptions } from "./client";
 
 /**
- * The apps store — the app builder's PG backend (issue #216): `list` /
- * `listExamples` / `get` / `create` / `updateDetails` / `saveContent` /
- * `duplicate` / `remove` over `public.apps` (migration 0014, the §3.6 sketch
- * block). The Convex reference surface is `api.appBuilder.apps.*`
- * (app/convex/appBuilder/apps.ts, untouched in-tree).
+ * The apps store — the app builder's PG backend, re-owned by projects
+ * (issue #259, the project-centric train's phase 5; ADR 0021 over migration
+ * 0022). `listVisible` / `get` / `create` / `updateDetails` / `saveContent` /
+ * `duplicate` / `remove` over `public.apps`; publish/freezing lives in
+ * `#/features/publishing/lib/pg-app-publish` + `./app-versions`.
  *
- * Behavior parity notes (each traces to the Convex module):
- *   - Access model: reads are authenticated-open (the maps-domain posture —
- *     RLS is flat `using (true)` for signed-in users, ADR 0009's trusted
- *     collaborator; the Convex `sharing = "private"` hiding does not carry
- *     over, migration 0014's header records the delta). Writes answer only
- *     to the creator, and the seeded examples (0014's system identity) are
- *     writable by NO ONE — a denial arrives as 0 affected rows, which the
- *     helpers below surface honestly instead of reporting success.
+ * The recorded shapes (ADR 0021):
+ *   - Apps are PROJECT-OWNED rows (`project_id` NOT NULL): reads are
+ *     member-wide with the seeded examples' one `example` arm; writes are
+ *     project-editor+ (the 0018 role split, the 0020 maps posture — the
+ *     0014 creator gate died). The system examples stay writable by NO ONE.
+ *   - Map widgets reference STORED project maps (`mapId`) — the inline
+ *     `datasetIds` map mode retired; `widgetDatasetIdsOf` answers [] for
+ *     maps. `create` mints the kind-'app' OWNED membership in
+ *     `project_artifacts` (the layers-store pattern — clients cannot
+ *     addArtifact an app).
  *   - `saveContent` is the builder's autosave: it replaces dataset refs and
- *     pages in ONE write and compares `revision` (the tables.ts doc line:
- *     the optimistic-concurrency counter). A save built on a stale revision
- *     or a non-creator's write affects 0 rows — the stale-save error the
- *     editor shows (`use-app-editor.ts`'s "changed in another tab").
+ *     pages in ONE write and compares `revision` (the optimistic-concurrency
+ *     counter, unchanged from 0014). A save built on a stale revision or a
+ *     non-editor's write affects 0 rows — the stale-save error the editor
+ *     shows (`use-app-editor.ts`'s "changed in another tab").
  *   - `duplicate` is "Make a copy" (examples included): any app the caller
- *     can read becomes a new private app they own. Dataset refs are filtered
- *     to what the NEW owner can see (a read on `public.datasets` — invisible
- *     ids drop out under RLS) and widgets whose refs left are dropped
- *     (keepReferenced parity: maps lose the layer, others go).
+ *     can read becomes a new app in the CALLER'S chosen project (apps are
+ *     project-owned now, so the copy target is explicit). Dataset refs are
+ *     filtered to what the new owner can see; a map reference survives only
+ *     if the map itself is visible to them (the same rule, applied to the
+ *     stored-map reference) — widgets whose refs left are dropped
+ *     (keepReferenced parity: maps whose map went away are dropped whole).
  *   - Dataset REFERENCES only: ids ride `dataset_ids` with no FK — a deleted
  *     dataset never wedges the editor (the viewer answers "unavailable" per
  *     widget, data.tsx parity).
@@ -36,7 +40,7 @@ import { clientOf, queryRow, queryRows, type StoreOptions } from "./client";
  * throwing — a denial reads as not-found, exactly like the Convex creator
  * check answered.
  *
- * NOTE: narrow local interfaces typed from migration 0014's DDL, not the
+ * NOTE: narrow local interfaces typed from migration 0022's DDL, not the
  * generated `database.types.ts` (see `./client`).
  */
 
@@ -52,7 +56,6 @@ export const APP_LIMITS = {
   columns: 12,
   /** Tallest widget, in grid row units. */
   maxHeight: 12,
-  mapDatasets: 8,
   tableColumns: 50,
   text: 10_000,
   title: 120,
@@ -71,8 +74,8 @@ export type PageLayout = "contained" | "fullscreen";
 /**
  * One widget's laid-out footprint. The store carries the order+span grid
  * shape (id/kind/w/h/title) and treats the widget's own payload (datasetId,
- * aggregate, body, …) as opaque jsonb — the widget registry is the feature's
- * shape, never widened here (the layer_styles.style posture).
+ * aggregate, mapId, body, …) as opaque jsonb — the widget registry is the
+ * feature's shape, never widened here (the layer_styles.style posture).
  */
 export interface AppWidgetConfig {
   id: string;
@@ -99,9 +102,17 @@ export interface AppContent {
   pages: AppPageConfig[];
 }
 
-/** One app row, as every reader of `apps` gets it (migration 0014's DDL). */
+/** The owning project's light shape (the explorer's chip + the pages' role resolution). */
+export interface AppProjectRef {
+  id: string;
+  title: string;
+  createdBy: string;
+}
+
+/** One app row, as every reader of `apps` gets it (migration 0022's DDL). */
 export interface AppRow {
   id: string;
+  projectId: string;
   title: string;
   description: string | null;
   sharing: "private" | "link";
@@ -113,13 +124,18 @@ export interface AppRow {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
-  /** The creator's display name — only present on `get`'s profiles embed. */
-  ownerName: string | null;
+  /**
+   * The owning project's embed — null when the viewer cannot read the
+   * project row (a signed-in non-member reading an example app; the ladder
+   * in [project 6] owns widening project reads).
+   */
+  project: AppProjectRef | null;
 }
 
 /** The light list-card shape (`toSummary` parity; counts derived from the row). */
 export interface AppSummary {
   id: string;
+  project: AppProjectRef | null;
   title: string;
   description: string | null;
   sharing: "private" | "link";
@@ -131,17 +147,17 @@ export interface AppSummary {
 }
 
 const APP_SELECT =
-    "id,title,description,sharing,datasetIds:dataset_ids,pages,example,revision,createdBy:created_by,createdAt:created_at,updatedAt:updated_at",
-  APP_SELECT_WITH_OWNER = `${APP_SELECT},ownerName:profiles(name)`;
+    "id,projectId:project_id,title,description,sharing,datasetIds:dataset_ids,pages,example,revision,createdBy:created_by,createdAt:created_at,updatedAt:updated_at",
+  APP_SELECT_WITH_PROJECT = `${APP_SELECT},project:projects(id,title,created_by)`;
 
-/** The creator's app-list width (the Convex `list` bound, MAX_APPS). */
+/** The explorer's list width (the /apps explorer's cap; MAX_APPS carried). */
 export const MAX_APPS = 200;
 
 // ---------------------------------------------------------------------------
 // Reads
 // ---------------------------------------------------------------------------
 
-/** The light list-card shape shared by the caller's apps and the examples gallery (`toSummary` parity). */
+/** The light list-card shape shared by every listing surface (`toSummary` parity). */
 export function toSummary(app: AppRow): AppSummary {
   return {
     datasetCount: app.datasetIds.length,
@@ -149,6 +165,7 @@ export function toSummary(app: AppRow): AppSummary {
     example: app.example,
     id: app.id,
     pageCount: app.pages.length,
+    project: app.project,
     sharing: app.sharing,
     title: app.title,
     updatedAt: app.updatedAt,
@@ -157,45 +174,45 @@ export function toSummary(app: AppRow): AppSummary {
 }
 
 /**
- * The creator's own apps, newest first — the /apps browser (the Convex
- * `list`'s by_createdBy index scope, server-side; MAX_APPS is the width cap).
- * RLS leaves these reads authenticated-open, so the creator filter is
- * explicit here — the browser asks for the signed-in user's id (issue #220:
- * the newest-200 sweep across ALL users rode the flat policy).
+ * Every app the viewer can see, newest first — the /apps EXPLORER's list
+ * (issue #259: the explorer browses; creation lives in projects). RLS
+ * answers member-wide + the example arm; the project embed carries the
+ * chips (null on unreadable projects — the example case).
  */
-export async function list(args: { createdBy: string }, options?: StoreOptions): Promise<AppRow[]> {
+export async function listVisible(options?: StoreOptions): Promise<AppRow[]> {
   return await queryRows<AppRow>(
     clientOf(options)
       .from("apps")
-      .select(APP_SELECT)
-      .eq("created_by", args.createdBy)
+      .select(APP_SELECT_WITH_PROJECT)
       .order("created_at", { ascending: false })
-      .limit(MAX_APPS),
-  );
-}
-
-/** The seeded example apps, oldest first — the /apps gallery (the Convex listExamples order; `id` breaks created_at ties so identical stamps render stably). */
-export async function listExamples(options?: StoreOptions): Promise<AppRow[]> {
-  return await queryRows<AppRow>(
-    clientOf(options)
-      .from("apps")
-      .select(APP_SELECT)
-      .eq("example", true)
-      .order("created_at", { ascending: true })
-      .order("id", { ascending: true })
       .limit(MAX_APPS),
   );
 }
 
 /**
  * One app for the viewer or the builder, or null when it doesn't exist (RLS
- * is authenticated-open, so this is "no such row" — the invisible-row-reads-
- * as-not-found rule still answers null on a foreign/deleted id). The id
- * arrives from a share URL; the profiles embed carries the creator's name.
+ * member-wide, so this is "no such row" — the invisible-row-reads-as-
+ * not-found rule still answers null on a foreign/deleted id). The id
+ * arrives from a share URL; the embed carries the project chip.
  */
 export async function get(args: { appId: string }, options?: StoreOptions): Promise<AppRow | null> {
   return await queryRow<AppRow>(
-    clientOf(options).from("apps").select(APP_SELECT_WITH_OWNER).eq("id", args.appId).limit(1),
+    clientOf(options).from("apps").select(APP_SELECT_WITH_PROJECT).eq("id", args.appId).limit(1),
+  );
+}
+
+/** One project's apps, newest first — the project workspace's Apps section (the Maps-section shape). */
+export async function listForProject(
+  args: { projectId: string },
+  options?: StoreOptions,
+): Promise<AppRow[]> {
+  return await queryRows<AppRow>(
+    clientOf(options)
+      .from("apps")
+      .select(APP_SELECT_WITH_PROJECT)
+      .eq("project_id", args.projectId)
+      .order("created_at", { ascending: false })
+      .limit(MAX_APPS),
   );
 }
 
@@ -203,17 +220,10 @@ export async function get(args: { appId: string }, options?: StoreOptions): Prom
 // TanStack Query options (reads; design §8.1 — every read a queryOptions)
 // ---------------------------------------------------------------------------
 
-export function listQueryOptions(args: { createdBy: string }, options?: StoreOptions) {
+export function listVisibleQueryOptions(options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:apps", "list", args],
-    queryFn: async () => await list(args, options),
-  });
-}
-
-export function listExamplesQueryOptions(options?: StoreOptions) {
-  return queryOptions({
-    queryKey: ["pg:apps", "listExamples"],
-    queryFn: async () => await listExamples(options),
+    queryKey: ["pg:apps", "listVisible"],
+    queryFn: async () => await listVisible(options),
   });
 }
 
@@ -221,6 +231,13 @@ export function getQueryOptions(args: { appId: string }, options?: StoreOptions)
   return queryOptions({
     queryKey: ["pg:apps", "get", args],
     queryFn: async () => await get(args, options),
+  });
+}
+
+export function listForProjectQueryOptions(args: { projectId: string }, options?: StoreOptions) {
+  return queryOptions({
+    queryKey: ["pg:apps", "listForProject", args],
+    queryFn: async () => await listForProject(args, options),
   });
 }
 
@@ -258,7 +275,9 @@ function cleanDescription(description: string | undefined): string | null {
  * Shape rules the DB can't express — the full assertContentShape parity
  * (issue #221): bounds, unique ids, and dataset references closed over the
  * app's sources, checked in the Convex module's order so a multi-violation
- * blob draws the same refusal it always drew.
+ * blob draws the same refusal it always drew. Map widgets reference a
+ * stored project map by id (issue #259) — shape-checked as a string, never
+ * against the app's datasets.
  */
 function assertContent(content: AppContent): void {
   if (content.datasetIds.length > APP_LIMITS.datasets) {
@@ -317,15 +336,9 @@ function assertInteger(value: unknown, min: number, max: number, label: string):
   }
 }
 
-/** Every dataset id one widget reads (content.ts widgetDatasetIds parity over the store's opaque payload). */
+/** Every dataset id one widget reads (content.ts widgetDatasetIds parity over the store's opaque payload) — maps read stored maps now, not the app's datasets. */
 function widgetDatasetIdsOf(widget: AppWidgetConfig): string[] {
-  if (widget.kind === "map") {
-    const datasetIds = widget["datasetIds"];
-    return Array.isArray(datasetIds)
-      ? datasetIds.filter((id): id is string => typeof id === "string")
-      : [];
-  }
-  if (widget.kind === "text") {
+  if (widget.kind === "map" || widget.kind === "text") {
     return [];
   }
   const datasetId = widget["datasetId"];
@@ -370,9 +383,9 @@ function assertMapWidgetOf(widget: AppWidgetConfig): void {
   if (widget.kind !== "map") {
     return;
   }
-  const datasetIds = widget["datasetIds"];
-  if (!Array.isArray(datasetIds) || datasetIds.length > APP_LIMITS.mapDatasets) {
-    throw new Error(`A map shows at most ${APP_LIMITS.mapDatasets} datasets.`);
+  const mapId = widget["mapId"];
+  if (typeof mapId !== "string") {
+    throw new Error("A map widget names the project map it shows.");
   }
 }
 
@@ -394,12 +407,15 @@ function assertChartWidgetOf(widget: AppWidgetConfig): void {
 }
 
 /**
- * Creates a private app with its first page. Returns the full row — the
- * shipped `.insert().select()` shape (RETURNING passes the flat SELECT
- * policy on the new row; the pg-apps int test pins the 0008 lesson).
+ * Creates an app IN a project (issue #259: creation lives in project flows)
+ * with its first page, and mints the kind-'app' OWNED membership the
+ * catalog reads (the layers-store pattern — the client-facing addArtifact
+ * never sees kind 'app'). Returns the full row — the shipped
+ * `.insert().select()` shape (RETURNING passes the flat SELECT policy on
+ * the new row; the pg-apps int test pins the 0008 lesson).
  */
 export async function create(
-  args: { title: string; description?: string },
+  args: { projectId: string; title: string; description?: string },
   options?: StoreOptions,
 ): Promise<AppRow> {
   // Validation runs BEFORE the builder chain: an invalid payload must not
@@ -409,12 +425,33 @@ export async function create(
   const row = await queryRow<AppRow>(
     clientOf(options)
       .from("apps")
-      .insert({ description, pages: [firstPage()], title })
+      .insert({
+        description,
+        pages: [firstPage()],
+        project_id: args.projectId,
+        title,
+      })
       .select(APP_SELECT)
       .single(),
   );
   if (row === null) {
     throw new Error("App insert returned no row.");
+  }
+  const membership = await queryRow<{ id: string }>(
+    clientOf(options)
+      .from("project_artifacts")
+      .insert({
+        artifact_id: row.id,
+        artifact_kind: "app",
+        project_id: args.projectId,
+        role: "owned",
+        sync_mode: "manual",
+      })
+      .select("id")
+      .single(),
+  );
+  if (membership === null) {
+    throw new Error("The app was created but its project membership didn't mint.");
   }
   return row;
 }
@@ -455,7 +492,7 @@ export async function updateDetails(
  * The builder's autosave: replaces the app's data sources and pages in one
  * write, gated on the revision the editor loaded. Returns the new revision.
  * Throws the stale-save error when 0 rows matched — a stale revision
- * (another tab saved first) or a non-creator's write, which are
+ * (another tab saved first) or a non-editor's write, which are
  * indistinguishable by design (the Convex appForWrite shape answered "App
  * not found." for both).
  *
@@ -507,9 +544,17 @@ export async function saveContent(
   return saved === undefined ? args.expectedRevision + 1 : saved.revision;
 }
 
-/** "Make a copy": any app the caller can read (examples included) becomes a new private app they own. Returns the full row. */
+/**
+ * "Make a copy": any app the caller can read (examples included) becomes a
+ * new app in the CALLER'S chosen project (apps are project-owned — the
+ * target is explicit). Returns the full row, or null when the source is
+ * invisible. Dataset refs the new owner cannot see drop out (the RLS read
+ * answers only visible ids); a map reference survives only if the map is
+ * visible to them too — the map widget drops whole when it isn't
+ * (keepReferenced parity, applied to the stored-map reference).
+ */
 export async function duplicate(
-  args: { appId: string },
+  args: { appId: string; projectId: string },
   options?: StoreOptions,
 ): Promise<AppRow | null> {
   const client = clientOf(options);
@@ -530,9 +575,38 @@ export async function duplicate(
       kept.add(row.id);
     }
   }
+  // Map references: kept only when the map row itself resolves for the
+  // caller (RLS member-wide — a non-member's copy of an example drops the
+  // widget instead of shipping a map they can never open).
+  const mapIds = new Set(
+    source.pages
+      .flatMap((page) => page.widgets)
+      .filter((widget) => widget.kind === "map")
+      .map((widget) => widget["mapId"])
+      .filter((mapId): mapId is string => typeof mapId === "string" && mapId !== ""),
+  );
+  const visibleMaps = new Set<string>();
+  if (mapIds.size > 0) {
+    const rows = await queryRows<{ id: string }>(
+      client
+        .from("maps")
+        .select("id")
+        .in("id", [...mapIds]),
+    );
+    for (const row of rows) {
+      visibleMaps.add(row.id);
+    }
+  }
   const pages = source.pages.map((page) => ({
     ...page,
-    widgets: keepReferenced(page.widgets, kept),
+    widgets: page.widgets.flatMap((widget): AppWidgetConfig[] => {
+      if (widget.kind === "map") {
+        const mapId = widget["mapId"];
+        return typeof mapId === "string" && visibleMaps.has(mapId) ? [widget] : [];
+      }
+      const datasetId = widget["datasetId"];
+      return typeof datasetId === "string" && kept.has(datasetId) ? [widget] : [];
+    }),
   }));
   const row = await queryRow<AppRow>(
     client
@@ -541,37 +615,50 @@ export async function duplicate(
         dataset_ids: [...kept],
         description: source.description ?? undefined,
         pages,
+        project_id: args.projectId,
         title: `${source.title} (copy)`.slice(0, APP_LIMITS.title),
       })
       .select(APP_SELECT)
       .single(),
   );
+  if (row !== null) {
+    await queryRow<{ id: string }>(
+      client
+        .from("project_artifacts")
+        .insert({
+          artifact_id: row.id,
+          artifact_kind: "app",
+          project_id: args.projectId,
+          role: "owned",
+          sync_mode: "manual",
+        })
+        .select("id")
+        .single(),
+    );
+  }
   return row;
 }
 
-/** Deletes the app. Returns the affected row count (0 = denied or gone). */
+/** Deletes the app; its kind-'app' membership goes with it by the store's cleanup. Returns the affected row count (0 = denied or gone). */
 export async function remove(args: { appId: string }, options?: StoreOptions): Promise<number> {
+  const client = clientOf(options);
+  const app = await queryRow<{ projectId: string }>(
+    client.from("apps").select("projectId:project_id").eq("id", args.appId).limit(1),
+  );
+  if (app === null) {
+    return 0;
+  }
+  await queryRows<unknown>(
+    client
+      .from("project_artifacts")
+      .delete()
+      .eq("artifact_kind", "app")
+      .eq("artifact_id", args.appId)
+      .eq("project_id", app.projectId)
+      .select("id"),
+  );
   const rows = await queryRows<{ id: string }>(
-    clientOf(options).from("apps").delete().eq("id", args.appId).select("id"),
+    client.from("apps").delete().eq("id", args.appId).select("id"),
   );
   return rows.length;
-}
-
-/** A widget list with every reference outside `kept` dropped (maps lose the layer; others go) — apps.ts keepReferenced parity. */
-function keepReferenced(widgets: AppWidgetConfig[], kept: ReadonlySet<string>): AppWidgetConfig[] {
-  return widgets.flatMap((widget): AppWidgetConfig[] => {
-    if (widget.kind === "map") {
-      const datasetIds = widget["datasetIds"];
-      return [
-        {
-          ...widget,
-          datasetIds: Array.isArray(datasetIds)
-            ? datasetIds.filter((id): id is string => typeof id === "string" && kept.has(id))
-            : [],
-        },
-      ];
-    }
-    const datasetId = widget["datasetId"];
-    return typeof datasetId === "string" && kept.has(datasetId) ? [widget] : [];
-  });
 }

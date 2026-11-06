@@ -15,10 +15,9 @@ import {
   firstPage,
   get,
   getQueryOptions,
-  list,
-  listExamples,
-  listExamplesQueryOptions,
-  listQueryOptions,
+  listForProject,
+  listVisible,
+  listVisibleQueryOptions,
   MAX_APPS,
   remove,
   saveContent,
@@ -50,8 +49,9 @@ function appRow(id: string, overrides: Record<string, unknown> = {}): AppRow {
     description: null,
     example: false,
     id,
-    ownerName: null,
     pages: [firstPage()],
+    project: { createdBy: "11111111-1111-1111-1111-111111111111", id: "p1", title: "Parks" },
+    projectId: "p1",
     revision: 0,
     sharing: "private",
     title: `App ${id}`,
@@ -60,7 +60,7 @@ function appRow(id: string, overrides: Record<string, unknown> = {}): AppRow {
   };
 }
 
-/** A one-widget page fixture (a stat widget keyed to a dataset). */
+/** A one-widget page fixture (a stat widget keyed to a dataset + a map keyed to a stored map). */
 function statPage(widgetDatasetId: string): AppPageConfig {
   return {
     id: "overview",
@@ -68,7 +68,7 @@ function statPage(widgetDatasetId: string): AppPageConfig {
     title: "Overview",
     widgets: [
       { datasetId: widgetDatasetId, h: 2, id: "stat-1", kind: "stat", w: 4 },
-      { datasetIds: [widgetDatasetId], h: 6, id: "map-1", kind: "map", w: 8 },
+      { h: 6, id: "map-1", kind: "map", mapId: `m-${widgetDatasetId}`, w: 8 },
     ],
   };
 }
@@ -89,8 +89,8 @@ function widgetOf(
 
 /**
  * Scripts one responder per upcoming query, in order — the shared stub's
- * `respond` only keeps the LAST responder, and multi-query writes (duplicate)
- * fire several queries inside one store call.
+ * `respond` only keeps the LAST responder, and multi-query writes (create,
+ * duplicate, remove) fire several queries inside one store call.
  */
 function script(stub: StubSupabase, responders: QueryResponder[]): void {
   let index = 0;
@@ -104,45 +104,29 @@ function script(stub: StubSupabase, responders: QueryResponder[]): void {
   });
 }
 
-describe("apps.list / apps.listExamples — the /apps browser and gallery", () => {
-  it("selects the creator's apps server-side, newest first (issue #220; capped at MAX_APPS)", async () => {
+describe("apps.listVisible — the /apps explorer", () => {
+  it("reads every visible app (RLS answers member-wide + the example arm), newest first, capped", async () => {
     const { client, queries } = stubSupabase(() => ({
       data: [appRow("a2", { createdAt: "2026-11-04T01:00:00Z" }), appRow("a1")],
       error: null,
     }));
-    const rows = await list({ createdBy: "user-1" }, { supabase: client });
+    const rows = await listVisible({ supabase: client });
     const query = queryAt(queries, 0);
     expect(query.table).toBe("apps");
-    expect(allArgs(query, "eq")[0]).toStrictEqual(["created_by", "user-1"]);
+    // No creator filter — visibility IS the RLS policy (issue #259).
+    expect(allArgs(query, "eq")).toStrictEqual([]);
     expect(firstArg(query, "order")).toBe("created_at");
     expect(argsOf(query, "order")[1]).toStrictEqual({ ascending: false });
     expect(allArgs(query, "limit")[0]).toStrictEqual([MAX_APPS]);
+    expect(firstArg(query, "select")).toContain("project:projects(id,title,created_by)");
     expect(rows[0]).toMatchObject({ id: "a2" });
-  });
-
-  it("listExamples filters example rows, oldest first (the Convex listExamples order)", async () => {
-    const { client, queries } = stubSupabase(() => ({ data: [], error: null }));
-    await listExamples({ supabase: client });
-    const query = queryAt(queries, 0);
-    expect(query.table).toBe("apps");
-    expect(allArgs(query, "eq")[0]).toStrictEqual(["example", true]);
-    expect(argsOf(query, "order")[1]).toStrictEqual({ ascending: true });
-    // The tiebreaker: identical created_at stamps (the seed writes both
-    // examples in one statement) order by id, never by insertion chance.
-    expect(allArgs(query, "order")[1]).toStrictEqual(["id", { ascending: true }]);
   });
 
   it("queryOptions carry the store namespace and args in the key", () => {
     const { client } = stubSupabase();
-    const listArgs = { createdBy: "user-1" };
-    expect(listQueryOptions(listArgs, { supabase: client }).queryKey).toStrictEqual([
+    expect(listVisibleQueryOptions({ supabase: client }).queryKey).toStrictEqual([
       "pg:apps",
-      "list",
-      listArgs,
-    ]);
-    expect(listExamplesQueryOptions({ supabase: client }).queryKey).toStrictEqual([
-      "pg:apps",
-      "listExamples",
+      "listVisible",
     ]);
     const args = { appId: "a1" };
     expect(getQueryOptions(args, { supabase: client }).queryKey).toStrictEqual([
@@ -154,26 +138,32 @@ describe("apps.list / apps.listExamples — the /apps browser and gallery", () =
 
   it("throws the PostgREST error shape on failure", async () => {
     const { client } = stubSupabase(() => ({ data: null, error: postgrestError() }));
-    await expect(list({ createdBy: "user-1" }, { supabase: client })).rejects.toThrow(
-      "permission denied (42501)",
-    );
+    await expect(listVisible({ supabase: client })).rejects.toThrow("permission denied (42501)");
+  });
+});
+
+describe("apps.listForProject — the workspace's Apps section", () => {
+  it("scopes to the project, newest first", async () => {
+    const { client, queries } = stubSupabase(() => ({ data: [appRow("a1")], error: null }));
+    await listForProject({ projectId: "p1" }, { supabase: client });
+    const query = queryAt(queries, 0);
+    expect(query.table).toBe("apps");
+    expect(allArgs(query, "eq")[0]).toStrictEqual(["project_id", "p1"]);
+    expect(firstArg(query, "order")).toBe("created_at");
   });
 });
 
 describe("apps.get — the viewer/builder read", () => {
-  it("filters by id and embeds the owner's name (the profiles projection)", async () => {
-    const { client, queries } = stubSupabase(() => ({
-      data: [appRow("a1", { ownerName: "Ada" })],
-      error: null,
-    }));
+  it("filters by id and embeds the owning project (the explorer's chip)", async () => {
+    const { client, queries } = stubSupabase(() => ({ data: [appRow("a1")], error: null }));
     const row = await get({ appId: "a1" }, { supabase: client });
     const query = queryAt(queries, 0);
     expect(query.table).toBe("apps");
     expect(firstArg(query, "eq")).toBe("id");
     expect(argsOf(query, "eq")[1]).toBe("a1");
-    expect(firstArg(query, "select")).toContain("ownerName:profiles(name)");
+    expect(firstArg(query, "select")).toContain("project:projects(id,title,created_by)");
     expect(row).not.toBeNull();
-    expect(row === null ? "" : row.ownerName).toBe("Ada");
+    expect(row === null || row.project === null ? "" : row.project.title).toBe("Parks");
   });
 
   it("answers null when the row is missing (reads as not found)", async () => {
@@ -183,7 +173,7 @@ describe("apps.get — the viewer/builder read", () => {
 });
 
 describe("toSummary — the list-card projection", () => {
-  it("derives the dataset/page/widget counts from the row", () => {
+  it("derives the dataset/page/widget counts from the row and carries the project chip", () => {
     const row = appRow("a1", {
       datasetIds: ["d1", "d2"],
       pages: [statPage("d1"), { ...statPage("d2"), widgets: statPage("d2").widgets.slice(0, 1) }],
@@ -194,6 +184,7 @@ describe("toSummary — the list-card projection", () => {
       example: false,
       id: "a1",
       pageCount: 2,
+      project: { createdBy: "11111111-1111-1111-1111-111111111111", id: "p1", title: "Parks" },
       sharing: "private",
       title: "App a1",
       updatedAt: "2026-11-04T00:00:00Z",
@@ -203,23 +194,53 @@ describe("toSummary — the list-card projection", () => {
 });
 
 describe("apps writes — rows-affected returns", () => {
-  it("create inserts title/cleaned description/first page and returns the row", async () => {
-    const { client, queries } = stubSupabase(() => ({ data: appRow("a-new"), error: null }));
-    const row = await create({ description: "  d  ", title: "  Corridor  " }, { supabase: client });
-    const query = queryAt(queries, 0);
+  it("create inserts into the project, mints the kind-'app' membership, and returns the row", async () => {
+    const stub = stubSupabase();
+    script(stub, [
+      // 1: the app insert (RETURNING).
+      () => ({ data: appRow("a-new"), error: null }),
+      // 2: the membership mint.
+      () => ({ data: [{ id: "pa1" }], error: null }),
+    ]);
+    const row = await create(
+      { description: "  d  ", projectId: "p1", title: "  Corridor  " },
+      { supabase: stub.client },
+    );
+    const query = queryAt(stub.queries, 0);
     expect(query.table).toBe("apps");
     expect(firstArg(query, "insert")).toStrictEqual({
       description: "d",
       pages: [firstPage()],
+      project_id: "p1",
       title: "Corridor",
     });
     expect(methodList(query)).toStrictEqual(["insert", "select", "single"]);
     expect(row).toMatchObject({ id: "a-new" });
+    const membership = queryAt(stub.queries, 1);
+    expect(membership.table).toBe("project_artifacts");
+    expect(firstArg(membership, "insert")).toStrictEqual({
+      artifact_id: "a-new",
+      artifact_kind: "app",
+      project_id: "p1",
+      role: "owned",
+      sync_mode: "manual",
+    });
+  });
+
+  it("create refuses to leave the app membership-less (the mint is part of the flow)", async () => {
+    const stub = stubSupabase();
+    script(stub, [
+      () => ({ data: appRow("a-new"), error: null }),
+      () => ({ data: [], error: null }),
+    ]);
+    await expect(
+      create({ projectId: "p1", title: "Corridor" }, { supabase: stub.client }),
+    ).rejects.toThrow("membership didn't mint");
   });
 
   it("create rejects an empty title (the component's rule)", async () => {
     const { client, queries } = stubSupabase(() => ({ data: null, error: null }));
-    await expect(create({ title: "   " }, { supabase: client })).rejects.toThrow(
+    await expect(create({ projectId: "p1", title: "   " }, { supabase: client })).rejects.toThrow(
       "Give the app a title.",
     );
     expect(queries.length).toBe(0);
@@ -229,7 +250,7 @@ describe("apps writes — rows-affected returns", () => {
     const { client, queries } = stubSupabase();
     await expect(
       create(
-        { description: "x".repeat(APP_LIMITS.description + 1), title: "t" },
+        { description: "x".repeat(APP_LIMITS.description + 1), projectId: "p1", title: "t" },
         { supabase: client },
       ),
     ).rejects.toThrow("Keep the description under");
@@ -460,25 +481,19 @@ describe("apps writes — rows-affected returns", () => {
       "Keep text blocks under 10000 characters.",
     ],
     [
-      "a map with too many layers",
+      // The inline datasetIds map mode retired (issue #259): a map widget
+      // names a stored project map or the save refuses.
+      "a map widget without a map reference",
       {
         ...validContent(),
         pages: [
           {
             ...firstPage(),
-            widgets: [
-              {
-                kind: "map",
-                h: 6,
-                id: "m1",
-                w: 8,
-                datasetIds: range(9).map((i) => `d${i}`),
-              },
-            ],
+            widgets: [{ kind: "map", h: 6, id: "m1", w: 8 }],
           },
         ],
       },
-      "A map shows at most 8 datasets.",
+      "A map widget names the project map it shows.",
     ],
     [
       "a table with too many columns",
@@ -548,21 +563,43 @@ describe("apps writes — rows-affected returns", () => {
     },
   );
 
-  it("remove deletes by id and returns the affected count", async () => {
-    const { client, queries } = stubSupabase(() => ({ data: [{ id: "a1" }], error: null }));
-    expect(await remove({ appId: "a1" }, { supabase: client })).toBe(1);
-    const query = queryAt(queries, 0);
-    expect(methodList(query)[0]).toBe("delete");
-    expect(argsOf(query, "eq")[1]).toBe("a1");
+  it("remove cleans up the membership, then deletes the app and returns the affected count", async () => {
+    const stub = stubSupabase();
+    script(stub, [
+      // 1: the ownership read (the membership cleanup targets the row).
+      () => ({ data: [{ projectId: "p1" }], error: null }),
+      // 2: the membership delete.
+      () => ({ data: [{ id: "pa1" }], error: null }),
+      // 3: the app delete.
+      () => ({ data: [{ id: "a1" }], error: null }),
+    ]);
+    expect(await remove({ appId: "a1" }, { supabase: stub.client })).toBe(1);
+    const ownershipRead = queryAt(stub.queries, 0);
+    expect(ownershipRead.table).toBe("apps");
+    const membershipDelete = queryAt(stub.queries, 1);
+    expect(membershipDelete.table).toBe("project_artifacts");
+    expect(allArgs(membershipDelete, "eq")[0]).toStrictEqual(["artifact_kind", "app"]);
+    expect(allArgs(membershipDelete, "eq")[1]).toStrictEqual(["artifact_id", "a1"]);
+    expect(allArgs(membershipDelete, "eq")[2]).toStrictEqual(["project_id", "p1"]);
+    const appDelete = queryAt(stub.queries, 2);
+    expect(methodList(appDelete)[0]).toBe("delete");
+    expect(argsOf(appDelete, "eq")[1]).toBe("a1");
+  });
+
+  it("remove answers 0 for an invisible app without further queries", async () => {
+    const stub = stubSupabase();
+    script(stub, [() => ({ data: [], error: null })]);
+    expect(await remove({ appId: "gone" }, { supabase: stub.client })).toBe(0);
+    expect(stub.queries.length).toBe(1);
   });
 });
 
-describe("apps.duplicate — Make a copy (examples included)", () => {
-  it("keeps only the datasets the new owner can see and drops unreferenced widgets", async () => {
+describe("apps.duplicate — Make a copy, into a chosen project", () => {
+  it("keeps only what the new owner can see: datasets by the RLS read, maps by the maps read", async () => {
     const stub = stubSupabase();
     script(stub, [
-      // 1: the source read — one stat keyed to an INVISIBLE dataset, a map
-      // keyed to a VISIBLE one.
+      // 1: the source read — a stat + a map keyed to an INVISIBLE dataset,
+      // another stat + map keyed to a VISIBLE one.
       () => ({
         data: [
           appRow("src", {
@@ -572,52 +609,61 @@ describe("apps.duplicate — Make a copy (examples included)", () => {
         ],
         error: null,
       }),
-      // 2: the visibility read — RLS answers the visible id only.
+      // 2: the dataset visibility read — RLS answers the visible id only.
       () => ({ data: [{ id: "d-visible" }], error: null }),
-      // 3: the copy insert.
+      // 3: the map visibility read — the stored-map references ride the same rule.
+      () => ({ data: [{ id: "m-d-visible" }], error: null }),
+      // 4: the copy insert.
       () => ({ data: appRow("copy"), error: null }),
+      // 5: the membership mint.
+      () => ({ data: [{ id: "pa1" }], error: null }),
     ]);
-    const row = await duplicate({ appId: "src" }, { supabase: stub.client });
+    const row = await duplicate({ appId: "src", projectId: "p2" }, { supabase: stub.client });
     const sourceRead = queryAt(stub.queries, 0);
     expect(sourceRead.table).toBe("apps");
     const visibilityRead = queryAt(stub.queries, 1);
     expect(visibilityRead.table).toBe("datasets");
     expect(allArgs(visibilityRead, "in")[0]).toStrictEqual(["id", ["d-visible", "d-hidden"]]);
-    const insertQuery = queryAt(stub.queries, 2);
+    const mapRead = queryAt(stub.queries, 2);
+    expect(mapRead.table).toBe("maps");
+    expect(allArgs(mapRead, "in")[0]).toStrictEqual(["id", ["m-d-visible", "m-d-hidden"]]);
+    const insertQuery = queryAt(stub.queries, 3);
     const payload = firstArg(insertQuery, "insert") as Record<string, unknown>;
     expect(payload["title"]).toBe("App src (copy)");
     expect(payload["dataset_ids"]).toStrictEqual(["d-visible"]);
+    expect(payload["project_id"]).toBe("p2");
     const pages = payload["pages"] as AppPageConfig[];
     expect(pages).toHaveLength(2);
     const visiblePage = pages[0];
     expect(visiblePage === undefined ? null : visiblePage.widgets).toStrictEqual(
       statPage("d-visible").widgets,
     );
-    // The second page's widgets all referenced the dropped dataset: the map
-    // loses its layer list, the stat goes entirely.
+    // The second page's widgets all referenced dropped sources: the map
+    // whose map went away drops whole, the stat goes entirely.
     const droppedPage = pages[1];
-    expect(droppedPage === undefined ? null : droppedPage.widgets[0]).toMatchObject({
-      kind: "map",
-      datasetIds: [],
-    });
+    expect(droppedPage === undefined ? null : droppedPage.widgets[0]).toBeUndefined();
     expect(droppedPage === undefined ? null : droppedPage.widgets[1]).toBeUndefined();
     expect(row).toMatchObject({ id: "copy" });
+    const membership = queryAt(stub.queries, 4);
+    expect(membership.table).toBe("project_artifacts");
+    expect(firstArg(membership, "insert")).toMatchObject({ artifact_id: "copy", project_id: "p2" });
   });
 
   it("answers null for an unreadable source without any further query", async () => {
     const { client, queries } = stubSupabase(() => ({ data: [], error: null }));
-    expect(await duplicate({ appId: "gone" }, { supabase: client })).toBeNull();
+    expect(await duplicate({ appId: "gone", projectId: "p2" }, { supabase: client })).toBeNull();
     expect(queries.length).toBe(1);
   });
 
-  it("skips the visibility read when the source references no datasets", async () => {
+  it("skips both visibility reads when the source references nothing", async () => {
     const stub = stubSupabase();
     script(stub, [
-      () => ({ data: [appRow("src")], error: null }),
+      () => ({ data: [appRow("src", { datasetIds: [] })], error: null }),
       () => ({ data: appRow("copy"), error: null }),
+      () => ({ data: [{ id: "pa1" }], error: null }),
     ]);
-    await duplicate({ appId: "src" }, { supabase: stub.client });
+    await duplicate({ appId: "src", projectId: "p2" }, { supabase: stub.client });
     expect(queryAt(stub.queries, 1).table).toBe("apps");
-    expect(stub.queries.length).toBe(2);
+    expect(stub.queries.length).toBe(3);
   });
 });
