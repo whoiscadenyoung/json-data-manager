@@ -84,10 +84,20 @@ resolved decisions D1–D7; §5 = the scenario that is the train's exit test).
   the recreated map_layers (the DROP-table-takes-the-enablement trap —
   `docs/memory/project-layers-0020-lessons.md`). Rendering stays live;
   frozen-row rendering is [project 5]'s.
-- **#258 relations** — `dataset_relations` (key|spatial, catalog-level);
-  migrations now 0021+, ADRs 0020+;
-  runtime queries GiST-backed, viewport-scoped, hard cap ~200 + "show more".
-  Perf lessons: `docs/memory/map-performance-audit-2026-10.md`.
+- **#258 relations** — `dataset_relations` (kind `key|spatial`,
+  cardinality, config jsonb; unique (from, to, kind)) — CATALOG-LEVEL rows
+  (D3: data truth, reusable by any project holding both datasets), with
+  the creation UX living in the project catalog. Migration 0021+; ADRs
+  0020+. The relation-aware MAP RUNTIME (feature click → bounded
+  PostGIS/key query → highlight related + "related records" popup section)
+  mounts in the IN-PROJECT editor's rendering path
+  (`/projects/$projectId/maps/$mapId` — placements→layers→datasets now;
+  the old `/maps/$mapId` is just a redirect). GiST-backed spatial queries,
+  viewport-scoped, hard cap ~200 rows + "show more". Perf lessons:
+  `docs/memory/map-performance-audit-2026-10.md`. Authoring gotchas that
+  still apply: `docs/memory/project-layers-0020-lessons.md` (RLS on
+  recreated tables, publication joins) + the wire-client int-test pattern
+  in `pg-maps-domain.int.test.ts`.
 - **#259 apps** — `apps.project_id` NOT NULL; update the two seeded example
   apps in the same migration; keep the `revision` CAS save flow.
 - **#260 ladder** — replaces `published_visibility`/`apps.sharing`; closure
