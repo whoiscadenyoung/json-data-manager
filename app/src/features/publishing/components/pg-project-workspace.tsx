@@ -25,7 +25,7 @@ import {
   SheetTitle,
 } from "@caden/ui/components/sheet";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeft,
   ArrowUpCircle,
@@ -37,6 +37,8 @@ import {
   Import,
   Link2,
   ListPlus,
+  Map as MapIcon,
+  MapPlus,
   Loader2,
   Rocket,
   Search,
@@ -53,6 +55,7 @@ import { useSession } from "@/integrations/supabase/provider";
 import { errorMessage } from "@/lib/errors";
 import * as datasetsStore from "@/lib/store/datasets";
 import * as derivedStore from "@/lib/store/derived";
+import * as mapsStore from "@/lib/store/maps";
 import { listMineQueryOptions, resolveMyRole, ROLE_LABELS } from "@/lib/store/project-members";
 import * as projectsStore from "@/lib/store/projects";
 import type { CatalogRow } from "@/lib/store/projects";
@@ -737,6 +740,141 @@ function PgBundleStatusLine({ projectId }: { projectId: string }) {
   );
 }
 
+/** The project's Maps view (issue #257; D2 — map creation lives in projects): the project-owned maps with their placement counts, and the create-map affordance the /maps explorer no longer has. */
+function PgProjectMapsSection({ canEdit, projectId }: { canEdit: boolean; projectId: string }) {
+  const queryClient = useQueryClient(),
+    mapsQuery = useQuery({ ...mapsStore.listForProjectQueryOptions({ projectId }) }),
+    placementsQuery = useQuery({ ...mapsStore.listAllPlacementsQueryOptions() }),
+    [createOpen, setCreateOpen] = useState(false),
+    [name, setName] = useState(""),
+    [creating, setCreating] = useState(false),
+    navigate = useNavigate(),
+    placementsByMap = new globalThis.Map<string, number>();
+  for (const placement of placementsQuery.data ?? []) {
+    placementsByMap.set(placement.mapId, (placementsByMap.get(placement.mapId) ?? 0) + 1);
+  }
+  const maps = mapsQuery.data ?? [],
+    create = async (): Promise<void> => {
+      setCreating(true);
+      try {
+        const mapId = await mapsStore.create({
+          name: name.trim() === "" ? "New map" : name.trim(),
+          projectId,
+        });
+        if (mapId === null) {
+          toast.error("The map didn't create — you may not have access.");
+          return;
+        }
+        void queryClient.invalidateQueries({ queryKey: ["pg:maps"] });
+        toast.success("Map created — opening the editor.");
+        await navigate({ params: { mapId, projectId }, to: "/projects/$projectId/maps/$mapId" });
+      } catch (error) {
+        toast.error(errorMessage(error, "Failed to create the map."));
+      } finally {
+        setCreating(false);
+      }
+    };
+  return (
+    <section className="mt-2">
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-muted-foreground">
+          Maps{" "}
+          <span className="font-normal">
+            ({maps.length} {maps.length === 1 ? "map" : "maps"})
+          </span>
+        </h2>
+        <Button
+          disabled={!canEdit || creating}
+          onClick={() => {
+            setCreateOpen(true);
+          }}
+          size="sm"
+          title={canEdit ? "Create a map in this project" : VIEWER_REASON}
+          variant="outline"
+        >
+          <MapPlus className="mr-1 h-3.5 w-3.5" />
+          Create map
+        </Button>
+      </div>
+      {maps.length === 0 ? (
+        <p className="rounded-lg border px-4 py-3 text-sm text-muted-foreground">
+          No maps yet — create one and compose the project's layers on it.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {maps.map((map) => (
+            <Card
+              className="flex-row items-center gap-4 px-4 py-3 transition-shadow hover:shadow-md"
+              key={map.id}
+            >
+              <Link
+                className="flex min-w-0 flex-1 flex-col gap-1 py-0"
+                params={{ mapId: map.id, projectId }}
+                to="/projects/$projectId/maps/$mapId"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline">
+                    <MapIcon className="h-3 w-3" />
+                    Map
+                  </Badge>
+                  <span className="text-xs text-muted-foreground">
+                    {placementsByMap.get(map.id) ?? 0}{" "}
+                    {(placementsByMap.get(map.id) ?? 0) === 1 ? "layer" : "layers"}
+                  </span>
+                </div>
+                <p className="truncate text-sm font-medium">{map.name}</p>
+              </Link>
+              <RouterButton
+                params={{ mapId: map.id, projectId }}
+                size="sm"
+                to="/projects/$projectId/maps/$mapId"
+                variant="outline"
+              >
+                Open editor
+              </RouterButton>
+            </Card>
+          ))}
+        </div>
+      )}
+      <Sheet
+        onOpenChange={(next) => {
+          if (next) {
+            setName("");
+          }
+          setCreateOpen(next);
+        }}
+        open={createOpen}
+      >
+        <SheetContent className="w-full sm:max-w-md">
+          <SheetHeader className="border-b">
+            <SheetTitle>New map</SheetTitle>
+            <SheetDescription>
+              Name is the only required field — the editor opens right after.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="flex flex-1 flex-col gap-4 p-6">
+            <Input
+              onChange={(event) => {
+                setName(event.target.value);
+              }}
+              placeholder="Parks overview"
+              value={name}
+            />
+            <Button
+              disabled={creating}
+              onClick={() => {
+                void create();
+              }}
+            >
+              {creating ? "Creating…" : "Create and open"}
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
+    </section>
+  );
+}
+
 /** The workspace body: the project's facts, the catalog's datasets + derived sections, add/import/create actions, the press. */
 // The body joins the project's reads and renders the catalog's sections
 // with their actions — the flat sequence the press lifecycle doc states;
@@ -982,6 +1120,8 @@ function PgProjectWorkspaceBody({ projectId }: { projectId: string }) {
           )}
         </div>
       )}
+
+      <PgProjectMapsSection canEdit={canEdit} projectId={projectId} />
 
       <PgAddReferenceSheet
         addedDatasetIds={addedDatasetIds}

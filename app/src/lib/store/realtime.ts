@@ -121,8 +121,17 @@ export const DATASET_CHANNEL_TABLES: readonly DatasetChannelTable[] = [
   { filterColumn: "dataset_id", surface: "versions", table: "dataset_versions" },
   { filterColumn: "dataset_id", surface: "versions (tags pin them)", table: "tags" },
   { filterColumn: "dataset_id", surface: "catalog memberships", table: "collection_datasets" },
-  { filterColumn: "target_id", surface: "maps layer data (layer set)", table: "map_layers" },
-  { filterColumn: "render_id", surface: "maps layer styles", table: "layer_styles" },
+  // map_layers + layers + layer_children ride the publication (0020) so a
+  // co-member's edits broadcast, but none carries a dataset column any
+  // more (placements name layer MEMBERSHIPS; layers name project rows) —
+  // their events never match this channel's per-dataset filters and are
+  // delivered instead through the map editor's own mutation refetches +
+  // TanStack invalidation (the same granularity the note below records
+  // for maps/groups/collections). Listed so the subscription set matches
+  // the publication and the tests pin the shape.
+  { filterColumn: "layer_member_id", surface: "map layer placements", table: "map_layers" },
+  { filterColumn: "project_id", surface: "project layers (definitions)", table: "layers" },
+  { filterColumn: "group_id", surface: "layer tree (group children)", table: "layer_children" },
   {
     filterColumn: "source_dataset_id",
     surface: "consumption edges (consumed-by list / drift badges)",
@@ -830,42 +839,36 @@ function applyCollectionDatasetsChange(
   invalidations.add(["pg:collections", "listDatasets"]);
 }
 
+function applyLayersChange(
+  _queryClient: QueryClient,
+  invalidations: PendingInvalidations,
+  _change: RealtimeChange,
+  _datasetId: string,
+): void {
+  // Layer definition/tree events are project-scoped (no dataset column —
+  // the matrix note): the owning keys invalidate broadly and TanStack's
+  // dedupe makes that one refetch per key.
+  invalidations.add(["pg:layers"]);
+}
+
 function applyMapLayersChange(
   _queryClient: QueryClient,
   invalidations: PendingInvalidations,
   change: RealtimeChange,
   _datasetId: string,
 ): void {
-  // A layer's map_id rides INSERT/UPDATE payloads; a DELETE carries only the
-  // layer's own uuid (default replica identity), so its map is unknown and
-  // the map-scoped keys invalidate broadly.
+  // A placement's map_id rides INSERT/UPDATE payloads; a DELETE carries
+  // only the placement's own uuid (default replica identity), so its map
+  // is unknown and the map-scoped keys invalidate broadly.
   const row =
     change.eventType === "INSERT" || change.eventType === "UPDATE" ? change.new : change.old;
   const mapId = row === null ? "" : columnString(row, "map_id");
-  invalidations.add(["pg:maps", "listAllLayers"]);
+  invalidations.add(["pg:maps", "listAllPlacements"]);
   if (change.eventType === "DELETE" || mapId === "") {
-    invalidations.add(["pg:maps", "listLayers"]);
-    invalidations.add(["pg:maps", "listOverrides"]);
+    invalidations.add(["pg:maps", "listPlacements"]);
     return;
   }
-  invalidations.add(["pg:maps", "listLayers", { mapId }]);
-  invalidations.add(["pg:maps", "listOverrides", { mapId }]);
-}
-
-function applyLayerStylesChange(
-  _queryClient: QueryClient,
-  invalidations: PendingInvalidations,
-  change: RealtimeChange,
-  _datasetId: string,
-): void {
-  const row =
-    change.eventType === "INSERT" || change.eventType === "UPDATE" ? change.new : change.old;
-  const mapId = row === null ? "" : columnString(row, "map_id");
-  if (mapId !== "" && change.eventType !== "DELETE") {
-    invalidations.add(["pg:layer-styles", "listForMap", { mapId }]);
-    return;
-  }
-  invalidations.add(["pg:layer-styles", "listForMap"]);
+  invalidations.add(["pg:maps", "listPlacements", { mapId }]);
 }
 
 const TABLE_HANDLERS: Record<string, ChangeHandler> = {
@@ -875,7 +878,8 @@ const TABLE_HANDLERS: Record<string, ChangeHandler> = {
   datasets: applyDatasetsChange,
   entries: applyEntriesChange,
   geometries: applyGeometriesChange,
-  layer_styles: applyLayerStylesChange,
+  layer_children: applyLayersChange,
+  layers: applyLayersChange,
   map_layers: applyMapLayersChange,
   tags: applyTagsChange,
   version_policies: applyVersionPoliciesChange,

@@ -10,19 +10,13 @@ vi.mock("#/env", () => ({
 }));
 
 import {
-  listForMap,
-  listForMapQueryOptions,
   listIcons,
-  listIconsQueryOptions,
   MARKER_SPRITES_BUCKET,
   removeIcon,
-  resetStyle,
-  setStyle,
   uploadedIconName,
   uploadIcon,
 } from "./layer-styles";
 import {
-  allArgs,
   firstArg,
   methodList,
   postgrestError,
@@ -74,17 +68,6 @@ function styledStub(initial?: QueryResponder): StubSupabase & {
 }
 
 /** Pre-aliased style fixture (see maps.test.ts — the stub skips select aliases). */
-function styleRow(renderId: string, overrides: Record<string, unknown> = {}) {
-  return {
-    mapId: "m1",
-    renderId,
-    style: { layers: [], version: 1 },
-    updatedBy: UID,
-    updatedAt: "2026-11-03T00:00:00Z",
-    ...overrides,
-  };
-}
-
 /** Pre-aliased marker-sprite fixture. */
 function spriteRow(id: string, overrides: Record<string, unknown> = {}) {
   return {
@@ -99,69 +82,6 @@ function spriteRow(id: string, overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
-
-describe("layerStyles.listForMap — the map's saved styles", () => {
-  it("selects the map's style rows and keeps the style document verbatim", async () => {
-    const { client, queries } = stubSupabase(() => ({
-      data: [styleRow("d1"), styleRow("d2", { style: { layers: [{ type: "fill" }] } })],
-      error: null,
-    }));
-    const rows = await listForMap({ mapId: "m1" }, { supabase: client });
-    const query = queryAt(queries, 0);
-    expect(query.table).toBe("layer_styles");
-    expect(firstArg(query, "eq")).toBe("map_id");
-    expect(rows.map((row) => row.renderId)).toStrictEqual(["d1", "d2"]);
-    expect(rows[1].style).toStrictEqual({ layers: [{ type: "fill" }] });
-  });
-
-  it("throws the PostgREST error shape on failure", async () => {
-    const { client } = stubSupabase(() => ({ data: null, error: postgrestError() }));
-    await expect(listForMap({ mapId: "m1" }, { supabase: client })).rejects.toThrow(
-      "permission denied (42501)",
-    );
-  });
-
-  it("queryOptions carry the args in the key", () => {
-    const { client } = stubSupabase();
-    const args = { mapId: "m1" };
-    expect(listForMapQueryOptions(args, { supabase: client }).queryKey).toStrictEqual([
-      "pg:layer-styles",
-      "listForMap",
-      args,
-    ]);
-    expect(listIconsQueryOptions({ supabase: client }).queryKey).toStrictEqual([
-      "pg:layer-styles",
-      "listIcons",
-    ]);
-  });
-});
-
-describe("layerStyles.setStyle — the debounced save", () => {
-  it("upserts on the unique (map_id, render_id); attribution is the trigger's job", async () => {
-    const stub = styledStub(() => ({ data: [{ id: "s1" }], error: null }));
-    const style = { layers: [{ type: "circle" }], version: 1 };
-    await setStyle({ mapId: "m1", renderId: "d1", style }, { supabase: stub.client });
-    const query = queryAt(stub.queries, 0);
-    expect(query.table).toBe("layer_styles");
-    expect(firstArg(query, "upsert")).toStrictEqual({
-      map_id: "m1",
-      render_id: "d1",
-      style,
-    });
-    expect(allArgs(query, "upsert")[0][1]).toStrictEqual({ onConflict: "map_id,render_id" });
-  });
-});
-
-describe("layerStyles.resetStyle — back to the assigned color", () => {
-  it("deletes the (map_id, render_id) row; absent rows delete nothing", async () => {
-    const { client, queries } = stubSupabase(() => ({ data: [], error: null }));
-    await resetStyle({ mapId: "m1", renderId: "d1" }, { supabase: client });
-    const query = queryAt(queries, 0);
-    expect(methodList(query)).toStrictEqual(["delete", "eq", "eq", "select"]);
-    expect(firstArg(query, "eq")).toBe("map_id");
-    expect(allArgs(query, "eq")[1]).toStrictEqual(["render_id", "d1"]);
-  });
-});
 
 describe("layerStyles.listIcons — the upload picker's feed", () => {
   it("lists sprites newest-first with signed read URLs and user-<id> names", async () => {

@@ -9,16 +9,15 @@ import {
 } from "./client";
 
 /**
- * The layer-styles store (design doc §8.1's `styles.ts`, named after the
- * feature module it feeds) — the PG counterpart of today's
- * `api.layerStyles.*`: `styles.listForMap` / `styles.set` / `styles.reset`
- * over `public.layer_styles` (DDL §3.4), and the uploaded point-marker
- * icons (`icons.list` / `icons.upload` / `icons.remove`) over
- * `public.marker_sprites` + the `marker-sprites` bucket (§3.4/§6).
+ * The layer-styles store's ICON half (issue #257 / ADR 0019) — uploaded
+ * point-marker icons (`icons.list` / `icons.upload` / `icons.remove`) over
+ * `public.marker_sprites` + the `marker-sprites` bucket (0005 §3.4/§6).
  *
- * Style documents stay MapLibre style-spec fragments per `(mapId, renderId)`
- * (ADR 0012) — this module stores and fetches them verbatim; compiling,
- * validating and rendering remain the `@caden/layer-styles` engine's job.
+ * The STYLE half retired with `layer_styles` itself: style documents live
+ * ON the layer rows now (`layers.style` — the layers store's update), the
+ * per-`(mapId, renderId)` fragments having been the pre-layers
+ * approximation. The `@caden/layer-styles` validators/engine are untouched
+ * — they compile and validate the fragments wherever they are stored.
  *
  * Marker uploads keep the ADR 0013 contract: PNG only, rasterized in the
  * uploader's browser, never an SVG. The §6 upload shape is: the browser
@@ -26,92 +25,15 @@ import {
  * server-issued, single-purpose URLs, so there is no pending-upload
  * provenance problem to manage.
  *
- * Attribution is NOT sent: migration 0005 stamps `updated_by` (insert and
- * update) and `uploaded_by` (insert) from `auth.uid()` with BEFORE triggers
- * — the 0003 rule that "identity is stamped from the request, never claimed
- * from a client payload", so a direct PostgREST write can neither omit nor
- * spoof them (stage-1 parity: `datasets`/`entries` inserts likewise omit
- * `created_by`). Convex parity: uploads are shared with every signed-in
- * user (ADR 0009) — RLS, not this module, draws the visibility line.
+ * Attribution is NOT sent: migration 0005 stamps `uploaded_by` (insert)
+ * from `auth.uid()` with a BEFORE trigger — the 0003 rule that "identity
+ * is stamped from the request, never claimed from a client payload".
+ * Convex parity: uploads are shared with every signed-in user (ADR 0009) —
+ * RLS, not this module, draws the visibility line.
  *
  * NOTE: narrow local interfaces typed from the design doc's DDL (§3.4/§6),
  * not the generated `database.types.ts` (see `./client`).
  */
-
-/** One stored style: the MapLibre fragment document for one render id of one map (§3.4). */
-export interface LayerStyleRow {
-  mapId: string;
-  renderId: string;
-  /** The style document verbatim (`{version, layers, editor?}` — validators.ts owns the shape). */
-  style: unknown;
-  updatedBy: string;
-  updatedAt: string;
-}
-
-const STYLE_SELECT =
-  "mapId:map_id,renderId:render_id,style,updatedBy:updated_by,updatedAt:updated_at";
-
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
-
-/** The map's saved styles, keyed by render id by the caller (the hook merges previews over them). */
-export async function listForMap(
-  args: { mapId: string },
-  options?: StoreOptions,
-): Promise<LayerStyleRow[]> {
-  return await queryRows<LayerStyleRow>(
-    clientOf(options)
-      .from("layer_styles")
-      .select(STYLE_SELECT)
-      .eq("map_id", args.mapId)
-      .limit(DEFAULT_STYLES_LIMIT),
-  );
-}
-
-/** The per-map style read width (a map's layer count bounds it in practice). */
-export const DEFAULT_STYLES_LIMIT = 500;
-
-/**
- * Upserts the style for `(mapId, renderId)` — the save side of the editor's
- * debounced write. The `unique (map_id, render_id)` constraint (§3.4) makes
- * one statement idempotent under a retried flush.
- */
-export async function setStyle(
-  args: { mapId: string; renderId: string; style: unknown },
-  options?: StoreOptions,
-): Promise<void> {
-  await queryRows<unknown>(
-    clientOf(options)
-      .from("layer_styles")
-      .upsert(
-        // `updated_by`/`updated_at` deliberately omitted — the 0005 triggers
-        // stamp both from the request.
-        {
-          map_id: args.mapId,
-          render_id: args.renderId,
-          style: args.style,
-        },
-        { onConflict: "map_id,render_id" },
-      )
-      .select("id"),
-  );
-}
-
-/** Deletes the style row — the dataset draws in its assigned color again. Absent rows delete nothing. */
-export async function resetStyle(
-  args: { mapId: string; renderId: string },
-  options?: StoreOptions,
-): Promise<void> {
-  await queryRows<unknown>(
-    clientOf(options)
-      .from("layer_styles")
-      .delete()
-      .eq("map_id", args.mapId)
-      .eq("render_id", args.renderId)
-      .select("id"),
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Uploaded marker icons (ADR 0013; bucket §6)
@@ -314,13 +236,6 @@ export async function removeIcon(args: { iconId: string }, options?: StoreOption
 // ---------------------------------------------------------------------------
 // TanStack Query options (reads; design §8.1)
 // ---------------------------------------------------------------------------
-
-export function listForMapQueryOptions(args: { mapId: string }, options?: StoreOptions) {
-  return queryOptions({
-    queryKey: ["pg:layer-styles", "listForMap", args],
-    queryFn: async () => await listForMap(args, options),
-  });
-}
 
 export function listIconsQueryOptions(options?: StoreOptions) {
   return queryOptions({

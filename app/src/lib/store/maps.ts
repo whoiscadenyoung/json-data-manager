@@ -3,82 +3,84 @@ import { queryOptions } from "@tanstack/react-query";
 import { clientOf, queryRow, queryRows, type StoreOptions } from "./client";
 
 /**
- * The maps store (design doc §8.1) — the PG counterpart of today's
- * `api.cms.maps.*`: `list` / `get` / `create` / `update` / `remove` /
- * `listLayers` / `addLayer` / `removeLayer` / `setLayerVisibility` /
- * `moveLayer` / `listOverrides` / `setMapLayerOverride`, over the catalog
- * tables `public.maps`, `public.map_layers`, `public.map_layer_overrides`
- * (DDL §3.4).
+ * The maps store (issue #257 — the project-centric train's phase 3; ADR
+ * 0019) — project-owned maps and their LAYER PLACEMENTS over
+ * `public.maps` + `public.map_layers`.
  *
- * Behavior parity notes (each traces to the Convex-era surface the maps
- * workspace rode, `app/convex/cms/maps.ts`):
- *   - `addLayer` appends at the END of the draw order (`order` = max + 1 —
- *     layers draw in list order, top of the panel first).
- *   - `removeLayer`/`remove` are plain deletes: the FKs cascade
- *     (map → layers → overrides, §3.4 — "deleted-with-parent cascades
- *     replace the component's explicit deleteSchema/deleteGroup/
- *     deleteCollection cleanup walks"), so a map's layers and a layer's
- *     overrides never dangle.
- *   - `moveLayer("up"|"down")` swaps the layer's `order` with its adjacent
- *     neighbor's (the panel's up/down semantics). PostgREST statements are
- *     single-statement, so the swap is two updates where the Convex mutation
- *     was one transaction; a crash between them can leave two layers with
- *     the same `order` — deterministic and harmless, because every read
- *     tie-breaks on `id` (no unique constraint exists on `(map_id, order)`,
- *     per the DDL's "gaps allowed after removal").
- *   - `setMapLayerOverride` keeps the #53 semantics: HIDING a child writes a
- *     `{visible: false}` row (upsert on the unique `(layer_id, child_key)`);
- *     SHOWING clears any override row (back to the default visible). An
- *     override row that survives its layer's child leaves the read as an
- *     inert entry (the component's dangling-target tolerance, §3.4).
+ * The recorded shapes (ADR 0019):
+ *   - Maps are project ROWS, never project_artifacts memberships: reads
+ *     are member-wide, content writes are editor+ (the 0018 role split —
+ *     the 0005 authenticated-wide policies are gone). D2: the /maps
+ *     explorer lists every map the viewer can see; creation lives in
+ *     projects.
+ *   - A placement names a layer MEMBERSHIP (a project_artifacts row of
+ *     kind 'layer'): owned layers answer via their layers row, linked ones
+ *     via their pinned layer_versions row (the membership's artifact_id).
+ *     The old direct dataset/collection/group target modes retired — "add
+ *     dataset to map" now flows through the layers store's auto-layer
+ *     (membership + owned layer, then this store places it).
+ *   - Draw order (`order`) is written contiguously, gaps allowed after
+ *     removals; only relative order renders; every read tie-breaks on id
+ *     (no unique constraint on (map_id, order) — the 0005 rule).
+ *   - `movePlacement("up"|"down")` swaps positions with the neighbor in
+ *     two updates (single-statement PostgREST; a crash mid-swap leaves a
+ *     harmless duplicate order, tie-broken by id).
+ *   - `viewport` is whatever the editor last captured (bounds + zoom);
+ *     `basemap` the saved style — both free-form editor state.
  *
- * Transactions: the create-and-add flow (`AddToMapSheet`'s "create & add")
- * is two calls where the Convex mutation was one; a crash between them
- * leaves an empty map — the user adds the layer again from the workspace.
- *
- * NOTE: narrow local interfaces typed from the design doc's DDL (§3.4), not
- * the generated `database.types.ts` (see `./client`).
+ * NOTE: narrow local interfaces typed from the migration 0020 DDL, not the
+ * generated `database.types.ts` (see `./client`).
  */
 
-/** One saved map, as every reader of `maps` gets it (DDL §3.4). */
+/** One project-owned map, as every reader of `maps` gets it (the project embed names it for the explorer's chips). */
 export interface MapRow {
   id: string;
+  projectId: string;
   name: string;
   description: string | null;
+  /** Display order in the project's Maps view (append-assigned; gaps fine). */
+  order: number;
+  /** The saved camera (bounds + zoom) — whatever the editor last captured. */
+  viewport: unknown;
+  basemap: string | null;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+  /** The owning project's title (FK embed — the explorer's chip). */
+  project: { id: string; title: string };
 }
 
-/** One layer of a saved map, in the DDL's shape (`targetId` is uuid-as-text, §3.4). */
-export interface MapLayerRow {
+/** One layer placement on a map, in draw order. */
+export interface MapPlacementRow {
   id: string;
   mapId: string;
-  /** Draw/list position; written contiguously, gaps allowed after removal (§3.4). */
+  /** Draw/list position; gaps allowed after removals — relative order renders. */
   order: number;
-  targetType: "collection" | "group" | "dataset" | "derived";
-  targetId: string;
-  visible: boolean;
-}
-
-/** One child-visibility override of a layer (`childKey` is `'group:<id>'` | `'dataset:<id>'`, §3.4). */
-export interface MapLayerOverrideRow {
-  id: string;
-  layerId: string;
-  childKey: string;
+  /** The layer MEMBERSHIP (project_artifacts kind 'layer') this placement shows. */
+  layerMemberId: string;
+  /** The map-local visibility toggle (the layer's own `visible` is the layer-wide default). */
   visible: boolean;
 }
 
 const MAP_SELECT =
-    "id,name,description,createdBy:created_by,createdAt:created_at,updatedAt:updated_at",
-  LAYER_SELECT = "id,mapId:map_id,order,targetType:target_type,targetId:target_id,visible",
-  OVERRIDE_SELECT = "id,layerId:layer_id,childKey:child_key,visible";
+    "id,projectId:project_id,name,description,order,viewport,basemap,createdBy:created_by,createdAt:created_at,updatedAt:updated_at,project:projects(id,title)",
+  PLACEMENT_SELECT = "id,mapId:map_id,order,layerMemberId:layer_member_id,visible";
+
+/** The maps list width when a caller doesn't pin one (the Convex `list` call sites all passed 500). */
+export const DEFAULT_MAPS_LIMIT = 500;
+
+/** The placement-list width (the 0005 layers cap carried over). */
+export const DEFAULT_PLACEMENTS_LIMIT = 500;
 
 // ---------------------------------------------------------------------------
 // Reads
 // ---------------------------------------------------------------------------
 
-/** The saved maps, newest first (the maps index's list). */
+/**
+ * Every map the viewer can see, newest first — the /maps EXPLORER's list
+ * (D2: the explorer never creates; it browses). The project embed carries
+ * the chips.
+ */
 export async function list(options?: StoreOptions): Promise<MapRow[]> {
   return await queryRows<MapRow>(
     clientOf(options)
@@ -89,90 +91,75 @@ export async function list(options?: StoreOptions): Promise<MapRow[]> {
   );
 }
 
-/** The maps list width when a caller doesn't pin one (the Convex `list` call sites all passed 500). */
-export const DEFAULT_MAPS_LIMIT = 500;
+/** One project's maps in display order (the project Maps view's section). */
+export async function listForProject(
+  args: { projectId: string },
+  options?: StoreOptions,
+): Promise<MapRow[]> {
+  return await queryRows<MapRow>(
+    clientOf(options)
+      .from("maps")
+      .select(MAP_SELECT)
+      .eq("project_id", args.projectId)
+      .order("order", { ascending: true })
+      .order("id", { ascending: true })
+      .limit(DEFAULT_MAPS_LIMIT),
+  );
+}
 
-/** One saved map by id, or null when RLS hides it (the invisible-row-reads-as-not-found rule). */
+/** One map by id, or null when RLS hides it (a non-member reads not-found). */
 export async function get(args: { mapId: string }, options?: StoreOptions): Promise<MapRow | null> {
   return await queryRow<MapRow>(
     clientOf(options).from("maps").select(MAP_SELECT).eq("id", args.mapId).limit(1),
   );
 }
 
-/** The map's layers in draw order (`order` asc, `id` tie-break — see `moveLayer`). */
-export async function listLayers(
+/** The map's placements in draw order (`order` asc, `id` tie-break). */
+export async function listPlacements(
   args: { mapId: string },
   options?: StoreOptions,
-): Promise<MapLayerRow[]> {
-  return await queryRows<MapLayerRow>(
+): Promise<MapPlacementRow[]> {
+  return await queryRows<MapPlacementRow>(
     clientOf(options)
       .from("map_layers")
-      .select(LAYER_SELECT)
+      .select(PLACEMENT_SELECT)
       .eq("map_id", args.mapId)
       .order("order", { ascending: true })
       .order("id", { ascending: true })
-      .limit(DEFAULT_LAYERS_LIMIT),
+      .limit(DEFAULT_PLACEMENTS_LIMIT),
   );
 }
 
-/** The layer-list width when a caller doesn't pin one (the Convex call sites all passed 500). */
-export const DEFAULT_LAYERS_LIMIT = 500;
-
 /**
- * Every PG map's layers in one read — the maps index's per-map layer counts
- * and the add-to-map sheet's "Added" badges (the Convex surface's
- * `listLayers({limit: 500})` all-maps read; per-map counts are computed
- * client-side there too). Draw order is meaningless across maps, so this
- * orders only by id for read stability.
+ * Every placement across the visible maps in one read — the explorer's
+ * per-map placement counts (the listAllLayers shape, retargeted). Draw
+ * order is meaningless across maps; this orders only by id.
  */
-export async function listAllLayers(options?: StoreOptions): Promise<MapLayerRow[]> {
-  return await queryRows<MapLayerRow>(
+export async function listAllPlacements(options?: StoreOptions): Promise<MapPlacementRow[]> {
+  return await queryRows<MapPlacementRow>(
     clientOf(options)
       .from("map_layers")
-      .select(LAYER_SELECT)
+      .select(PLACEMENT_SELECT)
       .order("id", { ascending: true })
-      .limit(DEFAULT_LAYERS_LIMIT),
+      .limit(DEFAULT_PLACEMENTS_LIMIT),
   );
-}
-
-/** `listAllLayers` as TanStack Query options. */
-export function listAllLayersQueryOptions(options?: StoreOptions) {
-  return queryOptions({
-    queryKey: ["pg:maps", "listAllLayers"],
-    queryFn: async () => await listAllLayers(options),
-  });
-}
-
-/**
- * Every child-visibility override of THIS map's layers — the issue #53
- * shape (the wrapper reads through the map's own layers, not every map's
- * overrides). PostgREST resource embedding with `!inner` filters to layers
- * of the map; the embed key is the TABLE name (`map_layers` — PostgREST
- * names relationships after the table, verified against the local stack's
- * REST endpoint), and the embedded parent is stripped by the mapper.
- */
-export async function listOverrides(
-  args: { mapId: string },
-  options?: StoreOptions,
-): Promise<MapLayerOverrideRow[]> {
-  const rows = await queryRows<MapLayerOverrideRow & { map_layers: unknown }>(
-    clientOf(options)
-      .from("map_layer_overrides")
-      .select(`${OVERRIDE_SELECT},map_layers!inner(map_id)`)
-      .eq("map_layers.map_id", args.mapId)
-      .limit(DEFAULT_LAYERS_LIMIT),
-  );
-  return rows.map(({ map_layers: _embeddedParent, ...override }) => override);
 }
 
 // ---------------------------------------------------------------------------
-// TanStack Query options (reads; design §8.1 — every read a queryOptions)
+// TanStack Query options
 // ---------------------------------------------------------------------------
 
 export function listQueryOptions(options?: StoreOptions) {
   return queryOptions({
     queryKey: ["pg:maps", "list"],
     queryFn: async () => await list(options),
+  });
+}
+
+export function listForProjectQueryOptions(args: { projectId: string }, options?: StoreOptions) {
+  return queryOptions({
+    queryKey: ["pg:maps", "listForProject", args],
+    queryFn: async () => await listForProject(args, options),
   });
 }
 
@@ -183,66 +170,88 @@ export function getQueryOptions(args: { mapId: string }, options?: StoreOptions)
   });
 }
 
-export function listLayersQueryOptions(args: { mapId: string }, options?: StoreOptions) {
+export function listPlacementsQueryOptions(args: { mapId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:maps", "listLayers", args],
-    queryFn: async () => await listLayers(args, options),
+    queryKey: ["pg:maps", "listPlacements", args],
+    queryFn: async () => await listPlacements(args, options),
   });
 }
 
-export function listOverridesQueryOptions(args: { mapId: string }, options?: StoreOptions) {
+export function listAllPlacementsQueryOptions(options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:maps", "listOverrides", args],
-    queryFn: async () => await listOverrides(args, options),
+    queryKey: ["pg:maps", "listAllPlacements"],
+    queryFn: async () => await listAllPlacements(options),
   });
 }
 
 // ---------------------------------------------------------------------------
-// Writes — map rows
+// Writes — map rows (editor+ at RLS; silent-denial returns where the count
+// matters, void where a zero-row answer is already "not found" upstream)
 // ---------------------------------------------------------------------------
 
-/** `api.cms.maps.create` parity. Returns the new map's id. */
+/**
+ * Creates a map in a project. Returns the new row's id (null = denied —
+ * not an editor of the project).
+ */
 export async function create(
-  args: { name: string; description?: string },
+  args: { projectId: string; name: string; description?: string },
   options?: StoreOptions,
-): Promise<string> {
+): Promise<string | null> {
+  const client = clientOf(options);
+  const existing = await listForProject({ projectId: args.projectId }, options);
+  const last = existing[existing.length - 1];
   const row = await queryRow<{ id: string }>(
-    clientOf(options)
+    client
       .from("maps")
       .insert({
-        name: args.name,
         ...(args.description === undefined ? {} : { description: args.description }),
+        name: args.name,
+        order: last === undefined ? 0 : last.order + 1,
+        project_id: args.projectId,
       })
       .select("id")
       .single(),
   );
-  if (row === null) {
-    throw new Error("Map insert returned no row.");
-  }
-  return row.id;
+  return row === null ? null : row.id;
 }
 
-/** `api.cms.maps.update` parity. */
+/** Updates the map's name/description (the form panel's fields). Returns the affected count. */
 export async function update(
   args: { mapId: string; name: string; description?: string },
   options?: StoreOptions,
-): Promise<void> {
-  await queryRows<unknown>(
+): Promise<number> {
+  const rows = await queryRows<{ id: string }>(
     clientOf(options)
       .from("maps")
       .update({
-        name: args.name,
         // A cleared description must overwrite the old one (the Convex
         // mutation set it to null when the field emptied).
         description: args.description ?? null,
+        name: args.name,
         updated_at: new Date().toISOString(),
       })
       .eq("id", args.mapId)
       .select("id"),
   );
+  return rows.length;
 }
 
-/** Deletes the map; its layers and their overrides go with it by cascade (§3.4). */
+/** Saves the camera the editor last captured (the viewport CAS is deliberately absent — last-write-wins editor state). */
+export async function saveViewport(
+  args: { mapId: string; viewport: unknown },
+  options?: StoreOptions,
+): Promise<number> {
+  const rows = await queryRows<{ id: string }>(
+    clientOf(options)
+      .from("maps")
+      .update({ updated_at: new Date().toISOString(), viewport: args.viewport })
+      .eq("id", args.mapId)
+      .select("id"),
+  );
+  return rows.length;
+}
+
+/** Deletes the map; its placements go with it by cascade. */
 export async function remove(args: { mapId: string }, options?: StoreOptions): Promise<void> {
   await queryRows<unknown>(
     clientOf(options).from("maps").delete().eq("id", args.mapId).select("id"),
@@ -250,144 +259,93 @@ export async function remove(args: { mapId: string }, options?: StoreOptions): P
 }
 
 // ---------------------------------------------------------------------------
-// Writes — layers
+// Writes — placements
 // ---------------------------------------------------------------------------
 
-/** `api.cms.maps.addLayer` parity: appends the target at the end of the map's draw order. */
-export async function addLayer(
-  args: {
-    mapId: string;
-    targetId: string;
-    targetType: MapLayerRow["targetType"];
-    /** Overrides the computed draw position (the create-and-add flow's first layer). */
-    order?: number;
-  },
+/**
+ * Appends one placement at the end of the map's draw order. Returns the
+ * row (null = denied — not an editor, the map is gone, or the membership
+ * is invisible).
+ */
+export async function addPlacement(
+  args: { layerMemberId: string; mapId: string; order?: number },
   options?: StoreOptions,
-): Promise<MapLayerRow> {
+): Promise<MapPlacementRow | null> {
   const client = clientOf(options);
   let order = args.order;
   if (order === undefined) {
-    const existing = await listLayers({ mapId: args.mapId }, options);
+    const existing = await listPlacements({ mapId: args.mapId }, options);
     const last = existing[existing.length - 1];
     order = last === undefined ? 0 : last.order + 1;
   }
-  const row = await queryRow<MapLayerRow>(
+  return await queryRow<MapPlacementRow>(
     client
       .from("map_layers")
       .insert({
+        layer_member_id: args.layerMemberId,
         map_id: args.mapId,
         order,
-        target_id: args.targetId,
-        target_type: args.targetType,
       })
-      .select(LAYER_SELECT)
+      .select(PLACEMENT_SELECT)
       .single(),
   );
-  if (row === null) {
-    throw new Error("Layer insert returned no row.");
-  }
-  return row;
 }
 
-/** Removes one layer; its overrides go with it by cascade (§3.4). */
-export async function removeLayer(
-  args: { layerId: string },
+/** Removes one placement (the layer itself stays — placements are the map's view of it). */
+export async function removePlacement(
+  args: { placementId: string },
   options?: StoreOptions,
-): Promise<void> {
-  await queryRows<unknown>(
-    clientOf(options).from("map_layers").delete().eq("id", args.layerId).select("id"),
+): Promise<number> {
+  const rows = await queryRows<{ id: string }>(
+    clientOf(options).from("map_layers").delete().eq("id", args.placementId).select("id"),
   );
+  return rows.length;
 }
 
-/** `api.cms.maps.setLayerVisibility` parity. */
-export async function setLayerVisibility(
-  args: { layerId: string; visible: boolean },
+/** The map-local visibility toggle (the layer-wide default lives on the layer row). */
+export async function setPlacementVisibility(
+  args: { placementId: string; visible: boolean },
   options?: StoreOptions,
-): Promise<void> {
-  await queryRows<unknown>(
+): Promise<number> {
+  const rows = await queryRows<{ id: string }>(
     clientOf(options)
       .from("map_layers")
       .update({ visible: args.visible })
-      .eq("id", args.layerId)
+      .eq("id", args.placementId)
       .select("id"),
   );
+  return rows.length;
 }
 
 /**
- * `api.cms.maps.moveLayer` parity: swaps the layer's draw position with its
- * neighbor's (two updates — see the module comment's transaction note). The
- * layer must exist and have a neighbor in the given direction; an unknown
- * neighbor (single-layer map, gap at the edge) is a no-op, matching the
- * panel's disabled buttons.
+ * Swaps the placement's draw position with its neighbor's (two updates —
+ * see the module comment). An unknown neighbor (single-placement map, gap
+ * at the edge) is a no-op, matching the panel's disabled buttons.
  */
-export async function moveLayer(
-  args: { layerId: string; direction: "up" | "down" },
+export async function movePlacement(
+  args: { direction: "up" | "down"; placementId: string },
   options?: StoreOptions,
 ): Promise<void> {
   const client = clientOf(options);
-  const layer = await queryRow<MapLayerRow>(
-    client.from("map_layers").select(LAYER_SELECT).eq("id", args.layerId).limit(1),
+  const placement = await queryRow<MapPlacementRow>(
+    client.from("map_layers").select(PLACEMENT_SELECT).eq("id", args.placementId).limit(1),
   );
-  if (layer === null) {
+  if (placement === null) {
     return;
   }
-  const siblings = await listLayers({ mapId: layer.mapId }, options),
-    index = siblings.findIndex((sibling) => sibling.id === layer.id),
+  const siblings = await listPlacements({ mapId: placement.mapId }, options),
+    index = siblings.findIndex((sibling) => sibling.id === placement.id),
     neighborIndex = args.direction === "up" ? index - 1 : index + 1,
-    neighbor = neighborsAt(siblings, neighborIndex);
+    neighbor = siblings[neighborIndex];
   if (neighbor === undefined) {
     return;
   }
-  // Update the neighbor FIRST: while mid-swap, the moving layer still holds
-  // its old position, so ordering reads stay gap-free.
+  // Update the neighbor FIRST: while mid-swap, the moving placement still
+  // holds its old position, so ordering reads stay gap-free.
   await queryRows<unknown>(
-    client.from("map_layers").update({ order: layer.order }).eq("id", neighbor.id).select("id"),
+    client.from("map_layers").update({ order: placement.order }).eq("id", neighbor.id).select("id"),
   );
   await queryRows<unknown>(
-    client.from("map_layers").update({ order: neighbor.order }).eq("id", layer.id).select("id"),
-  );
-}
-
-/** The sibling at `index`, or nothing (edge/no-neighbor). */
-function neighborsAt(siblings: MapLayerRow[], index: number): MapLayerRow | undefined {
-  if (index < 0) {
-    return undefined;
-  }
-  return siblings[index];
-}
-
-// ---------------------------------------------------------------------------
-// Writes — child overrides (issue #53 semantics; see the module comment)
-// ---------------------------------------------------------------------------
-
-/**
- * `api.cms.maps.setMapLayerOverride` parity: HIDING a child upserts a
- * `{visible: false}` row on the unique `(layer_id, child_key)`; SHOWING
- * clears any override row.
- */
-export async function setMapLayerOverride(
-  args: { layerId: string; childKey: string; visible: boolean },
-  options?: StoreOptions,
-): Promise<void> {
-  const client = clientOf(options);
-  if (args.visible) {
-    await queryRows<unknown>(
-      client
-        .from("map_layer_overrides")
-        .delete()
-        .eq("layer_id", args.layerId)
-        .eq("child_key", args.childKey)
-        .select("id"),
-    );
-    return;
-  }
-  await queryRows<unknown>(
-    client
-      .from("map_layer_overrides")
-      .upsert(
-        { child_key: args.childKey, layer_id: args.layerId, visible: false },
-        { onConflict: "layer_id,child_key" },
-      )
-      .select("id"),
+    client.from("map_layers").update({ order: neighbor.order }).eq("id", placement.id).select("id"),
   );
 }

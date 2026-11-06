@@ -5,20 +5,16 @@ import type { LayerStyle } from "@caden/layer-styles/validators";
 import { useQuery as useStoreQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import type { ReactElement } from "react";
 import { toast } from "sonner";
 
-import type { DatasetActionsSlot, LayersMapExtension, LayersMapLayerArgs } from "#/features/maps";
+import type { LayersMapExtension, LayersMapLayerArgs } from "#/features/maps";
 import type { DatasetEntryRow } from "#/lib/dataset-rows";
-import { isPostgresDatasetId } from "#/lib/dataset-source";
 import { errorMessage } from "#/lib/errors";
 import {
-  listForMapQueryOptions,
   listIconsQueryOptions,
   removeIcon as removeIconStore,
-  resetStyle as resetStyleStore,
-  setStyle as setStyleStore,
   uploadIcon as uploadIconStore,
-  type LayerStyleRow,
 } from "#/lib/store/layer-styles";
 
 import type { MarkerIcons } from "./components/marker-section";
@@ -38,7 +34,16 @@ const NON_POINT_TYPES = new Set(["LineString", "MultiLineString", "Polygon", "Mu
 const NO_ROWS: readonly DatasetEntryRow[] = [];
 
 export interface UseLayerStylesOptions {
-  mapId: string;
+  /**
+   * The saved layer styles, render-keyed by the caller (ADR 0019: styles
+   * live ON the layer rows — renderId = the layer's dataset id, style = the
+   * layer's stored fragment). The hook merges previews over them.
+   */
+  saved: ReadonlyArray<{ renderId: string; style: unknown }> | undefined;
+  /** The debounced flush's save — the caller's layers-store update (it owns the invalidation). */
+  saveStyle: (args: { renderId: string; style: LayerStyle }) => Promise<void>;
+  /** Reset to the assigned-color default — the caller writes the layer's style back to `{}`. */
+  resetStyle: (args: { renderId: string }) => Promise<void>;
   /** The render ids currently on the map. */
   renderIds: readonly string[];
   /** The dataset whose entries hold a render id's field values (a derived/chain layer's source; itself otherwise). */
@@ -55,11 +60,18 @@ export interface UseLayerStylesOptions {
   geometryTypeFor?: (renderId: string) => string | undefined;
 }
 
+/**
+ * The per-render-id style trigger the map's OWN layer rows render (the
+ * ⋯ menu that opens the editor) — the styling module's own contract now
+ * that the placements panel lives in the route (ADR 0019).
+ */
+export type StyleActionsSlot = (target: { renderId: string; title: string }) => ReactElement | null;
+
 export interface UseLayerStylesResult {
   /** Plug into `LayersMap`'s `extension`. */
   extension: LayersMapExtension;
-  /** Plug into `MapLayerPanel`'s `datasetActions`. */
-  datasetActions: DatasetActionsSlot;
+  /** Render beside an OWNED data layer row (linked rows are read-only — the caller skips them). */
+  datasetActions: StyleActionsSlot;
   /** Assigned colors with single-symbol styles' colors applied (layer-panel dots, legend swatches). */
   colorBySchema: Map<string, string>;
   /** Render anywhere on the page: the entry-value loaders (they draw nothing). */
@@ -124,12 +136,9 @@ function neededFieldsBySource(
   return bySource;
 }
 
-/** A saved-styles read (either backend) narrowed to the preview merge's row shape. */
+/** A saved-styles read (the caller's layer-keyed rows) narrowed to the preview merge's row shape. */
 function savedRowsOf(
-  saved:
-    | ReadonlyArray<LayerStyleRow>
-    | ReadonlyArray<{ renderId: string; style: unknown }>
-    | undefined,
+  saved: ReadonlyArray<{ renderId: string; style: unknown }> | undefined,
 ): Array<{ renderId: string; style: LayerStyle }> | undefined {
   if (saved === undefined) {
     return undefined;
@@ -162,12 +171,11 @@ function isIconAvailable(
 /**
  * The layer-styles module's single integration hook (docs/layer-styles.md):
  * the map page calls it once and plugs its results into the two core
- * extension slots. Styles are PER MAP (`(mapId, renderId)` — ADR 0012) and
- * live in Postgres: styles, icons, uploads and entry reads all ride the
- * store modules. The pre-migration Convex half (`api.layerStyles.*`) is
- * archived with the stage-7 disconnect (issue #206) — pre-migration maps
- * render the archived state at the route, so this hook only ever runs for
- * Postgres maps.
+ * extension slots. Styles live ON the layer rows (ADR 0019 — the caller
+ * passes the placed layers' fragments render-keyed and the save/reset
+ * callbacks that write them); icons, uploads and entry reads ride the
+ * store modules. The per-`(mapId, renderId)` layer_styles storage retired
+ * with the table (the pre-layers approximation).
  *
  * Edits preview instantly and save debounced (400 ms); field values load
  * only for datasets whose style reads fields (or that are open in the
@@ -175,17 +183,17 @@ function isIconAvailable(
  */
 // oxlint-disable-next-line eslint/complexity -- the styling wiring (extension + datasetActions + panel + loaders) is the hook's real shape; the decomposition is the deferred phase-2 cleanup, as in the route workspaces.
 export function useLayerStyles({
-  mapId,
+  saved,
+  saveStyle,
+  resetStyle,
   renderIds,
   entrySourceFor,
   tileRenderIds,
   colorBySchema,
   geometryTypeFor,
 }: UseLayerStylesOptions): UseLayerStylesResult {
-  const pgMap = isPostgresDatasetId(mapId),
-    // ---- saved styles + uploads (the store) ----
-    pgSaved = useStoreQuery({ ...listForMapQueryOptions({ mapId }), enabled: pgMap }),
-    pgUploadList = useStoreQuery({ ...listIconsQueryOptions(), enabled: pgMap }),
+  // ---- saved styles (the caller's layer-keyed rows) + uploads (the store) ----
+  const pgUploadList = useStoreQuery({ ...listIconsQueryOptions() }),
     queryClient = useQueryClient(),
     actions: MarkerIconActions = {
       removeUpload: async (iconId) => {
@@ -222,7 +230,7 @@ export function useLayerStyles({
     pendingRef = useRef<{ renderId: string; style: LayerStyle } | undefined>(undefined),
     timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined),
     // ---- styles + the entry sources whose field values they read ----
-    styles = effectiveStyles(savedRowsOf(pgSaved.data), previews),
+    styles = effectiveStyles(savedRowsOf(saved), previews),
     neededBySource = neededFieldsBySource(styles, renderIds, entrySourceFor),
     editingSource = editing === undefined ? undefined : entrySourceFor(editing.renderId),
     loadSourceIds = [
@@ -232,7 +240,7 @@ export function useLayerStyles({
       ]),
     ],
     // ---- field-value loaders ----
-    { loaders, reportsBySchema } = usePgEntryRowsBySchemas(pgMap ? loadSourceIds : [], pgMap);
+    { loaders, reportsBySchema } = usePgEntryRowsBySchemas(loadSourceIds, true);
 
   const clearPreview = useCallback((renderId: string) => {
     setPreviews((prev) => {
@@ -265,8 +273,7 @@ export function useLayerStyles({
       pendingRef.current = undefined;
       setSaving(true);
       try {
-        await setStyleStore({ mapId, renderId: pending.renderId, style: pending.style });
-        void queryClient.invalidateQueries({ queryKey: ["pg:layer-styles"] });
+        await saveStyle({ renderId: pending.renderId, style: pending.style });
         // The saved row now carries this style; drop the preview unless a newer edit queued.
         if (pendingRef.current === undefined) {
           clearPreview(pending.renderId);
@@ -279,7 +286,7 @@ export function useLayerStyles({
       }
     },
     // oxlint-disable-next-line react/preserve-manual-memoization -- see the comment above.
-    [clearPreview, mapId, queryClient],
+    [clearPreview, saveStyle],
   );
 
   // Save anything queued when the page unmounts.
@@ -296,9 +303,8 @@ export function useLayerStyles({
       }
       setPreviews((prev) => new Map(prev).set(renderId, null));
       try {
-        await resetStyleStore({ mapId, renderId });
-        void queryClient.invalidateQueries({ queryKey: ["pg:layer-styles"] });
-        toast.success("Style reset to the map default.");
+        await resetStyle({ renderId });
+        toast.success("Style reset to the assigned colors.");
       } catch (error) {
         toast.error(errorMessage(error, "Couldn't reset the style."));
       } finally {
@@ -374,7 +380,7 @@ export function useLayerStyles({
     },
   };
 
-  const datasetActions: DatasetActionsSlot = ({ renderId, title }) => (
+  const datasetActions: StyleActionsSlot = ({ renderId, title }) => (
     <StyleMenu
       title={title}
       styled={styles.has(renderId)}
