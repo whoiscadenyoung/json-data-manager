@@ -652,17 +652,13 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
                 onTileSourceIdle={(schemaId) => {
                   setArrivedTileSchemaIds((prev) => withArrivedTileSchema(prev, schemaId));
                 }}
+                relationRuntime={{ projectId }}
                 sourcesPending={split.sourcesPending}
                 tileSources={split.tileSources}
                 titlesById={
-                  new globalThis.Map(
-                    derivedRowIds.flatMap((derivedId) => {
-                      const summary = (pgDerivedRows.data ?? []).find(
-                        (row) => row.id === derivedId,
-                      );
-                      return summary === undefined ? [] : [[derivedId, summary.title] as const];
-                    }),
-                  )
+                  // Dataset titles first, derived over them — the relation
+                  // runtime names off-map relation ends from the same read.
+                  new globalThis.Map([...datasetTitleById, ...derivedTitleById])
                 }
                 visibleSchemaIds={new Set(visibleEntries.map((entry) => entry.renderId))}
               />

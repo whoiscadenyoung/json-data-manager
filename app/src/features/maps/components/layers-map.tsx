@@ -1,10 +1,11 @@
 import { buildFeatureCollection, unionBbox, useResolvedGeometries } from "@caden/json-cms/react";
 import type { BoundingBox, Geometry } from "@caden/json-cms/react";
 import { Button } from "@caden/ui/components/button";
-import { Map, MapClusterLayer, MapGeoJSON, MapVectorTiles } from "@caden/ui/components/map";
+import { Map, MapClusterLayer, MapGeoJSON, MapVectorTiles, useMap } from "@caden/ui/components/map";
 import { Link } from "@tanstack/react-router";
 import { ChevronRight, Loader2, X } from "lucide-react";
-import { Fragment, useState } from "react";
+import type { Map as MapLibreMap } from "maplibre-gl";
+import { Fragment, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
 import type { DatasetEntryRow, DatasetGeometryRow } from "#/lib/dataset-rows";
@@ -19,6 +20,13 @@ import {
   splitPointLikeGeometries,
 } from "../lib/point-geometry";
 import { usePgEnrichedDatasetEntryRow } from "./pg-entry-popup";
+import {
+  PgRelatedRecordsPanel,
+  PgRelationHighlight,
+  sourceDatasetOfRenderId,
+  useRelationsRuntime,
+} from "./pg-relations-runtime";
+import type { RelationRuntimeOptions, ViewportBbox } from "./pg-relations-runtime";
 
 type EntryDoc = DatasetEntryRow;
 
@@ -79,6 +87,7 @@ function FeatureDetailsPanel({
   schemaId,
   datasetTitle,
   joinedPending,
+  related,
   onClose,
 }: {
   /** `undefined` while the on-demand read is in flight, `null` if the entry is gone. */
@@ -88,6 +97,8 @@ function FeatureDetailsPanel({
   datasetTitle: string;
   /** True while the popup executor's spec/lookup-row reads are still streaming (issue #97). */
   joinedPending: boolean;
+  /** The relation runtime's related-records slot (the in-project editor's runtime; absent elsewhere). */
+  related?: ReactNode;
   onClose: () => void;
 }) {
   const data = entry !== null && entry !== undefined ? entry.data : undefined,
@@ -140,6 +151,7 @@ function FeatureDetailsPanel({
             )}
           </>
         )}
+        {related}
       </dl>
       <Link
         to="/datasets/$schemaId/$entryId"
@@ -270,6 +282,30 @@ function extensionLayer(
   return extension === undefined ? undefined : extension.renderLayer(args);
 }
 
+/**
+ * Per-instance registered MapLibre map — the click-time bounds source for the
+ * relation runtime's spatial scoping. A WeakMap keyed by a per-mount token,
+ * WRITTEN only from the sink child's effect and READ only in event handlers:
+ * no render-phase ref access (the react/refs rule; the react-compiler
+ * posture — a ref read in a render-scope closure is uncacheable).
+ */
+const registeredMaps = new WeakMap<object, MapLibreMap>();
+
+/** Registers the mounted MapLibre instance under the parent LayersMap's token. Renders nothing; lives inside <Map> so the context supplies the instance. */
+function MapInstanceSink({ token }: { token: object }) {
+  const { map } = useMap();
+  useEffect(() => {
+    if (map === null) {
+      return undefined;
+    }
+    registeredMaps.set(token, map);
+    return () => {
+      registeredMaps.delete(token);
+    };
+  }, [map, token]);
+  return null;
+}
+
 /** The stable empty list behind LayersMap's `derivedLayers` default (the default-prop rule). */
 const NO_DERIVED_LAYERS: Array<{ derivedId: string; sourceSchemaId: string }> = [];
 
@@ -378,6 +414,7 @@ export function LayersMap({
   sourcesPending = false,
   onTileSourceIdle,
   extension,
+  relationRuntime,
 }: {
   datasets: LayersMapDataset[];
   /** Derived layers on this map: render id → the bottom source dataset its geometry rides. */
@@ -403,8 +440,17 @@ export function LayersMap({
   onTileSourceIdle?: (schemaId: string) => void;
   /** Optional rendering extension (the map-styling module) — absent, every dataset draws by default. */
   extension?: LayersMapExtension;
+  /**
+   * The relation runtime (issue #258; ADR 0020) — present, feature clicks
+   * resolve the relations touching the clicked dataset, highlight the
+   * related set, and render a related-records popup section (each bounded
+   * by the `dataset_relation_records` RPC). Absent, clicks open the plain
+   * popup — zero extra reads anywhere.
+   */
+  relationRuntime?: RelationRuntimeOptions;
 }) {
-  const datasetById = new globalThis.Map(datasets.map((dataset) => [dataset._id, dataset])),
+  const [mapToken] = useState(() => ({})),
+    datasetById = new globalThis.Map(datasets.map((dataset) => [dataset._id, dataset])),
     resolvedGeometries = useResolvedGeometries(geometries),
     // Derived layers re-key their source's rows (see `keyedGeometryRows`):
     // the plain rows stay so a source that is ALSO a layer keeps drawing as
@@ -441,6 +487,9 @@ export function LayersMap({
       return bbox;
     }),
     [selected, setSelected] = useState<FeatureProperties | null>(null),
+    // The viewport captured AT click time (the spatial relation queries'
+    // scope — a stale bbox would answer a view the user already left).
+    [selectedBbox, setSelectedBbox] = useState<ViewportBbox | undefined>(undefined),
     // The clicked feature's entry, read on demand through the seam's
     // point-read path (issue #52) and enriched by the popup executor
     // (issue #97): one indexed single-doc subscription per selection plus —
@@ -489,15 +538,58 @@ export function LayersMap({
         onTileSourceIdle(schemaId);
       }
     },
+    // The relation runtime's read (issue #258): render ids resolve to their
+    // SOURCE datasets (relations are dataset-ended); titles merge the
+    // caller's map with the datasets prop so off-map relation ends still
+    // name themselves.
+    runtimeTitles = (() => {
+      const merged = new globalThis.Map<string, string>();
+      if (titlesById !== undefined) {
+        for (const [id, title] of titlesById) {
+          merged.set(id, title);
+        }
+      }
+      for (const dataset of datasets) {
+        if (!merged.has(dataset._id)) {
+          merged.set(dataset._id, dataset.title);
+        }
+      }
+      return merged;
+    })(),
+    relations = useRelationsRuntime({
+      chainLayers,
+      datasetIds: schemaIds.map((schemaId) =>
+        sourceDatasetOfRenderId(schemaId, derivedLayers, chainLayers),
+      ),
+      derivedLayers,
+      runtime: relationRuntime,
+      selected: selected === null ? undefined : selected,
+      titlesById: runtimeTitles,
+    }),
+    captureBounds = (): ViewportBbox | undefined => {
+      const map = registeredMaps.get(mapToken);
+      if (map === undefined) {
+        return undefined;
+      }
+      const [[minLon, minLat], [maxLon, maxLat]] = map.getBounds().toArray();
+      return [minLon, minLat, maxLon, maxLat];
+    },
+    // Every selection captures the viewport it was made in (the spatial
+    // queries' scope) — the single entry point for all click paths.
+    selectFeature = (properties: FeatureProperties) => {
+      setSelectedBbox(captureBounds());
+      setSelected(properties);
+    },
     // The extension's popup callback: tile features carry only `entryId`, so
     // the render id stands in for the dataset when the feature names none.
     selectFrom = (schemaId: string) => (selection: { entryId: string; schemaId?: string }) => {
-      setSelected({ entryId: selection.entryId, schemaId: selection.schemaId ?? schemaId });
+      selectFeature({ entryId: selection.entryId, schemaId: selection.schemaId ?? schemaId });
     };
 
   return (
     <div className="relative h-full w-full">
       <Map bounds={initialBounds} className="h-full w-full">
+        <MapInstanceSink token={mapToken} />
         {schemaIds.map((schemaId) => {
           const color = colorBySchema.get(schemaId) ?? "#3b82f6",
             tileSource = tileSources.find((source) => source.schemaId === schemaId);
@@ -531,7 +623,7 @@ export function LayersMap({
                 onClick={(e) => {
                   // Tiles carry id-only properties — the entry id is the join
                   // key; the dataset is known from this layer's wiring.
-                  setSelected({ entryId: e.feature.properties.entryId, schemaId });
+                  selectFeature({ entryId: e.feature.properties.entryId, schemaId });
                 }}
               />
             );
@@ -551,7 +643,7 @@ export function LayersMap({
               withResolved(pointRows),
             ),
             handleFeatureSelect = (properties: FeatureProperties) => {
-              setSelected(properties);
+              selectFeature(properties);
             },
             styled = extensionLayer(extension, {
               color,
@@ -598,6 +690,22 @@ export function LayersMap({
             </Fragment>
           );
         })}
+        {/* The relation runtime's highlight overlays (issue #258): the related
+            set per touching relation, amber, drawn on top. Rendered inside
+            <Map> AFTER the schema layers so the highlight wins the z-order;
+            clicking a highlighted point drills in. */}
+        {relationRuntime !== undefined &&
+          selected !== null &&
+          relations.touching.map((item) => (
+            <PgRelationHighlight
+              bbox={selectedBbox}
+              item={item}
+              key={item.relation.id}
+              onSelect={selectFeature}
+              runtime={relationRuntime}
+              selected={selected}
+            />
+          ))}
       </Map>
       {visibleGeometries.length === 0 && visibleTileSources === 0 && !sourcesPending && (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/40 p-6 text-center backdrop-blur-[1px]">
@@ -617,7 +725,19 @@ export function LayersMap({
           schemaId={selected.schemaId}
           datasetTitle={selectedDatasetTitle}
           joinedPending={popup.joinedPending}
+          related={
+            relationRuntime === undefined ? undefined : (
+              <PgRelatedRecordsPanel
+                bbox={selectedBbox}
+                loading={relations.loading}
+                runtime={relationRuntime}
+                selected={selected}
+                touching={relations.touching}
+              />
+            )
+          }
           onClose={() => {
+            setSelectedBbox(undefined);
             setSelected(null);
           }}
         />

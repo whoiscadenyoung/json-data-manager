@@ -166,26 +166,44 @@ alter table public.maps
 -- as its owner member), so the project-owned RLS below locks nobody out
 -- and no map is orphaned. The birth trigger mints the owner membership
 -- with each project (the 0018 invariant, for every writer).
+--
+-- The claims GUCs are set PER ITERATION because the projects INSERT fires
+-- the 0009 stamp trigger (`new.created_by := auth.uid()`), and auth.uid()
+-- is NULL in a migration session — the naive INSERT died on created_by NOT
+-- NULL on the first legacy stack this backfill ever met (the compose demo
+-- data, 2026-11-06; CI never sees it — fresh databases have no maps).
+-- Asserting the creator's identity for the statement makes the stamp write
+-- the honest owner AND the birth trigger mint the owner membership for
+-- them. A legacy map with a NULL created_by folds into the first profile.
 do $$
 declare
   m record;
   pid uuid;
+  v_owner uuid;
 begin
   for m in
-    select distinct on (created_by) created_by, id
+    select distinct on (coalesce(created_by, (select id from public.profiles order by created_at limit 1))) created_by, id
     from public.maps
     where project_id is null
-    order by created_by, id
+    order by coalesce(created_by, (select id from public.profiles order by created_at limit 1)), id
   loop
+    v_owner := coalesce(m.created_by, (select id from public.profiles order by created_at limit 1));
+    perform set_config('request.jwt.claims', json_build_object('sub', v_owner)::text, false);
+    perform set_config('request.jwt.claim.sub', v_owner::text, false);
     insert into public.projects (title, description, created_by)
     values (
-      coalesce((select name from public.profiles where id = m.created_by), 'Someone') || '''s maps',
+      coalesce((select name from public.profiles where id = v_owner), 'Someone') || '''s maps',
       'Project holding the maps created before maps became project-owned (backfilled 2026-11-06).',
-      m.created_by
+      v_owner
     )
     returning id into pid;
-    update public.maps set project_id = pid where created_by = m.created_by and project_id is null;
+    update public.maps
+    set project_id = pid
+    where coalesce(created_by, (select id from public.profiles order by created_at limit 1)) = v_owner
+      and project_id is null;
   end loop;
+  perform set_config('request.jwt.claims', '', false);
+  perform set_config('request.jwt.claim.sub', '', false);
 end
 $$;
 
