@@ -22,6 +22,7 @@ import {
   withPgDrafts,
   type PgBrowserItem,
 } from "#/features/catalog";
+import { PgDatasetCardAddToProjectButton } from "#/features/publishing";
 import * as collectionsStore from "#/lib/store/collections";
 import * as datasetsStore from "#/lib/store/datasets";
 import * as groupsStore from "#/lib/store/groups";
@@ -247,7 +248,11 @@ function DatasetsPage() {
                       item={item}
                     />
                   ) : (
-                    <PgDatasetCard key={item.dataset.id} dataset={item.dataset} />
+                    <PgDatasetCard
+                      key={item.dataset.id}
+                      dataset={item.dataset}
+                      trailing={<PgDatasetCardAddToProjectButton datasetId={item.dataset.id} />}
+                    />
                   ),
                 )}
               </div>

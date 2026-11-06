@@ -3,6 +3,7 @@ import { Card } from "@caden/ui/components/card";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Calendar, ChevronRight, Database, Layers } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { UserAvatar } from "#/components/user-avatar";
 import type { DatasetSummaryRow } from "#/lib/store/datasets";
@@ -68,8 +69,14 @@ function CreatorChip({ profileId }: { profileId: string }) {
   );
 }
 
-/** One PG dataset's browser card. */
-export function PgDatasetCard({ dataset }: { dataset: DatasetSummaryRow }) {
+/** One PG dataset's browser card. `trailing` renders between the creator chip and the chevron — the add-to-project affordance's slot (the route owns the feature dep; catalog stays feature-acyclic). */
+export function PgDatasetCard({
+  dataset,
+  trailing,
+}: {
+  dataset: DatasetSummaryRow;
+  trailing?: ReactNode;
+}) {
   return (
     <Card className="flex-row items-center gap-4 px-4 transition-shadow hover:shadow-md">
       <Link
@@ -91,6 +98,7 @@ export function PgDatasetCard({ dataset }: { dataset: DatasetSummaryRow }) {
         </div>
       </Link>
       <CreatorChip profileId={dataset.createdBy} />
+      {trailing}
       <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
     </Card>
   );

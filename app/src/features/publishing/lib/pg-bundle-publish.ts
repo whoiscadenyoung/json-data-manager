@@ -5,7 +5,6 @@ import { getQueryOptions as getProjectQueryOptions } from "@/lib/store/projects"
 import {
   completeBundle,
   latestBundleQueryOptions,
-  linkMapLayers,
   listMembersQueryOptions,
   memberOrder,
   publishDataset,
@@ -20,17 +19,16 @@ import {
  * (stage 4, #203; lifecycle doc §5–§6, ADR 0008), driving the publishing
  * store's press legs exactly the way `./bundle-publish.ts` drove the Convex
  * host mutations: `startBundle` (join-or-create + member plan, canonical
- * datasets → derived → maps order) → per-dataset `publishDataset` with
+ * datasets → derived order) → per-dataset `publishDataset` with
  * `recordMember` checkpoints → the promoted collection (create-once,
- * file-every-published-or-referenced-member) → `linkMapLayers` (the maps'
- * float references, reconciled against the CURRENT layer list the leg
- * re-reads — never this plan's snapshot) → `completeBundle`.
+ * file-every-published-or-referenced-member) → `completeBundle`.
  *
  * The member plan IS ADR 0008's bundle rule ("one project publishes as one
- * bundle — a collection plus its maps plus the datasets they reference"):
- * the plan is the project's artifacts PLUS every dataset its maps' layers
- * target (the `bundleClosure` walk, deduped by id), so a layered map never
- * publishes a collection missing its layer data.
+ * bundle — a collection plus its datasets"): the plan is the project's
+ * artifacts, deduped by id. Map members leave with #256/ADR 0018 — the
+ * artifact-kind domain narrowed to dataset|derived (0019) — and return as
+ * project-owned maps in [project 3], whose layer legs re-land then
+ * (`linkMapLayers` stays in the publishing store, unused until that phase).
  *
  * Every member's `publish_key` is DETERMINISTIC (`bundleId:memberId`) rather
  * than random: a browser killed mid-member re-presses into the same bundle
@@ -98,32 +96,18 @@ async function headOf(
   };
 }
 
-/** The map member's dataset-layer targets (the legs linkMapLayers mints references for). The maps store keeps the table; the press needs only the ids. */
-async function mapLayerTargets(mapId: string, options?: StoreOptions): Promise<string[]> {
-  const rows = await queryRows<{ targetId: string | null }>(
-    clientOf(options)
-      .from("map_layers")
-      .select("targetId:target_id")
-      .eq("map_id", mapId)
-      .eq("target_type", "dataset")
-      // The Convex leg-time width (bundles.ts linkMapLayers reads
-      // CATALOG_READ_LIMIT = 1000); 500 was an under-parity first cut.
-      .limit(1000),
-  );
-  return rows.flatMap((row) => (row.targetId === null ? [] : [row.targetId]));
-}
+/** The map member's dataset-layer targets removed with #256 — map memberships left the artifact domain (0019); the leg returns with [project 3]'s project-owned maps. */
 
 /**
  * Publishes one project as its Postgres bundle: start (or join) the press →
  * freeze every never-published dataset member → promote the collection
- * (create-once, reused across presses) → link the maps' layer references →
- * close the run.
+ * (create-once, reused across presses) → close the run.
  */
 // The press is one linear orchestration of the recorded legs — start,
-// per-member freeze with checkpoints, collection, map links, close — where
-// each leg consumes the previous leg's rows; splitting it into helpers
-// would thread that mutable run state through parameters and hide the
-// checkpoint order the resume semantics depend on.
+// per-member freeze with checkpoints, collection, close — where each leg
+// consumes the previous leg's rows; splitting it into helpers would thread
+// that mutable run state through parameters and hide the checkpoint order
+// the resume semantics depend on.
 // oxlint-disable-next-line eslint/complexity -- the leg sequence IS the flat, ordered control flow the press's resume contract is stated in.
 export async function pgPublishProjectBundle(options: {
   projectId: string;
@@ -147,17 +131,12 @@ export async function pgPublishProjectBundle(options: {
     );
 
   // The member plan (the bundleClosure walk): never-published datasets
-  // freeze; already-published ones join referenced; every dataset a map's
-  // layers target joins the plan too — an artifact held AND layered, or
-  // layered by two maps, publishes once (deduped by id). Maps record their
-  // PRESS-TIME dataset-layer targets on the member row, but the link leg
-  // never trusts that snapshot — it re-reads the CURRENT layer list at leg
-  // time (bundles.ts:1060-1123). Collection/group layers stay out of the
-  // plan — the recorded live-expansion asymmetry (bundles.ts): they expand
-  // at read time and become members only at the next press.
+  // freeze; already-published ones join referenced (deduped by id).
+  // Collection/group layers stay out of the plan — the recorded
+  // live-expansion asymmetry (bundles.ts): they expand at read time and
+  // become members only at the next press.
   const datasetPlans = new Map<string, BundleMemberPlan>(),
-    derivedPlans: BundleMemberPlan[] = [],
-    mapPlans: BundleMemberPlan[] = [];
+    derivedPlans: BundleMemberPlan[] = [];
   const planDataset = async (datasetId: string): Promise<void> => {
     if (datasetPlans.has(datasetId)) {
       return;
@@ -174,25 +153,12 @@ export async function pgPublishProjectBundle(options: {
     if (artifact.artifactKind === "dataset") {
       // oxlint-disable-next-line no-await-in-loop -- one head read per dataset artifact, in artifact order.
       await planDataset(artifact.artifactId);
-    } else if (artifact.artifactKind === "map") {
-      // oxlint-disable-next-line no-await-in-loop -- one targets read per map member, in artifact order.
-      const targets = await mapLayerTargets(artifact.artifactId, storeOptions);
-      for (const target of targets) {
-        // oxlint-disable-next-line no-await-in-loop -- one head read per layer-referenced dataset, in layer order.
-        await planDataset(target);
-      }
-      mapPlans.push({
-        datasetKey: artifact.artifactId,
-        kind: "map",
-        layerTargets: targets,
-        publish: true,
-      });
     } else {
       derivedPlans.push({ datasetKey: artifact.artifactId, kind: "derived", publish: true });
     }
   }
-  // Already in canonical order: datasets, then derived, then maps.
-  const members: BundleMemberPlan[] = [...datasetPlans.values(), ...derivedPlans, ...mapPlans];
+  // Already in canonical order: datasets, then derived.
+  const members: BundleMemberPlan[] = [...datasetPlans.values(), ...derivedPlans];
 
   const started = await startBundle(
       {
@@ -219,18 +185,9 @@ export async function pgPublishProjectBundle(options: {
       member.kind === "dataset" && (member.status === "published" || member.status === "referenced")
         ? [member.datasetKey]
         : [],
-    ),
-    mapLegs: Array<{ mapId: string; memberId: string }> = [];
+    );
 
   for (const member of ordered) {
-    if (member.kind === "map") {
-      // EVERY map member re-walks — including one an earlier leg already
-      // linked (the Convex leg iterates all map members, no skip): the leg
-      // re-reads the CURRENT layers and self-heals the edges, so a resumed
-      // press never leaves a stale reference standing.
-      mapLegs.push({ mapId: member.datasetKey, memberId: member.id });
-      continue;
-    }
     if (
       !member.publish ||
       member.status === "published" ||
@@ -331,11 +288,8 @@ export async function pgPublishProjectBundle(options: {
     return { bundleId: started.bundleId, collectionId: null, failedKeys, status: "failed" };
   }
 
-  // The map leg: one float reference per direct dataset-layer target, the
-  // CURRENT layer list re-read at leg time (stale edges reconciled away —
-  // including for members an earlier leg already linked), each map member
-  // stamped "linked".
-  await linkMapLayers({ bundleId: started.bundleId, maps: mapLegs }, storeOptions);
+  // (The map leg left with #256 — map memberships are out of the artifact
+  // domain until [project 3] re-lands it over project-owned maps.)
 
   const closed = await completeBundle({ bundleId: started.bundleId }, storeOptions);
   if (closed.affected === 0 || closed.bundle === null) {

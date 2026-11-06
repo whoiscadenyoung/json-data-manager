@@ -51,6 +51,8 @@ export interface ProjectMemberRow {
   addedBy: string;
   createdAt: string;
   profile: MemberProfile;
+  /** The membership's project (FK embed — one FK to projects, unambiguous), for the surfaces that name projects (the add-to-project picker). */
+  project: { id: string; title: string };
 }
 
 // The profile embed is FK-disambiguated (!project_members_user_id_fkey):
@@ -59,7 +61,8 @@ export interface ProjectMemberRow {
 // error (verified live).
 const MEMBER_SELECT =
   "id,projectId:project_id,userId:user_id,role,addedBy:added_by,createdAt:created_at," +
-  "profile:profiles!project_members_user_id_fkey(id,name,image)";
+  "profile:profiles!project_members_user_id_fkey(id,name,image)," +
+  "project:projects(id,title)";
 
 // ---------------------------------------------------------------------------
 // Reads (TanStack Query `queryOptions` per function)

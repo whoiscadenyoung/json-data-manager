@@ -35,6 +35,12 @@ const PROJECT = {
   title: "SMART 2024",
   updatedAt: "2026-11-04T00:00:00+00:00",
 };
+// The completed-press fixture: datasets only. Map memberships left with
+// #256 (the artifact kind domain narrowed to dataset|derived, 0019/ADR
+// 0018); derived rows join the plan but their publish still refuses (the
+// press's honest failure) — so a COMPLETED press needs a datasets-only
+// catalog, and the plan-order test overrides the artifacts read to include
+// the derived row.
 const ARTIFACTS = [
   {
     addedBy: "creator-1",
@@ -42,6 +48,8 @@ const ARTIFACTS = [
     artifactKind: "dataset",
     id: "art-1",
     projectId: "project-1",
+    role: "linked",
+    syncMode: "manual",
   },
   {
     addedBy: "creator-1",
@@ -49,13 +57,20 @@ const ARTIFACTS = [
     artifactKind: "dataset",
     id: "art-2",
     projectId: "project-1",
+    role: "linked",
+    syncMode: "manual",
   },
+];
+const ARTIFACTS_WITH_DERIVED = [
+  ...ARTIFACTS,
   {
     addedBy: "creator-1",
-    artifactId: "map-1",
-    artifactKind: "map",
+    artifactId: "derived-1",
+    artifactKind: "derived",
     id: "art-3",
     projectId: "project-1",
+    role: "linked",
+    syncMode: "manual",
   },
 ];
 const BUNDLE_ROW = {
@@ -91,18 +106,11 @@ const MEMBER_B = {
   publish: false,
   status: "referenced",
 };
-const MEMBER_C = {
+const MEMBER_D = {
   ...MEMBER_A,
-  datasetKey: "dataset-c",
-  id: "member-c",
-  status: "pending",
-};
-const MEMBER_MAP = {
-  ...MEMBER_A,
-  datasetKey: "map-1",
-  id: "member-map",
-  kind: "map",
-  layerTargets: ["dataset-a", "dataset-c"],
+  datasetKey: "derived-1",
+  id: "member-d",
+  kind: "derived",
 };
 
 /** The full argument list of the query's first operation with `method`, or undefined. */
@@ -115,8 +123,11 @@ function methodOf(query: RecordedQuery, method: string): unknown[] | undefined {
  * The stateful press responder: the member statuses UPDATE as the press
  * checkpoints them, so completeBundle's terminal-state read matches what
  * the loop recorded (the run's honesty, end to end through the store legs).
+ * `artifacts` names the catalog the plan reads — the plan-order test swaps
+ * in the derived variant.
  */
 function pressResponder(state: {
+  artifacts: Record<string, unknown>[];
   bundlesInserts: number;
   failOnPublishNumber: number;
   latest: Record<string, unknown> | null;
@@ -140,23 +151,16 @@ function pressResponder(state: {
       return { data: [PROJECT] };
     }
     if (query.table === "project_artifacts") {
-      return { data: ARTIFACTS };
+      return { data: state.artifacts };
     }
     if (query.table === "dataset_versions") {
-      // dataset-b already published (its head exists); dataset-a and
-      // dataset-c never did.
+      // dataset-b already published (its head exists); dataset-a never did.
       const eq = methodOf(query, "eq");
       const datasetId = eq === undefined ? undefined : eq[1];
       if (datasetId === "dataset-b") {
         return { data: [{ id: "version-b1", versionLabel: "v1" }] };
       }
       return { data: [] };
-    }
-    if (query.table === "map_layers") {
-      // The map layers dataset-a (already a project artifact — the dedupe
-      // path) AND dataset-c, which the project never added — the layer
-      // target the bundle rule pulls into the plan.
-      return { data: [{ targetId: "dataset-a" }, { targetId: "dataset-c" }] };
     }
     if (query.table === "collections") {
       return { data: [{ id: "collection-1" }] };
@@ -203,21 +207,27 @@ function pressResponder(state: {
         }
         return { data: [{ id: memberIdText }] };
       }
-      // The member read: statuses reflect the recorded checkpoints.
-      return {
-        data: [
-          { ...MEMBER_A, status: state.memberStatus.get("member-a") ?? "pending" },
-          { ...MEMBER_B, status: state.memberStatus.get("member-b") ?? "referenced" },
-          { ...MEMBER_C, status: state.memberStatus.get("member-c") ?? "pending" },
-          { ...MEMBER_MAP, status: state.memberStatus.get("member-map") ?? "pending" },
-        ],
-      };
+      // The member read: the plan's rows, statuses reflecting the recorded
+      // checkpoints — only the members the catalog's plan actually mints.
+      const planned: Array<Record<string, unknown>> = [];
+      for (const artifact of state.artifacts) {
+        const key = artifact.artifactId;
+        if (key === "dataset-a") {
+          planned.push({ ...MEMBER_A, status: state.memberStatus.get("member-a") ?? "pending" });
+        } else if (key === "dataset-b") {
+          planned.push({ ...MEMBER_B, status: state.memberStatus.get("member-b") ?? "referenced" });
+        } else if (key === "derived-1") {
+          planned.push({ ...MEMBER_D, status: state.memberStatus.get("member-d") ?? "pending" });
+        }
+      }
+      return { data: planned };
     }
     return { data: null };
   };
 }
 
 function freshState(latest: Record<string, unknown> | null = null): {
+  artifacts: Record<string, unknown>[];
   bundlesInserts: number;
   failOnPublishNumber: number;
   latest: Record<string, unknown> | null;
@@ -225,6 +235,7 @@ function freshState(latest: Record<string, unknown> | null = null): {
   memberStatus: Map<string, string>;
 } {
   return {
+    artifacts: ARTIFACTS,
     bundlesInserts: 0,
     failOnPublishNumber: -1,
     latest,
@@ -234,7 +245,7 @@ function freshState(latest: Record<string, unknown> | null = null): {
 }
 
 describe("pgPublishProjectBundle", () => {
-  it("publishes never-published datasets, marks published ones referenced-only, links the maps, and closes completed", async () => {
+  it("publishes never-published datasets, marks published ones referenced-only, and closes completed", async () => {
     const state = freshState();
     const stub = stubSupabase(pressResponder(state));
     const outcome = await pgPublishProjectBundle({ projectId: "project-1", supabase: stub.client });
@@ -244,27 +255,22 @@ describe("pgPublishProjectBundle", () => {
       failedKeys: [],
       status: "completed",
     });
-    // Exactly TWO publish_version calls — dataset-a (the artifact) AND
-    // dataset-c (the map's non-artifact layer target, pulled into the plan
-    // by the bundle closure); dataset-b joined referenced, never re-frozen.
+    // Exactly ONE publish_version call — dataset-a (the never-published
+    // artifact); dataset-b joined referenced, never re-frozen. The map legs
+    // left with #256 (map memberships are out of the artifact domain until
+    // [project 3] re-owns maps).
     const rpcs = stub.queries.filter((query) => query.rpc === "publish_version");
-    expect(rpcs).toHaveLength(2);
+    expect(rpcs).toHaveLength(1);
+    const rpc = at(rpcs, 0);
     // The deterministic publish key rides the bundle+member pair.
-    const rpc = rpcs[0];
-    expect(rpc === undefined ? undefined : rpc.rpcArgs.p_publish_key).toBe("bundle-1:member-a");
-    expect(rpc === undefined ? undefined : rpc.rpcArgs.p_version_label).toBe("v1");
-    expect(rpcs[1] === undefined ? undefined : rpcs[1].rpcArgs.p_publish_key).toBe(
-      "bundle-1:member-c",
-    );
-    // The map member reached "linked" AFTER the dataset publishes (the leg order).
-    expect(state.memberStatus.get("member-map")).toBe("linked");
+    expect(rpc.rpcArgs.p_publish_key).toBe("bundle-1:member-a");
+    expect(rpc.rpcArgs.p_version_label).toBe("v1");
     expect(state.memberStatus.get("member-a")).toBe("published");
-    expect(state.memberStatus.get("member-c")).toBe("published");
     // The promoted collection files every dataset member whose frozen row
-    // stands: the two newly frozen rows AND dataset-b filing itself as the
+    // stands: the newly frozen row AND dataset-b filing itself as the
     // referenced member.
     const memberships = stub.queries.filter((query) => query.table === "collection_datasets");
-    expect(memberships).toHaveLength(3);
+    expect(memberships).toHaveLength(2);
   });
 
   it("joins a RUNNING press instead of forking a second bundle, reusing its collection", async () => {
@@ -328,126 +334,27 @@ describe("pgPublishProjectBundle", () => {
     ).rejects.toThrow(/isn't yours/);
   });
 
-  it("re-links an already-linked map member on a joined press and self-heals edges to the CURRENT layers", async () => {
-    // The press JOINS a running bundle whose map member an earlier leg
-    // already linked. Since then, the dataset-c layer was REMOVED from the
-    // map: the plan-time snapshot carries both targets, but the leg-time
-    // map_layers read returns only dataset-a — so the stale dataset-c edge
-    // must not survive the leg (bundles.ts:1060-1123), and the linked
-    // member must be re-walked at all (no skip leaves stale edges standing).
-    const layerReads: string[][] = [];
-    let layersReadCount = 0;
-    // The scripted run for the resume leg — one branch per table the join
-    // path touches (project, artifacts, heads, layers, edges, members,
-    // bundles), each a two-line answer; the tests read it as one press.
-    // oxlint-disable-next-line eslint/complexity -- the branch-per-table dispatch IS the scripted run, kept in one readable place.
-    const stub = stubSupabase((query) => {
-      if (query.table === "projects") {
-        return { data: [PROJECT] };
-      }
-      if (query.table === "project_artifacts") {
-        return { data: [ARTIFACTS[2]] };
-      }
-      if (query.table === "dataset_versions") {
-        // Both layer targets already published — they join referenced and
-        // the press runs only the map leg.
-        return { data: [{ id: "version-1", versionLabel: "v1" }] };
-      }
-      if (query.table === "map_layers") {
-        layersReadCount += 1;
-        // First read = plan time (both targets); second read = leg time
-        // (the dataset-c layer was removed in between).
-        const targets = layersReadCount === 1 ? ["dataset-a", "dataset-c"] : ["dataset-a"];
-        layerReads.push(targets);
-        return { data: targets.map((targetId) => ({ targetId })) };
-      }
-      if (query.table === "consumer_references") {
-        // A prior leg linked BOTH snapshot targets.
-        return {
-          data: [
-            { consumerId: "map-1", id: "edge-a", sourceDatasetId: "dataset-a" },
-            { consumerId: "map-1", id: "edge-c", sourceDatasetId: "dataset-c" },
-          ],
-        };
-      }
-      if (query.table === "publish_bundle_members") {
-        const isUpdate = query.operations.some((op) => op.method === "update");
-        if (isUpdate) {
-          return { data: [{ id: "member-map" }] };
-        }
-        // The joined run's member read: the map member is ALREADY linked.
-        return { data: [{ ...MEMBER_MAP, status: "linked" }] };
-      }
-      if (query.table === "publish_bundles") {
-        if (query.operations.some((op) => op.method === "insert")) {
-          return { data: [{ id: "bundle-2" }] };
-        }
-        if (query.operations.some((op) => op.method === "update")) {
-          return { data: [{ ...BUNDLE_ROW, status: "completed" }] };
-        }
-        // The join/latest read: a RUNNING press (the resume path).
-        return { data: [{ ...BUNDLE_ROW, collectionId: "collection-keep", status: "running" }] };
-      }
-      return { data: null };
-    });
-    const outcome = await pgPublishProjectBundle({ projectId: "project-1", supabase: stub.client });
-    expect(outcome.status).toBe("completed");
-    expect(outcome.bundleId).toBe("bundle-1");
-    // The leg re-read the layers (plan + leg), and reconciliation followed
-    // the LEG-TIME answer: the stale dataset-c edge deleted, no new edges.
-    expect(layersReadCount).toBe(2);
-    expect(layerReads[1]).toStrictEqual(["dataset-a"]);
-    const deletes = stub.queries.filter(
-      (query) =>
-        query.table === "consumer_references" &&
-        query.operations.some((op) => op.method === "delete"),
-    );
-    expect(deletes.length).toBe(1);
-    const deleteQuery = at(deletes, 0);
-    const deleteEq = deleteQuery.operations.find((op) => op.method === "eq");
-    expect(deleteEq === undefined ? undefined : deleteEq.args).toStrictEqual(["id", "edge-c"]);
-    expect(
-      stub.queries.some(
-        (query) =>
-          query.table === "consumer_references" &&
-          query.operations.some((op) => op.method === "insert"),
-      ),
-    ).toBe(false);
-    // The linked member was re-stamped ("linked" again), not skipped.
-    const stamps = stub.queries.filter(
-      (query) =>
-        query.table === "publish_bundle_members" &&
-        query.operations.some((op) => op.method === "update" && op.args[0] !== null),
-    );
-    expect(
-      stamps.some((query) =>
-        query.operations.some(
-          (op) =>
-            op.method === "update" && (op.args[0] as Record<string, unknown>).status === "linked",
-        ),
-      ),
-    ).toBe(true);
-  });
-
   it("mints member rows through startBundle in the canonical plan order", async () => {
+    // The derived artifact joins the plan (the canonical datasets → derived
+    // order); its publish still refuses (the press's honest stage gap), so
+    // this test pins the PLAN shape, not a completed outcome.
     const state = freshState();
+    state.artifacts = ARTIFACTS_WITH_DERIVED;
     const stub = stubSupabase(pressResponder(state));
-    await pgPublishProjectBundle({ projectId: "project-1", supabase: stub.client });
+    const outcome = await pgPublishProjectBundle({ projectId: "project-1", supabase: stub.client });
+    expect(outcome.failedKeys).toContain("derived-1");
     const memberInserts = stub.queries.filter(
       (query) =>
         query.table === "publish_bundle_members" &&
         query.operations.some((op) => op.method === "insert"),
     );
-    expect(memberInserts).toHaveLength(4);
+    expect(memberInserts).toHaveLength(3);
     const keys = memberInserts.map((query) => {
       const insert = query.operations.find((op) => op.method === "insert");
       const payload = insert === undefined ? {} : (insert.args[0] as Record<string, unknown>);
       return String(payload.dataset_key);
     });
-    // datasets first, then maps (the canonical order startBundle writes);
-    // dataset-c is the map's layer target pulled into the plan, and
-    // dataset-a appears ONCE despite being both an artifact and a layer
-    // target (the closure dedupes by id).
-    expect(keys).toEqual(["dataset-a", "dataset-b", "dataset-c", "map-1"]);
+    // Datasets first, then derived (the canonical order startBundle writes).
+    expect(keys).toEqual(["dataset-a", "dataset-b", "derived-1"]);
   });
 });
