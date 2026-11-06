@@ -63,7 +63,9 @@ import { latestBundleQueryOptions, listMembersQueryOptions } from "@/lib/store/p
 import * as versionsStore from "@/lib/store/versions";
 
 import { pgPublishProjectBundle } from "../lib/pg-bundle-publish";
+import { VIEWER_REASON } from "../lib/pg-viewer-posture";
 import { PgProjectMembersDialog } from "./pg-project-members-dialog";
+import { PgProjectRelationsSection } from "./pg-project-relations";
 
 /**
  * The Postgres project workspace — the project CATALOG (issue #256, the
@@ -84,10 +86,6 @@ import { PgProjectMembersDialog } from "./pg-project-members-dialog";
  * arrive with their phases ([project 3]/[project 5]) — the catalog holds
  * datasets and derived datasets only.
  */
-
-/** The viewer-facing reason every disabled write control carries (the UI-polish rule: a reason, never a silent no-op). */
-const VIEWER_REASON =
-  "Viewers have read-only access to this project — ask an owner for editor access.";
 
 /** The stale-press window (the syncRuns/publishAttempts value): a press whose checkpoint hasn't moved this long was abandoned by its browser, and pressing again RESUMES it (joining the running bundle). */
 const STALE_PRESS_MS = 2 * 60 * 1000;
@@ -1119,6 +1117,10 @@ function PgProjectWorkspaceBody({ projectId }: { projectId: string }) {
             </section>
           )}
         </div>
+      )}
+
+      {datasetSection.length > 0 && (
+        <PgProjectRelationsSection canEdit={canEdit} projectId={projectId} />
       )}
 
       <PgProjectMapsSection canEdit={canEdit} projectId={projectId} />

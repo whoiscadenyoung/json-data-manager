@@ -426,5 +426,11 @@ describe.skipIf(!dbUp())("stage 5 — dataset_rows_for_tiles cap realignment (00
     } finally {
       await dropDatasets(s(), [datasetId]);
     }
-  });
+  }, 30_000);
+  // The explicit bound (2026-11-06, #258's run): this test seeds 5201 rows
+  // IN-TRANSACTION, so its speed pivots on the ambient planner stats — the
+  // same pages that answer in ~0.8s under big-table stats take ~7s once a
+  // prior suite's cleanup left the tables analyzed-small. CI's fresh
+  // container sits on the fast side; the 30s bound absorbs the slow side
+  // without masking anything functional (the assertions are unchanged).
 });
