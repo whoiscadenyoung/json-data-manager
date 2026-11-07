@@ -14,7 +14,6 @@ import { Route as SigninRouteImport } from './routes/signin'
 import { Route as AppsIndexRouteImport } from './routes/apps/index'
 import { Route as CollectionsIndexRouteImport } from './routes/collections/index'
 import { Route as DatasetsIndexRouteImport } from './routes/datasets/index'
-import { Route as DatasetsCreateRouteImport } from './routes/datasets/create'
 import { Route as GroupsGroupIdRouteImport } from './routes/groups/$groupId'
 import { Route as MapsIndexRouteImport } from './routes/maps/index'
 import { Route as MapsMapIdRouteImport } from './routes/maps/$mapId'
@@ -57,11 +56,6 @@ const CollectionsIndexRoute = CollectionsIndexRouteImport.update({
 const DatasetsIndexRoute = DatasetsIndexRouteImport.update({
   id: '/datasets/',
   path: '/datasets/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DatasetsCreateRoute = DatasetsCreateRouteImport.update({
-  id: '/datasets/create',
-  path: '/datasets/create',
   getParentRoute: () => rootRouteImport,
 } as any)
 const GroupsGroupIdRoute = GroupsGroupIdRouteImport.update({
@@ -162,7 +156,6 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/signin': typeof SigninRoute
   '/projects/$projectId': typeof ProjectsProjectIdRouteRouteWithChildren
-  '/datasets/create': typeof DatasetsCreateRoute
   '/groups/$groupId': typeof GroupsGroupIdRoute
   '/maps/$mapId': typeof MapsMapIdRoute
   '/users/$userId': typeof UsersUserIdRoute
@@ -187,7 +180,6 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/signin': typeof SigninRoute
-  '/datasets/create': typeof DatasetsCreateRoute
   '/groups/$groupId': typeof GroupsGroupIdRoute
   '/maps/$mapId': typeof MapsMapIdRoute
   '/users/$userId': typeof UsersUserIdRoute
@@ -214,7 +206,6 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/signin': typeof SigninRoute
   '/projects/$projectId': typeof ProjectsProjectIdRouteRouteWithChildren
-  '/datasets/create': typeof DatasetsCreateRoute
   '/groups/$groupId': typeof GroupsGroupIdRoute
   '/maps/$mapId': typeof MapsMapIdRoute
   '/users/$userId': typeof UsersUserIdRoute
@@ -242,7 +233,6 @@ export interface FileRouteTypes {
     | '/'
     | '/signin'
     | '/projects/$projectId'
-    | '/datasets/create'
     | '/groups/$groupId'
     | '/maps/$mapId'
     | '/users/$userId'
@@ -267,7 +257,6 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/signin'
-    | '/datasets/create'
     | '/groups/$groupId'
     | '/maps/$mapId'
     | '/users/$userId'
@@ -293,7 +282,6 @@ export interface FileRouteTypes {
     | '/'
     | '/signin'
     | '/projects/$projectId'
-    | '/datasets/create'
     | '/groups/$groupId'
     | '/maps/$mapId'
     | '/users/$userId'
@@ -320,7 +308,6 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SigninRoute: typeof SigninRoute
   ProjectsProjectIdRouteRoute: typeof ProjectsProjectIdRouteRouteWithChildren
-  DatasetsCreateRoute: typeof DatasetsCreateRoute
   GroupsGroupIdRoute: typeof GroupsGroupIdRoute
   MapsMapIdRoute: typeof MapsMapIdRoute
   UsersUserIdRoute: typeof UsersUserIdRoute
@@ -375,13 +362,6 @@ declare module '@tanstack/react-router' {
       path: '/datasets'
       fullPath: '/datasets/'
       preLoaderRoute: typeof DatasetsIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/datasets/create': {
-      id: '/datasets/create'
-      path: '/datasets/create'
-      fullPath: '/datasets/create'
-      preLoaderRoute: typeof DatasetsCreateRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/groups/$groupId': {
@@ -535,7 +515,6 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SigninRoute: SigninRoute,
   ProjectsProjectIdRouteRoute: ProjectsProjectIdRouteRouteWithChildren,
-  DatasetsCreateRoute: DatasetsCreateRoute,
   GroupsGroupIdRoute: GroupsGroupIdRoute,
   MapsMapIdRoute: MapsMapIdRoute,
   UsersUserIdRoute: UsersUserIdRoute,

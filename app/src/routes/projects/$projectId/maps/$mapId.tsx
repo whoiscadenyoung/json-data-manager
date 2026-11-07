@@ -548,9 +548,11 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
       <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="mb-2 flex items-center gap-2 text-sm text-muted-foreground">
-            <Link className="hover:underline" params={{ projectId }} to="/projects/$projectId">
-              {mapData.project.title}
-            </Link>
+            {mapData.project !== null && (
+              <Link className="hover:underline" params={{ projectId }} to="/projects/$projectId">
+                {mapData.project.title}
+              </Link>
+            )}
             <span>/</span>
             <span>Maps</span>
           </div>
@@ -1289,7 +1291,8 @@ function PgAddChildSheet(props: {
                 <span className="min-w-0 flex-1 truncate text-sm font-medium">
                   {version.layer.name}{" "}
                   <span className="text-xs text-muted-foreground">
-                    {version.versionLabel} · {version.layer.project.title}
+                    {version.versionLabel}
+                    {version.layer.project === null ? "" : ` · ${version.layer.project.title}`}
                   </span>
                 </span>
                 {pendingId === version.id ? (
@@ -1549,7 +1552,8 @@ function PgLinkLayerSheet(props: {
                 <span className="min-w-0 flex-1 truncate text-sm font-medium">
                   {version.layer.name}
                   <span className="ml-1 text-xs text-muted-foreground">
-                    {version.versionLabel} · {version.layer.project.title}
+                    {version.versionLabel}
+                    {version.layer.project === null ? "" : ` · ${version.layer.project.title}`}
                   </span>
                 </span>
                 {pendingId === version.id ? (

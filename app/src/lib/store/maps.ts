@@ -49,8 +49,12 @@ export interface MapRow {
   createdBy: string;
   createdAt: string;
   updatedAt: string;
-  /** The owning project's title (FK embed — the explorer's chip). */
-  project: { id: string; title: string };
+  /**
+   * The owning project's title (FK embed — the explorer's chip). NULL when
+   * the viewer can read the map but not the project row (a non-member
+   * reading a widened map — the embed evaluates under the caller's RLS).
+   */
+  project: { id: string; title: string } | null;
 }
 
 /** One layer placement on a map, in draw order. */
@@ -84,14 +88,21 @@ export const DEFAULT_PLACEMENTS_LIMIT = 500;
  * (D2: the explorer never creates; it browses). The project embed carries
  * the chips.
  */
+
+/** The embed's runtime shape: PostgREST answers null for an unreadable project row, and the key can be ABSENT under concurrent deletes — both normalize to null (the typed shape). */
+function normalizeMapRow(row: MapRow): MapRow {
+  return row.project === null || row.project === undefined ? { ...row, project: null } : row;
+}
+
 export async function list(options?: StoreOptions): Promise<MapRow[]> {
-  return await queryRows<MapRow>(
+  const rows = await queryRows<MapRow>(
     clientOf(options)
       .from("maps")
       .select(MAP_SELECT)
       .order("created_at", { ascending: false })
       .limit(DEFAULT_MAPS_LIMIT),
   );
+  return rows.map(normalizeMapRow);
 }
 
 /** One project's maps in display order (the project Maps view's section). */
@@ -99,7 +110,7 @@ export async function listForProject(
   args: { projectId: string },
   options?: StoreOptions,
 ): Promise<MapRow[]> {
-  return await queryRows<MapRow>(
+  const rows = await queryRows<MapRow>(
     clientOf(options)
       .from("maps")
       .select(MAP_SELECT)
@@ -108,13 +119,15 @@ export async function listForProject(
       .order("id", { ascending: true })
       .limit(DEFAULT_MAPS_LIMIT),
   );
+  return rows.map(normalizeMapRow);
 }
 
 /** One map by id, or null when RLS hides it (a non-member reads not-found). */
 export async function get(args: { mapId: string }, options?: StoreOptions): Promise<MapRow | null> {
-  return await queryRow<MapRow>(
+  const row = await queryRow<MapRow>(
     clientOf(options).from("maps").select(MAP_SELECT).eq("id", args.mapId).limit(1),
   );
+  return row === null ? null : normalizeMapRow(row);
 }
 
 /** The map's placements in draw order (`order` asc, `id` tie-break). */

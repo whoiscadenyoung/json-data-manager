@@ -23,8 +23,10 @@ import { Link } from "@tanstack/react-router";
 import {
   Calendar,
   Database,
+  FolderKanban,
   FolderTree,
   Layers,
+  LayoutDashboard,
   MapPin,
   Pencil,
   PencilOff,
@@ -39,12 +41,14 @@ import { toast } from "sonner";
 import { PgConsumersCard, PgVersionsCard } from "#/features/versions";
 import { useSession } from "@/integrations/supabase/provider";
 import { errorMessage } from "@/lib/errors";
+import * as appsStore from "@/lib/store/apps";
 import * as collectionsStore from "@/lib/store/collections";
 import type { CollectionRow } from "@/lib/store/collections";
 import type { DatasetRow } from "@/lib/store/datasets";
 import * as datasetsStore from "@/lib/store/datasets";
 import * as groupsStore from "@/lib/store/groups";
 import * as profilesStore from "@/lib/store/profiles";
+import * as projectsStore from "@/lib/store/projects";
 
 import { isLockedForViewer } from "../lib/edit-policy";
 
@@ -901,6 +905,78 @@ function PgGroupSection({ dataset, lockedHint }: { dataset: DatasetRow; lockedHi
 }
 
 /** The Overview tab's content for a Postgres dataset: details (with the inline metadata edit) plus inline collection/group management. `lockedHint` is set when the viewer may not write the dataset and explains every disabled control. */
+/**
+ * The dataset's "used in" back-references (issue #262): the viewer's member
+ * projects holding it (owned or linked — the D1 memberships) and the live
+ * apps whose shared data sources include it. RLS scopes both reads, so the
+ * card answers honestly for the viewer: foreign projects and invisible apps
+ * never appear. The version consumers (pinned references) have their own
+ * card; this one is the project/app surface.
+ */
+function PgUsedInCard({ datasetId }: { datasetId: string }) {
+  const memberships = useQuery(projectsStore.listVisibleArtifactMembershipsQueryOptions()),
+    apps = useQuery(appsStore.listVisibleQueryOptions()),
+    inProjects = (memberships.data ?? [])
+      .filter(
+        (membership) =>
+          membership.artifactId === datasetId &&
+          (membership.artifactKind === "dataset" || membership.artifactKind === "derived"),
+      )
+      .map((membership) => membership.project),
+    usingApps = (apps.data ?? []).filter((app) => appsStore.appUsesDataset(app, datasetId)),
+    empty = inProjects.length === 0 && usingApps.length === 0;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Used in</CardTitle>
+        <CardDescription>Projects holding this dataset, and apps reading from it</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {empty && (
+          <p className="text-sm text-muted-foreground">
+            Not referenced by any of your projects or apps yet — use the browser's "Add to project"
+            affordance to reference it.
+          </p>
+        )}
+        {inProjects.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Projects
+            </span>
+            {inProjects.map((project) => (
+              <Badge key={project.id} variant="outline">
+                <FolderKanban />
+                <Link
+                  className="hover:underline"
+                  params={{ projectId: project.id }}
+                  to="/projects/$projectId"
+                >
+                  {project.title}
+                </Link>
+              </Badge>
+            ))}
+          </div>
+        )}
+        {usingApps.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Apps
+            </span>
+            {usingApps.map((app) => (
+              <Badge key={app.id} variant="outline">
+                <LayoutDashboard />
+                <Link className="hover:underline" params={{ appId: app.id }} to="/apps/$appId">
+                  {app.title}
+                </Link>
+              </Badge>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function PgDatasetOverview({
   dataset,
   lockedHint,
@@ -924,6 +1000,7 @@ export function PgDatasetOverview({
           the version cards live. */}
       <PgVersionsCard datasetId={dataset.id} datasetTitle={dataset.title} />
       <PgConsumersCard datasetId={dataset.id} />
+      <PgUsedInCard datasetId={dataset.id} />
       <PgCollectionsSection dataset={dataset} lockedHint={effectiveLockedHint} />
       <PgGroupSection dataset={dataset} lockedHint={effectiveLockedHint} />
     </div>

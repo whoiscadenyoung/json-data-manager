@@ -1,610 +1,211 @@
 # Architecture
 
-> Last verified against the code 2026-09-30 (post data-platform roadmap, #88);
-> CI, auth and known-gaps sections refreshed 2026-10-06 after the #123 fixes.
-> For the reasoning behind major decisions, see [`docs/decisions/`](./decisions/);
-> for topic designs, the [documentation map](#documentation-map) at the end.
+> Last verified against the code 2026-11-07 (the project-centric train's
+> closeout, #262). The pre-migration Convex architecture this page used to
+> describe survives in git history and in the untouched in-tree archive
+> (`app/convex/` + `packages/json-cms/src/component/`); for the reasoning
+> behind major decisions, see [`docs/decisions/`](./decisions/), and for
+> topic designs, the [documentation map](#documentation-map) at the end.
 
-A geospatial JSON data manager: define datasets (JSON Schema), import rows
-(JSON/CSV/XLSX/GeoJSON), browse and edit them in tables and on maps, organize
-them into collections/groups, and compose saved map views. On top of that
-catalog sits a **data platform** layer: signed-in users draft work in
-**projects**, derive datasets with declarative transform specs (lookup,
-rollup, SQL), and **publish** drafts into an append-only, versioned catalog
-that consumers pin or float. It also renders data owned by a _different_
-Convex app as read-only "bound datasets" with git-style commits and tag
-versions.
-
-The core data layer is not in the app — it is a reusable Convex component,
-[`@caden/json-cms`](../packages/json-cms/), which owns the dataset/entry/
-geometry/organization tables. The app (`app/`) is a TanStack Start frontend
-plus a Convex host that re-exports the component's API through an auth choke
-point and adds everything app-specific: Better Auth, bound-datasets sync, the
-derived-dataset registry, projects, publish, bundles, and versioned
-consumption. **The component never learns projects exist** — nothing
-published knows how it was drafted (ADR 0008).
+A geospatial JSON data manager on self-hosted Supabase. Signed-in users work
+inside **projects** — the primary working context: a project's catalog holds
+datasets (created in-project as owned drafts, or added by reference with
+pin/float/sync), declares **relations** between datasets (key or spatial),
+composes project-owned **maps** from first-class **layers**, and publishes
+**apps** whose map widgets reference stored project maps. Publishing freezes
+artifacts into an append-only, versioned catalog under a single visibility
+ladder (`members | signed-in | link | public`) with closure preflight; a
+published app serves signed-out visitors from its frozen snapshot. The
+datasets/maps/apps/collections tabs are **explorers** — browsable views over
+everything the viewer can see — never creation surfaces.
 
 ## Workspace layout
 
 Bun workspace (`bun.lock` at the root; use `bun`, not node/npm):
 
-| Path                         | What it is                                                                                                                                                                                                                                                                                                                                         |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `app/`                       | The application: TanStack Start (React 19) frontend in `app/src`, Convex host functions in `app/convex`.                                                                                                                                                                                                                                           |
-| `packages/json-cms/`         | `@caden/json-cms` — the CMS Convex component (`src/component`), a typed client facade with `exposeApi` (`src/client`), React hooks + prop-driven UI (`src/react`). Builds on `@caden/data-core` and `@caden/importers` and re-exports their parser/transform names from `@caden/json-cms/react`. Keeps its own `example/` app as dev/codegen host. |
-| `packages/data-core/`        | `@caden/data-core` (built) — backend-free shared code: `/geojson` (types, validation, bbox, Convex geometry validators), `/coercion`, `/reference`, `/coordinate-columns`, and the **transform engine** `/transform`.                                                                                                                              |
-| `packages/importers/`        | `@caden/importers` (built) — browser-side tabular import parsers (JSON/JSONL, CSV, Excel via `exceljs`) behind a pluggable registry, plus `parseDataRows`.                                                                                                                                                                                         |
-| `packages/ui/`               | `@caden/ui` — source-only package (ADR 0014) holding all registry UI: the shadcn base-mira primitives, niko-table, and mapcn's MapLibre kit, plus the theme tokens (`globals.css`, imported by `app/src/styles.css`). Has its own `components.json`, so `shadcn add` writes here.                                                                  |
-| `packages/maps/`             | `@caden/maps` — source-only (ADR 0014) backend-free map engine: the shared PMTiles protocol instance, the OPFS tile-archive cache, the debounced rebuild scheduler + staleness check, the bounded fetch pool, and geometry-row parsing for the build worker. The Convex-bound managers and worker stay in `app/src/features/maps/`.                |
-| `packages/layer-styles/`     | `@caden/layer-styles` — source-only (ADR 0014) layer-styles engine: the stored-style validators (shared by `app/convex/layerStyles` and the client), compile, classify, palettes, legend, SDF and style.json exchange. See [`layer-styles.md`](./layer-styles.md).                                                                                 |
-| `packages/analysis/`         | `@caden/analysis` — source-only (ADR 0014) analysis engine: the lazy single-threaded DuckDB-WASM SQL engine (lockdown + memory limit) and the analysis row caps; used by `features/analysis` and publish. The Convex-bound worker stays in `app/src/features/analysis/`.                                                                           |
-| `packages/geometry-archive/` | `@caden/geometry-archive` — PMTiles archive writer + tile logic used by the map tile pipeline (issue #58).                                                                                                                                                                                                                                         |
-| `packages/data-export/`      | `@caden/data-export` — durable snapshot-export component. **Built but not wired in**: no consumer, not registered in `app/convex/convex.config.ts`; typechecked and tested in CI. Latent defects parked on #137 for any future wire-in.                                                                                                            |
-| `.github/workflows/ci.yml`   | Root CI (see [Development](#development)).                                                                                                                                                                                                                                                                                                         |
-| `docs/`                      | Design docs, decision records, and project memory (see the map at the end).                                                                                                                                                                                                                                                                        |
+| Path                         | What it is                                                                                                                                                                                                                                                             |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app/`                       | The application: TanStack Start (React 19, vite + nitro) frontend in `app/src` over self-hosted Supabase.                                                                                                                                                              |
+| `supabase/`                  | The backend: numbered SQL migrations (`0001`–`0024`), storage buckets, seed; the Docker compose stack lives in `demo/` (kong one-origin :8000).                                                                                                                        |
+| `packages/ui/`               | `@caden/ui` — source-only (ADR 0014): the shadcn base-mira primitives, niko-table, mapcn's MapLibre kit, theme tokens.                                                                                                                                                 |
+| `packages/maps/`             | `@caden/maps` — source-only (ADR 0014): shared PMTiles protocol instance, OPFS tile-archive cache, rebuild scheduler, bounded fetch pool. The app-side managers + worker live in `app/src/features/maps/`.                                                             |
+| `packages/layer-styles/`     | `@caden/layer-styles` — source-only (ADR 0014): stored-style validators, compile, classify, palettes, legend, SDF, style.json exchange.                                                                                                                                |
+| `packages/analysis/`         | `@caden/analysis` — source-only (ADR 0014): lazy DuckDB-WASM SQL engine (lockdown + memory limit) and row caps.                                                                                                                                                        |
+| `packages/geometry-archive/` | `@caden/geometry-archive` — PMTiles archive writer + tile logic for the tile pipeline (issue #58).                                                                                                                                                                     |
+| `packages/data-core/`        | `@caden/data-core` — backend-free shared code: `/geojson` (types, validation, bbox, geometry validators), `/coercion`, `/reference`, `/coordinate-columns`, and the **transform engine** `/transform`.                                                                 |
+| `packages/importers/`        | `@caden/importers` — browser-side tabular import parsers (JSON/JSONL, CSV, Excel) behind a pluggable registry, plus `parseDataRows`.                                                                                                                                   |
+| `packages/json-cms/`         | `@caden/json-cms` — **archived Convex component** (the pre-migration backend); its `react/ui` kit (SchemaEditor, DatasetImporter, shared dialogs) is still the app's UI source for those surfaces. In-tree untouched; do not build features against its component API. |
+| `packages/data-export/`      | `@caden/data-export` — durable snapshot-export component. **Built but not wired in** (no consumer; latent defects parked on #137).                                                                                                                                     |
+| `.github/workflows/ci.yml`   | Root CI (see [Development](#development)).                                                                                                                                                                                                                             |
+| `docs/`                      | Design docs, decision records, and project memory (see the map at the end).                                                                                                                                                                                            |
 
-**Module boundaries (ADR 0014).** The frontend is core (`app/src/components`, `app/src/lib`, `app/src/integrations`: app shell, shared widgets, the row-resolution seam) plus features in `app/src/features/<name>/` (with `app/convex/<domain>/` when they have a backend). Domain features (`maps`, `datasets`, `versions`, `publishing`, `analysis`, `catalog`, `dashboard`) may import each other's root entry files (`#/features/<name>`, or `#/features/maps/tiles` for the root's tile managers) as long as the graph stays acyclic; optional modules (`app-builder`, `layer-styles`) are wired only by routes; core never imports features; feature subfolders are private. `.oxlintrc.json` enforces this with `no-restricted-imports` and `import/no-cycle`. Workspace packages are either built (`dist`, for anything Convex component code imports) or source-only (`private`, app-only), and never import `#convex/_generated`.
+**Module boundaries (ADR 0014, amended).** The frontend is core
+(`app/src/components`, `app/src/lib`, `app/src/integrations`) plus domain
+features in `app/src/features/<name>/` (`datasets`, `catalog`, `maps`,
+`publishing`, `versions`, `analysis`, `app-builder`, `layer-styles`).
+Domain features may import each other's root entry files (`#/features/<name>`)
+as long as the graph stays acyclic; optional modules (`app-builder`,
+`layer-styles`) are wired only by routes; core never imports features; feature
+subfolders are private. `.oxlintrc.json` enforces this with
+`no-restricted-imports` + `import/no-cycle`. Every cross-feature read of data
+goes through the **store modules** in `app/src/lib/store/` (core seams, one
+per PG domain) — features never talk to `supabase-js` directly.
 
 ## Runtime topology
 
 ```
-Browser ── TanStack Start (Vite + nitro, bun preset; SSR shell + SPA)
-   │  /api/auth/* proxied same-origin to the Convex Better Auth routes
-   │  uses @convex-dev/react-query bridge; light queries persist to
-   │  sessionStorage for instant re-opens (app/src/integrations/tanstack-query)
-   │  client-side compute: transform execution, publish chunking, exports,
-   │  DuckDB-WASM analysis (web worker), PMTiles rebuild (web worker)
+Browser ── TanStack Start (vite + nitro; SSR shell + SPA)
+   │  auth: Better Auth on the SSR side (@supabase/ssr cookie session),
+   │  data: supabase-js v2 — PostgREST (REST + RPC), Realtime, Storage
+   │  client-side compute: import parsing, transform execution, publish
+   │  chunking, DuckDB-WASM analysis (web worker), PMTiles rebuild (worker)
    ▼
-Convex backend (cloud dev when available; local backend is the current
-   │  fallback — see "Development")
-   ├── component tables  (json-cms: datasets, entries, geometries, org, maps)
-   ├── betterAuth component (Better Auth's own user/session/jwks tables)
-   ├── host tables       (users mirror, bound-datasets sync state, derived
-   │                      registry, projects, publish/bundle checkpoints,
-   │                      version references; + foreign-domain stand-ins)
-   └── file storage      (source files, geometry blobs, publish chunk blobs,
-                          tile archives, snapshot JSONL — served with
-                          range-request support)
-        ▲
-        └── rebuild worker: in-browser worker builds a dataset's PMTiles
-            archive (geometry-archive) and installs it via tile_archives.install
+Supabase (self-hosted Docker stack, one kong origin :8000)
+   ├── Postgres 15 + PostGIS — all tables, RLS on everything (§ data model)
+   ├── PostgREST — the only data API; RPCs for search/import/publish/relations
+   ├── GoTrue — auth (signup closed; seeded accounts)
+   ├── Realtime — postgres_changes publication (0013, extended per phase)
+   └── Storage — source-files, tile archives, markers, sync-chunks buckets
+       (frozen- path convention = the anon serving leak guard, 0024)
 ```
 
-The app registers two components (`app/convex/convex.config.ts`): `jsonCms`
-and `betterAuth`. Component tables are namespace-isolated by Convex, so
-component and host tables never collide and need no prefixes. Consequence
-everywhere below: host tables reference component rows by **plain-string ids**
-(component tables are absent from the host's generated data model), and each
-side asks its own tables in turn.
+Every table is RLS-gated; the client's anon key is untrusted. Roles resolve
+through `project_members` (ADR 0017); visibility rungs widen reads
+(ADR 0022); anon SELECT policies exist only on frozen version rows and the
+`frozen-` storage path convention (ADR 0023) — live tables have no anon
+policies. SECURITY DEFINER helpers back the policy subqueries (policy
+subqueries evaluate under the invoking role and would read zero anon rows).
 
-## Data model
+## Data model (Postgres)
 
-Two schemas, deliberately separate.
+| Domain         | Tables                                                                                                               |
+| -------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Identity       | `profiles` (trigger-maintained from auth; ADR 0009's creator chip resolves here)                                     |
+| Catalog core   | `datasets`, `entries`, `geometries`, `imports`, `entry_references`                                                   |
+| Organization   | `collections`, `collection_datasets`, `groups`                                                                       |
+| Versions       | `dataset_versions`, `version_entries`, `tags`, `consumer_references`, `version_policies`                             |
+| Derived        | `derived_datasets` (registry rows; transform specs)                                                                  |
+| Projects       | `projects`, `project_members` (owner/editor/viewer), `project_artifacts` (owned/linked × manual/auto, kinds `dataset | derived | layer | app`) |
+| Layers & maps  | `layers`, `layer_children`, `layer_versions`, `maps`, `map_layers` (placements)                                      |
+| Relations      | `dataset_relations` (key/spatial; catalog-level per D3) + the bounded `dataset_relation_records` RPC                 |
+| Apps           | `apps` (project-owned; pages/widgets jsonb; map widgets carry `mapId`), `app_versions` (frozen snapshots)            |
+| Publishing     | `publish_bundles`, `publish_bundle_members`, `sync_runs`, `publish_attempts`                                         |
+| Bound datasets | `remote_sources`, `dataset_bindings`, `binding_entries`, `commit_mirror` (the foreign-app PoC)                       |
+| Sprites        | `marker_sprites` (uploaded point markers; ADR 0013)                                                                  |
 
-### Component tables (`packages/json-cms/src/component/schema.ts`)
+Migrations are numbered `0001`–`0024` and sorted by name on apply; every new
+migration must apply on a fresh DB. The DDL authority is
+[`docs/supabase-migration-design.md`](./supabase-migration-design.md) §3;
+the per-phase deltas are the train ADRs (0017–0023).
 
-- **Content** — `schemas` (a dataset: JSON Schema doc, `kind` standard/
-  geospatial, denormalized summaries, tile-cache bookkeeping, optional
-  `source`/`lineage` read-only markers, `createdBy`, `lifecycle`,
-  `publishedVisibility`), `entries` (one row of `data`),
-  `geometries` (1:1 with entries that have geometry; JSON-text payload either
-  inline under ~1 MiB or as a storage blob — never nested Convex arrays,
-  which cap at 8192 elements), `references` (denormalized index of entry-to-
-  entry references for reverse lookup), `imports` (batched import tracking).
-- **Organization** — `collections` and `groups` (groups may float outside a
-  collection; a dataset is in many collections via `schemaCollections` and at
-  most one group via `schemas.groupId`).
-- **Map views** — `maps`, `mapLayers` (a layer targets a whole collection,
-  group, or dataset; collection/group layers expand live at read time),
-  `mapLayerOverrides` (per-child visibility, sparse rows).
+## The project-centric model
 
-`schemas` carries three groups of denormalized fields maintained
-incrementally by entry/geometry mutations, never recomputed by scan:
-`entryCount`/`featureCount` (exact), `boundingBox` (monotonically
-non-shrinking — fine for viewports, not exact), and the tile-cache fields
-(`mapTileCacheVersion` bumps on every geometry write; `mapTileArchive*` point
-at the installed archive and the version it was built from).
-
-Fields added by the data-platform roadmap, all optional/additive (absent =
-pre-roadmap behavior) and **written only by host flows** — the `exposeApi`
-wrappers deliberately omit them:
-
-| Field                   | Meaning                                                                                                                                                                                                                                                                                                           |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `createdBy`             | Better Auth user id (`users.authId`), stamped from the auth hook's return as `actorId` (ADR 0007).                                                                                                                                                                                                                |
-| `lifecycle`             | `"draft"` or `"published"` (absent = published). Drafts are invisible to catalog reads (filtered server-side) and creator-only.                                                                                                                                                                                   |
-| `publishedVisibility`   | `"everyone"` (default) or `"author"`; narrows catalog reads to the creator. Set by `schemas.setVisibility` (creator-only).                                                                                                                                                                                        |
-| `lineage` (generalized) | Frozen-version marker: `versionLabel`, `frozenAt`, `snapshotRef` (global "a ref never freezes twice" key), `sourceSchemaId` (draft/bound chain anchor) **or** `sourceKey` (host registry-row chain anchor), `recipe` (the executed spec), `sourceVersions` (`{datasetId, ref?, frozenAt?}` per source at freeze). |
-
-### Component modules (`packages/json-cms/src/component/`)
-
-Component functions are split by domain; a function's path is
-`<module>.<name>` (`components.jsonCms.entries.listEntriesPage`,
-`internal.imports.importWorkflow`). The `exposeApi` names in `src/client`
-are independent of these paths.
-
-| Module            | Contents                                                                                                                                                      |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schemas.ts`      | Dataset (schema) queries/mutations, version lookups, tile-archive meta/install, lifecycle                                                                     |
-| `collections.ts`  | Collections and dataset↔collection membership                                                                                                                 |
-| `groups.ts`       | Groups, dataset→group and group→collection assignment                                                                                                         |
-| `maps.ts`         | Maps, map layers, and per-map layer overrides                                                                                                                 |
-| `entries.ts`      | Entry/geometry reads, entry mutations, internal entry functions, dataset-summary backfill                                                                     |
-| `imports.ts`      | Batched, monitored import workflow (upload URLs, chunk insertion, progress/completion)                                                                        |
-| `deletes.ts`      | Budget-aware batched dataset delete/clear (issue #128)                                                                                                        |
-| `geospatial.ts`   | Geospatial conversion and simplify-geometry workflows                                                                                                         |
-| `host_support.ts` | Host-only storage helpers (upload claims, blob deletes, sweeps)                                                                                               |
-| `internal/*.ts`   | Shared non-function helpers (validators, list-read bounds, delete budget, geometry paging, …). Registers no functions, so each function has exactly one path. |
-
-### Host tables (`app/convex/schema.ts`)
-
-`schema.ts` spreads each domain's `tables.ts` (`cms/`, `sources/`, `versions/`, `publishing/`, plus the optional `appBuilder/`, `layerStyles/` and `demoSources/` modules); only `users` is declared in `schema.ts` itself. Grouped by concern:
-
-**Identity and data platform**
-
-| Table                            | Purpose                                                                                                                                                                                                                                     |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `users`                          | App mirror of the Better Auth user, keyed `by_authId`/`by_email`; written only by the component's user triggers (`auth.ts`).                                                                                                                |
-| `derivedDatasets`                | Derived-dataset registry: one row = one stored transform spec (`spec` is `v.any()`), `dependsOn` edges, `status` draft (builder autosave) / saved. Stores specs only — no rows.                                                             |
-| `consumerReferences`             | One version reference a consumer holds on a source: `consumerKind` derived/map/fork, `mode` pin/float, pin identity (`pinnedRef` + `pinnedSchemaId`).                                                                                       |
-| `versionPolicies`                | Keep-N and pinned refs for **publish** chains, keyed by chain anchor; absence = defaults. (Bound chains keep theirs on `datasetBindings`.)                                                                                                  |
-| `publishAttempts`                | One materialized-publish attempt (syncRuns-pattern durability): uploaded chunk ids, `publishKey` idempotency key, planned schema/kind, executed spec, `importId`, status uploading/importing/completed/failed. `createdBy` = ownership key. |
-| `projects`, `projectArtifacts`   | The working container and its membership rows (`artifactKind` dataset/derived/map, plain-string `artifactId`). `projects.artifactCount` is maintained in lockstep.                                                                          |
-| `bundleRuns`, `bundleRunMembers` | One bundle press and its per-member checkpoints (status pending/publishing/published/referenced/linked/failed); `bundleRuns.collectionId` is the project→collection link.                                                                   |
-
-**Bound-datasets infrastructure** — `datasetBindings` (registry: source key
-→ projected dataset, sync cursor, retention settings), `bindingEntries`
-(foreign key → entry map; makes sync idempotent and delete detection
-possible), `syncRuns` (checkpointed durable runs), `datasetActivity`
-(per-sync history), `commits` (mirror of the applied foreign commit tail),
-`tagDeltas` (stored deltas between consecutive frozen versions; publish chains
-record theirs here too via `consumption.afterPublishCompleted`).
-
-**Foreign-domain stand-in** — the PoC's "other app": `restaurants`,
-`locations`, `restaurantLocations` (join), `sourceCommits` (its git-like
-feed), `restaurantSnapshots` (its tag snapshots as JSONL in storage),
-declared in `app/convex/demoSources/tables.ts` and spread into `schema.ts`
-with one line. Core code reads them only through the `LocalSource` adapters
-in `demoSources/sources.ts`. This is scaffolding for the real integration; phase 5 (#78, remote transport) is
-blocked on the hosting-fork decision — see
-[`docs/bound-datasets-design.md`](./bound-datasets-design.md) §8.
-
-Better Auth's own tables live inside the `betterAuth` component and never
-appear in either schema.
-
-## Auth and trust model
-
-- **Better Auth inside Convex** (ADR 0006): `app/convex/auth.ts` builds the
-  instance (`createAuth`, email + password provider); routes are registered
-  lazily in `http.ts` under `/api/auth` and proxied same-origin by
-  `app/src/routes/api/auth/$.tsx` → `app/src/lib/auth-server.ts`. Convex
-  verifies the component's JWTs via `auth.config.ts` (must stay in sync with
-  the `convex()` plugin, or everything reads as signed out). Env per
-  deployment: `BETTER_AUTH_SECRET`, `SITE_URL`. Sign-up is closed
-  (`disableSignUp`, #136); accounts are minted host-side via the internal
-  `auth:createAccount`. Standalone `ConvexClient`s (the row-resolution seam's client, tile
-  and analysis workers) authenticate via `fetchConvexToken`
-  (`app/src/lib/convex-auth-token.ts`).
-- **`auth(ctx, operation?)` is the single choke point.** Every `exposeApi`
-  wrapper and every host function calls it (ADR 0007: the hook receives `fn`
-  - CRUD `type` + target ids; its return is the `actorId`/`viewerId` the
-    component stamps/filters by — never taken from arguments):
-  1. **Sign-in gate** — signed-out callers are rejected with a `ConvexError`.
-     The one exception is `users.me`, the app's auth-state probe (returns null
-     signed out).
-  2. **Visibility** — every dataset an operation names (by schema, entry, or
-     import id) must be visible to the caller; denial reads as "not found".
-     Enumeration reads carry no ids and are scoped inside the component by
-     `viewerId`; batch-id reads filter component-side instead of denying.
-  3. **Edit policy** ([ADR 0010](./decisions/0010-dataset-edit-policy.md)) —
-     a dataset flagged `editPolicy: "locked"` answers EVERY write (data,
-     schema, import, transform, and the organization ops) to its
-     `createdBy`; `"open"`/absent keeps ADR 0009's co-editable default.
-     Reads never consult the policy (`publishedVisibility` decides readers).
-     Host flows that bypass the wrappers (`bindings.unbind`,
-     `bundles.recordMember`/`promoteCollection`) call
-     `assertDatasetWritable` explicitly.
-  4. **Read-only gate** — writes to bound datasets (`datasetBindings` row) and
-     frozen versions (`lineage`) are rejected. The component enforces the
-     same rule itself via the host-only `boundWrite` attestation
-     (`assertDataWritable`), so this is defense-in-depth. The edit policy
-     never relaxes this gate: frozen/bound stay read-only whatever the
-     policy is.
-- **Trust model** ([ADR 0009](./decisions/0009-trusted-collaborator-catalog.md),
-  refined by [ADR 0010](./decisions/0010-dataset-edit-policy.md)):
-  signed-in users are trusted collaborators. **Published datasets, maps,
-  collections and groups are co-editable by any signed-in user by design** —
-  there is deliberately no creator check on them. **Drafts
-  (`lifecycle: "draft"`) and `publishedVisibility: "author"` rows are
-  creator-only.** Since #124 a dataset can opt OUT of co-editing per id:
-  `editPolicy: "locked"` is creator-only writes (reads unchanged); `"open"`
-  — and absent — is the default and changes nothing.
-- **Creator-private host state** (stage 8, #104): projects, project
-  membership, bundle runs, publish attempts, and registry drafts answer only
-  to their `createdBy`; saved registry rows are catalog-visible. Consumer
-  reference and chain-policy mutations are owner-checked, with two recorded
-  exceptions — map edges stay signed-in-writable (the component's `maps`
-  table carries no creator stamp) and bound-chain policy keeps the tag path's
-  signed-in-wide semantics. Foreign rows always read as missing, never as
-  forbidden.
-
-## Users and profiles
-
-- `users` mirrors Better Auth users (triggers insert/patch/delete; nothing
-  else writes it). Queries in `users.ts`: `me` (own row or null),
-  `profileByAuthId` (incl. email), `listProfiles` (authId/name/image only —
-  the broadest surface carries no email), `profile` (a user's row plus the
-  datasets they created, viewer-scoped so restricted rows stay hidden).
-- `schemas.createdBy` = `users.authId`, so "Created by" chips deep-link to
-  `/users/$userId` with no resolution hop. Filtering by creator is host-side
-  over the component's summaries projection. Pre-auth datasets have no
-  `createdBy` (UI hides the chip).
-
-## Backend layout (`app/convex/`)
-
-Host functions are grouped by domain folder (ADR 0014, restructure step B3);
-function paths follow the folder (`api.cms.entries.listPage`,
-`internal.sources.sync.reconcileAll`). Each domain owns its tables in a
-`tables.ts` that `schema.ts` spreads in with one line.
-
-- **`cms/` — API shims** — `schemas.ts`, `entries.ts`, `collections.ts`, `groups.ts`,
-  `maps.ts`, `geometries.ts`, `imports.ts` are thin `exposeApi` re-exports of
-  component functions under short names (`api.cms.entries.listPage`, …). The
-  module/function names are load-bearing: client call sites, the TanStack
-  Query persist allowlist (`app/src/integrations/tanstack-query/light-namespaces.ts`,
-  `cms/*` namespaces) and saved query hashes all key on them, so a move bumps
-  the persist key (`light-query-cache-v2` after B3). Every shim passes the host `auth`.
-  `schemas.ts` also adds `listDraftSummaries` (opt-in creator-scoped drafts
-  read), `setVisibility`, `setEditPolicy` (the creator's lock control, ADR
-  0010), and `maxTileCacheVersion`. `uploads.ts` (abandoned-upload sweep) and
-  `tile_archives.ts` (below) live here too; `tables.ts` holds `datasetActivity`.
-- **Identity (top level)** — `auth.ts`, `auth.config.ts`, `http.ts`, `users.ts` (above), plus
-  `schema.ts`, `crons.ts` and `convex.config.ts`.
-- **`versions/` and `publishing/` — platform layer** — `versions/`:
-  `derivedDatasets.ts`/`derivedSpec.ts` (registry), `consumption.ts` (with its
-  pure chain-selection cores in `chain.ts`), `versioning.ts`, `tags.ts`;
-  `publishing/`: `projects.ts`, `publish.ts`, `bundles.ts` (sections below).
-- **`sources/` — bound-datasets layer** — `registry.ts` (the `BoundSource` descriptor
-  interface + registry: adding a source = one entry; snapshot-taking
-  sources implement `listSnapshots`), `sourcePaging.ts` (the #127 page-size
-  contract readers share), `sync.ts` (durable
-  engine: collect → chunked apply, keyed and idempotent via `bindingEntries`;
-  commit-tail is the primary path, full pass falls back or reconciles),
-  `remoteSources.ts`/`remoteClient.ts` (HTTP remote sources),
-  `bindings.ts` (binding status/unbind queries for the UI). Snapshot ingest
-  (`versions/tags.ts`) freezes foreign snapshots into read-only lineage
-  datasets via `versions/versioning.ts`, with version compare and keep-N/pin
-  retention. Weekly reconcile cron in `crons.ts`.
-- **Demo foreign app** — `demoSources/` (removable; see
-  [bound-datasets-design §9](./bound-datasets-design.md#removing-the-demo-sources)):
-  `tables.ts`, `sources.ts` (the two co-deployed `LocalSource` adapters),
-  `dashboard.ts` (restaurants/locations/links CRUD for `/dashboard`; every
-  write only stamps staleness on the binding), `snapshots.ts` (the foreign
-  app's snapshot taking + tag listing), and `seed.ts`.
-- **Tile install** — `tile_archives.ts` — deliberately NOT an exposeApi
-  export: `install` is a host wrapper around the component's
-  `setMapTileArchive` so only the rebuild worker (standalone ConvexClient)
-  can install archives; the expectedVersion guard makes an edit-raced
-  rebuild self-discard. `cms.schemas.maxTileCacheVersion` is the one-number cache
-  buster for persisted client state.
-
-## Projects and the draft layer
-
-- A **project** is the virtual working layer (ADR 0008): imports, transform
-  specs and map arrangements are drafted in it, then crossed into the catalog
-  by publish. Membership is `projectArtifacts` rows naming plain-string ids —
-  references, never copies or containment. Publish is per-artifact; a project
-  itself has no lifecycle state.
-- **Drafts** are ordinary component datasets with `lifecycle: "draft"`.
-  `projects.createDraftDataset` creates the draft (host-only flag) and the
-  membership row in one transaction; the existing import flow
-  (`imports.generateUploadUrl`/`startImport`) then fills it unchanged. Drafts
-  are filtered from catalog reads server-side (`listSchemaSummaries`,
-  `maxTileCacheVersion`); `schemas.listDraftSummaries` is the opt-in,
-  creator-scoped read behind the datasets browser's drafts toggle.
-- **Fork** = add to project: `projects.addArtifact` mints a `fork`
-  `consumerReferences` float edge per dataset membership (`removeArtifact`
-  deletes it); `projects.forkAsSpec` creates a saved identity-transform
-  registry row over a source and adds it as a member.
-- Surfaces: `/projects` (creator's list), `/projects/$projectId` (workspace:
-  members, bundle press status).
-
-## Derived datasets and the transform engine
-
-- **Engine** (`packages/data-core/src/transform`, React-free via
-  `@caden/data-core/transform`): pure functions over generic records,
-  inputs never mutated, joined through the shared coercion utilities
-  (`normalizeKey`: number `42` joins string `"42"`; trimmed, case-folded,
-  never numeric-normalized). Operation kinds form a discriminated union on
-  `TransformSpec.operations`:
-
-  | Kind     | Function      | Notes                                                                                                                                            |
-  | -------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-  | `lookup` | `applyLookup` | Left/inner join on a key; duplicate-key policy first/last/error; match-rate diagnostics; optional `geometrySource` (spec field).                 |
-  | `rollup` | `applyRollup` | Group-by + measures; keyless rows dropped and counted; chains with a follow-up lookup to join back.                                              |
-  | `sql`    | `applySql`    | Async; takes an injected `SqlEngine` (DuckDB-WASM in the app); single-statement gate, typed columns from declared structure; reports truncation. |
-
-- **Registry** (`derivedDatasets.ts`, `derivedSpec.ts`): stores specs only.
-  `validateSpecShape` (structural, additive so new kinds need no migration),
-  save-time cycle rejection over the persisted `dependsOn` edges (DAGs of
-  derived-of-derived allowed), and `specStatus` health computed on read
-  (`ready` / `stale` / `orphaned` — there is no completion hook to mark
-  staleness). Catalog-level, never map-level (ADR 0005); a derived dataset is
-  virtual — no entries/geometries rows, no boundingBox.
-- **Execution is client-side** (Convex only stores specs): the Transform tab
-  on the dataset page (`transform-builder.tsx`, `transform-preview.tsx` with
-  match-rate stats), export enrichment ("include joined fields" in
-  `features/datasets/lib/export.ts`), popup enrichment at seam point reads, and publish
-  (`features/publishing/lib/publish-spec.ts`). Anything virtual becomes real only by
-  [publishing](#publish-and-freeze-path).
-
-## Row-resolution seam
-
-`app/src/lib/dataset-rows.ts` (React-free, shared with the tile worker) and
-`dataset-rows-react.tsx` (hooks) are the one client-side interface for
-"resolve this dataset's rows". No surface paginates on its own: cursor
-chaining, page-size constants, and completeness semantics live here.
-
-- **Two row shapes** — entries (`entries.listPage`, cursor-chained) and
-  geometry (`geometries.list`, byte-budget pages; the budget is a
-  server-side clamp inside the component).
-- **Consumers** — the dataset table, export dialogs, map layers, popup/entry
-  reads, version diff overlays, `TransformPreview`, the tile-archive worker,
-  the publish orchestrator, and the analysis worker.
-- **Spec application** — point reads run the lookup-spec fold
-  (`applyEntryRowSpec`, the popup executor: never throws, never drops a
-  popup). The **bulk** step inside the seam (`applyEntryRowSpecs`) is still
-  identity; bulk enrichment is applied by the callers that want it (export,
-  transform preview, publish execution) over rows the seam fetched.
-- `src/lib/version-rows.ts` holds the natural-key rule shared with the
-  server's version-delta code so diff ops and overlay rows line up.
+- **Datasets are global + membership** (D1): a dataset lives in the global
+  catalog; projects hold it as an **owned** artifact (created in-project,
+  born a member-visible draft) or a **linked** reference (pin at head, or
+  float with `sync_mode auto`; sync/revert actions move the edge).
+- **Layers** are the style/filter/popup unit — never touching data — so one
+  dataset renders differently in many maps. **Maps** are project-owned
+  compositions of layer memberships; `/maps` is an explorer only.
+- **Relations** are catalog-level rows (D3): both ends' own gates are the
+  RLS; any project holding both datasets may consume them. The map runtime
+  highlights related records on click (bounded, index-backed RPC).
+- **Apps** freeze at publish into `app_versions` snapshots (dataset pins +
+  map snapshots + flattened layer versions) that render signed-out.
+- **Visibility** is one ladder on every artifact (D4) with closure:
+  `visibility_preflight` diffs the promotion, `visibility_apply` widens the
+  graph in one transaction; the bundle press stamps + applies per rung.
+- **Collections** exist in both roles (D5): standalone exploratory
+  groupings, and the projection a project's publish press mints once and
+  reuses (the explorer card names the minting project).
 
 ## Publish and freeze path
 
-Publish materializes a draft dataset or a saved derived spec into an ordinary
-frozen, versioned dataset through the existing ingest machinery. Append-only:
-a republish is a new attempt and a new immutable row (vN+1); nothing merges
-back.
-
-1. **`publish.start`** resolves the target (caller's own saved registry row
-   or draft dataset), mints the `publishKey` once per attempt, and
-   joins-or-revives an active attempt (stale after 2 min of no progress).
-2. **Client executes** (`app/src/features/publishing/lib/publish.ts`, `publish-spec.ts`): rows via
-   the seam, spec applied once (lookup → rollup → sql; `geometrySource`
-   pairing preserved), chunked with `chunkRowsForImport`, each chunk uploaded
-   and registered on the attempt (`registerChunk`), so a resumed browser
-   uploads only missing chunks.
-3. **`publish.freeze`** is one transaction: re-check `publishKey` globally,
-   refuse an orphaned/stale spec (`specStatus`), call the shared
-   `versioning.createFrozenVersion` (frozen row born `lifecycle: "published"`
-   with generalized `lineage`, inheriting the draft's `publishedVisibility`),
-   and start the component import workflow with the publish flow's
-   `boundWrite` attestation. After that, durability is the workflow's;
-   `pollImport` mirrors the outcome onto the attempt, and
-   `consumption.afterPublishCompleted` runs retention and records the chain
-   delta.
-
-- **`versioning.ts`** is the generalized frozen-version machinery extracted
-  from the tag path (no behavior change): `createFrozenVersion`,
-  `freezeVersion` (tag ingest), keep-N retention (`DEFAULT_KEEP_VERSIONS` =
-  10, pinned refs never auto-retire), sequential version deltas. Tag ingest
-  and publish share one implementation.
-- Frozen rows are read-only by `lineage` (component `assertDataWritable`).
-
-## Versioned consumption
-
-`consumption.ts` (ADR 0008; lifecycle design §7) — the consumer contract on
-top of frozen chains.
-
-- **Chain anchors**: a draft-published chain anchors on a component row
-  (`lineage.sourceSchemaId`); a derived-published chain on the registry id
-  (`lineage.sourceKey`, versions = completed `publishAttempts`). Bound
-  datasets' tag chains anchor on the binding. One `FrozenVersion` shape lets
-  the versioning cores drive all three.
-- **References**: `consumerReferences` rows, pin or float per edge. Writers:
-  registry save (one float row per spec dependency), sync/revert/pin
-  mutations, the bundle press's map leg, and project forks.
-- **Badges**: `sourceBadges` compares a row's recorded
-  `lineage.sourceVersions` with the source chain's current head
-  (`current` / `drift` / `live` / `missing`); only completed attempts count as
-  heads. Propagation through derived chains is transitive by construction.
-- **Actions**: `syncReference` (reference consumer: repin to head; derived
-  consumer: client re-runs `publishDataset`), `revertReference` (repin to the
-  prior version), `setReferenceMode` (float/pin), `setChainKeep` /
-  `setChainVersionPinned` (policy in `versionPolicies`), `consumedBy`
-  (reverse projection; fork edges surface only to their own project's
-  creator), `chainVersions`, `storedDelta` (diff via `tagDeltas`).
-- **UI**: `features/versions/components/dataset-consumption.tsx` (badges, sync/revert,
-  consumed-by), `version-compare.tsx`.
-- A pinned version that was retired resolves to nothing and map layers over
-  it are suppressed rather than falling back to newer rows.
-
-## Bundles
-
-`bundles.ts` + `app/src/features/publishing/lib/bundle-publish.ts` — one project publishes as one
-bundle: a collection plus its maps plus the datasets they reference.
-
-- **`bundleClosure`** (pure) computes the plan: project memberships plus every
-  dataset each map's layers reach (collection/group layers expand live),
-  deduped; drafts publish only if the project holds them (a foreign draft
-  found via live expansion is dropped, never frozen by someone else's press);
-  already-published datasets join as members without a new version; derived
-  members publish in dependency order; derived sources stay private
-  (lineage-only provenance).
-- **Press legs** (client-driven loop over `bundleRunMembers`): `start`
-  (creates or joins the run) → per-member `publishDataset` + `recordMember` →
-  `promoteCollection` (create-once/reuse component collection, file frozen
-  rows, re-attach groups) → `linkMapLayers` (one float `map` reference per
-  direct dataset layer target) → `completeRun`.
-- Per-member atomicity: a failed member leaves the bundle partial; completed
-  members keep their frozen rows. A re-press re-promotes every member (new
-  versions); the bundle itself is unversioned.
-- **Layer resolution**: layer targets are chain anchors; `layerResolutions`
-  and `consumption.resolveSourceHead` resolve float → head, pin → pinned row,
-  so maps keep their layer structure across republishes.
-
-## Sharing and visibility model
-
-| Artifact                                           | Visible to                     | Writable by                                                                                           |
-| -------------------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| Draft dataset (`lifecycle: "draft"`)               | creator                        | creator                                                                                               |
-| Registry draft (builder autosave)                  | creator                        | creator                                                                                               |
-| Project, membership, bundle run, attempt           | creator                        | creator                                                                                               |
-| Published dataset, `publishedVisibility: "author"` | creator                        | creator                                                                                               |
-| Published dataset, default (`"everyone"`)          | any signed-in user             | any signed-in user (ADR 0009), unless the dataset is `editPolicy: "locked"` — creator only (ADR 0010) |
-| Saved registry row (derived dataset)               | any signed-in user             | creator (owner-checked)                                                                               |
-| Maps, collections, groups                          | any signed-in user             | any signed-in user (ADR 0009; `mapId` rides every map mutation for a future per-map policy)           |
-| Frozen versions / bound datasets                   | per their dataset's visibility | nobody (read-only; organization ops allowed, locked datasets' to their creator)                       |
-
-`publishedVisibility` is the authoring-time choice and crosses the
-draft→published line with the data (the frozen row inherits it). Denials are
-indistinguishable from "not found" for invisible rows; a locked dataset's
-write denial is read-only-shaped (existence of a published row is already
-public). `editPolicy` is per-row and does NOT cross the lifecycle line:
-frozen rows carry `lineage` and stay read-only regardless.
-
-## Analysis layer
-
-Client-side SQL over the same rows (`docs/analysis-layer-design.md`; stage 9).
-There is no server-side analytics path.
-
-- **An analysis is a registry row** whose spec carries a `sql` operation
-  (`derivedDatasets.summaries` exposes `carriesSql`), so it saves, joins
-  projects as `derived`, and publishes through the normal lifecycle with no
-  new concepts.
-- **Resolve-then-feed**: `consumption.analysisTargets` resolves each referenced
-  dataset server-side through the same `resolveSourceHead` core as map layers
-  (identity / float / registry / missing), then the worker registers the
-  resolved component ids. v1 authors over component datasets only (registry
-  ids report `registry`).
-- **Execution**: `app/src/features/analysis/lib/analysis.ts` (main-thread run manager, one run
-  at a time, lazy worker), `analysis.worker.ts` (pages every table through the
-  seam, types columns from declared structure, runs `applySql`),
-  `@caden/analysis/duckdb` (lazy single-threaded DuckDB-WASM with a memory limit),
-  `@caden/analysis/caps` (`MAX_ANALYSIS_RESULT_ROWS` = 10,000; truncation always
-  reported, publish refuses truncated results). The worker authenticates via a
-  token round-trip to the main thread.
-- **UI**: the dataset page's **Analyze** tab (`features/analysis/components/analysis-panel.tsx`).
-- Parquet sidecar (DuckDB range reads over a per-version artifact) is
-  deferred; the registration path is shaped so it can substitute for
-  streaming.
-
-## Import, export, and the two geometry paths
-
-Import: the client parses (CSV/XLSX/JSON/GeoJSON via json-cms react parsers),
-chunks rows, uploads chunk blobs, and drives the component's workflow-driven
-`imports` progress. Optional: retain the source file, simplify geometry to
-6dp, or convert lat/lng columns to geometry (`geospatial-conversion-panel`).
-Imports never mutate existing data; new data lands as a draft in a project or
-as a plain dataset.
-
-Reading geometry has two paths, chosen per dataset by `app/src/features/maps/lib/layer-source.ts`:
-
-- **Row path** — byte-budget pagination (`geometries.list`, ~5 MB/page,
-  500-row ceiling) rendered as GeoJSON. Small datasets, always available.
-- **Tile path** — for datasets with an installed PMTiles archive: the map
-  requests tiles through the pmtiles protocol (`pmtiles-protocol.ts`), backed
-  by HTTP range requests against storage, with a 256 MB OPFS LRU
-  (`tile-archive-cache.ts`) making repeat opens fetch zero archive bytes. A
-  browser worker (`tile-archive.worker.ts` + geometry-archive) rebuilds
-  archives after edits; version guards discard stale builds.
-
-The tile path exists because the 2026-09 audit measured the row path at
-46.55 MB for one real dataset — see
-[`docs/map-performance-audit-2026-09-16.md`](./map-performance-audit-2026-09-16.md).
-
-Exports (`features/datasets/lib/export.ts`, GeoJSON/JSON/XLSX) read rows through the seam and
-can fold saved transform specs in as extra columns.
+`publish_version` (§5.4 RPC) materializes a dataset's live rows into
+`version_entries` (idempotent on `publish_key`); layers freeze into
+`layer_versions`; an app publish walks its project graph (owned draft layers
+publish first; published layers freeze their existing head), builds frozen
+PMTiles archives for large geospatial pins (one-shot worker message, stamped
+`frozen_archive`), and writes the self-contained `app_versions` snapshot.
+The project bundle press is the convenience closure over per-artifact
+publishes: per-member freezes with checkpoints, the promoted collection,
+close. Consumption pins or floats on the version chains
+(`consumer_references`; sync moves the edge, revert walks it back).
 
 ## Frontend layout (`app/src/`)
 
-- **Routes** (TanStack file-based routing): `/datasets` (+ per-dataset
-  detail/edit/bulk-upload/entry; detail tabs Overview, Entries, History
-  (bound only), Structure, Transform, Analyze), `/collections`, `/groups`,
-  `/maps` (optional per-dataset styling via the `features/layer-styles/`
-  module — see [`layer-styles.md`](./layer-styles.md)), `/projects` (+ `$projectId`), `/apps` (+ `$appId`, `$appId/edit`
-  — the app builder, a self-contained module in `features/app-builder/`,
-  see [`app-builder.md`](./app-builder.md)), `/users/$userId`, `/signin`,
-  `/dashboard` (the foreign-domain CRUD surface), `/api/auth/$` (Better Auth
-  proxy). The sign-in gate is server-side; the header shows the sign-in link
-  and project pages render a signed-out state.
-- **`@caden/ui/components/map`** (`packages/ui/src/components/map.tsx`, from the mapcn registry) — the app's MapLibre kit (~15 components: Map,
-  Marker/Popup, Controls, GeoJSON/VectorTiles/Arc/Cluster layers). Per-page
-  map components (`entries-map`, `group-map`, `layers-map`, `datasets-map`,
-  `diff-overlay-map`) compose it; they share orchestration that is a known
-  duplication target (#82).
-- **`@caden/ui/niko-table/*`** (`packages/ui/src/niko-table/`) — vendored third-party table library
-  (niko-table), ~11.7k lines, consumed only by `entries-table.tsx`.
-  Vendor-boundary cleanup tracked in #82.
-- **State** — Convex via the `@convex-dev/react-query` bridge; no global
-  store. Light query namespaces persist for instant re-opens; persisted state
-  is invalidated by `maxTileCacheVersion`.
+- `integrations/supabase/` — client factory, SSR client, auth provider
+  (`useSession`), Better Auth mount.
+- `lib/store/` — one module per PG domain (`datasets`, `entries`,
+  `geometries`, `collections`, `groups`, `layers`, `maps`, `apps`,
+  `projects`, `project-members`, `relations`, `versions`, `tags`,
+  `publishing`, `derived`, `visibility`, `realtime`, …): TanStack Query
+  options + plain table writers. Writes return affected-row counts (the
+  silent-denial rule — an RLS-filtered write reads as 0 rows, not an error).
+- `lib/dataset-rows-pg.ts` — the row-resolution seam (pagination budgeting,
+  geometry batching) shared by the table view, maps, exports, and analysis.
+- `features/<name>/` — `catalog` (browsers, cards, pickers), `datasets`
+  (page, import pipeline, entries table, export), `maps` (stored-map canvas,
+  layer editor, tile managers), `publishing` (project workspace, dialogs,
+  transform builders, bundle press), `versions`, `analysis` (DuckDB-WASM
+  panel), `app-builder` (route-only), `layer-styles` (route-only).
+- Routes: `/` → `/projects`; `/projects/$projectId` (workspace: Catalog,
+  Relations, Maps, Apps sections + members/settings), `/datasets`, `/maps`,
+  `/apps`, `/collections` (explorers), `/apps/$appId` (the ONE public route —
+  anon renders the frozen head snapshot; everything else is AuthGated).
 
 ## Development
 
 ```bash
 bun install
-bun --filter=app run dev     # app (vite + convex dev)
-bun run test                # vitest — the app workspace only
-bunx tsc --noEmit           # from app/ — the app has no typecheck script
-bun run lint                # oxlint (type-aware) at the root
+bun run dev                  # app (vite) — picks :3001 if stale :3000 is held
+bun run test                 # vitest — the app workspace only
+bunx tsc --noEmit            # from app/ — the app has no typecheck script
+bun run lint                 # oxlint (type-aware) at the root
+bun run fmt --check          # oxfmt (the formatter)
 ```
 
-Component-package changes need a rebuild before the app picks them up:
-`bun run build` inside `packages/json-cms` (the app consumes `dist`).
-json-cms develops against its own `example/` host (`bun run dev` there runs
-backend + example + codegen watch) and carries its own vitest suite.
+The backend stack (compose, migrations, seed, env) is documented in
+[`docs/memory/self-hosting-stack-2026-11-05.md`](./memory/self-hosting-stack-2026-11-05.md);
+the app expects `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` in
+`app/.env.local` (restart vite after changing it). DB-level tests follow the
+wire-client int-test pattern (they hit a live Postgres, not mocks).
 
 **CI** (`.github/workflows/ci.yml`, one job on PRs and pushes to `main`):
-build json-cms and geometry-archive dists, then `oxfmt --check`, lint,
-typecheck (json-cms, geometry-archive, data-export, app), test (json-cms,
-geometry-archive, app, data-export), and finally the app build. Not gated:
-deploys. App tests whose imports reach `env.ts` must `vi.mock("#/env")`
+oxfmt --check, lint, typecheck, app tests (incl. the Postgres int tests —
+the job applies migrations before storage-api boots; see #248/#250), and the
+app build. App tests whose imports reach `env.ts` must `vi.mock("#/env")`
 (CI has no `.env.local`).
-
-Deployment has been volatile — the cloud dev deployment was disabled on
-free-plan limits (2026-09-19) and the app currently runs against a local
-Convex backend; the working env-file recipe and the warnings (plain
-`convex dev` from `app/` can re-select cloud and rewrite `.env.local`) live
-in project memory (`docs/memory/`) rather than here, because this section
-ages fast.
 
 ## Documentation map
 
-| Doc                                                                            | Status                | What it holds                                                                                                                          |
-| ------------------------------------------------------------------------------ | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| [`bound-datasets-design.md`](./bound-datasets-design.md)                       | current               | The full bound-datasets design: concept mapping, data model, sync, tag ingest, adapter contract, PoC status, phased roadmap (#72–#78). |
-| [`derived-datasets-design.md`](./derived-datasets-design.md)                   | implemented           | Transform-spec design (lookup, rollup, composition); ADR 0005.                                                                         |
-| [`catalog-lifecycle-design.md`](./catalog-lifecycle-design.md)                 | implemented           | Projects, draft→publish, versioned consumption, bundles; ADR 0008.                                                                     |
-| [`analysis-layer-design.md`](./analysis-layer-design.md)                       | implemented           | DuckDB-WASM analysis design; Parquet sidecar still deferred.                                                                           |
-| [`data-platform-roadmap.md`](./data-platform-roadmap.md)                       | complete (2026-09-29) | Phase 0 + stages 1–9 (umbrella #88).                                                                                                   |
-| [`code-review-2026-09-30.md`](./code-review-2026-09-30.md)                     | historical record     | Post-roadmap full-repo review; all findings resolved under umbrella #123.                                                              |
-| [`map-performance-audit-2026-09-16.md`](./map-performance-audit-2026-09-16.md) | historical record     | The audit that produced #48–#55; method + measurements still cited by the geometry path.                                               |
-| [`gis-geometry-transport-survey.md`](./gis-geometry-transport-survey.md)       | research (2026-09-17) | Survey of how major GIS platforms transport geometry; rationale companion to the tile path.                                            |
-| [`app-builder.md`](./app-builder.md)                                           | implemented           | App builder: shareable map/chart/table apps; module layout, sharing model, removal checklist; ADR 0011.                                |
-| [`layer-styles.md`](./layer-styles.md)                                         | implemented           | Layer styles: optional MapLibre-style-spec cartography for saved maps; extension slots, removal checklist; ADR 0012.                   |
-| [`decisions/`](./decisions/)                                                   | living log            | Numbered decision records (ADR-style), 0001–0014.                                                                                      |
-| [`memory/`](./memory/MEMORY.md)                                                | living log            | Project memory: durable lessons, verification gotchas, per-initiative records. Policy in the repo `AGENTS.md`.                         |
+| Doc                                                                              | Status                | What it holds                                                                                                |
+| -------------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------ |
+| [`project-centric-experience-design.md`](./project-centric-experience-design.md) | implemented           | The train's authority: target model, D1–D7, the tourism scenario (§5).                                       |
+| [`project-centric-train-handoff.md`](./project-centric-train-handoff.md)         | living log            | Per-phase pointers, gotchas, and the train's state.                                                          |
+| [`supabase-migration-design.md`](./supabase-migration-design.md)                 | implemented           | The backend authority: schema/RLS/RPCs, stages 0–7, verification. ADR 0015.                                  |
+| [`catalog-lifecycle-design.md`](./catalog-lifecycle-design.md)                   | superseded in part    | The lifecycle design; its "projects are virtual" posture was replaced by real PG projects (ADR 0017/0018).   |
+| [`derived-datasets-design.md`](./derived-datasets-design.md)                     | implemented           | Transform-spec design (lookup, rollup, composition); ADR 0005.                                               |
+| [`analysis-layer-design.md`](./analysis-layer-design.md)                         | implemented           | DuckDB-WASM analysis design; Parquet sidecar still deferred.                                                 |
+| [`bound-datasets-design.md`](./bound-datasets-design.md)                         | implemented (PoC)     | Foreign-app read-only bound datasets + sync.                                                                 |
+| [`app-builder.md`](./app-builder.md)                                             | implemented           | App builder: layout, sharing model, removal checklist; ADR 0011.                                             |
+| [`layer-styles.md`](./layer-styles.md)                                           | implemented           | Layer styles history; retired as a module in [project 3] (style lives on the layer row, ADR 0019).           |
+| [`gis-geometry-transport-survey.md`](./gis-geometry-transport-survey.md)         | research (2026-09-17) | Survey of how major GIS platforms transport geometry.                                                        |
+| [`decisions/`](./decisions/)                                                     | living log            | Numbered decision records (ADR-style), 0001–0024; index in [`decisions/README.md`](./decisions/README.md).   |
+| [`memory/`](./memory/MEMORY.md)                                                  | living log            | Project memory: durable lessons, verification gotchas, per-initiative records. Policy in the repo AGENTS.md. |
 
 ## Known gaps
 
-- **The 2026-09-30 review is closed** — every finding in
-  [`code-review-2026-09-30.md`](./code-review-2026-09-30.md) was fixed under
-  umbrella **#123** (#124–#139) except #137, parked below.
-- **Published artifacts are co-editable** by design (ADR 0009); per-dataset
-  opt-out shipped as `editPolicy` (ADR 0010, #124), and sign-up is closed
-  (#136).
-- **Unverified in a browser:** a first real materialized publish +
-  republish (stage 5b) and a first DuckDB-WASM SQL query (stage 9) — both
-  unit-tested only (manual-verification list on #88).
+- **VPS cutover** (§11a of the self-hosting design) is the remaining
+  launch item — the stack runs locally; CI/CD builds and pushes the GHCR
+  image but skips deploy until the VPS exists.
 - **Parquet sidecar deferred** — analysis streams rows through the seam; no
   per-version Parquet artifact exists.
-- **#78 remote transport blocked** — bound datasets sync only from the local
-  foreign-domain stand-in until the hosting-fork decision lands.
 - **`@caden/data-export` is unwired** — the backup story exists as a package
-  but nothing registers or calls it; CI typechecks and tests it. Its latent
-  defects (table allowlist, streaming parts, idempotent file records) are
-  parked on #137 — fix them before any wire-in.
-- **#82** records a full architecture review (monolith splits, vendor
-  boundary, host-schema segmentation) as reference-only; nothing there is
+  but nothing registers or calls it; its latent defects are parked on #137.
+- **#82** records a pre-migration architecture review as reference-only —
+  much of it was overtaken by the Supabase rewrite; nothing there is
   approved work.
+- **Live-map app widgets** (referencing the live map instead of the frozen
+  snapshot) are a noted future per-widget toggle (umbrella #254's parked
+  list), not built.

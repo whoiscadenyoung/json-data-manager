@@ -1,5 +1,16 @@
 # Catalog lifecycle — projects, publish, and versioned consumption
 
+> **Status (2026-11-07):** the lifecycle SHIPPED — but on the Postgres
+> backend, and with one posture change: projects are **real rows**
+> (`projects`/`project_members`/`project_artifacts`, ADRs 0017/0018), not
+> the "virtual working layer" this doc describes, and datasets stay global
+> with owned/linked memberships (the project-centric train,
+> `project-centric-experience-design.md` D1). The publish → freeze →
+> version → pin/float/sync/revert mechanics and the one-project-one-bundle
+> press landed as designed (stages 4–5 + #259/#260). Read this doc for the
+> lifecycle reasoning; read the supabase migration design §3.5 + the train
+> ADRs for the shipped schema.
+
 Design for the draft → publish lifecycle over the dataset catalog: **projects**
 as the virtual working layer where imports, transforms, and maps are drafted;
 **publish** as the act of materializing and freezing artifacts into the
