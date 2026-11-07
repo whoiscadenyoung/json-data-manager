@@ -31,6 +31,9 @@ export {
   renderTargetsForDerivedLayers,
   resolveVisibleSchemaIds,
 } from "./lib/map-layers";
+export { MAP_TILE_ARCHIVE_FORMAT, MAP_TILE_ARCHIVE_MIN_BYTES } from "./lib/pg-tile-archives";
 export type { DatasetSummary, MapLayerOverride } from "./lib/map-layers";
 export type { DerivedDatasetSummary, MapLayerDoc, MembershipRow } from "./lib/map-layers";
+export { buildFrozenTileArchive } from "./lib/frozen-archive-build";
+export type { FrozenArchiveStamp } from "./lib/frozen-archive-build";
 export { bboxFeature, buildPointFeatureCollection } from "./lib/point-geometry";

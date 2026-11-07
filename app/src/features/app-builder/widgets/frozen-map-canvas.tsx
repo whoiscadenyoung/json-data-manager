@@ -1,13 +1,14 @@
 import { Badge } from "@caden/ui/components/badge";
 import { Skeleton } from "@caden/ui/components/skeleton";
 import { Spinner } from "@caden/ui/components/spinner";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueries } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
 
 import { useLayerStyles } from "#/features/layer-styles";
 import {
   colorForIndex,
   LayersMap,
+  MAP_TILE_ARCHIVE_FORMAT,
   pgGeometryToLayerRow,
   pgSummaryToDatasetSummary,
 } from "#/features/maps";
@@ -17,7 +18,9 @@ import type {
   AppSnapshotLayerVersion,
   AppVersionDefinition,
 } from "#/lib/store/app-versions";
+import { sharedClient } from "#/lib/store/client";
 import type { DatasetSummaryRow } from "#/lib/store/datasets";
+import { createTileArchiveUrl } from "#/lib/store/geometries";
 import type { GeometryRow } from "#/lib/store/geometries";
 import { versionEntriesQueryOptions } from "#/lib/store/versions";
 
@@ -25,11 +28,14 @@ import { versionEntriesQueryOptions } from "#/lib/store/versions";
  * A published app's map widget canvas (issue #259; D7) — renders the frozen
  * map snapshot, never the live map. Placements resolve through the
  * snapshot's flattened `layerVersions` list (groups recurse through their
- * frozen children), each data layer draws its pinned dataset version's
- * immutable `version_entries` rows (inline GeoJSON at freeze time — no
- * storage resolution, no tile archives on this path), and every style comes
- * from the frozen definition. This is the render half of "editing the live
- * map afterwards does not change the published app until republish".
+ * frozen children). Every style comes from the frozen definition, and the
+ * data comes from the pinned versions by one of two paths (#261): a dataset
+ * whose pin carries a servable frozen-archive stamp draws TILES (built at
+ * publish from exactly this version's rows — anon-readable under migration
+ * 0024's policy; a signing failure or old-format stamp falls back to rows),
+ * everything else pages the immutable `version_entries` rows. This is the
+ * render half of "editing the live map afterwards does not change the
+ * published app until republish".
  */
 
 /** How deep the frozen resolver descends before stopping (the store's guard bounds real trees; this is the render-side belt). */
@@ -198,6 +204,21 @@ function pinSummariesOf(
   });
 }
 
+/** A snapshot pin's archive stamp as a servable tile pointer: present only when the stamp matches this build's layout generation (the #125 format gate — an old-format stamp reads as "no archive", rows render). */
+function servableArchiveOf(
+  datasetId: string,
+  datasetPins: AppVersionDefinition["datasetPins"],
+): { datasetId: string; path: string } | undefined {
+  const pin = datasetPins.find((candidate) => candidate.datasetId === datasetId);
+  if (pin === undefined || pin.archive === null || pin.archive === undefined) {
+    return undefined;
+  }
+  if (pin.archive.format !== MAP_TILE_ARCHIVE_FORMAT) {
+    return undefined;
+  }
+  return { datasetId, path: pin.archive.path };
+}
+
 export function FrozenMapCanvas({
   datasetPins,
   layerVersions,
@@ -215,6 +236,39 @@ export function FrozenMapCanvas({
         entriesOfVersion(placement.versionId, placement.visible, 0, versionsById),
       ),
     drawable = entries.filter((entry) => entry.versionId !== null && entry.visible),
+    // The #261 split: a dataset whose pin carries a servable frozen archive
+    // draws TILES (the publish walk built them from exactly this version's
+    // rows — anon-readable under migration 0024's policy); everything else
+    // pages immutable rows as before.
+    tileArchives = [
+      ...new globalThis.Map(
+        drawable.flatMap((entry) => {
+          const archive = servableArchiveOf(entry.renderId, datasetPins);
+          return archive === undefined ? [] : [[archive.datasetId, archive] as const];
+        }),
+      ).values(),
+    ],
+    archiveQueries = useQueries({
+      queries: tileArchives.map((archive) => ({
+        // The 24 h TTL dwarfs staleTime; a re-sign on remount is one cheap
+        // storage round trip.
+        queryFn: async () => await createTileArchiveUrl(sharedClient(), archive.path),
+        queryKey: ["pg:tile-archives", "frozen-sign", archive.datasetId, archive.path],
+        retry: false,
+        staleTime: 20 * 60 * 1000,
+      })),
+    }),
+    signedUrlByDataset = new globalThis.Map(
+      tileArchives.flatMap((archive, index) => {
+        const query = archiveQueries[index];
+        return query !== undefined && typeof query.data === "string"
+          ? [[archive.datasetId, query.data] as const]
+          : [];
+      }),
+    ),
+    tileDatasetIds = new Set(tileArchives.map((archive) => archive.datasetId)),
+    tileSourcesPending = tileArchives.some((archive) => !signedUrlByDataset.has(archive.datasetId)),
+    rowEntries = drawable.filter((entry) => !tileDatasetIds.has(entry.renderId)),
     [rowsByDataset, setRowsByDataset] = useState<
       globalThis.Map<string, DatasetGeometryRow[] | undefined>
     >(() => new globalThis.Map()),
@@ -234,8 +288,16 @@ export function FrozenMapCanvas({
       // oxlint-disable-next-line react/preserve-manual-memoization -- see the comment above.
       [setRowsByDataset],
     ),
-    rowDatasetIds = [...new Set(drawable.map((entry) => entry.renderId))],
-    allComplete = rowDatasetIds.every((datasetId) => rowsByDataset.get(datasetId) !== undefined),
+    rowDatasetIds = [...new Set(rowEntries.map((entry) => entry.renderId))],
+    [arrivedTileDatasetIds, setArrivedTileDatasetIds] = useState<Set<string>>(
+      () => new Set<string>(),
+    ),
+    rowDatasetsComplete = rowDatasetIds.every(
+      (datasetId) => rowsByDataset.get(datasetId) !== undefined,
+    ),
+    tileDatasetsComplete = [...tileDatasetIds].every((datasetId) =>
+      arrivedTileDatasetIds.has(datasetId),
+    ),
     geometries = rowDatasetIds.flatMap((datasetId) => rowsByDataset.get(datasetId) ?? []),
     summaries = pinSummariesOf([...new Set(entries.map((entry) => entry.renderId))], datasetPins),
     pinTitleById = new globalThis.Map(
@@ -264,7 +326,7 @@ export function FrozenMapCanvas({
         throw new Error("The published app shows the frozen map — republish to restyle it.");
       },
       renderIds: [...new Set(entries.map((entry) => entry.renderId))],
-      tileRenderIds: new Set<string>(),
+      tileRenderIds: tileDatasetIds,
     });
 
   if (entries.length === 0) {
@@ -275,10 +337,20 @@ export function FrozenMapCanvas({
     );
   }
 
-  const shouldMount = rowDatasetIds.length === 0 || geometries.length > 0;
+  const tileSources = tileArchives.flatMap((archive) => {
+      const url = signedUrlByDataset.get(archive.datasetId);
+      // MapVectorTiles' PMTiles sources ride the `pmtiles://` protocol scheme
+      // (the layer-source decision's shape — the bare signed URL alone is
+      // not a loadable maplibre URL).
+      return url === undefined ? [] : [{ schemaId: archive.datasetId, url: `pmtiles://${url}` }];
+    }),
+    shouldMount =
+      (rowDatasetIds.length === 0 && tileSources.length === 0 && !tileSourcesPending) ||
+      geometries.length > 0 ||
+      tileSources.length > 0;
   return (
     <div className="relative size-full overflow-hidden">
-      {drawable.map((entry) => (
+      {rowEntries.map((entry) => (
         <FrozenLayerRows
           datasetId={entry.renderId}
           key={entry.layerVersionId}
@@ -294,15 +366,23 @@ export function FrozenMapCanvas({
           derivedLayers={[]}
           extension={layerStyles.extension}
           geometries={geometries}
-          sourcesPending={false}
-          tileSources={[]}
+          onTileSourceIdle={(datasetId) => {
+            setArrivedTileDatasetIds((prev) => {
+              if (prev.has(datasetId)) {
+                return prev;
+              }
+              return new globalThis.Set(prev).add(datasetId);
+            });
+          }}
+          sourcesPending={tileSourcesPending}
+          tileSources={tileSources}
           titlesById={pinTitleById}
           visibleSchemaIds={new Set(drawable.map((entry) => entry.renderId))}
         />
       ) : (
         <Skeleton className="size-full rounded-none" />
       )}
-      {!allComplete && (
+      {!(rowDatasetsComplete && tileDatasetsComplete) && (
         <Badge variant="outline" className="absolute top-3 left-3 z-10 bg-card shadow-sm">
           <Spinner data-icon="inline-start" />
           Loading features…

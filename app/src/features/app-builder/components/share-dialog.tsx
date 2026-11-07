@@ -73,7 +73,7 @@ const OPTIONS: ReadonlyArray<{
   },
   {
     description:
-      "Visitors holding the URL can open it without signing in — recorded and enforced on the published data now; anonymous serving itself ships with public serving.",
+      "Visitors holding the URL can open it without signing in — anonymous serving reads the published snapshot (frozen rows and tiles), never the live data.",
     icon: Link2,
     label: "Anyone with the link",
     value: "link",
@@ -85,6 +85,23 @@ const OPTIONS: ReadonlyArray<{
     value: "public",
   },
 ];
+
+/** The link field's liveness line per rung (#261 — what the copied URL actually does). */
+const LINK_NOTES: Record<VisibilityLevel, string> = {
+  members: "The link only opens for the project's members while the app sits at “members”.",
+  "signed-in":
+    "The link opens for any signed-in member of this workspace — anonymous visitors are asked to sign in.",
+  link: "This link is live: anyone holding it opens the app without signing in.",
+  public:
+    "This link is live for everyone — anonymous visitors included, and the app is listed in the explorers.",
+};
+
+function linkNoteFor(visibility: VisibilityLevel, pending: VisibilityLevel | undefined): string {
+  if (pending !== undefined) {
+    return `Confirming the share at “${pending}” — the link's audience updates with it.`;
+  }
+  return LINK_NOTES[visibility];
+}
 
 /** The diff-style report ("sharing publicly also widens 2 datasets and 1 map — review"). */
 function PromotionNotice({ report }: { report: PreflightReport }) {
@@ -328,11 +345,7 @@ export function ShareDialog({
                 </InputGroupButton>
               </InputGroupAddon>
             </InputGroup>
-            {visibility === "members" && pending === undefined && (
-              <FieldDescription>
-                The link only opens for the project's members while the app sits at “members”.
-              </FieldDescription>
-            )}
+            <FieldDescription>{linkNoteFor(visibility, pending)}</FieldDescription>
           </Field>
         </FieldGroup>
       </DialogContent>

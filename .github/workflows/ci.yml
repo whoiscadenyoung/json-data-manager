@@ -388,10 +388,12 @@ jobs:
       # real migration defect, not an environment limitation (the bare
       # container skip in those files no longer has a legitimate reason to
       # trigger in this job). Five buckets: 0004's four §6 private buckets +
-      # sync-chunks (0012 §3.6). Exactly 8 policies: the 0012 replacement
+      # sync-chunks (0012 §3.6). Exactly 9 policies: the 0012 replacement
       # set (it restates the 0006 set with sync-chunks added) —
       # can_view_dataset SELECT + editor+owner INSERT/UPDATE/DELETE on the
-      # dataset buckets, and the 4 per-kind marker-sprites policies.
+      # dataset buckets, the 4 per-kind marker-sprites policies, and 0024's
+      # anon SELECT on the frozen-convention tile archives of link/public
+      # datasets (#261).
       - name: Assert storage buckets and object policies
         run: |
           set -euo pipefail
@@ -402,8 +404,8 @@ jobs:
             exit 1
           fi
           n="$(psql "$SUPABASE_DB_URL" -X -tA -c "select count(*) from pg_policies where schemaname = 'storage' and tablename = 'objects';")"
-          if [ "${n}" -ne 8 ]; then
-            echo "::error::storage.objects carries ${n} policies — expected exactly the 8 the migration set installs (0004/0006)" >&2
+          if [ "${n}" -ne 9 ]; then
+            echo "::error::storage.objects carries ${n} policies — expected exactly the 9 the migration set installs (0004/0006 + 0024's frozen-archive anon policy)" >&2
             exit 1
           fi
-          echo "storage verified: 4 private buckets, 8 object policies"
+          echo "storage verified: 4 private buckets, 9 object policies"

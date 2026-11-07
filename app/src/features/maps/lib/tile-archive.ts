@@ -40,6 +40,16 @@ export type TileTokenSource = "supabase";
 /** Main thread → worker: one build per message, plus token-fetch replies. */
 export type TileArchiveWorkerInbound =
   | { schemaId: string; type: "build" }
+  | {
+      /** A FROZEN-version archive build (issue #261): pages the pinned
+       * version's immutable `version_entries` rows — never the live dataset —
+       * and uploads the result under the frozen path convention. Driven by
+       * the app publish walk (`frozen-archive-build.ts`), on a one-shot
+       * worker instance the live scheduler never sees. */
+      datasetId: string;
+      type: "build-frozen";
+      versionId: string;
+    }
   | { requestId: number; token: string | null; type: "token" };
 
 /** Worker → main thread: token requests, transient `phase` messages, then one terminal message. */
@@ -64,7 +74,24 @@ export type TileArchiveWorkerOutbound =
        * skip against the exact version it applies to. */
       version: number;
     }
-  | { message: string; schemaId: string; type: "error" };
+  | { message: string; schemaId: string; type: "error" }
+  // The frozen-build protocol (issue #261): its own `frozen-` message types
+  // so a one-shot worker's messages can never collide with the live
+  // scheduler's build-state store. Same phase/terminal shape, dataset-keyed.
+  | { datasetId: string; phase: TileArchiveBuildPhase; type: "frozen-phase" }
+  | {
+      bytes: number;
+      datasetId: string;
+      maxZoom: number;
+      path: string;
+      type: "frozen-done";
+    }
+  | {
+      datasetId: string;
+      reason: "below-threshold" | "not-geospatial";
+      type: "frozen-skipped";
+    }
+  | { datasetId: string; message: string; type: "frozen-error" };
 
 // --- Build-state store (module-level; survives route unmounts) ---
 
@@ -293,14 +320,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * The current session's Supabase access token, for the tile worker's own
+ * The current session's Supabase access token, for a tile worker's own
  * `createClient` (a worker has neither cookies nor the provider's storage —
  * it asks the main thread — the worker-handshake shape). Never
  * rejects: null when signed out or the read fails, so a request never hangs
  * and the PG build fails loudly on the missing identity instead of silently
- * reading zero RLS-visible rows.
+ * reading zero RLS-visible rows. Exported for the frozen-build one-shot
+ * worker (`frozen-archive-build.ts`), which answers the same handshake.
  */
-async function fetchSupabaseAccessToken(): Promise<string | null> {
+export async function fetchSupabaseAccessToken(): Promise<string | null> {
   try {
     const { data } = await sharedClient().auth.getSession();
     const session = data.session;

@@ -41,6 +41,18 @@ import { createTileArchiveUrl, tileArchivePointers } from "#/lib/store/geometrie
 export const MAP_TILE_ARCHIVE_FORMAT = 2;
 
 /**
+ * Minimum geometry-payload bytes an archive is worth building for (the
+ * live scheduler's gate, mirrored by the publish walk's frozen-archive leg —
+ * a small dataset skips the build and renders rows both places).
+ *
+ * KEEP IN SYNC with `MAP_TILE_ARCHIVE_MIN_BYTES` in
+ * `packages/json-cms/src/component/internal/tileArchive.ts` and the mirror in
+ * `@caden/maps/build-scheduler` (the live worker imports this constant — it
+ * is not re-declared there).
+ */
+export const MAP_TILE_ARCHIVE_MIN_BYTES = 262_144; // 256 KB
+
+/**
  * The tile-relevant fields of a Postgres dataset summary row
  * (`store/datasets`' `DatasetSummaryRow` — the full row passes
  * structurally). Deliberately the SAME field names the store exposes, so
@@ -107,6 +119,19 @@ export function isPgFreshArchiveCandidate(row: PgTileSummaryRow): boolean {
  */
 export function pgTileArchiveUploadPath(datasetId: string, version: number): string {
   return `${datasetId}/v${version}-${crypto.randomUUID()}.pmtiles`;
+}
+
+/**
+ * Storage path convention for a FROZEN-version archive upload (issue #261):
+ * `<datasetId>/frozen-<versionId>-<token>.pmtiles`. The second segment's
+ * `frozen-` marker is what migration 0024's anon SELECT policy matches — the
+ * leak guard that keeps the LIVE archives (uploaded under
+ * {@link pgTileArchiveUploadPath}'s `v` convention, built from post-freeze
+ * live rows) closed to anonymous consumers. Unique per attempt for the same
+ * reason the live path is.
+ */
+export function pgFrozenTileArchiveUploadPath(datasetId: string, versionId: string): string {
+  return `${datasetId}/frozen-${versionId}-${crypto.randomUUID()}.pmtiles`;
 }
 
 /**
