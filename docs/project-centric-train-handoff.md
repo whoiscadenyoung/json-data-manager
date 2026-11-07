@@ -147,7 +147,7 @@ resolved decisions D1–D7; §5 = the scenario that is the train's exit test).
   preflight→confirm→apply on widening; the dataset share dialog rides the
   plain column write (leaf artifact); the press dialog picks the rung.
   Lessons: `docs/memory/project-visibility-0023-lessons.md`.
-- **#261 anon serving** — ✅ DONE (PR, ADR 0023, migration 0024): the ONE
+- **#261 anon serving** — ✅ DONE (PR #269, ADR 0023, migration 0024): the ONE
   public route is `/apps/$appId` (the AuthGate exempts exactly that shape —
   deeper segments stay gated; explorers stay signed-in for [project 8]);
   the anon branch renders the whole view from the head `app_versions`
