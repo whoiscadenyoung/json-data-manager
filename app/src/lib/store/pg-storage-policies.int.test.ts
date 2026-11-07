@@ -123,7 +123,7 @@ describe.skipIf(!dbUp() || !storageUp())("dataset-shaped buckets (§6)", () => {
 
   test("select requires can_view_dataset on the path's dataset, not ownership", async () => {
     const openId = await createDataset(s(), { createdBy: ALICE });
-    const authorOnlyId = await createDataset(s(), { createdBy: ALICE, visibility: "author" });
+    const authorOnlyId = await createDataset(s(), { createdBy: ALICE, visibility: "members" });
 
     await s().begin();
     await s().asUser(ALICE);

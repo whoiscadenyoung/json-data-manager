@@ -190,7 +190,7 @@ function pinSummariesOf(
         mapTileArchiveFormat: null,
         mapTileArchiveMaxZoom: null,
         mapTileCacheVersion: 0,
-        publishedVisibility: "everyone",
+        visibility: "signed-in",
         source: null,
         title: pin.title ?? "Unavailable dataset",
       } satisfies DatasetSummaryRow,

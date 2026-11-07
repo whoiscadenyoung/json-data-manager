@@ -28,7 +28,7 @@ function datasetRow(overrides: Partial<DatasetSummaryRow> = {}): DatasetSummaryR
     mapTileArchiveFormat: null,
     mapTileArchiveMaxZoom: null,
     mapTileCacheVersion: 1,
-    publishedVisibility: "everyone",
+    visibility: "signed-in",
     source: null,
     title: "Sample",
     ...overrides,
@@ -58,11 +58,11 @@ describe("PgDatasetTypeTags", () => {
         dataset={datasetRow({
           editPolicy: "locked",
           lifecycle: "draft",
-          publishedVisibility: "author",
+          visibility: "members",
         })}
       />,
     );
-    expect(screen.getByText("Only me")).toBeTruthy();
+    expect(screen.getByText("Members only")).toBeTruthy();
     expect(screen.getByText("Draft")).toBeTruthy();
     expect(screen.getByText("Locked")).toBeTruthy();
   });

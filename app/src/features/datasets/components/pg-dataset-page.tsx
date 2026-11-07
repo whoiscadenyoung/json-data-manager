@@ -106,6 +106,7 @@ import { PgBindingCard } from "./pg-binding-card";
 import { PgBindingHistory } from "./pg-binding-history";
 import { PgDatasetExport } from "./pg-dataset-export";
 import { PgDatasetOverview } from "./pg-dataset-overview";
+import { PgDatasetVisibilityDialog } from "./pg-dataset-visibility-dialog";
 import { SchemaVisualizer } from "./schema-visualizer";
 
 /**
@@ -350,6 +351,7 @@ function PostgresDatasetBody({
     // at OPEN time (not submit), so every submit inside one dialog session
     // re-selects the same frozen version instead of forking a second one.
     [publishOpen, setPublishOpen] = useState(false),
+    [visibilityOpen, setVisibilityOpen] = useState(false),
     [publishKey, setPublishKey] = useState(""),
     // #256: the add-to-project sheet — the dataset referenced (linked, a pin
     // at head) from a project the viewer can edit.
@@ -392,20 +394,8 @@ function PostgresDatasetBody({
           : { filters: JSON.stringify(filters) },
       );
     },
-    flipVisibility = async () => {
-      const next = dataset.publishedVisibility === "author" ? "everyone" : "author";
-      try {
-        await datasetsStore.setVisibility({ datasetId: schemaId, visibility: next });
-        void queryClient.invalidateQueries({ queryKey: ["pg:datasets"] });
-        toast.success(
-          next === "author"
-            ? "Only you can see this dataset now."
-            : "This dataset is visible to everyone signed in.",
-        );
-      } catch (error) {
-        toast.error(errorMessage(error, "Couldn't update who can see this dataset."));
-      }
-    },
+    // The share dialog owns every rung change now (#260, ADR 0022) — the
+    // old author/everyone flip retired with `published_visibility`.
     flipEditPolicy = async () => {
       const next = dataset.editPolicy === "locked" ? ("open" as const) : ("locked" as const);
       try {
@@ -555,20 +545,16 @@ function PostgresDatasetBody({
               <DropdownMenuContent align="end">
                 <DropdownMenuItem
                   onClick={() => {
-                    void flipVisibility();
+                    setVisibilityOpen(true);
                   }}
-                  title={
-                    dataset.publishedVisibility === "author"
-                      ? "Currently only you can see this dataset — click to share it with everyone signed in."
-                      : "Currently every signed-in user can see this dataset — click to restrict it to you."
-                  }
+                  title={`Currently visible at “${dataset.visibility}” — click to change who can see this dataset.`}
                 >
-                  {dataset.publishedVisibility === "author" ? (
-                    <Globe className="h-4 w-4 mr-2" />
-                  ) : (
+                  {dataset.visibility === "members" ? (
                     <Lock className="h-4 w-4 mr-2" />
+                  ) : (
+                    <Globe className="h-4 w-4 mr-2" />
                   )}
-                  {dataset.publishedVisibility === "author" ? "Visible to everyone" : "Only me"}
+                  Share dataset…
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => {
@@ -778,6 +764,11 @@ function PostgresDatasetBody({
         onOpenChange={setPublishOpen}
         open={publishOpen}
         publishKey={publishKey}
+      />
+      <PgDatasetVisibilityDialog
+        dataset={dataset}
+        onOpenChange={setVisibilityOpen}
+        open={visibilityOpen}
       />
 
       {/* #256: the add-to-project sheet over this dataset. */}

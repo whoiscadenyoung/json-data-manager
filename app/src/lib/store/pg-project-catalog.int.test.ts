@@ -183,16 +183,17 @@ describe.skipIf(!dbUp())("project catalog — owned vs linked (ADR 0018, #256)",
     }
   });
 
-  test("the clause is draft-scoped: a published 'author' owned dataset stays creator-only; linked drafts don't share", async () => {
+  test("the clause is draft-scoped: a published `members` owned dataset reads only for its project; linked drafts don't share", async () => {
     await beginAs(ALICE);
     const seed = await seedCatalog();
-    // PUBLISHED + visibility 'author', OWNED by project A — the project
-    // clause must NOT widen a published row (the ladder owns visibility
-    // widening, #260).
+    // PUBLISHED + visibility 'members', OWNED by project A — the ladder's
+    // `members` rung IS the project-membership gate (#260, ADR 0022): the
+    // project's members read the published row, outsiders don't, and the
+    // project clause still never widens a draft past its own rules.
     const authorDataset = await createDataset(s(), {
       createdBy: ALICE,
       lifecycle: "published",
-      visibility: "author",
+      visibility: "members",
     });
     await s().expectOk(
       `insert into public.project_artifacts (project_id, artifact_id, artifact_kind, role, sync_mode)
@@ -206,17 +207,27 @@ describe.skipIf(!dbUp())("project catalog — owned vs linked (ADR 0018, #256)",
        values (${sqlLit(seed.projectA)}, ${sqlLit(linkedDraft)}, 'dataset', 'linked', 'manual')`,
     );
     try {
+      // BOB (project A's editor) reads the published `members` row through
+      // the ladder's membership arm — and still nothing of the linked draft.
       await s().asUser(BOB);
       expect(
         await s().count(
           `select count(*) as n from public.datasets where id = ${sqlLit(authorDataset)}`,
         ),
-      ).toBe(0);
+      ).toBe(1);
       expect(
         await s().count(
           `select count(*) as n from public.datasets where id = ${sqlLit(linkedDraft)}`,
         ),
       ).toBe(0);
+      // CAROL (project A's viewer, ANY role reads) also reads the published
+      // `members` row.
+      await s().asUser(CAROL);
+      expect(
+        await s().count(
+          `select count(*) as n from public.datasets where id = ${sqlLit(authorDataset)}`,
+        ),
+      ).toBe(1);
       // The creator still sees both (her own rows).
       await s().asUser(ALICE);
       expect(

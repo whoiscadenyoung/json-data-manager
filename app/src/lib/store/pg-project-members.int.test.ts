@@ -168,12 +168,14 @@ describe.skipIf(!dbUp())("project membership — the role access matrix (ADR 001
     await beginAs(ALICE);
     const seed = await seedMatrix();
     try {
-      // OWNER (ALICE, current user): everything.
-      expect(await s().count(`select count(*) as n from public.projects`)).toBe(2);
+      // OWNER (ALICE, current user): everything. Since 0023 the seeded
+      // "System examples" project is `signed-in`-visible, so every signed-in
+      // count below carries it (+1).
+      expect(await s().count(`select count(*) as n from public.projects`)).toBe(3);
       // EDITOR (BOB): project A's whole workspace — including both other
       // members' rows (the members dialog) — but not project B's existence.
       await s().asUser(BOB);
-      expect(await s().count(`select count(*) as n from public.projects`)).toBe(1);
+      expect(await s().count(`select count(*) as n from public.projects`)).toBe(2);
       const titleRow = await s().expectOk(
         `select title from public.projects where id = ${sqlLit(seed.projectA)}`,
       );
@@ -196,7 +198,7 @@ describe.skipIf(!dbUp())("project membership — the role access matrix (ADR 001
       expect(await s().count(`select count(*) as n from public.publish_bundle_members`)).toBe(1);
       // VIEWER (CAROL): the same reads.
       await s().asUser(CAROL);
-      expect(await s().count(`select count(*) as n from public.projects`)).toBe(1);
+      expect(await s().count(`select count(*) as n from public.projects`)).toBe(2);
       expect(
         await s().count(
           `select count(*) as n from public.project_members where project_id = ${sqlLit(seed.projectA)}`,
@@ -405,7 +407,9 @@ describe.skipIf(!dbUp())("project membership — the role access matrix (ADR 001
       // without raising.
       await s().asUser(ALICE);
       await s().expectOk(`delete from public.projects where id = ${sqlLit(seed.projectB)}`);
-      expect(await s().count(`select count(*) as n from public.projects`)).toBe(1);
+      // One fixture project left — plus the seeded examples project (0023's
+      // signed-in widening), visible to every authenticated count.
+      expect(await s().count(`select count(*) as n from public.projects`)).toBe(2);
       await s().rollback();
     } finally {
       await dropDatasets(s(), [seed.datasetId]);

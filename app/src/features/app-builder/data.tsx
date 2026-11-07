@@ -86,7 +86,7 @@ function frozenDocOf(pin: AppVersionDefinition["datasetPins"][number]): DatasetR
     mapTileCacheVersion: 0,
     maxGeometryRowBytes: null,
     properties: [],
-    publishedVisibility: "everyone",
+    visibility: "signed-in",
     simplifyGeometry: false,
     source: null,
     sourceFilePath: null,

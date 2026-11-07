@@ -13,6 +13,7 @@ import {
   startBundle,
   type BundleMemberPlan,
 } from "@/lib/store/publishing";
+import { visibilityApply, visibilityPreflight, type VisibilityLevel } from "@/lib/store/visibility";
 
 /**
  * The bundle press — the client orchestrator of the Postgres bundle
@@ -51,6 +52,8 @@ export interface PgBundlePressOutcome {
   collectionId: string | null;
   failedKeys: string[];
   status: "completed" | "failed";
+  /** Blockers the closure apply named — the share is capped at min(closure). */
+  visibilityCappedBy: number;
 }
 
 /**
@@ -112,6 +115,13 @@ async function headOf(
 export async function pgPublishProjectBundle(options: {
   projectId: string;
   supabase?: StoreOptions["supabase"];
+  /**
+   * The press's target visibility rung (#260, ADR 0022) — stamped on the
+   * bundle row, recorded per member from the preflight's promotion plan,
+   * and applied through the closure `visibility_apply` RPC after the
+   * freeze legs. Omitted = the press publishes without touching any rung.
+   */
+  visibility?: VisibilityLevel;
 }): Promise<PgBundlePressOutcome> {
   const storeOptions: StoreOptions | undefined =
       options.supabase === undefined ? undefined : { supabase: options.supabase },
@@ -160,6 +170,30 @@ export async function pgPublishProjectBundle(options: {
   // Already in canonical order: datasets, then derived.
   const members: BundleMemberPlan[] = [...datasetPlans.values(), ...derivedPlans];
 
+  // The ladder leg (#260): the promotion plan comes from a SERVER-DERIVED
+  // preflight (the caller's report is a preview; the stamps come from the
+  // walk), recorded per member at mint, and applied after the freeze legs
+  // so widened rows have frozen versions behind them. A foreign pin below
+  // the target stays a blocker — the apply names it, never widens it.
+  if (options.visibility !== undefined) {
+    const report = await visibilityPreflight(
+      { artifactId: options.projectId, kind: "project", target: options.visibility },
+      storeOptions,
+    );
+    const datasetPromotions = new Map(
+      report.promotions
+        .filter((promotion) => promotion.kind === "dataset")
+        .map((promotion) => [promotion.id, promotion]),
+    );
+    for (const member of members) {
+      const promotion = datasetPromotions.get(member.datasetKey);
+      if (promotion !== undefined) {
+        member.visibilityFrom = promotion.from;
+        member.visibilityTo = promotion.to;
+      }
+    }
+  }
+
   const started = await startBundle(
       {
         collectionId: latest === null ? undefined : (latest.collectionId ?? undefined),
@@ -167,6 +201,7 @@ export async function pgPublishProjectBundle(options: {
         projectDescription: project.description ?? undefined,
         projectId: options.projectId,
         title: project.title,
+        visibility: options.visibility,
       },
       storeOptions,
     ),
@@ -244,6 +279,10 @@ export async function pgPublishProjectBundle(options: {
     }
   }
 
+  // Declared before the collection leg: its early return reports the
+  // blocker count too (the apply leg below only ever increments it).
+  let visibilityCappedBy = 0;
+
   // The collection leg: reuse the prior press's collection, else create once
   // and record it; every dataset member whose frozen row stands files into
   // it — the newly frozen rows AND the referenced members (the frozen row,
@@ -285,11 +324,29 @@ export async function pgPublishProjectBundle(options: {
         .eq("id", started.bundleId)
         .select("id"),
     );
-    return { bundleId: started.bundleId, collectionId: null, failedKeys, status: "failed" };
+    return {
+      bundleId: started.bundleId,
+      collectionId: null,
+      failedKeys,
+      status: "failed",
+      visibilityCappedBy,
+    };
   }
 
   // (The map leg left with #256 — map memberships are out of the artifact
   // domain until [project 3] re-lands it over project-owned maps.)
+
+  // The confirmed widening, ONE transaction across the whole closure —
+  // after the freeze legs so every newly-widened dataset has its frozen
+  // rows behind it. Blockers ride home in the outcome (the workspace
+  // surfaces them; the share is capped at min(closure), never silently).
+  if (options.visibility !== undefined) {
+    const applied = await visibilityApply(
+      { artifactId: options.projectId, kind: "project", target: options.visibility },
+      storeOptions,
+    );
+    visibilityCappedBy = applied.blockers.length;
+  }
 
   const closed = await completeBundle({ bundleId: started.bundleId }, storeOptions);
   if (closed.affected === 0 || closed.bundle === null) {
@@ -300,5 +357,6 @@ export async function pgPublishProjectBundle(options: {
     collectionId,
     failedKeys,
     status: closed.bundle.status === "failed" ? "failed" : "completed",
+    visibilityCappedBy,
   };
 }

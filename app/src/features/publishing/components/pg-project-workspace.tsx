@@ -51,6 +51,7 @@ import { useState, type ComponentType } from "react";
 import { toast } from "sonner";
 
 import { PgDatasetTagsWithCount } from "#/features/catalog";
+import type { VisibilityLevel } from "#/lib/store/visibility";
 import { RouterButton } from "@/components/router-button";
 import { useSession } from "@/integrations/supabase/provider";
 import { errorMessage } from "@/lib/errors";
@@ -65,6 +66,7 @@ import type { CatalogRow } from "@/lib/store/projects";
 import { latestBundleQueryOptions, listMembersQueryOptions } from "@/lib/store/publishing";
 import * as versionsStore from "@/lib/store/versions";
 
+import { PgPublishBundleDialog } from "../components/pg-publish-bundle-dialog";
 import { pgPublishProjectBundle } from "../lib/pg-bundle-publish";
 import { VIEWER_REASON } from "../lib/pg-viewer-posture";
 import { PgProjectMembersDialog } from "./pg-project-members-dialog";
@@ -1018,19 +1020,24 @@ function PgProjectWorkspaceBody({
     [addOpen, setAddOpen] = useState(false),
     [membersOpen, setMembersOpen] = useState(false),
     [pressing, setPressing] = useState(false),
+    [pressOpen, setPressOpen] = useState(false),
     invalidateAll = (): void => {
       void queryClient.invalidateQueries({ queryKey: ["pg:projects"] });
       void queryClient.invalidateQueries({ queryKey: ["pg:publishing"] });
       void queryClient.invalidateQueries({ queryKey: ["pg:versions"] });
       void queryClient.invalidateQueries({ queryKey: ["pg:collections"] });
     },
-    press = async (): Promise<void> => {
+    press = async (visibility: VisibilityLevel): Promise<void> => {
       setPressing(true);
       try {
-        const outcome = await pgPublishProjectBundle({ projectId });
-        if (outcome.status === "completed") {
+        const outcome = await pgPublishProjectBundle({ projectId, visibility });
+        if (outcome.status === "completed" && outcome.visibilityCappedBy > 0) {
+          toast.warning(
+            "Project published — the collection and every referenced dataset are in the catalog, but the share is capped by artifacts you can't widen. Check the bundle's visibility.",
+          );
+        } else if (outcome.status === "completed") {
           toast.success(
-            "Project published — the collection and every referenced dataset are in the catalog.",
+            `Project published at “${visibility}” — the collection and every referenced dataset are in the catalog.`,
           );
         } else {
           toast.error(
@@ -1112,7 +1119,7 @@ function PgProjectWorkspaceBody({
             <Button
               disabled={pressing || catalog.length === 0 || !canEdit}
               onClick={() => {
-                void press();
+                setPressOpen(true);
               }}
               title={
                 !canEdit
@@ -1126,6 +1133,14 @@ function PgProjectWorkspaceBody({
               <Rocket className="mr-2 h-4 w-4" />
               {pressing ? "Publishing…" : "Publish bundle"}
             </Button>
+            <PgPublishBundleDialog
+              onConfirm={(visibility) => {
+                void press(visibility);
+              }}
+              onOpenChange={setPressOpen}
+              open={pressOpen}
+              projectId={projectId}
+            />
             <span title="Create or import a dataset inside this project — it lands as an owned draft, visible to the project's members.">
               <RouterButton
                 params={{ projectId }}

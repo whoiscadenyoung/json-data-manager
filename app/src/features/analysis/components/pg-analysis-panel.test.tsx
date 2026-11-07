@@ -127,7 +127,7 @@ function datasetOf(): DatasetRow {
     mapTileCacheVersion: 1,
     maxGeometryRowBytes: null,
     properties: ["awards", "state"],
-    publishedVisibility: "everyone",
+    visibility: "signed-in",
     simplifyGeometry: false,
     source: null,
     sourceFileName: null,

@@ -18,7 +18,7 @@ import {
 } from "@caden/ui/components/empty";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Globe, LayoutDashboard, Lock, MapPin, Plus, Sparkles } from "lucide-react";
+import { Globe, LayoutDashboard, Link2, Lock, MapPin, Plus, Sparkles, Users } from "lucide-react";
 import { useState } from "react";
 
 import { RouterButton } from "#/components/router-button";
@@ -40,15 +40,25 @@ function AccessBadges({ app }: { app: appsStore.AppSummary }) {
           <Sparkles data-icon="inline-start" />
           Example
         </Badge>
-      ) : app.sharing === "link" ? (
+      ) : app.visibility === "public" ? (
         <Badge variant="secondary">
           <Globe data-icon="inline-start" />
-          Shared by link
+          Public
+        </Badge>
+      ) : app.visibility === "link" ? (
+        <Badge variant="secondary">
+          <Link2 data-icon="inline-start" />
+          By link
+        </Badge>
+      ) : app.visibility === "signed-in" ? (
+        <Badge variant="secondary">
+          <Users data-icon="inline-start" />
+          Signed-in
         </Badge>
       ) : (
         <Badge variant="outline">
           <Lock data-icon="inline-start" />
-          Private
+          Members only
         </Badge>
       )}
       {app.project !== null && (

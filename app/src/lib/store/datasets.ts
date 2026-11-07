@@ -8,6 +8,7 @@ import {
   STORAGE_SIGNED_URL_TTL_SECONDS,
   type StoreOptions,
 } from "./client";
+import type { VisibilityLevel } from "./visibility";
 
 /**
  * The datasets store (design doc §8.1) — the PG counterpart of today's
@@ -68,7 +69,7 @@ export interface DatasetRow {
   bbox: DatasetBoundingBox | null;
   maxGeometryRowBytes: number | null;
   editPolicy: "open" | "locked";
-  publishedVisibility: "everyone" | "author";
+  visibility: VisibilityLevel;
   lifecycle: "draft" | "published";
   lineage: unknown;
   source: unknown;
@@ -108,7 +109,7 @@ export interface DatasetSummaryRow {
   featureCount: number;
   bbox: DatasetBoundingBox | null;
   editPolicy: "open" | "locked";
-  publishedVisibility: "everyone" | "author";
+  visibility: VisibilityLevel;
   lifecycle: "draft" | "published";
   lineage: unknown;
   source: unknown;
@@ -134,7 +135,7 @@ export const SUMMARY_SELECT = [
   "featureCount:feature_count",
   "bbox",
   "editPolicy:edit_policy",
-  "publishedVisibility:published_visibility",
+  "visibility",
   "lifecycle",
   "lineage",
   "source",
@@ -162,7 +163,7 @@ export const DATASET_FULL_SELECT = [
   "bbox",
   "maxGeometryRowBytes:max_geometry_row_bytes",
   "editPolicy:edit_policy",
-  "publishedVisibility:published_visibility",
+  "visibility",
   "lifecycle",
   "lineage",
   "source",
@@ -355,7 +356,7 @@ export interface CreateDatasetArgs {
   lifecycle?: "draft" | "published";
   /** Bound-dataset marker (host flows only). */
   source?: { name: string };
-  publishedVisibility?: "everyone" | "author";
+  visibility?: VisibilityLevel;
 }
 
 /** The declared property keys of a stored JSON Schema — `Object.keys(schema.properties)`, the same derivation the entries table's columns use. */
@@ -406,7 +407,7 @@ export async function create(args: CreateDatasetArgs, options?: StoreOptions): P
     json_schema: args.schema,
     lifecycle: args.lifecycle ?? "published",
     properties: declaredProperties(args.schema),
-    published_visibility: args.publishedVisibility ?? "everyone",
+    visibility: args.visibility ?? "signed-in",
     simplify_geometry: args.simplifyGeometry ?? false,
     title: args.schema.title,
   };
@@ -479,15 +480,20 @@ export async function setEditPolicy(
   return rows.length;
 }
 
-/** Creator-side published visibility (stage 8, #104) — `api.cms.schemas.setVisibility` parity. Returns the affected row count (0 = denied). */
+/**
+ * The dataset's visibility rung (the ladder's leaf artifact — a dataset
+ * references nothing, so a widening needs no closure walk; #260, ADR
+ * 0022). Narrowing and widening both ride the plain RLS'd write. Returns
+ * the affected row count (0 = denied).
+ */
 export async function setVisibility(
-  args: { datasetId: string; visibility: "everyone" | "author" },
+  args: { datasetId: string; visibility: VisibilityLevel },
   options?: StoreOptions,
 ): Promise<number> {
   const rows = await queryRows<unknown>(
     clientOf(options)
       .from("datasets")
-      .update({ published_visibility: args.visibility })
+      .update({ visibility: args.visibility })
       .eq("id", args.datasetId)
       .select("id"),
   );

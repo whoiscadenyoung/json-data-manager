@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 
 import { clientOf, queryRow, queryRows, type StoreOptions } from "./client";
+import type { VisibilityLevel } from "./visibility";
 
 /**
  * The maps store (issue #257 — the project-centric train's phase 3; ADR
@@ -43,6 +44,8 @@ export interface MapRow {
   /** The saved camera (bounds + zoom) — whatever the editor last captured. */
   viewport: unknown;
   basemap: string | null;
+  /** The visibility rung (#260, ADR 0022) — `members` keeps the project posture. */
+  visibility: VisibilityLevel;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -63,7 +66,7 @@ export interface MapPlacementRow {
 }
 
 const MAP_SELECT =
-    "id,projectId:project_id,name,description,order,viewport,basemap,createdBy:created_by,createdAt:created_at,updatedAt:updated_at,project:projects(id,title)",
+    "id,projectId:project_id,name,description,order,viewport,basemap,visibility,createdBy:created_by,createdAt:created_at,updatedAt:updated_at,project:projects(id,title)",
   PLACEMENT_SELECT = "id,mapId:map_id,order,layerMemberId:layer_member_id,visible";
 
 /** The maps list width when a caller doesn't pin one (the Convex `list` call sites all passed 500). */

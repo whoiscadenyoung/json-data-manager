@@ -2,6 +2,7 @@
 // imports from here, never from its subfolders.
 export { PgProjectWorkspace } from "./components/pg-project-workspace";
 export { PgProjectsBrowser } from "./components/pg-projects-browser";
+export { PgPublishBundleDialog } from "./components/pg-publish-bundle-dialog";
 export { PgPublishDialog } from "./components/pg-publish-dialog";
 export { PgTransformBuilder } from "./components/pg-transform-builder";
 export { TransformBuilder } from "./components/transform-builder";

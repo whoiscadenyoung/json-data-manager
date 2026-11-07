@@ -72,7 +72,9 @@ export function pgSummaryToDatasetSummary(row: DatasetSummaryRow): DatasetSummar
     mapTileArchiveBuiltVersion: row.mapTileArchiveBuiltVersion ?? undefined,
     mapTileArchiveBytes: row.mapTileArchiveBytes ?? undefined,
     mapTileCacheVersion: row.mapTileCacheVersion,
-    publishedVisibility: row.publishedVisibility,
+    // The pipeline type is the Convex-era projection (its field names are
+    // frozen in-tree); the ladder rung bridges to its two-literal union.
+    publishedVisibility: row.visibility === "members" ? "author" : "everyone",
     title: row.title,
   };
 }

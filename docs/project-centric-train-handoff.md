@@ -2,8 +2,9 @@
 
 Written 2026-11-05, main @ 55a3fa7. Updated 2026-11-05 after [project 1]
 (#255, PR #263). Updated 2026-11-06 after [project 2] (#256, PR #264),
-[project 3] (#257, PR #265), [project 4] (#258, PR #266), and [project 5]:
-**#259 DONE (PR #267, main @ dc5cbaf) — next work is #260.**
+[project 3] (#257, PR #265), [project 4] (#258, PR #266), [project 5]
+(#259, PR #267), and [project 6]:
+**#260 DONE (PR #268, main @ <this PR>) — next work is #261.**
 
 ## What this train is
 
@@ -126,9 +127,26 @@ resolved decisions D1–D7; §5 = the scenario that is the train's exit test).
   loops; version rows carry no kind — infer from dataset/frozenChildren;
   app_versions denial reads as RLS 0-rows; stable onLoaded or the frozen
   loaders OOM-loop).
-- **#260 ladder** — replaces `published_visibility`/`apps.sharing`; closure
-  preflight never widens without explicit review; effective access =
-  `min(closure)` incl. foreign pinned members blocking wider shares.
+- **#260 ladder** — ✅ DONE (PR #268, ADR 0022, migration 0023): one
+  `visibility members|signed-in|link|public` enum on datasets/layers/maps/
+  apps/projects (`published_visibility` and `apps.sharing` are GONE; the
+  in-migration mapping: author→members, everyone→signed-in,
+  private→members, link→signed-in; the seeded examples project widened to
+  `signed-in`). RLS re-issued: the wider arms are PUBLISHED-scoped (draft
+  layers/datasets stay member-gated); anon SELECT gates exist NOW on the
+  frozen rows only (dataset_versions/version_entries/layer_versions/
+  app_versions, gated through SECURITY DEFINER helpers — policy subqueries
+  evaluate under the invoking role and would read zero anon rows); live
+  tables have no anon policies. The closure engine: `visibility_preflight`
+  (read-only diff report — promotions + blockers + effective =
+  `min(closure)`) and `visibility_apply` (one transaction, re-walked
+  server-side, per-member edit gates, widen-only) over the artifact graph
+  app→maps→layers→datasets with foreign pins included. The bundle press
+  stamps `publish_bundles.visibility` + per-member `visibility_from/to`
+  and applies after the freeze legs. Share UI: the app share dialog runs
+  preflight→confirm→apply on widening; the dataset share dialog rides the
+  plain column write (leaf artifact); the press dialog picks the rung.
+  Lessons: `docs/memory/project-visibility-0023-lessons.md`.
 - **#261 anon serving** — anon sees ONLY frozen published rows at
   link/public; never drafts, never live tables; no service-role shortcuts.
   SSR facts: `docs/memory/prod-ssr-build-invariants.md`.

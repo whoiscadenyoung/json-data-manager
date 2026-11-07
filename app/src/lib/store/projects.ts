@@ -3,6 +3,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { clientOf, queryRow, queryRows, type StoreOptions } from "./client";
 import { CATALOG_READ_LIMIT } from "./datasets";
 import { REFERENCE_SELECT, VERSIONS_READ_LIMIT, type ConsumerReferenceRow } from "./versions";
+import type { VisibilityLevel } from "./visibility";
 
 /**
  * The projects store (design doc §8.1 "projects.ts # projects/artifacts";
@@ -47,6 +48,8 @@ export interface ProjectRow {
   description: string | null;
   /** Denormalized membership total — trigger-maintained, never client-sent. */
   artifactCount: number;
+  /** The project row's own visibility rung (#260, ADR 0022) — widening shares title/description/chips, never the artifacts (each rides its own rung). */
+  visibility: VisibilityLevel;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -71,7 +74,7 @@ export interface ProjectArtifactRow {
 }
 
 const PROJECT_SELECT =
-  "id,title,description,artifactCount:artifact_count,createdBy:created_by,createdAt:created_at,updatedAt:updated_at";
+  "id,title,description,artifactCount:artifact_count,visibility,createdBy:created_by,createdAt:created_at,updatedAt:updated_at";
 const ARTIFACT_SELECT =
   "id,projectId:project_id,artifactId:artifact_id,artifactKind:artifact_kind,role,syncMode:sync_mode,addedBy:added_by";
 

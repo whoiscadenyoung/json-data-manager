@@ -66,7 +66,7 @@ function appOf(overrides: Partial<AppDoc> = {}): AppDoc {
         project: { createdBy: CREATOR, id: "p1", title: "Parks project" },
         projectId: "p1",
         revision: 3,
-        sharing: "private",
+        visibility: "members",
         title: "Parks",
         updatedAt: "2026-11-04T01:00:00.000Z",
       },

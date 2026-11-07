@@ -36,7 +36,7 @@ function datasetRow(id: string, overrides: Partial<DatasetSummaryRow> = {}): Dat
     mapTileArchiveFormat: null,
     mapTileArchiveMaxZoom: null,
     mapTileCacheVersion: 1,
-    publishedVisibility: "everyone",
+    visibility: "signed-in",
     source: null,
     title: `Dataset ${id}`,
     ...overrides,

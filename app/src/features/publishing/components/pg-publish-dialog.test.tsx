@@ -77,7 +77,7 @@ function datasetOf(overrides: Partial<DatasetRow>): DatasetRow {
     mapTileCacheVersion: 1,
     maxGeometryRowBytes: null,
     properties: [],
-    publishedVisibility: "everyone",
+    visibility: "signed-in",
     simplifyGeometry: false,
     source: null,
     sourceFileName: null,

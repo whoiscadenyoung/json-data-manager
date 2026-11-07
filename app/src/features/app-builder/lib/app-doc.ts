@@ -1,6 +1,6 @@
 import type { AppRow } from "#/lib/store/apps";
 
-import { appPagesOf, type AppPage, type Sharing } from "./content";
+import { appPagesOf, type AppPage, type Visibility } from "./content";
 
 /**
  * The feature's app view model, built from the store's raw `AppRow`
@@ -26,7 +26,7 @@ export interface AppDoc {
   projectTitle: string | null;
   title: string;
   description: string | null;
-  sharing: Sharing;
+  visibility: Visibility;
   /** The app's data sources (PG dataset ids), in order. */
   datasetIds: string[];
   pages: AppPage[];
@@ -64,7 +64,7 @@ export function appDocOf(row: AppRow, myRole: AppViewerRole): AppDoc {
     projectId: row.projectId,
     projectTitle: row.project === null ? null : row.project.title,
     revision: row.revision,
-    sharing: row.sharing,
+    visibility: row.visibility,
     title: row.title,
     id: row.id,
     updatedAt: row.updatedAt,

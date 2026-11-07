@@ -232,7 +232,7 @@ describe.skipIf(!dbUp())("dataset relations (0021, ADR 0020)", () => {
     const secret = await createDataset(s(), {
       createdBy: ALICE,
       editPolicy: "locked",
-      visibility: "author",
+      visibility: "members",
     });
     const open2 = await createDataset(s(), { createdBy: ALICE, editPolicy: "open" });
 
@@ -391,7 +391,7 @@ describe.skipIf(!dbUp())("dataset relations (0021, ADR 0020)", () => {
     const secret = await createDataset(s(), {
       createdBy: ALICE,
       editPolicy: "locked",
-      visibility: "author",
+      visibility: "members",
     });
     const blindRelation = await declareRelation(parks, secret, "key", { fromKey: "a", toKey: "b" });
     await s().asUser(BOB);
