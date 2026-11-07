@@ -6,6 +6,31 @@ Written 2026-11-05, main @ 55a3fa7. Updated 2026-11-05 after [project 1]
 (#259, PR #267), [project 6] (#260, PR #268), and [project 7]:
 **#261 DONE (PR #269, main @ 1e1f0a8) — next work is #262 (the closeout).**
 
+## ✅ TRAIN COMPLETE (2026-11-07)
+
+**[project 8] (#262) landed as PR #270 (main @ f854daa) and the umbrella
+#254 is closed.** The §5 tourism scenario passed end-to-end in the browser
+on main: parks project (owned draft via the schema flow, linked pins from
+the global picker, spatial + key relations, lookup-join derived, map with
+relation-aware clicks — key-join visitor counts + PostGIS containing-polygon
+
+- amber highlight — layers published, app published at link with a 7-artifact
+  closure apply) → State Tourism project (cross-project linked pins, owned
+  States draft, a map REUSING the parks layers via the link picker's read-only
+  pins, its app published at link with a 4-artifact closure) → both apps serve
+  signed-out from their frozen snapshots. Collections verified in both roles
+  (bundle press minted the State Tourism collection — the explorer card names
+  its minting project — and a standalone explorer grouping). Update-available →
+  sync verified live (a v2 republish flagged the stale pin; sync moved it).
+  ADR 0024 records the explorer posture; `docs/architecture.md` is rewritten
+  to the current architecture; `docs/decisions/README.md` indexes 0001–0024.
+
+The walkthrough caught and fixed four real bugs (all in PR #270): the
+target-sheet's new-project handoff, the null/absent project-embed crash
+on foreign published maps, the linked-layer app freeze refusal, and the
+bundle press planning non-dataset kinds as legs (see
+`docs/memory/project-262-explorers-closeout.md`).
+
 ## What this train is
 
 Projects become the primary working context (SaaS posture): inside a project
@@ -170,10 +195,11 @@ resolved decisions D1–D7; §5 = the scenario that is the train's exit test).
   `docs/memory/project-anon-serving-0024-lessons.md` (pmtiles:// prefix,
   cross-port localhost cookies defeating signed-out tests, the two-stack DB
   split, 63-char policy names, storage-api's NoSuchKey masking).
-- **#262 closeout** — run the tourism walkthrough end-to-end in the browser
-  (parks project → tourism project reusing pinned data → published app
-  opened signed-out). Re-verify every earlier issue's criteria on main,
-  then close #254.
+- **#262 closeout** — ✅ DONE (PR #270, ADR 0024): the explorer polish
+  (home → /projects redirect; publish-state + provenance chips on the
+  datasets/maps/collections explorers; start-from-here target sheets;
+  standalone create retired; Used-in back-reference cards), the docs/ADR
+  pass, and the tourism walkthrough + full re-verification (see ✅ above).
 
 ## Reporting
 
