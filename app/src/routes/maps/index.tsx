@@ -147,19 +147,21 @@ function MapsPage() {
                 <div className="flex min-w-0 flex-1 flex-col gap-2 py-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <VisibilityBadge visibility={map.visibility} />
-                    <Badge
-                      title="The project that owns this map — maps are project rows."
-                      variant="outline"
-                    >
-                      <MapIcon className="h-3 w-3" />
-                      <Link
-                        className="hover:underline"
-                        params={{ projectId: map.project.id }}
-                        to="/projects/$projectId"
+                    {map.project !== null && (
+                      <Badge
+                        title="The project that owns this map — maps are project rows."
+                        variant="outline"
                       >
-                        {map.project.title}
-                      </Link>
-                    </Badge>
+                        <MapIcon className="h-3 w-3" />
+                        <Link
+                          className="hover:underline"
+                          params={{ projectId: map.project.id }}
+                          to="/projects/$projectId"
+                        >
+                          {map.project.title}
+                        </Link>
+                      </Badge>
+                    )}
                     {usedIn.map((app) => (
                       <Badge
                         key={app.id}

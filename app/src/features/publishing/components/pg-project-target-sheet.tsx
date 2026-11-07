@@ -49,10 +49,10 @@ export function PgProjectTargetSheet({
     run = async (projectId: string, write?: () => Promise<string>): Promise<void> => {
       setPendingId(projectId);
       try {
-        if (write !== undefined) {
-          await write();
-        }
-        await onTarget(projectId);
+        // A fresh project's real id comes from the write; picking an existing
+        // one has no write (the id IS the pick).
+        const targetId = write === undefined ? projectId : await write();
+        await onTarget(targetId);
         onOpenChange(false);
       } catch (error) {
         toast.error(errorMessage(error, "Something went wrong."));
