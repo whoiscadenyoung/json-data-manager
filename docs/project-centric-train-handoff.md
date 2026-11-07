@@ -4,7 +4,7 @@ Written 2026-11-05, main @ 55a3fa7. Updated 2026-11-05 after [project 1]
 (#255, PR #263). Updated 2026-11-06 after [project 2] (#256, PR #264),
 [project 3] (#257, PR #265), [project 4] (#258, PR #266), [project 5]
 (#259, PR #267), and [project 6]:
-**#260 DONE (PR #268, main @ <this PR>) — next work is #261.**
+**#260 DONE (PR #268, main @ dbd66df) — next work is #261.**
 
 ## What this train is
 
