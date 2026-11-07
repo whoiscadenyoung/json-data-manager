@@ -3,8 +3,8 @@
 Written 2026-11-05, main @ 55a3fa7. Updated 2026-11-05 after [project 1]
 (#255, PR #263). Updated 2026-11-06 after [project 2] (#256, PR #264),
 [project 3] (#257, PR #265), [project 4] (#258, PR #266), [project 5]
-(#259, PR #267), and [project 6]:
-**#260 DONE (PR #268, main @ dbd66df) — next work is #261.**
+(#259, PR #267), [project 6] (#260, PR #268), and [project 7]:
+**#261 DONE (PR, main) — next work is #262 (the closeout).**
 
 ## What this train is
 
@@ -147,9 +147,29 @@ resolved decisions D1–D7; §5 = the scenario that is the train's exit test).
   preflight→confirm→apply on widening; the dataset share dialog rides the
   plain column write (leaf artifact); the press dialog picks the rung.
   Lessons: `docs/memory/project-visibility-0023-lessons.md`.
-- **#261 anon serving** — anon sees ONLY frozen published rows at
-  link/public; never drafts, never live tables; no service-role shortcuts.
-  SSR facts: `docs/memory/prod-ssr-build-invariants.md`.
+- **#261 anon serving** — ✅ DONE (PR, ADR 0023, migration 0024): the ONE
+  public route is `/apps/$appId` (the AuthGate exempts exactly that shape —
+  deeper segments stay gated; explorers stay signed-in for [project 8]);
+  the anon branch renders the whole view from the head `app_versions`
+  snapshot (the live `apps` row and membership reads never run signed-out;
+  a null head = the RLS-honest denial card with a sign-in CTA). Tiles ride
+  FROZEN-version archives: the publish walk builds each large geospatial
+  pin's PMTiles from its own `version_entries` rows via a one-shot worker
+  message and stamps `frozen_archive` on the pin; 0024's anon policy grants
+  SELECT only on the `frozen-` path convention at link/public — the LIVE
+  archives stay anon-closed (the `frozen-` marker is the leak guard). The
+  frozen map canvas signs per-pin URLs (anon CAN sign under 0024) and feeds
+  `pmtiles://` tile sources; below-threshold pins render rows. Share UX:
+  the "this link is live" chip on the published view, per-rung liveness
+  notes in the share dialog. Policy matrix: `pg-anon-serving.int.test.ts`
+  (closure traversal as anon, min(closure) at anon, the exact-rung matrix,
+  the storage leg incl. the live-object control). Verified in-browser with
+  bench-20k-points (20k points render anon via 206 range reads on the
+  frozen archive; narrowing to members closes serving + the chip; the
+  members app shows the denial card). Lessons:
+  `docs/memory/project-anon-serving-0024-lessons.md` (pmtiles:// prefix,
+  cross-port localhost cookies defeating signed-out tests, the two-stack DB
+  split, 63-char policy names, storage-api's NoSuchKey masking).
 - **#262 closeout** — run the tourism walkthrough end-to-end in the browser
   (parks project → tourism project reusing pinned data → published app
   opened signed-out). Re-verify every earlier issue's criteria on main,

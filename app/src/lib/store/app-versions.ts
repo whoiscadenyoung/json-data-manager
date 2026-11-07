@@ -12,9 +12,10 @@ import { clientOf, queryRow, queryRows, type StoreOptions } from "./client";
  *   - title/description + the app's pages jsonb verbatim (map widgets keep
  *     their `mapId` — the widget resolves its snapshot at render);
  *   - `datasetPins` — per referenced dataset, the head version id + ref +
- *     the frozen title/schema/geometry facts; a dataset with no chain yet
- *     pins nulls (honest — the widget renders "unavailable" until the
- *     dataset publishes);
+ *     the frozen title/schema/geometry facts + the version's frozen tile
+ *     archive stamp when one was worth building (#261); a dataset with no
+ *     chain yet pins nulls (honest — the widget renders "unavailable" until
+ *     the dataset publishes);
  *   - `mapSnapshots` — per referenced map, the frozen meta + placements as
  *     `{order, visible, versionId}`;
  *   - `layerVersions` — the flattened set of referenced layer_versions rows
@@ -30,6 +31,23 @@ import { clientOf, queryRow, queryRows, type StoreOptions } from "./client";
  * generated `database.types.ts` (see `./client`).
  */
 
+/**
+ * The frozen-version tile archive stamp (issue #261): the PMTiles archive
+ * the publish walk built from EXACTLY this version's immutable
+ * `version_entries` rows and uploaded under the frozen path convention
+ * (migration 0024's anon policy matches the `frozen-` marker). Content is
+ * the pinned version's data by construction — never the live rows. Null /
+ * absent when the dataset is small (below the 256 KB threshold — rows
+ * render it), non-geospatial, or the build failed (a tile leg never fails
+ * a publish). Snapshots written before #261 carry no field.
+ */
+export interface FrozenDatasetArchive {
+  bytes: number;
+  format: number;
+  maxZoom: number;
+  path: string;
+}
+
 /** One frozen dataset pin: what a published widget reads instead of the live dataset. */
 export interface AppDatasetPin {
   datasetId: string;
@@ -42,6 +60,8 @@ export interface AppDatasetPin {
   geometryType: string | null;
   /** The frozen expand-only bbox envelope (`datasets.bbox` at freeze). */
   bbox: unknown;
+  /** The frozen tile archive (issue #261 — the map widget's tile source), when one was worth building. */
+  archive?: FrozenDatasetArchive | null;
 }
 
 /** One frozen placement: a pointer into the snapshot's layerVersions list. */

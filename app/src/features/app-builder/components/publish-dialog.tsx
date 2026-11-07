@@ -102,6 +102,11 @@ export function PublishDialog({
               } no published version yet`
         }.`,
       );
+      // The tile leg degrades instead of failing the publish (#261): name the
+      // datasets whose published maps fall back to rows, never silently.
+      for (const note of result.frozenTileNotes) {
+        toast.warning(`Tiles fell back to rows for this publish — ${note}`);
+      }
       onOpenChange(false);
       if (onPublished !== undefined) {
         await onPublished();

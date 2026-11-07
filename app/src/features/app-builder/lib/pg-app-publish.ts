@@ -1,3 +1,4 @@
+import { buildFrozenTileArchive } from "@/features/maps";
 import * as appVersionsStore from "@/lib/store/app-versions";
 import type {
   AppDatasetPin,
@@ -20,7 +21,10 @@ import * as mapsStore from "@/lib/store/maps";
  * renders ONLY from it plus the immutable `version_entries`:
  *   - pages jsonb verbatim (map widgets keep their `mapId`);
  *   - `datasetPins`: every referenced dataset's head version + frozen
- *     meta; a dataset with no chain yet pins honest nulls (its widgets
+ *     meta + the version's frozen tile archive stamp when one was worth
+ *     building (the #261 tile leg — built from the version's own rows,
+ *     uploaded under the frozen path convention 0024's anon policy reads);
+ *     a dataset with no chain yet pins honest nulls (its widgets
  *     render "unavailable" until it publishes — the closure preflight in
  *     [project 6] will make widening explicit);
  *   - `mapSnapshots` + a flattened `layerVersions` list: per referenced
@@ -42,6 +46,8 @@ export interface PgAppPublishResult {
   version: appVersionsStore.AppVersionRow;
   /** Datasets whose widgets will render "unavailable" in the published app (no version at freeze). */
   unpinnedDatasetTitles: string[];
+  /** Datasets whose frozen tile build failed (#261 — the pin stamps null and the widget renders rows); the dialog notes them. */
+  frozenTileNotes: string[];
 }
 
 /** The store row's `LayerVersionRow.dataset` shape (layers.ts publishes it). */
@@ -254,6 +260,7 @@ export async function publishApp(
   // ---- the referenced datasets: head pins (no chain yet = honest nulls) ----
   const datasetPins: AppDatasetPin[] = [];
   const unpinnedDatasetTitles: string[] = [];
+  const frozenTileNotes: string[] = [];
   for (const datasetId of app.datasetIds) {
     const dataset = await runStoreRead(
       datasetsStore.getQueryOptions({ datasetId }, options).queryFn,
@@ -283,7 +290,28 @@ export async function publishApp(
     if (head === null) {
       unpinnedDatasetTitles.push(dataset.title);
     }
+    // The frozen tile leg (#261): build the pinned version's archive from its
+    // own immutable rows so a published map can serve tiles (incl. to anon,
+    // migration 0024's policy) without touching the live rows. Degrades to
+    // null — rows render — on a below-threshold skip or any failure; a tile
+    // leg never fails the publish.
+    let frozenArchive: appVersionsStore.FrozenDatasetArchive | null = null;
+    if (
+      head !== null &&
+      dataset.isGeospatial &&
+      dataset.geometryType !== null &&
+      dataset.geometryType !== undefined
+    ) {
+      try {
+        frozenArchive = await buildFrozenTileArchive({ datasetId: dataset.id, versionId: head.id });
+      } catch (error) {
+        frozenTileNotes.push(
+          `${dataset.title}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
     datasetPins.push({
+      archive: frozenArchive,
       bbox: dataset.bbox,
       datasetId: dataset.id,
       geometryType: dataset.geometryType,
@@ -313,6 +341,6 @@ export async function publishApp(
   if (version === null) {
     throw new Error("The publish didn't land — you may not have access.");
   }
-  return { unpinnedDatasetTitles, version };
+  return { frozenTileNotes, unpinnedDatasetTitles, version };
 }
 /* oxlint-enable eslint/no-await-in-loop */

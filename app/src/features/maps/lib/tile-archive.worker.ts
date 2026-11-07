@@ -50,7 +50,12 @@ import {
   tileDatasetInfo,
 } from "#/lib/store/geometries";
 
-import { MAP_TILE_ARCHIVE_FORMAT, pgTileArchiveUploadPath } from "./pg-tile-archives";
+import {
+  MAP_TILE_ARCHIVE_FORMAT,
+  MAP_TILE_ARCHIVE_MIN_BYTES,
+  pgFrozenTileArchiveUploadPath,
+  pgTileArchiveUploadPath,
+} from "./pg-tile-archives";
 import type {
   TileArchiveWorkerInbound,
   TileArchiveWorkerOutbound,
@@ -58,13 +63,13 @@ import type {
 } from "./tile-archive";
 
 /**
- * Minimum geometry-payload bytes an archive is worth building for — keep in
- * sync with `MAP_TILE_ARCHIVE_MIN_BYTES` in the component's `lib.ts` (and its
- * mirror in `@caden/maps/build-scheduler`). Applied here, after assembly, on the exact
- * payload size: a small dataset skips upload/install entirely and reports
- * `skipped`.
+ * Minimum geometry-payload bytes an archive is worth building for — lives
+ * next to the format constant in `pg-tile-archives.ts` (the keep-in-sync
+ * comment there covers the mirrors). Applied here, after assembly, on the
+ * exact payload size: a small dataset skips upload/install entirely and
+ * reports `skipped` — the frozen-build path applies the same gate so a
+ * pin never carries an archive the rows path would serve better.
  */
-const MAP_TILE_ARCHIVE_MIN_BYTES = 262_144; // 256 KB
 
 /**
  * Geometry payload fetches in flight at once (issue #134's 8–16 band). Each
@@ -128,7 +133,17 @@ self.addEventListener("message", (event: MessageEvent<TileArchiveWorkerInbound>)
     }
     return;
   }
-  if (message.type !== "build") return;
+  if (message.type !== "build") {
+    if (message.type === "build-frozen") {
+      // The frozen-version build (issue #261) serializes on the same queue —
+      // its CPU-bound tile math must not interleave with a live build either.
+      const { datasetId, versionId } = message;
+      buildQueue = buildQueue
+        .then(async () => runFrozenBuild(datasetId, versionId))
+        .catch(() => undefined);
+    }
+    return;
+  }
   const { schemaId } = message;
   if (isPostgresDatasetId(schemaId)) {
     // The PG path never touches the Convex client (constructing one opens a
@@ -347,6 +362,151 @@ async function runPgBuild(datasetId: string): Promise<void> {
       message: error instanceof Error ? error.message : String(error),
       schemaId: datasetId,
       type: "error",
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The frozen-version path (issue #261): the publish walk's tile leg. Same
+// engine, same threshold, same signed-URL upload — but the feed is the
+// pinned version's immutable `version_entries` (inline geometry only; the
+// frozen chain's storage-backed rows are null-geometry, skipped here exactly
+// as the published rows path skips them), and there is NO install: the
+// archive pointer rides the snapshot's pin (`frozen_archive`), never the
+// dataset row's live pointer, and the path convention (`frozen-` marker,
+// see pg-tile-archives.ts) is what migration 0024's anon policy matches.
+// ---------------------------------------------------------------------------
+
+/** One frozen-entries page's width (the versions store's page cap). */
+const FROZEN_ENTRY_PAGE_ROWS = 200;
+
+function postFrozenPhase(datasetId: string, phase: TileArchiveBuildPhase): void {
+  post({ datasetId, phase, type: "frozen-phase" });
+}
+
+/** One frozen-entries page as parsed features + payload bytes (null-geometry rows skipped — the rows path skips them identically). */
+function frozenFeaturesOfPage(rows: ReadonlyArray<Record<string, unknown>>): {
+  bytes: number;
+  features: Array<GeoJSONFeature>;
+} {
+  const features: Array<GeoJSONFeature> = [];
+  let bytes = 0;
+  for (const row of rows) {
+    if (row.geometry === null || row.geometry === undefined) continue;
+    const json = JSON.stringify(row.geometry);
+    const geometry = parseGeometry(json, `Frozen geometry row ${String(row.entry_id)}`);
+    features.push(
+      feature(
+        typeof row.entry_id === "string" ? row.entry_id : `ordinal-${String(row.ordinal)}`,
+        geometry,
+      ),
+    );
+    bytes += utf8ByteLength(json);
+  }
+  return { bytes, features };
+}
+
+/**
+ * Pages one version's `version_entries` by `ordinal` keyset to exhaustion
+ * (the store's completeness rule) through the worker's own client, parsing
+ * each row's inline geometry locally.
+ */
+// The keyset cursor chains page to page — each await feeds the next (the
+// pg-app-publish walk's scoped suspension).
+/* oxlint-disable eslint/no-await-in-loop -- the keyset paging is inherently sequential. */
+async function fetchAllFrozenFeatures(
+  supabase: SupabaseClient,
+  versionId: string,
+): Promise<{ features: Array<GeoJSONFeature>; payloadBytes: number }> {
+  const features: Array<GeoJSONFeature> = [];
+  let payloadBytes = 0;
+  let cursor: number | null = null;
+  while (true) {
+    let query = supabase
+      .from("version_entries")
+      .select("entry_id,geometry,geometry_type,ordinal")
+      .eq("version_id", versionId);
+    if (cursor !== null) {
+      query = query.gt("ordinal", cursor);
+    }
+    const { data, error } = await query
+      .order("ordinal", { ascending: true })
+      .limit(FROZEN_ENTRY_PAGE_ROWS + 1);
+    if (error !== null) {
+      throw new Error(`${error.message} (${error.code})`);
+    }
+    const rows: Array<Record<string, unknown>> = Array.isArray(data) ? data : [];
+    const hasMore = rows.length > FROZEN_ENTRY_PAGE_ROWS;
+    const page = hasMore ? rows.slice(0, FROZEN_ENTRY_PAGE_ROWS) : rows;
+    const parsed = frozenFeaturesOfPage(page);
+    features.push(...parsed.features);
+    payloadBytes += parsed.bytes;
+    const last = page[page.length - 1];
+    if (!hasMore || last === undefined) {
+      return { features, payloadBytes };
+    }
+    cursor = typeof last.ordinal === "number" ? last.ordinal : null;
+    if (cursor === null) {
+      // An ordinal the wire didn't deliver as a number cannot anchor a keyset
+      // cursor — stop here rather than re-read the same page forever.
+      return { features, payloadBytes };
+    }
+  }
+}
+/* oxlint-enable eslint/no-await-in-loop */
+
+/**
+ * Uploads the frozen archive via a signed upload URL at the FROZEN path
+ * convention (the 0024 anon policy's match). No install leg: the pointer is
+ * returned to the publish walk and stamped on the pin.
+ */
+async function uploadFrozenArchive(
+  supabase: SupabaseClient,
+  datasetId: string,
+  versionId: string,
+  archive: Uint8Array,
+): Promise<string> {
+  const path = pgFrozenTileArchiveUploadPath(datasetId, versionId);
+  const { signedUrl } = await createTileArchiveUploadUrl({ path }, { supabase });
+  const response = await fetch(signedUrl, {
+    body: new Blob([new Uint8Array(archive)], { type: "application/octet-stream" }),
+    headers: { "Content-Type": "application/octet-stream" },
+    method: "PUT",
+  });
+  if (!response.ok) {
+    throw new Error(`Frozen archive upload failed with HTTP ${response.status}`);
+  }
+  return path;
+}
+
+async function runFrozenBuild(datasetId: string, versionId: string): Promise<void> {
+  try {
+    postFrozenPhase(datasetId, "fetching");
+    const supabase = await pgSupabaseClient();
+    const { features, payloadBytes } = await fetchAllFrozenFeatures(supabase, versionId);
+    if (payloadBytes < MAP_TILE_ARCHIVE_MIN_BYTES) {
+      post({ datasetId, reason: "below-threshold", type: "frozen-skipped" });
+      return;
+    }
+    postFrozenPhase(datasetId, "building");
+    const archive = await buildGeometryArchive({
+      features,
+      maxZoom: DEFAULT_MAX_ZOOM,
+    });
+    postFrozenPhase(datasetId, "uploading");
+    const path = await uploadFrozenArchive(supabase, datasetId, versionId, archive);
+    post({
+      bytes: archive.byteLength,
+      datasetId,
+      maxZoom: DEFAULT_MAX_ZOOM,
+      path,
+      type: "frozen-done",
+    });
+  } catch (error) {
+    post({
+      datasetId,
+      message: error instanceof Error ? error.message : String(error),
+      type: "frozen-error",
     });
   }
 }

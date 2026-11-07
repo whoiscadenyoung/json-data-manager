@@ -21,6 +21,7 @@ import { useNavigate } from "@tanstack/react-router";
 import {
   Copy,
   Eye,
+  Globe,
   LayoutDashboard,
   LayoutGrid,
   Link2,
@@ -49,6 +50,64 @@ import { AppDatasetsProvider, AppFrozenProvider } from "../data";
 import { appDocOf, type AppDoc } from "../lib/app-doc";
 import { appPagesOf, type AppPage } from "../lib/content";
 import { resolvePage } from "../lib/pages";
+
+/**
+ * The signed-out visitor's view model (#261): built entirely from the frozen
+ * snapshot — the anon-visible read (0023's `app_versions` gate) carries the
+ * title/description/pages/pins, and the edit rule is false by construction
+ * (the anon role holds no seat). `visibility` is the viewer's own posture
+ * (they arrived on a link without a session): the "this link is live" chip
+ * renders from it, which is honest for exactly the visitor holding the URL.
+ * The frozen definition cannot name the app's CURRENT rung — a public app
+ * shows the link chip to anon; the signed-in view reads the live row.
+ */
+function anonAppDocOf(appId: string, definition: appVersionsStore.AppVersionDefinition): AppDoc {
+  return {
+    canEdit: false,
+    datasetIds: definition.datasetPins.map((pin) => pin.datasetId),
+    description: definition.description,
+    example: false,
+    id: appId,
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the snapshot's pages jsonb is this feature's writer shape (the AppWidgetConfig boundary cast, app-doc.ts posture).
+    pages: appPagesOf(definition.pages as AppPage[]),
+    projectId: "",
+    projectTitle: null,
+    revision: 0,
+    title: definition.title,
+    updatedAt: "",
+    visibility: "link",
+  };
+}
+
+/**
+ * What a signed-out visitor sees when the URL names no anon-visible app —
+ * a non-existent id, a `members` or `signed-in` app: RLS filters the frozen
+ * read to null, and the denial must not distinguish (the
+ * invisible-reads-as-not-found rule). The sign-in CTA preserves the link:
+ * a member opening it signed-in lands here.
+ */
+function AnonAppDenied({ appId }: { appId: string }) {
+  return (
+    <main className="mx-auto max-w-3xl px-4 py-16">
+      <Empty className="min-h-80 border">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <LayoutDashboard />
+          </EmptyMedia>
+          <EmptyTitle>Not available while signed out</EmptyTitle>
+          <EmptyDescription>
+            This app isn&apos;t shared for anonymous access — sign in to open it, or check the link.
+          </EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <RouterButton search={{ redirect: `/apps/${appId}` }} to="/signin">
+            Sign in
+          </RouterButton>
+        </EmptyContent>
+      </Empty>
+    </main>
+  );
+}
 
 /**
  * A null row. Reads are member-wide + the example arm (0022), so a null
@@ -248,6 +307,24 @@ function AppBar({
           {publishedLabel}
         </Badge>
       )}
+      {/* The "this link is live" indicator (#261): the rung the share dialog
+          set, shown where the share link opens. The anon view renders no
+          chip — the frozen snapshot cannot honestly name the current rung. */}
+      {app.visibility === "link" && (
+        <Badge variant="outline" title="Anyone holding this link opens the app without signing in.">
+          <Link2 data-icon="inline-start" />
+          Link — opens without sign-in
+        </Badge>
+      )}
+      {app.visibility === "public" && (
+        <Badge
+          variant="outline"
+          title="Anyone can open this app — link holders and explorers alike."
+        >
+          <Globe data-icon="inline-start" />
+          Public
+        </Badge>
+      )}
       {tabs !== null && (
         // Phones: title and menu share the first row, the tabs take the next.
         <div className="order-last basis-full sm:order-none sm:basis-auto">{tabs}</div>
@@ -298,6 +375,7 @@ function FrozenAppBody({
   onPageChange,
   previewing,
   onExit,
+  menu = true,
 }: {
   app: AppDoc;
   definition: appVersionsStore.AppVersionDefinition;
@@ -306,9 +384,11 @@ function FrozenAppBody({
   onPageChange: (pageId: string | undefined) => void;
   previewing: boolean;
   onExit?: () => void;
+  /** The overflow menu renders for editors and non-editing members; the anon view passes false (its actions need a session). */
+  menu?: boolean;
 }) {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the snapshot's pages jsonb is this feature's writer shape (the AppWidgetConfig boundary cast, app-doc.ts posture).
-  const pages = appPagesOf(definition.pages as unknown as AppPage[]),
+  const pages = appPagesOf(definition.pages as AppPage[]),
     page = resolvePage(pages, initialPageId),
     tabs =
       pages.length > 1 ? (
@@ -324,7 +404,7 @@ function FrozenAppBody({
     bars = (
       <>
         {previewing && onExit !== undefined && <PreviewBar app={app} onExit={onExit} />}
-        <AppBar app={app} menu={!previewing} publishedLabel={publishedLabel} tabs={tabs} />
+        <AppBar app={app} menu={menu && !previewing} publishedLabel={publishedLabel} tabs={tabs} />
       </>
     );
   return (
@@ -392,6 +472,12 @@ function LiveAppBody({
  *
  * Published mode renders the HEAD app_version when one exists (the frozen
  * snapshot — D7), else the live config; preview always renders live.
+ *
+ * The signed-out visitor (#261 — the public serving route): the live `apps`
+ * row and the membership reads don't run (no anon policies — the 0023
+ * model); the HEAD app_version IS the anon-visible read (0023's gate), and
+ * the whole view renders from its self-contained snapshot. A null head is
+ * the honest denial (a non-existent id, or an app not at link/public).
  */
 // The page joins the app read, the role resolution, and the head-version
 // gate — the branches are the view's states, each rendered once, here.
@@ -409,15 +495,55 @@ export function AppViewPage({
   onPageChange: (pageId: string | undefined) => void;
   onExit?: () => void;
 }) {
-  const row = useQuery(appsStore.getQueryOptions({ appId })),
-    { session } = useSession(),
+  const { session } = useSession(),
+    // The anon branch rides the published view only (the gate never lets a
+    // signed-out visitor reach preview).
+    anon = mode === "published" && session === null,
+    row = useQuery({ ...appsStore.getQueryOptions({ appId }), enabled: !anon }),
     userId = session === null ? "" : session.user.id,
-    membershipsQuery = useQuery(listMineQueryOptions({ userId })),
+    membershipsQuery = useQuery({ ...listMineQueryOptions({ userId }), enabled: !anon }),
     headVersion = useQuery({
       ...appVersionsStore.headQueryOptions({ appId }),
       // Preview always shows the live config; only the published view freezes.
       enabled: mode === "published",
     });
+  if (anon) {
+    if (headVersion.isPending) {
+      return <PageLoading />;
+    }
+    if (headVersion.data === null || headVersion.data === undefined) {
+      // An error and a denial read differently only when the read FAILED —
+      // an RLS-filtered head is a null row, and that is the denial card.
+      return headVersion.isError ? (
+        <main className="mx-auto max-w-3xl px-4 py-16">
+          <Empty className="min-h-80 border">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <LayoutDashboard />
+              </EmptyMedia>
+              <EmptyTitle>Couldn&apos;t open the app</EmptyTitle>
+              <EmptyDescription>
+                {errorMessage(headVersion.error, "Something went wrong — try again.")}
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </main>
+      ) : (
+        <AnonAppDenied appId={appId} />
+      );
+    }
+    return (
+      <FrozenAppBody
+        app={anonAppDocOf(appId, headVersion.data.definition)}
+        definition={headVersion.data.definition}
+        menu={false}
+        publishedLabel={`Published ${headVersion.data.versionLabel}`}
+        initialPageId={pageId}
+        onPageChange={onPageChange}
+        previewing={false}
+      />
+    );
+  }
   if (row.isPending) {
     return <PageLoading />;
   }

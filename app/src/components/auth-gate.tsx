@@ -4,6 +4,17 @@ import type { ReactNode } from "react";
 import { useSession } from "#/integrations/supabase/provider";
 
 /**
+ * The public serving route (issue #261): exactly the published-app view —
+ * one id segment, nothing deeper. The builder (`/edit`) and preview routes
+ * stay gated; the published view itself decides what a signed-out visitor
+ * sees (the frozen snapshot at link/public, an honest denial otherwise).
+ * The explorers stay signed-in until [project 8].
+ */
+export function isPublicServingPathname(pathname: string): boolean {
+  return /^\/apps\/[^/]+$/.test(pathname);
+}
+
+/**
  * The app-wide sign-in gate (issue #135, defect 1): every route renders
  * through here, so a signed-out visitor never reaches a page whose queries
  * would run unauthenticated — the endless skeletons, TanStack error
@@ -17,7 +28,9 @@ import { useSession } from "#/integrations/supabase/provider";
  * while the session is resolving (and during SSR, which knows nothing of
  * it) the gate holds the same centered spinner the route pages render — no
  * child mounts, so no child query fires anonymously. `/signin` passes
- * through untouched.
+ * through untouched, and so does the public serving route (#261): an
+ * anonymous visitor reaching a published app URL renders it — the route's
+ * anon branch reads only the anon-gated frozen rows, never a live table.
  */
 export function AuthGate({ children }: { children: ReactNode }) {
   const { session, isLoading } = useSession(),
@@ -34,7 +47,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
       </div>
     );
   }
-  if (session === null) {
+  if (session === null && !isPublicServingPathname(pathname)) {
     // Remember where the visitor was headed (a shared app link, a dataset
     // URL) so signing in lands them there instead of on the home page.
     return (

@@ -56,7 +56,7 @@ const OPTIONS: ReadonlyArray<{
   },
   {
     description:
-      "Visitors holding a link to its published data can read it without signing in — recorded and enforced on the frozen data now; anonymous serving itself ships with public serving.",
+      "Visitors holding a link to its published data can read it without signing in — anonymous serving reads the frozen rows (versions and tiles), never the live table.",
     icon: Link2,
     label: "Anyone with the link",
     value: "link",
