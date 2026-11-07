@@ -199,6 +199,25 @@ export function listBundlesQueryOptions(args: { projectId: string }, options?: S
   });
 }
 
+/** The bundle press that minted a collection, newest first (the explorer's minted-by chip, issue #262). */
+export function listBundlesForCollectionQueryOptions(
+  args: { collectionId: string },
+  options?: StoreOptions,
+) {
+  return queryOptions({
+    queryKey: ["pg:publishing", "listBundlesForCollection", args],
+    queryFn: async () =>
+      await queryRows<PublishBundleRow>(
+        clientOf(options)
+          .from("publish_bundles")
+          .select(BUNDLE_SELECT)
+          .eq("collection_id", args.collectionId)
+          .order("started_at", { ascending: false })
+          .limit(VERSIONS_READ_LIMIT),
+      ),
+  });
+}
+
 /** The project's LATEST press (the join-or-revive read). */
 export function latestBundleQueryOptions(args: { projectId: string }, options?: StoreOptions) {
   return queryOptions({

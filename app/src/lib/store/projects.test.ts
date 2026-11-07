@@ -12,6 +12,7 @@ import {
   addArtifact,
   create,
   listCatalogQueryOptions,
+  listVisibleArtifactMembershipsQueryOptions,
   remove,
   removeArtifact,
   setSyncMode,
@@ -537,5 +538,38 @@ describe("listCatalogQueryOptions — the provenance merge (#256)", () => {
     expect(present(rows[0]).updateAvailable).toBe(false);
     expect(queries.some((query) => query.table === "consumer_references")).toBe(false);
     expect(queries.some((query) => query.table === "dataset_versions")).toBe(false);
+  });
+});
+
+describe("listVisibleArtifactMembershipsQueryOptions — the used-in read (#262)", () => {
+  it("reads every visible membership row with the project embed, no project filter", async () => {
+    const { client, queries } = stubSupabase(() => ({
+      data: [
+        {
+          addedBy: "user-1",
+          artifactId: "d1",
+          artifactKind: "dataset",
+          id: "m1",
+          project: { id: "p1", title: "National Parks" },
+          projectId: "p1",
+          role: "owned",
+          syncMode: "manual",
+        },
+      ],
+    }));
+    const query = listVisibleArtifactMembershipsQueryOptions({ supabase: client });
+    const fn = query.queryFn;
+    if (fn === undefined) {
+      throw new Error("The memberships read carries no queryFn.");
+    }
+    // The queryFn context is structural (`never` satisfies it) — the row type comes from the read's generic.
+    const rows = await fn({} as never);
+    expect(rows.length).toBe(1);
+    expect(present(rows[0].project)).toStrictEqual({ id: "p1", title: "National Parks" });
+    const recorded = queryAt(queries, 0);
+    expect(recorded.table).toBe("project_artifacts");
+    // The chip read is UNFILTERED — the caller groups per artifact; RLS does
+    // the scoping. No .eq("project_id", …) operation was recorded.
+    expect(recorded.operations.some((op) => op.method === "eq")).toBe(false);
   });
 });

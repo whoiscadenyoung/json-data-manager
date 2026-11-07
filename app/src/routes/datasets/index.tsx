@@ -1,3 +1,4 @@
+import { Button } from "@caden/ui/components/button";
 import {
   Empty,
   EmptyContent,
@@ -8,11 +9,10 @@ import {
 } from "@caden/ui/components/empty";
 import { Input } from "@caden/ui/components/input";
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { FolderOpen, Plus, Search } from "lucide-react";
 import { useState } from "react";
 
-import { RouterButton } from "#/components/router-button";
 import {
   PgDatasetCard,
   PgGroupCard,
@@ -22,17 +22,20 @@ import {
   withPgDrafts,
   type PgBrowserItem,
 } from "#/features/catalog";
-import { PgDatasetCardAddToProjectButton } from "#/features/publishing";
+import { PgDatasetCardAddToProjectButton, PgProjectTargetSheet } from "#/features/publishing";
 import * as collectionsStore from "#/lib/store/collections";
 import * as datasetsStore from "#/lib/store/datasets";
 import * as groupsStore from "#/lib/store/groups";
+import * as projectsStore from "#/lib/store/projects";
 
 /**
  * The browser's reads — the store's summary projection (with the
  * trigger-maintained entry/feature counts the PG cards' count labels read),
- * the opt-in drafts view, the groups, and the collections (a group's
- * "In {collection}" line). This was the Postgres half of the §14.6
- * split-brain pair; the Convex half is archived with the stage-7 disconnect.
+ * the opt-in drafts view, the groups, the collections (a group's
+ * "In {collection}" line), and the visible artifact memberships (the
+ * per-card "in project" chips; issue #262). This was the Postgres half of
+ * the §14.6 split-brain pair; the Convex half is archived with the stage-7
+ * disconnect.
  */
 function usePgBrowserQueries(showDrafts: boolean) {
   return {
@@ -43,6 +46,7 @@ function usePgBrowserQueries(showDrafts: boolean) {
       enabled: showDrafts,
     }).data,
     groups: useQuery(groupsStore.listQueryOptions()).data,
+    memberships: useQuery(projectsStore.listVisibleArtifactMembershipsQueryOptions()).data,
   };
 }
 
@@ -151,10 +155,24 @@ function DatasetsPage() {
     [sort, setSort] = useState<SortOption>("newest"),
     [typeFilter, setTypeFilter] = useState<TypeFilter>("all"),
     [showDrafts, setShowDrafts] = useState(false),
+    [targeting, setTargeting] = useState(false),
+    navigate = useNavigate(),
     pg = usePgBrowserQueries(showDrafts),
     pgCollectionNames = new Map<string, string>();
   for (const collection of pg.collections ?? []) {
     pgCollectionNames.set(collection.id, collection.name);
+  }
+  // The per-dataset project chips: one membership read for every card —
+  // dataset/derived edges only (layer/app edges belong to their own
+  // explorers' reads).
+  const projectsByDataset = new Map<string, { id: string; title: string }[]>();
+  for (const membership of pg.memberships ?? []) {
+    if (membership.artifactKind !== "dataset" && membership.artifactKind !== "derived") {
+      continue;
+    }
+    const chips = projectsByDataset.get(membership.artifactId) ?? [];
+    chips.push(membership.project);
+    projectsByDataset.set(membership.artifactId, chips);
   }
   const pgAllDatasets = withPgDrafts(pg.datasets, pg.drafts, showDrafts),
     pgVisible = sortPgBrowserItems(
@@ -170,6 +188,10 @@ function DatasetsPage() {
     );
   }
 
+  const startFromHere = async (projectId: string): Promise<void> => {
+    await navigate({ params: { projectId }, to: "/projects/$projectId/create" });
+  };
+
   return (
     <main className="mx-auto max-w-6xl px-4 py-8">
       <div className="flex items-center justify-between mb-8">
@@ -179,10 +201,14 @@ function DatasetsPage() {
             Browse datasets and groups — grouped datasets are listed under their group
           </p>
         </div>
-        <RouterButton to="/datasets/create">
+        <Button
+          onClick={() => {
+            setTargeting(true);
+          }}
+        >
           <Plus className="h-4 w-4 mr-2" />
           Create dataset
-        </RouterButton>
+        </Button>
       </div>
 
       {pgAllDatasets.length === 0 && (pg.groups ?? []).length === 0 ? (
@@ -192,13 +218,19 @@ function DatasetsPage() {
               <FolderOpen />
             </EmptyMedia>
             <EmptyTitle>No datasets yet</EmptyTitle>
-            <EmptyDescription>Create a dataset to start managing your JSON data.</EmptyDescription>
+            <EmptyDescription>
+              Datasets are created inside projects — start here and pick (or name) the project.
+            </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
-            <RouterButton to="/datasets/create">
+            <Button
+              onClick={() => {
+                setTargeting(true);
+              }}
+            >
               <Plus className="h-4 w-4 mr-2" />
               Create your first dataset
-            </RouterButton>
+            </Button>
           </EmptyContent>
         </Empty>
       ) : (
@@ -251,6 +283,7 @@ function DatasetsPage() {
                     <PgDatasetCard
                       key={item.dataset.id}
                       dataset={item.dataset}
+                      projects={projectsByDataset.get(item.dataset.id)}
                       trailing={<PgDatasetCardAddToProjectButton datasetId={item.dataset.id} />}
                     />
                   ),
@@ -260,6 +293,14 @@ function DatasetsPage() {
           </div>
         </div>
       )}
+
+      <PgProjectTargetSheet
+        description="Creation happens inside projects — the dataset lands there as an owned draft."
+        onOpenChange={setTargeting}
+        onTarget={startFromHere}
+        open={targeting}
+        title="Create a dataset"
+      />
     </main>
   );
 }
