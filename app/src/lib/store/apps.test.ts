@@ -10,6 +10,8 @@ vi.mock("#/env", () => ({
 
 import {
   APP_LIMITS,
+  appMapIds,
+  appUsesDataset,
   create,
   duplicate,
   firstPage,
@@ -190,6 +192,31 @@ describe("toSummary — the list-card projection", () => {
       updatedAt: "2026-11-04T00:00:00Z",
       widgetCount: 3,
     });
+  });
+});
+
+describe("appMapIds / appUsesDataset — the used-in back-reference scans (#262)", () => {
+  it("collects the distinct mapIds across every page's widgets, ignoring non-map shapes", () => {
+    const row = appRow("a1", {
+      pages: [
+        statPage("d1"),
+        {
+          ...statPage("d2"),
+          widgets: [
+            { datasetId: "d2", h: 2, id: "stat-2", kind: "stat", w: 4 },
+            { h: 6, id: "map-2", kind: "map", mapId: "m-d2", w: 8 },
+            { body: "text", id: "text-1", kind: "text", w: 12 },
+          ],
+        },
+      ],
+    });
+    expect(appMapIds(row)).toStrictEqual(["m-d1", "m-d2"]);
+  });
+
+  it("reads dataset use from the shared datasetIds list", () => {
+    const row = appRow("a1", { datasetIds: ["d1", "d2"] });
+    expect(appUsesDataset(row, "d1")).toBe(true);
+    expect(appUsesDataset(row, "dX")).toBe(false);
   });
 });
 

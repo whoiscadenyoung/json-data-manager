@@ -175,6 +175,30 @@ export function toSummary(app: AppRow): AppSummary {
 }
 
 /**
+ * The stored-map ids a live app's widgets reference — the maps-side
+ * back-reference scan (issue #262's "used in"). Widget payloads are opaque
+ * jsonb in this store, so this reads the one key the builder's map widget
+ * writes (`mapId`); other widget shapes never carry it.
+ */
+export function appMapIds(app: AppRow): string[] {
+  const ids: string[] = [];
+  for (const page of app.pages) {
+    for (const widget of page.widgets) {
+      const mapId = widget["mapId"];
+      if (typeof mapId === "string" && !ids.includes(mapId)) {
+        ids.push(mapId);
+      }
+    }
+  }
+  return ids;
+}
+
+/** Whether the app's shared data sources include a dataset (`datasetIds` is the builder's table/chart source list). */
+export function appUsesDataset(app: AppRow, datasetId: string): boolean {
+  return app.datasetIds.includes(datasetId);
+}
+
+/**
  * Every app the viewer can see, newest first — the /apps EXPLORER's list
  * (issue #259: the explorer browses; creation lives in projects). RLS
  * answers member-wide + the example arm; the project embed carries the

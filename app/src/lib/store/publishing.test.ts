@@ -12,6 +12,7 @@ import {
   BUNDLE_MEMBER_STATUSES,
   completeBundle,
   linkMapLayers,
+  listBundlesForCollectionQueryOptions,
   listMembersQueryOptions,
   memberOrder,
   publishDataset,
@@ -241,6 +242,46 @@ describe("publishing.startBundle — join-or-revive + canonical member order", (
     await expect(
       startBundle({ members: [], projectId: "p1", title: "x" }, { supabase: client }),
     ).rejects.toThrow("Nothing to publish yet");
+  });
+});
+
+describe("listBundlesForCollectionQueryOptions — the minted-by read (#262)", () => {
+  it("filters publish_bundles by collection, newest first", async () => {
+    const { client, queries } = stubSupabase(() => ({
+      data: [
+        {
+          collectionId: "c1",
+          createdBy: "user-1",
+          error: null,
+          finishedAt: "2026-11-07T00:00:00Z",
+          id: "b1",
+          lastProgressAt: "2026-11-07T00:00:00Z",
+          projectId: "p1",
+          projectDescription: null,
+          startedAt: "2026-11-07T00:00:00Z",
+          status: "completed",
+          title: "Parks press",
+          visibility: "link",
+        },
+      ],
+    }));
+    const query = listBundlesForCollectionQueryOptions(
+      { collectionId: "c1" },
+      {
+        supabase: client,
+      },
+    );
+    const fn = query.queryFn;
+    if (fn === undefined) {
+      throw new Error("The bundle-by-collection read carries no queryFn.");
+    }
+    // The queryFn context is structural (`never` satisfies it) — the row type comes from the read's generic.
+    const rows = await fn({} as never);
+    expect(rows.length).toBe(1);
+    expect(rows[0]["projectId"]).toBe("p1");
+    const recorded = queryAt(queries, 0);
+    expect(recorded.table).toBe("publish_bundles");
+    expect(recorded.operations.some((op) => op.method === "eq")).toBe(true);
   });
 });
 

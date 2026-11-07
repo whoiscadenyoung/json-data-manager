@@ -85,7 +85,7 @@ describe("maps.list — the explorer feed (D2: every visible map, project chips)
     const { client, queries } = stubSupabase(() => ({ data: [mapRow("m2"), mapRow("m1")] }));
     const rows = await list({ supabase: client });
     expect(rows.map((row) => row.id)).toEqual(["m2", "m1"]);
-    expect(present(rows[0]).project.title).toBe("SMART 2024");
+    expect(present(present(rows[0]).project).title).toBe("SMART 2024");
     const query = queryAt(queries, 0);
     expect(query.table).toBe("maps");
     // Newest first: the created_at desc order filter rides the chain.

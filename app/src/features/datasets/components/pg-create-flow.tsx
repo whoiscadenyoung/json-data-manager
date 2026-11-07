@@ -22,16 +22,9 @@ import * as projectsStore from "@/lib/store/projects";
 import { runPgImport } from "../lib/pg-import-pipeline";
 
 /**
- * The create/import flow's Postgres edition (design §10 + the §14.1
- * transitional rule: from stage 1, new datasets are Postgres-native). Same
- * two entry points as the Convex flow — start from schema, or import a file
- * (`DatasetImporter`'s client-side `@caden/importers` parse is unchanged) —
- * but every write rides the `#/lib/store/*` modules: the datasets row is a
- * Postgres insert, the rows stream through `import_entries` in ~1.5 MB
- * chunks with an `imports` history row per attempt, and the original file is
- * retained in the `source-files` bucket.
- *
- * The PROJECT BOUND variant (#256/ADR 0018) mounts with a `projectId`: the
+ * The create/import flow's Postgres edition (design §10). One entry point
+ * since #262 — the PROJECT-BOUND variant (ADR 0018): explorers never create
+ * outside projects, so the flow always mounts with a `projectId` and the
  * dataset is born an OWNED DRAFT of that project — lifecycle stays 'draft'
  * (no markImportComplete flip: the import completing is not a publish; the
  * dataset publishes through the normal publish surfaces) and the membership
@@ -40,24 +33,30 @@ import { runPgImport } from "../lib/pg-import-pipeline";
  * drafts). Discarding a failed attempt removes the membership with the
  * dataset (the artifact reference is a text id; no FK would clean it up).
  *
+ * Same two start points as the original flow — schema first, or import a
+ * file (`DatasetImporter`'s client-side `@caden/importers` parse is
+ * unchanged) — and every write rides the `#/lib/store/*` modules: the
+ * datasets row is a Postgres insert, the rows stream through
+ * `import_entries` in ~1.5 MB chunks with an `imports` history row per
+ * attempt, and the original file is retained in the `source-files` bucket.
+ *
  * Deliberately absent here still: the tile-archive scheduling (stage 2 owns
  * the map path).
  */
 
 type Mode = "choose" | "schema" | "import";
 
-/** The create args both paths send — the store's `create` arg set. The import path passes `lifecycle: "draft"` (issue #129): the dataset is born invisible to everyone but its creator and flips to published only when `markImportComplete` runs. */
+/** The create args both paths send — the store's `create` arg set. Every dataset this flow births is a draft (the owned-draft rule; ADR 0018). */
 function createArgs(
   datasetKind: "standard" | "geospatial",
   geometryType: GeometryType | undefined,
   schema: object,
   simplifyGeometry: boolean | undefined,
-  lifecycle?: "draft",
 ): datasetsStore.CreateDatasetArgs {
   return {
     geometryType: datasetKind === "geospatial" ? geometryType : undefined,
     kind: datasetKind === "geospatial" ? "geospatial" : undefined,
-    lifecycle,
+    lifecycle: "draft",
     schema,
     simplifyGeometry: datasetKind === "geospatial" ? simplifyGeometry : undefined,
   };
@@ -76,29 +75,22 @@ function useAvailableDatasets(): Array<{ id: string; schema: unknown; title: str
   return (datasets ?? []).map((row) => ({ id: row.id, schema: row.jsonSchema, title: row.title }));
 }
 
-export function PostgresCreateDatasetPage({ projectId }: { projectId?: string } = {}) {
+export function PostgresCreateDatasetPage({ projectId }: { projectId: string }) {
   const [mode, setMode] = useState<Mode>("choose");
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-8">
       <div className="mb-6">
         {mode === "choose" ? (
-          projectId === undefined ? (
-            <RouterButton variant="ghost" to="/datasets" className="mb-4 -ml-2">
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Back to Datasets
-            </RouterButton>
-          ) : (
-            <RouterButton
-              params={{ projectId }}
-              variant="ghost"
-              to="/projects/$projectId"
-              className="mb-4 -ml-2"
-            >
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Back to Project
-            </RouterButton>
-          )
+          <RouterButton
+            params={{ projectId }}
+            variant="ghost"
+            to="/projects/$projectId"
+            className="mb-4 -ml-2"
+          >
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back to Project
+          </RouterButton>
         ) : (
           <button
             type="button"
@@ -113,13 +105,8 @@ export function PostgresCreateDatasetPage({ projectId }: { projectId?: string } 
         )}
         <h1 className="text-3xl font-bold text-primary mb-1">Create dataset</h1>
         <p className="text-muted-foreground">
-          {projectId !== undefined
-            ? "The dataset lands in this project as an owned draft — visible to the project's members until it publishes."
-            : mode === "import"
-              ? "Import a JSON, CSV, or Excel file to auto-generate a schema and pre-populate the dataset."
-              : mode === "schema"
-                ? "Build your JSON schema visually or in code, then test it against sample data."
-                : "Start from an empty schema, or import data to generate one automatically."}
+          The dataset lands in this project as an owned draft — visible to the project's members
+          until it publishes.
         </p>
       </div>
 
@@ -175,7 +162,7 @@ function PathChooser({ onChoose }: { onChoose: (mode: Mode) => void }) {
   );
 }
 
-function SchemaFirst({ projectId }: { projectId?: string }) {
+function SchemaFirst({ projectId }: { projectId: string }) {
   const navigate = useNavigate(),
     queryClient = useQueryClient(),
     availableDatasets = useAvailableDatasets(),
@@ -191,28 +178,16 @@ function SchemaFirst({ projectId }: { projectId?: string }) {
       onGeometryTypeChange={setGeometryType}
       onSave={async (_json, parsed, _uiSchemaJson, _uiSchemaParsed) => {
         try {
-          // The project-bound path births an OWNED DRAFT (ADR 0018): draft
-          // lifecycle + the membership row binding it to the project.
+          // The owned-draft path (ADR 0018): draft lifecycle + the
+          // membership row binding it to the project.
           const datasetId = await datasetsStore.create(
-            createArgs(
-              datasetKind,
-              geometryType,
-              parsed,
-              undefined,
-              projectId === undefined ? undefined : "draft",
-            ),
+            createArgs(datasetKind, geometryType, parsed, undefined),
           );
-          if (projectId !== undefined) {
-            await bindOwnedDraft(datasetId, projectId);
-          }
+          await bindOwnedDraft(datasetId, projectId);
           void queryClient.invalidateQueries({ queryKey: ["pg:datasets"] });
           void queryClient.invalidateQueries({ queryKey: ["pg:projects"] });
-          toast.success(
-            projectId === undefined
-              ? "Dataset created!"
-              : "Dataset created in the project as an owned draft.",
-          );
-          await navigateAfterCreate(navigate, datasetId, projectId);
+          toast.success("Dataset created in the project as an owned draft.");
+          await navigate({ params: { projectId }, to: "/projects/$projectId" });
         } catch (error) {
           toast.error(errorMessage(error, "Failed to create schema."));
           throw error;
@@ -236,20 +211,7 @@ async function bindOwnedDraft(datasetId: string, projectId: string): Promise<voi
   }
 }
 
-/** Where the flow lands when it finishes — the dataset page standalone, back to the project's catalog in-project. */
-async function navigateAfterCreate(
-  navigate: ReturnType<typeof useNavigate>,
-  datasetId: string,
-  projectId: string | undefined,
-): Promise<void> {
-  if (projectId === undefined) {
-    await navigate({ params: { schemaId: datasetId }, to: "/datasets/$schemaId" });
-    return;
-  }
-  await navigate({ params: { projectId }, to: "/projects/$projectId" });
-}
-
-function ImportFirst({ projectId }: { projectId?: string }) {
+function ImportFirst({ projectId }: { projectId: string }) {
   const navigate = useNavigate(),
     queryClient = useQueryClient(),
     [datasetId, setDatasetId] = useState<string | undefined>(),
@@ -285,16 +247,8 @@ function ImportFirst({ projectId }: { projectId?: string }) {
     });
   }
 
-  async function navigateToDataset(targetDatasetId: string) {
-    toast.success(
-      projectId === undefined
-        ? "Dataset imported!"
-        : "Dataset imported into the project as an owned draft.",
-    );
-    if (projectId === undefined) {
-      await navigate({ params: { schemaId: targetDatasetId }, to: "/datasets/$schemaId" });
-      return;
-    }
+  async function navigateToDataset() {
+    toast.success("Dataset imported into the project as an owned draft.");
     await navigate({ params: { projectId }, to: "/projects/$projectId" });
   }
 
@@ -305,7 +259,10 @@ function ImportFirst({ projectId }: { projectId?: string }) {
         // Re-import into the SAME dataset: whatever partial rows the failed
         // attempt committed are cleared first, then the full file runs again
         // (issue #129). The dataset keeps its schema and kind — no duplicate
-        // catalog entries. A fresh `imports` row opens per attempt.
+        // catalog entries. A fresh `imports` row opens per attempt. The
+        // draft stays a draft (the owned-draft rule; ADR 0018) — project
+        // members see it through the binding, and publishing happens
+        // through the publish surfaces.
         onRetry: async (rows, options) => {
           if (datasetId === undefined) {
             throw new Error("This dataset is gone — start a new import instead.");
@@ -313,45 +270,27 @@ function ImportFirst({ projectId }: { projectId?: string }) {
           await entriesStore.clearDatasetRows({ datasetId });
           setProgress(null);
           await runImport(datasetId, rows, options);
-          if (projectId === undefined) {
-            // The first attempt failed before `markImportComplete`, so the
-            // draft is still draft — the successful retry is the import
-            // completing (issue #129): publish it, or it stays invisible to
-            // its creator.
-            await datasetsStore.markImportComplete({ datasetId });
-          }
-          // In-project the flip is deliberately skipped (#256/ADR 0018): the
-          // owned draft stays a draft — project members see it through the
-          // membership, and publishing happens through the publish surfaces.
-          await navigateToDataset(datasetId);
+          await navigateToDataset();
         },
         // Delete the dataset the failed import created — nothing left behind
         // (the cascade removes its entries, geometries, and import rows).
-        // In-project the owned membership goes first: the artifact reference
-        // is a text id no FK reaches, so an unremoved binding would dangle.
+        // The owned membership goes first: the artifact reference is a text
+        // id no FK reaches, so an unremoved binding would dangle.
         onDiscard: async () => {
           if (datasetId !== undefined) {
-            if (projectId !== undefined) {
-              await projectsStore.removeArtifact({ artifactId: datasetId, projectId });
-            }
+            await projectsStore.removeArtifact({ artifactId: datasetId, projectId });
             await datasetsStore.remove({ datasetId });
             void queryClient.invalidateQueries({ queryKey: ["pg:datasets"] });
             void queryClient.invalidateQueries({ queryKey: ["pg:projects"] });
           }
           toast.success("Draft dataset discarded.");
-          await navigate({ to: projectId === undefined ? "/datasets" : "/projects" });
-          if (projectId !== undefined) {
-            await navigate({ params: { projectId }, to: "/projects/$projectId" });
-          }
           setDatasetId(undefined);
           setProgress(null);
+          await navigate({ params: { projectId }, to: "/projects/$projectId" });
         },
         // Keep the (draft) dataset and leave the flow.
         onBack: () => {
-          void navigate({ to: projectId === undefined ? "/datasets" : "/projects" });
-          if (projectId !== undefined) {
-            void navigate({ params: { projectId }, to: "/projects/$projectId" });
-          }
+          void navigate({ params: { projectId }, to: "/projects/$projectId" });
         },
       }}
       onImport={async (
@@ -364,14 +303,10 @@ function ImportFirst({ projectId }: { projectId?: string }) {
         geometryType,
         options,
       ) => {
-        // The dataset is created as a lifecycle DRAFT. Standalone, it flips
-        // to published only when the import completes (issue #129) — a
-        // failed or in-flight import leaves an invisible draft for
-        // Retry/Discard instead of an empty, published dataset in the
-        // catalog. Project-bound (#256/ADR 0018), it binds as the project's
-        // OWNED artifact and NEVER auto-flips: the owned draft is
-        // member-visible through the binding, and publishing stays an
-        // explicit act.
+        // The dataset is created as a lifecycle DRAFT and binds as the
+        // project's OWNED artifact (ADR 0018) — it NEVER auto-flips: the
+        // owned draft is member-visible through the binding, and publishing
+        // stays an explicit act.
         setProgress(null);
         const newDatasetId = await datasetsStore.create(
           createArgs(
@@ -379,7 +314,6 @@ function ImportFirst({ projectId }: { projectId?: string }) {
             geometryType,
             parsedSchema,
             kind === "geospatial" ? options.simplifyGeometry : undefined,
-            "draft",
           ),
         );
         setDatasetId(newDatasetId);
@@ -387,9 +321,7 @@ function ImportFirst({ projectId }: { projectId?: string }) {
           // The project binding first — an owned draft is only member-
           // visible through it, and a failure here should abort before any
           // row lands (the file-retention ordering precedent).
-          if (projectId !== undefined) {
-            await bindOwnedDraft(newDatasetId, projectId);
-          }
+          await bindOwnedDraft(newDatasetId, projectId);
           // The retained original file (§10 step 4) — uploaded before the
           // chunks so a failed retention aborts before any row lands.
           if (options.sourceFile !== null) {
@@ -399,16 +331,9 @@ function ImportFirst({ projectId }: { projectId?: string }) {
             });
           }
           await runImport(newDatasetId, rows, options);
-          if (projectId === undefined) {
-            // The standalone draft becomes catalog-visible only now that its
-            // import completed (issue #129). In-project the flip is
-            // deliberately skipped — the owned draft stays a draft (ADR
-            // 0018); publishing happens through the publish surfaces.
-            await datasetsStore.markImportComplete({ datasetId: newDatasetId });
-          }
           void queryClient.invalidateQueries({ queryKey: ["pg:datasets"] });
           void queryClient.invalidateQueries({ queryKey: ["pg:projects"] });
-          await navigateToDataset(newDatasetId);
+          await navigateToDataset();
         } catch (error) {
           // `runPgImport` already closed its `imports` row as failed with the
           // error text; this catch is the UI half — the progress card shows

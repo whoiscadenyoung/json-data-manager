@@ -212,7 +212,7 @@ export async function publishApp(
           .eq("id", placement.layerMemberId)
           .limit(1),
       );
-      if (membership === null || membership.role !== "owned") {
+      if (membership === null) {
         throw new Error(
           "One of the map's placements isn't a readable layer membership — publish from the map's own project.",
         );
@@ -237,8 +237,17 @@ export async function publishApp(
           throw new Error(`The layer "${layer.name}" didn't publish — you may not have access.`);
         }
       } else {
-        // Unreachable (the role check above) — kept for exhaustiveness.
-        versionId = membership.artifactId;
+        // A LINKED placement's artifactId IS the frozen layer_versions id
+        // (the link-or-clone contract: a read-only pin at an existing
+        // freeze — the map editor resolves placements the same way). The
+        // snapshot reuses that version verbatim; nothing re-freezes.
+        const version = await layersStore.getVersion({ versionId: membership.artifactId }, options);
+        if (version === null) {
+          throw new Error(
+            "One of the map's linked layers isn't visible — its frozen version is gone or unreadable.",
+          );
+        }
+        versionId = version.id;
       }
       // oxlint-disable-next-line no-await-in-loop -- placements freeze in draw order; each entry feeds the flattened list.
       await freezeVersion(versionId);

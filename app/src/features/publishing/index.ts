@@ -10,6 +10,7 @@ export {
   PgAddToProjectSheet,
   PgDatasetCardAddToProjectButton,
 } from "./components/pg-add-to-project-sheet";
+export { PgProjectTargetSheet } from "./components/pg-project-target-sheet";
 export { pgPublishProjectBundle } from "./lib/pg-bundle-publish";
 export { mintPublishKey } from "./lib/pg-publish";
 export { publishProjectBundle } from "./lib/bundle-publish";

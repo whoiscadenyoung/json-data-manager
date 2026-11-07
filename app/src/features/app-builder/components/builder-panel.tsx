@@ -285,10 +285,13 @@ function DatasetRow({
 
 function DataPanel({
   content,
+  projectId,
   onAddDataset,
   onRemoveDataset,
 }: {
   content: AppContent;
+  /** The app's owning project — the catalog import affordance lands in its create flow (#262: explorers never create outside projects). */
+  projectId?: string;
   onAddDataset: (datasetId: string) => void;
   onRemoveDataset: (datasetId: string) => void;
 }) {
@@ -359,10 +362,16 @@ function DataPanel({
           An app holds up to {APP_LIMITS.datasets} datasets.
         </p>
       )}
-      <Button variant="link" size="sm" render={<Link to="/datasets/create" />}>
-        <Upload data-icon="inline-start" />
-        Import new data into the catalog
-      </Button>
+      {projectId !== undefined ? (
+        <Button
+          variant="link"
+          size="sm"
+          render={<Link params={{ projectId }} to="/projects/$projectId/create" />}
+        >
+          <Upload data-icon="inline-start" />
+          Import new data into this project
+        </Button>
+      ) : null}
       <PgDatasetPickerSheet
         title="Add a dataset"
         description="Pick a catalog dataset for this app's widgets to use."
@@ -722,6 +731,7 @@ export function BuilderPanel({
         <TabsContent value="data">
           <DataPanel
             content={content}
+            projectId={projectId}
             onAddDataset={(datasetId) => {
               onUpdate((prev) => ({ ...prev, datasetIds: [...prev.datasetIds, datasetId] }));
             }}

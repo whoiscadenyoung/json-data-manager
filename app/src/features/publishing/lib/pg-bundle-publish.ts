@@ -144,9 +144,12 @@ export async function pgPublishProjectBundle(options: {
   // freeze; already-published ones join referenced (deduped by id).
   // Collection/group layers stay out of the plan — the recorded
   // live-expansion asymmetry (bundles.ts): they expand at read time and
-  // become members only at the next press.
-  const datasetPlans = new Map<string, BundleMemberPlan>(),
-    derivedPlans: BundleMemberPlan[] = [];
+  // become members only at the next press. Derived/layer/app memberships
+  // stay out too (#262): layers and apps publish per-artifact (D6 — their
+  // frozen forms live in layer_versions/app_versions), and derived rows
+  // are re-executed registry entries with no freeze of their own — a press
+  // is a DATASET projection plus the promoted collection.
+  const datasetPlans = new Map<string, BundleMemberPlan>();
   const planDataset = async (datasetId: string): Promise<void> => {
     if (datasetPlans.has(datasetId)) {
       return;
@@ -163,12 +166,10 @@ export async function pgPublishProjectBundle(options: {
     if (artifact.artifactKind === "dataset") {
       // oxlint-disable-next-line no-await-in-loop -- one head read per dataset artifact, in artifact order.
       await planDataset(artifact.artifactId);
-    } else {
-      derivedPlans.push({ datasetKey: artifact.artifactId, kind: "derived", publish: true });
     }
   }
   // Already in canonical order: datasets, then derived.
-  const members: BundleMemberPlan[] = [...datasetPlans.values(), ...derivedPlans];
+  const members: BundleMemberPlan[] = [...datasetPlans.values()];
 
   // The ladder leg (#260): the promotion plan comes from a SERVER-DERIVED
   // preflight (the caller's report is a preview; the stamps come from the
@@ -264,9 +265,10 @@ export async function pgPublishProjectBundle(options: {
         }
         fileIntoCollection.push(member.datasetKey);
       } else {
-        // Derived publishing lands with stage 5 — the honest refusal, not a
-        // silent skip.
-        throw new Error("Derived dataset publishing arrives in stage 5.");
+        // Defensive: the plan is datasets-only (see the member-plan note) —
+        // a non-dataset member here would be a planner regression, refused
+        // loudly rather than skipped silently.
+        throw new Error(`The press has no publish leg for a ${member.kind} member.`);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "The publish failed.";

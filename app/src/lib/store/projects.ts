@@ -123,6 +123,33 @@ export function listArtifactsQueryOptions(args: { projectId: string }, options?:
   });
 }
 
+/**
+ * Every membership row the viewer can see, with each holding project's title
+ * embedded — the "used in" back-reference read (issue #262): the datasets
+ * explorer's per-dataset "in project X" chips and the dataset overview's
+ * Used-in card resolve from this one query (TanStack dedupes the shared key
+ * across cards). RLS scopes the rows to the viewer's member projects — a
+ * foreign project holding the dataset is invisible here, which is the honest
+ * answer (the ladder's project reads widen with visibility, not membership).
+ */
+export function listVisibleArtifactMembershipsQueryOptions(options?: StoreOptions) {
+  return queryOptions({
+    queryKey: ["pg:projects", "listVisibleArtifactMemberships"],
+    queryFn: async () =>
+      await queryRows<ArtifactMembershipRow>(
+        clientOf(options)
+          .from("project_artifacts")
+          .select(`${ARTIFACT_SELECT},project:projects(id,title)`)
+          .limit(CATALOG_READ_LIMIT),
+      ),
+  });
+}
+
+/** A membership row with its holding project's id + title (the chips' link target + label). */
+export interface ArtifactMembershipRow extends ProjectArtifactRow {
+  project: { id: string; title: string };
+}
+
 // ---------------------------------------------------------------------------
 // Writes — rows-affected returns (the stage-4 silent-denial rule)
 // ---------------------------------------------------------------------------

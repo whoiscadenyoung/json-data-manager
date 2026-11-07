@@ -337,7 +337,13 @@ export interface LinkableVersionRow {
   id: string;
   versionLabel: string;
   createdAt: string;
-  layer: { id: string; name: string; projectId: string; project: { id: string; title: string } };
+  layer: {
+    id: string;
+    name: string;
+    projectId: string;
+    /** NULL when the viewer can read the version but not the project row (RLS embed). */
+    project: { id: string; title: string } | null;
+  };
 }
 
 /**
@@ -346,7 +352,7 @@ export interface LinkableVersionRow {
  * linked-layer picker's list — link = pin one of these into a project.
  */
 export async function listLinkableVersions(options?: StoreOptions): Promise<LinkableVersionRow[]> {
-  return await queryRows<LinkableVersionRow>(
+  const rows = await queryRows<LinkableVersionRow>(
     clientOf(options)
       .from("layer_versions")
       .select(
@@ -355,6 +361,13 @@ export async function listLinkableVersions(options?: StoreOptions): Promise<Link
       )
       .order("created_at", { ascending: false })
       .limit(100),
+  );
+  // The project embed can be absent under concurrent deletes or an
+  // unreadable project row — both normalize to null (the typed shape).
+  return rows.map((row) =>
+    row.layer.project === null || row.layer.project === undefined
+      ? { ...row, layer: { ...row.layer, project: null } }
+      : row,
   );
 }
 

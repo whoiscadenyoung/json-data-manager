@@ -2,7 +2,7 @@ import { Badge } from "@caden/ui/components/badge";
 import { Card } from "@caden/ui/components/card";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Calendar, ChevronRight, Database, Layers } from "lucide-react";
+import { Calendar, ChevronRight, Database, FolderKanban, Layers } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { UserAvatar } from "#/components/user-avatar";
@@ -69,34 +69,79 @@ function CreatorChip({ profileId }: { profileId: string }) {
   );
 }
 
-/** One PG dataset's browser card. `trailing` renders between the creator chip and the chevron — the add-to-project affordance's slot (the route owns the feature dep; catalog stays feature-acyclic). */
+/** The dataset's publish state (#262's explorer polish): draft until an explicit publish freezes its first version. */
+function LifecycleBadge({ lifecycle }: { lifecycle: "draft" | "published" }) {
+  return lifecycle === "draft" ? (
+    <Badge title="A draft — visible to its project's members until published." variant="outline">
+      Draft
+    </Badge>
+  ) : (
+    <Badge
+      title="Published — frozen versions live on the version chain for consumers to pin or float."
+      variant="secondary"
+    >
+      Published
+    </Badge>
+  );
+}
+
+/** The "in project" chip: a SIBLING context for the card's link (no anchor nesting), naming one holding project and linking there. */
+function ProjectChip({ project }: { project: { id: string; title: string } }) {
+  return (
+    <Badge title={`Held by the project “${project.title}”`} variant="outline">
+      <FolderKanban />
+      <Link
+        className="hover:underline"
+        params={{ projectId: project.id }}
+        to="/projects/$projectId"
+      >
+        {project.title}
+      </Link>
+    </Badge>
+  );
+}
+
+/**
+ * One PG dataset's browser card. `trailing` renders between the creator chip
+ * and the chevron — the add-to-project affordance's slot (the route owns the
+ * feature dep; catalog stays feature-acyclic). `projects` names the viewer's
+ * member projects holding this dataset (issue #262's provenance chips — RLS
+ * scopes the read, so foreign holdings stay invisible). The badges row is a
+ * SIBLING of the card's link so its project chips can be links.
+ */
 export function PgDatasetCard({
   dataset,
+  projects,
   trailing,
 }: {
   dataset: DatasetSummaryRow;
+  projects?: { id: string; title: string }[];
   trailing?: ReactNode;
 }) {
   return (
     <Card className="flex-row items-center gap-4 px-4 transition-shadow hover:shadow-md">
-      <Link
-        to="/datasets/$schemaId"
-        params={{ schemaId: dataset.id }}
-        className="flex min-w-0 flex-1 flex-col gap-2 py-0"
-      >
+      <div className="flex min-w-0 flex-1 flex-col gap-2 py-0">
         <div className="flex flex-wrap items-center gap-2">
           <SourceStoreBadge store="postgres" />
           <PgDatasetTypeTags dataset={dataset} />
+          <LifecycleBadge lifecycle={dataset.lifecycle} />
+          {(projects ?? []).map((project) => (
+            <ProjectChip key={project.id} project={project} />
+          ))}
         </div>
-        <div>
+        <Link
+          to="/datasets/$schemaId"
+          params={{ schemaId: dataset.id }}
+          className="flex flex-col gap-2"
+        >
           <h3 className="text-base font-semibold">{dataset.title}</h3>
           <p className="line-clamp-2 text-sm text-muted-foreground">{dataset.description}</p>
-        </div>
-        <div className="flex items-center text-xs text-muted-foreground">
-          <Calendar className="mr-1.5 h-3.5 w-3.5" />
-          Created {new Date(dataset.createdAt).toLocaleDateString()}
-        </div>
-      </Link>
+          <div className="flex items-center text-xs text-muted-foreground">
+            <Calendar className="mr-1.5 h-3.5 w-3.5" />
+            Created {new Date(dataset.createdAt).toLocaleDateString()}
+          </div>
+        </Link>
+      </div>
       <CreatorChip profileId={dataset.createdBy} />
       {trailing}
       <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
