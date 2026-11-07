@@ -216,7 +216,7 @@ function DatasetRow({
   onRemove: () => void;
 }) {
   const [confirming, setConfirming] = useState(false),
-    restricted = state.status === "ready" && state.doc.publishedVisibility === "author",
+    restricted = state.status === "ready" && state.doc.visibility === "members",
     kind = kindLabel(state),
     size = sizeLabel(state),
     title = datasetTitle(state);

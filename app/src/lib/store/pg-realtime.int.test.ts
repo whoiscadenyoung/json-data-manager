@@ -236,7 +236,7 @@ beforeEach(async () => {
   datasetId = await createDataset(s(), {
     createdBy: ALICE,
     lifecycle: "draft",
-    visibility: "author",
+    visibility: "members",
   });
   await s().asAdmin();
   const rows = await s().expectOk(

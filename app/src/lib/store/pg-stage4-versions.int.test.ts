@@ -771,7 +771,9 @@ describe.skipIf(!dbUp())(
         );
 
         await s().asUser(BOB);
-        expect(await s().count(`select count(*) as n from public.projects`)).toBe(0);
+        // 0023: the seeded "System examples" project is `signed-in`-visible
+        // to every authenticated user — the foreign user's one extra row.
+        expect(await s().count(`select count(*) as n from public.projects`)).toBe(1);
         expect(await s().count(`select count(*) as n from public.publish_bundles`)).toBe(0);
         expect(await s().count(`select count(*) as n from public.publish_bundle_members`)).toBe(0);
         // BOB cannot checkpoint ALICE's member (creator-only; the UPDATE

@@ -520,7 +520,7 @@ export async function createDataset(
     createdBy: string;
     editPolicy?: "open" | "locked";
     lifecycle?: "draft" | "published";
-    visibility?: "everyone" | "author";
+    visibility?: "members" | "signed-in" | "link" | "public";
     frozenLineage?: boolean;
     properties?: string[];
   },
@@ -528,10 +528,10 @@ export async function createDataset(
   const id = crypto.randomUUID();
   await session.expectOk(
     `insert into public.datasets
-       (id, title, properties, created_by, edit_policy, lifecycle, published_visibility, lineage)
+       (id, title, properties, created_by, edit_policy, lifecycle, visibility, lineage)
      values (${sqlLit(id)}, 'pg-int fixture', ${sqlLit(JSON.stringify(opts.properties ?? ["name"]))}::jsonb,
              ${sqlLit(opts.createdBy)}, ${sqlLit(opts.editPolicy ?? "open")},
-             ${sqlLit(opts.lifecycle ?? "published")}, ${sqlLit(opts.visibility ?? "everyone")},
+             ${sqlLit(opts.lifecycle ?? "published")}, ${sqlLit(opts.visibility ?? "signed-in")},
              ${opts.frozenLineage ? sqlLit(JSON.stringify({ frozen: true })) : "null"}::jsonb)`,
   );
   return id;

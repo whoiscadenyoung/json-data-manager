@@ -417,7 +417,7 @@ function Builder({ app, initialPageId }: { app: AppDoc; initialPageId: string | 
         </div>
         <ShareDialog
           appId={app.id}
-          sharing={app.sharing}
+          visibility={app.visibility}
           open={sharing}
           onOpenChange={setSharing}
         />

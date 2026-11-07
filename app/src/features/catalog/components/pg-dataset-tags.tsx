@@ -32,13 +32,13 @@ export function PgDatasetTypeTags({ dataset }: { dataset: DatasetSummaryRow }) {
         </Badge>
       )}
       {dataset.geometryType !== null && <Badge variant="outline">{dataset.geometryType}</Badge>}
-      {dataset.publishedVisibility === "author" && (
+      {dataset.visibility === "members" && (
         <Badge
           variant="outline"
-          title="Only you can see this dataset — other signed-in users can't (the catalog, collections, and profiles all hide it from them)."
+          title="Members-only — you and the members of projects holding this dataset (the catalog, collections, and profiles all hide it from everyone else)."
         >
           <Lock />
-          Only me
+          Members only
         </Badge>
       )}
       {dataset.lifecycle === "draft" && (

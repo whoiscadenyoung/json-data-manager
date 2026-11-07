@@ -1,3 +1,5 @@
+import type { VisibilityLevel } from "#/lib/store/visibility";
+
 /**
  * The app builder's stored shapes — the Postgres port of the Convex-era
  * `convex/appBuilder/validators.ts` (READ-ONLY reference). The feature owns
@@ -37,13 +39,14 @@ export const APP_LIMITS = {
   totalWidgets: 80,
 } as const;
 
-/** Who may open an app's share URL besides its creator. */
-export type Sharing =
-  // Only the creator.
-  | "private"
-  // Any signed-in user holding the link (the trusted-collaborator model,
-  // ADR 0009 — the app-wide sign-in gate still applies).
-  | "link";
+/**
+ * Who may open an app, on the unified visibility ladder (#260, ADR 0022):
+ * `members` (the project seat), `signed-in` (the trusted-collaborator
+ * posture, ADR 0009), `link`/`public` (the anon rungs — serving lands in
+ * [project 7]). The old two-literal `Sharing` union retired with
+ * `apps.sharing` in migration 0023.
+ */
+export type Visibility = VisibilityLevel;
 
 export type Aggregate = "count" | "sum" | "avg" | "min" | "max";
 

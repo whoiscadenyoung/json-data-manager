@@ -254,6 +254,7 @@ describe("pgPublishProjectBundle", () => {
       collectionId: "collection-1",
       failedKeys: [],
       status: "completed",
+      visibilityCappedBy: 0,
     });
     // Exactly ONE publish_version call — dataset-a (the never-published
     // artifact); dataset-b joined referenced, never re-frozen. The map legs

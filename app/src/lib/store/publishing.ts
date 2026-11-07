@@ -3,6 +3,7 @@ import { queryOptions } from "@tanstack/react-query";
 
 import { clientOf, queryRow, queryRows, queryScalar, type StoreOptions } from "./client";
 import { VERSIONS_READ_LIMIT } from "./versions";
+import type { VisibilityLevel } from "./visibility";
 
 /**
  * The publishing store (design doc §8.1 "publishing.ts # publish_version
@@ -55,6 +56,8 @@ export interface PublishBundleRow {
   collectionId: string | null;
   status: "running" | "completed" | "failed";
   error: string | null;
+  /** The press's target visibility rung (#260, ADR 0022). */
+  visibility: VisibilityLevel;
   createdBy: string;
   startedAt: string;
   finishedAt: string | null;
@@ -77,6 +80,9 @@ export interface BundleMemberRow {
   attemptId: string | null;
   /** Map members: the DATASET-layer target ids the press mints map references for. */
   layerTargets: string[] | null;
+  /** The promotion plan's from/to for this member (null = the press promoted nothing here). */
+  visibilityFrom: VisibilityLevel | null;
+  visibilityTo: VisibilityLevel | null;
   error: string | null;
 }
 
@@ -129,9 +135,9 @@ export function survivingMembers(
 }
 
 const BUNDLE_SELECT =
-  "id,projectId:project_id,title,projectDescription:project_description,collectionId:collection_id,status,error,createdBy:created_by,startedAt:started_at,finishedAt:finished_at,lastProgressAt:last_progress_at";
+  "id,projectId:project_id,title,projectDescription:project_description,collectionId:collection_id,status,error,visibility,createdBy:created_by,startedAt:started_at,finishedAt:finished_at,lastProgressAt:last_progress_at";
 const MEMBER_SELECT =
-  "id,bundleId:bundle_id,kind,datasetKey:dataset_key,groupId:group_id,publish,status,publishedVersionId:published_version_id,attemptId:attempt_id,layerTargets:layer_targets,error";
+  "id,bundleId:bundle_id,kind,datasetKey:dataset_key,groupId:group_id,publish,status,publishedVersionId:published_version_id,attemptId:attempt_id,layerTargets:layer_targets,visibilityFrom:visibility_from,visibilityTo:visibility_to,error";
 
 // ---------------------------------------------------------------------------
 // Publish (§5.4)
@@ -237,6 +243,9 @@ export interface BundleMemberPlan {
   publish: boolean;
   /** Map members: the dataset-layer target ids (press-time snapshot). */
   layerTargets?: string[];
+  /** The confirmed promotion plan's from/to for this member (the preflight's rows, stamped at mint). */
+  visibilityFrom?: VisibilityLevel;
+  visibilityTo?: VisibilityLevel;
 }
 
 /** The {@link startBundle} argument set. */
@@ -245,6 +254,8 @@ export interface StartBundleArgs {
   /** The project's title/description at press time (the promoted collection's). */
   title: string;
   projectDescription?: string;
+  /** The press's target visibility rung (#260) — stamped on the bundle row. */
+  visibility?: VisibilityLevel;
   /** The prior press's collection id — REUSED across presses (the recorded invariant); omit on the first press. */
   collectionId?: string;
   /** The closure plan, already ordered datasets → derived → maps by the caller. */

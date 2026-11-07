@@ -54,6 +54,8 @@ function memberWire(overrides: Record<string, unknown> = {}): BundleMemberRow {
     bundleId: "b1",
     datasetKey: "d1",
     error: null,
+    visibilityFrom: null,
+    visibilityTo: null,
     groupId: null,
     id: "m1",
     kind: "dataset",

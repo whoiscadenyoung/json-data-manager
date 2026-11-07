@@ -146,7 +146,7 @@ function AppMenu({ app }: { app: AppDoc }) {
       {app.canEdit && (
         <ShareDialog
           appId={app.id}
-          sharing={app.sharing}
+          visibility={app.visibility}
           open={sharing}
           onOpenChange={setSharing}
         />
@@ -209,9 +209,9 @@ function PreviewBar({ app, onExit }: { app: AppDoc; onExit: () => void }) {
         <Eye className="size-4 shrink-0 text-muted-foreground" />
         <span className="font-medium">Preview</span>
         <span className="truncate text-muted-foreground">
-          {app.sharing === "link"
-            ? "This is what people with the link see."
-            : "This is what people will see once you share it."}
+          {app.visibility === "members"
+            ? "This is what people will see once you share it."
+            : "This is what people can see at the app's current visibility."}
         </span>
       </div>
       <Button type="button" variant="ghost" size="sm" onClick={onExit} aria-label="Exit preview">

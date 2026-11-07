@@ -97,7 +97,7 @@ describe.skipIf(!dbUp())("seeded examples (0014/0022) — presence after reset",
 
     const parks = await s().expectOk(
       `select title, entry_count as entries, feature_count as features, edit_policy as policy,
-              published_visibility as visibility, lifecycle, created_by::text as by
+              visibility, lifecycle, created_by::text as by
          from public.datasets where id = ${sqlLit(PARKS)}`,
     );
     expect(parks).toHaveLength(1);
@@ -105,7 +105,7 @@ describe.skipIf(!dbUp())("seeded examples (0014/0022) — presence after reset",
     expect(Number(parks[0].entries)).toBe(28);
     expect(Number(parks[0].features)).toBe(28);
     expect(parks[0].policy).toBe("locked");
-    expect(parks[0].visibility).toBe("everyone");
+    expect(parks[0].visibility).toBe("signed-in");
     expect(parks[0].lifecycle).toBe("published");
 
     const visits = await s().expectOk(
@@ -117,7 +117,7 @@ describe.skipIf(!dbUp())("seeded examples (0014/0022) — presence after reset",
     expect(Number(visits[0].features)).toBe(0);
 
     const apps = await s().expectOk(
-      `select id::text as id, title, sharing, example, revision, jsonb_array_length(pages) as pages,
+      `select id::text as id, title, visibility, example, revision, jsonb_array_length(pages) as pages,
               created_by::text as by, project_id::text as proj
          from public.apps where example order by id`,
     );
@@ -127,7 +127,7 @@ describe.skipIf(!dbUp())("seeded examples (0014/0022) — presence after reset",
       "Park Visits Atlas",
     ]);
     for (const row of apps) {
-      expect(row.sharing).toBe("link");
+      expect(row.visibility).toBe("signed-in");
       expect(row.example).toBe("t");
       expect(Number(row.revision)).toBe(0);
       expect(row.by).toBe(SYSTEM_OWNER);
@@ -243,8 +243,10 @@ describe.skipIf(!dbUp())("seeded examples (0014/0022) — presence after reset",
     expect(placementVersion[0].ref).not.toBeNull();
 
     // A signed-in NON-MEMBER reads the published app + its snapshot + the
-    // frozen rows (the example arm + everyone-visible datasets), but NOT the
-    // live project rows — the published render is snapshot-driven.
+    // frozen rows (the example arm + everyone-visible datasets) — and, since
+    // 0023 widened the seeded examples PROJECT to `signed-in`, the project
+    // row's chip too (title/description only; the artifact list stays
+    // member-gated). The published render is still snapshot-driven.
     await s().begin();
     await s().asUser(BOB);
     expect(
@@ -267,6 +269,11 @@ describe.skipIf(!dbUp())("seeded examples (0014/0022) — presence after reset",
     expect(
       await s().count(
         `select count(*) as n from public.projects where id = ${sqlLit(EXAMPLES_PROJECT)}`,
+      ),
+    ).toBe(1);
+    expect(
+      await s().count(
+        `select count(*) as n from public.project_artifacts where project_id = ${sqlLit(EXAMPLES_PROJECT)}`,
       ),
     ).toBe(0);
     await s().rollback();
@@ -435,14 +442,14 @@ describe.skipIf(!dbUp())(
       }
     });
 
-    test("structure parity: sharing is a two-literal check; revision is the CAS counter; column grants pin server-owned fields", async () => {
+    test("structure parity: visibility is the four-rung check; revision is the CAS counter; column grants pin server-owned fields", async () => {
       await asAlice();
       const projectId = await createProject();
 
-      // sharing's literal union (validators.ts) as text + check.
+      // The 0023 ladder check: an unknown rung is refused.
       await expect(
         s().denied(
-          `insert into public.apps (id, title, project_id, sharing) values ('${crypto.randomUUID()}', 'x', ${sqlLit(projectId)}, 'public')`,
+          `insert into public.apps (id, title, project_id, visibility) values ('${crypto.randomUUID()}', 'x', ${sqlLit(projectId)}, 'everyone')`,
         ),
       ).resolves.toMatch(/check/i);
 
@@ -481,7 +488,7 @@ describe.skipIf(!dbUp())(
           `update public.apps set project_id = ${sqlLit(EXAMPLES_PROJECT)} where id = ${sqlLit(appId)}`,
         ),
       ).resolves.toMatch(/permission/i);
-      // The writable set: title/description/sharing/dataset_ids/pages/revision/updated_at.
+      // The writable set: title/description/visibility/dataset_ids/pages/revision/updated_at.
       await s().expectOk(
         `update public.apps set title = 'ok', pages = '[]'::jsonb, revision = 1, dataset_ids = '{}'::uuid[] where id = ${sqlLit(appId)}`,
       );

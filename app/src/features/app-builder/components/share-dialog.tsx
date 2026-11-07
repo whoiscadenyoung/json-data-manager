@@ -1,3 +1,4 @@
+import { Button } from "@caden/ui/components/button";
 import {
   Dialog,
   DialogContent,
@@ -23,14 +24,19 @@ import {
 } from "@caden/ui/components/input-group";
 import { RadioGroup, RadioGroupItem } from "@caden/ui/components/radio-group";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Check, Copy, Globe, Lock } from "lucide-react";
+import { Check, Copy, Globe, Link2, Lock, Users } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { errorMessage } from "#/lib/errors";
 import * as appsStore from "#/lib/store/apps";
-
-import type { Sharing } from "../lib/content";
+import {
+  isWidening,
+  visibilityApply,
+  visibilityPreflight,
+  type PreflightReport,
+  type VisibilityLevel,
+} from "#/lib/store/visibility";
 
 /** The app's share URL — the viewer route, on whatever origin the app is served from. */
 export function shareUrlFor(appId: string): string {
@@ -47,89 +53,213 @@ export async function copyShareUrl(appId: string): Promise<void> {
 }
 
 const OPTIONS: ReadonlyArray<{
-  value: Sharing;
+  value: VisibilityLevel;
   label: string;
   description: string;
   icon: typeof Lock;
 }> = [
   {
-    description: "Only you can open this app.",
+    description: "Only the app project's members can open it.",
     icon: Lock,
-    label: "Private",
-    value: "private",
+    label: "Project members",
+    value: "members",
   },
   {
     description:
-      "Anyone signed in to this workspace can open it with the link. They see only the datasets they already have access to.",
-    icon: Globe,
+      "Every signed-in member of this workspace can open it. They see only the data they already have access to.",
+    icon: Users,
+    label: "Anyone signed in",
+    value: "signed-in",
+  },
+  {
+    description:
+      "Visitors holding the URL can open it without signing in — recorded and enforced on the published data now; anonymous serving itself ships with public serving.",
+    icon: Link2,
     label: "Anyone with the link",
     value: "link",
   },
+  {
+    description: "Like the link level, and listed in the explorers.",
+    icon: Globe,
+    label: "Public",
+    value: "public",
+  },
 ];
+
+/** The diff-style report ("sharing publicly also widens 2 datasets and 1 map — review"). */
+function PromotionNotice({ report }: { report: PreflightReport }) {
+  if (report.promotions.length === 0) {
+    return <p className="text-sm text-muted-foreground">No referenced artifact needs widening.</p>;
+  }
+  return (
+    <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
+      <p className="font-medium">
+        Sharing at “{report.target}” also widens {report.promotions.length} referenced{" "}
+        {report.promotions.length === 1 ? "artifact" : "artifacts"} — review:
+      </p>
+      <ul className="mt-1 list-inside list-disc text-muted-foreground">
+        {report.promotions.map((promotion) => (
+          <li key={`${promotion.kind}:${promotion.id}`}>
+            {promotion.name} — {promotion.kind}, {promotion.from} → {promotion.to}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** The blockers section — a foreign member below the target caps the share; never silent. */
+function BlockerNotice({ report }: { report: PreflightReport }) {
+  return (
+    <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
+      <p className="font-medium">
+        {report.blockers.length} referenced{" "}
+        {report.blockers.length === 1 ? "artifact" : "artifacts"} can't be widened by you.
+      </p>
+      <ul className="mt-1 list-inside list-disc text-muted-foreground">
+        {report.blockers.map((blocker) => (
+          <li key={`${blocker.kind}:${blocker.id}`}>
+            {blocker.name} — {blocker.kind}, stays at “{blocker.current}” (owned by another project
+            or locked)
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1 text-muted-foreground">
+        Effective access stays “{report.effective}” — request access to the blocked data or pick
+        different data. Nothing is widened past it.
+      </p>
+    </div>
+  );
+}
 
 export function ShareDialog({
   appId,
-  sharing,
+  visibility,
   open,
   onOpenChange,
 }: {
   appId: string;
-  sharing: Sharing;
+  visibility: VisibilityLevel;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient(),
     updateDetails = useMutation({
-      mutationFn: async (args: { appId: string; sharing: Sharing }) =>
+      mutationFn: async (args: { appId: string; visibility: VisibilityLevel }) =>
         await appsStore.updateDetails(args),
     }),
-    [pending, setPending] = useState<Sharing | undefined>(),
+    [pending, setPending] = useState<VisibilityLevel | undefined>(),
+    [report, setReport] = useState<PreflightReport | null>(null),
+    [reportLoading, setReportLoading] = useState(false),
     [copied, setCopied] = useState(false),
-    setSharing = async (next: Sharing) => {
-      if (next === sharing) {
-        return;
-      }
+    resetPending = () => {
+      setPending(undefined);
+      setReport(null);
+    },
+    // Narrowing needs no closure walk — the plain RLS'd write lands it (the
+    // RPCs are widening-only by design).
+    setVisibilityDirect = async (next: VisibilityLevel) => {
       setPending(next);
       try {
-        const affected = await updateDetails.mutateAsync({ appId, sharing: next });
+        const affected = await updateDetails.mutateAsync({ appId, visibility: next });
         if (affected === 0) {
           // RLS answered with 0 rows — this viewer cannot edit the app; the
           // radio stays honest instead of pretending the flip landed.
-          toast.error("Couldn't change sharing — only the app's creator can edit it.");
+          toast.error("Couldn't change visibility — only a project editor can edit it.");
           return;
         }
         void queryClient.invalidateQueries({ queryKey: ["pg:apps"] });
       } catch (error) {
-        toast.error(errorMessage(error, "Couldn't change sharing."));
+        toast.error(errorMessage(error, "Couldn't change visibility."));
       } finally {
-        setPending(undefined);
+        resetPending();
+      }
+    },
+    // Widening runs the closure preflight FIRST (§6.2): nothing moves until
+    // the diff-style report is confirmed, and the confirm applies every
+    // promotion atomically through the apply RPC (the app row itself is one
+    // of the promotions).
+    setVisibilityWidening = async (next: VisibilityLevel) => {
+      setPending(next);
+      setReportLoading(true);
+      try {
+        setReport(await visibilityPreflight({ artifactId: appId, kind: "app", target: next }));
+      } catch (error) {
+        toast.error(errorMessage(error, "Couldn't check the share's references."));
+        resetPending();
+      } finally {
+        setReportLoading(false);
+      }
+    },
+    confirmWidening = async () => {
+      if (pending === undefined) {
+        return;
+      }
+      try {
+        const outcome = await visibilityApply({ artifactId: appId, kind: "app", target: pending });
+        void queryClient.invalidateQueries({ queryKey: ["pg:apps"] });
+        void queryClient.invalidateQueries({ queryKey: ["pg:datasets"] });
+        if (outcome.blockers.length > 0) {
+          toast.warning(
+            `Shared, but effective access is “${outcome.effective}” — ${outcome.blockers.length} referenced artifact(s) cap it. Request access or pick different data.`,
+          );
+        } else {
+          toast.success(
+            `Shared at “${outcome.target}” — ${outcome.applied.length} referenced artifact(s) widened with it.`,
+          );
+        }
+        onOpenChange(false);
+      } catch (error) {
+        toast.error(errorMessage(error, "The share didn't land."));
+      } finally {
+        resetPending();
+      }
+    },
+    onPick = (next: VisibilityLevel) => {
+      if (next === visibility || pending !== undefined) {
+        return;
+      }
+      if (isWidening(visibility, next)) {
+        void setVisibilityWidening(next);
+      } else {
+        void setVisibilityDirect(next);
       }
     };
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (pending === undefined) {
+          onOpenChange(next);
+        } else {
+          resetPending();
+        }
+      }}
+    >
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Share app</DialogTitle>
           <DialogDescription>
-            Choose who can open this app's link. Only you can edit it.
+            Choose who can open this app. Widening checks every dataset, map and layer the app
+            references first — nothing widens without your confirm.
           </DialogDescription>
         </DialogHeader>
         <FieldGroup>
           <FieldSet>
             <FieldLegend className="sr-only">Who can open this app</FieldLegend>
             <RadioGroup
-              value={pending ?? sharing}
+              value={pending ?? visibility}
               disabled={pending !== undefined}
               onValueChange={(value) => {
                 const next = OPTIONS.find((option) => option.value === value);
                 if (next !== undefined) {
-                  void setSharing(next.value);
+                  onPick(next.value);
                 }
               }}
             >
               {OPTIONS.map((option) => {
                 const Icon = option.icon,
-                  id = `app-sharing-${option.value}`;
+                  id = `app-visibility-${option.value}`;
                 return (
                   <FieldLabel key={option.value} htmlFor={id}>
                     <Field orientation="horizontal">
@@ -145,6 +275,31 @@ export function ShareDialog({
               })}
             </RadioGroup>
           </FieldSet>
+          {reportLoading && (
+            <p className="text-sm text-muted-foreground">Checking the app's references…</p>
+          )}
+          {report !== null && pending !== undefined && (
+            <div className="flex flex-col gap-2">
+              <PromotionNotice report={report} />
+              {report.blockers.length > 0 && <BlockerNotice report={report} />}
+              <div className="flex justify-end gap-2">
+                <Button onClick={resetPending} type="button" variant="outline">
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => {
+                    void confirmWidening();
+                  }}
+                  type="button"
+                >
+                  Share at “{pending}”
+                  {report.promotions.length > 0
+                    ? ` (${report.promotions.length} widened)`
+                    : undefined}
+                </Button>
+              </div>
+            </div>
+          )}
           <Field>
             <FieldLabel htmlFor="app-share-link">Link</FieldLabel>
             <InputGroup>
@@ -173,9 +328,9 @@ export function ShareDialog({
                 </InputGroupButton>
               </InputGroupAddon>
             </InputGroup>
-            {sharing === "private" && pending === undefined && (
+            {visibility === "members" && pending === undefined && (
               <FieldDescription>
-                The link only works for you while the app is private.
+                The link only opens for the project's members while the app sits at “members”.
               </FieldDescription>
             )}
           </Field>

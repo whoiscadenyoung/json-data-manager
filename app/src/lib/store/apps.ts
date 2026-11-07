@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 
 import { clientOf, queryRow, queryRows, type StoreOptions } from "./client";
+import type { VisibilityLevel } from "./visibility";
 
 /**
  * The apps store — the app builder's PG backend, re-owned by projects
@@ -115,7 +116,7 @@ export interface AppRow {
   projectId: string;
   title: string;
   description: string | null;
-  sharing: "private" | "link";
+  visibility: VisibilityLevel;
   datasetIds: string[];
   pages: AppPageConfig[];
   example: boolean;
@@ -138,7 +139,7 @@ export interface AppSummary {
   project: AppProjectRef | null;
   title: string;
   description: string | null;
-  sharing: "private" | "link";
+  visibility: VisibilityLevel;
   example: boolean;
   datasetCount: number;
   pageCount: number;
@@ -147,7 +148,7 @@ export interface AppSummary {
 }
 
 const APP_SELECT =
-    "id,projectId:project_id,title,description,sharing,datasetIds:dataset_ids,pages,example,revision,createdBy:created_by,createdAt:created_at,updatedAt:updated_at",
+    "id,projectId:project_id,title,description,visibility,datasetIds:dataset_ids,pages,example,revision,createdBy:created_by,createdAt:created_at,updatedAt:updated_at",
   APP_SELECT_WITH_PROJECT = `${APP_SELECT},project:projects(id,title,created_by)`;
 
 /** The explorer's list width (the /apps explorer's cap; MAX_APPS carried). */
@@ -166,7 +167,7 @@ export function toSummary(app: AppRow): AppSummary {
     id: app.id,
     pageCount: app.pages.length,
     project: app.project,
-    sharing: app.sharing,
+    visibility: app.visibility,
     title: app.title,
     updatedAt: app.updatedAt,
     widgetCount: app.pages.reduce((sum, page) => sum + page.widgets.length, 0),
@@ -457,12 +458,18 @@ export async function create(
 }
 
 /**
- * Title, description, and sharing — the app's metadata, saved independently
- * of the layout (updateDetails parity). Returns the affected row count (0 =
- * denied or gone).
+ * Title, description, and visibility — the app's metadata, saved
+ * independently of the layout (updateDetails parity; the ladder rung rides
+ * the plain RLS'd write — widening goes through the closure preflight's
+ * apply, #260). Returns the affected row count (0 = denied or gone).
  */
 export async function updateDetails(
-  args: { appId: string; title?: string; description?: string; sharing?: AppRow["sharing"] },
+  args: {
+    appId: string;
+    title?: string;
+    description?: string;
+    visibility?: AppRow["visibility"];
+  },
   options?: StoreOptions,
 ): Promise<number> {
   const patch: Record<string, unknown> = {};
@@ -472,8 +479,8 @@ export async function updateDetails(
   if (args.description !== undefined) {
     patch.description = cleanDescription(args.description);
   }
-  if (args.sharing !== undefined) {
-    patch.sharing = args.sharing;
+  if (args.visibility !== undefined) {
+    patch.visibility = args.visibility;
   }
   if (Object.keys(patch).length === 0) {
     throw new Error("App update needs a field to set.");

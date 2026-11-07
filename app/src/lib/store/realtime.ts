@@ -9,6 +9,7 @@ import type {
 } from "./datasets";
 import type { EntryRow } from "./entries";
 import type { GeometryRow } from "./geometries";
+import { VISIBILITY_LEVELS } from "./visibility";
 
 /**
  * The realtime layer (design doc §7; issue #205): one `postgres_changes`
@@ -339,13 +340,13 @@ function datasetRowOf(raw: Record<string, unknown>): DatasetRow | null {
   const id = columnString(raw, "id");
   const title = columnString(raw, "title");
   const editPolicy = columnEnum(raw, "edit_policy", ["locked", "open"]);
-  const publishedVisibility = columnEnum(raw, "published_visibility", ["author", "everyone"]);
+  const visibility = columnEnum(raw, "visibility", [...VISIBILITY_LEVELS]);
   const lifecycle = columnEnum(raw, "lifecycle", ["draft", "published"]);
   if (
     id === "" ||
     title === "" ||
     editPolicy === null ||
-    publishedVisibility === null ||
+    visibility === null ||
     lifecycle === null
   ) {
     return null;
@@ -378,7 +379,7 @@ function datasetRowOf(raw: Record<string, unknown>): DatasetRow | null {
     mapTileCacheVersion: columnNumber(raw, "map_tile_cache_version"),
     maxGeometryRowBytes: columnNumberOrNull(raw, "max_geometry_row_bytes"),
     properties: columnStringArray(raw, "properties"),
-    publishedVisibility,
+    visibility,
     simplifyGeometry: raw["simplify_geometry"] === true,
     source: columnJson(raw, "source"),
     sourceFileName: columnStringOrNull(raw, "source_file_name"),
@@ -411,7 +412,7 @@ function datasetSummaryRowOf(row: DatasetRow): DatasetSummaryRow {
     mapTileArchiveFormat: row.mapTileArchiveFormat,
     mapTileArchiveMaxZoom: row.mapTileArchiveMaxZoom,
     mapTileCacheVersion: row.mapTileCacheVersion,
-    publishedVisibility: row.publishedVisibility,
+    visibility: row.visibility,
     source: row.source,
     title: row.title,
   };

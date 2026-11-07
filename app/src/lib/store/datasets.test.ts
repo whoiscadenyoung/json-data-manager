@@ -56,7 +56,7 @@ function datasetWire(id: string, overrides: Record<string, unknown> = {}) {
     mapTileArchiveMaxZoom: null,
     mapTileCacheVersion: 7,
     properties: ["name", "grant"],
-    publishedVisibility: "everyone",
+    visibility: "signed-in",
     source: null,
     title: `Dataset ${id}`,
     ...overrides,
@@ -179,7 +179,7 @@ describe("datasets.create", () => {
       },
       lifecycle: "published",
       properties: ["grant", "site"],
-      published_visibility: "everyone",
+      visibility: "signed-in",
       simplify_geometry: false,
       title: "Grants",
       // `source` is absent for ordinary creates (host-flow-only); `lineage`
@@ -240,12 +240,12 @@ describe("datasets policy + lifecycle writes", () => {
   it("setEditPolicy / setVisibility / markImportComplete write exactly their column", async () => {
     const { client, queries } = stubSupabase(() => ({ data: [{ id: "d1" }], error: null }));
     await setEditPolicy({ datasetId: "d1", editPolicy: "locked" }, { supabase: client });
-    await setVisibility({ datasetId: "d1", visibility: "author" }, { supabase: client });
+    await setVisibility({ datasetId: "d1", visibility: "members" }, { supabase: client });
     await markImportComplete({ datasetId: "d1" }, { supabase: client });
     const patches = queries.map((query) => firstArg(query, "update"));
     expect(patches).toStrictEqual([
       { edit_policy: "locked" },
-      { published_visibility: "author" },
+      { visibility: "members" },
       { lifecycle: "published" },
     ]);
   });

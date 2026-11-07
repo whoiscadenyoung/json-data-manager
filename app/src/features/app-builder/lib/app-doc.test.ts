@@ -22,7 +22,7 @@ function rowOf(overrides: Partial<AppRow> = {}): AppRow {
     projectId: "p1",
     // The 0014 default: an empty pages array (read as one empty first page).
     revision: 7,
-    sharing: "private",
+    visibility: "members",
     title: "Parks",
     updatedAt: "2026-11-04T01:00:00.000Z",
     ...overrides,
@@ -54,11 +54,11 @@ describe("canEditApp", () => {
 
 describe("appDocOf", () => {
   it("maps the store row's identity and metadata fields", () => {
-    const doc = appDocOf(rowOf({ description: "hello", sharing: "link" }), "owner");
+    const doc = appDocOf(rowOf({ description: "hello", visibility: "signed-in" }), "owner");
     expect(doc.id).toBe("aaaaaaa1-0000-4000-8000-000000000001");
     expect(doc.title).toBe("Parks");
     expect(doc.description).toBe("hello");
-    expect(doc.sharing).toBe("link");
+    expect(doc.visibility).toBe("signed-in");
     expect(doc.revision).toBe(7);
     expect(doc.updatedAt).toBe("2026-11-04T01:00:00.000Z");
     expect(doc.example).toBe(false);

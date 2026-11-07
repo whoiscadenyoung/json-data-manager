@@ -53,7 +53,7 @@ function appRow(id: string, overrides: Record<string, unknown> = {}): AppRow {
     project: { createdBy: "11111111-1111-1111-1111-111111111111", id: "p1", title: "Parks" },
     projectId: "p1",
     revision: 0,
-    sharing: "private",
+    visibility: "members",
     title: `App ${id}`,
     updatedAt: "2026-11-04T00:00:00Z",
     ...overrides,
@@ -185,7 +185,7 @@ describe("toSummary — the list-card projection", () => {
       id: "a1",
       pageCount: 2,
       project: { createdBy: "11111111-1111-1111-1111-111111111111", id: "p1", title: "Parks" },
-      sharing: "private",
+      visibility: "members",
       title: "App a1",
       updatedAt: "2026-11-04T00:00:00Z",
       widgetCount: 3,
@@ -260,13 +260,13 @@ describe("apps writes — rows-affected returns", () => {
   it("updateDetails patches only the given fields and returns the affected count", async () => {
     const { client, queries } = stubSupabase(() => ({ data: [{ id: "a1" }], error: null }));
     const affected = await updateDetails(
-      { appId: "a1", sharing: "link", title: "Renamed" },
+      { appId: "a1", title: "Renamed", visibility: "signed-in" },
       { supabase: client },
     );
     const query = queryAt(queries, 0);
     const payload = firstArg(query, "update") as Record<string, unknown>;
     expect(payload["title"]).toBe("Renamed");
-    expect(payload["sharing"]).toBe("link");
+    expect(payload["visibility"]).toBe("signed-in");
     expect("description" in payload).toBe(false);
     expect("pages" in payload).toBe(false);
     expect("revision" in payload).toBe(false);

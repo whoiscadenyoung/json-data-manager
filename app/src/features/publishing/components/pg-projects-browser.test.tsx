@@ -98,6 +98,7 @@ describe("PgProjectsBrowser", () => {
       {
         artifactCount: 3,
         createdAt: "2026-11-04T00:00:00+00:00",
+        visibility: "members",
         createdBy: "creator-1",
         description: "One year of SMART data.",
         id: "project-1",

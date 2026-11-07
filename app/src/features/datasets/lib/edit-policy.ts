@@ -12,7 +12,7 @@ export const LOCKED_DATASET_HINT =
 /**
  * Whether write controls are locked FOR THIS VIEWER: the dataset is
  * `editPolicy: "locked"` and they aren't its creator. Reads are never
- * gated — `publishedVisibility` decides who may see a dataset, this only
+ * gated — the visibility rung decides who may see a dataset, this only
  * decides who may change it.
  */
 export function isLockedForViewer(

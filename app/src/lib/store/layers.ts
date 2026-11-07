@@ -2,6 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 
 import { clientOf, queryRow, queryRows, type StoreOptions } from "./client";
 import { CATALOG_READ_LIMIT } from "./datasets";
+import type { VisibilityLevel } from "./visibility";
 
 /**
  * The layers store (issue #257 — the project-centric train's phase 3; ADR
@@ -56,6 +57,8 @@ export interface LayerRow {
   opacity: number | null;
   visible: boolean;
   lifecycle: "draft" | "published";
+  /** The visibility rung (#260, ADR 0022) — wider arms are published-scoped (a draft layer stays project-visible). */
+  visibility: VisibilityLevel;
   /** The drift message (set by the schema-edit stamp, cleared by the next styling write). */
   needsAttention: string | null;
   createdBy: string;
@@ -89,7 +92,7 @@ export interface LayerVersionRow {
 }
 
 const LAYER_SELECT =
-    "id,projectId:project_id,kind,name,datasetMemberId:dataset_member_id,style,filter,labels,popup,opacity,visible,lifecycle,needsAttention:needs_attention,createdBy:created_by,createdAt:created_at,updatedAt:updated_at",
+    "id,projectId:project_id,kind,name,datasetMemberId:dataset_member_id,style,filter,labels,popup,opacity,visible,lifecycle,visibility,needsAttention:needs_attention,createdBy:created_by,createdAt:created_at,updatedAt:updated_at",
   CHILD_SELECT = "id,groupId:group_id,childKind:child_kind,childLayerId:child_layer_id,order",
   VERSION_SELECT =
     "id,layerId:layer_id,versionLabel:version_label,definition,dataset,frozenChildren:frozen_children,createdBy:created_by,createdAt:created_at";

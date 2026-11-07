@@ -33,7 +33,7 @@ export type Database = {
           id: string;
           pages: NonNullable<Json>;
           revision: number;
-          sharing: string;
+          visibility: string;
           title: string;
           updated_at: string;
         };
@@ -47,7 +47,7 @@ export type Database = {
           id?: string;
           pages?: NonNullable<Json>;
           revision?: number;
-          sharing?: string;
+          visibility?: string;
           title: string;
           updated_at?: string;
         };
@@ -60,7 +60,7 @@ export type Database = {
           id?: string;
           pages?: NonNullable<Json>;
           revision?: number;
-          sharing?: string;
+          visibility?: string;
           title?: string;
           updated_at?: string;
         };
@@ -469,7 +469,7 @@ export type Database = {
           map_tile_cache_version: number;
           max_geometry_row_bytes: number | null;
           properties: NonNullable<Json>;
-          published_visibility: string;
+          visibility: string;
           simplify_geometry: boolean;
           source: Json | null;
           source_file_name: string | null;
@@ -502,7 +502,7 @@ export type Database = {
           map_tile_cache_version?: number;
           max_geometry_row_bytes?: number | null;
           properties?: NonNullable<Json>;
-          published_visibility?: string;
+          visibility?: string;
           simplify_geometry?: boolean;
           source?: Json | null;
           source_file_name?: string | null;
@@ -534,7 +534,7 @@ export type Database = {
           map_tile_cache_version?: number;
           max_geometry_row_bytes?: number | null;
           properties?: NonNullable<Json>;
-          published_visibility?: string;
+          visibility?: string;
           simplify_geometry?: boolean;
           source?: Json | null;
           source_file_name?: string | null;

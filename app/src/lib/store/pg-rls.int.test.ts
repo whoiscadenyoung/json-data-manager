@@ -196,7 +196,7 @@ describe.skipIf(!dbUp())("RLS matrix (§4)", () => {
 
   test("drafts are invisible to non-creators; author-visibility restricts reads", async () => {
     const draftId = await createDataset(s(), { createdBy: ALICE, lifecycle: "draft" });
-    const authorId = await createDataset(s(), { createdBy: ALICE, visibility: "author" });
+    const authorId = await createDataset(s(), { createdBy: ALICE, visibility: "members" });
     try {
       await s().begin();
       await s().asAdmin();
