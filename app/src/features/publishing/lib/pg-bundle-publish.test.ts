@@ -131,6 +131,7 @@ function pressResponder(state: {
   bundlesInserts: number;
   failOnPublishNumber: number;
   latest: Record<string, unknown> | null;
+  minted: string[];
   publishes: number;
   memberStatus: Map<string, string>;
 }): (query: RecordedQuery) => ScriptedResponse {
@@ -193,6 +194,11 @@ function pressResponder(state: {
     }
     if (query.table === "publish_bundle_members") {
       if (methodOf(query, "insert") !== undefined) {
+        const args = methodOf(query, "insert");
+        const payload = args === undefined ? undefined : (args[0] as Record<string, unknown>);
+        if (payload !== undefined && typeof payload.dataset_key === "string") {
+          state.minted.push(payload.dataset_key);
+        }
         return { data: [{ id: "inserted" }] };
       }
       const update = methodOf(query, "update");
@@ -207,11 +213,11 @@ function pressResponder(state: {
         }
         return { data: [{ id: memberIdText }] };
       }
-      // The member read: the plan's rows, statuses reflecting the recorded
-      // checkpoints — only the members the catalog's plan actually mints.
+      // The member read: the rows the plan ACTUALLY MINTED (the insert
+      // branch records them), statuses reflecting the recorded checkpoints
+      // — never more members than the plan produced.
       const planned: Array<Record<string, unknown>> = [];
-      for (const artifact of state.artifacts) {
-        const key = artifact.artifactId;
+      for (const key of state.minted) {
         if (key === "dataset-a") {
           planned.push({ ...MEMBER_A, status: state.memberStatus.get("member-a") ?? "pending" });
         } else if (key === "dataset-b") {
@@ -231,6 +237,8 @@ function freshState(latest: Record<string, unknown> | null = null): {
   bundlesInserts: number;
   failOnPublishNumber: number;
   latest: Record<string, unknown> | null;
+  /** The member rows the plan ACTUALLY minted (the stub's insert branch records them). */
+  minted: string[];
   publishes: number;
   memberStatus: Map<string, string>;
 } {
@@ -239,6 +247,7 @@ function freshState(latest: Record<string, unknown> | null = null): {
     bundlesInserts: 0,
     failOnPublishNumber: -1,
     latest,
+    minted: [],
     publishes: 0,
     memberStatus: new Map(),
   };
@@ -336,26 +345,27 @@ describe("pgPublishProjectBundle", () => {
   });
 
   it("mints member rows through startBundle in the canonical plan order", async () => {
-    // The derived artifact joins the plan (the canonical datasets → derived
-    // order); its publish still refuses (the press's honest stage gap), so
-    // this test pins the PLAN shape, not a completed outcome.
+    // Derived/layer/app artifacts stay OUT of the plan (#262 — D6: a press
+    // is a dataset projection; layers and apps freeze per-artifact, and
+    // derived rows are re-executed registry entries with no freeze). The
+    // derived row in the catalog must not mint a member row nor fail the
+    // press.
     const state = freshState();
     state.artifacts = ARTIFACTS_WITH_DERIVED;
     const stub = stubSupabase(pressResponder(state));
     const outcome = await pgPublishProjectBundle({ projectId: "project-1", supabase: stub.client });
-    expect(outcome.failedKeys).toContain("derived-1");
+    expect(outcome.failedKeys).not.toContain("derived-1");
     const memberInserts = stub.queries.filter(
       (query) =>
         query.table === "publish_bundle_members" &&
         query.operations.some((op) => op.method === "insert"),
     );
-    expect(memberInserts).toHaveLength(3);
+    expect(memberInserts).toHaveLength(2);
     const keys = memberInserts.map((query) => {
       const insert = query.operations.find((op) => op.method === "insert");
       const payload = insert === undefined ? {} : (insert.args[0] as Record<string, unknown>);
       return String(payload.dataset_key);
     });
-    // Datasets first, then derived (the canonical order startBundle writes).
-    expect(keys).toEqual(["dataset-a", "dataset-b", "derived-1"]);
+    expect(keys).toEqual(["dataset-a", "dataset-b"]);
   });
 });
