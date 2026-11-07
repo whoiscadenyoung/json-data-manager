@@ -54,9 +54,7 @@ interface CollectionListItem {
  * they're exploratory groupings, never project building blocks.
  */
 function MintedByChip({ collectionId }: { collectionId: string }) {
-  const bundles = useQuery(
-      publishingStore.listBundlesForCollectionQueryOptions({ collectionId }),
-    ),
+  const bundles = useQuery(publishingStore.listBundlesForCollectionQueryOptions({ collectionId })),
     bundle = (bundles.data ?? []).find((candidate) => candidate.status === "completed"),
     project = useQuery({
       ...projectsStore.getQueryOptions({ projectId: bundle === undefined ? "" : bundle.projectId }),
