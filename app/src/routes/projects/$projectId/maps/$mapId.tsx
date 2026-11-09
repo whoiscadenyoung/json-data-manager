@@ -273,18 +273,18 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
       pgDerivedRows.data === undefined
         ? undefined
         : pgDerivedRows.data.map(pgDerivedToDerivedSummary),
+    // Published + the project's owned drafts: a project map renders its in-flight datasets too.
+    allSummaries =
+      pgSummaries.data === undefined || pgDraftSummaries.data === undefined
+        ? undefined
+        : [...pgSummaries.data, ...pgDraftSummaries.data],
     datasetsDocs =
-      pgSummaries.data === undefined ? undefined : pgSummaries.data.map(pgSummaryToDatasetSummary),
+      allSummaries === undefined ? undefined : allSummaries.map(pgSummaryToDatasetSummary),
     renderableDerived =
       derivedSummaries === undefined || datasetsDocs === undefined
         ? undefined
         : renderTargetsForDerivedLayers(derivedSummaries, datasetsDocs),
-    datasetTitleById = new globalThis.Map(
-      [...(pgSummaries.data ?? []), ...(pgDraftSummaries.data ?? [])].map((row) => [
-        row.id,
-        row.title,
-      ]),
-    ),
+    datasetTitleById = new globalThis.Map((allSummaries ?? []).map((row) => [row.id, row.title])),
     derivedTitleById = new globalThis.Map(
       // The Convex doc's branded id flattens to its string value (the PG
       // ids the editor resolves are plain strings).
@@ -433,7 +433,7 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
       schemaIds.map((schemaId, index) => [schemaId, PALETTE[index % PALETTE.length] ?? "#3b82f6"]),
     ),
     mapDatasets = (datasetsDocs ?? []).filter((dataset) => schemaIds.includes(dataset._id)),
-    pgDecisionRows: DatasetSummaryRow[] = (pgSummaries.data ?? []).filter(
+    pgDecisionRows: DatasetSummaryRow[] = (allSummaries ?? []).filter(
       (row) => schemaIds.includes(row.id) && row.isGeospatial && row.geometryType !== null,
     ),
     decisions = useTileArchiveSources(pgDecisionRows),
@@ -498,7 +498,7 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
     map.data === undefined ||
     placementsQuery.data === undefined ||
     projectLayersQuery.data === undefined ||
-    pgSummaries.data === undefined ||
+    allSummaries === undefined ||
     pgDerivedRows.data === undefined ||
     renderableDerived === undefined ||
     datasetsDocs === undefined
@@ -549,7 +549,7 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
     );
 
   return (
-    <div className="flex min-h-[480px] flex-col lg:h-[calc(100vh-7rem)]">
+    <div className="flex min-h-[480px] flex-col md:h-[calc(100vh-7rem)]">
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-2">
         <div>
           <h1 className="flex items-center gap-2 text-xl font-bold text-primary">
@@ -634,9 +634,9 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
           </Empty>
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
           {pgFan.loaders}
-          <aside className="flex w-full shrink-0 flex-col gap-4 overflow-y-auto border-b border-border bg-background p-4 lg:w-[380px] lg:border-r lg:border-b-0">
+          <aside className="flex w-full shrink-0 flex-col gap-4 overflow-y-auto border-b border-border bg-background p-4 md:w-[360px] xl:w-[420px] md:border-r md:border-b-0">
             {layerStyles.panel}
             <PgPlacementsPanel
               childrenLists={childrenLists}
@@ -653,7 +653,7 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
               versionsById={versionsById}
             />
           </aside>
-          <div className="relative h-[440px] min-w-0 flex-1 overflow-hidden lg:h-auto">
+          <div className="relative h-[440px] min-w-0 flex-1 overflow-hidden md:h-auto">
             {(servedGeometries !== undefined || split.tileSources.length > 0) && (
               <LayersMap
                 chainLayers={[]}
