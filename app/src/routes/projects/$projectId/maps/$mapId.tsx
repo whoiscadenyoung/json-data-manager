@@ -965,19 +965,6 @@ function PlacementRowBody(
             <Ellipsis className="h-4 w-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            {viewDatasetId !== undefined && (
-              <DropdownMenuItem
-                render={
-                  <Link
-                    params={{ projectId: props.projectId, schemaId: viewDatasetId }}
-                    to="/projects/$projectId/datasets/$schemaId"
-                  />
-                }
-              >
-                <Database className="mr-2 h-4 w-4" />
-                View dataset
-              </DropdownMenuItem>
-            )}
             <DropdownMenuItem
               disabled={props.index === 0 || busy !== undefined}
               onClick={() => {
@@ -1081,6 +1068,19 @@ function PlacementRowBody(
               <X className="mr-2 h-4 w-4" />
               {linked ? "Unlink from project" : "Remove from map"}
             </DropdownMenuItem>
+            {viewDatasetId !== undefined && (
+              <DropdownMenuItem
+                render={
+                  <Link
+                    params={{ projectId: props.projectId, schemaId: viewDatasetId }}
+                    to="/projects/$projectId/datasets/$schemaId"
+                  />
+                }
+              >
+                <Database className="mr-2 h-4 w-4" />
+                View dataset
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
