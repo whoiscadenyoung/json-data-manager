@@ -106,6 +106,7 @@ import { EntryFormPanel } from "./entry-form-panel";
 import { PgBindingCard } from "./pg-binding-card";
 import { PgBindingHistory } from "./pg-binding-history";
 import { PgDatasetExport } from "./pg-dataset-export";
+import { PgDatasetMap } from "./pg-dataset-map";
 import { PgDatasetOverview } from "./pg-dataset-overview";
 import { PgDatasetVisibilityDialog } from "./pg-dataset-visibility-dialog";
 import { SchemaVisualizer } from "./schema-visualizer";
@@ -583,6 +584,8 @@ function PostgresDatasetBody({
           )}
         </div>
       </div>
+
+      {dataset.isGeospatial && dataset.geometryType !== null && <PgDatasetMap dataset={dataset} />}
 
       <Tabs
         value={view}
