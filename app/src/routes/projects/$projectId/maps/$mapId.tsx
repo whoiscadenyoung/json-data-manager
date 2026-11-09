@@ -1,12 +1,6 @@
 import { ConfirmDialog } from "@caden/json-cms/react/ui";
 import { Button } from "@caden/ui/components/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@caden/ui/components/card";
+import { Card, CardContent, CardDescription, CardTitle } from "@caden/ui/components/card";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -44,6 +38,8 @@ import {
   Layers as LayersIcon,
   Link2,
   Loader2,
+  PanelLeftClose,
+  PanelLeftOpen,
   MapPin,
   Pencil,
   Plus,
@@ -292,6 +288,7 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
     ),
     // ---- editor state ----
     [editingMap, setEditingMap] = useState(false),
+    [sidebarOpen, setSidebarOpen] = useState(true),
     [addOpen, setAddOpen] = useState(false),
     [groupOpen, setGroupOpen] = useState(false),
     [linkOpen, setLinkOpen] = useState(false),
@@ -636,7 +633,9 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
       ) : (
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
           {pgFan.loaders}
-          <aside className="flex w-full shrink-0 flex-col gap-4 overflow-y-auto border-b border-border bg-background p-4 md:w-[360px] xl:w-[420px] md:border-r md:border-b-0">
+          <aside
+            className={`${sidebarOpen ? "flex" : "hidden"} w-full shrink-0 flex-col gap-3 overflow-y-auto border-b border-border bg-background p-3 md:w-[320px] xl:w-[360px] md:border-r md:border-b-0`}
+          >
             {layerStyles.panel}
             <PgPlacementsPanel
               childrenLists={childrenLists}
@@ -654,6 +653,27 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
             />
           </aside>
           <div className="relative h-[440px] min-w-0 flex-1 overflow-hidden md:h-auto">
+            <Button
+              aria-expanded={sidebarOpen}
+              aria-label={sidebarOpen ? "Collapse layers sidebar" : "Expand layers sidebar"}
+              className="absolute top-3 right-3 z-20 bg-card/95 shadow-sm backdrop-blur-sm"
+              onClick={() => {
+                setSidebarOpen((open) => !open);
+                // MapLibre sizes to its container: nudge it once the layout settles.
+                globalThis.setTimeout(() => {
+                  globalThis.dispatchEvent(new Event("resize"));
+                }, 50);
+              }}
+              size="icon"
+              title={sidebarOpen ? "Collapse layers sidebar" : "Expand layers sidebar"}
+              variant="outline"
+            >
+              {sidebarOpen ? (
+                <PanelLeftClose className="h-4 w-4" />
+              ) : (
+                <PanelLeftOpen className="h-4 w-4" />
+              )}
+            </Button>
             {(servedGeometries !== undefined || split.tileSources.length > 0) && (
               <LayersMap
                 chainLayers={[]}
@@ -875,9 +895,7 @@ function PlacementRowBody(
               <ChevronDown className="h-3.5 w-3.5" />
             )}
           </button>
-        ) : (
-          <span className="inline-block size-6 shrink-0" />
-        )}
+        ) : null}
         {linked ? (
           <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" />
         ) : isGroup ? (
@@ -894,7 +912,7 @@ function PlacementRowBody(
           }}
           type="button"
         >
-          <p className={`truncate text-sm font-medium ${placement.visible ? "" : "opacity-55"}`}>
+          <p className={`truncate text-sm ${placement.visible ? "" : "opacity-55"}`}>
             {name}
             {linked && version !== null && version !== undefined ? (
               <span className="ml-1 text-xs text-muted-foreground">{version.versionLabel}</span>
@@ -930,42 +948,6 @@ function PlacementRowBody(
         >
           {placement.visible ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
         </Button>
-        <Button
-          aria-label={`Move "${name}" up`}
-          className="size-7"
-          disabled={props.index === 0 || busy !== undefined}
-          onClick={() => {
-            void act(
-              "up",
-              async () => {
-                await mapsStore.movePlacement({ direction: "up", placementId: placement.id });
-              },
-              "",
-            );
-          }}
-          size="icon"
-          variant="ghost"
-        >
-          <ChevronUp className="size-3.5" />
-        </Button>
-        <Button
-          aria-label={`Move "${name}" down`}
-          className="size-7"
-          disabled={props.index === props.placements.length - 1 || busy !== undefined}
-          onClick={() => {
-            void act(
-              "down",
-              async () => {
-                await mapsStore.movePlacement({ direction: "down", placementId: placement.id });
-              },
-              "",
-            );
-          }}
-          size="icon"
-          variant="ghost"
-        >
-          <ChevronDown className="size-3.5" />
-        </Button>
         <DropdownMenu>
           <DropdownMenuTrigger
             render={<Button aria-label={`Actions for "${name}"`} size="icon" variant="ghost" />}
@@ -973,6 +955,36 @@ function PlacementRowBody(
             <Ellipsis className="h-4 w-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              disabled={props.index === 0 || busy !== undefined}
+              onClick={() => {
+                void act(
+                  "up",
+                  async () => {
+                    await mapsStore.movePlacement({ direction: "up", placementId: placement.id });
+                  },
+                  "",
+                );
+              }}
+            >
+              <ChevronUp className="mr-2 h-4 w-4" />
+              Move up
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={props.index === props.placements.length - 1 || busy !== undefined}
+              onClick={() => {
+                void act(
+                  "down",
+                  async () => {
+                    await mapsStore.movePlacement({ direction: "down", placementId: placement.id });
+                  },
+                  "",
+                );
+              }}
+            >
+              <ChevronDown className="mr-2 h-4 w-4" />
+              Move down
+            </DropdownMenuItem>
             {!linked && layer !== undefined && (
               <DropdownMenuItem
                 onClick={() => {
@@ -1091,7 +1103,7 @@ function PgGroupChildren(props: {
               : childLayer.name;
         return (
           <li
-            className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 ${
+            className={`flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-muted/50 ${
               childLayer !== undefined && !childLayer.visible ? "opacity-55" : ""
             }`}
             key={child.id}
@@ -1310,23 +1322,21 @@ function PgAddChildSheet(props: {
 /** The panel shell (the route passes its resolved maps + the shared run/invalidate pair). */
 function PgPlacementsPanel(props: PanelProps) {
   return (
-    <Card className="h-fit">
-      <CardHeader>
-        <CardTitle>Layers ({props.placements.length})</CardTitle>
-        <CardDescription>
-          Draw order, top layer first — groups expand to their children
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <ul className="flex flex-col gap-2">
-          {props.placements.map((placement, index) => (
-            <li className="rounded-md border px-2.5 py-2" key={placement.id}>
-              <PlacementRowBody index={index} placement={placement} {...props} />
-            </li>
-          ))}
-        </ul>
-      </CardContent>
-    </Card>
+    <section aria-label="Layers">
+      <h2
+        className="px-1 pb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase"
+        title="Draw order, top layer first — groups expand to their children"
+      >
+        Layers ({props.placements.length})
+      </h2>
+      <ul className="flex flex-col">
+        {props.placements.map((placement, index) => (
+          <li className="rounded-md px-1 py-1 hover:bg-muted/50" key={placement.id}>
+            <PlacementRowBody index={index} placement={placement} {...props} />
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
