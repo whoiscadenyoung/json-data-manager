@@ -33,6 +33,7 @@ import {
   DB_URL,
   dbUp,
   dropDatasets,
+  dropDatasetsBulk,
   ensureUsers,
   PgSession,
   sqlLit,
@@ -814,7 +815,10 @@ describe.skipIf(!dbUp())("dataset relations (0021, ADR 0020)", () => {
 
       await s().rollback();
     } finally {
-      await dropDatasets(s(), [parks, points]);
+      // Bulk teardown, not dropDatasets: the cascade fires ~100k child-side
+      // RI triggers at this scale (~130 s, measured 2026-11-09) — the whole
+      // point of this test's 120 s budget. See dropDatasetsBulk.
+      await dropDatasetsBulk(s(), [parks, points]);
       await s().expectOk("vacuum analyze public.entries");
       await s().expectOk("vacuum analyze public.geometries");
     }

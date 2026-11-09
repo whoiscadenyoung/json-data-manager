@@ -556,6 +556,36 @@ export async function dropDatasets(session: PgSession, ids: string[]): Promise<v
   }
 }
 
+// Bulk teardown for row-heavy perf fixtures. The plain dropDatasets cascade
+// costs ~1.3 ms PER DELETED ENTRY on the wire-client stacks: each entry row
+// fires the five child-side RI triggers of the FKs referencing entries.id
+// (geometries, entry_references x2, version_entries, binding_entries), so a
+// 20k-entry fixture pays ~100k probes = ~130 s and blows the perf test's
+// 120 s budget on CI (2026-11-09: pg-relations timeouts, main failed the
+// same way 2026-11-07). session_replication_role = replica (the admin
+// session is the stack superuser) skips the RI machinery — measured 15 ms
+// for the same 20k delete. Children are deleted explicitly in FK order so
+// nothing orphans, because replica mode enforces nothing.
+//
+// Contract: fixtures WITHOUT version/reference/binding rows (entryReferences
+// are handled; versionEntries only exist via publish). The plain
+// dropDatasets stays the default for every other suite.
+export async function dropDatasetsBulk(session: PgSession, ids: string[]): Promise<void> {
+  await session.rollbackIfOpen();
+  await session.asAdmin();
+  await session.expectOk("set session_replication_role = replica");
+  try {
+    const idList = ids.map(sqlLit).join(", ");
+    await session.expectOk(`delete from public.geometries where dataset_id in (${idList})`);
+    await session.expectOk(`delete from public.entry_references
+       where source_dataset_id in (${idList}) or target_dataset_id in (${idList})`);
+    await session.expectOk(`delete from public.entries where dataset_id in (${idList})`);
+    await session.expectOk(`delete from public.datasets where id in (${idList})`);
+  } finally {
+    await session.expectOk("reset session_replication_role");
+  }
+}
+
 // Probe the stack once per worker so every test file can `skipIf(!dbUp())`.
 // The same probe resolves the auth.users confirmation column ensureUsers may
 // insert (email_confirmed_at on GoTrue-migrated CLI 3.x stacks, whose
