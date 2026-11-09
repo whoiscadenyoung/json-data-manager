@@ -38,6 +38,8 @@ import { Route as ProjectsProjectIdPublishRouteImport } from './routes/projects/
 import { Route as ProjectsProjectIdSettingsRouteImport } from './routes/projects/$projectId/settings'
 import { Route as ProjectsProjectIdMapsMapIdRouteImport } from './routes/projects/$projectId/maps/$mapId'
 import { Route as ProjectsProjectIdAppsAppIdEditRouteImport } from './routes/projects/$projectId/apps/$appId/edit'
+import { Route as ProjectsProjectIdDatasetsSchemaIdIndexRouteImport } from './routes/projects/$projectId/datasets/$schemaId/index'
+import { Route as ProjectsProjectIdDatasetsSchemaIdEntryIdRouteImport } from './routes/projects/$projectId/datasets/$schemaId/$entryId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -193,6 +195,18 @@ const ProjectsProjectIdAppsAppIdEditRoute =
     path: '/apps/$appId/edit',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
+const ProjectsProjectIdDatasetsSchemaIdIndexRoute =
+  ProjectsProjectIdDatasetsSchemaIdIndexRouteImport.update({
+    id: '/datasets/$schemaId/',
+    path: '/datasets/$schemaId/',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
+const ProjectsProjectIdDatasetsSchemaIdEntryIdRoute =
+  ProjectsProjectIdDatasetsSchemaIdEntryIdRouteImport.update({
+    id: '/datasets/$schemaId/$entryId',
+    path: '/datasets/$schemaId/$entryId',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -224,6 +238,8 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
   '/projects/$projectId/maps/$mapId': typeof ProjectsProjectIdMapsMapIdRoute
   '/projects/$projectId/apps/$appId/edit': typeof ProjectsProjectIdAppsAppIdEditRoute
+  '/projects/$projectId/datasets/$schemaId/$entryId': typeof ProjectsProjectIdDatasetsSchemaIdEntryIdRoute
+  '/projects/$projectId/datasets/$schemaId/': typeof ProjectsProjectIdDatasetsSchemaIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -254,6 +270,8 @@ export interface FileRoutesByTo {
   '/projects/$projectId': typeof ProjectsProjectIdIndexRoute
   '/projects/$projectId/maps/$mapId': typeof ProjectsProjectIdMapsMapIdRoute
   '/projects/$projectId/apps/$appId/edit': typeof ProjectsProjectIdAppsAppIdEditRoute
+  '/projects/$projectId/datasets/$schemaId/$entryId': typeof ProjectsProjectIdDatasetsSchemaIdEntryIdRoute
+  '/projects/$projectId/datasets/$schemaId': typeof ProjectsProjectIdDatasetsSchemaIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -286,6 +304,8 @@ export interface FileRoutesById {
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
   '/projects/$projectId/maps/$mapId': typeof ProjectsProjectIdMapsMapIdRoute
   '/projects/$projectId/apps/$appId/edit': typeof ProjectsProjectIdAppsAppIdEditRoute
+  '/projects/$projectId/datasets/$schemaId/$entryId': typeof ProjectsProjectIdDatasetsSchemaIdEntryIdRoute
+  '/projects/$projectId/datasets/$schemaId/': typeof ProjectsProjectIdDatasetsSchemaIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -319,6 +339,8 @@ export interface FileRouteTypes {
     | '/projects/$projectId/'
     | '/projects/$projectId/maps/$mapId'
     | '/projects/$projectId/apps/$appId/edit'
+    | '/projects/$projectId/datasets/$schemaId/$entryId'
+    | '/projects/$projectId/datasets/$schemaId/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -349,6 +371,8 @@ export interface FileRouteTypes {
     | '/projects/$projectId'
     | '/projects/$projectId/maps/$mapId'
     | '/projects/$projectId/apps/$appId/edit'
+    | '/projects/$projectId/datasets/$schemaId/$entryId'
+    | '/projects/$projectId/datasets/$schemaId'
   id:
     | '__root__'
     | '/'
@@ -380,6 +404,8 @@ export interface FileRouteTypes {
     | '/projects/$projectId/'
     | '/projects/$projectId/maps/$mapId'
     | '/projects/$projectId/apps/$appId/edit'
+    | '/projects/$projectId/datasets/$schemaId/$entryId'
+    | '/projects/$projectId/datasets/$schemaId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -610,6 +636,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdAppsAppIdEditRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
+    '/projects/$projectId/datasets/$schemaId/': {
+      id: '/projects/$projectId/datasets/$schemaId/'
+      path: '/datasets/$schemaId'
+      fullPath: '/projects/$projectId/datasets/$schemaId/'
+      preLoaderRoute: typeof ProjectsProjectIdDatasetsSchemaIdIndexRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/datasets/$schemaId/$entryId': {
+      id: '/projects/$projectId/datasets/$schemaId/$entryId'
+      path: '/datasets/$schemaId/$entryId'
+      fullPath: '/projects/$projectId/datasets/$schemaId/$entryId'
+      preLoaderRoute: typeof ProjectsProjectIdDatasetsSchemaIdEntryIdRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
   }
 }
 
@@ -623,6 +663,8 @@ interface ProjectsProjectIdRouteRouteChildren {
   ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
   ProjectsProjectIdMapsMapIdRoute: typeof ProjectsProjectIdMapsMapIdRoute
   ProjectsProjectIdAppsAppIdEditRoute: typeof ProjectsProjectIdAppsAppIdEditRoute
+  ProjectsProjectIdDatasetsSchemaIdEntryIdRoute: typeof ProjectsProjectIdDatasetsSchemaIdEntryIdRoute
+  ProjectsProjectIdDatasetsSchemaIdIndexRoute: typeof ProjectsProjectIdDatasetsSchemaIdIndexRoute
 }
 
 const ProjectsProjectIdRouteRouteChildren: ProjectsProjectIdRouteRouteChildren =
@@ -636,6 +678,10 @@ const ProjectsProjectIdRouteRouteChildren: ProjectsProjectIdRouteRouteChildren =
     ProjectsProjectIdIndexRoute: ProjectsProjectIdIndexRoute,
     ProjectsProjectIdMapsMapIdRoute: ProjectsProjectIdMapsMapIdRoute,
     ProjectsProjectIdAppsAppIdEditRoute: ProjectsProjectIdAppsAppIdEditRoute,
+    ProjectsProjectIdDatasetsSchemaIdEntryIdRoute:
+      ProjectsProjectIdDatasetsSchemaIdEntryIdRoute,
+    ProjectsProjectIdDatasetsSchemaIdIndexRoute:
+      ProjectsProjectIdDatasetsSchemaIdIndexRoute,
   }
 
 const ProjectsProjectIdRouteRouteWithChildren =

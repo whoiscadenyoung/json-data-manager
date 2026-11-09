@@ -43,3 +43,4 @@ export {
   referencedEntryIds,
 } from "./lib/reference-labels";
 export { uploadChunkBlob, uploadSourceFileBlob } from "./lib/upload";
+export { DatasetProjectContext, useDatasetLinks } from "./lib/dataset-project-context";

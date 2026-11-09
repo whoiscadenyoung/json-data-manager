@@ -152,7 +152,7 @@ export function PgProjectSettings() {
 
 /** The Data → Analysis section (issue #271): the project's datasets with one-click entry to each dataset's Transform / Analyze tabs, and its derived datasets (outputs also appear in the catalog as Derived). */
 export function PgProjectAnalysis() {
-  const { catalog } = useProjectShell(),
+  const { catalog, projectId } = useProjectShell(),
     datasetsQuery = useQuery(datasetsStore.listQueryOptions()),
     derivedQuery = useQuery(derivedStore.summariesQueryOptions()),
     titleOf = (id: string, kind: "dataset" | "derived"): string => {
@@ -185,17 +185,17 @@ export function PgProjectAnalysis() {
               </p>
               <Link
                 className="rounded-md border px-3 py-1 text-sm hover:bg-muted"
-                params={{ schemaId: row.artifact.artifactId }}
+                params={{ projectId, schemaId: row.artifact.artifactId }}
                 search={{ view: "analyze" }}
-                to="/datasets/$schemaId"
+                to="/projects/$projectId/datasets/$schemaId"
               >
                 Analyze
               </Link>
               <Link
                 className="rounded-md border px-3 py-1 text-sm hover:bg-muted"
-                params={{ schemaId: row.artifact.artifactId }}
+                params={{ projectId, schemaId: row.artifact.artifactId }}
                 search={{ view: "transform" }}
-                to="/datasets/$schemaId"
+                to="/projects/$projectId/datasets/$schemaId"
               >
                 Transform
               </Link>

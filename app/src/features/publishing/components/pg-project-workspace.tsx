@@ -440,8 +440,8 @@ function PgCatalogRow({
       {dataset !== undefined ? (
         <Link
           className="flex min-w-0 flex-1 flex-col gap-1.5 py-0"
-          params={{ schemaId: artifact.artifactId }}
-          to="/datasets/$schemaId"
+          params={{ projectId, schemaId: artifact.artifactId }}
+          to="/projects/$projectId/datasets/$schemaId"
         >
           <PgProvenanceChips draft={draft} row={row} />
           <p className="truncate text-sm font-medium">{label}</p>

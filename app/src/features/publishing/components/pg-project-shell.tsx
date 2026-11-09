@@ -13,6 +13,7 @@ import { Link, useNavigate, useRouterState, type LinkProps } from "@tanstack/rea
 import {
   Database,
   FlaskConical,
+  Globe,
   Import,
   LayoutDashboard,
   LayoutGrid,
@@ -34,6 +35,7 @@ import type { VisibilityLevel } from "#/lib/store/visibility";
 import { useSession } from "@/integrations/supabase/provider";
 import { errorMessage } from "@/lib/errors";
 import * as appsStore from "@/lib/store/apps";
+import * as datasetsStore from "@/lib/store/datasets";
 import * as mapsStore from "@/lib/store/maps";
 import { listMineQueryOptions, resolveMyRole, ROLE_LABELS } from "@/lib/store/project-members";
 import * as projectsStore from "@/lib/store/projects";
@@ -171,6 +173,9 @@ function sectionLabel(rest: string, name: string | undefined): string {
   if (rest.startsWith("/apps/")) {
     return name ?? "App";
   }
+  if (rest.startsWith("/datasets/")) {
+    return name ?? "Dataset";
+  }
   const labels: Record<string, string> = {
     "": "Overview",
     "/analysis": "Analysis",
@@ -209,6 +214,11 @@ function PgProjectShellBody({
     myMembershipQuery = useQuery(listMineQueryOptions({ userId })),
     mapsQuery = useQuery({ ...mapsStore.listForProjectQueryOptions({ projectId }) }),
     appsQuery = useQuery({ ...appsStore.listForProjectQueryOptions({ projectId }) }),
+    datasetId = rest.startsWith("/datasets/") ? (rest.split("/")[2] ?? "") : "",
+    datasetQuery = useQuery({
+      ...datasetsStore.getQueryOptions({ datasetId }),
+      enabled: datasetId !== "",
+    }),
     [addOpen, setAddOpen] = useState(false),
     [pressOpen, setPressOpen] = useState(false),
     [pressing, setPressing] = useState(false),
@@ -298,12 +308,16 @@ function PgProjectShellBody({
     ),
     currentMap = maps.find((map) => rest === `/maps/${map.id}`),
     currentApp = apps.find((app) => rest.startsWith(`/apps/${app.id}`)),
+    currentDataset = datasetQuery.data === null ? undefined : datasetQuery.data,
     currentName =
       currentMap === undefined
         ? currentApp === undefined
-          ? undefined
+          ? currentDataset === undefined
+            ? undefined
+            : currentDataset.title
           : currentApp.title
         : currentMap.name,
+    onDataset = datasetId !== "",
     section = sectionLabel(rest, currentName),
     onCatalog = rest === "/catalog" || rest === "/create",
     CreateAppDialog = createAppDialog,
@@ -356,6 +370,18 @@ function PgProjectShellBody({
               {project.title}
             </Link>
             <span className="text-muted-foreground">/</span>
+            {onDataset ? (
+              <>
+                <Link
+                  className="text-muted-foreground hover:text-foreground"
+                  params={{ projectId }}
+                  to="/projects/$projectId/catalog"
+                >
+                  Catalog
+                </Link>
+                <span className="text-muted-foreground">/</span>
+              </>
+            ) : null}
             <span className="max-w-48 truncate font-medium">{section}</span>
           </nav>
           <Badge title={`Your access to this project (${ROLE_LABELS[myRole]}).`} variant="outline">
@@ -385,6 +411,17 @@ function PgProjectShellBody({
                   Import
                 </Link>
               </>
+            ) : null}
+            {currentDataset !== undefined && currentDataset.lifecycle === "published" ? (
+              <Link
+                className="inline-flex h-8 items-center rounded-md border px-3 text-sm hover:bg-muted"
+                params={{ schemaId: currentDataset.id }}
+                title="Open the public catalog version of this dataset"
+                to="/datasets/$schemaId"
+              >
+                <Globe className="mr-1 h-3.5 w-3.5" />
+                Public version
+              </Link>
             ) : null}
             <Link
               aria-label="New dataset"
@@ -462,11 +499,15 @@ function PgProjectShellBody({
                 icon={LayoutGrid}
                 label="Overview"
                 rail={rail}
-                linkProps={{ params: { projectId }, to: "/projects/$projectId" }}
+                linkProps={{
+                  activeOptions: { exact: true },
+                  params: { projectId },
+                  to: "/projects/$projectId",
+                }}
               />
               <NavGroup label="Data" rail={rail}>
                 <NavItem
-                  active={rest === "/catalog"}
+                  active={rest === "/catalog" || onDataset}
                   count={catalog.length}
                   icon={Database}
                   label="Catalog"
