@@ -1,13 +1,30 @@
-# Root CI gate — docs/data-platform-roadmap.md §3 item 0.5: fmt + lint +
-# typecheck + test + build on every PR. The `ci` job carries the PR's single
-# green/red signal; `store` is the Supabase side (stage 0 of the migration,
-# docs/supabase-migration-design.md §12 + ADR 0015): boot supabase/postgres,
-# apply supabase/migrations/*.sql in lexical order, assert PostGIS is live.
+# Root CI gate — docs/data-platform-roadmap.md §3 item 0.5 introduced this
+# file; since 2026-11-09 it is SPLIT BY COST (Actions minutes are
+# budget-limited — see docs/memory/int-test-db-split-ri-teardown.md):
+#
+#   ci    — every PR + main push: the fast gates (dist builds, fmt, lint,
+#           typechecks, the packages' unit suites). No Postgres service, no
+#           app suite, no app build. The PR's green/red signal.
+#   full  — workflow_dispatch (run ONCE, when a PR is completely ready) and
+#           main pushes: the entire pipeline — storage-api boot + migrations
+#           + ALL tests (the app suite's PG int tests need the dedicated
+#           service db) + the app build. Local equivalent, zero minutes:
+#           `scripts/local-gate.sh` (CI-parity throwaway stack, verified
+#           2026-11-09 against this exact step list).
+#   store — every PR + main push: the Supabase migration/PostGIS side
+#           (stage 0 of the migration, docs/supabase-migration-design.md
+#           §12 + ADR 0015); fast (~1 min) and independent.
+#
+# Why the app suite is not in `ci`: it is the single dominant cost (~7 min
+# of tests + ~2 min of service boot against a 2-core runner), and its int
+# files REQUIRE a dedicated db — against any db carrying real app data the
+# count/closure assertions inflate and fail (the live compose db shows 9
+# phantom failures; docs/memory/int-test-db-split-ri-teardown.md).
 #
 # Deliberately out of scope here: deploys, publishing, coverage thresholds.
 # (The nested packages/data-export workflow inherited from its
 # standalone-repo days was removed 2026-09-30 — GitHub never runs workflows
-# in subdirectories; data-export's typecheck and test now run here.)
+# in subdirectories; data-export's typecheck and test run in `ci`/`full`.)
 name: CI
 
 on:
@@ -26,8 +43,132 @@ permissions:
   contents: read
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Fast PR gate — minutes matter: this is the ONLY job PR pushes run.
+  # ---------------------------------------------------------------------------
   ci:
-    name: Format, lint, typecheck, test, build
+    name: Fast checks (fmt, lint, typecheck, package tests)
+    # Dispatch means "run the full gate"; duplicating the fast checks there
+    # would only burn minutes (the same SHA's push run already ran them).
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # Same commit the repo's existing workflow pins.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Bun setup
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          # Pinned to the dev machine's version (`bun --version`); bump it
+          # alongside bun upgrades.
+          bun-version: 1.3.5
+
+      - name: Cache bun install
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # app consumes @caden/json-cms, @caden/data-core, @caden/importers and
+      # @caden/geometry-archive only through their built dist (each package's
+      # exports point at ./dist/...), and every dist is gitignored (root
+      # .gitignore: `dist`) — so the dists must exist before anything resolves
+      # those imports (type-aware lint, app typecheck, the packages' own
+      # tests). data-core and importers build first: json-cms compiles
+      # against their dists. data-export's example typecheck does the same
+      # through its own exports map, and `bun install` does not run workspace
+      # `prepare` scripts, so its dist is rebuilt here too (plain tsc; its
+      # _generated dir is committed). No codegen step: the _generated dirs
+      # are committed, so typecheck does not depend on regenerating.
+      - name: Build workspace dists
+        run: |
+          bun --filter=@caden/data-core run build
+          bun --filter=@caden/importers run build
+          bun --filter=@caden/json-cms run build
+          bun --filter=@caden/geometry-archive run build
+          bun --filter=@caden/data-export run build
+
+      - name: Format check
+        run: bun run fmt:check
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Typecheck (@caden/data-core)
+        run: bun --filter=@caden/data-core run typecheck
+
+      - name: Typecheck (@caden/importers)
+        run: bun --filter=@caden/importers run typecheck
+
+      - name: Typecheck (@caden/json-cms)
+        run: bun --filter=@caden/json-cms run typecheck
+
+      - name: Typecheck (@caden/geometry-archive)
+        run: bun --filter=@caden/geometry-archive run typecheck
+
+      # Source-only package (ADR 0014): no dist, typechecked from src.
+      - name: Typecheck (@caden/ui)
+        run: bun --filter=@caden/ui run typecheck
+
+      - name: Typecheck (@caden/maps)
+        run: bun --filter=@caden/maps run typecheck
+
+      - name: Typecheck (@caden/layer-styles)
+        run: bun --filter=@caden/layer-styles run typecheck
+
+      - name: Typecheck (@caden/analysis)
+        run: bun --filter=@caden/analysis run typecheck
+
+      - name: Typecheck (@caden/data-export)
+        run: bun --filter=@caden/data-export run typecheck
+
+      # app has no typecheck script — bunx tsc --noEmit is the verified command
+      # (docs/memory/local-dev-verification.md).
+      - name: Typecheck (app)
+        run: bunx tsc --noEmit
+        working-directory: app
+
+      # The packages' unit suites are cheap (~2 min total) and need no
+      # Postgres — they stay on every PR. The APP suite is the dominant cost
+      # and needs the dedicated db: it lives in `full` only.
+      - name: Test (@caden/data-core)
+        run: bun --filter=@caden/data-core run test
+
+      - name: Test (@caden/importers)
+        run: bun --filter=@caden/importers run test
+
+      - name: Test (@caden/json-cms)
+        run: bun --filter=@caden/json-cms run test
+
+      - name: Test (@caden/geometry-archive)
+        run: bun --filter=@caden/geometry-archive run test
+
+      - name: Test (@caden/maps)
+        run: bun --filter=@caden/maps run test
+
+      - name: Test (@caden/layer-styles)
+        run: bun --filter=@caden/layer-styles run test
+
+      - name: Test (@caden/analysis)
+        run: bun --filter=@caden/analysis run test
+
+      - name: Test (@caden/data-export)
+        run: bun --filter=@caden/data-export run test
+
+  # ---------------------------------------------------------------------------
+  # Full gate — manual dispatch (once, when a PR is ready) + every main push.
+  # Byte-for-byte the pre-split `ci` job; do not trim steps ad hoc —
+  # scripts/local-gate.sh mirrors THIS list for local verification.
+  # ---------------------------------------------------------------------------
+  full:
+    name: Full gate (migrations, tests, build)
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -56,8 +197,8 @@ jobs:
           --health-retries 10
 
     env:
-      # The app's PG integration tests (*.int.test.ts) connect here (and skip-with-message where the
-      # DB is unreachable); same URL shape as the store job's.
+      # The app's PG integration tests (*.int.test.ts) connect here; same URL
+      # shape as the store job's.
       SUPABASE_DB_URL: postgresql://supabase_admin:postgres@localhost:5432/postgres
 
     steps:
@@ -82,12 +223,8 @@ jobs:
         run: bun install --frozen-lockfile
 
       # The app's PG integration tests (*.int.test.ts) connect to this job's
-      # own postgres service — the store job's env cannot cross jobs, so this
-      # job boots an identical service and applies the same migration set
-      # before `bun --filter=app run test` (design §12: the int tests read
-      # SUPABASE_DB_URL and skip-with-message when unreachable). Without a
-      # reachable DB the files still pass as skips; with it, they run for
-      # real on every PR. Same script as the store job's apply step below.
+      # own postgres service and apply the same migration set before
+      # `bun --filter=app run test`.
       #
       # ORDER (#234/#248 follow-up, the real root cause of the storage RLS
       # flake): storage-api boots BEFORE the migrations apply. The bare
@@ -149,17 +286,6 @@ jobs:
           done
           echo "Applied ${#migrations[@]} migration(s)."
 
-      # app consumes @caden/json-cms, @caden/data-core, @caden/importers and
-      # @caden/geometry-archive only through their built dist (each package's
-      # exports point at ./dist/...), and every dist is gitignored (root
-      # .gitignore: `dist`) — so CI must rebuild them before anything resolves
-      # those imports (type-aware lint, app typecheck). data-core and importers
-      # build first: json-cms compiles against their dists.
-      # data-export's example typecheck does the same through its own exports
-      # map, and `bun install` does not run workspace `prepare` scripts, so its
-      # dist is rebuilt here too (plain tsc; its _generated dir is committed).
-      # No codegen step: app/convex/_generated and the packages' _generated dirs
-      # are committed, so typecheck does not depend on regenerating.
       - name: Build workspace dists
         run: |
           bun --filter=@caden/data-core run build
@@ -250,6 +376,9 @@ jobs:
   # supabase/postgres image.
   store:
     name: Supabase store (migrations + PostGIS)
+    # Same dispatch rule as `ci`: a dispatched `full` boot + applies the same
+    # migration set already.
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 

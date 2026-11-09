@@ -28,3 +28,4 @@ exports
 .zcode/workflow-drafts/
 .zcode/workflow-runs/
 .zcodeignore
+.zcode/plans/

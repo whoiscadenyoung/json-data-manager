@@ -30,11 +30,20 @@ same two tests 2026-11-07 — pre-existing cliff, not a PR regression). Two dura
    locally. On a timed-out test the abandoned teardown stays queued on the shared
    per-file session socket and wedges the NEXT test (the trailing 5 s timeout pattern).
 
-3. **The perf test also has an independent CI-only variance cliff**: even after the
-   teardown fix, CI still burned the old 120 s budget (e5ae15a added per-phase console
-   marks + a 240 s budget for exactly this). All three reds (2026-11-07 ×2, 2026-11-09)
-   were this one test at a silent test-level timeout while every other int file ran
-   60 ms-1.5 s on the same runner; green baseline ~82 s. Prime suspect: the explicit
-   ANALYZE / vacuum-analyze queueing on the tables' ShareUpdateExclusiveLock behind
-   autovacuum (insert thresholds crossed by the 20k seed + ~20 int files of churn
-   before it). The marks will name the blocked phase if it recurs; don't remove them.
+3. **The perf test's CI cliff was the SEED, not the teardown.** The phase marks
+   (added in e5ae15a) settled it on the green run: `seeded 20k +144443ms` on CI
+   (vs 2.3 s locally) with rpc 55 ms, plan instant, bulk teardown 50 ms, vacuum 126 ms.
+   The 20k CTE INSERT costs 40-150 s on the 2-core runner depending on the run
+   (~82 s green pre-fix total; GIN pending-list flush / checkpoint behavior on the
+   slow runner disk suspected). Keep the marks AND the 240 s budget; the budget is
+   the guard, the marks are the diagnosis.
+
+4. **CI is split by cost (Actions minutes are budget-limited; user policy
+   2026-11-09)**: ci.yml `ci` job = fast gates only on every PR (dists, fmt, lint,
+   typechecks, package unit tests — no Postgres, no app suite, no app build);
+   `full` job = the entire pipeline, ONLY on `workflow_dispatch` (once, when a PR
+   is completely ready) + main pushes; `store` on PRs/main. Dispatch recipe:
+   `gh workflow run ci.yml --ref <branch>`. Local equivalent, zero minutes:
+   `scripts/local-gate.sh` (boots the CI-parity throwaway stack, mirrors the full
+   job's step list; verified 2026-11-09). Local single-file int runs may use the
+   compose db via the :54322 override — expect the phantom count failures there.
