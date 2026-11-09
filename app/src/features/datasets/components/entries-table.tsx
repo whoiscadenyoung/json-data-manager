@@ -31,6 +31,7 @@ import { toast } from "sonner";
 
 import type { DatasetEntryRow } from "#/lib/dataset-rows";
 
+import { useDatasetLinks } from "../lib/dataset-project-context";
 import {
   resolveUpdater,
   SERVED_FILTER_OPERATORS,
@@ -81,10 +82,10 @@ function ReferenceLink({
   entryId: string;
   label: string | undefined;
 }) {
+  const links = useDatasetLinks();
   return (
     <Link
-      to="/datasets/$schemaId/$entryId"
-      params={{ entryId, schemaId: targetSchemaId }}
+      {...links.entry(targetSchemaId, entryId)}
       className="text-primary hover:underline"
       onClick={(e) => {
         e.stopPropagation();
@@ -139,19 +140,20 @@ function RowActions({
   /** Present only where the backend serves a single-entry delete (the Postgres store; the Convex wrapper set never exposed one). */
   onDelete?: (entry: Entry) => void;
 }) {
-  const copyAsJson = () => {
-    // The success toast waits for the clipboard write to actually resolve —
-    // firing it first claimed success before (or while) the write could fail
-    // (issue #135, defect 10).
-    void (async () => {
-      try {
-        await navigator.clipboard.writeText(JSON.stringify(entry.data, null, 2));
-        toast.success("Copied entry as JSON.");
-      } catch {
-        toast.error("Could not copy — the browser refused the clipboard write.");
-      }
-    })();
-  };
+  const links = useDatasetLinks(),
+    copyAsJson = () => {
+      // The success toast waits for the clipboard write to actually resolve —
+      // firing it first claimed success before (or while) the write could fail
+      // (issue #135, defect 10).
+      void (async () => {
+        try {
+          await navigator.clipboard.writeText(JSON.stringify(entry.data, null, 2));
+          toast.success("Copied entry as JSON.");
+        } catch {
+          toast.error("Could not copy — the browser refused the clipboard write.");
+        }
+      })();
+    };
 
   return (
     <DropdownMenu>
@@ -159,11 +161,7 @@ function RowActions({
         <MoreHorizontal className="h-3.5 w-3.5" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem
-          render={
-            <Link to="/datasets/$schemaId/$entryId" params={{ entryId: entry._id, schemaId }} />
-          }
-        >
+        <DropdownMenuItem render={<Link {...links.entry(schemaId, entry._id)} />}>
           <Eye className="h-3.5 w-3.5" />
           View Details
         </DropdownMenuItem>

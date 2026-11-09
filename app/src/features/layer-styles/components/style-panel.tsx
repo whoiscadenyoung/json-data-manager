@@ -691,7 +691,10 @@ export function StylePanel({
     tileNote = style !== undefined && rendersFromTiles && hasTileLimitations(style),
     icons: MarkerIcons = { actions, uploadList, uploads };
   return (
-    <Card className="h-fit gap-0 py-0" aria-label={`Style for ${title}`}>
+    <Card
+      className="h-fit gap-0 rounded-none border-0 border-t bg-transparent py-0 shadow-none ring-0"
+      aria-label={`Style for ${title}`}
+    >
       <CardHeader className="border-b py-4">
         <CardTitle className="truncate">Style · {title}</CardTitle>
         <CardDescription>

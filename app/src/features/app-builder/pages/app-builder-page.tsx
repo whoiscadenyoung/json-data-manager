@@ -234,7 +234,15 @@ function BuilderMenu({ app }: { app: AppDoc }) {
   );
 }
 
-function Builder({ app, initialPageId }: { app: AppDoc; initialPageId: string | undefined }) {
+function Builder({
+  app,
+  embedded,
+  initialPageId,
+}: {
+  app: AppDoc;
+  embedded: boolean;
+  initialPageId: string | undefined;
+}) {
   const editor = useAppEditor(app),
     { content, update } = editor,
     [pageId, setPageId] = useState(() => resolvePage(app.pages, initialPageId).id),
@@ -260,15 +268,22 @@ function Builder({ app, initialPageId }: { app: AppDoc; initialPageId: string | 
 
   return (
     <AppDatasetsProvider datasetIds={content.datasetIds}>
-      <div className="flex h-[calc(100vh-3.5rem)] flex-col">
+      <div
+        className={cn(
+          "flex flex-col",
+          embedded ? "h-[calc(100vh-7rem)]" : "h-[calc(100vh-3.5rem)]",
+        )}
+      >
         <div className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-border px-4">
           <div className="flex min-w-0 items-center gap-3">
             <Breadcrumb className="min-w-0">
               <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink render={<Link to="/apps" />}>Apps</BreadcrumbLink>
-                </BreadcrumbItem>
-                {app.projectTitle !== null && (
+                {embedded ? null : (
+                  <BreadcrumbItem>
+                    <BreadcrumbLink render={<Link to="/apps" />}>Apps</BreadcrumbLink>
+                  </BreadcrumbItem>
+                )}
+                {!embedded && app.projectTitle !== null && (
                   <>
                     <BreadcrumbSeparator />
                     <BreadcrumbItem>
@@ -282,7 +297,7 @@ function Builder({ app, initialPageId }: { app: AppDoc; initialPageId: string | 
                     </BreadcrumbItem>
                   </>
                 )}
-                <BreadcrumbSeparator />
+                {embedded ? null : <BreadcrumbSeparator />}
                 <BreadcrumbItem className="min-w-0">
                   <BreadcrumbPage className="truncate">
                     <h1 className="truncate font-semibold">{app.title}</h1>
@@ -325,6 +340,19 @@ function Builder({ app, initialPageId }: { app: AppDoc; initialPageId: string | 
           </div>
         </div>
         <div className="flex min-h-0 flex-1">
+          <aside className="w-[340px] shrink-0 overflow-y-auto border-r border-border bg-background p-4">
+            <BuilderPanel
+              tab={tab}
+              onTabChange={setTab}
+              content={content}
+              page={page}
+              selected={selected}
+              projectId={app.projectId}
+              onUpdate={update}
+              onSelect={setSelectedId}
+              onSelectPage={showPage}
+            />
+          </aside>
           <div className="flex min-w-0 flex-1 flex-col bg-muted/40">
             <div className="flex shrink-0 items-center border-b border-border bg-background px-4 py-1.5">
               <PageTabs pages={content.pages} activeId={page.id} onChange={showPage}>
@@ -401,19 +429,6 @@ function Builder({ app, initialPageId }: { app: AppDoc; initialPageId: string | 
               </div>
             </div>
           </div>
-          <aside className="w-[340px] shrink-0 border-l border-border bg-background p-4">
-            <BuilderPanel
-              tab={tab}
-              onTabChange={setTab}
-              content={content}
-              page={page}
-              selected={selected}
-              projectId={app.projectId}
-              onUpdate={update}
-              onSelect={setSelectedId}
-              onSelectPage={showPage}
-            />
-          </aside>
         </div>
         <ShareDialog
           appId={app.id}
@@ -430,9 +445,12 @@ function Builder({ app, initialPageId }: { app: AppDoc; initialPageId: string | 
 /** The builder (/apps/$appId/edit) — an editor of the app's project; anyone else is sent to the viewer. */
 export function AppBuilderPage({
   appId,
+  embedded = false,
   initialPageId,
 }: {
   appId: string;
+  /** Rendered inside the project shell (issue #271): sized under the shell toolbar, breadcrumb trimmed to the app title. */
+  embedded?: boolean;
   initialPageId: string | undefined;
 }) {
   const row = useQuery(appsStore.getQueryOptions({ appId })),
@@ -495,5 +513,5 @@ export function AppBuilderPage({
     );
   }
   // Keyed by id: the editor's working copy initializes once per app.
-  return <Builder key={app.id} app={app} initialPageId={initialPageId} />;
+  return <Builder key={app.id} app={app} embedded={embedded} initialPageId={initialPageId} />;
 }

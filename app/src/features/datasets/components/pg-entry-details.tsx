@@ -26,6 +26,7 @@ import * as entriesStore from "@/lib/store/entries";
 import * as geometriesStore from "@/lib/store/geometries";
 import * as referencesStore from "@/lib/store/references";
 
+import { useDatasetLinks } from "../lib/dataset-project-context";
 import { useSplitReferenceLabels } from "../lib/pg-reference-labels";
 import { isRecord, referencedEntryIds } from "../lib/reference-labels";
 import { GeometryCard } from "./geometry-card";
@@ -41,6 +42,7 @@ import { GeometryCard } from "./geometry-card";
 
 /** The same card a null read gets — the denial fallback too (RLS: an invisible row reads as missing). */
 function PgEntryNotFoundCard() {
+  const links = useDatasetLinks();
   return (
     <Card className="text-center py-12">
       <CardContent className="pt-6">
@@ -48,7 +50,7 @@ function PgEntryNotFoundCard() {
         <CardDescription className="mb-4">
           The entry you're looking for doesn't exist or has been deleted.
         </CardDescription>
-        <Link to="/datasets" className="text-primary hover:underline">
+        <Link {...links.home} className="text-primary hover:underline">
           Back to Datasets
         </Link>
       </CardContent>
@@ -136,6 +138,7 @@ function PgReferenceLinks({
   targetIds: string[];
   labels: Map<string, string>;
 }) {
+  const links = useDatasetLinks();
   if (targetIds.length === 0) {
     return <span className="text-muted-foreground/50">—</span>;
   }
@@ -144,8 +147,7 @@ function PgReferenceLinks({
       {targetIds.map((targetId) => (
         <Link
           key={targetId}
-          to="/datasets/$schemaId/$entryId"
-          params={{ entryId: targetId, schemaId: field.meta.datasetId }}
+          {...links.entry(field.meta.datasetId, targetId)}
           className="text-primary hover:underline"
         >
           {labels.get(targetId) ?? targetId}
@@ -163,6 +165,7 @@ function ReferencedByCard({
   referencing: referencesStore.ReferencingEntryRow[] | undefined;
   titlesByDatasetId: Map<string, string>;
 }) {
+  const links = useDatasetLinks();
   if (referencing === undefined || referencing.length === 0) {
     return null;
   }
@@ -181,8 +184,7 @@ function ReferencedByCard({
               className="flex flex-wrap items-baseline gap-x-2 text-sm"
             >
               <Link
-                to="/datasets/$schemaId/$entryId"
-                params={{ entryId: ref.sourceEntryId, schemaId: ref.sourceDatasetId }}
+                {...links.entry(ref.sourceDatasetId, ref.sourceEntryId)}
                 className="text-primary hover:underline"
               >
                 {datasetTitle === undefined ? "Entry" : datasetTitle} · {ref.sourceEntryId}
@@ -209,7 +211,8 @@ export function PostgresEntryDetailsPage({
   entryId: string;
   schemaId: string;
 }) {
-  const entryQuery = useQuery(entriesStore.getQueryOptions({ entryId })),
+  const links = useDatasetLinks(),
+    entryQuery = useQuery(entriesStore.getQueryOptions({ entryId })),
     geometryQuery = useQuery(geometriesStore.getByEntryQueryOptions({ entryId })),
     datasetQuery = useQuery(datasetsStore.getQueryOptions({ datasetId: schemaId })),
     dataset = datasetQuery.data,
@@ -276,27 +279,28 @@ export function PostgresEntryDetailsPage({
   return (
     <div className="max-w-6xl mx-auto py-8 px-4 sm:px-0">
       <div className="mb-8">
-        <Breadcrumb className="mb-2">
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink render={<Link to="/datasets" />}>Datasets</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink render={<Link to="/datasets/$schemaId" params={{ schemaId }} />}>
-                {dataset.title}
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>Entry Details</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
+        {links.projectId === null && (
+          <Breadcrumb className="mb-2">
+            <BreadcrumbList>
+              <BreadcrumbItem>
+                <BreadcrumbLink render={<Link to="/datasets" />}>Datasets</BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbLink render={<Link to="/datasets/$schemaId" params={{ schemaId }} />}>
+                  {dataset.title}
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbPage>Entry Details</BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
+        )}
         <div className="flex items-center gap-4 mb-4">
           <Link
-            to="/datasets/$schemaId"
-            params={{ schemaId }}
+            {...links.dataset(schemaId)}
             className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm hover:bg-muted"
           >
             <ArrowLeft className="h-4 w-4 mr-2" />

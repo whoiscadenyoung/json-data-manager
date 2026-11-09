@@ -1,6 +1,13 @@
 // Public API of the publishing feature (ADR 0014). Code outside `features/publishing/`
 // imports from here, never from its subfolders.
-export { PgProjectWorkspace } from "./components/pg-project-workspace";
+export { PgProjectAnalysis, PgProjectSettings } from "./components/pg-project-sections";
+export { PgProjectShell } from "./components/pg-project-shell";
+export {
+  PgProjectCatalog,
+  PgProjectMembers,
+  PgProjectOverview,
+  PgProjectPublish,
+} from "./components/pg-project-workspace";
 export { PgProjectsBrowser } from "./components/pg-projects-browser";
 export { PgPublishBundleDialog } from "./components/pg-publish-bundle-dialog";
 export { PgPublishDialog } from "./components/pg-publish-dialog";

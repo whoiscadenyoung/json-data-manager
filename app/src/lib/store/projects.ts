@@ -108,6 +108,25 @@ export function getQueryOptions(args: { projectId: string }, options?: StoreOpti
   });
 }
 
+/** The project that OWNS an artifact (the in-project create/import binds an owned draft at birth), or null — a dataset opens inside that project's shell (issue #271). */
+export function ownerOfArtifactQueryOptions(args: { artifactId: string }, options?: StoreOptions) {
+  return queryOptions({
+    queryKey: ["pg:projects", "ownerOf", args],
+    queryFn: async () => {
+      const rows = await queryRows<{ projectId: string }>(
+        clientOf(options)
+          .from("project_artifacts")
+          .select("projectId:project_id")
+          .eq("artifact_id", args.artifactId)
+          .eq("role", "owned")
+          .limit(1),
+      );
+      const first = rows[0];
+      return first === undefined ? null : first.projectId;
+    },
+  });
+}
+
 /** One project's membership rows — the workspace read. */
 export function listArtifactsQueryOptions(args: { projectId: string }, options?: StoreOptions) {
   return queryOptions({

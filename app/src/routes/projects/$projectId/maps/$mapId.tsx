@@ -1,12 +1,6 @@
 import { ConfirmDialog } from "@caden/json-cms/react/ui";
 import { Button } from "@caden/ui/components/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@caden/ui/components/card";
+import { Card, CardContent, CardDescription, CardTitle } from "@caden/ui/components/card";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,6 +29,7 @@ import { useQuery as useStoreQuery } from "@tanstack/react-query";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   ChevronDown,
+  Database,
   ChevronUp,
   Ellipsis,
   Eye,
@@ -44,6 +39,8 @@ import {
   Layers as LayersIcon,
   Link2,
   Loader2,
+  PanelLeftClose,
+  PanelLeftOpen,
   MapPin,
   Pencil,
   Plus,
@@ -68,7 +65,7 @@ import {
 import { isPostgresDatasetId } from "#/lib/dataset-source";
 import { errorMessage } from "#/lib/errors";
 import type { DatasetSummaryRow } from "#/lib/store/datasets";
-import { listSummariesQueryOptions } from "#/lib/store/datasets";
+import { listDraftSummariesQueryOptions, listSummariesQueryOptions } from "#/lib/store/datasets";
 import * as derivedStore from "#/lib/store/derived";
 import * as layersStore from "#/lib/store/layers";
 import type { LayerRow } from "#/lib/store/layers";
@@ -192,6 +189,8 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
     placementsQuery = useStoreQuery(mapsStore.listPlacementsQueryOptions({ mapId })),
     projectLayersQuery = useQuery({ ...layersStore.listForProjectQueryOptions({ projectId }) }),
     pgSummaries = useStoreQuery(listSummariesQueryOptions()),
+    // Owned drafts (the project's in-flight datasets) carry titles too — the add-dataset picker names them.
+    pgDraftSummaries = useStoreQuery(listDraftSummariesQueryOptions()),
     pgDerivedRows = useStoreQuery(derivedStore.summariesQueryOptions()),
     linkableVersionsQuery = useQuery({ ...layersStore.listLinkableVersionsQueryOptions() }),
     projectDatasetsQuery = useQuery({
@@ -271,15 +270,18 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
       pgDerivedRows.data === undefined
         ? undefined
         : pgDerivedRows.data.map(pgDerivedToDerivedSummary),
+    // Published + the project's owned drafts: a project map renders its in-flight datasets too.
+    allSummaries =
+      pgSummaries.data === undefined || pgDraftSummaries.data === undefined
+        ? undefined
+        : [...pgSummaries.data, ...pgDraftSummaries.data],
     datasetsDocs =
-      pgSummaries.data === undefined ? undefined : pgSummaries.data.map(pgSummaryToDatasetSummary),
+      allSummaries === undefined ? undefined : allSummaries.map(pgSummaryToDatasetSummary),
     renderableDerived =
       derivedSummaries === undefined || datasetsDocs === undefined
         ? undefined
         : renderTargetsForDerivedLayers(derivedSummaries, datasetsDocs),
-    datasetTitleById = new globalThis.Map(
-      (pgSummaries.data ?? []).map((row) => [row.id, row.title]),
-    ),
+    datasetTitleById = new globalThis.Map((allSummaries ?? []).map((row) => [row.id, row.title])),
     derivedTitleById = new globalThis.Map(
       // The Convex doc's branded id flattens to its string value (the PG
       // ids the editor resolves are plain strings).
@@ -287,6 +289,7 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
     ),
     // ---- editor state ----
     [editingMap, setEditingMap] = useState(false),
+    [sidebarOpen, setSidebarOpen] = useState(true),
     [addOpen, setAddOpen] = useState(false),
     [groupOpen, setGroupOpen] = useState(false),
     [linkOpen, setLinkOpen] = useState(false),
@@ -428,7 +431,7 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
       schemaIds.map((schemaId, index) => [schemaId, PALETTE[index % PALETTE.length] ?? "#3b82f6"]),
     ),
     mapDatasets = (datasetsDocs ?? []).filter((dataset) => schemaIds.includes(dataset._id)),
-    pgDecisionRows: DatasetSummaryRow[] = (pgSummaries.data ?? []).filter(
+    pgDecisionRows: DatasetSummaryRow[] = (allSummaries ?? []).filter(
       (row) => schemaIds.includes(row.id) && row.isGeospatial && row.geometryType !== null,
     ),
     decisions = useTileArchiveSources(pgDecisionRows),
@@ -493,7 +496,7 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
     map.data === undefined ||
     placementsQuery.data === undefined ||
     projectLayersQuery.data === undefined ||
-    pgSummaries.data === undefined ||
+    allSummaries === undefined ||
     pgDerivedRows.data === undefined ||
     renderableDerived === undefined ||
     datasetsDocs === undefined
@@ -544,24 +547,15 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
     );
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-0">
-      <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
+    <div className="flex min-h-[480px] flex-col md:h-[calc(100vh-7rem)]">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-2">
         <div>
-          <div className="mb-2 flex items-center gap-2 text-sm text-muted-foreground">
-            {mapData.project !== null && (
-              <Link className="hover:underline" params={{ projectId }} to="/projects/$projectId">
-                {mapData.project.title}
-              </Link>
-            )}
-            <span>/</span>
-            <span>Maps</span>
-          </div>
-          <h1 className="flex items-center gap-2 text-3xl font-bold text-primary">
+          <h1 className="flex items-center gap-2 text-xl font-bold text-primary">
             <LayersIcon className="h-6 w-6" />
             {mapData.name}
           </h1>
           {mapData.description !== null && (
-            <p className="mt-2 text-lg text-muted-foreground">{mapData.description}</p>
+            <p className="text-sm text-muted-foreground">{mapData.description}</p>
           )}
         </div>
         <div className="flex flex-wrap gap-2">
@@ -613,32 +607,74 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
       </div>
 
       {!hasPlacements ? (
-        <Empty className="min-h-80 border">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <LayersIcon />
-            </EmptyMedia>
-            <EmptyTitle>No layers yet</EmptyTitle>
-            <EmptyDescription>
-              Add a project dataset — an owned layer is created for it in one click — or link a
-              published layer from another project. Nothing is copied.
-            </EmptyDescription>
-          </EmptyHeader>
-          <EmptyContent>
-            <Button
-              onClick={() => {
-                setAddOpen(true);
-              }}
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              Add your first dataset
-            </Button>
-          </EmptyContent>
-        </Empty>
+        <div className="p-6">
+          <Empty className="min-h-80 border">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <LayersIcon />
+              </EmptyMedia>
+              <EmptyTitle>No layers yet</EmptyTitle>
+              <EmptyDescription>
+                Add a project dataset — an owned layer is created for it in one click — or link a
+                published layer from another project. Nothing is copied.
+              </EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent>
+              <Button
+                onClick={() => {
+                  setAddOpen(true);
+                }}
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Add your first dataset
+              </Button>
+            </EmptyContent>
+          </Empty>
+        </div>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
           {pgFan.loaders}
-          <div className="relative h-[440px] w-full overflow-hidden rounded-lg border border-border lg:h-[640px]">
+          <aside
+            className={`${sidebarOpen ? "flex" : "hidden"} w-full shrink-0 flex-col gap-3 overflow-y-auto border-b border-border bg-background p-3 md:w-[320px] xl:w-[360px] md:border-r md:border-b-0`}
+          >
+            {layerStyles.panel}
+            <PgPlacementsPanel
+              childrenLists={childrenLists}
+              collapsedGroups={collapsedGroups}
+              invalidate={invalidate}
+              layersById={layersById}
+              memberships={memberships}
+              onAddChild={setChildAddGroupId}
+              onRemove={setPendingRemove}
+              placements={placements}
+              projectId={projectId}
+              run={run}
+              toggleCollapsed={toggleCollapsed}
+              versionsById={versionsById}
+            />
+          </aside>
+          <div className="relative h-[440px] min-w-0 flex-1 overflow-hidden md:h-auto">
+            <Button
+              aria-expanded={sidebarOpen}
+              aria-label={sidebarOpen ? "Collapse layers sidebar" : "Expand layers sidebar"}
+              className="absolute top-3 left-3 z-20 bg-card/95 shadow-sm backdrop-blur-sm"
+              onClick={() => {
+                setSidebarOpen((open) => !open);
+                // MapLibre sizes to its container: nudge it once the layout settles.
+                globalThis.setTimeout(() => {
+                  globalThis.dispatchEvent(new Event("resize"));
+                }, 50);
+              }}
+              size="icon"
+              title={sidebarOpen ? "Collapse layers sidebar" : "Expand layers sidebar"}
+              variant="outline"
+            >
+              {sidebarOpen ? (
+                <PanelLeftClose className="h-4 w-4" />
+              ) : (
+                <PanelLeftOpen className="h-4 w-4" />
+              )}
+            </Button>
             {(servedGeometries !== undefined || split.tileSources.length > 0) && (
               <LayersMap
                 chainLayers={[]}
@@ -671,23 +707,6 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
                 Loading features…
               </div>
             )}
-          </div>
-          <div className="flex min-w-0 flex-col gap-4">
-            {layerStyles.panel}
-            <PgPlacementsPanel
-              childrenLists={childrenLists}
-              collapsedGroups={collapsedGroups}
-              invalidate={invalidate}
-              layersById={layersById}
-              memberships={memberships}
-              onAddChild={setChildAddGroupId}
-              onRemove={setPendingRemove}
-              placements={placements}
-              projectId={projectId}
-              run={run}
-              toggleCollapsed={toggleCollapsed}
-              versionsById={versionsById}
-            />
           </div>
           {layerStyles.loaders}
         </div>
@@ -851,6 +870,15 @@ function PlacementRowBody(
     isGroup = layer !== undefined && layer.kind === "group",
     expanded = isGroup && !props.collapsedGroups.has(placement.id),
     needsAttention = layer === undefined ? null : layer.needsAttention,
+    // A data layer styles one project dataset — "View dataset" opens it in the shell.
+    datasetMember =
+      layer === undefined || layer.datasetMemberId === null
+        ? undefined
+        : props.memberships.get(layer.datasetMemberId),
+    viewDatasetId =
+      datasetMember !== undefined && datasetMember.artifactKind === "dataset"
+        ? datasetMember.artifactId
+        : undefined,
     [busy, setBusy] = useState<string | undefined>(),
     act = async (action: string, job: () => Promise<unknown>, success: string): Promise<void> => {
       setBusy(action);
@@ -877,9 +905,7 @@ function PlacementRowBody(
               <ChevronDown className="h-3.5 w-3.5" />
             )}
           </button>
-        ) : (
-          <span className="inline-block size-6 shrink-0" />
-        )}
+        ) : null}
         {linked ? (
           <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" />
         ) : isGroup ? (
@@ -896,7 +922,7 @@ function PlacementRowBody(
           }}
           type="button"
         >
-          <p className={`truncate text-sm font-medium ${placement.visible ? "" : "opacity-55"}`}>
+          <p className={`truncate text-sm ${placement.visible ? "" : "opacity-55"}`}>
             {name}
             {linked && version !== null && version !== undefined ? (
               <span className="ml-1 text-xs text-muted-foreground">{version.versionLabel}</span>
@@ -932,42 +958,6 @@ function PlacementRowBody(
         >
           {placement.visible ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
         </Button>
-        <Button
-          aria-label={`Move "${name}" up`}
-          className="size-7"
-          disabled={props.index === 0 || busy !== undefined}
-          onClick={() => {
-            void act(
-              "up",
-              async () => {
-                await mapsStore.movePlacement({ direction: "up", placementId: placement.id });
-              },
-              "",
-            );
-          }}
-          size="icon"
-          variant="ghost"
-        >
-          <ChevronUp className="size-3.5" />
-        </Button>
-        <Button
-          aria-label={`Move "${name}" down`}
-          className="size-7"
-          disabled={props.index === props.placements.length - 1 || busy !== undefined}
-          onClick={() => {
-            void act(
-              "down",
-              async () => {
-                await mapsStore.movePlacement({ direction: "down", placementId: placement.id });
-              },
-              "",
-            );
-          }}
-          size="icon"
-          variant="ghost"
-        >
-          <ChevronDown className="size-3.5" />
-        </Button>
         <DropdownMenu>
           <DropdownMenuTrigger
             render={<Button aria-label={`Actions for "${name}"`} size="icon" variant="ghost" />}
@@ -975,6 +965,36 @@ function PlacementRowBody(
             <Ellipsis className="h-4 w-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              disabled={props.index === 0 || busy !== undefined}
+              onClick={() => {
+                void act(
+                  "up",
+                  async () => {
+                    await mapsStore.movePlacement({ direction: "up", placementId: placement.id });
+                  },
+                  "",
+                );
+              }}
+            >
+              <ChevronUp className="mr-2 h-4 w-4" />
+              Move up
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={props.index === props.placements.length - 1 || busy !== undefined}
+              onClick={() => {
+                void act(
+                  "down",
+                  async () => {
+                    await mapsStore.movePlacement({ direction: "down", placementId: placement.id });
+                  },
+                  "",
+                );
+              }}
+            >
+              <ChevronDown className="mr-2 h-4 w-4" />
+              Move down
+            </DropdownMenuItem>
             {!linked && layer !== undefined && (
               <DropdownMenuItem
                 onClick={() => {
@@ -1048,6 +1068,19 @@ function PlacementRowBody(
               <X className="mr-2 h-4 w-4" />
               {linked ? "Unlink from project" : "Remove from map"}
             </DropdownMenuItem>
+            {viewDatasetId !== undefined && (
+              <DropdownMenuItem
+                render={
+                  <Link
+                    params={{ projectId: props.projectId, schemaId: viewDatasetId }}
+                    to="/projects/$projectId/datasets/$schemaId"
+                  />
+                }
+              >
+                <Database className="mr-2 h-4 w-4" />
+                View dataset
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -1093,7 +1126,7 @@ function PgGroupChildren(props: {
               : childLayer.name;
         return (
           <li
-            className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 ${
+            className={`flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-muted/50 ${
               childLayer !== undefined && !childLayer.visible ? "opacity-55" : ""
             }`}
             key={child.id}
@@ -1312,23 +1345,21 @@ function PgAddChildSheet(props: {
 /** The panel shell (the route passes its resolved maps + the shared run/invalidate pair). */
 function PgPlacementsPanel(props: PanelProps) {
   return (
-    <Card className="h-fit">
-      <CardHeader>
-        <CardTitle>Layers ({props.placements.length})</CardTitle>
-        <CardDescription>
-          Draw order, top layer first — groups expand to their children
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <ul className="flex flex-col gap-2">
-          {props.placements.map((placement, index) => (
-            <li className="rounded-md border px-2.5 py-2" key={placement.id}>
-              <PlacementRowBody index={index} placement={placement} {...props} />
-            </li>
-          ))}
-        </ul>
-      </CardContent>
-    </Card>
+    <section aria-label="Layers">
+      <h2
+        className="px-1 pb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase"
+        title="Draw order, top layer first — groups expand to their children"
+      >
+        Layers ({props.placements.length})
+      </h2>
+      <ul className="flex flex-col">
+        {props.placements.map((placement, index) => (
+          <li className="rounded-md px-1 py-1 hover:bg-muted/50" key={placement.id}>
+            <PlacementRowBody index={index} placement={placement} {...props} />
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

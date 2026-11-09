@@ -281,16 +281,14 @@ function MemberRow({
   );
 }
 
-/** The members dialog itself (see the module comment). */
-export function PgProjectMembersDialog({
+/** The members surface (the dialog's body, also the Members section page — issue #271): invite form + member rows with live updates while `isOpen`. */
+export function PgProjectMembersPanel({
   isOpen,
   myRole,
-  onOpenChange,
   project,
 }: {
   isOpen: boolean;
   myRole: ProjectRole;
-  onOpenChange: (open: boolean) => void;
   project: ProjectRow;
 }) {
   const queryClient = useQueryClient(),
@@ -308,53 +306,76 @@ export function PgProjectMembersDialog({
       void queryClient.invalidateQueries({ queryKey: ["pg:project-members"] });
       void queryClient.invalidateQueries({ queryKey: ["pg:projects"] });
     };
-  // One project channel while the dialog is open (the layer's per-surface
-  // granularity): membership changes from co-owners arrive live.
+  // One project channel while open (the layer's per-surface granularity):
+  // membership changes from co-owners arrive live.
   useEffect(() => {
     if (!isOpen) {
       return undefined;
     }
     return attachProjectRealtime(sharedClient(), project.id, invalidate);
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- the channel rides the open project only; invalidate is stable per dialog instance.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- the channel rides the open project only; invalidate is stable per instance.
   }, [isOpen, project.id]);
   const members = membersQuery.data;
+  return (
+    <>
+      <div className="mb-3">
+        <h2 className="flex items-center gap-2 text-lg font-semibold">
+          <Users className="h-4 w-4" />
+          Members
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          {canManage
+            ? "Invite teammates and manage their access — owners manage, editors work, viewers read."
+            : `You have ${ROLE_LABELS[myRole]} access — member management is owner-only.`}
+        </p>
+      </div>
+      <div className="flex flex-col gap-3">
+        {canManage ? <InviteForm onInvited={invalidate} projectId={project.id} /> : null}
+        {members === undefined ? (
+          <div className="flex min-h-20 items-center justify-center">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : members.length === 0 ? (
+          <p className="rounded-lg border px-4 py-3 text-center text-sm text-muted-foreground">
+            No membership rows are visible — refresh to re-sync.
+          </p>
+        ) : (
+          members.map((member) => (
+            <MemberRow
+              canManage={canManage}
+              email={session !== null && member.userId === session.user.id ? selfEmail : null}
+              key={member.id}
+              member={member}
+              onRemoved={invalidate}
+              project={project}
+            />
+          ))
+        )}
+      </div>
+    </>
+  );
+}
+
+/** The members dialog (kept for callers wanting a modal). */
+export function PgProjectMembersDialog({
+  isOpen,
+  myRole,
+  onOpenChange,
+  project,
+}: {
+  isOpen: boolean;
+  myRole: ProjectRole;
+  onOpenChange: (open: boolean) => void;
+  project: ProjectRow;
+}) {
   return (
     <Dialog onOpenChange={onOpenChange} open={isOpen}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Users className="h-4 w-4" />
-            Members
-          </DialogTitle>
-          <DialogDescription>
-            {canManage
-              ? "Invite teammates and manage their access — owners manage, editors work, viewers read."
-              : `You have ${ROLE_LABELS[myRole]} access — member management is owner-only.`}
-          </DialogDescription>
+          <DialogTitle className="sr-only">Members</DialogTitle>
+          <DialogDescription className="sr-only">Project members and roles.</DialogDescription>
         </DialogHeader>
-        <div className="flex flex-col gap-3">
-          {canManage ? <InviteForm onInvited={invalidate} projectId={project.id} /> : null}
-          {members === undefined ? (
-            <div className="flex min-h-20 items-center justify-center">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-            </div>
-          ) : members.length === 0 ? (
-            <p className="rounded-lg border px-4 py-3 text-center text-sm text-muted-foreground">
-              No membership rows are visible — refresh to re-sync.
-            </p>
-          ) : (
-            members.map((member) => (
-              <MemberRow
-                canManage={canManage}
-                email={session !== null && member.userId === session.user.id ? selfEmail : null}
-                key={member.id}
-                member={member}
-                onRemoved={invalidate}
-                project={project}
-              />
-            ))
-          )}
-        </div>
+        <PgProjectMembersPanel isOpen={isOpen} myRole={myRole} project={project} />
       </DialogContent>
     </Dialog>
   );

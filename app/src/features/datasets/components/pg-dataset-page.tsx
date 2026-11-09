@@ -88,6 +88,7 @@ import type { EntryRow } from "@/lib/store/entries";
 import * as geometriesStore from "@/lib/store/geometries";
 import * as groupsStore from "@/lib/store/groups";
 
+import { useDatasetLinks } from "../lib/dataset-project-context";
 import { isLockedForViewer, LOCKED_DATASET_HINT } from "../lib/edit-policy";
 import type { JsonSchemaNode } from "../lib/json-schema";
 import { declaredPropertyTypes, isSchemaNode } from "../lib/json-schema";
@@ -105,6 +106,7 @@ import { EntryFormPanel } from "./entry-form-panel";
 import { PgBindingCard } from "./pg-binding-card";
 import { PgBindingHistory } from "./pg-binding-history";
 import { PgDatasetExport } from "./pg-dataset-export";
+import { PgDatasetMap } from "./pg-dataset-map";
 import { PgDatasetOverview } from "./pg-dataset-overview";
 import { PgDatasetVisibilityDialog } from "./pg-dataset-visibility-dialog";
 import { SchemaVisualizer } from "./schema-visualizer";
@@ -163,6 +165,7 @@ function tableRowOf(row: EntryRow): DatasetEntryRow {
 
 /** The same card a null read gets — the RLS denial fallback too (an invisible dataset reads as missing). */
 function PgDatasetNotFoundCard() {
+  const links = useDatasetLinks();
   return (
     <Card className="text-center py-12">
       <CardContent className="pt-6">
@@ -170,7 +173,7 @@ function PgDatasetNotFoundCard() {
         <CardDescription className="mb-4">
           The dataset you're looking for doesn't exist or has been deleted.
         </CardDescription>
-        <Link className="text-primary hover:underline" to="/datasets">
+        <Link className="text-primary hover:underline" {...links.home}>
           Back to Datasets
         </Link>
       </CardContent>
@@ -290,6 +293,7 @@ function PostgresDatasetBody({
   search: PgDatasetPageSearch;
   onPatchSearch: (patch: Partial<PgDatasetPageSearch>) => void;
 }) {
+  const links = useDatasetLinks();
   const queryClient = useQueryClient(),
     { session } = useSession(),
     datasetQuery = useQuery(datasetsStore.getQueryOptions({ datasetId: schemaId })),
@@ -434,34 +438,36 @@ function PostgresDatasetBody({
     <div className="max-w-4xl mx-auto py-8 px-4 sm:px-0">
       <div className="flex justify-between items-start mb-8">
         <div>
-          <Breadcrumb className="mb-2">
-            <BreadcrumbList>
-              <BreadcrumbItem>
-                <BreadcrumbLink render={<Link to="/datasets" />}>Datasets</BreadcrumbLink>
-              </BreadcrumbItem>
-              {/* The group crumb mirrors the Convex page's trail (Datasets /
+          {links.projectId === null && (
+            <Breadcrumb className="mb-2">
+              <BreadcrumbList>
+                <BreadcrumbItem>
+                  <BreadcrumbLink render={<Link to="/datasets" />}>Datasets</BreadcrumbLink>
+                </BreadcrumbItem>
+                {/* The group crumb mirrors the Convex page's trail (Datasets /
                   {group} / {dataset}); a dangling groupId renders no crumb
                   rather than a dead link. `null` = skipped. */}
-              {groupForBreadcrumb !== null && groupForBreadcrumb !== undefined && (
-                <>
-                  <BreadcrumbSeparator />
-                  <BreadcrumbItem>
-                    <BreadcrumbLink
-                      render={
-                        <Link to="/groups/$groupId" params={{ groupId: groupForBreadcrumb.id }} />
-                      }
-                    >
-                      {groupForBreadcrumb.name}
-                    </BreadcrumbLink>
-                  </BreadcrumbItem>
-                </>
-              )}
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage>{dataset.title}</BreadcrumbPage>
-              </BreadcrumbItem>
-            </BreadcrumbList>
-          </Breadcrumb>
+                {groupForBreadcrumb !== null && groupForBreadcrumb !== undefined && (
+                  <>
+                    <BreadcrumbSeparator />
+                    <BreadcrumbItem>
+                      <BreadcrumbLink
+                        render={
+                          <Link to="/groups/$groupId" params={{ groupId: groupForBreadcrumb.id }} />
+                        }
+                      >
+                        {groupForBreadcrumb.name}
+                      </BreadcrumbLink>
+                    </BreadcrumbItem>
+                  </>
+                )}
+                <BreadcrumbSeparator />
+                <BreadcrumbItem>
+                  <BreadcrumbPage>{dataset.title}</BreadcrumbPage>
+                </BreadcrumbItem>
+              </BreadcrumbList>
+            </Breadcrumb>
+          )}
           <div className="flex items-center gap-3">
             <h1 className="text-3xl font-bold text-primary">{dataset.title}</h1>
             {dataset.editPolicy === "locked" && (
@@ -578,6 +584,8 @@ function PostgresDatasetBody({
           )}
         </div>
       </div>
+
+      {dataset.isGeospatial && dataset.geometryType !== null && <PgDatasetMap dataset={dataset} />}
 
       <Tabs
         value={view}
