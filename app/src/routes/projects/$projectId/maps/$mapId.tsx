@@ -656,7 +656,7 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
             <Button
               aria-expanded={sidebarOpen}
               aria-label={sidebarOpen ? "Collapse layers sidebar" : "Expand layers sidebar"}
-              className="absolute top-3 right-3 z-20 bg-card/95 shadow-sm backdrop-blur-sm"
+              className="absolute top-3 left-3 z-20 bg-card/95 shadow-sm backdrop-blur-sm"
               onClick={() => {
                 setSidebarOpen((open) => !open);
                 // MapLibre sizes to its container: nudge it once the layout settles.
