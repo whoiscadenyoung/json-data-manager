@@ -730,6 +730,17 @@ describe.skipIf(!dbUp())("dataset relations (0021, ADR 0020)", () => {
   });
 
   test("perf: the live spatial query is index-served (never a full-table spatial scan), and a 20k-point dataset answers inside the budget", async () => {
+    // Phase marks, not decoration: CI runs of this test have swung from ~82 s
+    // green to past the old 120 s cliff (three red runs 2026-11-07/09, all
+    // silent test-level timeouts). On any future stall the last printed mark
+    // localizes the blocked phase (prime suspect: ANALYZE/VACUUM waiting on
+    // the table's ShareUpdateExclusiveLock behind autovacuum — insert thresholds
+    // crossed by the seed and the ~20 int files that ran before this one).
+    const t0 = Date.now();
+    const mark = (phase: string) => {
+      console.log(`[relations perf] ${phase} +${Date.now() - t0}ms`);
+    };
+
     // The 20k seed lands as COMMITTED admin rows (autocommit), then ANALYZE
     // runs on them: the perf criterion's plan evidence needs the planner to
     // see a lived-in table, and in-transaction rows are invisible to
@@ -760,8 +771,10 @@ describe.skipIf(!dbUp())("dataset relations (0021, ADR 0020)", () => {
          'Point', ${sqlLit(ALICE)}
        from e`,
     );
+    mark("seeded 20k");
     await s().expectOk("analyze public.entries");
     await s().expectOk("analyze public.geometries");
+    mark("analyzed");
 
     try {
       await s().begin();
@@ -787,6 +800,7 @@ describe.skipIf(!dbUp())("dataset relations (0021, ADR 0020)", () => {
       const count = Number(firstRow(rows.rows).n);
       expect(count).toBeGreaterThan(0);
       expect(elapsed).toBeLessThan(10_000);
+      mark(`rpc ${count} rows in ${elapsed}ms`);
 
       // The PLAN (the perf criterion's deterministic evidence): at a selective
       // click-time viewport with the planner seeing real stats, the other
@@ -812,17 +826,24 @@ describe.skipIf(!dbUp())("dataset relations (0021, ADR 0020)", () => {
       const planText = plan.rows.map((row) => String(Object.values(row)[0])).join("\n");
       expect(planText).not.toMatch(/Seq Scan on (public\.)?geometries/);
       expect(planText).toMatch(/Index (Scan|Only Scan) using geometries_(geom_gist|entry_id_key)/);
+      mark("plan verified");
 
       await s().rollback();
     } finally {
       // Bulk teardown, not dropDatasets: the cascade fires ~100k child-side
-      // RI triggers at this scale (~130 s, measured 2026-11-09) — the whole
-      // point of this test's 120 s budget. See dropDatasetsBulk.
+      // RI triggers at this scale (~130 s measured on the local stack,
+      // 2026-11-09). See dropDatasetsBulk.
       await dropDatasetsBulk(s(), [parks, points]);
+      mark("fixtures dropped");
       await s().expectOk("vacuum analyze public.entries");
       await s().expectOk("vacuum analyze public.geometries");
+      mark("vacuumed");
     }
-  }, 120_000);
+    // 240 s: a CI box has proven able to push every phase of this test past
+    // 120 s when a stall lands (three red runs above) — the budget exists so
+    // a blocked phase surfaces as marks + a failed assertion, never as a
+    // bare cliff. The RPC keeps its own 10 s assertion.
+  }, 240_000);
 
   test("realtime absence: dataset_relations is deliberately NOT a publication member", async () => {
     await asAlice();
