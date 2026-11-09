@@ -29,6 +29,7 @@ import { useQuery as useStoreQuery } from "@tanstack/react-query";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   ChevronDown,
+  Database,
   ChevronUp,
   Ellipsis,
   Eye,
@@ -869,6 +870,15 @@ function PlacementRowBody(
     isGroup = layer !== undefined && layer.kind === "group",
     expanded = isGroup && !props.collapsedGroups.has(placement.id),
     needsAttention = layer === undefined ? null : layer.needsAttention,
+    // A data layer styles one project dataset — "View dataset" opens it in the shell.
+    datasetMember =
+      layer === undefined || layer.datasetMemberId === null
+        ? undefined
+        : props.memberships.get(layer.datasetMemberId),
+    viewDatasetId =
+      datasetMember !== undefined && datasetMember.artifactKind === "dataset"
+        ? datasetMember.artifactId
+        : undefined,
     [busy, setBusy] = useState<string | undefined>(),
     act = async (action: string, job: () => Promise<unknown>, success: string): Promise<void> => {
       setBusy(action);
@@ -955,6 +965,19 @@ function PlacementRowBody(
             <Ellipsis className="h-4 w-4" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            {viewDatasetId !== undefined && (
+              <DropdownMenuItem
+                render={
+                  <Link
+                    params={{ projectId: props.projectId, schemaId: viewDatasetId }}
+                    to="/projects/$projectId/datasets/$schemaId"
+                  />
+                }
+              >
+                <Database className="mr-2 h-4 w-4" />
+                View dataset
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem
               disabled={props.index === 0 || busy !== undefined}
               onClick={() => {
