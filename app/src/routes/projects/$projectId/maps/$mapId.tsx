@@ -68,7 +68,7 @@ import {
 import { isPostgresDatasetId } from "#/lib/dataset-source";
 import { errorMessage } from "#/lib/errors";
 import type { DatasetSummaryRow } from "#/lib/store/datasets";
-import { listSummariesQueryOptions } from "#/lib/store/datasets";
+import { listDraftSummariesQueryOptions, listSummariesQueryOptions } from "#/lib/store/datasets";
 import * as derivedStore from "#/lib/store/derived";
 import * as layersStore from "#/lib/store/layers";
 import type { LayerRow } from "#/lib/store/layers";
@@ -192,6 +192,8 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
     placementsQuery = useStoreQuery(mapsStore.listPlacementsQueryOptions({ mapId })),
     projectLayersQuery = useQuery({ ...layersStore.listForProjectQueryOptions({ projectId }) }),
     pgSummaries = useStoreQuery(listSummariesQueryOptions()),
+    // Owned drafts (the project's in-flight datasets) carry titles too — the add-dataset picker names them.
+    pgDraftSummaries = useStoreQuery(listDraftSummariesQueryOptions()),
     pgDerivedRows = useStoreQuery(derivedStore.summariesQueryOptions()),
     linkableVersionsQuery = useQuery({ ...layersStore.listLinkableVersionsQueryOptions() }),
     projectDatasetsQuery = useQuery({
@@ -278,7 +280,10 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
         ? undefined
         : renderTargetsForDerivedLayers(derivedSummaries, datasetsDocs),
     datasetTitleById = new globalThis.Map(
-      (pgSummaries.data ?? []).map((row) => [row.id, row.title]),
+      [...(pgSummaries.data ?? []), ...(pgDraftSummaries.data ?? [])].map((row) => [
+        row.id,
+        row.title,
+      ]),
     ),
     derivedTitleById = new globalThis.Map(
       // The Convex doc's branded id flattens to its string value (the PG
@@ -544,24 +549,15 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
     );
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-0">
-      <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
+    <div className="flex min-h-[480px] flex-col lg:h-[calc(100vh-7rem)]">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-2">
         <div>
-          <div className="mb-2 flex items-center gap-2 text-sm text-muted-foreground">
-            {mapData.project !== null && (
-              <Link className="hover:underline" params={{ projectId }} to="/projects/$projectId">
-                {mapData.project.title}
-              </Link>
-            )}
-            <span>/</span>
-            <span>Maps</span>
-          </div>
-          <h1 className="flex items-center gap-2 text-3xl font-bold text-primary">
+          <h1 className="flex items-center gap-2 text-xl font-bold text-primary">
             <LayersIcon className="h-6 w-6" />
             {mapData.name}
           </h1>
           {mapData.description !== null && (
-            <p className="mt-2 text-lg text-muted-foreground">{mapData.description}</p>
+            <p className="text-sm text-muted-foreground">{mapData.description}</p>
           )}
         </div>
         <div className="flex flex-wrap gap-2">
@@ -613,32 +609,51 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
       </div>
 
       {!hasPlacements ? (
-        <Empty className="min-h-80 border">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <LayersIcon />
-            </EmptyMedia>
-            <EmptyTitle>No layers yet</EmptyTitle>
-            <EmptyDescription>
-              Add a project dataset — an owned layer is created for it in one click — or link a
-              published layer from another project. Nothing is copied.
-            </EmptyDescription>
-          </EmptyHeader>
-          <EmptyContent>
-            <Button
-              onClick={() => {
-                setAddOpen(true);
-              }}
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              Add your first dataset
-            </Button>
-          </EmptyContent>
-        </Empty>
+        <div className="p-6">
+          <Empty className="min-h-80 border">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <LayersIcon />
+              </EmptyMedia>
+              <EmptyTitle>No layers yet</EmptyTitle>
+              <EmptyDescription>
+                Add a project dataset — an owned layer is created for it in one click — or link a
+                published layer from another project. Nothing is copied.
+              </EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent>
+              <Button
+                onClick={() => {
+                  setAddOpen(true);
+                }}
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Add your first dataset
+              </Button>
+            </EmptyContent>
+          </Empty>
+        </div>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
           {pgFan.loaders}
-          <div className="relative h-[440px] w-full overflow-hidden rounded-lg border border-border lg:h-[640px]">
+          <aside className="flex w-full shrink-0 flex-col gap-4 overflow-y-auto border-b border-border bg-background p-4 lg:w-[380px] lg:border-r lg:border-b-0">
+            {layerStyles.panel}
+            <PgPlacementsPanel
+              childrenLists={childrenLists}
+              collapsedGroups={collapsedGroups}
+              invalidate={invalidate}
+              layersById={layersById}
+              memberships={memberships}
+              onAddChild={setChildAddGroupId}
+              onRemove={setPendingRemove}
+              placements={placements}
+              projectId={projectId}
+              run={run}
+              toggleCollapsed={toggleCollapsed}
+              versionsById={versionsById}
+            />
+          </aside>
+          <div className="relative h-[440px] min-w-0 flex-1 overflow-hidden lg:h-auto">
             {(servedGeometries !== undefined || split.tileSources.length > 0) && (
               <LayersMap
                 chainLayers={[]}
@@ -671,23 +686,6 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
                 Loading features…
               </div>
             )}
-          </div>
-          <div className="flex min-w-0 flex-col gap-4">
-            {layerStyles.panel}
-            <PgPlacementsPanel
-              childrenLists={childrenLists}
-              collapsedGroups={collapsedGroups}
-              invalidate={invalidate}
-              layersById={layersById}
-              memberships={memberships}
-              onAddChild={setChildAddGroupId}
-              onRemove={setPendingRemove}
-              placements={placements}
-              projectId={projectId}
-              run={run}
-              toggleCollapsed={toggleCollapsed}
-              versionsById={versionsById}
-            />
           </div>
           {layerStyles.loaders}
         </div>

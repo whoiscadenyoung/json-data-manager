@@ -24,8 +24,8 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@caden/ui/components/sheet";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import {
   ArrowLeft,
   ArrowUpCircle,
@@ -44,32 +44,27 @@ import {
   Rocket,
   Search,
   Trash2,
-  Upload,
-  Users,
 } from "lucide-react";
 import { useState, type ComponentType } from "react";
 import { toast } from "sonner";
 
 import { PgDatasetTagsWithCount } from "#/features/catalog";
-import type { VisibilityLevel } from "#/lib/store/visibility";
 import { RouterButton } from "@/components/router-button";
-import { useSession } from "@/integrations/supabase/provider";
 import { errorMessage } from "@/lib/errors";
 import * as appVersionsStore from "@/lib/store/app-versions";
 import * as appsStore from "@/lib/store/apps";
 import * as datasetsStore from "@/lib/store/datasets";
 import * as derivedStore from "@/lib/store/derived";
 import * as mapsStore from "@/lib/store/maps";
-import { listMineQueryOptions, resolveMyRole, ROLE_LABELS } from "@/lib/store/project-members";
+import { ROLE_LABELS } from "@/lib/store/project-members";
 import * as projectsStore from "@/lib/store/projects";
 import type { CatalogRow } from "@/lib/store/projects";
 import { latestBundleQueryOptions, listMembersQueryOptions } from "@/lib/store/publishing";
 import * as versionsStore from "@/lib/store/versions";
 
-import { PgPublishBundleDialog } from "../components/pg-publish-bundle-dialog";
-import { pgPublishProjectBundle } from "../lib/pg-bundle-publish";
 import { VIEWER_REASON } from "../lib/pg-viewer-posture";
-import { PgProjectMembersDialog } from "./pg-project-members-dialog";
+import { useProjectShell } from "./pg-project-context";
+import { PgProjectMembersPanel } from "./pg-project-members-dialog";
 import { PgProjectRelationsSection } from "./pg-project-relations";
 
 /**
@@ -96,7 +91,7 @@ import { PgProjectRelationsSection } from "./pg-project-relations";
 const STALE_PRESS_MS = 2 * 60 * 1000;
 
 /** The not-found card — a foreign project (no membership row) reads exactly as a missing one. */
-function PgProjectNotFound() {
+export function PgProjectNotFound() {
   return (
     <main className="mx-auto max-w-3xl px-4 py-8">
       <Empty className="min-h-80 border">
@@ -121,7 +116,7 @@ function PgProjectNotFound() {
 }
 
 /** The signed-out gate (projects are membership-gated — the auth-gated stage). */
-function PgProjectSignInPrompt() {
+export function PgProjectSignInPrompt() {
   return (
     <main className="mx-auto max-w-3xl px-4 py-8">
       <Empty className="min-h-80 border">
@@ -512,7 +507,7 @@ function PgAddCandidateRow({
 }
 
 /** The add-existing sheet — the D1 picker over the GLOBAL catalog (every visible dataset is addable, incl. from other projects): published datasets + saved derived rows, already-added ids excluded. Each add lands as a linked reference; the sheet's sync toggle picks its follow intent (pin at head / float). */
-function PgAddReferenceSheet({
+export function PgAddReferenceSheet({
   addedDatasetIds,
   addedDerivedIds,
   onAdded,
@@ -678,7 +673,7 @@ function PgAddReferenceSheet({
 // branch per state IS the line's copy contract; extracting them would hide
 // the mutually-exclusive states behind a table no other surface shares.
 // oxlint-disable-next-line eslint/complexity -- the four states are the line's whole contract.
-function PgBundleStatusLine({ projectId }: { projectId: string }) {
+export function PgBundleStatusLine({ projectId }: { projectId: string }) {
   const latestQuery = useQuery(latestBundleQueryOptions({ projectId })),
     bundle = latestQuery.data,
     [now] = useState(() => Date.now()),
@@ -743,40 +738,16 @@ function PgBundleStatusLine({ projectId }: { projectId: string }) {
   );
 }
 
-/** The project's Maps view (issue #257; D2 — map creation lives in projects): the project-owned maps with their placement counts, and the create-map affordance the /maps explorer no longer has. */
-function PgProjectMapsSection({ canEdit, projectId }: { canEdit: boolean; projectId: string }) {
-  const queryClient = useQueryClient(),
+/** The project's Maps view (issue #257; D2 — map creation lives in projects): the project-owned maps with their placement counts. The create-map sheet is owned by the shell (issue #271). */
+export function PgProjectMapsSection() {
+  const { canEdit, openNewMap, projectId } = useProjectShell(),
     mapsQuery = useQuery({ ...mapsStore.listForProjectQueryOptions({ projectId }) }),
     placementsQuery = useQuery({ ...mapsStore.listAllPlacementsQueryOptions() }),
-    [createOpen, setCreateOpen] = useState(false),
-    [name, setName] = useState(""),
-    [creating, setCreating] = useState(false),
-    navigate = useNavigate(),
     placementsByMap = new globalThis.Map<string, number>();
   for (const placement of placementsQuery.data ?? []) {
     placementsByMap.set(placement.mapId, (placementsByMap.get(placement.mapId) ?? 0) + 1);
   }
-  const maps = mapsQuery.data ?? [],
-    create = async (): Promise<void> => {
-      setCreating(true);
-      try {
-        const mapId = await mapsStore.create({
-          name: name.trim() === "" ? "New map" : name.trim(),
-          projectId,
-        });
-        if (mapId === null) {
-          toast.error("The map didn't create — you may not have access.");
-          return;
-        }
-        void queryClient.invalidateQueries({ queryKey: ["pg:maps"] });
-        toast.success("Map created — opening the editor.");
-        await navigate({ params: { mapId, projectId }, to: "/projects/$projectId/maps/$mapId" });
-      } catch (error) {
-        toast.error(errorMessage(error, "Failed to create the map."));
-      } finally {
-        setCreating(false);
-      }
-    };
+  const maps = mapsQuery.data ?? [];
   return (
     <section className="mt-2">
       <div className="mb-2 flex items-center justify-between">
@@ -787,10 +758,8 @@ function PgProjectMapsSection({ canEdit, projectId }: { canEdit: boolean; projec
           </span>
         </h2>
         <Button
-          disabled={!canEdit || creating}
-          onClick={() => {
-            setCreateOpen(true);
-          }}
+          disabled={!canEdit}
+          onClick={openNewMap}
           size="sm"
           title={canEdit ? "Create a map in this project" : VIEWER_REASON}
           variant="outline"
@@ -839,41 +808,6 @@ function PgProjectMapsSection({ canEdit, projectId }: { canEdit: boolean; projec
           ))}
         </div>
       )}
-      <Sheet
-        onOpenChange={(next) => {
-          if (next) {
-            setName("");
-          }
-          setCreateOpen(next);
-        }}
-        open={createOpen}
-      >
-        <SheetContent className="w-full sm:max-w-md">
-          <SheetHeader className="border-b">
-            <SheetTitle>New map</SheetTitle>
-            <SheetDescription>
-              Name is the only required field — the editor opens right after.
-            </SheetDescription>
-          </SheetHeader>
-          <div className="flex flex-1 flex-col gap-4 p-6">
-            <Input
-              onChange={(event) => {
-                setName(event.target.value);
-              }}
-              placeholder="Parks overview"
-              value={name}
-            />
-            <Button
-              disabled={creating}
-              onClick={() => {
-                void create();
-              }}
-            >
-              {creating ? "Creating…" : "Create and open"}
-            </Button>
-          </div>
-        </SheetContent>
-      </Sheet>
     </section>
   );
 }
@@ -897,20 +831,10 @@ function PgAppPublishChip({ appId }: { appId: string }) {
   );
 }
 
-/** The project's Apps view (issue #259; D7 — apps are project-owned and their map widgets reference this project's stored maps): the project's apps with their publish state, and the create affordance the /apps explorer no longer carries. */
-function PgProjectAppsSection({
-  canEdit,
-  createAppDialog,
-  projectId,
-}: {
-  canEdit: boolean;
-  projectId: string;
-  createAppDialog?: CreateAppSlot;
-}) {
-  const queryClient = useQueryClient(),
-    navigate = useNavigate(),
+/** The project's Apps view (issue #259; D7): the project's apps with their publish state. The create-app dialog is owned by the shell (issue #271). */
+export function PgProjectAppsSection() {
+  const { canEdit, openNewApp, projectId } = useProjectShell(),
     appsQuery = useQuery({ ...appsStore.listForProjectQueryOptions({ projectId }) }),
-    [createOpen, setCreateOpen] = useState(false),
     apps = appsQuery.data ?? [];
   return (
     <section className="mt-2">
@@ -923,9 +847,7 @@ function PgProjectAppsSection({
         </h2>
         <Button
           disabled={!canEdit}
-          onClick={() => {
-            setCreateOpen(true);
-          }}
+          onClick={openNewApp}
           size="sm"
           title={canEdit ? "Create an app in this project" : VIEWER_REASON}
           variant="outline"
@@ -963,9 +885,9 @@ function PgProjectAppsSection({
                 <p className="truncate text-sm font-medium">{app.title}</p>
               </Link>
               <RouterButton
-                params={{ appId: app.id }}
+                params={{ appId: app.id, projectId }}
                 size="sm"
-                to="/apps/$appId/edit"
+                to="/projects/$projectId/apps/$appId/edit"
                 variant="outline"
               >
                 Open builder
@@ -974,100 +896,65 @@ function PgProjectAppsSection({
           ))}
         </div>
       )}
-      {(() => {
-        // Rendered as an element, never called as a function (hooks inside).
-        if (createAppDialog === undefined) {
-          return null;
-        }
-        const CreateAppDialog = createAppDialog;
-        return (
-          <CreateAppDialog
-            onSaved={async (appId) => {
-              void queryClient.invalidateQueries({ queryKey: ["pg:apps"] });
-              await navigate({ params: { appId }, to: "/apps/$appId/edit" });
-            }}
-            open={createOpen}
-            onOpenChange={setCreateOpen}
-            projectId={projectId}
-          />
-        );
-      })()}
     </section>
   );
 }
 
-/** The workspace body: the project's facts, the catalog's datasets + derived sections, add/import/create actions, the press. */
-// The body joins the project's reads and renders the catalog's sections
-// with their actions — the flat sequence the press lifecycle doc states;
-// the branches are the sections' load/denied states, each rendered once,
-// here.
-// oxlint-disable-next-line eslint/complexity -- the section ladder is the workspace's whole contract, read top to bottom.
-function PgProjectWorkspaceBody({
-  createAppDialog,
-  projectId,
-}: {
-  projectId: string;
-  createAppDialog?: CreateAppSlot;
-}) {
-  const queryClient = useQueryClient(),
-    { session } = useSession(),
-    userId = session === null ? "" : session.user.id,
-    projectQuery = useQuery(projectsStore.getQueryOptions({ projectId })),
-    catalogQuery = useQuery(projectsStore.listCatalogQueryOptions({ projectId })),
-    myMembershipQuery = useQuery(listMineQueryOptions({ userId })),
+/** The Overview section: the project's facts, "start here" when the catalog is empty, then the maps and apps lists. */
+export function PgProjectOverview() {
+  const { canEdit, catalog, myRole, project, projectId } = useProjectShell();
+  return (
+    <main className="mx-auto max-w-5xl px-6 py-6">
+      <h1 className="mb-1 text-2xl font-bold text-primary">{project.title}</h1>
+      <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+        <Badge title={`Your access to this project (${ROLE_LABELS[myRole]}).`} variant="outline">
+          {ROLE_LABELS[myRole]}
+        </Badge>
+        <span>
+          {catalog.length} {catalog.length === 1 ? "artifact" : "artifacts"}
+        </span>
+      </div>
+      {project.description !== null && (
+        <p className="mt-1 text-muted-foreground">{project.description}</p>
+      )}
+      <PgBundleStatusLine projectId={projectId} />
+      {catalog.length === 0 && (
+        <Card className="mt-6 gap-3 px-5 py-4">
+          <h2 className="text-sm font-semibold">Start here</h2>
+          <p className="text-sm text-muted-foreground">
+            This project has no data yet. Create or import a dataset (it lands as an owned draft
+            visible to the project), or add an existing one by reference — nothing is copied.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <RouterButton params={{ projectId }} to="/projects/$projectId/create">
+              <Import className="mr-2 h-4 w-4" />
+              Create / import
+            </RouterButton>
+            <RouterButton
+              params={{ projectId }}
+              to="/projects/$projectId/catalog"
+              variant="outline"
+            >
+              <Database className="mr-2 h-4 w-4" />
+              Open catalog
+            </RouterButton>
+          </div>
+          {canEdit ? null : <p className="text-xs text-muted-foreground">{VIEWER_REASON}</p>}
+        </Card>
+      )}
+      <div className="mt-6 flex flex-col gap-4">
+        <PgProjectMapsSection />
+        <PgProjectAppsSection />
+      </div>
+    </main>
+  );
+}
+
+/** The Data → Catalog section: the project's datasets + derived sections, relations, empty state. */
+export function PgProjectCatalog() {
+  const { canEdit, catalog, invalidateAll, openAdd, projectId } = useProjectShell(),
     datasetsQuery = useQuery(datasetsStore.listQueryOptions()),
     derivedQuery = useQuery(derivedStore.summariesQueryOptions()),
-    [addOpen, setAddOpen] = useState(false),
-    [membersOpen, setMembersOpen] = useState(false),
-    [pressing, setPressing] = useState(false),
-    [pressOpen, setPressOpen] = useState(false),
-    invalidateAll = (): void => {
-      void queryClient.invalidateQueries({ queryKey: ["pg:projects"] });
-      void queryClient.invalidateQueries({ queryKey: ["pg:publishing"] });
-      void queryClient.invalidateQueries({ queryKey: ["pg:versions"] });
-      void queryClient.invalidateQueries({ queryKey: ["pg:collections"] });
-    },
-    press = async (visibility: VisibilityLevel): Promise<void> => {
-      setPressing(true);
-      try {
-        const outcome = await pgPublishProjectBundle({ projectId, visibility });
-        if (outcome.status === "completed" && outcome.visibilityCappedBy > 0) {
-          toast.warning(
-            "Project published — the collection and every referenced dataset are in the catalog, but the share is capped by artifacts you can't widen. Check the bundle's visibility.",
-          );
-        } else if (outcome.status === "completed") {
-          toast.success(
-            `Project published at “${visibility}” — the collection and every referenced dataset are in the catalog.`,
-          );
-        } else {
-          toast.error(
-            `The press finished with ${outcome.failedKeys.length} failed member${
-              outcome.failedKeys.length === 1 ? "" : "s"
-            }: ${outcome.failedKeys.join(", ")} — completed members keep their published versions. Press again to retry.`,
-          );
-        }
-        invalidateAll();
-      } catch (error) {
-        toast.error(errorMessage(error, "Something went wrong."));
-      } finally {
-        setPressing(false);
-      }
-    };
-
-  if (projectQuery.isPending) {
-    return (
-      <div className="flex min-h-100 items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-      </div>
-    );
-  }
-  if (projectQuery.data === null || projectQuery.data === undefined) {
-    return <PgProjectNotFound />;
-  }
-  const project = projectQuery.data,
-    myRole = resolveMyRole(myMembershipQuery.data, projectId, project.createdBy, userId),
-    canEdit = myRole !== "viewer",
-    catalog = catalogQuery.data ?? [],
     datasetsById = new globalThis.Map(
       (datasetsQuery.data ?? []).map((dataset) => [
         dataset.id,
@@ -1077,106 +964,14 @@ function PgProjectWorkspaceBody({
     derivedById = new globalThis.Map(
       (derivedQuery.data ?? []).map((derived) => [derived.id, { title: derived.title }]),
     ),
-    addedDatasetIds = new Set(
-      catalog
-        .filter((row) => row.artifact.artifactKind === "dataset")
-        .map((row) => row.artifact.artifactId),
-    ),
-    addedDerivedIds = new Set(
-      catalog
-        .filter((row) => row.artifact.artifactKind === "derived")
-        .map((row) => row.artifact.artifactId),
-    ),
     datasetSection = catalog.filter((row) => row.artifact.artifactKind === "dataset"),
-    derivedSection = catalog.filter((row) => row.artifact.artifactKind === "derived");
+    derivedSection = catalog.filter((row) => row.artifact.artifactKind === "derived"),
+    sections = [
+      { label: "Datasets", rows: datasetSection },
+      { label: "Derived", rows: derivedSection },
+    ];
   return (
-    <main className="mx-auto max-w-6xl px-4 py-8">
-      <div className="mb-6">
-        <RouterButton className="-ml-2 mb-4" to="/projects" variant="ghost">
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          Back to Projects
-        </RouterButton>
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h1 className="mb-1 text-3xl font-bold text-primary">{project.title}</h1>
-            <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-              <Badge
-                title={`Your access to this project (${ROLE_LABELS[myRole]}).`}
-                variant="outline"
-              >
-                {ROLE_LABELS[myRole]}
-              </Badge>
-              <span>
-                {catalog.length} {catalog.length === 1 ? "artifact" : "artifacts"}
-              </span>
-            </div>
-            {project.description !== null && (
-              <p className="mt-1 text-muted-foreground">{project.description}</p>
-            )}
-            <PgBundleStatusLine projectId={projectId} />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              disabled={pressing || catalog.length === 0 || !canEdit}
-              onClick={() => {
-                setPressOpen(true);
-              }}
-              title={
-                !canEdit
-                  ? VIEWER_REASON
-                  : catalog.length === 0
-                    ? "Nothing to publish yet — add a dataset first."
-                    : undefined
-              }
-              type="button"
-            >
-              <Rocket className="mr-2 h-4 w-4" />
-              {pressing ? "Publishing…" : "Publish bundle"}
-            </Button>
-            <PgPublishBundleDialog
-              onConfirm={(visibility) => {
-                void press(visibility);
-              }}
-              onOpenChange={setPressOpen}
-              open={pressOpen}
-              projectId={projectId}
-            />
-            <span title="Create or import a dataset inside this project — it lands as an owned draft, visible to the project's members.">
-              <RouterButton
-                params={{ projectId }}
-                to="/projects/$projectId/create"
-                variant="outline"
-              >
-                <Upload className="mr-2 h-4 w-4" />
-                Create / import
-              </RouterButton>
-            </span>
-            <Button
-              disabled={!canEdit}
-              onClick={() => {
-                setAddOpen(true);
-              }}
-              title={canEdit ? undefined : VIEWER_REASON}
-              type="button"
-              variant="outline"
-            >
-              <ListPlus className="mr-2 h-4 w-4" />
-              Add existing
-            </Button>
-            <Button
-              onClick={() => {
-                setMembersOpen(true);
-              }}
-              type="button"
-              variant="outline"
-            >
-              <Users className="mr-2 h-4 w-4" />
-              Members
-            </Button>
-          </div>
-        </div>
-      </div>
-
+    <main className="mx-auto max-w-5xl px-6 py-6">
       {catalog.length === 0 ? (
         <Empty className="min-h-80 border">
           <EmptyHeader>
@@ -1197,9 +992,7 @@ function PgProjectWorkspaceBody({
               </RouterButton>
               <Button
                 disabled={!canEdit}
-                onClick={() => {
-                  setAddOpen(true);
-                }}
+                onClick={openAdd}
                 title={canEdit ? undefined : VIEWER_REASON}
                 type="button"
                 variant="outline"
@@ -1212,86 +1005,82 @@ function PgProjectWorkspaceBody({
         </Empty>
       ) : (
         <div className="flex flex-col gap-6">
-          {datasetSection.length > 0 && (
-            <section>
-              <h2 className="mb-2 text-sm font-semibold text-muted-foreground">
-                Datasets{" "}
-                <span className="font-normal">
-                  ({datasetSection.length} {datasetSection.length === 1 ? "artifact" : "artifacts"})
-                </span>
-              </h2>
-              <div className="flex flex-col gap-3">
-                {datasetSection.map((row) => (
-                  <PgCatalogRow
-                    canEdit={canEdit}
-                    datasetsById={datasetsById}
-                    derivedById={derivedById}
-                    key={row.artifact.id}
-                    onRemoved={invalidateAll}
-                    projectId={projectId}
-                    row={row}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-          {derivedSection.length > 0 && (
-            <section>
-              <h2 className="mb-2 text-sm font-semibold text-muted-foreground">
-                Derived{" "}
-                <span className="font-normal">
-                  ({derivedSection.length} {derivedSection.length === 1 ? "artifact" : "artifacts"})
-                </span>
-              </h2>
-              <div className="flex flex-col gap-3">
-                {derivedSection.map((row) => (
-                  <PgCatalogRow
-                    canEdit={canEdit}
-                    datasetsById={datasetsById}
-                    derivedById={derivedById}
-                    key={row.artifact.id}
-                    onRemoved={invalidateAll}
-                    projectId={projectId}
-                    row={row}
-                  />
-                ))}
-              </div>
-            </section>
+          {sections.map(
+            (section) =>
+              section.rows.length > 0 && (
+                <section key={section.label}>
+                  <h2 className="mb-2 text-sm font-semibold text-muted-foreground">
+                    {section.label}{" "}
+                    <span className="font-normal">
+                      ({section.rows.length} {section.rows.length === 1 ? "artifact" : "artifacts"})
+                    </span>
+                  </h2>
+                  <div className="flex flex-col gap-3">
+                    {section.rows.map((row) => (
+                      <PgCatalogRow
+                        canEdit={canEdit}
+                        datasetsById={datasetsById}
+                        derivedById={derivedById}
+                        key={row.artifact.id}
+                        onRemoved={invalidateAll}
+                        projectId={projectId}
+                        row={row}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ),
           )}
         </div>
       )}
-
       {datasetSection.length > 0 && (
         <PgProjectRelationsSection canEdit={canEdit} projectId={projectId} />
       )}
-
-      <PgProjectMapsSection canEdit={canEdit} projectId={projectId} />
-
-      <PgProjectAppsSection
-        canEdit={canEdit}
-        createAppDialog={createAppDialog}
-        projectId={projectId}
-      />
-
-      <PgAddReferenceSheet
-        addedDatasetIds={addedDatasetIds}
-        addedDerivedIds={addedDerivedIds}
-        onAdded={invalidateAll}
-        onOpenChange={setAddOpen}
-        open={addOpen}
-        projectId={projectId}
-      />
-      <PgProjectMembersDialog
-        isOpen={membersOpen}
-        myRole={myRole}
-        onOpenChange={setMembersOpen}
-        project={project}
-      />
     </main>
   );
 }
 
-/** The Postgres edition of `/projects/$projectId` — the project catalog. */
+/** The Project → Publish section: bundle status and the press. */
+export function PgProjectPublish() {
+  const { canEdit, catalog, openPress, pressing, projectId } = useProjectShell();
+  return (
+    <main className="mx-auto max-w-3xl px-6 py-6">
+      <h1 className="mb-1 text-2xl font-bold text-primary">Publish</h1>
+      <p className="text-sm text-muted-foreground">
+        Publishing materialises this project's datasets into the global catalog as one bundle
+        collection.
+      </p>
+      <PgBundleStatusLine projectId={projectId} />
+      <Button
+        className="mt-4"
+        disabled={pressing || catalog.length === 0 || !canEdit}
+        onClick={openPress}
+        title={
+          !canEdit
+            ? VIEWER_REASON
+            : catalog.length === 0
+              ? "Nothing to publish yet — add a dataset first."
+              : undefined
+        }
+        type="button"
+      >
+        <Rocket className="mr-2 h-4 w-4" />
+        {pressing ? "Publishing…" : "Publish bundle"}
+      </Button>
+    </main>
+  );
+}
+
+/** The Project → Members section (replaces the Members dialog launch; the dialog stays exported). */
+export function PgProjectMembers() {
+  const { myRole, project } = useProjectShell();
+  return (
+    <main className="mx-auto max-w-3xl px-6 py-6">
+      <PgProjectMembersPanel isOpen myRole={myRole} project={project} />
+    </main>
+  );
+}
+
 /** The create-app dialog, wired by the route (the app-builder module is route-wired — ADR 0011/0014; the extension-slot pattern applied). */
 export type CreateAppSlot = ComponentType<{
   open: boolean;
@@ -1299,24 +1088,3 @@ export type CreateAppSlot = ComponentType<{
   onSaved: (appId: string) => void | Promise<void>;
   projectId: string;
 }>;
-
-export function PgProjectWorkspace({
-  createAppDialog,
-  projectId,
-}: {
-  projectId: string;
-  createAppDialog?: CreateAppSlot;
-}) {
-  const { isLoading, session } = useSession();
-  if (isLoading) {
-    return (
-      <div className="flex min-h-100 items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-      </div>
-    );
-  }
-  if (session === null) {
-    return <PgProjectSignInPrompt />;
-  }
-  return <PgProjectWorkspaceBody createAppDialog={createAppDialog} projectId={projectId} />;
-}
