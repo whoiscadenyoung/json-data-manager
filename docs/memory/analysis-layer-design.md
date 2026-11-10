@@ -5,6 +5,8 @@ metadata:
   type: project
 ---
 
+> **Superseded 2026-11-10** by the Views initiative ([[views-initiative]], ADR 0028). Kept as history.
+
 2026-09-21: Design futures recorded in `docs/analysis-layer-design.md` —
 ad-hoc analytics (DuckDB-style SQL: counts per state, avg locations per
 brand) over catalog/project data, guarding five invariants (client-side

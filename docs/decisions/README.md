@@ -9,7 +9,7 @@ the next number; superseded records stay. The one-line index:
 | 0002 | Convex component extraction (`@caden/json-cms`)                                 | accepted    |
 | 0003 | Geometry storage and tile archives (PMTiles)                                    | accepted    |
 | 0004 | Bound-datasets projection (foreign-app read-only sync)                          | accepted    |
-| 0005 | Derived datasets: catalog-level, transform specs                                | accepted    |
+| 0005 | Derived datasets: catalog-level, transform specs                                | superseded⁴ |
 | 0006 | Better Auth hybrid component (Convex era)                                       | superseded¹ |
 | 0007 | Component actor authz (`exposeApi` per-function policy)                         | superseded¹ |
 | 0008 | Catalog lifecycle (draft→publish, versioned consumption, bundles)               | accepted²   |
@@ -30,8 +30,9 @@ the next number; superseded records stay. The one-line index:
 | 0023 | Anon serving: frozen rows only, no live-table policies                          | implemented |
 | 0024 | Explorers browse, projects create — cross-project reuse surfaces                | accepted    |
 | 0025 | Row-path geometry loading off the main thread (worker offload, sized takes)     | accepted    |
-| 0026 | 1-N joins collect every match as per-field arrays (`onDuplicateKey: "collect"`) | accepted    |
-| 0027 | Join outputs are project-owned derived artifacts with a joined-table route      | accepted    |
+| 0026 | 1-N joins collect every match as per-field arrays (`onDuplicateKey: "collect"`) | superseded⁴ |
+| 0027 | Join outputs are project-owned derived artifacts with a joined-table route      | superseded⁴ |
+| 0028 | Views: saved, Postgres-compiled step pipelines that are datasets                | accepted    |
 
 ¹ The Convex-era auth/authz mechanics were archived by the Supabase
 migration (ADR 0015); the records remain as history.
@@ -39,3 +40,5 @@ migration (ADR 0015); the records remain as history.
 the mechanism now lives in the PG schema/RLS.
 ³ Retired by [project 3] (#257): style moved onto the layer row (ADR 0019);
 the optional-module posture and its extension slots went with it.
+⁴ Superseded by ADR 0028 (Views, umbrella #298): derived datasets become
+views; 0026 only in part (arrays survive as the opt-in `list` mode).

@@ -4,6 +4,11 @@ Where the #273 test-pass work stands and how to finish it. Companion to
 `docs/local-test-accounts.md` (gitignored — credentials) and the CI policy in
 `.github/workflows/ci.yml`'s header.
 
+> **2026-11-10 update:** remedies 1–3 are merged. Remedies 4 (#290) is
+> superseded by the **Views** initiative: umbrella #298,
+> [`views-handoff.md`](views-handoff.md), and ADR 0028. Remedies 5–8
+> (#291–#294) are still open and independent of Views.
+
 ## Where things stand
 
 - **Merged 2026-11-10**: PR #285 (`088173d`) — the eight bounded fixes
@@ -102,30 +107,12 @@ Two rules the hard way earned:
 Each item: what exists (landed in #285 or earlier), what remains, and the
 shape of done. Issues #277/#279/#280/#283 are whole-issue features.
 
-1. **#284-b — row path off the main thread** (the actual freeze; first
-   because it blocks real use of the big maps). Worker or chunked
-   parse/build of GeoJSON (`pg-geometries-loader` fans per-dataset pagers;
-   the parse currently blocks the main thread); investigate why tile archives
-   never built for the four big datasets (#183/#184 threshold interplay —
-   `maxGeometryRowBytes` 0.7–3.3 MB/row); consider read-time simplification
-   (stored geometry is 6 dp — far more than national-scale views need).
-   Done = Planning grants map stays responsive throughout on a throttled
-   environment, and archives either build or have a documented reason not to.
-2. **#282-b — non-lossy 1-N join semantics.** Decide the output shape first
-   (one row per match = row explosion; aggregate = count+first fields; array
-   column): it changes what preview, export, app widgets and popups all see.
-   Engine work lands in `@caden/data-core` `lookup.ts` (the duplicate-count
-   diagnostic from #285 is the visibility half). Done = a 1-N relation joined
-   via "Join into a table" loses nothing, and the stats say which policy ran.
-3. **#280 — join outputs belong to the project + a derived route.** The
-   relation's "Join into a table" mints an OWNED derived artifact (same
-   posture as an owned draft dataset) and the catalog renders a Derived
-   section whose rows open `/projects/$projectId/derived/$id` — the joined
-   table with its match stats. Today the output lives only in the global
-   registry and must be attached by hand as a Linked reference.
-4. **#281-b — old joins + aliases.** Decide: backfill stored specs'
-   namespaces (a registry migration) vs re-save-in-place; plus user-editable
-   column aliases for brought-in fields.
+- **Items 1–3 (#284-b, #282-b, #280): done** in remedies 1–3 (PRs
+  #295–#297).
+- **Item 4 (#281-b): superseded** by the Views initiative (#298). Legacy
+  specs are dropped, not backfilled, and field aliases become the view
+  output schema's labels (ADR 0028).
+
 5. **#274-b — import-time suggestions.** Detect coordinate columns and
    currency-shaped values during import; offer typing/conversion in the flow
    (pairs with #277/#279 below; shared detection utilities).
@@ -143,22 +130,18 @@ shape of done. Issues #277/#279/#280/#283 are whole-issue features.
    Corridors via UEI") and an optional related-set grouping; build on the
    existing layer groups.
 
-## Decisions to record (ADR-worthy, in the order they'll be hit)
+## Decisions recorded
 
-- 1-N join output shape (#282-b) — the biggest one; every consumer inherits
-  it.
-- Derived-dataset project ownership (#280) — owned artifact vs linked
-  reference at creation time.
-- Row-path parse strategy (#284-b) — worker vs chunked main-thread vs
-  simplify-at-read.
+- Row-path parse strategy → ADR 0025 (remedies 1).
+- 1-N join output shape → ADR 0026 (remedies 2), now superseded in part
+  by ADR 0028 (Views): flat output is the default.
+- Derived-dataset project ownership → ADR 0027 (remedies 3), superseded
+  by ADR 0028.
 
 ## Issue filing
 
-The split halves above are documented HERE but not yet filed as GitHub
-issues — the original #272–#284 stay open per their "Partially addresses"
-references. Filing an umbrella + ordered sub-issues (per the usual train
-convention) is the natural next step; each item above is already
-sub-issue-shaped.
+Filed 2026-11-10 as umbrella #286 + #287–#294. Remedies 1–3 merged; 5–8
+remain open; 4 is superseded by the Views train (see the top of this file).
 
 ## Verification recipes that worked this pass
 

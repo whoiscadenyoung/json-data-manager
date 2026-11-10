@@ -1,6 +1,6 @@
 # 5. Transformations are catalog-level virtual derived datasets; a Projects layer is deferred
 
-- Status: accepted
+- Status: superseded by [ADR 0028](0028-views.md)
 - Date: 2026-09
 
 ## Context

@@ -5,6 +5,8 @@ metadata:
   type: project
 ---
 
+> **Superseded 2026-11-10** by the Views initiative ([[views-initiative]], ADR 0028). Kept as history.
+
 2026-09-21: The data-transformation brainstorm is documented in
 `docs/derived-datasets-design.md` with the architectural direction accepted
 in `docs/decisions/0005-derived-datasets-catalog-level.md`. **Design only —

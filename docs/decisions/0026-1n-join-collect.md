@@ -1,6 +1,6 @@
 # ADR 0026: 1-N joins collect every match as per-field arrays (`onDuplicateKey: "collect"`)
 
-Date: 2026-11-10 · Status: accepted · Issue: [#288](https://github.com/whoiscadenyoung/json-data-manager/issues/288) ([remedies 2], the engine half of #282) ·
+Date: 2026-11-10 · Status: superseded in part by [ADR 0028](0028-views.md) (arrays become the opt-in `list` multi-match mode; flat output is the default) · Issue: [#288](https://github.com/whoiscadenyoung/json-data-manager/issues/288) ([remedies 2], the engine half of #282) ·
 Train: [remedies umbrella #286] · Engine: `@caden/data-core` `lookup.ts` / `spec.ts`
 
 ## Context
