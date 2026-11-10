@@ -126,8 +126,8 @@ sub-issue-shaped.
   `151dea15-…` (loading states). The publish RPC's rejection text is the
   honest expected state until oversized-geometry freezing gets an answer.
 - **Gates**: `scripts/local-gate.sh` (full, zero minutes); `bun run fmt:check`
-  + `bun run lint` + per-package typecheck/test for quick passes; single-file
-  int runs against a DEDICATED db via `SUPABASE_DB_URL`.
+  - `bun run lint` + per-package typecheck/test for quick passes; single-file
+    int runs against a DEDICATED db via `SUPABASE_DB_URL`.
 - **Perf test**: the phase marks + 240 s budget in
   `pg-relations.int.test.ts` stay — the 20k SEED is the CI variance cliff
   (144 s observed); don't remove the marks.
