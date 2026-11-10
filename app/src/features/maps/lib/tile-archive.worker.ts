@@ -43,6 +43,7 @@ import { env } from "#/env";
 import type { DatasetGeometryRow } from "#/lib/dataset-rows-pg";
 import { forEachDatasetGeometryPage as forEachPgGeometryPage } from "#/lib/dataset-rows-pg";
 import { isPostgresDatasetId } from "#/lib/dataset-source";
+import { geometryTakeRowsFor } from "#/lib/pg-geometry-fetch";
 import {
   createGeometrySourceUrl,
   createTileArchiveUploadUrl,
@@ -230,6 +231,7 @@ export async function fetchAllPgGeometryFeatures(
   supabase: SupabaseClient,
   datasetId: string,
   onProgress?: (fetchedRows: number) => void,
+  pageRows?: number,
 ): Promise<{ features: Array<GeoJSONFeature>; payloadBytes: number }> {
   const features: Array<GeoJSONFeature> = [];
   const pool = new BoundedPool(GEOMETRY_FETCH_POOL_SIZE);
@@ -248,7 +250,11 @@ export async function fetchAllPgGeometryFeatures(
         );
       }
     },
-    { supabase },
+    // Take-sized paging (#183, [remedies 1]): a dataset of 3 MB rows pages
+    // ~5 rows per read instead of 2000 — the fetch phase's RPC responses
+    // (and this worker's memory between pages) stay bounded by bytes, not
+    // by the dataset happening to be small.
+    { supabase, geometryPageRows: pageRows },
   );
   const resolvedRows = await Promise.all(rowTasks);
   let payloadBytes = 0;
@@ -341,10 +347,15 @@ async function runPgBuild(datasetId: string): Promise<void> {
     }
     const expectedVersion = info.mapTileCacheVersion;
     const total = info.featureCount,
-      { features, payloadBytes } = await fetchAllPgGeometryFeatures(supabase, datasetId, (done) => {
-        if (total > 0)
-          post({ done: Math.min(done, total), schemaId: datasetId, total, type: "progress" });
-      });
+      { features, payloadBytes } = await fetchAllPgGeometryFeatures(
+        supabase,
+        datasetId,
+        (done) => {
+          if (total > 0)
+            post({ done: Math.min(done, total), schemaId: datasetId, total, type: "progress" });
+        },
+        geometryTakeRowsFor(info.maxGeometryRowBytes),
+      );
     if (payloadBytes < MAP_TILE_ARCHIVE_MIN_BYTES) {
       // The version rides along so the manager can memoize the skip (the
       // #134 rule, shared memo with the Convex path — id spaces are disjoint).

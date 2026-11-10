@@ -251,6 +251,35 @@ export function listDraftSummariesQueryOptions(options?: StoreOptions) {
   });
 }
 
+/**
+ * The TILE pipeline's summary feed — every dataset the signed-in user can
+ * see, drafts included ([remedies 1] / #287). The catalog feeds gate on
+ * `lifecycle eq 'published'` (the stage-4 drafts-leak fix, still
+ * load-bearing THERE), which silently excluded project-held draft datasets
+ * from the tile-archive manager's watch: their maps rode the frozen row
+ * path forever because the scheduler never saw them (#284's four big
+ * polygon datasets were exactly this). The tile pipeline has no drafts
+ * leak to fear — it runs behind the sign-in gate, its scheduling and
+ * rendering are identity-scoped reads, and anon serving (0023/0024) only
+ * ever touches published/frozen rows. Scope still rides RLS: a draft
+ * visible to its project's members schedules; a foreign draft does not.
+ */
+export function tileWatchSummariesQueryOptions(options?: StoreOptions) {
+  return queryOptions({
+    queryKey: ["pg:datasets", "tileWatch", CATALOG_READ_LIMIT],
+    queryFn: async () => {
+      const rows = await queryRows<DatasetSummaryWire>(
+        clientOf(options)
+          .from("datasets")
+          .select(SUMMARY_SELECT)
+          .order("created_at", { ascending: false })
+          .limit(CATALOG_READ_LIMIT),
+      );
+      return rows.map(summaryOf);
+    },
+  });
+}
+
 /** One dataset's full row, or null when RLS hides it — `api.cms.schemas.get` parity. */
 export function getQueryOptions(args: { datasetId: string }, options?: StoreOptions) {
   return queryOptions({

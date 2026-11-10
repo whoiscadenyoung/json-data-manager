@@ -24,7 +24,7 @@ vi.mock("#/integrations/tanstack-query/root-provider", () => ({
 }));
 // The PG feed: summaries scripted per test, metas irrelevant to the manager.
 vi.mock("./pg-tile-archives-react", () => ({
-  usePgDatasetSummaries: () => mocks.pgSummaries,
+  usePgTileDatasetSummaries: () => mocks.pgSummaries,
   usePgTileArchiveMetas: () => new globalThis.Map(),
 }));
 

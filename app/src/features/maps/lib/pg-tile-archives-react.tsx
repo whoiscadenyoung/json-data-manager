@@ -16,13 +16,19 @@
 
 import { useQuery } from "@tanstack/react-query";
 
-import { listSummariesQueryOptions, type DatasetSummaryRow } from "#/lib/store/datasets";
+import { tileWatchSummariesQueryOptions, type DatasetSummaryRow } from "#/lib/store/datasets";
 
 import { pgTileArchiveMetasOf, type PgTileArchiveMeta } from "./pg-tile-archives";
 
-/** The PG dataset summaries (`pg:datasets`/`listSummaries`), or undefined while loading. */
-export function usePgDatasetSummaries(): DatasetSummaryRow[] | undefined {
-  const query = useQuery(listSummariesQueryOptions());
+/**
+ * The PG dataset summaries the TILE pipeline watches (`pg:datasets`/
+ * `tileWatch`) — drafts included ([remedies 1] / #287: the published-only
+ * catalog feed silently excluded project-held draft datasets from the
+ * manager's watch, so their maps rode the row path forever). Undefined
+ * while loading.
+ */
+export function usePgTileDatasetSummaries(): DatasetSummaryRow[] | undefined {
+  const query = useQuery(tileWatchSummariesQueryOptions());
   return query.data;
 }
 

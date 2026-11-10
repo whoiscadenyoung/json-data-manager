@@ -19,7 +19,7 @@ import { useEffect, useMemo } from "react";
 import { isPostgresDatasetId } from "#/lib/dataset-source";
 
 import { isPgTileCandidate } from "./pg-tile-archives";
-import { usePgDatasetSummaries, usePgTileArchiveMetas } from "./pg-tile-archives-react";
+import { usePgTileDatasetSummaries, usePgTileArchiveMetas } from "./pg-tile-archives-react";
 
 /**
  * Mounted once at the app root (next to the rebuild manager): observes every
@@ -29,7 +29,7 @@ import { usePgDatasetSummaries, usePgTileArchiveMetas } from "./pg-tile-archives
  * `tile-archive.ts`.
  */
 export function TileArchiveCacheManager(): null {
-  const pgSummaries = usePgDatasetSummaries();
+  const pgSummaries = usePgTileDatasetSummaries();
   const pgGeospatialIds = useMemo(
     () => (pgSummaries ?? []).filter((row) => isPgTileCandidate(row)).map((row) => row.id),
     [pgSummaries],

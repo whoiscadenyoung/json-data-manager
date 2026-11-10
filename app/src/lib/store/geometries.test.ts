@@ -279,6 +279,7 @@ describe("tileDatasetInfo — the worker's pre-build read", () => {
           featureCount: 42,
           geometryType: "Point",
           isGeospatial: true,
+          maxGeometryRowBytes: 59,
           mapTileCacheVersion: 7,
         },
       ],
@@ -289,13 +290,14 @@ describe("tileDatasetInfo — the worker's pre-build read", () => {
       featureCount: 42,
       geometryType: "Point",
       isGeospatial: true,
+      maxGeometryRowBytes: 59,
       mapTileCacheVersion: 7,
     });
     const first = queryAt(queries, 0);
     expect(first.table).toBe("datasets");
     expect(argsOf(first, "eq")).toStrictEqual(["id", "d1"]);
     expect(firstArg(first, "select")).toBe(
-      "isGeospatial:is_geospatial,geometryType:geometry_type,featureCount:feature_count,mapTileCacheVersion:map_tile_cache_version",
+      "isGeospatial:is_geospatial,geometryType:geometry_type,featureCount:feature_count,maxGeometryRowBytes:max_geometry_row_bytes,mapTileCacheVersion:map_tile_cache_version",
     );
   });
 

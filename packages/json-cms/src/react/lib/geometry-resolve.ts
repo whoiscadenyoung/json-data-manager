@@ -8,6 +8,13 @@ export interface ResolvableGeometryRow {
   _id: string;
   geometryJson?: string;
   geometryUrl?: string;
+  /**
+   * A PRE-RESOLVED geometry object (the PG row-path worker's hand-off, ADR
+   * 0025): when present it IS the resolution — no `geometryJson` parse, no
+   * `geometryUrl` fetch. The worker structured-cloned the parsed payload
+   * across the boundary, so this reference is the main thread's only copy.
+   */
+  geometryResolved?: unknown;
 }
 
 // Module-level cache, keyed by URL. A `geometryUrl` is a stable Convex
@@ -79,6 +86,15 @@ export function useResolvedGeometries(rows: ResolvableGeometryRow[]): Map<string
         map = new Map<string, Geometry>(),
         rowIds = new Set<string>();
       for (const row of rows) {
+        if (row.geometryResolved !== undefined) {
+          // The worker-resolved hand-off: the object IS the geometry —
+          // cache plumbing skipped entirely (the reference is stable across
+          // a streaming pass's reports; nothing to parse or prune).
+          rowIds.add(row._id);
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- worker-resolved GeoJSON, validated at import time (the store's posture toward its payloads).
+          map.set(row._id, row.geometryResolved as Geometry);
+          continue;
+        }
         if (row.geometryJson === undefined) {
           continue;
         }

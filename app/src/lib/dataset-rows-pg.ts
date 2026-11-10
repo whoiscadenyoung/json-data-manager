@@ -324,6 +324,13 @@ export { sharedClient };
  */
 export interface DatasetRowsOptions extends StoreOptions {
   entryOrder?: "asc" | "desc";
+  /**
+   * Explicit page width for the geometry paging reads (the worker-side
+   * take-sizing, #183): the callers that know the dataset's
+   * `maxGeometryRowBytes` size the take so one page's payload stays
+   * bounded; absent keeps `GEOMETRY_PAGE_ROWS`.
+   */
+  geometryPageRows?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -400,10 +407,12 @@ export async function forEachDatasetGeometryPage(
   onPage: (rows: DatasetGeometryRow[]) => void,
   options?: DatasetRowsOptions,
 ): Promise<void> {
+  const pageRows =
+    (options === undefined ? undefined : options.geometryPageRows) ?? GEOMETRY_PAGE_ROWS;
   let cursor: string | null = null;
   for (;;) {
     // oxlint-disable-next-line no-await-in-loop -- each page resumes from the previous page's cursor; inherently sequential.
-    const page = await rowsForTiles({ cursor, datasetId, limit: GEOMETRY_PAGE_ROWS }, options);
+    const page = await rowsForTiles({ cursor, datasetId, limit: pageRows }, options);
     onPage(applyGeometryRowSpecs(page.rows));
     if (page.nextCursor === null) {
       return;

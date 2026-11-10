@@ -27,7 +27,7 @@ import { isPostgresDatasetId } from "#/lib/dataset-source";
 import { sharedClient } from "#/lib/store/client";
 
 import { isPgTileArchiveStale } from "./pg-tile-archives";
-import { usePgDatasetSummaries } from "./pg-tile-archives-react";
+import { usePgTileDatasetSummaries } from "./pg-tile-archives-react";
 
 /**
  * Which auth surface a worker token request is for: the Supabase access
@@ -563,7 +563,7 @@ function getScheduler(): TileArchiveScheduler {
  * `mapTileCacheVersion` server-side with no client hook.
  */
 export function useMapTileArchiveManager(): void {
-  const pgSummaries = usePgDatasetSummaries();
+  const pgSummaries = usePgTileDatasetSummaries();
   useEffect(() => {
     if (pgSummaries === undefined) return;
     const scheduler = getScheduler();
