@@ -63,3 +63,4 @@
 - [Views compiler notes](views-compiler-notes.md) — #299: unaccent not installed (translate fallback), all values+keys bound, first/last ordering caveat, pglite sanity trick
 - [Views server runner](views-server-runner.md) — #300: server-side runner (no client SQL/rows); no in-function statement_timeout, EXECUTE defaults need explicit revokes, postgres.js double-encodes jsonb, committed int fixtures
 - [Views editor + derived retire](views-editor-and-derived-retire.md) — #301: draft-input pickers via view_input_meta (no lifecycle gate), PostgREST embed hint, base-ui Select shows raw values, routeTree regen, what was retired vs left
+- [Views graphs](views-graphs-notes.md) — 2026-11-10 #304 React Flow lineage + step graphs: lazy client-only impl, elk bundled, layout via useQuery, jsdom stubs, edge direction

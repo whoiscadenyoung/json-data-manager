@@ -21,6 +21,7 @@ import {
   Map as MapIcon,
   MapPlus,
   Menu,
+  Network,
   PanelLeftClose,
   Plus,
   Rocket,
@@ -184,6 +185,7 @@ function sectionLabel(rest: string, name: string | undefined): string {
     "/analysis": "Analysis",
     "/catalog": "Catalog",
     "/create": "Import",
+    "/lineage": "Lineage",
     "/members": "Members",
     "/publish": "Publish",
     "/settings": "Settings",
@@ -586,6 +588,13 @@ function PgProjectShellBody({
                 ) : null}
               </NavGroup>
               <NavGroup label="Project" rail={rail}>
+                <NavItem
+                  active={rest === "/lineage"}
+                  icon={Network}
+                  label="Lineage"
+                  rail={rail}
+                  linkProps={{ params: { projectId }, to: "/projects/$projectId/lineage" }}
+                />
                 <NavItem
                   active={rest === "/publish"}
                   icon={Rocket}

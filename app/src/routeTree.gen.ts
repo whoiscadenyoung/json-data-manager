@@ -33,6 +33,7 @@ import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects/$p
 import { Route as ProjectsProjectIdAnalysisRouteImport } from './routes/projects/$projectId/analysis'
 import { Route as ProjectsProjectIdCatalogRouteImport } from './routes/projects/$projectId/catalog'
 import { Route as ProjectsProjectIdCreateRouteImport } from './routes/projects/$projectId/create'
+import { Route as ProjectsProjectIdLineageRouteImport } from './routes/projects/$projectId/lineage'
 import { Route as ProjectsProjectIdMembersRouteImport } from './routes/projects/$projectId/members'
 import { Route as ProjectsProjectIdPublishRouteImport } from './routes/projects/$projectId/publish'
 import { Route as ProjectsProjectIdSettingsRouteImport } from './routes/projects/$projectId/settings'
@@ -166,6 +167,12 @@ const ProjectsProjectIdCreateRoute = ProjectsProjectIdCreateRouteImport.update({
   path: '/create',
   getParentRoute: () => ProjectsProjectIdRouteRoute,
 } as any)
+const ProjectsProjectIdLineageRoute =
+  ProjectsProjectIdLineageRouteImport.update({
+    id: '/lineage',
+    path: '/lineage',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
 const ProjectsProjectIdMembersRoute =
   ProjectsProjectIdMembersRouteImport.update({
     id: '/members',
@@ -236,6 +243,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/analysis': typeof ProjectsProjectIdAnalysisRoute
   '/projects/$projectId/catalog': typeof ProjectsProjectIdCatalogRoute
   '/projects/$projectId/create': typeof ProjectsProjectIdCreateRoute
+  '/projects/$projectId/lineage': typeof ProjectsProjectIdLineageRoute
   '/projects/$projectId/members': typeof ProjectsProjectIdMembersRoute
   '/projects/$projectId/publish': typeof ProjectsProjectIdPublishRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
@@ -269,6 +277,7 @@ export interface FileRoutesByTo {
   '/projects/$projectId/analysis': typeof ProjectsProjectIdAnalysisRoute
   '/projects/$projectId/catalog': typeof ProjectsProjectIdCatalogRoute
   '/projects/$projectId/create': typeof ProjectsProjectIdCreateRoute
+  '/projects/$projectId/lineage': typeof ProjectsProjectIdLineageRoute
   '/projects/$projectId/members': typeof ProjectsProjectIdMembersRoute
   '/projects/$projectId/publish': typeof ProjectsProjectIdPublishRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
@@ -304,6 +313,7 @@ export interface FileRoutesById {
   '/projects/$projectId/analysis': typeof ProjectsProjectIdAnalysisRoute
   '/projects/$projectId/catalog': typeof ProjectsProjectIdCatalogRoute
   '/projects/$projectId/create': typeof ProjectsProjectIdCreateRoute
+  '/projects/$projectId/lineage': typeof ProjectsProjectIdLineageRoute
   '/projects/$projectId/members': typeof ProjectsProjectIdMembersRoute
   '/projects/$projectId/publish': typeof ProjectsProjectIdPublishRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
@@ -340,6 +350,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/analysis'
     | '/projects/$projectId/catalog'
     | '/projects/$projectId/create'
+    | '/projects/$projectId/lineage'
     | '/projects/$projectId/members'
     | '/projects/$projectId/publish'
     | '/projects/$projectId/settings'
@@ -373,6 +384,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/analysis'
     | '/projects/$projectId/catalog'
     | '/projects/$projectId/create'
+    | '/projects/$projectId/lineage'
     | '/projects/$projectId/members'
     | '/projects/$projectId/publish'
     | '/projects/$projectId/settings'
@@ -407,6 +419,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/analysis'
     | '/projects/$projectId/catalog'
     | '/projects/$projectId/create'
+    | '/projects/$projectId/lineage'
     | '/projects/$projectId/members'
     | '/projects/$projectId/publish'
     | '/projects/$projectId/settings'
@@ -614,6 +627,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdCreateRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
+    '/projects/$projectId/lineage': {
+      id: '/projects/$projectId/lineage'
+      path: '/lineage'
+      fullPath: '/projects/$projectId/lineage'
+      preLoaderRoute: typeof ProjectsProjectIdLineageRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
     '/projects/$projectId/members': {
       id: '/projects/$projectId/members'
       path: '/members'
@@ -677,6 +697,7 @@ interface ProjectsProjectIdRouteRouteChildren {
   ProjectsProjectIdAnalysisRoute: typeof ProjectsProjectIdAnalysisRoute
   ProjectsProjectIdCatalogRoute: typeof ProjectsProjectIdCatalogRoute
   ProjectsProjectIdCreateRoute: typeof ProjectsProjectIdCreateRoute
+  ProjectsProjectIdLineageRoute: typeof ProjectsProjectIdLineageRoute
   ProjectsProjectIdMembersRoute: typeof ProjectsProjectIdMembersRoute
   ProjectsProjectIdPublishRoute: typeof ProjectsProjectIdPublishRoute
   ProjectsProjectIdSettingsRoute: typeof ProjectsProjectIdSettingsRoute
@@ -693,6 +714,7 @@ const ProjectsProjectIdRouteRouteChildren: ProjectsProjectIdRouteRouteChildren =
     ProjectsProjectIdAnalysisRoute: ProjectsProjectIdAnalysisRoute,
     ProjectsProjectIdCatalogRoute: ProjectsProjectIdCatalogRoute,
     ProjectsProjectIdCreateRoute: ProjectsProjectIdCreateRoute,
+    ProjectsProjectIdLineageRoute: ProjectsProjectIdLineageRoute,
     ProjectsProjectIdMembersRoute: ProjectsProjectIdMembersRoute,
     ProjectsProjectIdPublishRoute: ProjectsProjectIdPublishRoute,
     ProjectsProjectIdSettingsRoute: ProjectsProjectIdSettingsRoute,
