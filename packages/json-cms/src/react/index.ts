@@ -112,25 +112,15 @@ export type { Geometry, GeometryType, Feature, FeatureCollection } from "@caden/
 export { looksLikeGeoJson, parseGeoJsonFeatures } from "./lib/geojson-import.js";
 export type { GeoJsonRow, GeoJsonParseResult, GeoJsonFeatureError } from "./lib/geojson-import.js";
 
-// Derived-dataset transform engine (roadmap stages 1+4) — declarative,
-// serializable specs (see ../shared/transform/spec.ts) plus the pure engine
-// over generic rows: namespaced fields in, base rows never mutated,
-// diagnostics out. Stage 4 (#98) added the rollup primitive, the
-// `geometrySource` spec field (per-row references, index-paired), and the
-// union-aware dependency helper. Stage 9 (#105) added the SQL escape hatch
-// (applySql + its typed-table materialization) — the same engine interface,
-// its DuckDB handle injected (see ../shared/transform/sql.ts).
-export { applyLookup, LookupKeyConflictError } from "@caden/data-core/transform";
-export { applyRollup } from "@caden/data-core/transform";
+// SQL escape hatch engine (stage 9, #105; applySql + typed-table
+// materialization, DuckDB handle injected). The lookup/rollup executors and
+// TransformSpec went with the derived registry (#301).
 export {
   applySql,
   declaredColumnTypes,
   materializeSqlTable,
   sqlSourceName,
 } from "@caden/data-core/transform";
-export { transformSpecDependencies, geometrySourceOperationOf } from "@caden/data-core/transform";
-export type { LookupDiagnostics, LookupResult } from "@caden/data-core/transform";
-export type { RollupDiagnostics, RollupResult } from "@caden/data-core/transform";
 export type {
   SqlApplyOptions,
   SqlColumnSpec,
@@ -140,16 +130,7 @@ export type {
   SqlSideTable,
   SqlTable,
 } from "@caden/data-core/transform";
-export type {
-  TransformSpec,
-  TransformOperation,
-  LookupOperation,
-  RollupOperation,
-  RollupMeasure,
-  SqlOperation,
-  SqlTableRef,
-  GeometrySource,
-} from "@caden/data-core/transform";
+export type { SqlOperation, SqlTableRef } from "@caden/data-core/transform";
 
 // Resolves a `GeometryDoc`'s `geometryJson`/`geometryUrl` (see its doc
 // comment in types.ts) into an actual `Geometry` — handles the client-side

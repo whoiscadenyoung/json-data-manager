@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { transformSpecDependencies } from "./spec.js";
 import type { SqlOperation } from "./spec.js";
 import { applySql, declaredColumnTypes, materializeSqlTable, sqlSourceName } from "./sql.js";
 import type { SqlColumnSpec, SqlEngine, SqlTable } from "./sql.js";
@@ -424,32 +423,5 @@ describe("applySql — the one engine interface, fourth argument the handle", ()
       const ok = await applySql(sqlOp({ sql }), locations, new Map(), engine);
       expect(ok.diagnostics.error).toBeUndefined();
     }
-  });
-});
-
-describe("SqlOperation in the spec union — serializable, walk-aware", () => {
-  it("round-trips as serializable data — a saved query is plain data", () => {
-    const spec = {
-      sourceDatasetId: "locations",
-      operations: [sqlOp({ tables: [{ as: "restaurants", datasetId: "restaurants" }] })],
-    };
-    expect(JSON.parse(JSON.stringify(spec))).toStrictEqual(spec);
-  });
-
-  it("contributes its table refs as dependency edges — the cycle walk, health walk, visibility gate, and press order all read these", () => {
-    expect(
-      transformSpecDependencies({
-        sourceDatasetId: "locations",
-        operations: [
-          sqlOp({
-            tables: [
-              { as: "restaurants", datasetId: "restaurants" },
-              { as: "again", datasetId: "restaurants" },
-            ],
-          }),
-          { kind: "lookup", lookupDatasetId: "orgs", baseKey: "id", lookupKey: "id" },
-        ],
-      }),
-    ).toStrictEqual(["locations", "restaurants", "orgs"]);
   });
 });

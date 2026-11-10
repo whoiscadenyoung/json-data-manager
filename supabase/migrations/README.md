@@ -21,3 +21,5 @@ Third-party extensions install into the `extensions` schema.
   `view_inputs`, `view_runs`, the row-write guard, the runner's database half
   (`view_input_versions`; `view_apply_run` / `view_record_failure` executable only by `view_runner`),
   `create_view` / `save_view`, and the `view_stale` computed column (#300).
+- `0028_retire_derived.sql` — drops `derived_datasets` and the `derived` project-artifact kind;
+  views replace them (#301).
