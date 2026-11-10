@@ -363,8 +363,10 @@ describe.skipIf(!dbUp())("install_tile_archive CAS (§5.6)", () => {
     await s().begin();
     await s().asUser(ALICE);
     // Current version is 0: installing onto 0 succeeds and stamps the columns.
+    // Paths are BUCKET-RELATIVE (0026) — the exact shape the build worker
+    // uploads under and every signed-URL reader signs against.
     const okRows = await s().expectOk(
-      `select public.install_tile_archive(${sqlLit(datasetId)}, 0, ${sqlLit(`tile-archives/${datasetId}/tiles.pmtiles`)}, 12345, 12, 0, 2) as ok`,
+      `select public.install_tile_archive(${sqlLit(datasetId)}, 0, ${sqlLit(`${datasetId}/tiles.pmtiles`)}, 12345, 12, 0, 2) as ok`,
     );
     expect(okRows[0].ok as string).toBe("t");
     const stamped = await s().expectOk(
@@ -372,7 +374,7 @@ describe.skipIf(!dbUp())("install_tile_archive CAS (§5.6)", () => {
               map_tile_archive_built_version as v, map_tile_archive_format as f
          from public.datasets where id = ${sqlLit(datasetId)}`,
     );
-    expect(stamped[0].p as string).toBe(`tile-archives/${datasetId}/tiles.pmtiles`);
+    expect(stamped[0].p as string).toBe(`${datasetId}/tiles.pmtiles`);
     expect(stamped[0].b as string).toBe("12345");
     expect(stamped[0].z as string).toBe("12");
     expect(stamped[0].f as string).toBe("2");
@@ -394,39 +396,49 @@ describe.skipIf(!dbUp())("install_tile_archive CAS (§5.6)", () => {
     expect(current).toBeGreaterThan(0);
 
     const staleRows = await s().expectOk(
-      `select public.install_tile_archive(${sqlLit(datasetId)}, 0, ${sqlLit(`tile-archives/${datasetId}/stale.pmtiles`)}, 1, 12, 0, 2) as ok`,
+      `select public.install_tile_archive(${sqlLit(datasetId)}, 0, ${sqlLit(`${datasetId}/stale.pmtiles`)}, 1, 12, 0, 2) as ok`,
     );
     expect(staleRows[0].ok as string).toBe("f");
     const unchanged = await s().expectOk(
       `select map_tile_archive_path as p from public.datasets where id = ${sqlLit(datasetId)}`,
     );
-    expect(unchanged[0].p as string).toBe(`tile-archives/${datasetId}/tiles.pmtiles`);
+    expect(unchanged[0].p as string).toBe(`${datasetId}/tiles.pmtiles`);
 
     // And onto the CURRENT version → true (the worker's success path).
     const freshRows = await s().expectOk(
-      `select public.install_tile_archive(${sqlLit(datasetId)}, ${current}, ${sqlLit(`tile-archives/${datasetId}/fresh.pmtiles`)}, 1, 12, ${current}, 2) as ok`,
+      `select public.install_tile_archive(${sqlLit(datasetId)}, ${current}, ${sqlLit(`${datasetId}/fresh.pmtiles`)}, 1, 12, ${current}, 2) as ok`,
     );
     expect(freshRows[0].ok as string).toBe("t");
     await s().rollback();
     await dropDatasets(s(), [datasetId]);
   });
 
-  test("paths outside the caller dataset's tile-archives prefix are rejected", async () => {
+  test("paths outside the caller dataset's prefix are rejected", async () => {
     const datasetId = await createDataset(s(), { createdBy: ALICE });
     const other = crypto.randomUUID();
 
     await s().begin();
     await s().asUser(ALICE);
+    // Another dataset's prefix: still the caller-bug raise (the leak guard).
     await expect(
       s().denied(
-        `select public.install_tile_archive(${sqlLit(datasetId)}, 0, ${sqlLit(`tile-archives/${other}/x.pmtiles`)}, 1, 12, 0, 2)`,
+        `select public.install_tile_archive(${sqlLit(datasetId)}, 0, ${sqlLit(`${other}/x.pmtiles`)}, 1, 12, 0, 2)`,
       ),
-    ).resolves.toMatch(/tile-archives\/<datasetId>/i);
+    ).resolves.toMatch(/<datasetId>\/<name>/i);
+    // Outside the tile-archives convention entirely: rejected as well.
     await expect(
       s().denied(
         `select public.install_tile_archive(${sqlLit(datasetId)}, 0, ${sqlLit(`geometries/${datasetId}/x.json`)}, 1, 12, 0, 2)`,
       ),
-    ).resolves.toMatch(/tile-archives\/<datasetId>/i);
+    ).resolves.toMatch(/<datasetId>\/<name>/i);
+    // The bucket-QUALIFIED form (the 0005 guard's expectation — the exact
+    // mismatch that broke every live install, 0026's header): rejected now,
+    // since the stored column and every reader are bucket-relative.
+    await expect(
+      s().denied(
+        `select public.install_tile_archive(${sqlLit(datasetId)}, 0, ${sqlLit(`tile-archives/${datasetId}/x.pmtiles`)}, 1, 12, 0, 2)`,
+      ),
+    ).resolves.toMatch(/<datasetId>\/<name>/i);
     await s().rollback();
     await dropDatasets(s(), [datasetId]);
   });
@@ -442,13 +454,13 @@ describe.skipIf(!dbUp())("install_tile_archive CAS (§5.6)", () => {
     await s().begin();
     await s().asUser(BOB);
     const deniedRows = await s().expectOk(
-      `select public.install_tile_archive(${sqlLit(lockedId)}, 0, ${sqlLit(`tile-archives/${lockedId}/x.pmtiles`)}, 1, 12, 0, 2) as ok`,
+      `select public.install_tile_archive(${sqlLit(lockedId)}, 0, ${sqlLit(`${lockedId}/x.pmtiles`)}, 1, 12, 0, 2) as ok`,
     );
     expect(deniedRows[0].ok as string).toBe("f");
 
     // BOB on an OPEN dataset installs fine (trusted collaborator, ADR 0010).
     const okRows = await s().expectOk(
-      `select public.install_tile_archive(${sqlLit(openId)}, 0, ${sqlLit(`tile-archives/${openId}/x.pmtiles`)}, 1, 12, 0, 2) as ok`,
+      `select public.install_tile_archive(${sqlLit(openId)}, 0, ${sqlLit(`${openId}/x.pmtiles`)}, 1, 12, 0, 2) as ok`,
     );
     expect(okRows[0].ok as string).toBe("t");
     await s().rollback();
