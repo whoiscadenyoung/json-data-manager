@@ -48,6 +48,13 @@ Where the #273 test-pass work stands and how to finish it. Companion to
   read "collected into arrays (1-N)". The verification pass also
   re-confirmed the #280 gap (the minted derived artifact lands in the
   global registry only, invisible in the project catalog).
+- **[remedies 3] (#289) MERGED 2026-11-10** (PR #297, main @ `39fd681`,
+  ADR 0027): the relation's one-click join mints the registry row AND an
+  OWNED catalog membership; `/projects/$projectId/derived/$derivedId`
+  renders the joined table with its match stats; the catalog's Derived
+  cards, the Analysis cards, and the Transform tab's "Open" links all
+  reach the route. Bundle press unchanged (derived rows re-execute;
+  sources ride the bundle). Verified live end-to-end on the grant stack.
 - **Merged 2026-11-09**: #273 (project workspace shell, `d86607a`) + its
   perf-test repairs (`e854b51` bulk teardown, `e5ae15a` phase marks + 240 s
   budget) + the CI cost split (`8d90ad2`).
