@@ -1,4 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// The import chain reaches `#/env` through the store's client (which
+// validates at import time); CI has no .env.local — the
+// stage-3-ci-tree-lessons mock, applied before any store import.
+vi.mock("#/env", () => ({
+  env: { VITE_SUPABASE_ANON_KEY: "test-anon-key", VITE_SUPABASE_URL: "http://127.0.0.1:54321" },
+}));
 
 import {
   DEFAULT_GEOMETRY_PAGE_ROWS,
