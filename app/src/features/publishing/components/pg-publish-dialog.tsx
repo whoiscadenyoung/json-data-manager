@@ -35,6 +35,17 @@ import { publishPgDatasetVersion } from "../lib/pg-publish";
  * version label is required with an inline warning while empty, and a draft
  * flip that moved zero rows says so instead of toasting success.
  */
+/**
+ * The draft-flip honesty message, or undefined on a clean publish: a frozen
+ * version whose lifecycle flip moved zero rows is a partial failure the
+ * dialog must name (module comment; #275 keeps it inline, not toast-only).
+ */
+function flipFailureMessage(isDraft: boolean, draftFlipped: boolean): string | undefined {
+  return isDraft && !draftFlipped
+    ? "The version froze, but the draft flip didn't land — you may not have access to publish this dataset. Refresh to check its state."
+    : undefined;
+}
+
 export function PgPublishDialog({
   dataset,
   onOpenChange,
@@ -58,6 +69,11 @@ export function PgPublishDialog({
     isDraft = dataset.lifecycle === "draft",
     [label, setLabel] = useState(""),
     [submitting, setSubmitting] = useState(false),
+    // The rejection lives INSIDE the dialog, not only in a toast: toasts
+    // auto-dismiss (and sit bottom-right, where the devtools panel floats in
+    // dev), so a swallowed-feeling failure was invisible (#275). Inline stays
+    // until the next attempt, and the dialog keeps its retry-safe key.
+    [error, setError] = useState<string>(),
     labelEmpty = label.trim() === "",
     submit = async (): Promise<void> => {
       if (labelEmpty) {
@@ -65,6 +81,10 @@ export function PgPublishDialog({
         return;
       }
       setSubmitting(true);
+      setError(undefined);
+      // Local, not state: the closure must not read a stale render's error
+      // when deciding whether the dialog closes.
+      let failureMessage: string | undefined;
       try {
         const outcome = await publishPgDatasetVersion({
           datasetId: dataset.id,
@@ -72,10 +92,10 @@ export function PgPublishDialog({
           publishKey,
           versionLabel: label.trim(),
         });
-        if (isDraft && !outcome.draftFlipped) {
-          toast.error(
-            "The version froze, but the draft flip didn't land — you may not have access to publish this dataset. Refresh to check its state.",
-          );
+        failureMessage = flipFailureMessage(isDraft, outcome.draftFlipped);
+        if (failureMessage !== undefined) {
+          setError(failureMessage);
+          toast.error(failureMessage);
         } else {
           toast.success(
             `Froze ${label.trim()} — the dataset's current rows are now an immutable version.`,
@@ -83,10 +103,15 @@ export function PgPublishDialog({
         }
         void queryClient.invalidateQueries({ queryKey: ["pg:versions"] });
         void queryClient.invalidateQueries({ queryKey: ["pg:datasets"] });
-        onOpenChange(false);
-      } catch (error) {
-        // A locked dataset's denial (or any RPC refusal) surfaces verbatim.
-        toast.error(errorMessage(error, "The publish failed."));
+        if (failureMessage === undefined) {
+          onOpenChange(false);
+        }
+      } catch (caught) {
+        // A locked dataset's denial (or any RPC refusal) surfaces verbatim —
+        // inline where the retry button is, plus the toast for parity.
+        failureMessage = errorMessage(caught, "The publish failed.");
+        setError(failureMessage);
+        toast.error(failureMessage);
       } finally {
         setSubmitting(false);
       }
@@ -144,6 +169,14 @@ export function PgPublishDialog({
               </p>
             )}
           </div>
+          {error !== undefined && (
+            <p
+              className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              role="alert"
+            >
+              {error}
+            </p>
+          )}
           <p className="text-xs text-muted-foreground">
             Retry-safe: this publish carries key{" "}
             <span className="font-mono">{publishKey.slice(0, 8)}…</span> — submitting again with it

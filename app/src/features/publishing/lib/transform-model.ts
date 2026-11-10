@@ -171,7 +171,16 @@ export function matchStatLine(diagnostics: LookupDiagnostics, baseKey: string): 
     return "No rows to match yet.";
   }
   const percent = Math.round((diagnostics.matchedRows / diagnostics.totalSourceRows) * 100);
-  return `${percent}% matched; ${diagnostics.unmatchedRows} orphan ${baseKey}`;
+  const base = `${percent}% matched; ${diagnostics.unmatchedRows} orphan ${baseKey}`;
+  // #282: a keeping duplicate policy silently drops lookup rows that share a
+  // key (1-N: one award, several corridors) — the stats say so explicitly
+  // instead of the numbers quietly disagreeing with the source.
+  if (diagnostics.droppedLookupRows > 0) {
+    return `${base}; ${diagnostics.droppedLookupRows} duplicate lookup row${
+      diagnostics.droppedLookupRows === 1 ? "" : "s"
+    } dropped by the duplicate policy`;
+  }
+  return base;
 }
 
 /** The orphan list a human reads: the first `limit` raw keys plus how many more (`unmatchedKeys` is unbounded). */

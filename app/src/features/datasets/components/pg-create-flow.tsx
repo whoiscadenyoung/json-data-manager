@@ -323,12 +323,29 @@ function ImportFirst({ projectId }: { projectId: string }) {
           // row lands (the file-retention ordering precedent).
           await bindOwnedDraft(newDatasetId, projectId);
           // The retained original file (§10 step 4) — uploaded before the
-          // chunks so a failed retention aborts before any row lands.
+          // chunks so a failed retention aborts before any row lands. A
+          // retention failure means NOTHING landed: the half-created empty
+          // draft is removed here (the owned binding cascades with it)
+          // instead of waiting for a Discard the user may never press —
+          // leaving the page used to orphan it (#274).
           if (options.sourceFile !== null) {
-            await datasetsStore.uploadSourceFile({
-              datasetId: newDatasetId,
-              file: options.sourceFile,
-            });
+            try {
+              await datasetsStore.uploadSourceFile({
+                datasetId: newDatasetId,
+                file: options.sourceFile,
+              });
+            } catch (uploadError) {
+              let removed = true;
+              try {
+                await datasetsStore.remove({ datasetId: newDatasetId });
+              } catch {
+                removed = false;
+              }
+              setDatasetId(undefined);
+              throw new Error(
+                `The import failed while retaining the source file: ${errorMessage(uploadError, "the upload was refused")}. No rows were imported${removed ? " and the empty draft was removed" : " — the empty draft could not be removed automatically, discard it from the project's catalog"}. Check the file size against the storage cap and retry.`,
+              );
+            }
           }
           await runImport(newDatasetId, rows, options);
           void queryClient.invalidateQueries({ queryKey: ["pg:datasets"] });

@@ -1466,7 +1466,19 @@ function MapVectorTiles<P extends TileFeatureProperties = TileFeatureProperties>
       paint: Record<string, unknown>;
       filter?: MapLibreGL.FilterSpecification;
     }> = [
-      { id: fillLayerId, type: "fill", show: showFill, paint: mergedFillPaint },
+      {
+        id: fillLayerId,
+        type: "fill",
+        show: showFill,
+        paint: mergedFillPaint,
+        // MapLibre's `fill` layer closes and fills the rings of ANY feature —
+        // on a line dataset every LineString would draw a shaded wedge between
+        // its endpoints. Fill is for area geometries only (same treatment as
+        // the circle layer below; layer-styles' compile.ts carries the same
+        // filter on its styled layers). The sibling `line` layer keeps drawing
+        // both lines and polygon outlines.
+        filter: ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]],
+      },
       { id: lineLayerId, type: "line", show: showLine, paint: mergedLinePaint },
       {
         id: circleLayerId,
@@ -1758,6 +1770,10 @@ function MapGeoJSON<P extends GeoJSON.GeoJsonProperties = GeoJSON.GeoJsonPropert
           type: "fill",
           source: sourceId,
           paint: mergedFillPaint,
+          // Area geometries only: an unfiltered fill layer closes LineStrings
+          // into shaded wedges (see the tile-path fill layer for the long
+          // comment; same filter as layer-styles' POLYGONS).
+          filter: ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]],
         },
         beforeId,
       );

@@ -192,6 +192,7 @@ describe("applyLookup — inner join", () => {
       unmatchedRows: 2,
       unmatchedKeys: [" 88 "],
       droppedRows: 2,
+      droppedLookupRows: 0,
     });
   });
 
@@ -329,6 +330,51 @@ describe("applyLookup — enrichment fields", () => {
   });
 });
 
+describe("applyLookup — duplicate keys (#282)", () => {
+  const award = { id: "a1", uei: "UEI-1" };
+  const corridors = [
+    { id: "c1", corridorUei: "UEI-1", name: "north" },
+    { id: "c2", corridorUei: "UEI-1", name: "south" },
+    { id: "c3", corridorUei: "UEI-2", name: "east" },
+  ];
+  const op = (onDuplicateKey?: "first" | "last" | "error") => ({
+    baseKey: "uei",
+    kind: "lookup" as const,
+    lookupDatasetId: "corridors",
+    lookupKey: "corridorUei",
+    namespace: "Corridors",
+    ...(onDuplicateKey === undefined ? {} : { onDuplicateKey }),
+  });
+
+  it("counts the lookup rows a keeping policy drops (1-N: one award, several corridors)", () => {
+    const first = applyLookup(op(), [award], corridors);
+    expect(first.diagnostics.droppedLookupRows).toBe(1);
+    expect(first.rows[0]).toStrictEqual({
+      id: "a1",
+      uei: "UEI-1",
+      "Corridors.id": "c1",
+      "Corridors.name": "north",
+    });
+
+    const last = applyLookup(op("last"), [award], corridors);
+    expect(last.diagnostics.droppedLookupRows).toBe(1);
+    expect(last.rows[0]).toStrictEqual({
+      id: "a1",
+      uei: "UEI-1",
+      "Corridors.id": "c2",
+      "Corridors.name": "south",
+    });
+  });
+
+  it("counts zero when every key is distinct, and errors stay errors", () => {
+    const distinct = applyLookup(op(), [award], [corridors[0], corridors[2]]);
+    expect(distinct.diagnostics.droppedLookupRows).toBe(0);
+    expect(() => applyLookup(op("error"), [award, { id: "a2", uei: "UEI-1" }], corridors)).toThrow(
+      /Duplicate key/,
+    );
+  });
+});
+
 describe("applyLookup — diagnostics", () => {
   it("reports exact matched/orphan counts on a known-orphan fixture", () => {
     const source = [
@@ -348,6 +394,7 @@ describe("applyLookup — diagnostics", () => {
       // two listings of one orphan key 88; keyless cells list nothing.
       unmatchedKeys: [" 88 ", "88"],
       droppedRows: 0,
+      droppedLookupRows: 0,
     });
   });
 
@@ -360,6 +407,7 @@ describe("applyLookup — diagnostics", () => {
       unmatchedRows: 0,
       unmatchedKeys: [],
       droppedRows: 0,
+      droppedLookupRows: 0,
     });
   });
 
@@ -374,6 +422,7 @@ describe("applyLookup — diagnostics", () => {
       unmatchedRows: 1,
       unmatchedKeys: ["42"],
       droppedRows: 0,
+      droppedLookupRows: 0,
     });
     expect(inner.rows).toHaveLength(0);
     expect(inner.diagnostics.droppedRows).toBe(1);
