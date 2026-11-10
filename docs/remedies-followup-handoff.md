@@ -38,6 +38,16 @@ Where the #273 test-pass work stands and how to finish it. Companion to
      attempt should install under 0026; a benchmark dataset, not tracked).
 - **Train filed 2026-11-10**: umbrella #286 + #287–#294 (ordered
   sub-issues for the remainder below), mapped onto #272–#284.
+- **[remedies 2] (#288) MERGED 2026-11-10** (PR #296, main @ `60b868b`,
+  ADR 0026): `onDuplicateKey: "collect"` — 1-N joins keep EVERY match as
+  per-field arrays, row count unchanged; new joins default to collect
+  (editor + relation mint), stored specs keep "first"; the stats line
+  says which policy ran (`collectedLookupRows`). Verified live: the FY23
+  IG Awards + Corridors collect join collects 22 corridors onto one
+  award (ZEL3HB6H7B24) — the same 133 rows the legacy join dropped now
+  read "collected into arrays (1-N)". The verification pass also
+  re-confirmed the #280 gap (the minted derived artifact lands in the
+  global registry only, invisible in the project catalog).
 - **Merged 2026-11-09**: #273 (project workspace shell, `d86607a`) + its
   perf-test repairs (`e854b51` bulk teardown, `e5ae15a` phase marks + 240 s
   budget) + the CI cost split (`8d90ad2`).
