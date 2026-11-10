@@ -107,6 +107,80 @@ export function collectionBounds(
   return found ? bounds : undefined;
 }
 
+/** Web-Mercator tile column/row of a lon/lat at zoom `z`, clamped to the grid. */
+function tileIndexOf(lon: number, lat: number, z: number): { x: number; y: number } {
+  const n = 2 ** z,
+    clampedLat = Math.max(-85.0511, Math.min(85.0511, lat)),
+    latRad = (clampedLat * Math.PI) / 180,
+    x = Math.floor(((lon + 180) / 360) * n),
+    y = Math.floor(((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n);
+  return { x: Math.max(0, Math.min(n - 1, x)), y: Math.max(0, Math.min(n - 1, y)) };
+}
+
+/**
+ * The highest zoom in [minZoom, maxZoom] whose estimated tile count stays
+ * under `tileBudget` — the tile count of a feature is bounded by the tiles
+ * its bounding box spans, summed over features. Points and small shapes
+ * cost ~1 tile per zoom so they keep `maxZoom`; large polygons (states,
+ * countries) grow 4x per zoom, and building them at z14 exhausts browser
+ * memory (a 52-state dataset: 74 s / 1.7 GB at z13, a crashed tab at z14).
+ */
+export function suggestMaxZoom(
+  features: readonly (GeoJSONFeature | null | undefined)[],
+  minZoom: number,
+  maxZoom: number,
+  tileBudget: number,
+): number {
+  const boxes = featureBoxes(features);
+  for (let z = maxZoom; z > minZoom; z -= 1) {
+    if (estimatedTiles(boxes, z, tileBudget) <= tileBudget) {
+      return z;
+    }
+  }
+  return minZoom;
+}
+
+/** One finite bounding box per feature that has any coordinates. */
+function featureBoxes(features: readonly (GeoJSONFeature | null | undefined)[]): Bounds[] {
+  const boxes: Bounds[] = [];
+  for (const feature of features) {
+    if (feature === null || feature === undefined) {
+      continue;
+    }
+    const geometry = feature.geometry;
+    if (geometry === null || geometry === undefined) {
+      continue;
+    }
+    const bounds: Bounds = {
+      minLon: Number.POSITIVE_INFINITY,
+      minLat: Number.POSITIVE_INFINITY,
+      maxLon: Number.NEGATIVE_INFINITY,
+      maxLat: Number.NEGATIVE_INFINITY,
+    };
+    for (const part of flattenGeometry(geometry)) {
+      visitCoordinates(part.coordinates, bounds);
+    }
+    if (Number.isFinite(bounds.minLon)) {
+      boxes.push(bounds);
+    }
+  }
+  return boxes;
+}
+
+/** Sum of bbox-spanned tiles at zoom `z`, stopping early once past `limit`. */
+function estimatedTiles(boxes: readonly Bounds[], z: number, limit: number): number {
+  let tiles = 0;
+  for (const box of boxes) {
+    const low = tileIndexOf(box.minLon, box.maxLat, z),
+      high = tileIndexOf(box.maxLon, box.minLat, z);
+    tiles += (high.x - low.x + 1) * (high.y - low.y + 1);
+    if (tiles > limit) {
+      break;
+    }
+  }
+  return tiles;
+}
+
 /** Entry id: feature `_id` first, then `properties.entryId`, then `properties._id`. */
 function resolveEntryId(feature: GeoJSONFeature): string | undefined {
   if (typeof feature._id === "string") {

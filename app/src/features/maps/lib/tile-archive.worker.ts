@@ -26,6 +26,8 @@
 import {
   buildGeometryArchive,
   DEFAULT_MAX_ZOOM,
+  DEFAULT_MIN_ZOOM,
+  suggestMaxZoom,
   type GeoJSONFeature,
 } from "@caden/geometry-archive";
 import { BoundedPool } from "@caden/maps/bounded-pool";
@@ -290,6 +292,13 @@ async function uploadPgArchive(
   return path;
 }
 
+/** Estimated-tile ceiling for one archive build; above it the max zoom drops (z13 of 52 state polygons: 74 s / 1.7 GB). */
+const ARCHIVE_TILE_BUDGET = 1_000_000;
+
+function archiveMaxZoom(features: Array<GeoJSONFeature>): number {
+  return suggestMaxZoom(features, DEFAULT_MIN_ZOOM, DEFAULT_MAX_ZOOM, ARCHIVE_TILE_BUDGET);
+}
+
 async function buildAndInstallPg(
   supabase: SupabaseClient,
   datasetId: string,
@@ -297,9 +306,10 @@ async function buildAndInstallPg(
   features: Array<GeoJSONFeature>,
 ): Promise<void> {
   postPhase(datasetId, "building");
+  const maxZoom = archiveMaxZoom(features);
   const archive = await buildGeometryArchive({
     features,
-    maxZoom: DEFAULT_MAX_ZOOM,
+    maxZoom,
   });
 
   postPhase(datasetId, "uploading");
@@ -315,7 +325,7 @@ async function buildAndInstallPg(
       // The layout generation this builder produced — the #125 format gate
       // compares exactly this stamp (see pg-tile-archives.ts).
       format: MAP_TILE_ARCHIVE_FORMAT,
-      maxZoom: DEFAULT_MAX_ZOOM,
+      maxZoom,
       path,
     },
     { supabase },
@@ -324,7 +334,7 @@ async function buildAndInstallPg(
     post({
       builtVersion: expectedVersion,
       bytes: archive.byteLength,
-      maxZoom: DEFAULT_MAX_ZOOM,
+      maxZoom,
       schemaId: datasetId,
       type: "done",
     });
@@ -500,16 +510,17 @@ async function runFrozenBuild(datasetId: string, versionId: string): Promise<voi
       return;
     }
     postFrozenPhase(datasetId, "building");
+    const maxZoom = archiveMaxZoom(features);
     const archive = await buildGeometryArchive({
       features,
-      maxZoom: DEFAULT_MAX_ZOOM,
+      maxZoom,
     });
     postFrozenPhase(datasetId, "uploading");
     const path = await uploadFrozenArchive(supabase, datasetId, versionId, archive);
     post({
       bytes: archive.byteLength,
       datasetId,
-      maxZoom: DEFAULT_MAX_ZOOM,
+      maxZoom,
       path,
       type: "frozen-done",
     });
