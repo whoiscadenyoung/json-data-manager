@@ -127,11 +127,15 @@ export interface LookupOperation {
   /**
    * Duplicate-key policy (§6: "must be decided, not implicit"). When
    * several lookup rows share one normalized key: "first" (default) keeps
-   * the first, "last" keeps the last, "error" rejects the whole lookup.
-   * The defaults are the engine's recorded decision (stage 1, #94), not an
-   * accident of implementation.
+   * the first, "last" keeps the last, "error" rejects the whole lookup,
+   * "collect" (the non-lossy 1-N answer, ADR 0026 / #288) keeps them ALL —
+   * each enrichment field lands as an array of the matched rows' values in
+   * lookup-table order, and the row count never changes. The defaults are
+   * the engine's recorded decision (stage 1, #94), not an accident of
+   * implementation; spec-authoring layers write "collect" explicitly for
+   * new joins so a 1-N relation loses nothing by default.
    */
-  onDuplicateKey?: "first" | "last" | "error";
+  onDuplicateKey?: "first" | "last" | "error" | "collect";
 }
 
 /**

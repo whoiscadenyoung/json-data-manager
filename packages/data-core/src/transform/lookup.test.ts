@@ -192,6 +192,7 @@ describe("applyLookup — inner join", () => {
       unmatchedRows: 2,
       unmatchedKeys: [" 88 "],
       droppedRows: 2,
+      collectedLookupRows: 0,
       droppedLookupRows: 0,
     });
   });
@@ -337,7 +338,7 @@ describe("applyLookup — duplicate keys (#282)", () => {
     { id: "c2", corridorUei: "UEI-1", name: "south" },
     { id: "c3", corridorUei: "UEI-2", name: "east" },
   ];
-  const op = (onDuplicateKey?: "first" | "last" | "error") => ({
+  const op = (onDuplicateKey?: "first" | "last" | "error" | "collect") => ({
     baseKey: "uei",
     kind: "lookup" as const,
     lookupDatasetId: "corridors",
@@ -373,6 +374,80 @@ describe("applyLookup — duplicate keys (#282)", () => {
       /Duplicate key/,
     );
   });
+
+  // "collect" (ADR 0026 / #288): the non-lossy 1-N policy — every match's
+  // fields land as per-field arrays, the row count never changes.
+  it("collect keeps EVERY match as per-field arrays, in lookup-table order", () => {
+    const { rows, diagnostics } = applyLookup(op("collect"), [award], corridors);
+    expect(diagnostics.droppedLookupRows).toBe(0);
+    expect(diagnostics.collectedLookupRows).toBe(1);
+    expect(diagnostics.matchedRows).toBe(1);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toStrictEqual({
+      id: "a1",
+      uei: "UEI-1",
+      "Corridors.id": ["c1", "c2"],
+      "Corridors.name": ["north", "south"],
+    });
+  });
+
+  it("collect keeps per-field arrays ALIGNED per match — a row lacking a field contributes null", () => {
+    const ragged = [
+      { id: "c1", corridorUei: "UEI-1", name: "north", status: "open" },
+      { id: "c2", corridorUei: "UEI-1", name: "south" },
+    ];
+    const { rows } = applyLookup(op("collect"), [award], ragged);
+    expect(rows[0]).toStrictEqual({
+      id: "a1",
+      uei: "UEI-1",
+      "Corridors.id": ["c1", "c2"],
+      "Corridors.name": ["north", "south"],
+      // c2 has no status: null, not a skip — index i reads one match.
+      "Corridors.status": ["open", null],
+    });
+  });
+
+  it("collect never changes the row count, across several base keys at once", () => {
+    const source = [award, { id: "a2", uei: "UEI-2" }, { id: "a3", uei: "UEI-9" }],
+      { rows, diagnostics } = applyLookup(op("collect"), source, corridors);
+    expect(rows).toHaveLength(3);
+    expect(diagnostics.collectedLookupRows).toBe(1);
+    expect(diagnostics.matchedRows).toBe(2);
+    expect(rows[1]).toStrictEqual({
+      id: "a2",
+      uei: "UEI-2",
+      "Corridors.id": ["c3"],
+      "Corridors.name": ["east"],
+    });
+    // The orphan keeps the §6 null literal, not an empty array.
+    expect(rows[2]).toStrictEqual({
+      id: "a3",
+      uei: "UEI-9",
+      "Corridors.id": null,
+      "Corridors.name": null,
+    });
+  });
+
+  it("collect reads the geometry reference from the FIRST matched row, still one per output row", () => {
+    const geo = corridors.map((c, i) => ({ ...c, geometryId: `geo-${i}` }));
+    const { rows, geometryReferences } = applyLookup(op("collect"), [award], geo, {
+      column: "geometryId",
+      lookupDatasetId: "corridors",
+      side: "lookup",
+    });
+    expect(rows).toHaveLength(1);
+    expect(geometryReferences).toStrictEqual(["geo-0"]);
+  });
+
+  it("collect stays pure — the lookup rows' buckets never leak into the result", () => {
+    const { rows } = applyLookup(op("collect"), [award], corridors);
+    const first = rows[0] as Record<string, unknown>;
+    // A second call with the same inputs must produce identical arrays (no
+    // shared mutable bucket state), and the inputs stay unwritten.
+    const again = applyLookup(op("collect"), [award], corridors);
+    expect(again.rows[0]).toStrictEqual(first);
+    expect(corridors[0]).toStrictEqual({ id: "c1", corridorUei: "UEI-1", name: "north" });
+  });
 });
 
 describe("applyLookup — diagnostics", () => {
@@ -394,6 +469,7 @@ describe("applyLookup — diagnostics", () => {
       // two listings of one orphan key 88; keyless cells list nothing.
       unmatchedKeys: [" 88 ", "88"],
       droppedRows: 0,
+      collectedLookupRows: 0,
       droppedLookupRows: 0,
     });
   });
@@ -407,6 +483,7 @@ describe("applyLookup — diagnostics", () => {
       unmatchedRows: 0,
       unmatchedKeys: [],
       droppedRows: 0,
+      collectedLookupRows: 0,
       droppedLookupRows: 0,
     });
   });
@@ -422,6 +499,7 @@ describe("applyLookup — diagnostics", () => {
       unmatchedRows: 1,
       unmatchedKeys: ["42"],
       droppedRows: 0,
+      collectedLookupRows: 0,
       droppedLookupRows: 0,
     });
     expect(inner.rows).toHaveLength(0);

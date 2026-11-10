@@ -81,6 +81,7 @@ describe("matchStatLine", () => {
     expect(
       matchStatLine(
         {
+          collectedLookupRows: 0,
           droppedLookupRows: 0,
           droppedRows: 0,
           matchedRows: 8700,
@@ -97,6 +98,7 @@ describe("matchStatLine", () => {
     expect(
       matchStatLine(
         {
+          collectedLookupRows: 0,
           droppedLookupRows: 0,
           droppedRows: 0,
           matchedRows: 2,
@@ -110,6 +112,7 @@ describe("matchStatLine", () => {
     expect(
       matchStatLine(
         {
+          collectedLookupRows: 0,
           droppedLookupRows: 0,
           droppedRows: 0,
           matchedRows: 0,

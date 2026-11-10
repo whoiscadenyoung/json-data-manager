@@ -122,7 +122,7 @@ export function lookupOperationsOfSpec(spec: unknown): readonly LookupOperation[
 const LOOKUP_MATCH_POLICIES = ["left", "inner"] as const;
 
 /** The duplicate-key policies the engine accepts (spec.ts). */
-const LOOKUP_DUPLICATE_POLICIES = ["first", "last", "error"] as const;
+const LOOKUP_DUPLICATE_POLICIES = ["first", "last", "error", "collect"] as const;
 
 /** `value` when it is a non-empty string — the required-column shape the save gate enforces. */
 function requiredString(value: unknown): string | undefined {

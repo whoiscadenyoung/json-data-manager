@@ -213,15 +213,16 @@ function matchPolicyError(match: unknown): string | undefined {
   return undefined;
 }
 
-/** The duplicate-key policy cell — reason, or undefined. */
+/** The duplicate-key policy cell — reason, or undefined. "collect" joins the union as the non-lossy 1-N policy (ADR 0026 / #288). */
 function duplicatePolicyError(onDuplicateKey: unknown): string | undefined {
   if (
     onDuplicateKey !== undefined &&
     onDuplicateKey !== "error" &&
     onDuplicateKey !== "first" &&
-    onDuplicateKey !== "last"
+    onDuplicateKey !== "last" &&
+    onDuplicateKey !== "collect"
   ) {
-    return `A lookup operation's onDuplicateKey must be "first", "last", or "error".`;
+    return `A lookup operation's onDuplicateKey must be "first", "last", "error", or "collect".`;
   }
   return undefined;
 }

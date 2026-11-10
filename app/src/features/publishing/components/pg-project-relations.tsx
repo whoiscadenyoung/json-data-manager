@@ -216,6 +216,11 @@ function PgRelationRow({
                 lookupDatasetId: relation.toDataset,
                 lookupKey: toKey,
                 match: "left",
+                // The non-lossy 1-N policy (ADR 0026 / #288): a relation's
+                // join must not silently drop rows when the TO side has
+                // several matches per key (one award, several corridors) —
+                // enrichment lands as per-field arrays instead.
+                onDuplicateKey: "collect",
                 // Namespace by TITLE, not the engine's dataset-id default —
                 // UUID-prefixed output headers are unreadable (#281; the
                 // transform editor's picker flow already names this way).
