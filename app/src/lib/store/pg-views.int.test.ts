@@ -13,8 +13,8 @@ import crypto from "node:crypto";
 
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "vitest";
 
-import type { CompileInputMeta, ViewCompiler } from "#/lib/views/view-compiler";
-import { inputsOfDefinition } from "#/lib/views/view-compiler-wiring";
+import type { CompileInputMeta, ViewCompiler, ViewDefinition } from "#/lib/views/view-compiler";
+import { defaultViewCompiler, inputsOfDefinition } from "#/lib/views/view-compiler-wiring";
 import {
   createView,
   previewView,
@@ -82,7 +82,8 @@ function firstId(inputs: CompileInputMeta[]): string {
 const fakeCompiler: ViewCompiler = {
   validateViewDefinition: (definition) =>
     typeof definition === "object" && definition !== null
-      ? { ok: true, value: definition }
+      ? // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the fake compiler accepts any object as a "definition"; only the real compiler (below) sees real ViewDefinitions.
+        { ok: true, value: definition as ViewDefinition }
       : { ok: false, errors: [{ path: "", message: "not an object" }] },
   compileView: (definition, inputs, options) => {
     if ("fail" in definition) {
@@ -450,6 +451,86 @@ describe.skipIf(!dbUp())("views (#300)", () => {
       `select count(*) as n from public.entries where dataset_id = ${sqlLit(view)}`,
     );
     expect(left.n).toBe("0");
+  });
+
+  test("the REAL compiler runs end to end through the runner (join + summarize)", async () => {
+    await s().begin();
+    const states = await source({ rows: 0 });
+    const deployments = await source({ rows: 0 });
+    await s().asAdmin();
+    // The real validator checks field names against the declared properties.
+    await s().expectOk(
+      `update public.datasets set properties = '["id","name"]'::jsonb where id = ${sqlLit(states)}`,
+    );
+    await s().expectOk(
+      `update public.datasets set properties = '["stateId","cost"]'::jsonb where id = ${sqlLit(deployments)}`,
+    );
+    await s().expectOk(
+      `insert into public.entries (dataset_id, data) values
+         (${sqlLit(states)}, '{"id":"s1","name":"Alpha"}'),
+         (${sqlLit(states)}, '{"id":"s2","name":"Beta"}'),
+         (${sqlLit(deployments)}, '{"stateId":"s1","cost":10}'),
+         (${sqlLit(deployments)}, '{"stateId":"s1","cost":5}')`,
+    );
+    await s().expectOk(
+      `insert into public.geometries (dataset_id, entry_id, source, type)
+       select dataset_id, id, '{"type":"Point","coordinates":[1,2]}'::jsonb, 'Point'
+       from public.entries where dataset_id = ${sqlLit(states)}`,
+    );
+    await s().asUser(ALICE);
+    const definition = {
+      inputs: [
+        { alias: "states", ref: { kind: "dataset", id: states } },
+        { alias: "deployments", ref: { kind: "dataset", id: deployments } },
+      ],
+      base: "states",
+      steps: [
+        {
+          kind: "join",
+          right: { input: "deployments" },
+          on: [{ left: "id", right: "stateId" }],
+          matching: { trim: false, caseFold: false, collapseSpace: false, stripDiacritics: false },
+          type: "left",
+          multiMatch: {
+            mode: "summarize",
+            measures: [
+              { as: "n", fn: "count" },
+              { as: "total", fn: "sum", field: "cost" },
+            ],
+          },
+        },
+      ],
+      output: { fields: [], emptyFields: "keep" },
+    };
+    const real: ViewDeps = { rpc: pgRpc(), compiler: defaultViewCompiler };
+    const preview = await previewView(real, {
+      definition,
+      inputs: inputsOfDefinition(definition),
+    });
+    expect(preview.rows).toHaveLength(2);
+    expect(JSON.stringify(preview.diagnostics)).toContain("steps");
+
+    const view = await createView(real, {
+      title: "real compiler view",
+      definition,
+      inputs: inputsOfDefinition(definition),
+      lifecycle: "published",
+      visibility: "signed-in",
+    });
+    const outcome = await runView(real, view);
+    expect(outcome.status).toBe("ok");
+    const rows = await s().expectOk(
+      `select data->>'name' as name, data->>'n' as n, data->>'total' as total
+       from public.entries where dataset_id = ${sqlLit(view)} order by data->>'name'`,
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ name: "Alpha", n: "2", total: "15" });
+    expect(rows[1]).toMatchObject({ name: "Beta", n: "0" });
+    const geoms = await one(
+      `select count(*) as n from public.geometries where dataset_id = ${sqlLit(view)}`,
+    );
+    expect(geoms.n).toBe("2");
+    expect(await stale(view)).toBe(false);
   });
 
   test("view_query: one statement, read-only, bind params, timeout from the caller", async () => {

@@ -5,39 +5,18 @@
  * import it directly and tests can inject a tiny fake. The one place the real
  * exports are plugged in is `view-compiler-wiring.ts`.
  *
- * Shapes mirror #299's published signatures. `ViewDefinition` is opaque here
- * (the runner only stores, hashes and forwards it); when #299 is merged the
- * wiring file may narrow it to data-core's type.
+ * The shapes are data-core's own (`@caden/data-core/views`).
  */
 
-export interface CompileInputMeta {
-  alias: string;
-  datasetId: string;
-  title: string;
-  pinnedVersion?: string;
-  fields?: {
-    name: string;
-    type?: "string" | "number" | "integer" | "boolean" | "date" | "unknown";
-  }[];
-}
+import type {
+  CompileInputMeta,
+  CompiledQuery,
+  ValidationError as ValidationIssue,
+  ValidationResult,
+  ViewDefinition,
+} from "@caden/data-core/views";
 
-/** Positional `$1..$n` parameters; casts live in the SQL itself. */
-export interface CompiledQuery {
-  sql: string;
-  params: unknown[];
-}
-
-export interface ValidationIssue {
-  path: string;
-  message: string;
-}
-
-/** The definition payload as the compiler validated it (opaque to the runner). */
-export type ViewDefinition = object;
-
-export type ValidationResult =
-  | { ok: true; value: ViewDefinition }
-  | { ok: false; errors: ValidationIssue[] };
+export type { CompileInputMeta, CompiledQuery, ValidationIssue, ValidationResult, ViewDefinition };
 
 export interface ViewCompiler {
   validateViewDefinition(definition: unknown, inputs?: CompileInputMeta[]): ValidationResult;
@@ -45,13 +24,13 @@ export interface ViewCompiler {
   compileView(
     definition: ViewDefinition,
     inputs: CompileInputMeta[],
-    options?: { uptoStep?: number; limit?: number },
+    options?: { uptoStep?: number; limit?: number; unaccent?: boolean },
   ): CompiledQuery;
   /** SELECT returning one row, one column `diagnostics jsonb`. */
   compileDiagnostics(
     definition: ViewDefinition,
     inputs: CompileInputMeta[],
-    options?: { uptoStep?: number },
+    options?: { uptoStep?: number; unaccent?: boolean },
   ): CompiledQuery;
   viewInputDatasetIds(definition: ViewDefinition, inputs: CompileInputMeta[]): string[];
 }

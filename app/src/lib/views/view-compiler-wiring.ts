@@ -1,43 +1,23 @@
+import {
+  compileDiagnostics,
+  compileView,
+  validateViewDefinition,
+  viewInputDatasetIds,
+} from "@caden/data-core/views";
+
 import type { ViewCompiler, ViewInputRef } from "./view-compiler";
 
 /**
  * THE WIRING POINT (issue #300). The runner and preview modules receive a
- * `ViewCompiler`; this file is the single place that supplies the real one.
- *
- * Until the compiler PR (#299 / #309) is in this branch's base,
- * `defaultViewCompiler` throws a clear error on first use. To wire it:
- *
- *   import {
- *     compileDiagnostics, compileView, validateViewDefinition, viewInputDatasetIds,
- *   } from "@caden/data-core/views";
- *
- *   export const defaultViewCompiler: ViewCompiler = {
- *     validateViewDefinition, compileView, compileDiagnostics, viewInputDatasetIds,
- *   };
- *
- * (The subpath is `@caden/data-core/views`, not the package root. The
- * compiler's `{ unaccent }` option defaults to false: no migration installs
- * the extension.) Then adjust `inputsOfDefinition` below if the definition
- * format moved from design §4.
+ * `ViewCompiler`; this file is the single place that supplies the real one,
+ * `@caden/data-core/views` (#299). `unaccent` stays at the compiler's default
+ * (false): no migration installs the extension.
  */
-
-class ViewCompilerNotWiredError extends Error {
-  constructor() {
-    super(
-      "The view compiler is not wired yet: plug @caden/data-core/views in at view-compiler-wiring.ts (#299).",
-    );
-  }
-}
-
-function notWired(): never {
-  throw new ViewCompilerNotWiredError();
-}
-
 export const defaultViewCompiler: ViewCompiler = {
-  validateViewDefinition: notWired,
-  compileView: notWired,
-  compileDiagnostics: notWired,
-  viewInputDatasetIds: notWired,
+  validateViewDefinition,
+  compileView,
+  compileDiagnostics,
+  viewInputDatasetIds,
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
