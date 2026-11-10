@@ -389,7 +389,7 @@ input_versions jsonb, diagnostics jsonb, error text, created_by)`.
 - **Dropped:** `derived_datasets`, the `derived` artifact kind, the
   relation join mint RPCs, and the derived-row read paths in
   `dataset-rows-pg.ts` and the bundle publish.
-- **Visibility (implemented in [views 2]; owner to confirm):**
+- **Visibility (implemented in [views 2]; confirmed by the owner 2026-11-10):**
   - Saved rows of a view follow the view dataset's own gates, like any
     dataset.
   - Saving (`create_view` / `save_view`) or running a view requires
