@@ -36,6 +36,7 @@ import { Route as ProjectsProjectIdCreateRouteImport } from './routes/projects/$
 import { Route as ProjectsProjectIdMembersRouteImport } from './routes/projects/$projectId/members'
 import { Route as ProjectsProjectIdPublishRouteImport } from './routes/projects/$projectId/publish'
 import { Route as ProjectsProjectIdSettingsRouteImport } from './routes/projects/$projectId/settings'
+import { Route as ProjectsProjectIdDerivedDerivedIdRouteImport } from './routes/projects/$projectId/derived/$derivedId'
 import { Route as ProjectsProjectIdMapsMapIdRouteImport } from './routes/projects/$projectId/maps/$mapId'
 import { Route as ProjectsProjectIdAppsAppIdEditRouteImport } from './routes/projects/$projectId/apps/$appId/edit'
 import { Route as ProjectsProjectIdDatasetsSchemaIdIndexRouteImport } from './routes/projects/$projectId/datasets/$schemaId/index'
@@ -183,6 +184,12 @@ const ProjectsProjectIdSettingsRoute =
     path: '/settings',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
+const ProjectsProjectIdDerivedDerivedIdRoute =
+  ProjectsProjectIdDerivedDerivedIdRouteImport.update({
+    id: '/derived/$derivedId',
+    path: '/derived/$derivedId',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
 const ProjectsProjectIdMapsMapIdRoute =
   ProjectsProjectIdMapsMapIdRouteImport.update({
     id: '/maps/$mapId',
@@ -236,6 +243,7 @@ export interface FileRoutesByFullPath {
   '/collections/$collectionId/': typeof CollectionsCollectionIdIndexRoute
   '/datasets/$schemaId/': typeof DatasetsSchemaIdIndexRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
+  '/projects/$projectId/derived/$derivedId': typeof ProjectsProjectIdDerivedDerivedIdRoute
   '/projects/$projectId/maps/$mapId': typeof ProjectsProjectIdMapsMapIdRoute
   '/projects/$projectId/apps/$appId/edit': typeof ProjectsProjectIdAppsAppIdEditRoute
   '/projects/$projectId/datasets/$schemaId/$entryId': typeof ProjectsProjectIdDatasetsSchemaIdEntryIdRoute
@@ -268,6 +276,7 @@ export interface FileRoutesByTo {
   '/collections/$collectionId': typeof CollectionsCollectionIdIndexRoute
   '/datasets/$schemaId': typeof DatasetsSchemaIdIndexRoute
   '/projects/$projectId': typeof ProjectsProjectIdIndexRoute
+  '/projects/$projectId/derived/$derivedId': typeof ProjectsProjectIdDerivedDerivedIdRoute
   '/projects/$projectId/maps/$mapId': typeof ProjectsProjectIdMapsMapIdRoute
   '/projects/$projectId/apps/$appId/edit': typeof ProjectsProjectIdAppsAppIdEditRoute
   '/projects/$projectId/datasets/$schemaId/$entryId': typeof ProjectsProjectIdDatasetsSchemaIdEntryIdRoute
@@ -302,6 +311,7 @@ export interface FileRoutesById {
   '/collections/$collectionId/': typeof CollectionsCollectionIdIndexRoute
   '/datasets/$schemaId/': typeof DatasetsSchemaIdIndexRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
+  '/projects/$projectId/derived/$derivedId': typeof ProjectsProjectIdDerivedDerivedIdRoute
   '/projects/$projectId/maps/$mapId': typeof ProjectsProjectIdMapsMapIdRoute
   '/projects/$projectId/apps/$appId/edit': typeof ProjectsProjectIdAppsAppIdEditRoute
   '/projects/$projectId/datasets/$schemaId/$entryId': typeof ProjectsProjectIdDatasetsSchemaIdEntryIdRoute
@@ -337,6 +347,7 @@ export interface FileRouteTypes {
     | '/collections/$collectionId/'
     | '/datasets/$schemaId/'
     | '/projects/$projectId/'
+    | '/projects/$projectId/derived/$derivedId'
     | '/projects/$projectId/maps/$mapId'
     | '/projects/$projectId/apps/$appId/edit'
     | '/projects/$projectId/datasets/$schemaId/$entryId'
@@ -369,6 +380,7 @@ export interface FileRouteTypes {
     | '/collections/$collectionId'
     | '/datasets/$schemaId'
     | '/projects/$projectId'
+    | '/projects/$projectId/derived/$derivedId'
     | '/projects/$projectId/maps/$mapId'
     | '/projects/$projectId/apps/$appId/edit'
     | '/projects/$projectId/datasets/$schemaId/$entryId'
@@ -402,6 +414,7 @@ export interface FileRouteTypes {
     | '/collections/$collectionId/'
     | '/datasets/$schemaId/'
     | '/projects/$projectId/'
+    | '/projects/$projectId/derived/$derivedId'
     | '/projects/$projectId/maps/$mapId'
     | '/projects/$projectId/apps/$appId/edit'
     | '/projects/$projectId/datasets/$schemaId/$entryId'
@@ -622,6 +635,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdSettingsRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
+    '/projects/$projectId/derived/$derivedId': {
+      id: '/projects/$projectId/derived/$derivedId'
+      path: '/derived/$derivedId'
+      fullPath: '/projects/$projectId/derived/$derivedId'
+      preLoaderRoute: typeof ProjectsProjectIdDerivedDerivedIdRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
     '/projects/$projectId/maps/$mapId': {
       id: '/projects/$projectId/maps/$mapId'
       path: '/maps/$mapId'
@@ -661,6 +681,7 @@ interface ProjectsProjectIdRouteRouteChildren {
   ProjectsProjectIdPublishRoute: typeof ProjectsProjectIdPublishRoute
   ProjectsProjectIdSettingsRoute: typeof ProjectsProjectIdSettingsRoute
   ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
+  ProjectsProjectIdDerivedDerivedIdRoute: typeof ProjectsProjectIdDerivedDerivedIdRoute
   ProjectsProjectIdMapsMapIdRoute: typeof ProjectsProjectIdMapsMapIdRoute
   ProjectsProjectIdAppsAppIdEditRoute: typeof ProjectsProjectIdAppsAppIdEditRoute
   ProjectsProjectIdDatasetsSchemaIdEntryIdRoute: typeof ProjectsProjectIdDatasetsSchemaIdEntryIdRoute
@@ -676,6 +697,8 @@ const ProjectsProjectIdRouteRouteChildren: ProjectsProjectIdRouteRouteChildren =
     ProjectsProjectIdPublishRoute: ProjectsProjectIdPublishRoute,
     ProjectsProjectIdSettingsRoute: ProjectsProjectIdSettingsRoute,
     ProjectsProjectIdIndexRoute: ProjectsProjectIdIndexRoute,
+    ProjectsProjectIdDerivedDerivedIdRoute:
+      ProjectsProjectIdDerivedDerivedIdRoute,
     ProjectsProjectIdMapsMapIdRoute: ProjectsProjectIdMapsMapIdRoute,
     ProjectsProjectIdAppsAppIdEditRoute: ProjectsProjectIdAppsAppIdEditRoute,
     ProjectsProjectIdDatasetsSchemaIdEntryIdRoute:
