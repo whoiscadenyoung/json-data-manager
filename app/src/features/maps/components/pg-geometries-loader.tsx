@@ -194,6 +194,10 @@ export function useGeometriesByPgDatasets(datasetIds: string[]): {
   geometries: DatasetGeometryRow[] | undefined;
   loaders: ReactNode[];
   servedGeometries: DatasetGeometryRow[] | undefined;
+  /** How many datasets finished a full paging pass (the "N of M layers" progress, #284). */
+  completedCount: number;
+  /** The row-path dataset count the completed fraction is out of. */
+  datasetCount: number;
 } {
   const [reportsByDataset, setReportsByDataset] = useState<
       globalThis.Map<string, PgGeometriesReport | undefined>
@@ -243,5 +247,7 @@ export function useGeometriesByPgDatasets(datasetIds: string[]): {
       <PgGeometriesLoader key={datasetId} datasetId={datasetId} onLoaded={handleLoaded} />
     )),
     servedGeometries,
+    completedCount: datasetIds.filter(completeFor).length,
+    datasetCount: datasetIds.length,
   };
 }

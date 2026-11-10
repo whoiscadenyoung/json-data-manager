@@ -282,6 +282,14 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
         ? undefined
         : renderTargetsForDerivedLayers(derivedSummaries, datasetsDocs),
     datasetTitleById = new globalThis.Map((allSummaries ?? []).map((row) => [row.id, row.title])),
+    // The add-dataset picker only offers rows that can draw: geospatial
+    // datasets (derived stays offered — its geometry resolves at render time
+    // and the summaries projection carries no geometry flag for it).
+    // Undefined while the summaries load, so the sheet never flashes empty.
+    geospatialDatasetIds =
+      allSummaries === undefined
+        ? undefined
+        : new Set(allSummaries.filter((row) => row.isGeospatial).map((row) => row.id)),
     derivedTitleById = new globalThis.Map(
       // The Convex doc's branded id flattens to its string value (the PG
       // ids the editor resolves are plain strings).
@@ -690,6 +698,7 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
                 onTileSourceIdle={(schemaId) => {
                   setArrivedTileSchemaIds((prev) => withArrivedTileSchema(prev, schemaId));
                 }}
+                rowsPending={geometries === undefined && pgRowIds.length > 0}
                 relationRuntime={{ projectId }}
                 sourcesPending={split.sourcesPending}
                 tileSources={split.tileSources}
@@ -702,9 +711,11 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
               />
             )}
             {!geometriesComplete && (
-              <div className="absolute top-3 right-3 z-10 flex items-center gap-2 rounded-full border border-border bg-card/95 px-3 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur-sm">
+              <div className="absolute top-3 right-3 z-20 flex items-center gap-2 rounded-full border border-border bg-card/95 px-3 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur-sm">
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                Loading features…
+                {pgRowIds.length > 1
+                  ? `Loading features — ${pgFan.completedCount} of ${pgFan.datasetCount} layers…`
+                  : "Loading features…"}
               </div>
             )}
           </div>
@@ -723,6 +734,7 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
       />
 
       <PgAddDatasetSheet
+        geospatialDatasetIds={geospatialDatasetIds}
         invalidate={invalidate}
         mapId={mapId}
         memberships={projectDatasetsQuery.data ?? []}
@@ -1426,8 +1438,10 @@ function PgMapFormDialog(props: {
   );
 }
 
-/** The add-dataset sheet: the project's dataset/derived memberships not yet placed — picking one mints the owned default-style layer (the auto-layer) and places it. */
+/** The add-dataset sheet: the project's drawable memberships not yet placed — picking one mints the owned default-style layer (the auto-layer) and places it. */
 function PgAddDatasetSheet(props: {
+  /** Geospatial dataset ids, or undefined while the summaries load (no filtering then — never flash an empty sheet). */
+  geospatialDatasetIds: ReadonlySet<string> | undefined;
   invalidate: () => void;
   mapId: string;
   memberships: layersStore.DatasetMembershipRow[];
@@ -1440,7 +1454,13 @@ function PgAddDatasetSheet(props: {
 }) {
   const [pendingId, setPendingId] = useState<string>(),
     candidates = props.memberships.filter(
-      (membership) => !props.placedMembershipIds.has(membership.id),
+      (membership) =>
+        // A plain table can never draw — offering it mints a dead layer
+        // (#278). Derived stays: its geometry resolves at render time.
+        !props.placedMembershipIds.has(membership.id) &&
+        (membership.artifactKind === "derived" ||
+          props.geospatialDatasetIds === undefined ||
+          props.geospatialDatasetIds.has(membership.artifactId)),
     ),
     add = async (membershipId: string): Promise<void> => {
       setPendingId(membershipId);
@@ -1485,7 +1505,9 @@ function PgAddDatasetSheet(props: {
         <div className="flex flex-1 flex-col gap-1 overflow-y-auto p-6">
           {candidates.length === 0 ? (
             <p className="rounded-lg border px-4 py-3 text-center text-sm text-muted-foreground">
-              Every project dataset is already placed — add more from the project's catalog.
+              {props.geospatialDatasetIds === undefined
+                ? "Every project dataset is already placed — add more from the project's catalog."
+                : "Nothing drawable to add — everything geospatial is placed, and plain tables need geometry before they can map."}
             </p>
           ) : (
             candidates.map((membership) => (

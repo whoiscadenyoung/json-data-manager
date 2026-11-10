@@ -93,6 +93,13 @@ export interface LookupDiagnostics {
   unmatchedKeys: string[];
   /** Rows the match policy removed: `unmatchedRows` under "inner", always 0 under "left". */
   droppedRows: number;
+  /**
+   * Lookup-side rows that lost the duplicate-key policy ("first" keeps the
+   * first row per key, "last" keeps the last — every other row sharing a
+   * key drops). 1-N lookups (one award, several corridors) lose rows here
+   * silently, so the preview stats surface the count (#282).
+   */
+  droppedLookupRows: number;
 }
 
 /** The result of one `applyLookup` call: fresh rows plus match-rate diagnostics. */
@@ -127,9 +134,10 @@ export class LookupKeyConflictError extends Error {
 function buildKeyMap(
   operation: LookupOperation,
   lookupRows: readonly Record<string, unknown>[],
-): Map<string, Record<string, unknown>> {
+): { map: Map<string, Record<string, unknown>>; droppedLookupRows: number } {
   const policy = operation.onDuplicateKey ?? "first",
     byKey = new Map<string, Record<string, unknown>>();
+  let droppedLookupRows = 0;
   for (const row of lookupRows) {
     const key = normalizeKey(row[operation.lookupKey]);
     if (key === undefined) {
@@ -145,11 +153,14 @@ function buildKeyMap(
         `Duplicate key ${JSON.stringify(row[operation.lookupKey])} in lookup dataset "${operation.lookupDatasetId}" (onDuplicateKey: "error").`,
       );
     }
+    // Both keeping policies drop the loser: "first" drops this row, "last"
+    // drops the one it supersedes. The count is the 1-N loss signal (#282).
+    droppedLookupRows += 1;
     if (policy === "last") {
       byKey.set(key, row);
     }
   }
-  return byKey;
+  return { map: byKey, droppedLookupRows };
 }
 
 /**
@@ -258,7 +269,8 @@ export function applyLookup<R extends Record<string, unknown>>(
 ): LookupResult<R> {
   const namespace = operation.namespace ?? operation.lookupDatasetId,
     fields = enrichmentFields(operation, lookupRows),
-    byKey = buildKeyMap(operation, lookupRows),
+    keyed = buildKeyMap(operation, lookupRows),
+    byKey = keyed.map,
     matchPolicy = operation.match ?? "left",
     geometry = geometrySource,
     references = geometry === undefined ? undefined : ([] as unknown[]),
@@ -300,6 +312,7 @@ export function applyLookup<R extends Record<string, unknown>>(
       unmatchedRows: sourceRows.length - matchedRows,
       unmatchedKeys: [...orphanKeys],
       droppedRows,
+      droppedLookupRows: keyed.droppedLookupRows,
     },
   };
   if (references !== undefined) {

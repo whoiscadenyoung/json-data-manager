@@ -7,13 +7,18 @@ import {
   latestBundleQueryOptions,
   listMembersQueryOptions,
   memberOrder,
-  publishDataset,
   recordMember,
   setBundleCollection,
   startBundle,
   type BundleMemberPlan,
 } from "@/lib/store/publishing";
 import { visibilityApply, visibilityPreflight, type VisibilityLevel } from "@/lib/store/visibility";
+
+// The single-dataset publish (freeze + the draft's lifecycle flip) — the
+// press shares it so pressed members enter the catalog the same way a
+// hand publish does (#276: the press froze drafts but never flipped
+// lifecycle, leaving them invisible to the explorer/app-picker/collection).
+import { publishPgDatasetVersion } from "./pg-publish";
 
 /**
  * The bundle press — the client orchestrator of the Postgres bundle
@@ -242,9 +247,16 @@ export async function pgPublishProjectBundle(options: {
         // oxlint-disable-next-line no-await-in-loop -- see above; the freeze is inherently per-member sequential.
         const head = await headOf(member.datasetKey, storeOptions);
         // oxlint-disable-next-line no-await-in-loop -- see above.
-        const versionId = await publishDataset(
+        // The single-dataset publish, not the bare freeze: `publish: true`
+        // members are the project's own drafts, so the freeze is followed by
+        // the same lifecycle flip a hand publish does — without it the frozen
+        // draft stayed invisible to the explorer, the app picker and the
+        // promoted collection (#276). Already-published members never reach
+        // this leg (the loop skips them), and a flipped row is idempotent.
+        const { versionId } = await publishPgDatasetVersion(
           {
             datasetId: member.datasetKey,
+            isDraft: member.publish,
             publishKey: `${started.bundleId}:${member.id}`,
             versionLabel: head === null ? "v1" : head.label,
           },

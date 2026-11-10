@@ -29,3 +29,6 @@ exports
 .zcode/workflow-runs/
 .zcodeignore
 .zcode/plans/
+
+# Local-only test-account reference — credentials never ship in the repo.
+docs/local-test-accounts.md

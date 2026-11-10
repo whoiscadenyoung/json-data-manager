@@ -163,7 +163,12 @@ services:
       POSTGREST_URL: http://rest:3000
       STORAGE_BACKEND: file
       FILE_STORAGE_BACKEND_PATH: /var/lib/storage
-      FILE_SIZE_LIMIT: "52428800" # 50 MiB — supabase/config.toml [storage]
+      # Real grant sources routinely exceed 50 MiB (#274: FY22 Action Plan
+      # alone is 87 MB; only the ORIGINAL is retained — served geometry is
+      # simplified to 6dp). Env-tunable single knob; keep
+      # supabase/config.toml [storage] in agreement. Kong's body size is
+      # unlimited by default (verified: 112 MB uploads pass through it).
+      FILE_SIZE_LIMIT: ${STORAGE_FILE_SIZE_LIMIT:-524288000} # 500 MiB
       GLOBAL_S3_BUCKET: stub
       TENANT_ID: stub
       REGION: local

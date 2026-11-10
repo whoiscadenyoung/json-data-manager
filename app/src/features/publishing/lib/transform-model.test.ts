@@ -81,6 +81,7 @@ describe("matchStatLine", () => {
     expect(
       matchStatLine(
         {
+          droppedLookupRows: 0,
           droppedRows: 0,
           matchedRows: 8700,
           totalSourceRows: 10000,
@@ -96,6 +97,7 @@ describe("matchStatLine", () => {
     expect(
       matchStatLine(
         {
+          droppedLookupRows: 0,
           droppedRows: 0,
           matchedRows: 2,
           totalSourceRows: 3,
@@ -107,7 +109,14 @@ describe("matchStatLine", () => {
     ).toBe("67% matched; 1 orphan Id");
     expect(
       matchStatLine(
-        { droppedRows: 0, matchedRows: 0, totalSourceRows: 0, unmatchedKeys: [], unmatchedRows: 0 },
+        {
+          droppedLookupRows: 0,
+          droppedRows: 0,
+          matchedRows: 0,
+          totalSourceRows: 0,
+          unmatchedKeys: [],
+          unmatchedRows: 0,
+        },
         "Id",
       ),
     ).toBe("No rows to match yet.");

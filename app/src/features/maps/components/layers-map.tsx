@@ -412,6 +412,7 @@ export function LayersMap({
   colorBySchema,
   tileSources,
   sourcesPending = false,
+  rowsPending = false,
   onTileSourceIdle,
   extension,
   relationRuntime,
@@ -436,6 +437,12 @@ export function LayersMap({
   tileSources: Array<{ schemaId: string; url: string }>;
   /** True while any layer's source decision is still resolving (suppresses the "nothing to draw" overlay). */
   sourcesPending?: boolean;
+  /**
+   * True while the row path is still paging geometry rows in (#284) —
+   * an empty geometry array then means "loading", never "no data", so the
+   * overlay stays suppressed until the pass completes.
+   */
+  rowsPending?: boolean;
   /** Fired once per tile source, after it loaded and the map reached `idle`. */
   onTileSourceIdle?: (schemaId: string) => void;
   /** Optional rendering extension (the map-styling module) — absent, every dataset draws by default. */
@@ -707,13 +714,16 @@ export function LayersMap({
             />
           ))}
       </Map>
-      {visibleGeometries.length === 0 && visibleTileSources === 0 && !sourcesPending && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/40 p-6 text-center backdrop-blur-[1px]">
-          <p className="text-sm text-muted-foreground">
-            Nothing to draw — every visible layer is empty or its datasets have no features.
-          </p>
-        </div>
-      )}
+      {visibleGeometries.length === 0 &&
+        visibleTileSources === 0 &&
+        !sourcesPending &&
+        !rowsPending && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/40 p-6 text-center backdrop-blur-[1px]">
+            <p className="text-sm text-muted-foreground">
+              Nothing to draw — every visible layer is empty or its datasets have no features.
+            </p>
+          </div>
+        )}
       <MapLegend datasets={legendDatasets} />
       {/* The popup executor's lookup-row fan-out (issue #97): renders
           nothing itself, holds the seam's live row subscriptions. */}

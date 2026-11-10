@@ -216,6 +216,10 @@ function PgRelationRow({
                 lookupDatasetId: relation.toDataset,
                 lookupKey: toKey,
                 match: "left",
+                // Namespace by TITLE, not the engine's dataset-id default —
+                // UUID-prefixed output headers are unreadable (#281; the
+                // transform editor's picker flow already names this way).
+                namespace: toTitle,
               },
             ],
             sourceDatasetId: relation.fromDataset,

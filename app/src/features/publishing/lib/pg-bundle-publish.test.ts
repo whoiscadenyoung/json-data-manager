@@ -134,6 +134,7 @@ function pressResponder(state: {
   minted: string[];
   publishes: number;
   memberStatus: Map<string, string>;
+  lifecycleFlips: string[];
 }): (query: RecordedQuery) => ScriptedResponse {
   // The responder dispatches every table the press legs touch — one branch
   // per table in leg order, each a two-line script; splitting it would
@@ -160,6 +161,21 @@ function pressResponder(state: {
       const datasetId = eq === undefined ? undefined : eq[1];
       if (datasetId === "dataset-b") {
         return { data: [{ id: "version-b1", versionLabel: "v1" }] };
+      }
+      return { data: [] };
+    }
+    if (query.table === "datasets") {
+      // #276: the press's lifecycle flip for owned drafts — answered with
+      // the updated row (draftFlipped true) and recorded for assertions.
+      const update = methodOf(query, "update");
+      if (update !== undefined) {
+        const idOp = query.operations.find((op) => op.method === "eq" && op.args[0] === "id");
+        const datasetId = idOp === undefined ? undefined : idOp.args[1];
+        if (typeof datasetId === "string") {
+          state.lifecycleFlips.push(datasetId);
+          return { data: [{ id: datasetId }] };
+        }
+        return { data: [] };
       }
       return { data: [] };
     }
@@ -241,6 +257,8 @@ function freshState(latest: Record<string, unknown> | null = null): {
   minted: string[];
   publishes: number;
   memberStatus: Map<string, string>;
+  /** The datasets the press flipped to published (#276's lifecycle leg). */
+  lifecycleFlips: string[];
 } {
   return {
     artifacts: ARTIFACTS,
@@ -250,6 +268,7 @@ function freshState(latest: Record<string, unknown> | null = null): {
     minted: [],
     publishes: 0,
     memberStatus: new Map(),
+    lifecycleFlips: [],
   };
 }
 
@@ -281,6 +300,10 @@ describe("pgPublishProjectBundle", () => {
     // referenced member.
     const memberships = stub.queries.filter((query) => query.table === "collection_datasets");
     expect(memberships).toHaveLength(2);
+    // #276: the freeze rides the single-publish's lifecycle flip, so the
+    // pressed draft enters the catalog like a hand-published one. dataset-b
+    // (referenced-only) is never touched.
+    expect(state.lifecycleFlips).toEqual(["dataset-a"]);
   });
 
   it("joins a RUNNING press instead of forking a second bundle, reusing its collection", async () => {

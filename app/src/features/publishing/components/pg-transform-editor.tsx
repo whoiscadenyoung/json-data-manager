@@ -247,7 +247,16 @@ function PgTransformEditorForm({
   schemaId: string;
 }) {
   const queryClient = useQueryClient(),
-    candidates = useQuery(datasetsStore.listSummariesQueryOptions()).data,
+    // #281: project DRAFTS are valid lookup sources — the owner's unpublished
+    // datasets join exactly like published ones (the preview's row reads are
+    // creator-visible). Without the draft summaries a draft lookup showed the
+    // "Derived source" badge, the raw UUID, and free-text-only keys.
+    publishedCandidates = useQuery(datasetsStore.listSummariesQueryOptions()).data,
+    draftCandidates = useQuery(datasetsStore.listDraftSummariesQueryOptions()).data,
+    candidates =
+      publishedCandidates === undefined || draftCandidates === undefined
+        ? undefined
+        : [...publishedCandidates, ...draftCandidates],
     componentIds = new globalThis.Set((candidates ?? []).map((entry) => entry.id)),
     [title, setTitle] = useState(initial.title),
     [description, setDescription] = useState(initial.description),
@@ -536,8 +545,9 @@ function PgTransformEditorForm({
           <PgTransformPreview operations={previewOperations} sourceDatasetId={schemaId} />
           {candidates !== undefined && completedCount > previewOperations.length && (
             <p className="mt-3 text-xs text-muted-foreground">
-              Steps reading another derived dataset aren&apos;t previewed — the PG registry only
-              previews steps whose related dataset is a published dataset.
+              Steps reading another derived dataset aren&apos;t previewed — pickers and preview
+              cover imported datasets (published or your project drafts, #281); a derived source has
+              no readable rows to preview yet.
             </p>
           )}
         </CardContent>
