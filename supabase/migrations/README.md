@@ -18,6 +18,6 @@ Third-party extensions install into the `extensions` schema.
   needed: `gen_random_uuid()` is core PostgreSQL since 13 and the stack runs
   PostgreSQL 15.
 - `0027_views.sql` — Views: `datasets.kind/definition/refresh_mode/output_settings/data_version`,
-  `view_inputs`, `view_runs`, the row-write guard, the two-phase runner RPCs
-  (`view_query`, `view_input_versions`, `view_apply_run`, `view_record_failure`),
+  `view_inputs`, `view_runs`, the row-write guard, the runner's database half
+  (`view_input_versions`; `view_apply_run` / `view_record_failure` executable only by `view_runner`),
   `create_view` / `save_view`, and the `view_stale` computed column (#300).

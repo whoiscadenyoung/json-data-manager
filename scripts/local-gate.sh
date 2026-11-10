@@ -122,6 +122,12 @@ for p in @caden/data-core @caden/importers @caden/json-cms @caden/geometry-archi
   bun --filter="${p}" run test
 done
 
+# The server-side view runner reads these (docs/views-design.md §7). The int
+# tests connect through SUPABASE_DB_URL; exporting the runner's own names keeps
+# any app code path that goes through entry.server.ts working in the gate too.
+export DATABASE_URL="${SUPABASE_DB_URL}"
+export JWT_SECRET="${JWT_SECRET:-super-secret-jwt-token-with-at-least-32-characters-long}"
+
 step "app tests (PG int suites included)"
 (cd app && SUPABASE_DB_URL="${SUPABASE_DB_URL}" bun run test)
 

@@ -260,34 +260,50 @@ the states with no links. Neither changes the output.
   3. It writes a `view_runs` row: status, row count, input versions,
      diagnostics and any error.
 
-  **Runner location (decided in [views 2], #300): a Postgres RPC pair,
-  orchestrated by a transport-agnostic TypeScript module** (`app/src/lib/views/view-runner.ts`
-  over a `ViewsRpc`; supabase-js today, a server function later without
-  change). The compiler is injected (`ViewCompiler`); the single wiring file
-  is `view-compiler-wiring.ts`.
-  - Phase 1 = `view_input_versions` (the gate, plus input `data_version`s
-    captured _before_ the read) and `view_query` (one statement, PREPAREd so
-    Postgres infers bind types, `transaction_read_only` forced on and
-    unflippable, `SECURITY INVOKER` so RLS applies, result capped).
-  - Phase 2 = `view_apply_run` / `view_record_failure` (`SECURITY DEFINER`,
-    require `can_edit_dataset(view)` and `can_view_dataset` on every input).
-    They receive rows as _data_ and execute no user SQL.
-  - Separate RPCs are separate transactions on every transport, so user SQL
-    can never share a transaction with a write. Entries of a view can only be
-    written by `view_apply_run` (statement-level guard triggers bind a token
-    to `<view id>:<xid>`), which diffs by a deterministic entry id
-    (`md5(view || row_id || occurrence)`, not the input's `row_id`, which is
-    a global primary key already taken) so re-runs touch only changed rows.
-  - Why not a server function: the app has no server-side Postgres access
-    (no driver, no JWT-to-role plumbing); adding one is a larger surface
-    than this feature. Trade-offs accepted: rows are ferried through the
-    caller (an editor could call `view_apply_run` with hand-made rows, which
-    they were already allowed to do to any dataset they edit), and
-    `statement_timeout` cannot be set from inside a function, so the phase-1
-    timeout is the caller's (the role setting over PostgREST, or
-    `set local statement_timeout` on a direct session). Run payload size is
-    bounded by the transport; chunked staging is a follow-up if real views
-    outgrow it.
+  **Runner location (decided in [views 2], #300): a server-side runner**
+  (TanStack Start server functions in `app/src/server/views`, talking to
+  Postgres directly with `postgres` (porsager)). The browser sends only a
+  view id (plus a step index, or a draft DEFINITION as JSON) and its
+  Supabase access token. It never sends SQL and never sees rows; user SQL
+  (the `sql` step) is compiled on the server and reaches no endpoint a
+  browser can call.
+  - **Acting as the user.** The server verifies the access token itself
+    (HS256 with `JWT_SECRET`, algorithm pinned, expiry/audience/role checked;
+    `claims.ts`), never a client-supplied user id. Each transaction then runs
+    `set local role authenticated` and installs the verified claims as
+    `request.jwt.claims`, so `auth.uid()` and RLS behave exactly as through
+    PostgREST.
+  - **Phase 1** (`begin read only`, always rolled back): `set local
+statement_timeout` (default 60 s, `VIEW_RUN_TIMEOUT_MS`), then
+    `view_input_versions` (the gate: editable view, every input viewable;
+    versions captured _before_ the read), the definition and input metadata,
+    the compile, and the execute. Rows stay on the server. An input the user
+    cannot see is refused loudly rather than read as zero rows.
+  - **Phase 2** is a separate write transaction: the verified claims are
+    installed and `view_apply_run` / `view_record_failure` are called. They
+    are `SECURITY DEFINER`, take rows as data, execute no user SQL, and are
+    executable ONLY by the `view_runner` role (revoked from authenticated and
+    anon); they re-check `can_edit_dataset` and input visibility against the
+    verified user. The server connects as a login role that is a member of
+    `view_runner` (`jdm_server` in compose; a superuser works for dev/CI).
+  - Entries of a view can only be written by `view_apply_run` (statement-level
+    guard triggers bind a token to `<view id>:<xid>`). It diffs by a
+    deterministic entry id (`md5(view || row_id || occurrence)`, not the
+    input's `row_id`, which is a global primary key already taken) so re-runs
+    touch only changed rows and the tile version only bumps on real change.
+  - **Why a server function, not an RPC pair.** A first version ran phase 1
+    through a SQL-taking RPC (`view_query`) and ferried rows through the
+    browser. That put client-supplied SQL on an endpoint any signed-in user
+    can call, could not enforce `statement_timeout` (a function cannot re-arm
+    the timer of its own top-level statement), and trusted the browser to
+    carry honest rows. The server runner fixes all three; the cost is a
+    server-only Postgres connection (`DATABASE_URL`, `JWT_SECRET`) and the
+    token round-trip. `create_view` / `save_view` still take definitions, not
+    SQL, and stay PostgREST RPCs with DB-side checks (inputs visible, no
+    cycle, editable view).
+  - Run payloads are held in server memory (capped at 1M rows) and sent to
+    Postgres as one jsonb parameter; chunked staging is the follow-up if
+    real views outgrow that.
 
 - **Stale** means any input's current `data_version` differs from the
   last successful run's. It is computed in the catalog query and shown as

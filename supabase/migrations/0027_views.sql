@@ -19,12 +19,12 @@
 --       inserts, row edits and even admin writes all refuse. Statement-level
 --       transition-table triggers, one per event (the 0003 restriction).
 --   §4  view_inputs + view_runs (+ RLS).
---   §5  The two-phase runner. Phase 1 is view_query / view_input_versions
---       (READ ONLY, SECURITY INVOKER, so RLS applies). Phase 2 is
---       view_apply_run / view_record_failure (SECURITY DEFINER, a write
---       transaction that executes NO user SQL — it receives rows as data).
---       They are separate RPCs, hence separate transactions on every
---       transport: user SQL never shares a transaction with a write.
+--   §5  The two-phase runner's database half. Phase 1 (compile + execute the
+--       user-derived SELECT) runs in the SERVER-SIDE runner (app/src/server/
+--       views) over a READ ONLY, RLS-scoped transaction — no SQL-taking RPC
+--       exists. Phase 2 is view_apply_run / view_record_failure (SECURITY
+--       DEFINER; they take ROWS as data and execute no user SQL), executable
+--       ONLY by the dedicated `view_runner` role, never by authenticated.
 --   §6  Save path: create_view / save_view — rewrite view_inputs, refuse
 --       cycles, require can_view_dataset on every input.
 --   §7  Staleness: view_stale(datasets) is a PostgREST computed column, so
@@ -339,208 +339,6 @@ create policy "view_runs select: editors and the creator"
 -- ---------------------------------------------------------------------------
 -- §5 — the two-phase runner
 -- ---------------------------------------------------------------------------
-
--- Exactly one statement? The phase-1 executor PREPAREs user SQL, and a
--- string like 'select 1; set session …' would otherwise run its tail OUTSIDE
--- the prepare (a plain SET persists on a pooled connection). A tiny lexer:
--- it skips comments, '…' / E'…' strings, "…" identifiers and $tag$…$tag$
--- bodies, and allows at most ONE trailing semicolon.
-create function public.view_sql_is_single_statement(p_sql text) returns boolean
-language plpgsql immutable set search_path = pg_catalog as $fn$
-declare
-  v_n       integer := length(p_sql);
-  v_i       integer := 1;
-  v_c       text;
-  v_semi    boolean := false;
-  v_depth   integer;
-  v_tag     text;
-  v_end     integer;
-  v_escape  boolean;
-  v_prev    text;
-begin
-  while v_i <= v_n loop
-    v_c := substr(p_sql, v_i, 1);
-
-    if v_c = '-' and substr(p_sql, v_i, 2) = '--' then
-      v_end := strpos(substr(p_sql, v_i), E'\n');
-      v_i := case when v_end = 0 then v_n + 1 else v_i + v_end end;
-
-    elsif v_c = '/' and substr(p_sql, v_i, 2) = '/*' then
-      v_depth := 1;
-      v_i := v_i + 2;
-      while v_i <= v_n and v_depth > 0 loop
-        if substr(p_sql, v_i, 2) = '/*' then
-          v_depth := v_depth + 1;
-          v_i := v_i + 2;
-        elsif substr(p_sql, v_i, 2) = '*/' then
-          v_depth := v_depth - 1;
-          v_i := v_i + 2;
-        else
-          v_i := v_i + 1;
-        end if;
-      end loop;
-      if v_depth > 0 then
-        return false;
-      end if;
-
-    elsif v_c in (' ', E'\n', E'\t', E'\r') then
-      v_i := v_i + 1;
-
-    elsif v_semi then
-      -- Anything but whitespace / comments after the one allowed semicolon.
-      return false;
-
-    elsif v_c = ';' then
-      v_semi := true;
-      v_i := v_i + 1;
-
-    elsif v_c = '''' then
-      -- E'…' honours backslash escapes; the E must not be the tail of a
-      -- longer identifier-ish run.
-      v_prev := case when v_i > 1 then substr(p_sql, v_i - 1, 1) else '' end;
-      v_escape := v_prev in ('e', 'E')
-        and (v_i < 3 or substr(p_sql, v_i - 2, 1) !~ '[A-Za-z0-9_$]');
-      v_i := v_i + 1;
-      loop
-        if v_i > v_n then
-          return false;
-        end if;
-        v_c := substr(p_sql, v_i, 1);
-        if v_escape and v_c = '\' then
-          v_i := v_i + 2;
-        elsif v_c = '''' then
-          if substr(p_sql, v_i + 1, 1) = '''' then
-            v_i := v_i + 2;
-          else
-            v_i := v_i + 1;
-            exit;
-          end if;
-        else
-          v_i := v_i + 1;
-        end if;
-      end loop;
-
-    elsif v_c = '"' then
-      v_i := v_i + 1;
-      loop
-        if v_i > v_n then
-          return false;
-        end if;
-        if substr(p_sql, v_i, 1) = '"' then
-          if substr(p_sql, v_i + 1, 1) = '"' then
-            v_i := v_i + 2;
-          else
-            v_i := v_i + 1;
-            exit;
-          end if;
-        else
-          v_i := v_i + 1;
-        end if;
-      end loop;
-
-    elsif v_c = '$' then
-      v_tag := substring(substr(p_sql, v_i) from '^\$([A-Za-z_][A-Za-z_0-9]*)?\$');
-      if v_tag is null and substr(p_sql, v_i, 2) <> '$$' then
-        v_i := v_i + 1;           -- a parameter marker ($1) or a stray $
-      else
-        v_tag := '$' || coalesce(v_tag, '') || '$';
-        v_end := strpos(substr(p_sql, v_i + length(v_tag)), v_tag);
-        if v_end = 0 then
-          return false;
-        end if;
-        v_i := v_i + length(v_tag) + v_end - 1 + length(v_tag);
-      end if;
-
-    else
-      v_i := v_i + 1;
-    end if;
-  end loop;
-  return true;
-end $fn$;
-
--- Phase 1 executor: ONE statement, read-only, as the invoker (RLS applies).
--- Returns { rows: [...], rowCount }. Geometry values leave as GeoJSON.
---
--- The statement is PREPAREd first so Postgres infers the bind-parameter
--- types from the query itself (dataset_id = $1 → uuid) and the params, which
--- travel as a jsonb array, are passed as literals that coerce to them.
---
--- Read-only is enforced with transaction_read_only = on, which user SQL
--- cannot flip back ("transaction read-write mode must be set before any
--- query"). The flag is SET LOCAL — it would stay on for the caller's whole
--- transaction — so the work runs in a sub-block that ends by raising a
--- sentinel: the subtransaction rollback reverts the setting while the plpgsql
--- variables (the collected rows) survive.
---
--- statement_timeout is deliberately NOT set here: it cannot take effect from
--- inside a function (the timer is armed once per top-level statement). The
--- timeout is the CALLER's: the role setting over PostgREST, or
--- `set local statement_timeout` on a direct session.
-create function public.view_query(
-  p_sql      text,
-  p_params   jsonb   default '[]'::jsonb,
-  p_max_rows integer default 1000000
-)
-returns jsonb
-language plpgsql
-volatile
-security invoker
-set search_path = public, extensions
-as $$
-declare
-  v_name  text := 'jdm_view_' || replace(gen_random_uuid()::text, '-', '');
-  v_rows  jsonb[] := '{}';
-  v_n     integer := 0;
-  v_args  text;
-  r       record;
-begin
-  if p_sql is null or not public.view_sql_is_single_statement(p_sql) then
-    raise exception 'view_query: expected exactly one statement';
-  end if;
-  if p_params is null or jsonb_typeof(p_params) is distinct from 'array' then
-    raise exception 'view_query: p_params must be a jsonb array';
-  end if;
-
-  select string_agg(
-           case jsonb_typeof(e.value)
-             when 'null' then 'null'
-             when 'string' then quote_literal(e.value #>> '{}')
-             when 'number' then quote_literal(e.value #>> '{}')
-             when 'boolean' then quote_literal(e.value #>> '{}')
-             else quote_literal(e.value::text)
-           end, ', ' order by e.ord)
-    into v_args
-    from jsonb_array_elements(p_params) with ordinality as e(value, ord);
-
-  begin
-    perform set_config('transaction_read_only', 'on', true);
-    execute 'prepare ' || v_name || ' as ' || p_sql;
-    for r in execute 'execute ' || v_name || coalesce('(' || v_args || ')', '') loop
-      v_n := v_n + 1;
-      if v_n > p_max_rows then
-        raise exception 'view_query: result exceeds % rows', p_max_rows
-          using errcode = '54000';
-      end if;
-      -- PostGIS's geometry -> json cast adds a "crs" member; GeoJSON here is
-      -- always EPSG:4326, so drop it.
-      v_rows := v_rows || (to_jsonb(r) #- '{geom,crs}');
-    end loop;
-    execute 'deallocate ' || v_name;
-    raise exception 'view_query done' using errcode = 'JDM01';
-  exception
-    when sqlstate 'JDM01' then
-      null;
-    when others or query_canceled then
-      begin
-        execute 'deallocate ' || v_name;
-      exception when others then
-        null;
-      end;
-      raise;
-  end;
-
-  return jsonb_build_object('rows', to_jsonb(v_rows), 'rowCount', v_n);
-end $$;
 
 -- The write gate shared by the phase-1 version capture and phase 2: a view,
 -- editable by the caller, whose every input the caller can view (no
@@ -947,29 +745,46 @@ language sql stable security definer set search_path = public, extensions as $$
 $$;
 
 -- ---------------------------------------------------------------------------
+-- The server runner's role. `view_runner` (NOLOGIN) owns the only EXECUTE on
+-- the two row-taking definer functions and may SET ROLE authenticated (the
+-- runner acts as the verified user for phase 1). The server connects as a
+-- login role that is a member of it (deploy/postgres/zz-supabase-roles.sh
+-- creates `jdm_server`; a superuser connection also works for dev/tests).
+-- ---------------------------------------------------------------------------
+
+do $$
+begin
+  if not exists (select 1 from pg_roles where rolname = 'view_runner') then
+    create role view_runner nologin;
+  end if;
+  grant authenticated to view_runner;
+  if exists (select 1 from pg_roles where rolname = 'jdm_server') then
+    grant view_runner to jdm_server;
+  end if;
+end $$;
+grant usage on schema public to view_runner;
+
+-- ---------------------------------------------------------------------------
 -- Grants. The internal helpers stay private to the definers above.
 -- ---------------------------------------------------------------------------
 
-revoke all on function public.view_sql_is_single_statement(text) from anon, public;
-revoke all on function public.view_assert_run_token(uuid) from anon, public;
-revoke all on function public.view_query(text, jsonb, integer) from anon, public;
-revoke all on function public.view_assert_runnable(uuid) from anon, public;
-revoke all on function public.view_input_versions(uuid) from anon, public;
-revoke all on function public.view_apply_run(uuid, jsonb, jsonb, jsonb, timestamptz) from anon, public;
-revoke all on function public.view_prune_runs(uuid) from anon, public;
-revoke all on function public.view_record_failure(uuid, text, timestamptz, jsonb, jsonb) from anon, public;
-revoke all on function public.view_definition(uuid) from anon, public;
-revoke all on function public.view_input_meta(jsonb) from anon, public;
-revoke all on function public.view_set_inputs(uuid, jsonb) from anon, public;
-revoke all on function public.create_view(text, jsonb, jsonb, text, jsonb, text, text, text, text) from anon, public;
-revoke all on function public.save_view(uuid, jsonb, jsonb, text, jsonb) from anon, public;
-revoke all on function public.view_stale(public.datasets) from anon, public;
-revoke all on function public.view_run_readable(uuid) from anon, public;
+revoke all on function public.view_assert_run_token(uuid) from anon, authenticated, service_role, public;
+revoke all on function public.view_assert_runnable(uuid) from anon, authenticated, service_role, public;
+revoke all on function public.view_input_versions(uuid) from anon, authenticated, service_role, public;
+revoke all on function public.view_apply_run(uuid, jsonb, jsonb, jsonb, timestamptz) from anon, authenticated, service_role, public;
+revoke all on function public.view_prune_runs(uuid) from anon, authenticated, service_role, public;
+revoke all on function public.view_record_failure(uuid, text, timestamptz, jsonb, jsonb) from anon, authenticated, service_role, public;
+revoke all on function public.view_definition(uuid) from anon, authenticated, service_role, public;
+revoke all on function public.view_input_meta(jsonb) from anon, authenticated, service_role, public;
+revoke all on function public.view_set_inputs(uuid, jsonb) from anon, authenticated, service_role, public;
+revoke all on function public.create_view(text, jsonb, jsonb, text, jsonb, text, text, text, text) from anon, authenticated, service_role, public;
+revoke all on function public.save_view(uuid, jsonb, jsonb, text, jsonb) from anon, authenticated, service_role, public;
+revoke all on function public.view_stale(public.datasets) from anon, authenticated, service_role, public;
+revoke all on function public.view_run_readable(uuid) from anon, authenticated, service_role, public;
 
-grant execute on function public.view_query(text, jsonb, integer) to authenticated;
 grant execute on function public.view_input_versions(uuid) to authenticated;
-grant execute on function public.view_apply_run(uuid, jsonb, jsonb, jsonb, timestamptz) to authenticated;
-grant execute on function public.view_record_failure(uuid, text, timestamptz, jsonb, jsonb) to authenticated;
+grant execute on function public.view_apply_run(uuid, jsonb, jsonb, jsonb, timestamptz) to view_runner;
+grant execute on function public.view_record_failure(uuid, text, timestamptz, jsonb, jsonb) to view_runner;
 grant execute on function public.view_definition(uuid) to authenticated;
 grant execute on function public.view_input_meta(jsonb) to authenticated;
 grant execute on function public.create_view(text, jsonb, jsonb, text, jsonb, text, text, text, text) to authenticated;

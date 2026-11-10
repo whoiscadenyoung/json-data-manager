@@ -1,28 +1,24 @@
-// Integration tests — Views schema, two-phase runner, previews, staleness
-// (issue #300; migration 0027_views.sql; docs/views-design.md §7/§10).
+// Integration tests — Views schema, the SERVER-SIDE runner, previews and
+// staleness (issue #300; migration 0027_views.sql; docs/views-design.md §7).
 //
-// Same wire-client pattern as the other pg-*.int.test.ts files: the real view
-// runner (`#/lib/views/view-runner`) is driven through a `ViewsRpc` adapter
-// that issues each RPC as SQL on the test session, roles switched inside a
-// test-scoped transaction and rolled back after each test. The compiler is a
-// tiny FAKE (the real one is #299): it emits a fixed SELECT over the input
-// CTE layout, so these tests pin the DATABASE half of the contract.
+// The runner under test is the real one (`#/server/views/runner`): it opens
+// its OWN Postgres connections (postgres.js), so — unlike the other
+// pg-*.int.test.ts files — fixtures are COMMITTED (autocommit as the admin
+// session) and removed again in afterEach. User-side actions (create_view,
+// save_view, direct writes, denied calls) run on the wire session inside a
+// short transaction as that user. The compiler is a tiny FAKE for the
+// database-contract tests plus the REAL @caden/data-core/views compiler for
+// one end-to-end test.
 // Needs a DEDICATED CI-parity db (docs/memory/int-test-db-split-ri-teardown.md).
-
-import crypto from "node:crypto";
 
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import type { CompileInputMeta, ViewCompiler, ViewDefinition } from "#/lib/views/view-compiler";
 import { defaultViewCompiler, inputsOfDefinition } from "#/lib/views/view-compiler-wiring";
-import {
-  createView,
-  previewView,
-  runView,
-  saveView,
-  type ViewDeps,
-  type ViewsRpc,
-} from "#/lib/views/view-runner";
+import { createView, saveView, type ViewDeps, type ViewsRpc } from "#/lib/views/view-save";
+import type { VerifiedClaims } from "#/server/views/claims";
+import { connect } from "#/server/views/entry.server";
+import { previewAs, runReadOnlyAsUser, runViewAs, type RunnerDeps } from "#/server/views/runner";
 
 import {
   ALICE,
@@ -30,12 +26,16 @@ import {
   createDataset,
   DB_URL,
   dbUp,
+  dropDatasets,
   ensureUsers,
   PgSession,
   sqlLit,
 } from "./pg-int-helpers.int.test";
 
 let session: PgSession | undefined;
+const runnerSql = dbUp() ? connect(DB_URL, 4) : undefined;
+const created: { views: string[]; sources: string[] } = { views: [], sources: [] };
+const LEAST_PRIVILEGE_ROLE = "jdm_server_int";
 
 function s(): PgSession {
   if (session === undefined) throw new Error("integration session not connected");
@@ -49,26 +49,37 @@ beforeEach(async () => {
   }
 });
 
-afterAll(async () => {
-  if (session) await session.close();
-  session = undefined;
-});
-
 afterEach(async () => {
-  if (session) await session.rollbackIfOpen();
+  if (session === undefined) return;
+  await session.rollbackIfOpen();
+  await session.asAdmin();
+  // Newest first: a chained view reads an older one (NO ACTION input FK).
+  for (const id of [...created.views].reverse()) {
+    await session.expectOk(`delete from public.datasets where id = ${sqlLit(id)}`);
+  }
+  await dropDatasets(session, created.sources);
+  created.views = [];
+  created.sources = [];
+});
+
+afterAll(async () => {
+  if (session) {
+    await session.rollbackIfOpen();
+    await session.expectOk(`drop role if exists ${LEAST_PRIVILEGE_ROLE}`);
+    await session.close();
+  }
+  session = undefined;
+  if (runnerSql) await runnerSql.end({ timeout: 2 });
 });
 
 // ---------------------------------------------------------------------------
-// The fake compiler and the SQL transport
+// The fake compiler
 // ---------------------------------------------------------------------------
 
-/** Definition shape of these tests: design §4's `inputs`, plus a `fail` switch. */
+/** Definition shape of the fake: design §4's `inputs`, plus `fail` / `sleep` switches. */
 function definitionOver(datasetIds: string[], extra: Record<string, unknown> = {}) {
   return {
-    inputs: datasetIds.map((id, i) => ({
-      alias: `in${i}`,
-      ref: { kind: "dataset", id },
-    })),
+    inputs: datasetIds.map((id, i) => ({ alias: `in${i}`, ref: { kind: "dataset", id } })),
     ...extra,
   };
 }
@@ -92,58 +103,74 @@ const fakeCompiler: ViewCompiler = {
         params: [],
       };
     }
+    if ("sleep" in definition) {
+      return {
+        sql: "select (pg_sleep(5))::text::uuid as row_id, '{}'::jsonb as d, null::geometry as geom",
+        params: [],
+      };
+    }
     const limit =
       options === undefined || options.limit === undefined ? "" : ` limit ${options.limit}`;
     return {
       sql:
         "select e.id as row_id, e.data as d, g.geom from public.entries e " +
-        "left join public.geometries g on g.entry_id = e.id where e.dataset_id = $1" +
+        "left join public.geometries g on g.entry_id = e.id where e.dataset_id = $1::uuid" +
         ` order by e.created_at, e.id${limit}`,
       params: [firstId(inputs)],
     };
   },
   compileDiagnostics: (_definition, inputs) => ({
-    sql: "select jsonb_build_object('rowsIn', count(*)) as diagnostics from public.entries where dataset_id = $1",
+    sql: "select jsonb_build_object('rowsIn', count(*)) as diagnostics from public.entries where dataset_id = $1::uuid",
     params: [firstId(inputs)],
   }),
   viewInputDatasetIds: (_definition, inputs) => inputs.map((i) => i.datasetId),
 };
+
+// ---------------------------------------------------------------------------
+// Transports and fixtures
+// ---------------------------------------------------------------------------
+
+function who(userId: string): VerifiedClaims {
+  return { sub: userId, role: "authenticated", claims: { sub: userId, role: "authenticated" } };
+}
+
+function runnerDeps(
+  opts: { compiler?: ViewCompiler; timeoutMs?: number; url?: string } = {},
+): RunnerDeps {
+  if (runnerSql === undefined) throw new Error("no db");
+  return {
+    sql: opts.url === undefined ? runnerSql : connect(opts.url, 2),
+    compiler: opts.compiler ?? fakeCompiler,
+    timeoutMs: opts.timeoutMs ?? 30_000,
+  };
+}
 
 function litOf(value: unknown): string {
   if (value !== null && typeof value === "object") return `${sqlLit(value)}::jsonb`;
   return sqlLit(value);
 }
 
-/** Each RPC runs as one SQL statement inside a savepoint (an error must not abort the shared test transaction). */
-function pgRpc(): ViewsRpc {
-  // The wire session cannot pipeline; the runner issues phase-1 reads in
-  // parallel (separate connections in production), so serialize them here.
-  let tail: Promise<unknown> = Promise.resolve();
-  const serialized = async (work: () => Promise<unknown>): Promise<unknown> => {
-    const run = tail.then(work, work);
-    tail = run.catch(() => undefined);
-    return await run;
+/** The save-path RPCs, issued as `userId` in one short COMMITTED transaction each. */
+function savePath(userId: string, compiler: ViewCompiler = fakeCompiler): ViewDeps {
+  const rpc: ViewsRpc = {
+    call: async (fn, args) => {
+      const named = Object.entries(args)
+        .map(([key, value]) => `${key} => ${litOf(value)}`)
+        .join(", ");
+      await s().begin();
+      await s().asUser(userId);
+      const result = await s().query(`select public.${fn}(${named}) as r`);
+      if (result.error !== undefined) {
+        await s().rollback();
+        throw new Error(result.error);
+      }
+      await s().commit();
+      const row = result.rows[0];
+      const raw = row === undefined ? null : row.r;
+      return raw === null || raw === undefined ? null : parseMaybeJson(raw);
+    },
   };
-  return {
-    call: async (fn, args) =>
-      await serialized(async () => {
-        const named = Object.entries(args)
-          .map(([key, value]) => `${key} => ${litOf(value)}`)
-          .join(", ");
-        const sp = `sp_${crypto.randomUUID().replaceAll("-", "")}`;
-        await s().expectOk(`savepoint ${sp}`);
-        const result = await s().query(`select public.${fn}(${named}) as r`);
-        if (result.error !== undefined) {
-          await s().expectOk(`rollback to ${sp}`);
-          await s().expectOk(`release ${sp}`);
-          throw new Error(result.error);
-        }
-        await s().expectOk(`release ${sp}`);
-        const row = result.rows[0];
-        const raw = row === undefined ? null : row.r;
-        return raw === null || raw === undefined ? null : parseMaybeJson(raw);
-      }),
-  };
+  return { rpc, compiler };
 }
 
 function parseMaybeJson(raw: string): unknown {
@@ -153,14 +180,6 @@ function parseMaybeJson(raw: string): unknown {
     return raw;
   }
 }
-
-function deps(): ViewDeps {
-  return { rpc: pgRpc(), compiler: fakeCompiler };
-}
-
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
 
 async function source(opts: {
   lifecycle?: "draft" | "published";
@@ -173,6 +192,7 @@ async function source(opts: {
     lifecycle: opts.lifecycle ?? "published",
     visibility: opts.lifecycle === "draft" ? "members" : "signed-in",
   });
+  created.sources.push(id);
   await s().expectOk(
     `insert into public.entries (dataset_id, data)
      select ${sqlLit(id)}, jsonb_build_object('name', 'row ' || g) from generate_series(1, ${opts.rows}) g`,
@@ -189,11 +209,10 @@ async function source(opts: {
 
 async function newView(
   inputIds: string[],
-  extra: { editPolicy?: "open" | "locked"; fail?: boolean } = {},
+  extra: { editPolicy?: "open" | "locked"; flags?: Record<string, unknown>; by?: string } = {},
 ): Promise<string> {
-  await s().asUser(ALICE);
-  const definition = definitionOver(inputIds, extra.fail === true ? { fail: true } : {});
-  return await createView(deps(), {
+  const definition = definitionOver(inputIds, extra.flags ?? {});
+  const id = await createView(savePath(extra.by ?? ALICE), {
     title: "fixture view",
     definition,
     inputs: inputsOfDefinition(definition),
@@ -201,6 +220,8 @@ async function newView(
     visibility: "signed-in",
     editPolicy: extra.editPolicy ?? "open",
   });
+  created.views.push(id);
+  return id;
 }
 
 async function one(sql: string): Promise<Record<string, string | null>> {
@@ -210,33 +231,45 @@ async function one(sql: string): Promise<Record<string, string | null>> {
   return row;
 }
 
-async function stale(viewId: string): Promise<boolean> {
-  const row = await one(
-    `select public.view_stale(d) as v from public.datasets d where d.id = ${sqlLit(viewId)}`,
-  );
-  return row.v === "t";
+/** Read as `userId` in a rolled-back transaction. */
+async function asUserRead(userId: string, sql: string): Promise<Record<string, string | null>[]> {
+  await s().begin();
+  await s().asUser(userId);
+  try {
+    return await s().expectOk(sql);
+  } finally {
+    await s().rollback();
+  }
 }
 
-async function expectRaises(text: string): Promise<string> {
-  const sp = `sp_${crypto.randomUUID().replaceAll("-", "")}`;
-  await s().expectOk(`savepoint ${sp}`);
+async function stale(viewId: string): Promise<boolean> {
+  const rows = await asUserRead(
+    ALICE,
+    `select public.view_stale(d) as v from public.datasets d where d.id = ${sqlLit(viewId)}`,
+  );
+  const first = rows[0];
+  return first !== undefined && first.v === "t";
+}
+
+/** A statement expected to RAISE as `userId`; returns the message. */
+async function raisesAs(userId: string, text: string): Promise<string> {
+  await s().begin();
+  await s().asUser(userId);
   const result = await s().query(text);
-  await s().expectOk(`rollback to ${sp}`);
-  await s().expectOk(`release ${sp}`);
+  await s().rollback();
   if (result.error !== undefined) return result.error;
   throw new Error(`expected the statement to raise: ${text}`);
 }
 
 describe.skipIf(!dbUp())("views (#300)", () => {
   test("a run writes rows and geometries and bumps the tile cache version", async () => {
-    await s().begin();
     const input = await source({ rows: 5, geometry: true });
     const view = await newView([input]);
     const before = await one(
       `select map_tile_cache_version::int as v from public.datasets where id = ${sqlLit(view)}`,
     );
 
-    const outcome = await runView(deps(), view);
+    const outcome = await runViewAs(runnerDeps(), who(ALICE), view);
     expect(outcome.status).toBe("ok");
 
     const after = await one(
@@ -251,7 +284,6 @@ describe.skipIf(!dbUp())("views (#300)", () => {
     expect(Number(after.v)).toBeGreaterThan(Number(before.v));
     expect(Number(after.dv)).toBeGreaterThan(0);
     expect(after.p).toBe('["name"]');
-    // The ferried geometry is a real, indexed geometry.
     const geom = await one(
       `select count(*) as n from public.geometries where dataset_id = ${sqlLit(view)} and geom is not null and bbox is not null`,
     );
@@ -264,7 +296,7 @@ describe.skipIf(!dbUp())("views (#300)", () => {
     expect(run.iv).toContain(input);
 
     // An unchanged re-run diffs to nothing: no churn, no tile bump.
-    const second = await runView(deps(), view);
+    const second = await runViewAs(runnerDeps(), who(ALICE), view);
     expect(second.status).toBe("ok");
     const again = await one(
       `select map_tile_cache_version::int as v from public.datasets where id = ${sqlLit(view)}`,
@@ -273,22 +305,19 @@ describe.skipIf(!dbUp())("views (#300)", () => {
   });
 
   test("stale flips after an input edit", async () => {
-    await s().begin();
     const input = await source({ rows: 3 });
     const view = await newView([input]);
     expect(await stale(view)).toBe(true); // never run
 
-    await runView(deps(), view);
+    await runViewAs(runnerDeps(), who(ALICE), view);
     expect(await stale(view)).toBe(false);
 
-    await s().asAdmin();
     await s().expectOk(
       `insert into public.entries (dataset_id, data) values (${sqlLit(input)}, '{"name":"late"}')`,
     );
-    await s().asUser(ALICE);
     expect(await stale(view)).toBe(true);
 
-    expect((await runView(deps(), view)).status).toBe("ok");
+    expect((await runViewAs(runnerDeps(), who(ALICE), view)).status).toBe("ok");
     expect(await stale(view)).toBe(false);
     const rows = await one(
       `select count(*) as n from public.entries where dataset_id = ${sqlLit(view)}`,
@@ -297,51 +326,62 @@ describe.skipIf(!dbUp())("views (#300)", () => {
   });
 
   test("the catalog summary select reads the stale flag as a field", async () => {
-    await s().begin();
     const input = await source({ rows: 1 });
     const view = await newView([input]);
-    const row = await one(
+    const [row] = await asUserRead(
+      ALICE,
       `select kind, refresh_mode, public.view_stale(d) as stale from public.datasets d where id = ${sqlLit(view)}`,
     );
-    expect(row.kind).toBe("view");
-    expect(row.refresh_mode).toBe("manual");
-    expect(row.stale).toBe("t");
-    const src = await one(
+    expect(row).toMatchObject({ kind: "view", refresh_mode: "manual", stale: "t" });
+    const [src] = await asUserRead(
+      ALICE,
       `select public.view_stale(d) as stale from public.datasets d where id = ${sqlLit(input)}`,
     );
-    expect(src.stale).toBe("f");
+    expect(src).toMatchObject({ stale: "f" });
   });
 
   test("a viewer cannot run (and nothing is recorded)", async () => {
-    await s().begin();
     const input = await source({ rows: 2 });
     const view = await newView([input], { editPolicy: "locked" });
-    await s().asUser(BOB);
-    await expect(runView(deps(), view)).rejects.toThrow(/not writable/);
-    await s().asAdmin();
+    await expect(runViewAs(runnerDeps(), who(BOB), view)).rejects.toThrow(/not writable/);
     const runs = await one(
       `select count(*) as n from public.view_runs where view_id = ${sqlLit(view)}`,
     );
     expect(runs.n).toBe("0");
     // ...and Bob cannot read the run history even of a run Alice makes.
-    await s().asUser(ALICE);
-    await runView(deps(), view);
-    await s().asUser(BOB);
-    const visible = await one(
+    await runViewAs(runnerDeps(), who(ALICE), view);
+    const visible = await asUserRead(
+      BOB,
       `select count(*) as n from public.view_runs where view_id = ${sqlLit(view)}`,
     );
-    expect(visible.n).toBe("0");
+    expect(visible[0]).toMatchObject({ n: "0" });
+  });
+
+  test("the runner enforces RLS: an editor who cannot see an input is refused", async () => {
+    const draft = await source({ lifecycle: "draft", rows: 2 });
+    const view = await newView([draft]); // Alice's open view over her members-only draft
+    // Bob may edit the open view but cannot view its draft input.
+    await expect(runViewAs(runnerDeps(), who(BOB), view)).rejects.toThrow(/not visible/);
+    await expect(previewAs(runnerDeps(), who(BOB), { viewId: view })).rejects.toThrow(
+      /not visible/,
+    );
+    const runs = await one(
+      `select count(*) as n from public.view_runs where view_id = ${sqlLit(view)}`,
+    );
+    expect(runs.n).toBe("0");
   });
 
   test("a failed run keeps the previous rows and records the error", async () => {
-    await s().begin();
     const input = await source({ rows: 4 });
     const view = await newView([input]);
-    expect((await runView(deps(), view)).status).toBe("ok");
+    expect((await runViewAs(runnerDeps(), who(ALICE), view)).status).toBe("ok");
 
     const broken = definitionOver([input], { fail: true });
-    await saveView(deps(), view, { definition: broken, inputs: inputsOfDefinition(broken) });
-    const outcome = await runView(deps(), view);
+    await saveView(savePath(ALICE), view, {
+      definition: broken,
+      inputs: inputsOfDefinition(broken),
+    });
+    const outcome = await runViewAs(runnerDeps(), who(ALICE), view);
     expect(outcome.status).toBe("error");
     expect(JSON.stringify(outcome)).toMatch(/division by zero/);
 
@@ -357,107 +397,195 @@ describe.skipIf(!dbUp())("views (#300)", () => {
     expect(await stale(view)).toBe(true); // definition changed since the last good run
   });
 
+  test("a statement timeout fires on the phase-1 read and the run errors out", async () => {
+    const input = await source({ rows: 1 });
+    const view = await newView([input], { flags: { sleep: true } });
+    const started = Date.now();
+    const outcome = await runViewAs(runnerDeps({ timeoutMs: 300 }), who(ALICE), view);
+    expect(Date.now() - started).toBeLessThan(4000);
+    expect(outcome.status).toBe("error");
+    expect(JSON.stringify(outcome)).toMatch(/timeout/);
+  });
+
   test("a cycle is rejected", async () => {
-    await s().begin();
     const input = await source({ rows: 1 });
     const a = await newView([input]);
-    const b = await newView([a]); // b reads a: fine
+    await newView([a]); // b reads a: fine
+    const b = created.views[1] ?? "";
     const cyclic = definitionOver([b]);
     await expect(
-      saveView(deps(), a, { definition: cyclic, inputs: inputsOfDefinition(cyclic) }),
+      saveView(savePath(ALICE), a, { definition: cyclic, inputs: inputsOfDefinition(cyclic) }),
     ).rejects.toThrow(/cycle/);
     const self = definitionOver([a]);
     await expect(
-      saveView(deps(), a, { definition: self, inputs: inputsOfDefinition(self) }),
+      saveView(savePath(ALICE), a, { definition: self, inputs: inputsOfDefinition(self) }),
     ).rejects.toThrow(/cycle/);
-    // The refused saves left a's inputs untouched.
     const inputs = await one(
       `select input_dataset_id::text as i from public.view_inputs where view_id = ${sqlLit(a)}`,
     );
     expect(inputs.i).toBe(input);
   });
 
-  test("preview returns at most 50 rows plus full-input diagnostics", async () => {
-    await s().begin();
+  test("preview returns at most 50 rows plus full-input diagnostics (saved and draft)", async () => {
     const input = await source({ rows: 120 });
-    await s().asUser(ALICE);
-    const definition = definitionOver([input]);
-    const preview = await previewView(deps(), {
-      definition,
-      inputs: inputsOfDefinition(definition),
+    const view = await newView([input]);
+    const saved = await previewAs(runnerDeps(), who(ALICE), { viewId: view });
+    expect(saved.rows).toHaveLength(50);
+    expect(saved.diagnostics).toEqual({ rowsIn: 120 });
+
+    // A draft (unsaved) DEFINITION previews too — JSON in, never SQL.
+    const draft = definitionOver([input]);
+    const preview = await previewAs(runnerDeps(), who(ALICE), {
+      definition: draft,
+      inputs: inputsOfDefinition(draft),
     });
     expect(preview.rows).toHaveLength(50);
     expect(preview.diagnostics).toEqual({ rowsIn: 120 });
   });
 
-  test("a view over an UNPUBLISHED draft input works; an invisible input is refused", async () => {
-    await s().begin();
+  test("a view over an UNPUBLISHED draft input works; an invisible input is refused on save", async () => {
     const draft = await source({ lifecycle: "draft", rows: 3 });
     const view = await newView([draft]);
-    const outcome = await runView(deps(), view);
+    const outcome = await runViewAs(runnerDeps(), who(ALICE), view);
     expect(outcome.status).toBe("ok");
 
-    // Bob cannot see Alice's members-only draft, so he cannot build on it.
-    await s().asUser(BOB);
     const definition = definitionOver([draft]);
     await expect(
-      createView(deps(), { title: "nope", definition, inputs: inputsOfDefinition(definition) }),
+      createView(savePath(BOB), {
+        title: "nope",
+        definition,
+        inputs: inputsOfDefinition(definition),
+      }),
     ).rejects.toThrow(/not visible/);
   });
 
   test("a view's rows are written only by its run", async () => {
-    await s().begin();
     const input = await source({ rows: 2 });
     const view = await newView([input]);
-    await runView(deps(), view);
+    await runViewAs(runnerDeps(), who(ALICE), view);
 
-    // Direct writes, as the owner and as an admin: all refused.
-    expect(
-      await expectRaises(
-        `insert into public.entries (dataset_id, data) values (${sqlLit(view)}, '{}')`,
-      ),
-    ).toMatch(/is a view/);
-    expect(
-      await expectRaises(
-        `update public.entries set data = '{}' where dataset_id = ${sqlLit(view)}`,
-      ),
-    ).toMatch(/is a view/);
-    expect(
-      await expectRaises(`delete from public.entries where dataset_id = ${sqlLit(view)}`),
-    ).toMatch(/is a view/);
-    expect(
-      await expectRaises(
-        `select public.import_entries(${sqlLit(view)}, '[{"data":{"a":1}}]'::jsonb)`,
-      ),
-    ).toMatch(/is a view/);
-    await s().asAdmin();
-    expect(
-      await expectRaises(
-        `insert into public.entries (dataset_id, data) values (${sqlLit(view)}, '{}')`,
-      ),
-    ).toMatch(/is a view/);
+    const writes = [
+      `insert into public.entries (dataset_id, data) values (${sqlLit(view)}, '{}')`,
+      `update public.entries set data = '{}' where dataset_id = ${sqlLit(view)}`,
+      `delete from public.entries where dataset_id = ${sqlLit(view)}`,
+      `select public.import_entries(${sqlLit(view)}, '[{"data":{"a":1}}]'::jsonb)`,
+    ];
+    for (const write of writes) {
+      expect(await raisesAs(ALICE, write)).toMatch(/is a view/);
+    }
+    // Admin writes too.
+    await s().begin();
+    const admin = await s().query(
+      `insert into public.entries (dataset_id, data) values (${sqlLit(view)}, '{}')`,
+    );
+    await s().rollback();
+    expect(admin.error).toMatch(/is a view/);
 
-    // A client cannot mint a view directly either.
-    await s().asUser(ALICE);
-    await expectRaises(
+    // A client cannot mint a view directly.
+    await raisesAs(
+      ALICE,
       `insert into public.datasets (title, kind, definition, refresh_mode, created_by)
        values ('x', 'view', '{}', 'manual', ${sqlLit(ALICE)})`,
     );
 
     // Dropping the view itself cascades through the guard.
-    await s().asAdmin();
     await s().expectOk(`delete from public.datasets where id = ${sqlLit(view)}`);
+    created.views = [];
     const left = await one(
       `select count(*) as n from public.entries where dataset_id = ${sqlLit(view)}`,
     );
     expect(left.n).toBe("0");
   });
 
+  test("authenticated cannot execute any SQL-taking or row-taking function", async () => {
+    const input = await source({ rows: 1 });
+    const view = await newView([input]);
+    // The SQL-taking RPC is gone entirely.
+    expect(await raisesAs(ALICE, `select public.view_query('select 1')`)).toMatch(/does not exist/);
+    const denied = [
+      `select public.view_apply_run(${sqlLit(view)}, '[]'::jsonb, '{}'::jsonb)`,
+      `select public.view_record_failure(${sqlLit(view)}, 'x')`,
+      `select public.view_set_inputs(${sqlLit(view)}, '[]'::jsonb)`,
+      `select public.view_assert_runnable(${sqlLit(view)})`,
+      `select public.view_prune_runs(${sqlLit(view)})`,
+    ];
+    for (const call of denied) {
+      expect(await raisesAs(ALICE, call)).toMatch(/permission denied/);
+    }
+  });
+
+  test("the raw read-only entry: RLS-scoped, read-only, row-capped", async () => {
+    const input = await source({ rows: 5 });
+    const draft = await source({ lifecycle: "draft", rows: 2 });
+    const deps = runnerDeps();
+    const rows = await runReadOnlyAsUser(
+      deps,
+      who(ALICE),
+      "select data->>'name' as name from public.entries where dataset_id = $1::uuid order by 1",
+      [input],
+      { maxRows: 10 },
+    );
+    expect(rows).toHaveLength(5);
+    // RLS applies: Bob cannot read Alice's members-only draft.
+    const hidden = await runReadOnlyAsUser(
+      deps,
+      who(BOB),
+      "select count(*)::int as n from public.entries where dataset_id = $1::uuid",
+      [draft],
+    );
+    expect(hidden).toEqual([{ n: 0 }]);
+    // Writes and a stacked statement are refused; the row cap fires.
+    await expect(
+      runReadOnlyAsUser(
+        deps,
+        who(ALICE),
+        "delete from public.entries where dataset_id = $1::uuid returning 1",
+        [input],
+      ),
+    ).rejects.toThrow(/read-only|syntax error/);
+    await expect(runReadOnlyAsUser(deps, who(ALICE), "select 1; select 2", [])).rejects.toThrow(
+      /syntax error|cannot insert multiple commands/,
+    );
+    await expect(
+      runReadOnlyAsUser(deps, who(ALICE), "select generate_series(1, 20) as n", [], { maxRows: 3 }),
+    ).rejects.toThrow(/exceeds 3 rows/);
+    const still = await one(
+      `select count(*) as n from public.entries where dataset_id = ${sqlLit(input)}`,
+    );
+    expect(still.n).toBe("5");
+  });
+
+  test("the least-privilege server role (view_runner member) runs a view", async () => {
+    await s().expectOk(`drop role if exists ${LEAST_PRIVILEGE_ROLE}`);
+    await s().expectOk(
+      `create role ${LEAST_PRIVILEGE_ROLE} login password 'x' in role view_runner`,
+    );
+    const url = new URL(DB_URL);
+    url.username = LEAST_PRIVILEGE_ROLE;
+    url.password = "x";
+    const input = await source({ rows: 3 });
+    const view = await newView([input]);
+    const deps = runnerDeps({ url: url.toString() });
+    try {
+      expect((await runViewAs(deps, who(ALICE), view)).status).toBe("ok");
+      const rows = await one(
+        `select count(*) as n from public.entries where dataset_id = ${sqlLit(view)}`,
+      );
+      expect(rows.n).toBe("3");
+      // It cannot do anything a plain login could not: no direct table writes.
+      await expect(
+        deps.sql.unsafe(`insert into public.entries (dataset_id, data) values ($1::uuid, '{}')`, [
+          input,
+        ]),
+      ).rejects.toThrow(/permission denied|row-level security/);
+    } finally {
+      await deps.sql.end({ timeout: 2 });
+    }
+  });
+
   test("the REAL compiler runs end to end through the runner (join + summarize)", async () => {
-    await s().begin();
     const states = await source({ rows: 0 });
     const deployments = await source({ rows: 0 });
-    await s().asAdmin();
     // The real validator checks field names against the declared properties.
     await s().expectOk(
       `update public.datasets set properties = '["id","name"]'::jsonb where id = ${sqlLit(states)}`,
@@ -477,7 +605,6 @@ describe.skipIf(!dbUp())("views (#300)", () => {
        select dataset_id, id, '{"type":"Point","coordinates":[1,2]}'::jsonb, 'Point'
        from public.entries where dataset_id = ${sqlLit(states)}`,
     );
-    await s().asUser(ALICE);
     const definition = {
       inputs: [
         { alias: "states", ref: { kind: "dataset", id: states } },
@@ -502,22 +629,23 @@ describe.skipIf(!dbUp())("views (#300)", () => {
       ],
       output: { fields: [], emptyFields: "keep" },
     };
-    const real: ViewDeps = { rpc: pgRpc(), compiler: defaultViewCompiler };
-    const preview = await previewView(real, {
+    const real = runnerDeps({ compiler: defaultViewCompiler });
+    const preview = await previewAs(real, who(ALICE), {
       definition,
       inputs: inputsOfDefinition(definition),
     });
     expect(preview.rows).toHaveLength(2);
     expect(JSON.stringify(preview.diagnostics)).toContain("steps");
 
-    const view = await createView(real, {
+    const view = await createView(savePath(ALICE, defaultViewCompiler), {
       title: "real compiler view",
       definition,
       inputs: inputsOfDefinition(definition),
       lifecycle: "published",
       visibility: "signed-in",
     });
-    const outcome = await runView(real, view);
+    created.views.push(view);
+    const outcome = await runViewAs(real, who(ALICE), view);
     expect(outcome.status).toBe("ok");
     const rows = await s().expectOk(
       `select data->>'name' as name, data->>'n' as n, data->>'total' as total
@@ -531,44 +659,5 @@ describe.skipIf(!dbUp())("views (#300)", () => {
     );
     expect(geoms.n).toBe("2");
     expect(await stale(view)).toBe(false);
-  });
-
-  test("view_query: one statement, read-only, bind params, timeout from the caller", async () => {
-    await s().begin();
-    await s().asUser(ALICE);
-    const ok = await one(
-      `select public.view_query('select $1::int + 1 as x', '[41]'::jsonb)::text as r`,
-    );
-    expect(JSON.parse(ok.r ?? "")).toEqual({ rows: [{ x: 42 }], rowCount: 1 });
-
-    expect(await expectRaises(`select public.view_query('select 1; select 2')`)).toMatch(
-      /exactly one statement/,
-    );
-    expect(await expectRaises(`select public.view_query('select 1; set session x.y = 1')`)).toMatch(
-      /exactly one statement/,
-    );
-    // A semicolon inside a literal is fine.
-    await s().expectOk(`select public.view_query($q$select 'a;b' as t$q$)`);
-    // Writes are refused by the read-only transaction, flags restored after.
-    expect(
-      await expectRaises(
-        `select public.view_query('insert into public.imports (dataset_id) values (null) returning 1')`,
-      ),
-    ).toMatch(/read-only/);
-    expect(
-      await expectRaises(
-        `select public.view_query('select set_config(''transaction_read_only'', ''off'', true)')`,
-      ),
-    ).toMatch(/read-write/);
-    const mode = await one(`select current_setting('transaction_read_only') as m`);
-    expect(mode.m).toBe("off");
-
-    await s().expectOk(`set local statement_timeout = '200ms'`);
-    expect(await expectRaises(`select public.view_query('select pg_sleep(3)')`)).toMatch(/timeout/);
-    await s().expectOk(`set local statement_timeout = 0`);
-    const leftover = await one(
-      `select count(*) as n from pg_prepared_statements where name like 'jdm_view_%'`,
-    );
-    expect(leftover.n).toBe("0");
   });
 });
