@@ -18,9 +18,33 @@ function minMax(fn: "min" | "max", row: string, bag: ParamBag, field: string): s
 }
 
 /**
+ * `topBy`: the value of `field` on the row where `by` is highest (`max`,
+ * the default) or lowest (`min`). Empty / missing `by` values sort last, and
+ * ties break on the field's text so the result is deterministic.
+ */
+function topBy(measure: Measure, row: string, bag: ParamBag): string {
+  const field = requireField(measure);
+  if (measure.by === undefined || measure.by === "") {
+    throw new ViewCompileError(`Measure "${measure.as}" (topBy) needs a by field.`);
+  }
+  const by = `nullif(${fieldJson(row, bag, measure.by)}, 'null'::jsonb)`;
+  const direction = measure.direction === "min" ? "asc" : "desc";
+  const value = fieldJson(row, bag, field);
+  const tie = fieldText(row, bag, field);
+  return `(array_agg(${value} order by ${by} ${direction} nulls last, ${tie} asc nulls last))[1]`;
+}
+
+/** `text`: the field's values joined with the separator (default ", "), empty values skipped. */
+function textAgg(measure: Measure, row: string, bag: ParamBag): string {
+  const field = requireField(measure);
+  const separator = bag.text(measure.separator ?? ", ");
+  const text = fieldText(row, bag, field);
+  return `to_jsonb(string_agg(${text}, ${separator} order by ${text}))`;
+}
+
+/**
  * The aggregate expression (a jsonb value) for one measure over the rows of
- * the current group, where `row` is the jsonb row column. Measures `topBy`
- * and `text` belong to later issues.
+ * the current group, where `row` is the jsonb row column.
  */
 export function measureAggregate(
   measure: Measure,
@@ -45,8 +69,12 @@ export function measureAggregate(
     case "min":
     case "max":
       return minMax(measure.fn, row, bag, requireField(measure));
+    case "topBy":
+      return topBy(measure, row, bag);
+    case "text":
+      return textAgg(measure, row, bag);
     default:
-      throw new ViewStepNotSupportedError(step, `measure:${measure.fn}`);
+      throw new ViewStepNotSupportedError(step, `measure:${JSON.stringify(measure.fn)}`);
   }
 }
 

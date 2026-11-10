@@ -64,7 +64,8 @@ export function compileDiagnostics(
   inputs: CompileInputMeta[],
   opts: DiagnosticsOptions = {},
 ): CompiledQuery {
-  const chain = buildChain(def, inputs, opts);
+  // The `error` multi-match guard would abort the query; diagnostics report the conflicts instead.
+  const chain = buildChain(def, inputs, { ...opts, guards: false });
   const sql = `${withClause(chain)}\n${diagnosticsSelect(chain.steps, chain.bag)}`;
   return { sql, params: chain.bag.values };
 }

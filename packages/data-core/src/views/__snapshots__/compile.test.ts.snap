@@ -1,5 +1,56 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`calculate > every function, case and if > case 1`] = `
+"with "in_states" as (
+  select e.id as row_id, e.data as d, g.geom as geom
+  from public.entries e
+  left join public.geometries g on g.entry_id = e.id
+  where e.dataset_id = $1::uuid
+),
+"s0" as (
+  select row_id, d || jsonb_build_object($9::text, to_jsonb((case when ((case when jsonb_typeof((d -> $2::text)) = 'number' then ((d -> $2::text))::numeric end) > $3::numeric) then $4::text when ((case when jsonb_typeof((d -> $2::text)) = 'number' then ((d -> $2::text))::numeric end) > $5::numeric) then $6::text else (case when ((case when jsonb_typeof((d -> $2::text)) = 'number' then ((d -> $2::text))::numeric end) is null) then $7::text else $8::text end) end))) as d, geom
+  from "in_states"
+  offset 0
+)
+select row_id, d as d, geom
+from "s0"
+-- params: ["11111111-1111-4111-8111-111111111111","cost",100,"high",10,"mid","none","low","band"]"
+`;
+
+exports[`calculate > every function, case and if > functions 1`] = `
+"with "in_states" as (
+  select e.id as row_id, e.data as d, g.geom as geom
+  from public.entries e
+  left join public.geometries g on g.entry_id = e.id
+  where e.dataset_id = $1::uuid
+),
+"s0" as (
+  select row_id, d || jsonb_build_object($11::text, to_jsonb((((concat(upper(btrim((d ->> $2::text))), $3::text, lower((d ->> $4::text))) = $5::text) or ((coalesce((case when jsonb_typeof((d -> $6::text)) = 'number' then ((d -> $6::text))::numeric end), $7::numeric) > $8::numeric) and (not ((case when jsonb_typeof((d -> $6::text)) = 'number' then ((d -> $6::text))::numeric end) is null)))) or (extract(year from (case when (d ->> $9::text) ~ '^\\d{4}-\\d{2}-\\d{2}' then left((d ->> $9::text), 10)::date end)) = (($10::numeric + extract(month from (case when (d ->> $9::text) ~ '^\\d{4}-\\d{2}-\\d{2}' then left((d ->> $9::text), 10)::date end))) - extract(day from (case when (d ->> $9::text) ~ '^\\d{4}-\\d{2}-\\d{2}' then left((d ->> $9::text), 10)::date end))))))) as d, geom
+  from "in_states"
+  offset 0
+)
+select row_id, d as d, geom
+from "s0"
+-- params: ["11111111-1111-4111-8111-111111111111","name"," / ","state name","x","cost",0,1,"opened",2024,"flag"]"
+`;
+
+exports[`calculate > typed refs, literals bound as params 1`] = `
+"with "in_states" as (
+  select e.id as row_id, e.data as d, g.geom as geom
+  from public.entries e
+  left join public.geometries g on g.entry_id = e.id
+  where e.dataset_id = $1::uuid
+),
+"s0" as (
+  select row_id, d || jsonb_build_object($6::text, to_jsonb(round((((case when jsonb_typeof((d -> $2::text)) = 'number' then ((d -> $2::text))::numeric end) * $3::numeric) + $4::numeric), ($5::numeric)::int))) as d, geom
+  from "in_states"
+  offset 0
+)
+select row_id, d as d, geom
+from "s0"
+-- params: ["11111111-1111-4111-8111-111111111111","cost",1.5,2,1,"total"]"
+`;
+
 exports[`diagnostics > join + filter diagnostics query 1`] = `
 "with "in_states" as (
   select e.id as row_id, e.data as d, g.geom as geom
@@ -292,6 +343,253 @@ from "s1"
 -- params: ["11111111-1111-4111-8111-111111111111","name","pop","State","Population","[\\"State\\"]"]"
 `;
 
+exports[`inline sub-pipelines > diagnostics include sub-pipeline steps with their path 1`] = `
+"with "in_states" as (
+  select e.id as row_id, e.data as d, g.geom as geom
+  from public.entries e
+  left join public.geometries g on g.entry_id = e.id
+  where e.dataset_id = $1::uuid
+),
+"in_deployments" as (
+  select e.id as row_id, e.data as d, g.geom as geom
+  from public.entries e
+  left join public.geometries g on g.entry_id = e.id
+  where e.dataset_id = $2::uuid
+),
+"in_links" as (
+  select ve.id as row_id, ve.data as d,
+    case when ve.geometry is null then null
+      else st_setsrid(st_geomfromgeojson(ve.geometry::text), 4326)::geometry(Geometry,4326) end as geom
+  from public.version_entries ve
+  join public.dataset_versions v on v.id = ve.version_id
+  where v.dataset_id = $3::uuid and v.ref = $4::text
+),
+"s0_s0" as (
+  select row_id, d, geom
+  from "in_deployments"
+  where (case when jsonb_typeof((d -> $5::text)) = 'number' then (d -> $5::text)::numeric end) > $6::numeric
+),
+"s0_l1" as (
+  select row_id, d, geom, (d ->> $7::text) as k0, concat_ws(' | ', (d ->> $7::text)) as kraw
+  from "s0_s0"
+),
+"s0_r1" as (
+  select row_id, d, (d ->> $8::text) as k0, concat_ws(' | ', (d ->> $8::text)) as kraw
+  from "in_links"
+),
+"s0_rs1" as (
+  select k0, to_jsonb(count(*)) as m0
+  from "s0_r1"
+  group by k0
+),
+"s0_s1" as (
+  select l.row_id, l.d || jsonb_build_object($10::text, coalesce(rs.m0, $9::jsonb)) as d, l.geom
+  from "s0_l1" l
+  left join "s0_rs1" rs on l.k0 = rs.k0
+),
+"l0" as (
+  select row_id, d, geom, (d ->> $11::text) as k0, concat_ws(' | ', (d ->> $11::text)) as kraw
+  from "in_states"
+),
+"r0" as (
+  select row_id, d, (d ->> $12::text) as k0, concat_ws(' | ', (d ->> $12::text)) as kraw
+  from "s0_s1"
+),
+"rf0" as (
+  select distinct on (k0) row_id, d, k0
+  from "r0"
+  order by k0, row_id asc
+),
+"s0" as (
+  select l.row_id, l.d || coalesce((select jsonb_object_agg($13::text || t.key, t.value) from jsonb_each(r.d) t), '{}'::jsonb) as d, l.geom
+  from "l0" l
+  left join "rf0" r on l.k0 = r.k0
+)
+select jsonb_build_object('steps', jsonb_build_array(
+  jsonb_build_object(
+    'index', 0,
+    'kind', $14::text,
+    'rowsIn', (select count(*) from "in_deployments"),
+    'rowsOut', (select count(*) from "s0_s0"),
+    'fieldsAdded', coalesce((select jsonb_agg(k order by k) from ((select jsonb_object_keys(d) from "s0_s0") except (select jsonb_object_keys(d) from "in_deployments")) t(k)), '[]'::jsonb),
+    'fieldsRemoved', coalesce((select jsonb_agg(k order by k) from ((select jsonb_object_keys(d) from "in_deployments") except (select jsonb_object_keys(d) from "s0_s0")) t(k)), '[]'::jsonb),
+    'path', $15::text
+  ),
+  jsonb_build_object(
+    'index', 1,
+    'kind', $16::text,
+    'rowsIn', (select count(*) from "s0_s0"),
+    'rowsOut', (select count(*) from "s0_s1"),
+    'fieldsAdded', coalesce((select jsonb_agg(k order by k) from ((select jsonb_object_keys(d) from "s0_s1") except (select jsonb_object_keys(d) from "s0_s0")) t(k)), '[]'::jsonb),
+    'fieldsRemoved', coalesce((select jsonb_agg(k order by k) from ((select jsonb_object_keys(d) from "s0_s0") except (select jsonb_object_keys(d) from "s0_s1")) t(k)), '[]'::jsonb),
+    'path', $17::text,
+    'join', jsonb_build_object(
+      'leftMatched', (select count(*) from "s0_l1" x where exists (select 1 from "s0_r1" o where o.k0 = x.k0)),
+      'leftUnmatched', (select count(*) from "s0_l1") - (select count(*) from "s0_l1" x where exists (select 1 from "s0_r1" o where o.k0 = x.k0)),
+      'leftUnmatchedSamples', coalesce((select jsonb_agg(kraw order by kraw) from (select distinct kraw from "s0_l1" x where kraw <> '' and not exists (select 1 from "s0_r1" o where o.k0 = x.k0) order by kraw limit 20) s), '[]'::jsonb),
+      'rightMatched', (select count(*) from "s0_r1" x where exists (select 1 from "s0_l1" o where o.k0 = x.k0)),
+      'rightUnmatched', (select count(*) from "s0_r1") - (select count(*) from "s0_r1" x where exists (select 1 from "s0_l1" o where o.k0 = x.k0)),
+      'rightUnmatchedSamples', coalesce((select jsonb_agg(kraw order by kraw) from (select distinct kraw from "s0_r1" x where kraw <> '' and not exists (select 1 from "s0_l1" o where o.k0 = x.k0) order by kraw limit 20) s), '[]'::jsonb),
+      'multiMatchKeys', (select count(*) from (select r.k0 from "s0_r1" r where exists (select 1 from "s0_l1" o where o.k0 = r.k0) group by r.k0 having count(*) > 1) m),
+      'policy', $18::text
+    )
+  ),
+  jsonb_build_object(
+    'index', 0,
+    'kind', $16::text,
+    'rowsIn', (select count(*) from "in_states"),
+    'rowsOut', (select count(*) from "s0"),
+    'fieldsAdded', coalesce((select jsonb_agg(k order by k) from ((select jsonb_object_keys(d) from "s0") except (select jsonb_object_keys(d) from "in_states")) t(k)), '[]'::jsonb),
+    'fieldsRemoved', coalesce((select jsonb_agg(k order by k) from ((select jsonb_object_keys(d) from "in_states") except (select jsonb_object_keys(d) from "s0")) t(k)), '[]'::jsonb),
+    'join', jsonb_build_object(
+      'leftMatched', (select count(*) from "l0" x where exists (select 1 from "r0" o where o.k0 = x.k0)),
+      'leftUnmatched', (select count(*) from "l0") - (select count(*) from "l0" x where exists (select 1 from "r0" o where o.k0 = x.k0)),
+      'leftUnmatchedSamples', coalesce((select jsonb_agg(kraw order by kraw) from (select distinct kraw from "l0" x where kraw <> '' and not exists (select 1 from "r0" o where o.k0 = x.k0) order by kraw limit 20) s), '[]'::jsonb),
+      'rightMatched', (select count(*) from "r0" x where exists (select 1 from "l0" o where o.k0 = x.k0)),
+      'rightUnmatched', (select count(*) from "r0") - (select count(*) from "r0" x where exists (select 1 from "l0" o where o.k0 = x.k0)),
+      'rightUnmatchedSamples', coalesce((select jsonb_agg(kraw order by kraw) from (select distinct kraw from "r0" x where kraw <> '' and not exists (select 1 from "l0" o where o.k0 = x.k0) order by kraw limit 20) s), '[]'::jsonb),
+      'multiMatchKeys', (select count(*) from (select r.k0 from "r0" r where exists (select 1 from "l0" o where o.k0 = r.k0) group by r.k0 having count(*) > 1) m),
+      'policy', $19::text
+    )
+  )
+)) as diagnostics
+-- params: ["11111111-1111-4111-8111-111111111111","22222222-2222-4222-8222-222222222222","33333333-3333-4333-8333-333333333333","v-ref-1","cost",0,"name","stateName","0","n","id","stateId","deployments_2024.","filter","steps[0].right.steps[0]","join","steps[0].right.steps[1]","summarize","first"]"
+`;
+
+exports[`inline sub-pipelines > recursion: a sub-pipeline join can have its own sub-pipeline 1`] = `
+"with "in_states" as (
+  select e.id as row_id, e.data as d, g.geom as geom
+  from public.entries e
+  left join public.geometries g on g.entry_id = e.id
+  where e.dataset_id = $1::uuid
+),
+"in_deployments" as (
+  select e.id as row_id, e.data as d, g.geom as geom
+  from public.entries e
+  left join public.geometries g on g.entry_id = e.id
+  where e.dataset_id = $2::uuid
+),
+"in_links" as (
+  select ve.id as row_id, ve.data as d,
+    case when ve.geometry is null then null
+      else st_setsrid(st_geomfromgeojson(ve.geometry::text), 4326)::geometry(Geometry,4326) end as geom
+  from public.version_entries ve
+  join public.dataset_versions v on v.id = ve.version_id
+  where v.dataset_id = $3::uuid and v.ref = $4::text
+),
+"s0_s0_s0" as (
+  select row_id, d, geom
+  from "in_links"
+  where ((d -> $5::text) is not null and jsonb_typeof((d -> $5::text)) <> 'null')
+),
+"s0_l0" as (
+  select row_id, d, geom, (d ->> $6::text) as k0, concat_ws(' | ', (d ->> $6::text)) as kraw
+  from "in_deployments"
+),
+"s0_r0" as (
+  select row_id, d, (d ->> $7::text) as k0, concat_ws(' | ', (d ->> $7::text)) as kraw
+  from "s0_s0_s0"
+),
+"s0_rf0" as (
+  select distinct on (k0) row_id, d, k0
+  from "s0_r0"
+  order by k0, row_id asc
+),
+"s0_s0" as (
+  select l.row_id, l.d || coalesce((select jsonb_object_agg($8::text || t.key, t.value) from jsonb_each(r.d) t), '{}'::jsonb) as d, l.geom
+  from "s0_l0" l
+  left join "s0_rf0" r on l.k0 = r.k0
+),
+"l0" as (
+  select row_id, d, geom, (d ->> $9::text) as k0, concat_ws(' | ', (d ->> $9::text)) as kraw
+  from "in_states"
+),
+"r0" as (
+  select row_id, d, (d ->> $10::text) as k0, concat_ws(' | ', (d ->> $10::text)) as kraw
+  from "s0_s0"
+),
+"rf0" as (
+  select distinct on (k0) row_id, d, k0
+  from "r0"
+  order by k0, row_id asc
+),
+"s0" as (
+  select l.row_id, l.d || coalesce((select jsonb_object_agg($11::text || t.key, t.value) from jsonb_each(r.d) t), '{}'::jsonb) as d, l.geom
+  from "l0" l
+  left join "rf0" r on l.k0 = r.k0
+)
+select row_id, d as d, geom
+from "s0"
+-- params: ["11111111-1111-4111-8111-111111111111","22222222-2222-4222-8222-222222222222","33333333-3333-4333-8333-333333333333","v-ref-1","url","name","stateName","links.","id","stateId","deployments_2024."]"
+`;
+
+exports[`inline sub-pipelines > the right side compiles as a nested CTE chain prefixed by the step id 1`] = `
+"with "in_states" as (
+  select e.id as row_id, e.data as d, g.geom as geom
+  from public.entries e
+  left join public.geometries g on g.entry_id = e.id
+  where e.dataset_id = $1::uuid
+),
+"in_deployments" as (
+  select e.id as row_id, e.data as d, g.geom as geom
+  from public.entries e
+  left join public.geometries g on g.entry_id = e.id
+  where e.dataset_id = $2::uuid
+),
+"in_links" as (
+  select ve.id as row_id, ve.data as d,
+    case when ve.geometry is null then null
+      else st_setsrid(st_geomfromgeojson(ve.geometry::text), 4326)::geometry(Geometry,4326) end as geom
+  from public.version_entries ve
+  join public.dataset_versions v on v.id = ve.version_id
+  where v.dataset_id = $3::uuid and v.ref = $4::text
+),
+"s0_s0" as (
+  select row_id, d, geom
+  from "in_deployments"
+  where (case when jsonb_typeof((d -> $5::text)) = 'number' then (d -> $5::text)::numeric end) > $6::numeric
+),
+"s0_l1" as (
+  select row_id, d, geom, (d ->> $7::text) as k0, concat_ws(' | ', (d ->> $7::text)) as kraw
+  from "s0_s0"
+),
+"s0_r1" as (
+  select row_id, d, (d ->> $8::text) as k0, concat_ws(' | ', (d ->> $8::text)) as kraw
+  from "in_links"
+),
+"s0_rs1" as (
+  select k0, to_jsonb(count(*)) as m0
+  from "s0_r1"
+  group by k0
+),
+"s0_s1" as (
+  select l.row_id, l.d || jsonb_build_object($10::text, coalesce(rs.m0, $9::jsonb)) as d, l.geom
+  from "s0_l1" l
+  left join "s0_rs1" rs on l.k0 = rs.k0
+),
+"l0" as (
+  select row_id, d, geom, (d ->> $11::text) as k0, concat_ws(' | ', (d ->> $11::text)) as kraw
+  from "in_states"
+),
+"r0" as (
+  select row_id, d, (d ->> $12::text) as k0, concat_ws(' | ', (d ->> $12::text)) as kraw
+  from "s0_s1"
+),
+"rf0" as (
+  select distinct on (k0) row_id, d, k0
+  from "r0"
+  order by k0, row_id asc
+),
+"s0" as (
+  select l.row_id, l.d || coalesce((select jsonb_object_agg($13::text || t.key, t.value) from jsonb_each(r.d) t), '{}'::jsonb) as d, l.geom
+  from "l0" l
+  left join "rf0" r on l.k0 = r.k0
+)
+select row_id, d as d, geom
+from "s0"
+-- params: ["11111111-1111-4111-8111-111111111111","22222222-2222-4222-8222-222222222222","33333333-3333-4333-8333-333333333333","v-ref-1","cost",0,"name","stateName","0","n","id","stateId","deployments_2024."]"
+`;
+
 exports[`input CTEs > no steps: base input over entries + geometries 1`] = `
 "with "in_states" as (
   select e.id as row_id, e.data as d, g.geom as geom
@@ -428,6 +726,257 @@ exports[`join: first / last > last reverses the order; all right fields get the 
 select row_id, d as d, geom
 from "s0"
 -- params: ["11111111-1111-4111-8111-111111111111","22222222-2222-4222-8222-222222222222","id","stateId","cost","deployments_2024."]"
+`;
+
+exports[`join: spread / text / list / error > error: a cast guard raises on duplicate keys; diagnostics leave it out 1`] = `
+"with "in_states" as (
+  select e.id as row_id, e.data as d, g.geom as geom
+  from public.entries e
+  left join public.geometries g on g.entry_id = e.id
+  where e.dataset_id = $1::uuid
+),
+"in_links" as (
+  select ve.id as row_id, ve.data as d,
+    case when ve.geometry is null then null
+      else st_setsrid(st_geomfromgeojson(ve.geometry::text), 4326)::geometry(Geometry,4326) end as geom
+  from public.version_entries ve
+  join public.dataset_versions v on v.id = ve.version_id
+  where v.dataset_id = $2::uuid and v.ref = $3::text
+),
+"l0" as (
+  select row_id, d, geom, btrim(lower((d ->> $4::text))) as k0, concat_ws(' | ', (d ->> $4::text)) as kraw
+  from "in_states"
+),
+"r0" as (
+  select row_id, d, btrim(lower((d ->> $5::text))) as k0, concat_ws(' | ', (d ->> $5::text)) as kraw
+  from "in_links"
+),
+"rf0" as (
+  select k0, (array_agg(r.row_id order by r.row_id))[1] as row_id, (array_agg(r.d order by r.row_id))[1] as d, case when count(*) > 1 then ($6::text || min(r.kraw))::int else 0 end as chk
+  from "r0" r
+  where exists (select 1 from "l0" x where x.k0 = r.k0)
+  group by k0
+),
+"s0" as (
+  select l.row_id, l.d || case when coalesce(r.chk, 0) = 0 then coalesce((select jsonb_object_agg($7::text || t.key, t.value) from jsonb_each(r.d) t), '{}'::jsonb) else '{}'::jsonb end as d, l.geom
+  from "l0" l
+  left join "rf0" r on l.k0 = r.k0
+)
+select row_id, d as d, geom
+from "s0"
+-- params: ["11111111-1111-4111-8111-111111111111","33333333-3333-4333-8333-333333333333","v-ref-1","name","stateName","Multiple rows match the join key: ","links."]"
+`;
+
+exports[`join: spread / text / list / error > list: jsonb_agg of whole rows, or of the chosen fields > chosen fields 1`] = `
+"with "in_states" as (
+  select e.id as row_id, e.data as d, g.geom as geom
+  from public.entries e
+  left join public.geometries g on g.entry_id = e.id
+  where e.dataset_id = $1::uuid
+),
+"in_links" as (
+  select ve.id as row_id, ve.data as d,
+    case when ve.geometry is null then null
+      else st_setsrid(st_geomfromgeojson(ve.geometry::text), 4326)::geometry(Geometry,4326) end as geom
+  from public.version_entries ve
+  join public.dataset_versions v on v.id = ve.version_id
+  where v.dataset_id = $2::uuid and v.ref = $3::text
+),
+"l0" as (
+  select row_id, d, geom, btrim(lower((d ->> $4::text))) as k0, concat_ws(' | ', (d ->> $4::text)) as kraw
+  from "in_states"
+),
+"r0" as (
+  select row_id, d, btrim(lower((d ->> $5::text))) as k0, concat_ws(' | ', (d ->> $5::text)) as kraw
+  from "in_links"
+),
+"rf0" as (
+  select k0, jsonb_agg(jsonb_build_object($6::text, (d -> $6::text), $7::text, (d -> $7::text)) order by row_id) as items
+  from "r0"
+  group by k0
+),
+"s0" as (
+  select l.row_id, l.d || jsonb_build_object($8::text, coalesce(r.items, '[]'::jsonb)) as d, l.geom
+  from "l0" l
+  left join "rf0" r on l.k0 = r.k0
+)
+select row_id, d as d, geom
+from "s0"
+-- params: ["11111111-1111-4111-8111-111111111111","33333333-3333-4333-8333-333333333333","v-ref-1","name","stateName","type","url","links"]"
+`;
+
+exports[`join: spread / text / list / error > list: jsonb_agg of whole rows, or of the chosen fields > whole rows 1`] = `
+"with "in_states" as (
+  select e.id as row_id, e.data as d, g.geom as geom
+  from public.entries e
+  left join public.geometries g on g.entry_id = e.id
+  where e.dataset_id = $1::uuid
+),
+"in_links" as (
+  select ve.id as row_id, ve.data as d,
+    case when ve.geometry is null then null
+      else st_setsrid(st_geomfromgeojson(ve.geometry::text), 4326)::geometry(Geometry,4326) end as geom
+  from public.version_entries ve
+  join public.dataset_versions v on v.id = ve.version_id
+  where v.dataset_id = $2::uuid and v.ref = $3::text
+),
+"l0" as (
+  select row_id, d, geom, btrim(lower((d ->> $4::text))) as k0, concat_ws(' | ', (d ->> $4::text)) as kraw
+  from "in_states"
+),
+"r0" as (
+  select row_id, d, btrim(lower((d ->> $5::text))) as k0, concat_ws(' | ', (d ->> $5::text)) as kraw
+  from "in_links"
+),
+"rf0" as (
+  select k0, jsonb_agg(d order by row_id) as items
+  from "r0"
+  group by k0
+),
+"s0" as (
+  select l.row_id, l.d || jsonb_build_object($6::text, coalesce(r.items, '[]'::jsonb)) as d, l.geom
+  from "l0" l
+  left join "rf0" r on l.k0 = r.k0
+)
+select row_id, d as d, geom
+from "s0"
+-- params: ["11111111-1111-4111-8111-111111111111","33333333-3333-4333-8333-333333333333","v-ref-1","name","stateName","links"]"
+`;
+
+exports[`join: spread / text / list / error > spread diagnostics report categories without a declared column 1`] = `
+"with "in_states" as (
+  select e.id as row_id, e.data as d, g.geom as geom
+  from public.entries e
+  left join public.geometries g on g.entry_id = e.id
+  where e.dataset_id = $1::uuid
+),
+"in_links" as (
+  select ve.id as row_id, ve.data as d,
+    case when ve.geometry is null then null
+      else st_setsrid(st_geomfromgeojson(ve.geometry::text), 4326)::geometry(Geometry,4326) end as geom
+  from public.version_entries ve
+  join public.dataset_versions v on v.id = ve.version_id
+  where v.dataset_id = $2::uuid and v.ref = $3::text
+),
+"l0" as (
+  select row_id, d, geom, btrim(lower((d ->> $4::text))) as k0, concat_ws(' | ', (d ->> $4::text)) as kraw
+  from "in_states"
+),
+"r0" as (
+  select row_id, d, btrim(lower((d ->> $5::text))) as k0, concat_ws(' | ', (d ->> $5::text)) as kraw
+  from "in_links"
+),
+"rf0" as (
+  select k0, (array_agg((d -> $6::text) order by row_id) filter (where (d ->> $7::text) = $8::text))[1] as v0
+  from "r0"
+  group by k0
+),
+"s0" as (
+  select l.row_id, l.d || jsonb_build_object($9::text, r.v0) as d, l.geom
+  from "l0" l
+  left join "rf0" r on l.k0 = r.k0
+)
+select jsonb_build_object('steps', jsonb_build_array(
+  jsonb_build_object(
+    'index', 0,
+    'kind', $10::text,
+    'rowsIn', (select count(*) from "in_states"),
+    'rowsOut', (select count(*) from "s0"),
+    'fieldsAdded', coalesce((select jsonb_agg(k order by k) from ((select jsonb_object_keys(d) from "s0") except (select jsonb_object_keys(d) from "in_states")) t(k)), '[]'::jsonb),
+    'fieldsRemoved', coalesce((select jsonb_agg(k order by k) from ((select jsonb_object_keys(d) from "in_states") except (select jsonb_object_keys(d) from "s0")) t(k)), '[]'::jsonb),
+    'join', jsonb_build_object(
+      'leftMatched', (select count(*) from "l0" x where exists (select 1 from "r0" o where o.k0 = x.k0)),
+      'leftUnmatched', (select count(*) from "l0") - (select count(*) from "l0" x where exists (select 1 from "r0" o where o.k0 = x.k0)),
+      'leftUnmatchedSamples', coalesce((select jsonb_agg(kraw order by kraw) from (select distinct kraw from "l0" x where kraw <> '' and not exists (select 1 from "r0" o where o.k0 = x.k0) order by kraw limit 20) s), '[]'::jsonb),
+      'rightMatched', (select count(*) from "r0" x where exists (select 1 from "l0" o where o.k0 = x.k0)),
+      'rightUnmatched', (select count(*) from "r0") - (select count(*) from "r0" x where exists (select 1 from "l0" o where o.k0 = x.k0)),
+      'rightUnmatchedSamples', coalesce((select jsonb_agg(kraw order by kraw) from (select distinct kraw from "r0" x where kraw <> '' and not exists (select 1 from "l0" o where o.k0 = x.k0) order by kraw limit 20) s), '[]'::jsonb),
+      'multiMatchKeys', (select count(*) from (select r.k0 from "r0" r where exists (select 1 from "l0" o where o.k0 = r.k0) group by r.k0 having count(*) > 1) m),
+      'policy', $12::text,
+      'spread', jsonb_build_object(
+        'undeclaredCategories', coalesce((select jsonb_agg(c order by c) from (select distinct (r.d ->> $7::text) as c from "r0" r where (r.d ->> $7::text) is not null and (r.d ->> $7::text) not in (select jsonb_array_elements_text($11::jsonb)) and exists (select 1 from "l0" o where o.k0 = r.k0) order by c limit 20) s), '[]'::jsonb),
+        'undeclaredRows', (select count(*) from "r0" r where (r.d ->> $7::text) is not null and (r.d ->> $7::text) not in (select jsonb_array_elements_text($11::jsonb)) and exists (select 1 from "l0" o where o.k0 = r.k0))
+      )
+    )
+  )
+)) as diagnostics
+-- params: ["11111111-1111-4111-8111-111111111111","33333333-3333-4333-8333-333333333333","v-ref-1","name","stateName","url","type","docs","docsLink","join","[\\"docs\\"]","spread"]"
+`;
+
+exports[`join: spread / text / list / error > spread: one declared column per category 1`] = `
+"with "in_states" as (
+  select e.id as row_id, e.data as d, g.geom as geom
+  from public.entries e
+  left join public.geometries g on g.entry_id = e.id
+  where e.dataset_id = $1::uuid
+),
+"in_links" as (
+  select ve.id as row_id, ve.data as d,
+    case when ve.geometry is null then null
+      else st_setsrid(st_geomfromgeojson(ve.geometry::text), 4326)::geometry(Geometry,4326) end as geom
+  from public.version_entries ve
+  join public.dataset_versions v on v.id = ve.version_id
+  where v.dataset_id = $2::uuid and v.ref = $3::text
+),
+"l0" as (
+  select row_id, d, geom, btrim(lower((d ->> $4::text))) as k0, concat_ws(' | ', (d ->> $4::text)) as kraw
+  from "in_states"
+),
+"r0" as (
+  select row_id, d, btrim(lower((d ->> $5::text))) as k0, concat_ws(' | ', (d ->> $5::text)) as kraw
+  from "in_links"
+),
+"rf0" as (
+  select k0, (array_agg((d -> $6::text) order by row_id) filter (where (d ->> $7::text) = $8::text))[1] as v0, (array_agg((d -> $6::text) order by row_id) filter (where (d ->> $7::text) = $9::text))[1] as v1
+  from "r0"
+  group by k0
+),
+"s0" as (
+  select l.row_id, l.d || jsonb_build_object($10::text, r.v0, $11::text, r.v1) as d, l.geom
+  from "l0" l
+  left join "rf0" r on l.k0 = r.k0
+)
+select row_id, d as d, geom
+from "s0"
+-- params: ["11111111-1111-4111-8111-111111111111","33333333-3333-4333-8333-333333333333","v-ref-1","name","stateName","url","type","docs","benefits","docsLink","benefitsLink"]"
+`;
+
+exports[`join: spread / text / list / error > text: string_agg with a bound separator 1`] = `
+"with "in_states" as (
+  select e.id as row_id, e.data as d, g.geom as geom
+  from public.entries e
+  left join public.geometries g on g.entry_id = e.id
+  where e.dataset_id = $1::uuid
+),
+"in_links" as (
+  select ve.id as row_id, ve.data as d,
+    case when ve.geometry is null then null
+      else st_setsrid(st_geomfromgeojson(ve.geometry::text), 4326)::geometry(Geometry,4326) end as geom
+  from public.version_entries ve
+  join public.dataset_versions v on v.id = ve.version_id
+  where v.dataset_id = $2::uuid and v.ref = $3::text
+),
+"l0" as (
+  select row_id, d, geom, btrim(lower((d ->> $4::text))) as k0, concat_ws(' | ', (d ->> $4::text)) as kraw
+  from "in_states"
+),
+"r0" as (
+  select row_id, d, btrim(lower((d ->> $5::text))) as k0, concat_ws(' | ', (d ->> $5::text)) as kraw
+  from "in_links"
+),
+"rf0" as (
+  select k0, string_agg((d ->> $6::text), $7::text order by row_id) as t
+  from "r0"
+  group by k0
+),
+"s0" as (
+  select l.row_id, l.d || jsonb_build_object($8::text, to_jsonb(r.t)) as d, l.geom
+  from "l0" l
+  left join "rf0" r on l.k0 = r.k0
+)
+select row_id, d as d, geom
+from "s0"
+-- params: ["11111111-1111-4111-8111-111111111111","33333333-3333-4333-8333-333333333333","v-ref-1","name","stateName","url","; ","links.url"]"
 `;
 
 exports[`join: summarize > every supported measure, with emptyValue and the count default 1`] = `
@@ -615,4 +1164,125 @@ exports[`key matching > unaccent option swaps in unaccent() 1`] = `
 select row_id, d as d, geom
 from "s0"
 -- params: ["11111111-1111-4111-8111-111111111111","33333333-3333-4333-8333-333333333333","v-ref-1","stateName","links."]"
+`;
+
+exports[`measures: topBy and text > groupBy accepts the same measures 1`] = `
+"with "in_states" as (
+  select e.id as row_id, e.data as d, g.geom as geom
+  from public.entries e
+  left join public.geometries g on g.entry_id = e.id
+  where e.dataset_id = $1::uuid
+),
+"s0" as (
+  select md5(jsonb_build_array(g0)::text)::uuid as row_id, jsonb_build_object($2::text, g0, $6::text, (array_agg((d -> $4::text) order by nullif((d -> $3::text), 'null'::jsonb) desc nulls last, (d ->> $4::text) asc nulls last))[1], $7::text, to_jsonb(string_agg((d ->> $4::text), $5::text order by (d ->> $4::text)))) as d, null::geometry(Geometry,4326) as geom
+  from (select d, (d -> $2::text) as g0 from "in_states") t
+  group by g0
+)
+select row_id, d as d, geom
+from "s0"
+-- params: ["11111111-1111-4111-8111-111111111111","stateId","cost","name",",","top","all"]"
+`;
+
+exports[`measures: topBy and text > topBy (max, min) and text in a join summarize 1`] = `
+"with "in_states" as (
+  select e.id as row_id, e.data as d, g.geom as geom
+  from public.entries e
+  left join public.geometries g on g.entry_id = e.id
+  where e.dataset_id = $1::uuid
+),
+"in_deployments" as (
+  select e.id as row_id, e.data as d, g.geom as geom
+  from public.entries e
+  left join public.geometries g on g.entry_id = e.id
+  where e.dataset_id = $2::uuid
+),
+"l0" as (
+  select row_id, d, geom, (d ->> $3::text) as k0, concat_ws(' | ', (d ->> $3::text)) as kraw
+  from "in_states"
+),
+"r0" as (
+  select row_id, d, (d ->> $4::text) as k0, concat_ws(' | ', (d ->> $4::text)) as kraw
+  from "in_deployments"
+),
+"rs0" as (
+  select k0, (array_agg((d -> $6::text) order by nullif((d -> $5::text), 'null'::jsonb) desc nulls last, (d ->> $6::text) asc nulls last))[1] as m0, (array_agg((d -> $6::text) order by nullif((d -> $5::text), 'null'::jsonb) asc nulls last, (d ->> $6::text) asc nulls last))[1] as m1, to_jsonb(string_agg((d ->> $6::text), $7::text order by (d ->> $6::text))) as m2
+  from "r0"
+  group by k0
+),
+"s0" as (
+  select l.row_id, l.d || jsonb_build_object($8::text, rs.m0, $9::text, rs.m1, $10::text, rs.m2) as d, l.geom
+  from "l0" l
+  left join "rs0" rs on l.k0 = rs.k0
+)
+select row_id, d as d, geom
+from "s0"
+-- params: ["11111111-1111-4111-8111-111111111111","22222222-2222-4222-8222-222222222222","id","stateId","cost","name"," / ","priciest","cheapest","names"]"
+`;
+
+exports[`sql step > d / row_id / geom columns pass through; input CTEs are emitted on demand 1`] = `
+"with "in_states" as (
+  select e.id as row_id, e.data as d, g.geom as geom
+  from public.entries e
+  left join public.geometries g on g.entry_id = e.id
+  where e.dataset_id = $1::uuid
+),
+"in_deployments" as (
+  select e.id as row_id, e.data as d, g.geom as geom
+  from public.entries e
+  left join public.geometries g on g.entry_id = e.id
+  where e.dataset_id = $2::uuid
+),
+"s0_q" as (
+select p.row_id, p.d || jsonb_build_object('n', (select count(*) from in_deployments)) as d, p.geom from "in_states" p
+),
+"s0" as (
+  select f.rid as row_id, f.d, f.geom
+  from (select coalesce(to_jsonb(q."d"), '{}'::jsonb) as d, q."geom" as geom, (q."row_id")::text::uuid as rid from "s0_q" q) f
+)
+select row_id, d as d, geom
+from "s0"
+-- params: ["11111111-1111-4111-8111-111111111111","22222222-2222-4222-8222-222222222222"]"
+`;
+
+exports[`sql step > plain columns are folded into d; prev points at the previous step 1`] = `
+"with "in_states" as (
+  select e.id as row_id, e.data as d, g.geom as geom
+  from public.entries e
+  left join public.geometries g on g.entry_id = e.id
+  where e.dataset_id = $1::uuid
+),
+"s0" as (
+  select row_id, d, geom
+  from "in_states"
+  where ((d -> $2::text) is not null and jsonb_typeof((d -> $2::text)) <> 'null')
+),
+"s1_q" as (
+select p.d ->> 'name' as name, (p.d ->> 'cost')::numeric * 2 as double from "s0" p where p.d ->> 'name' is not null
+),
+"s1" as (
+  select md5(f.d::text || ':' || (row_number() over (partition by f.d::text))::text)::uuid as row_id, f.d, f.geom
+  from (select jsonb_build_object($2::text, to_jsonb(q."name"), $3::text, to_jsonb(q."double")) as d, null::geometry(Geometry,4326) as geom, null::uuid as rid from "s1_q" q) f
+)
+select row_id, d as d, geom
+from "s1"
+-- params: ["11111111-1111-4111-8111-111111111111","name","double"]"
+`;
+
+exports[`sql step > select * from prev keeps row_id, d and geom 1`] = `
+"with "in_states" as (
+  select e.id as row_id, e.data as d, g.geom as geom
+  from public.entries e
+  left join public.geometries g on g.entry_id = e.id
+  where e.dataset_id = $1::uuid
+),
+"s0_q" as (
+select * from "in_states" as prev -- trailing comment
+),
+"s0" as (
+  select f.rid as row_id, f.d, f.geom
+  from (select coalesce(to_jsonb(q."d"), '{}'::jsonb) as d, q."geom" as geom, (q."row_id")::text::uuid as rid from "s0_q" q) f
+)
+select row_id, d as d, geom
+from "s0"
+-- params: ["11111111-1111-4111-8111-111111111111"]"
 `;

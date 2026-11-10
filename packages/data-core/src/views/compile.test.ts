@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import { compileDiagnostics, compileView, viewInputDatasetIds } from "./compile.js";
-import { ViewStepNotSupportedError } from "./errors.js";
+import { ViewCompileError } from "./errors.js";
 import {
   DEPLOYMENTS_ID,
   LINKS_ID,
@@ -12,21 +12,28 @@ import {
   metas,
   noNormalization,
 } from "./test-fixtures.js";
-import type { Condition, ConditionLeaf, Step } from "./types.js";
+import type { Condition, ConditionLeaf, JoinStep, Step } from "./types.js";
 
 /** Golden SQL: the statement text and its params, as a single snapshot. */
 function golden(query: { sql: string; params: unknown[] }): string {
   return `${query.sql}\n-- params: ${JSON.stringify(query.params)}`;
 }
 
-function catchError(fn: () => unknown): unknown {
-  try {
-    fn();
-  } catch (error) {
-    return error;
-  }
-  return undefined;
-}
+/** `states` with typed fields, for calculate: the compiler checks refs against known fields. */
+const calcMetas = metas.map((meta) =>
+  meta.alias === "states"
+    ? {
+        ...meta,
+        fields: [
+          { name: "name", type: "string" as const },
+          { name: "cost", type: "number" as const },
+          { name: "state name", type: "string" as const },
+          { name: "opened", type: "date" as const },
+          { name: "stateId" },
+        ],
+      }
+    : meta,
+);
 
 describe("input CTEs", () => {
   test("no steps: base input over entries + geometries", () => {
@@ -251,64 +258,242 @@ describe("diagnostics", () => {
   });
 });
 
-describe("unsupported", () => {
-  const cases: [string, Step][] = [
-    ["calculate", { kind: "calculate", field: "x", expr: { op: "+" } }],
-    ["sql", { kind: "sql", query: "select 1" }],
-    [
-      "spread",
-      join({
-        multiMatch: {
-          mode: "spread",
-          by: "type",
-          value: "url",
-          columns: [{ category: "docs", as: "docsLink" }],
-        },
-      }),
-    ],
-    ["text", join({ multiMatch: { mode: "text", field: "name", separator: "," } })],
-    ["list", join({ multiMatch: { mode: "list" } })],
-    ["error", join({ multiMatch: { mode: "error" } })],
-    [
-      "topBy",
-      join({
-        multiMatch: {
-          mode: "summarize",
-          measures: [{ as: "m", fn: "topBy", field: "name", by: "cost", direction: "max" }],
-        },
-      }),
-    ],
-    [
-      "text measure",
-      join({
-        multiMatch: {
-          mode: "summarize",
-          measures: [{ as: "m", fn: "text", field: "name", separator: "," }],
-        },
-      }),
-    ],
-    [
-      "sub-pipeline",
-      join({
-        right: {
-          input: "deployments",
-          steps: [{ kind: "filter", where: { field: "a", op: "notNull" } }],
-        },
-      }),
-    ],
-  ];
+/** A join of the links input on the state name, trimmed and case-folded. */
+function linkJoin(multiMatch: JoinStep["multiMatch"], overrides: Partial<JoinStep> = {}): Step {
+  return join({
+    right: { input: "links" },
+    on: [{ left: "name", right: "stateName" }],
+    matching: { ...noNormalization, trim: true, caseFold: true },
+    multiMatch,
+    ...overrides,
+  });
+}
 
-  test.each(cases)("%s throws ViewStepNotSupportedError", (_name, step) => {
-    expect(() => compileView(definition([step]), metas)).toThrow(ViewStepNotSupportedError);
-    expect(() => compileDiagnostics(definition([step]), metas)).toThrow(ViewStepNotSupportedError);
+describe("join: spread / text / list / error", () => {
+  test("spread: one declared column per category", () => {
+    const step = linkJoin({
+      mode: "spread",
+      by: "type",
+      value: "url",
+      columns: [
+        { category: "docs", as: "docsLink" },
+        { category: "benefits", as: "benefitsLink" },
+      ],
+    });
+    const query = compileView(definition([step]), metas);
+    expect(query.params).toContain("docs");
+    expect(golden(query)).toMatchSnapshot();
   });
 
-  test("the error carries kind and mode", () => {
-    const thrown = catchError(() =>
-      compileView(definition([join({ multiMatch: { mode: "list" } })]), metas),
+  test("text: string_agg with a bound separator", () => {
+    const step = linkJoin({ mode: "text", field: "url", separator: "; " });
+    const query = compileView(definition([step]), metas);
+    expect(query.params).toContain("; ");
+    expect(golden(query)).toMatchSnapshot();
+  });
+
+  test("list: jsonb_agg of whole rows, or of the chosen fields", () => {
+    expect(golden(compileView(definition([linkJoin({ mode: "list" })]), metas))).toMatchSnapshot(
+      "whole rows",
     );
-    expect(thrown).toBeInstanceOf(ViewStepNotSupportedError);
-    expect(thrown).toMatchObject({ kind: "join", mode: "list" });
+    const picked = linkJoin({ mode: "list" }, { fields: ["type", "url"], prefix: "links" });
+    expect(golden(compileView(definition([picked]), metas))).toMatchSnapshot("chosen fields");
+  });
+
+  test("error: a cast guard raises on duplicate keys; diagnostics leave it out", () => {
+    const step = linkJoin({ mode: "error" });
+    const rows = compileView(definition([step]), metas);
+    expect(rows.sql).toContain(")::int");
+    expect(golden(rows)).toMatchSnapshot();
+    const diagnostics = compileDiagnostics(definition([step]), metas);
+    expect(diagnostics.sql).not.toContain(")::int");
+    expect(diagnostics.sql).toContain("multiMatchKeys");
+  });
+
+  test("spread diagnostics report categories without a declared column", () => {
+    const step = linkJoin({
+      mode: "spread",
+      by: "type",
+      value: "url",
+      columns: [{ category: "docs", as: "docsLink" }],
+    });
+    const query = compileDiagnostics(definition([step]), metas);
+    expect(query.sql).toContain("undeclaredCategories");
+    expect(golden(query)).toMatchSnapshot();
+  });
+});
+
+describe("measures: topBy and text", () => {
+  test("topBy (max, min) and text in a join summarize", () => {
+    const step = join({
+      multiMatch: {
+        mode: "summarize",
+        measures: [
+          { as: "priciest", fn: "topBy", field: "name", by: "cost", direction: "max" },
+          { as: "cheapest", fn: "topBy", field: "name", by: "cost", direction: "min" },
+          { as: "names", fn: "text", field: "name", separator: " / " },
+        ],
+      },
+    });
+    expect(golden(compileView(definition([step]), metas))).toMatchSnapshot();
+  });
+
+  test("groupBy accepts the same measures", () => {
+    const step: Step = {
+      kind: "groupBy",
+      by: ["stateId"],
+      measures: [
+        { as: "top", fn: "topBy", field: "name", by: "cost" },
+        { as: "all", fn: "text", field: "name", separator: "," },
+      ],
+    };
+    expect(golden(compileView(definition([step]), metas))).toMatchSnapshot();
+  });
+
+  test("topBy needs a by field at compile time", () => {
+    const step: Step = {
+      kind: "groupBy",
+      by: ["stateId"],
+      measures: [{ as: "top", fn: "topBy", field: "name" }],
+    };
+    expect(() => compileView(definition([step]), metas)).toThrow(ViewCompileError);
+  });
+});
+
+describe("inline sub-pipelines", () => {
+  const sub: Step[] = [
+    { kind: "filter", where: { field: "cost", op: "gt", value: 0 } },
+    {
+      kind: "join",
+      right: { input: "links" },
+      on: [{ left: "name", right: "stateName" }],
+      matching: noNormalization,
+      type: "left",
+      multiMatch: { mode: "summarize", measures: [{ as: "n", fn: "count" }] },
+    },
+  ];
+
+  test("the right side compiles as a nested CTE chain prefixed by the step id", () => {
+    const step = join({ right: { input: "deployments", steps: sub } });
+    const query = compileView(definition([step]), metas);
+    expect(query.sql).toContain('"s0_s0"');
+    expect(query.sql).toContain('"s0_l1"');
+    expect(query.sql).toContain('"in_links"');
+    expect(golden(query)).toMatchSnapshot();
+  });
+
+  test("the step id keeps nested names unique across steps", () => {
+    const steps: Step[] = [
+      join({ right: { input: "deployments", steps: sub } }),
+      join({ right: { input: "deployments", steps: sub }, prefix: "again" }),
+    ];
+    const names = [
+      ...compileView(definition(steps), metas).sql.matchAll(/^("[^"]+")(?:\([^)]*\))? as \(/gm),
+    ];
+    const unique = new Set(names.map((match) => match[1]));
+    expect(unique.size).toBe(names.length);
+  });
+
+  test("recursion: a sub-pipeline join can have its own sub-pipeline", () => {
+    const inner: Step = join({
+      right: {
+        input: "links",
+        steps: [{ kind: "filter", where: { field: "url", op: "notNull" } }],
+      },
+      on: [{ left: "name", right: "stateName" }],
+      multiMatch: { mode: "first" },
+    });
+    const outer = join({ right: { input: "deployments", steps: [inner] } });
+    const query = compileView(definition([outer]), metas);
+    expect(query.sql).toContain('"s0_s0_s0"');
+    expect(golden(query)).toMatchSnapshot();
+  });
+
+  test("diagnostics include sub-pipeline steps with their path", () => {
+    const step = join({ right: { input: "deployments", steps: sub } });
+    const query = compileDiagnostics(definition([step]), metas);
+    expect(query.params).toContain("steps[0].right.steps[0]");
+    expect(query.params).toContain("steps[0].right.steps[1]");
+    expect(golden(query)).toMatchSnapshot();
+  });
+});
+
+describe("calculate", () => {
+  test("typed refs, literals bound as params", () => {
+    const step: Step = {
+      kind: "calculate",
+      field: "total",
+      expr: "round(cost * 1.5 + 2, 1)",
+    };
+    const query = compileView(definition([step]), calcMetas);
+    expect(query.params).toContain(1.5);
+    expect(query.params).toContain("total");
+    expect(golden(query)).toMatchSnapshot();
+  });
+
+  test("every function, case and if", () => {
+    const expr =
+      "concat(upper(trim(name)), ' / ', lower(\"state name\")) = 'x' or coalesce(cost, 0) > 1 and not (cost is null) or year(opened) = 2024 + month(opened) - day(opened)";
+    const step: Step = { kind: "calculate", field: "flag", expr };
+    expect(golden(compileView(definition([step]), calcMetas))).toMatchSnapshot("functions");
+    const cased: Step = {
+      kind: "calculate",
+      field: "band",
+      expr: "case when cost > 100 then 'high' when cost > 10 then 'mid' else if(cost is null, 'none', 'low') end",
+    };
+    expect(golden(compileView(definition([cased]), calcMetas))).toMatchSnapshot("case");
+  });
+
+  test("hostile text is a bound param, never SQL", () => {
+    const step: Step = { kind: "calculate", field: "x", expr: "'a''; drop table entries; --'" };
+    const { sql, params } = compileView(definition([step]), calcMetas);
+    expect(sql).not.toContain("drop table");
+    expect(params).toContain("a'; drop table entries; --");
+  });
+
+  test("unknown functions and bad syntax throw ViewCompileError", () => {
+    for (const expr of ["sleep(1)", "(1 + 2", "cost +"]) {
+      const step: Step = { kind: "calculate", field: "x", expr };
+      expect(() => compileView(definition([step]), calcMetas)).toThrow(ViewCompileError);
+    }
+  });
+});
+
+describe("sql step", () => {
+  test("plain columns are folded into d; prev points at the previous step", () => {
+    const step: Step = {
+      kind: "sql",
+      query:
+        "select p.d ->> 'name' as name, (p.d ->> 'cost')::numeric * 2 as double from prev p where p.d ->> 'name' is not null",
+    };
+    const query = compileView(
+      definition([{ kind: "filter", where: { field: "name", op: "notNull" } }, step]),
+      metas,
+    );
+    expect(query.sql).toContain('from "s0" p');
+    expect(golden(query)).toMatchSnapshot();
+  });
+
+  test("d / row_id / geom columns pass through; input CTEs are emitted on demand", () => {
+    const step: Step = {
+      kind: "sql",
+      query:
+        "select p.row_id, p.d || jsonb_build_object('n', (select count(*) from in_deployments)) as d, p.geom from prev p;",
+    };
+    const query = compileView(definition([step]), metas);
+    expect(query.sql).toContain('"in_deployments" as (');
+    expect(golden(query)).toMatchSnapshot();
+  });
+
+  test("select * from prev keeps row_id, d and geom", () => {
+    const step: Step = { kind: "sql", query: "select * from prev -- trailing comment" };
+    const query = compileView(definition([step]), metas);
+    expect(golden(query)).toMatchSnapshot();
+  });
+
+  test("an invalid query fails compilation with a located error", () => {
+    const step: Step = { kind: "sql", query: "delete from prev" };
+    expect(() => compileView(definition([step]), metas)).toThrow(ViewCompileError);
   });
 });
 

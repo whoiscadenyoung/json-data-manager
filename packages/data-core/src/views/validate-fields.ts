@@ -1,26 +1,61 @@
 /**
  * Field-reference checking: walks the step list tracking which field names
- * exist in the current row. Skipped (never an error) once the row's shape is
- * unknown, i.e. when the base input has no `fields` metadata or after a
- * `sql` step.
+ * (and their types) exist in the current row. Skipped (never an error) once
+ * the row's shape is unknown, i.e. when the base input has no `fields`
+ * metadata or after a `sql` step whose output is a bare `d`. The compiler
+ * reuses the same walk to learn field types for `calculate`.
  */
 
-import { slugify } from "./sql-util.js";
-import type { CompileInputMeta, Condition, JoinStep, Step } from "./types.js";
+import { analyzeExpression } from "./calculate.js";
+import { joinPrefix, listKey, prefixed } from "./join-names.js";
+import { analyzeSqlStep } from "./sql-step.js";
+import type { CompileInputMeta, Condition, FieldType, JoinStep, Measure, Step } from "./types.js";
+import { isRecord } from "./validate-issues.js";
 import type { Issues } from "./validate-issues.js";
+import { validateStepShape } from "./validate-steps.js";
 
-function fieldNames(meta: CompileInputMeta | undefined): string[] | undefined {
-  return meta === undefined || meta.fields === undefined
-    ? undefined
-    : meta.fields.map((field) => field.name);
+export type FieldMap = Map<string, FieldType>;
+
+function metaFields(meta: CompileInputMeta | undefined): FieldMap | undefined {
+  if (meta === undefined || meta.fields === undefined) {
+    return undefined;
+  }
+  return new Map(meta.fields.map((field) => [field.name, field.type ?? "unknown"]));
+}
+
+/** Result type of a measure, given the field types of the rows it aggregates. */
+export function measureType(measure: Measure, source: FieldMap | undefined): FieldType {
+  switch (measure.fn) {
+    case "count":
+    case "countDistinct":
+    case "sum":
+    case "avg":
+      return "number";
+    case "text":
+      return "string";
+    default: {
+      const ref = measure.field;
+      const type = ref === undefined || source === undefined ? undefined : source.get(ref);
+      return type ?? "unknown";
+    }
+  }
 }
 
 export class FieldScope {
-  private known: Set<string> | undefined;
+  private known: FieldMap | undefined;
 
-  constructor(base: string, metas: CompileInputMeta[]) {
-    const names = fieldNames(metas.find((meta) => meta.alias === base));
-    this.known = names === undefined ? undefined : new Set(names);
+  constructor(
+    base: string,
+    private readonly metas: CompileInputMeta[],
+    private readonly aliases: Set<string>,
+  ) {
+    this.known = metaFields(metas.find((meta) => meta.alias === base));
+  }
+
+  /** Field types for `calculate`; `undefined` = the row has no such field. */
+  resolver(): (name: string) => FieldType | undefined {
+    const known = this.known;
+    return (name) => (known === undefined ? "unknown" : known.get(name));
   }
 
   /** Report `field` when the current row is known and lacks it. */
@@ -30,13 +65,30 @@ export class FieldScope {
     }
   }
 
-  apply(step: Step, path: string, metas: CompileInputMeta[], issues: Issues): void {
+  /** Shape-check and apply every step of a (sub-)pipeline. */
+  validateList(steps: unknown[], path: string, issues: Issues): void {
+    for (const [i, raw] of steps.entries()) {
+      const at = `${path}[${i}]`;
+      if (!isRecord(raw) || typeof raw.kind !== "string") {
+        issues.add(at, "Each step needs a kind.");
+        continue;
+      }
+      const before = issues.count;
+      validateStepShape(raw, at, this.aliases, issues);
+      // Only walk the field scope through well-formed steps.
+      if (issues.count === before && isStep(raw)) {
+        this.apply(raw, at, issues);
+      }
+    }
+  }
+
+  apply(step: Step, path: string, issues: Issues): void {
     switch (step.kind) {
       case "filter":
         this.checkCondition(step.where, `${path}.where`, issues);
         break;
       case "join":
-        this.applyJoin(step, path, metas, issues);
+        this.applyJoin(step, path, issues);
         break;
       case "groupBy":
         this.applyGroupBy(step, path, issues);
@@ -45,13 +97,48 @@ export class FieldScope {
         this.applySelect(step, path, issues);
         break;
       case "calculate":
-        if (this.known !== undefined) {
-          this.known.add(step.field);
-        }
+        this.applyCalculate(step, path, issues);
+        break;
+      case "sql":
+        this.applySql(step, path, issues);
         break;
       default:
         this.known = undefined;
     }
+  }
+
+  private applyCalculate(
+    step: Extract<Step, { kind: "calculate" }>,
+    path: string,
+    issues: Issues,
+  ): void {
+    const result = analyzeExpression(step.expr, this.resolver());
+    if (!result.ok) {
+      for (const error of result.errors) {
+        issues.add(`${path}.expr`, error.message, error);
+      }
+    }
+    if (this.known !== undefined) {
+      this.known.set(step.field, result.ok ? result.type : "unknown");
+    }
+  }
+
+  private applySql(step: Extract<Step, { kind: "sql" }>, path: string, issues: Issues): void {
+    const result = analyzeSqlStep(step.query, [...this.aliases]);
+    if (!result.ok) {
+      for (const error of result.errors) {
+        issues.add(`${path}.query`, error.message, error);
+      }
+      this.known = undefined;
+      return;
+    }
+    const columns = result.analysis.columns;
+    if (columns.includes("d")) {
+      this.known = undefined;
+      return;
+    }
+    const props = columns.filter((name) => name !== "row_id" && name !== "geom");
+    this.known = new Map(props.map((name) => [name, "unknown"]));
   }
 
   private checkCondition(cond: Condition, path: string, issues: Issues): void {
@@ -83,8 +170,16 @@ export class FieldScope {
         }
       }
     }
-    if (this.known !== undefined) {
-      this.known = new Set([...step.by, ...step.measures.map((measure) => measure.as)]);
+    const known = this.known;
+    if (known !== undefined) {
+      const next: FieldMap = new Map();
+      for (const field of step.by) {
+        next.set(field, known.get(field) ?? "unknown");
+      }
+      for (const measure of step.measures) {
+        next.set(measure.as, measureType(measure, known));
+      }
+      this.known = next;
     }
   }
 
@@ -92,102 +187,144 @@ export class FieldScope {
     for (const [i, field] of step.fields.entries()) {
       this.check(field.from, `${path}.fields[${i}].from`, issues);
     }
-    if (this.known !== undefined) {
-      this.known = new Set(step.fields.map((field) => field.as));
+    const known = this.known;
+    if (known !== undefined) {
+      this.known = new Map(
+        step.fields.map((field) => [field.as, known.get(field.from) ?? "unknown"]),
+      );
     }
   }
 
-  private applyJoin(step: JoinStep, path: string, metas: CompileInputMeta[], issues: Issues): void {
-    const rightMeta = metas.find((meta) => meta.alias === step.right.input);
-    const rightFields = fieldNames(rightMeta);
+  /** The fields (and types) of a join's right side: the input, then its sub-pipeline. */
+  private rightScope(step: JoinStep, path: string, issues: Issues): FieldScope {
+    const scope = new FieldScope(step.right.input, this.metas, this.aliases);
+    if (Array.isArray(step.right.steps)) {
+      scope.validateList(step.right.steps, `${path}.right.steps`, issues);
+    }
+    return scope;
+  }
+
+  private applyJoin(step: JoinStep, path: string, issues: Issues): void {
+    const rightMeta = this.metas.find((meta) => meta.alias === step.right.input);
+    const right = this.rightScope(step, path, issues).known;
     for (const [i, pair] of step.on.entries()) {
       this.check(pair.left, `${path}.on[${i}].left`, issues);
-      checkRight(rightFields, pair.right, `${path}.on[${i}].right`, issues);
+      checkRight(right, pair.right, `${path}.on[${i}].right`, issues);
     }
     for (const [i, field] of (step.fields ?? []).entries()) {
-      checkRight(rightFields, field, `${path}.fields[${i}]`, issues);
+      checkRight(right, field, `${path}.fields[${i}]`, issues);
     }
-    checkMultiMatchRefs(step, rightFields, `${path}.multiMatch`, issues);
+    checkMultiMatchRefs(step, right, `${path}.multiMatch`, issues);
     if (this.known !== undefined) {
-      this.addJoinedFields(step, rightFields, rightMeta);
-    }
-  }
-
-  private addJoinedFields(
-    step: JoinStep,
-    rightFields: string[] | undefined,
-    rightMeta: CompileInputMeta | undefined,
-  ): void {
-    const known = this.known;
-    const { multiMatch } = step;
-    if (known === undefined) {
-      return;
-    }
-    if (multiMatch.mode === "summarize") {
-      addAll(
-        known,
-        multiMatch.measures.map((measure) => measure.as),
-      );
-    } else if (multiMatch.mode === "spread") {
-      addAll(
-        known,
-        multiMatch.columns.map((column) => column.as),
-      );
-    } else if (multiMatch.mode === "first" || multiMatch.mode === "last") {
-      const names = step.fields ?? rightFields;
-      const prefix = step.prefix ?? slugify(rightMeta === undefined ? "" : rightMeta.title);
-      if (names === undefined) {
-        this.known = undefined;
-      } else {
-        addAll(
-          known,
-          names.map((name) => (prefix === "" ? name : `${prefix}.${name}`)),
-        );
-      }
-    } else {
-      this.known = undefined;
+      this.known = joinedFields(this.known, step, right, rightMeta);
     }
   }
 }
 
-function addAll(target: Set<string>, names: string[]): void {
-  for (const name of names) {
-    target.add(name);
+/** Narrowing after validateStepShape found no problems with the step. */
+function isStep(raw: Record<string, unknown>): raw is Record<string, unknown> & Step {
+  return typeof raw.kind === "string";
+}
+
+/** Names the join adds for the row-copying modes (first / last / error). */
+function copiedFields(
+  step: JoinStep,
+  right: FieldMap | undefined,
+  prefix: string,
+): [string, FieldType][] | undefined {
+  const names = step.fields ?? (right === undefined ? undefined : [...right.keys()]);
+  if (names === undefined || right === undefined) {
+    return undefined;
   }
+  return names.map((name) => [prefixed(prefix, name), right.get(name) ?? "unknown"]);
+}
+
+/** The fields (and types) a join adds, or undefined when they cannot be known. */
+function addedFields(
+  step: JoinStep,
+  right: FieldMap | undefined,
+  title: string,
+): [string, FieldType][] | undefined {
+  const { multiMatch } = step;
+  const prefix = joinPrefix(step, title);
+  switch (multiMatch.mode) {
+    case "summarize":
+      return multiMatch.measures.map((measure) => [measure.as, measureType(measure, right)]);
+    case "spread": {
+      const valueType = right === undefined ? undefined : right.get(multiMatch.value);
+      return multiMatch.columns.map((column) => [column.as, valueType ?? "unknown"]);
+    }
+    case "text":
+      return [[prefixed(prefix, multiMatch.field), "string"]];
+    case "list":
+      return [[listKey(prefix, title), "unknown"]];
+    default:
+      return copiedFields(step, right, prefix);
+  }
+}
+
+/** The row's fields after a join, or undefined when they cannot be known. */
+function joinedFields(
+  before: FieldMap,
+  step: JoinStep,
+  right: FieldMap | undefined,
+  rightMeta: CompileInputMeta | undefined,
+): FieldMap | undefined {
+  const added = addedFields(step, right, rightMeta === undefined ? "" : rightMeta.title);
+  return added === undefined ? undefined : new Map([...before, ...added]);
 }
 
 function checkRight(
-  rightFields: string[] | undefined,
+  right: FieldMap | undefined,
   field: string,
   path: string,
   issues: Issues,
 ): void {
-  if (rightFields !== undefined && !rightFields.includes(field)) {
+  if (right !== undefined && !right.has(field)) {
     issues.add(path, `Unknown field "${field}".`);
+  }
+}
+
+function checkMeasureRefs(
+  measures: Measure[],
+  right: FieldMap | undefined,
+  path: string,
+  issues: Issues,
+): void {
+  for (const [i, measure] of measures.entries()) {
+    for (const ref of [measure.field, measure.by]) {
+      if (ref !== undefined) {
+        checkRight(right, ref, `${path}.measures[${i}]`, issues);
+      }
+    }
   }
 }
 
 function checkMultiMatchRefs(
   step: JoinStep,
-  rightFields: string[] | undefined,
+  right: FieldMap | undefined,
   path: string,
   issues: Issues,
 ): void {
   const { multiMatch } = step;
-  if (multiMatch.mode === "summarize") {
-    for (const [i, measure] of multiMatch.measures.entries()) {
-      for (const ref of [measure.field, measure.by]) {
-        if (ref !== undefined) {
-          checkRight(rightFields, ref, `${path}.measures[${i}]`, issues);
-        }
+  switch (multiMatch.mode) {
+    case "summarize":
+      checkMeasureRefs(multiMatch.measures, right, path, issues);
+      break;
+    case "spread":
+      checkRight(right, multiMatch.by, `${path}.by`, issues);
+      checkRight(right, multiMatch.value, `${path}.value`, issues);
+      break;
+    case "text":
+      checkRight(right, multiMatch.field, `${path}.field`, issues);
+      break;
+    case "first":
+    case "last":
+      for (const [i, sort] of (multiMatch.orderBy ?? []).entries()) {
+        checkRight(right, sort.field, `${path}.orderBy[${i}]`, issues);
       }
-    }
-  } else if (multiMatch.mode === "spread") {
-    checkRight(rightFields, multiMatch.by, `${path}.by`, issues);
-    checkRight(rightFields, multiMatch.value, `${path}.value`, issues);
-  } else if (multiMatch.mode === "first" || multiMatch.mode === "last") {
-    for (const [i, sort] of (multiMatch.orderBy ?? []).entries()) {
-      checkRight(rightFields, sort.field, `${path}.orderBy[${i}]`, issues);
-    }
+      break;
+    default:
+      break;
   }
 }

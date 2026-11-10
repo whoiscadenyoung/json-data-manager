@@ -1,8 +1,8 @@
 /**
  * The Views step format (docs/views-design.md §4): a plain-JSON, serializable
  * definition that the compiler turns into one Postgres statement. The Step
- * union is complete for v1 so later issues only add compiler branches; the
- * kinds this package cannot compile yet throw `ViewStepNotSupportedError`.
+ * union is complete for v1; `ViewStepNotSupportedError` is reserved for
+ * later step kinds (spatial steps) the union does not name yet.
  */
 
 export type ViewInputRef = { kind: "dataset"; id: string; version?: string };
@@ -33,10 +33,11 @@ export type Condition =
   | { not: Condition };
 
 /**
- * Placeholder for the calculate expression AST (views 4 / #302 owns the
- * grammar). `calculate` steps are not compiled by this package.
+ * A calculate expression, stored as its source text (e.g. `"cost * 2"`) so
+ * the editor round-trips what the user typed. `parseExpression` turns it
+ * into an AST (`ExprNode`); the compiler rebuilds SQL from that AST only.
  */
-export type Expr = unknown;
+export type Expr = string;
 
 export type MeasureFn =
   | "count"
@@ -157,7 +158,12 @@ export interface DiagnosticsOptions {
   unaccent?: boolean;
 }
 
-export type ValidationError = { path: string; message: string };
+export type ValidationError = {
+  path: string;
+  message: string;
+  /** For errors inside an expression / SQL string: offsets (end exclusive) into the string at `path`. */
+  position?: { start: number; end: number };
+};
 
 export type ValidationResult =
   | { ok: true; value: ViewDefinition }

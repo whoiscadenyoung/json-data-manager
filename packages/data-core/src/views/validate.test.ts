@@ -156,11 +156,131 @@ describe("field references (with input metadata)", () => {
     expect(paths(def, true)).toContain("output.fields[0].key");
   });
 
-  test("a sql step makes the row shape unknown, so later refs are not checked", () => {
+  test("a sql step returning d makes the row shape unknown, so later refs are not checked", () => {
     const steps: Step[] = [
-      { kind: "sql", query: "select 1" },
+      { kind: "sql", query: "select * from prev" },
       { kind: "filter", where: { field: "anything", op: "notNull" } },
     ];
     expect(paths(definition(steps), true)).toEqual([]);
+  });
+});
+
+function located(steps: Step[], withMetas = true) {
+  const result = validateViewDefinition(definition(steps), withMetas ? metas : undefined);
+  return result.ok ? [] : result.errors;
+}
+
+describe("calculate, sql and sub-pipelines", () => {
+  test("calculate: a syntax error carries its position", () => {
+    const [error] = located([{ kind: "calculate", field: "x", expr: "1 + (2" }], false);
+    expect(error).toMatchObject({ path: "steps[0].expr", position: { start: 4, end: 5 } });
+    expect(error.message).toContain("never closed");
+  });
+
+  test("calculate: unknown function and unknown field are located", () => {
+    const [fn] = located([{ kind: "calculate", field: "x", expr: "name + sleep(1)" }]);
+    expect(fn).toMatchObject({ path: "steps[0].expr", position: { start: 7, end: 15 } });
+    const [field] = located([{ kind: "calculate", field: "x", expr: "lower(nope)" }]);
+    expect(field).toMatchObject({
+      message: 'Unknown field "nope".',
+      position: { start: 6, end: 10 },
+    });
+  });
+
+  test("calculate: needs text, and its field joins the scope for later steps", () => {
+    const bad = { kind: "calculate", field: "x", expr: { op: "+" } } as unknown as Step;
+    expect(paths(definition([bad]))).toContain("steps[0].expr");
+    const steps: Step[] = [
+      { kind: "calculate", field: "double", expr: "stateName" },
+      { kind: "filter", where: { field: "double", op: "notNull" } },
+      { kind: "filter", where: { field: "other", op: "notNull" } },
+    ];
+    expect(located(steps).map((e) => e.path)).toEqual(["steps[2].where.field"]);
+  });
+
+  test("calculate: types flow, so a type error is caught", () => {
+    const steps: Step[] = [
+      join({ right: { input: "deployments" }, prefix: "d" }),
+      { kind: "calculate", field: "x", expr: '"d.stateId" = "d.cost"' },
+    ];
+    expect(located(steps)[0].message).toContain("different types");
+  });
+
+  test("sql: DML, undeclared tables and multiple statements are rejected", () => {
+    const query = (text: string): string[] =>
+      located([{ kind: "sql", query: text }]).map((e) => e.message);
+    expect(query("delete from prev")[0]).toContain("Only SELECT");
+    expect(query("with x as (delete from prev returning *) select * from x")[0]).toContain(
+      "Only SELECT",
+    );
+    expect(query("select * from secrets")[0]).toContain("Unknown table");
+    expect(query("select * from prev; select * from prev")[0]).toContain("Only one statement");
+    expect(query("select * from prev")).toEqual([]);
+    const [positioned] = located([{ kind: "sql", query: "select * from prev, secrets" }]);
+    expect(positioned).toMatchObject({ path: "steps[0].query" });
+    expect(positioned.position).toEqual({ start: 20, end: 27 });
+  });
+
+  test("sql: output columns become the known fields", () => {
+    const steps: Step[] = [
+      { kind: "sql", query: "select d ->> 'a' as a, row_id from prev" },
+      { kind: "filter", where: { field: "a", op: "notNull" } },
+      { kind: "filter", where: { field: "row_id", op: "notNull" } },
+    ];
+    expect(located(steps).map((e) => e.path)).toEqual(["steps[2].where.field"]);
+  });
+
+  test("sub-pipeline steps are validated with their own path and scope", () => {
+    const step = join({
+      right: {
+        input: "deployments",
+        steps: [{ kind: "filter", where: { field: "nope", op: "notNull" } }],
+      },
+    });
+    expect(located([step]).map((e) => e.path)).toEqual(["steps[0].right.steps[0].where.field"]);
+    const malformed = join({
+      right: { input: "deployments", steps: [{ kind: "filter" } as unknown as Step] },
+    });
+    expect(paths(definition([malformed]))).toContain("steps[0].right.steps[0].where");
+    const notList = join({ right: { input: "deployments", steps: {} as unknown as Step[] } });
+    expect(paths(definition([notList]))).toContain("steps[0].right.steps");
+  });
+
+  test("the outer join sees the sub-pipeline's output fields, not the raw input's", () => {
+    const sub: Step = join({
+      right: { input: "links" },
+      on: [{ left: "name", right: "stateName" }],
+      multiMatch: { mode: "summarize", measures: [{ as: "linkCount", fn: "count" }] },
+    });
+    const outer = (field: string): Step =>
+      join({
+        right: { input: "deployments", steps: [sub] },
+        multiMatch: {
+          mode: "summarize",
+          measures: [{ as: "top", fn: "topBy", field: "name", by: field }],
+        },
+      });
+    expect(located([outer("linkCount")])).toEqual([]);
+    expect(located([outer("missing")]).map((e) => e.path)).toEqual([
+      "steps[0].multiMatch.measures[0]",
+    ]);
+  });
+
+  test("text and list multi-matches add their fields; their inputs are checked", () => {
+    const text = join({ multiMatch: { mode: "text", field: "name", separator: ", " } });
+    const steps: Step[] = [
+      text,
+      { kind: "filter", where: { field: "deployments_2024.name", op: "notNull" } },
+    ];
+    expect(located(steps)).toEqual([]);
+    const badText = join({ multiMatch: { mode: "text", field: "nope", separator: "," } });
+    expect(located([badText]).map((e) => e.path)).toEqual(["steps[0].multiMatch.field"]);
+    const list: Step[] = [
+      join({ multiMatch: { mode: "list" } }),
+      { kind: "filter", where: { field: "deployments_2024", op: "notNull" } },
+    ];
+    expect(located(list)).toEqual([]);
+    const shape = join({ multiMatch: { mode: "text", field: "name" } as never });
+    expect(paths(definition([shape]))).toContain("steps[0].multiMatch");
   });
 });

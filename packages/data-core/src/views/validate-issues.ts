@@ -16,7 +16,12 @@ export class Issues {
     return this.list.length;
   }
 
-  add(path: string, message: string): void {
-    this.list.push({ path, message });
+  /** `position` is the offset range inside the string at `path` (expressions, SQL). */
+  add(path: string, message: string, position?: { start: number; end: number }): void {
+    this.list.push(
+      position === undefined
+        ? { path, message }
+        : { path, message, position: { start: position.start, end: position.end } },
+    );
   }
 }

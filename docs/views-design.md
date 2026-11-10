@@ -161,7 +161,8 @@ is never spliced in as raw text. v1 supports: field refs, literals,
 `+ - * /`, comparisons, `and/or/not`, `coalesce`, `case when`, `concat`,
 `lower/upper/trim`, `round`, `year/month/day`, and `if(cond, a, b)`.
 Typing follows the input `json_schema`, with casts at the reference
-site.
+site. The step stores the expression as its source text (`expr: string`);
+the parser produces the AST.
 
 ## 5. Worked example (the end-to-end test fixture)
 
@@ -240,8 +241,9 @@ the states with no links. Neither changes the output.
 - **`sql` step.** The user query is parsed (a Postgres parser in TS or
   WASM). It must be a single `SELECT` with no data-modifying CTEs, and
   may reference only the input CTE names and the previous step (`prev`).
-  It must return `d` (and optionally `geom`), or plain columns that the
-  compiler folds into `d`.
+  Output columns are classified by name: `d` (jsonb properties), optional
+  `row_id` and `geom`; any other columns become properties (merged into `d`
+  when present). `select * from prev` keeps everything.
 - **Golden tests.** Each step kind × mode has a golden SQL file in
   `@caden/data-core`. A separate int test runs the §5 fixture against a
   dedicated database.

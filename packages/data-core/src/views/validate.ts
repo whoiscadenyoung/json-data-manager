@@ -6,10 +6,9 @@
  */
 
 import { containsUuid } from "./sql-util.js";
-import type { CompileInputMeta, Step, ValidationResult, ViewDefinition } from "./types.js";
+import type { CompileInputMeta, ValidationResult, ViewDefinition } from "./types.js";
 import { FieldScope } from "./validate-fields.js";
 import { Issues, isRecord } from "./validate-issues.js";
-import { validateStepShape } from "./validate-steps.js";
 
 const ALIAS_PATTERN = /^[A-Za-z0-9_]{1,40}$/;
 
@@ -77,40 +76,11 @@ function validateOutput(output: unknown, scope: FieldScope, issues: Issues): voi
   }
 }
 
-/** Narrowing after validateStepShape found no problems with the step. */
-function isStep(raw: Record<string, unknown>): raw is Record<string, unknown> & Step {
-  return typeof raw.kind === "string";
-}
-
 /** Narrowing after every shape check passed. */
 function isDefinition(
   def: Record<string, unknown>,
 ): def is Record<string, unknown> & ViewDefinition {
   return Array.isArray(def.inputs) && Array.isArray(def.steps) && typeof def.base === "string";
-}
-
-function validateSteps(
-  steps: unknown[],
-  aliases: Set<string>,
-  scope: FieldScope,
-  metas: CompileInputMeta[],
-  issues: Issues,
-): void {
-  for (const [i, raw] of steps.entries()) {
-    const path = `steps[${i}]`;
-    if (!isRecord(raw) || typeof raw.kind !== "string") {
-      issues.add(path, "Each step needs a kind.");
-      continue;
-    }
-    const before = issues.count;
-    validateStepShape(raw, path, aliases, issues);
-    if (issues.count === before) {
-      // Only walk the field scope through well-formed steps.
-      if (isStep(raw)) {
-        scope.apply(raw, path, metas, issues);
-      }
-    }
-  }
 }
 
 /** Validate an unknown value as a ViewDefinition. */
@@ -128,9 +98,9 @@ export function validateViewDefinition(
     issues.add("base", "base must be the alias of one of the inputs.");
   }
   const metas = inputs ?? [];
-  const scope = new FieldScope(typeof base === "string" ? base : "", metas);
+  const scope = new FieldScope(typeof base === "string" ? base : "", metas, aliases);
   if (Array.isArray(def.steps)) {
-    validateSteps(def.steps, aliases, scope, metas, issues);
+    scope.validateList(def.steps, "steps", issues);
   } else {
     issues.add("steps", "steps must be an array.");
   }

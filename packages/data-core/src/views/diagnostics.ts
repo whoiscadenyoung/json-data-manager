@@ -27,12 +27,35 @@ function samples(cte: string, other: string, keyCount: number): string {
   return `coalesce((select jsonb_agg(kraw order by kraw) from (select distinct kraw from ${cte} x where kraw <> '' and ${unmatched} order by kraw limit ${SAMPLE_CAP}) s), '[]'::jsonb)`;
 }
 
+/**
+ * Categories found among the matched right rows that have no declared
+ * spread column (they never add columns; this only reports them).
+ */
+function spreadDiagnostics(
+  spread: NonNullable<NonNullable<StepInfo["join"]>["spread"]>,
+  info: NonNullable<StepInfo["join"]>,
+  bag: ParamBag,
+): string {
+  const { left, right, keyCount } = info;
+  const category = `(r.d ->> ${bag.text(spread.by)})`;
+  const undeclared = `from ${right} r where ${category} is not null and ${category} not in (select jsonb_array_elements_text(${bag.jsonb(spread.categories)})) and ${hasMatch(left, keyCount, "r")}`;
+  return `jsonb_build_object(
+        'undeclaredCategories', coalesce((select jsonb_agg(c order by c) from (select distinct ${category} as c ${undeclared} order by c limit ${SAMPLE_CAP}) s), '[]'::jsonb),
+        'undeclaredRows', (select count(*) ${undeclared})
+      )`;
+}
+
 function joinDiagnostics(info: NonNullable<StepInfo["join"]>, bag: ParamBag): string {
   const { left, right, keyCount, policy } = info;
   const keyCols = Array.from({ length: keyCount }, (_, i) => `r.k${i}`).join(", ");
   const leftMatched = `(select count(*) from ${left} x where ${hasMatch(right, keyCount, "x")})`;
   const rightMatched = `(select count(*) from ${right} x where ${hasMatch(left, keyCount, "x")})`;
   const multi = `(select count(*) from (select ${keyCols} from ${right} r where ${hasMatch(left, keyCount, "r")} group by ${keyCols} having count(*) > 1) m)`;
+  const extra =
+    info.spread === undefined
+      ? ""
+      : `,
+      'spread', ${spreadDiagnostics(info.spread, info, bag)}`;
   return `jsonb_build_object(
       'leftMatched', ${leftMatched},
       'leftUnmatched', (select count(*) from ${left}) - ${leftMatched},
@@ -41,7 +64,7 @@ function joinDiagnostics(info: NonNullable<StepInfo["join"]>, bag: ParamBag): st
       'rightUnmatched', (select count(*) from ${right}) - ${rightMatched},
       'rightUnmatchedSamples', ${samples(right, left, keyCount)},
       'multiMatchKeys', ${multi},
-      'policy', ${bag.text(policy)}
+      'policy', ${bag.text(policy)}${extra}
     )`;
 }
 
@@ -54,6 +77,9 @@ function stepDiagnostics(step: StepInfo, bag: ParamBag): string {
     `'fieldsAdded', ${fieldDelta(step.output, step.input)}`,
     `'fieldsRemoved', ${fieldDelta(step.input, step.output)}`,
   ];
+  if (step.path !== undefined) {
+    parts.push(`'path', ${bag.text(step.path)}`);
+  }
   if (step.join !== undefined) {
     parts.push(`'join', ${joinDiagnostics(step.join, bag)}`);
   }

@@ -242,6 +242,9 @@ function validateJoin(
   } else if (!aliases.has(right.input)) {
     issues.add(`${path}.right.input`, `Unknown input alias "${right.input}".`);
   }
+  if (isRecord(right) && right.steps !== undefined && !Array.isArray(right.steps)) {
+    issues.add(`${path}.right.steps`, "A sub-pipeline must be a list of steps.");
+  }
   validateOn(step.on, `${path}.on`, issues);
   validateMatching(step.matching, `${path}.matching`, issues);
   if (step.type !== "left" && step.type !== "inner") {
@@ -311,8 +314,11 @@ export function validateStepShape(
       validateSelect(step, path, issues);
       break;
     case "calculate":
-      if (!isNonEmptyString(step.field) || step.expr === undefined) {
-        issues.add(path, "calculate needs a field and an expression.");
+      if (!isNonEmptyString(step.field)) {
+        issues.add(`${path}.field`, "calculate needs a field name.");
+      }
+      if (!isNonEmptyString(step.expr)) {
+        issues.add(`${path}.expr`, "calculate needs an expression (text).");
       }
       break;
     case "sql":
