@@ -30,7 +30,7 @@ could provide cleanly.
 - Reuse means Duplicate, chaining and Extract to view; no templates.
 - Saved views use Postgres only; DuckDB-WASM is only for unsaved Scratch
   queries.
-- #290 ([remedies 4]) is superseded by this train.
+- Remedies 4–8 (#290–#294) are deferred behind Views, not dropped. #290's live requirements (draft inputs, title-based names, visible renames) are on #299/#300/#301/#303; #291–#294 resume after Views.
 
 Related: [[derived-datasets-brainstorm]], [[analysis-layer-design]],
 [[int-test-db-split-ri-teardown]].

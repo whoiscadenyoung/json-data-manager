@@ -4,10 +4,11 @@ Where the #273 test-pass work stands and how to finish it. Companion to
 `docs/local-test-accounts.md` (gitignored — credentials) and the CI policy in
 `.github/workflows/ci.yml`'s header.
 
-> **2026-11-10 update:** remedies 1–3 are merged. Remedies 4 (#290) is
-> superseded by the **Views** initiative: umbrella #298,
-> [`views-handoff.md`](views-handoff.md), and ADR 0028. Remedies 5–8
-> (#291–#294) are still open and independent of Views.
+> **2026-11-10 update:** remedies 1–3 are merged. **Remedies 4–8
+> (#290–#294) are deferred behind the Views initiative** (umbrella #298,
+> [`views-handoff.md`](views-handoff.md), ADR 0028), not dropped. Each
+> issue has a "Views update" comment. #290's live requirements moved into
+> the Views issues; #291–#294 resume after Views.
 
 ## Where things stand
 

@@ -80,8 +80,12 @@ one after the other or split files carefully.
 
 ## Related, outside the train
 
-- #290 ([remedies 4], legacy join namespaces + aliases) is **superseded**
-  by this initiative and can be closed.
-- #283 ([remedies 8], relation indicators) still applies.
+- **Remedies 4–8 (#290–#294) are deferred until after Views, not
+  dropped.** Each has a "Views update" comment saying what changes.
+  - #290: its backfill half no longer applies. Its live requirements
+    (draft inputs, title-based names, visible renames) are acceptance
+    criteria on #299, #300, #301 and #303. Close it once #303 is verified.
+  - #291–#294 (import detection, currency, spreadsheet → geospatial,
+    relation indicators) are still wanted after Views.
 - #280, #282 and #284 were addressed by remedies 1–3 (PRs #295–#297) but
   are still open; close them if their remaining scope is covered.
