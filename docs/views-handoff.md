@@ -71,7 +71,7 @@ one after the other or split files carefully.
 | ----- | ------- | ---- |
 | #299  | PR open | #309 |
 | #300  | PR open | #310 |
-| #301  | open    |      |
+| #301  | PR open | #314 |
 | #302  | open    |      |
 | #303  | open    |      |
 | #304  | open    |      |
