@@ -13,7 +13,6 @@
 
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "vitest";
 
-import { definitionFromRelation } from "#/features/views/lib/view-model";
 import type { CompileInputMeta, ViewCompiler, ViewDefinition } from "#/lib/views/view-compiler";
 import { defaultViewCompiler, inputsOfDefinition } from "#/lib/views/view-compiler-wiring";
 import { createView, saveView, type ViewDeps, type ViewsRpc } from "#/lib/views/view-save";
@@ -680,15 +679,34 @@ describe.skipIf(!dbUp())("views (#300)", () => {
          (${sqlLit(deployments)}, '{"stateId":"s1","cost":5}'),
          (${sqlLit(deployments)}, '{"stateId":"s2","cost":1}')`,
     );
-    const seeded = definitionFromRelation({
-      cardinality: "1-N",
-      fromDataset: states,
-      fromKey: "id",
-      fromTitle: "States",
-      toDataset: deployments,
-      toKey: "stateId",
-      toTitle: "Deployments",
-    });
+    // The definition "Create view from relation" pre-fills (features/views
+    // `definitionFromRelation`; core code cannot import features, so it is
+    // spelled out): base = FROM side, one left Join on the relation's keys,
+    // summarize with a count for a 1-N relation.
+    const seeded = {
+      title: "States + Deployments",
+      definition: {
+        inputs: [
+          { alias: "states", ref: { kind: "dataset", id: states } },
+          { alias: "deployments", ref: { kind: "dataset", id: deployments } },
+        ],
+        base: "states",
+        steps: [
+          {
+            kind: "join",
+            right: { input: "deployments" },
+            on: [{ left: "id", right: "stateId" }],
+            matching: { trim: true, caseFold: false, collapseSpace: false, stripDiacritics: false },
+            type: "left",
+            multiMatch: {
+              mode: "summarize",
+              measures: [{ as: "deployments_count", fn: "count" }],
+            },
+          },
+        ],
+        output: { fields: [], emptyFields: "keep" },
+      },
+    };
     const view = await createView(savePath(ALICE, defaultViewCompiler), {
       title: seeded.title,
       definition: seeded.definition,

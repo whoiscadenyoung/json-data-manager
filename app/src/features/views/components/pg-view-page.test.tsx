@@ -166,7 +166,8 @@ describe("PgViewPage (view editor)", () => {
     });
     // The preview is requested for the selected step with a draft definition (JSON), never SQL.
     const call = mocks.previewDraftView.mock.calls[0];
-    expect(call?.[2]).toBe(0);
+    expect(call).toBeDefined();
+    expect(call === undefined ? undefined : call[2]).toBe(0);
     expect(await screen.findByText("Kansas")).toBeTruthy();
     expect(await screen.findByText(/rows here matched/)).toBeTruthy();
   });
@@ -196,8 +197,11 @@ describe("PgViewPage (view editor)", () => {
       expect(mocks.saveView).toHaveBeenCalledTimes(1);
     });
     const saved = mocks.saveView.mock.calls[0];
-    expect(saved?.[1]).toBe("v1");
-    expect(JSON.stringify(saved?.[2])).toContain("deployment_count");
+    expect(saved).toBeDefined();
+    expect(saved === undefined ? undefined : saved[1]).toBe("v1");
+    expect(JSON.stringify(saved === undefined ? undefined : saved[2])).toContain(
+      "deployment_count",
+    );
   });
 
   it("names the required field when the steps are incomplete", async () => {

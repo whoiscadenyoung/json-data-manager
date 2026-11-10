@@ -135,6 +135,14 @@ function join(overrides: Partial<JoinStep> = {}): JoinStep {
   };
 }
 
+function firstCall(spy: { mock: { calls: JoinStep[][] } }): JoinStep {
+  const call = spy.mock.calls[0];
+  if (call === undefined || call[0] === undefined) {
+    throw new Error("onChange was not called");
+  }
+  return call[0];
+}
+
 describe("JoinForm", () => {
   const baseProps = {
     datasets: [
@@ -165,9 +173,9 @@ describe("JoinForm", () => {
     render(createElement(JoinForm, { ...baseProps, onChange, step: join() }));
     fireEvent.click(screen.getByText("Ignore case"));
     expect(onChange).toHaveBeenCalledTimes(1);
-    const next = onChange.mock.calls[0]?.[0];
-    expect(next?.matching.caseFold).toBe(true);
-    expect(next?.matching.trim).toBe(true);
+    const next = firstCall(onChange);
+    expect(next.matching.caseFold).toBe(true);
+    expect(next.matching.trim).toBe(true);
   });
 
   it("offers measures for a summarize policy and a remove button per key pair", () => {
@@ -196,7 +204,7 @@ describe("JoinForm", () => {
       }),
     );
     fireEvent.click(screen.getByLabelText("Remove map entry AL"));
-    expect(onChange.mock.calls[0]?.[0].matching.manualMap).toBeUndefined();
+    expect(firstCall(onChange).matching.manualMap).toBeUndefined();
   });
 });
 
