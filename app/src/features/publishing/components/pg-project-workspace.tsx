@@ -446,6 +446,18 @@ function PgCatalogRow({
           <PgProvenanceChips draft={draft} row={row} />
           <p className="truncate text-sm font-medium">{label}</p>
         </Link>
+      ) : derived !== undefined ? (
+        // An OWNED derived artifact opens its joined-table view ([remedies 3],
+        // #289, ADR 0027); a LINKED one opens the same route — the registry
+        // row is saved-and-readable, so the view is identical.
+        <Link
+          className="flex min-w-0 flex-1 flex-col gap-1.5 py-0"
+          params={{ derivedId: artifact.artifactId, projectId }}
+          to="/projects/$projectId/derived/$derivedId"
+        >
+          <PgProvenanceChips draft={false} row={row} />
+          <p className="truncate text-sm font-medium">{label}</p>
+        </Link>
       ) : (
         <div className="flex min-w-0 flex-1 flex-col gap-1.5 py-0">
           <PgProvenanceChips draft={draft} row={row} />

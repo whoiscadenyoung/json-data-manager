@@ -15,6 +15,7 @@ import {
   EmptyTitle,
 } from "@caden/ui/components/empty";
 import { useQuery } from "@tanstack/react-query";
+import { Link, useParams } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { useState } from "react";
 
@@ -72,12 +73,14 @@ function PgTransformList({
   myAuthId,
   onEdit,
   onNew,
+  projectId,
   rows,
 }: {
   datasetTitle: string;
   myAuthId: string | undefined;
   onEdit: (id: string) => void;
   onNew: () => void;
+  projectId: string | undefined;
   rows: DerivedDatasetSummaryRow[] | undefined;
 }) {
   const transformRows = rows === undefined ? undefined : rows.filter((row) => !row.carriesSql);
@@ -138,6 +141,18 @@ function PgTransformList({
                     <p className="truncate text-xs text-muted-foreground">{row.description}</p>
                   )}
                 </div>
+                {row.status === "saved" &&
+                  projectId !== undefined && (
+                    // The joined-table view ([remedies 3], #289) — the editor
+                    // stays the write surface; this is the read.
+                    <Link
+                      className="shrink-0 rounded-md border px-3 py-1.5 text-sm hover:bg-muted"
+                      params={{ derivedId: row.id, projectId }}
+                      to="/projects/$projectId/derived/$derivedId"
+                    >
+                      Open
+                    </Link>
+                  )}
                 <Button
                   size="sm"
                   type="button"
@@ -167,7 +182,8 @@ export function PgTransformBuilder({
   datasetTitle: string;
   schemaId: string;
 }) {
-  const { session } = useSession(),
+  const { projectId } = useParams({ strict: false }),
+    { session } = useSession(),
     myAuthId = session === null ? undefined : session.user.id,
     rows = useQuery(derivedStore.listBySourceQueryOptions({ sourceDatasetId: schemaId })).data,
     [editing, setEditing] = useState<EditingTarget | undefined>(undefined),
@@ -184,6 +200,7 @@ export function PgTransformBuilder({
     <PgTransformList
       datasetTitle={datasetTitle}
       myAuthId={myAuthId}
+      projectId={projectId}
       rows={rows}
       onEdit={(id) => {
         setEditing({ id });

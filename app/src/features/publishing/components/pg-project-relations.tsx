@@ -16,6 +16,7 @@ import {
   SheetTitle,
 } from "@caden/ui/components/sheet";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { ArrowRight, KeyRound, Loader2, MapPinned, Plus, Sparkles, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -26,6 +27,7 @@ import type { DatasetRow } from "@/lib/store/datasets";
 import * as derivedStore from "@/lib/store/derived";
 import * as layersStore from "@/lib/store/layers";
 import type { DatasetMembershipRow } from "@/lib/store/layers";
+import * as projectsStore from "@/lib/store/projects";
 import * as relationsStore from "@/lib/store/relations";
 import type { DatasetRelationRow } from "@/lib/store/relations";
 
@@ -90,6 +92,9 @@ export function PgProjectRelationsSection({
     invalidate = (): void => {
       void queryClient.invalidateQueries({ queryKey: ["pg:relations"] });
       void queryClient.invalidateQueries({ queryKey: ["pg:derived"] });
+      // The mint now adds an OWNED membership (#289) — the shell's catalog
+      // feed must refetch too, or the Derived section misses the new row.
+      void queryClient.invalidateQueries({ queryKey: ["pg:projects", "catalog"] });
     },
     membershipsQuery = useQuery({
       ...layersStore.listDatasetMembershipsQueryOptions({ projectId }),
@@ -148,6 +153,7 @@ export function PgProjectRelationsSection({
               datasetsById={datasetsById}
               invalidate={invalidate}
               key={relation.id}
+              projectId={projectId}
               relation={relation}
             />
           ))}
@@ -178,14 +184,17 @@ function PgRelationRow({
   canEdit,
   datasetsById,
   invalidate,
+  projectId,
   relation,
 }: {
   canEdit: boolean;
   datasetsById: globalThis.Map<string, DatasetRow>;
   invalidate: () => void;
+  projectId: string;
   relation: DatasetRelationRow;
 }) {
   const [busy, setBusy] = useState<string>(),
+    navigate = useNavigate(),
     fromTitle = titleOf(datasetsById, relation.fromDataset, "Unknown dataset"),
     toTitle = titleOf(datasetsById, relation.toDataset, "Unknown dataset"),
     keyConfig =
@@ -207,7 +216,12 @@ function PgRelationRow({
         if (typeof fromKey !== "string" || typeof toKey !== "string") {
           throw new Error("This relation's key fields are missing.");
         }
-        await derivedStore.save({
+        // The registry row is the engine-level store; the OWNED catalog
+        // membership is what makes it visible ([remedies 3], #289, ADR
+        // 0027) — the same bind-at-birth posture an owned draft dataset
+        // gets. RLS denies the insert for non-editors, so a viewer can't
+        // mint an owned artifact.
+        const derivedId = await derivedStore.save({
           spec: {
             operations: [
               {
@@ -232,8 +246,18 @@ function PgRelationRow({
           status: "saved",
           title: `${fromTitle} + ${toTitle}`,
         });
-        toast.success("Derived dataset created — the join lives in the Derived section.");
+        await projectsStore.addArtifact({
+          artifactId: derivedId,
+          artifactKind: "derived",
+          projectId,
+          role: "owned",
+        });
+        toast.success("Derived dataset created — opening its joined table.");
         invalidate();
+        void navigate({
+          params: { derivedId, projectId },
+          to: "/projects/$projectId/derived/$derivedId",
+        });
       } catch (error) {
         toast.error(errorMessage(error, "Failed to create the derived dataset."));
       } finally {

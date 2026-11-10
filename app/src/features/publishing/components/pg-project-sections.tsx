@@ -212,9 +212,13 @@ export function PgProjectAnalysis() {
             {derived.map((row) => (
               <Card className="flex-row items-center gap-3 px-4 py-3" key={row.artifact.id}>
                 <Badge variant="outline">Derived</Badge>
-                <p className="min-w-0 flex-1 truncate text-sm font-medium">
+                <Link
+                  className="min-w-0 flex-1 truncate text-sm font-medium hover:underline"
+                  params={{ derivedId: row.artifact.artifactId, projectId }}
+                  to="/projects/$projectId/derived/$derivedId"
+                >
                   {titleOf(row.artifact.artifactId, "derived")}
-                </p>
+                </Link>
               </Card>
             ))}
           </div>

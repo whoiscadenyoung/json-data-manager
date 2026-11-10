@@ -31,6 +31,7 @@ the next number; superseded records stay. The one-line index:
 | 0024 | Explorers browse, projects create — cross-project reuse surfaces                | accepted    |
 | 0025 | Row-path geometry loading off the main thread (worker offload, sized takes)     | accepted    |
 | 0026 | 1-N joins collect every match as per-field arrays (`onDuplicateKey: "collect"`) | accepted    |
+| 0027 | Join outputs are project-owned derived artifacts with a joined-table route      | accepted    |
 
 ¹ The Convex-era auth/authz mechanics were archived by the Supabase
 migration (ADR 0015); the records remain as history.
