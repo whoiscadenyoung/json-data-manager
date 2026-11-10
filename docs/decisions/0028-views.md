@@ -63,11 +63,18 @@ compatibility and no migration of stored derived specs.
      Live is limited to views without spatial steps, and is read through
      the capped, viewport-scoped path that the map runtime already uses.
    - Exports are always a saved snapshot.
-4. **One engine for anything saved.** Editor step previews run in
-   Postgres with a row LIMIT. DuckDB-WASM is kept only for **Scratch
-   query**: an unsaved, local SQL pad whose "Save as view" re-validates
-   the query as Postgres SQL. This avoids dialect drift between two
-   engines.
+4. **One SQL engine: Postgres.** A TanStack Start server function
+   connects directly to Postgres as the signed-in user: it verifies the
+   token, then sets `role authenticated` and the JWT claims, so RLS applies
+   exactly as through PostgREST. It runs every query: saved runs, step
+   previews, and the **Scratch query** pad. Scratch queries are raw SQL,
+   read-only, with a timeout and a row cap; "Save as view" turns one into a
+   `sql` step without translating it. The browser never sends rows, and
+   sends SQL only through the scratch pad and `sql` steps. Those run as
+   `authenticated`, so they can reach nothing the API can't already reach.
+   The guards against expensive queries are read-only transactions, the
+   timeout and the row cap. DuckDB-WASM and the Analysis worker are
+   retired.
 5. **One editor.** The Analysis tab and the dataset Transform tab fold
    into the View editor. A relation's "Join into a table" becomes "Create
    view from relation", which pre-fills a Join step.
@@ -124,8 +131,22 @@ compatibility and no migration of stored derived specs.
 - **A node-canvas-first editor** (CARTO, ModelBuilder). It is expensive
   to build and slower for the common linear case; the graph is a read-only
   visualization in v1.
-- **Running saved views in both DuckDB-WASM and Postgres.** Two SQL
-  dialects drift apart; the browser engine is limited to scratch queries.
+- **Running SQL in both DuckDB-WASM and Postgres** (including DuckDB for
+  scratch queries only). The two SQL dialects drift apart, and a query
+  that works in the scratch pad would fail once saved.
+- **DuckDB on the server** (`@duckdb/node-api` with the Postgres
+  extension). Every input would be copied out of Postgres and the output
+  written back. It adds a native binary to the SSR build, and RLS would
+  have to be re-applied by fetching inputs as the user. It gains nothing
+  PostGIS doesn't already provide.
+- **Supabase's REST API (PostgREST) for runs.** It can only call tables
+  and existing functions, so running compiled SQL would need a "run this
+  SQL" RPC that the browser could also call. It would also be held to the
+  `authenticated` role's short timeout, and every row would cross HTTP
+  twice.
+- **Executing the step format in TypeScript** (the old derived engine).
+  It can't scale to large datasets or spatial work, and it duplicates
+  what Postgres does.
 
 ## Consequences
 
@@ -143,4 +164,5 @@ compatibility and no migration of stored derived specs.
   dataset. The rule for viewers who cannot read an input is decided in
   the design doc (§10).
 - Spatial steps are a later step kind on the same compiler, re-scoping
-  GIS 3 (#161) away from the DuckDB-WASM spatial-join plan.
+  GIS 3 (#161) away from the DuckDB-WASM spatial-join plan. DuckDB-WASM
+  leaves the app with the Analysis tab (#306).

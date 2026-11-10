@@ -19,8 +19,9 @@ design doc is the reference; this file says how to pick up the work.
   retire them.
 - **Flat output by default.** Arrays only when the user picks `list`;
   ArcGIS needs flat feature properties.
-- **One engine for anything saved** (Postgres). DuckDB-WASM is only for
-  unsaved Scratch queries.
+- **One SQL engine: Postgres**, through a server function acting as the
+  user (RLS applies). Scratch queries run there too; DuckDB-WASM is
+  retired. Users write raw SQL only in the scratch pad and `sql` steps.
 - **No templates.** Reuse means Duplicate, chaining and Extract to view.
 - **Labels live in the view and the layer**; keeping or omitting empty
   fields is the user's choice.
@@ -40,7 +41,7 @@ design doc is the reference; this file says how to pick up the work.
 | 5     | #303 labels + export profiles + tooltip defaults       | 3     | Shares the view editor with #302; coordinate or run serially |
 | 6     | #304 React Flow graphs                                 | 3     | Client-only rendering (SSR gotcha)                           |
 | 7     | #305 auto + live refresh                               | 3     |                                                              |
-| 8     | #306 Scratch query + retire Analysis tab               | 3     |                                                              |
+| 8     | #306 server Scratch query + retire Analysis/DuckDB     | 3     |                                                              |
 | 9     | #307 Duplicate / remap / Extract                       | 4     |                                                              |
 | Later | #161 re-scoped: spatial steps on the views compiler    | 4     | Not filed as a views issue yet                               |
 

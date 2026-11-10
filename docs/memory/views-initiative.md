@@ -28,8 +28,10 @@ could provide cleanly.
 - Joins on names (with normalization and a manual key map) are a
   requirement, because users often don't have codes.
 - Reuse means Duplicate, chaining and Extract to view; no templates.
-- Saved views use Postgres only; DuckDB-WASM is only for unsaved Scratch
-  queries.
+- One SQL engine: Postgres, through a TanStack Start server function that
+  connects directly as the user (RLS). Supabase's REST API can't run the
+  compiled SQL. Scratch queries run there too; DuckDB-WASM is retired
+  (owner chose this 2026-11-10).
 - Remedies 4–8 (#290–#294) are deferred behind Views, not dropped. #290's live requirements (draft inputs, title-based names, visible renames) are on #299/#300/#301/#303; #291–#294 resume after Views.
 
 Related: [[derived-datasets-brainstorm]], [[analysis-layer-design]],

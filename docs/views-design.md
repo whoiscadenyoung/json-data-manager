@@ -57,7 +57,7 @@ Recorded in [ADR 0028](decisions/0028-views.md); summarized here:
 | D1  | A View is a dataset (`datasets.kind = 'view'`); the derived registry is dropped                                                                         |
 | D2  | Steps compile to one Postgres SQL statement (CTEs) and run in Postgres/PostGIS                                                                          |
 | D3  | Runs save their output into the view's rows; refresh modes are `manual` (default, with a stale badge), `auto` and `live`; exports always use a snapshot |
-| D4  | Previews run in Postgres with a LIMIT; DuckDB-WASM is only for unsaved Scratch queries                                                                  |
+| D4  | One SQL engine: a server function runs runs, previews and Scratch queries in Postgres as the user (RLS); DuckDB-WASM is retired                         |
 | D5  | The Analysis and Transform tabs fold into the View editor; a relation's "Join into a table" becomes "Create view from relation"                         |
 | D6  | Relations stay for related records without a joined field; a Join step can be seeded from one                                                           |
 | D7  | Reuse by Duplicate (with input remap), chaining, and Extract to view; no templates                                                                      |
@@ -313,9 +313,13 @@ run.
   - _View step graph_: inputs → steps → output, with sub-pipelines as
     branches. It stays in sync with the step list (selecting a node
     selects the step). Read-only in v1.
-- **Scratch query**: a DuckDB-WASM SQL pad over loaded rows, unsaved. It
-  replaces the Analysis tab. "Save as view" creates a view with one
-  `sql` step after validating it as Postgres SQL.
+- **Scratch query**: a raw SQL pad over the project's datasets and views,
+  unsaved, replacing the Analysis tab. It runs on the server in Postgres
+  through the preview path: read-only, as the user (RLS), with a timeout
+  and a row cap. Datasets are exposed by name as CTEs (the same input CTE
+  layout the compiler uses), so the SQL a user writes is the SQL a `sql`
+  step will run. "Save as view" creates a view with one `sql` step, with
+  no dialect translation.
 - **Export profiles** on a view: format (GeoJSON first, then CSV and
   JSON), property names (keys or labels), empty fields (keep or omit) and
   coordinate precision. The editor warns when a key is not a valid ArcGIS
