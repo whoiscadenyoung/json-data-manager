@@ -8,22 +8,25 @@ Where the #273 test-pass work stands and how to finish it. Companion to
 
 - **Merged 2026-11-10**: PR #285 (`088173d`) — the eight bounded fixes
   (#272 #274 #275 #276 #278 + bounded parts of #281 #282 #284).
-- **[remedies 1] (#287) landed 2026-11-10** (branch
-  `feat/remedies-1-row-path-worker`, ADR 0025): the row-path parse moved
-  into a web worker (`pg-geometry-rows.worker.ts` + `-client.ts`; rows
-  cross as parsed geometry via `geometryResolved`), the build worker's
-  fetch is take-sized, and the tile pipeline got a drafts-inclusive feed
-  (`tileWatchSummariesQueryOptions`). Verified live on the grant stack:
-  the Planning map loads responsively with the pill throughout, and ALL
-  FOUR big polygon datasets now have installed archives and render via
-  PMTiles (built_v = cache_v for 0093bbbd/7773e857/c23e38aa/199abd77).
+- **[remedies 1] (#287) MERGED 2026-11-10** (PR #295, main @ `c828a16`,
+  ADR 0025): the row-path parse moved into a web worker
+  (`pg-geometry-rows.worker.ts` + `-client.ts`; rows cross as parsed
+  geometry via `geometryResolved`), the build worker's fetch is
+  take-sized (`geometryTakeRowsFor`), and the tile pipeline got a
+  drafts-inclusive feed (`tileWatchSummariesQueryOptions`). Verified
+  live on the grant stack: the Planning map loads responsively with the
+  pill throughout, and ALL FOUR big polygon datasets now have installed
+  archives and render via PMTiles (built_v = cache_v for
+  0093bbbd/7773e857/c23e38aa/199abd77). CI full gate green on dispatch;
+  the one CI-only fix (cb73999) was the stage-3 `#/env` mock in the new
+  test (bun auto-loads .env.local locally, CI doesn't).
 - **Why the archives never built — three stacked causes**, found live
-  2026-11-10 (all fixed on the #287 branch):
+  2026-11-10 (all fixed by #287):
   1. `install_tile_archive` demanded the bucket-QUALIFIED path
      (`tile-archives/<id>/…`) while uploads/storage/reads all use the
      bucket-RELATIVE convention — every install raised; the #184 backoff
      plateau retried forever, leaking an orphan object per attempt
-     (214 objects ≈ 1.9 GB for bench-20k alone). Fixed by migration 0026.
+     (248 objects ≈ 2.1 GB when swept 2026-11-10). Fixed by migration 0026.
   2. The tile manager's feed (`listSummaries`) is published-only, and the
      four big datasets are `lifecycle='draft'` (#276 posture) — they were
      never scheduled at all. Fixed by `tileWatchSummariesQueryOptions`
