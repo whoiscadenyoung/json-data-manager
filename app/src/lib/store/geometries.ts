@@ -411,6 +411,8 @@ export interface TileDatasetInfo {
   featureCount: number;
   geometryType: DatasetGeometryType | null;
   isGeospatial: boolean;
+  /** The dataset's largest geometry row in bytes (the #183 take-sizing estimate); null when never backfilled. */
+  maxGeometryRowBytes: number | null;
   mapTileCacheVersion: number;
 }
 
@@ -427,7 +429,7 @@ export async function tileDatasetInfo(
     clientOf(options)
       .from("datasets")
       .select(
-        "isGeospatial:is_geospatial,geometryType:geometry_type,featureCount:feature_count,mapTileCacheVersion:map_tile_cache_version",
+        "isGeospatial:is_geospatial,geometryType:geometry_type,featureCount:feature_count,maxGeometryRowBytes:max_geometry_row_bytes,mapTileCacheVersion:map_tile_cache_version",
       )
       .eq("id", args.datasetId)
       .limit(1),

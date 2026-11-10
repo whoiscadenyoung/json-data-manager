@@ -27,7 +27,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./pg-tile-archives-react", () => ({
-  usePgDatasetSummaries: () => undefined,
+  usePgTileDatasetSummaries: () => undefined,
   usePgTileArchiveMetas: () => mocks.pgMetas,
 }));
 

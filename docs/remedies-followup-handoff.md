@@ -6,11 +6,35 @@ Where the #273 test-pass work stands and how to finish it. Companion to
 
 ## Where things stand
 
-- **PR #285** (`fixes/testing-remedies`): the eight bounded fixes (#272 #274
-  #275 #276 #278 + bounded parts of #281 #282 #284). Fast checks green
-  (~6 min), local full gate green (1219/1219 on a CI-parity db), in-browser
-  verified against the grant project. Awaiting merge; merging runs the full
-  gate on main automatically.
+- **Merged 2026-11-10**: PR #285 (`088173d`) — the eight bounded fixes
+  (#272 #274 #275 #276 #278 + bounded parts of #281 #282 #284).
+- **[remedies 1] (#287) landed 2026-11-10** (branch
+  `feat/remedies-1-row-path-worker`, ADR 0025): the row-path parse moved
+  into a web worker (`pg-geometry-rows.worker.ts` + `-client.ts`; rows
+  cross as parsed geometry via `geometryResolved`), the build worker's
+  fetch is take-sized, and the tile pipeline got a drafts-inclusive feed
+  (`tileWatchSummariesQueryOptions`). Verified live on the grant stack:
+  the Planning map loads responsively with the pill throughout, and ALL
+  FOUR big polygon datasets now have installed archives and render via
+  PMTiles (built_v = cache_v for 0093bbbd/7773e857/c23e38aa/199abd77).
+- **Why the archives never built — three stacked causes**, found live
+  2026-11-10 (all fixed on the #287 branch):
+  1. `install_tile_archive` demanded the bucket-QUALIFIED path
+     (`tile-archives/<id>/…`) while uploads/storage/reads all use the
+     bucket-RELATIVE convention — every install raised; the #184 backoff
+     plateau retried forever, leaking an orphan object per attempt
+     (214 objects ≈ 1.9 GB for bench-20k alone). Fixed by migration 0026.
+  2. The tile manager's feed (`listSummaries`) is published-only, and the
+     four big datasets are `lifecycle='draft'` (#276 posture) — they were
+     never scheduled at all. Fixed by `tileWatchSummariesQueryOptions`
+     (RLS-scoped, no lifecycle gate) + `usePgTileDatasetSummaries`.
+  3. The row path itself froze the main thread (ADR 0025's worker
+     offload). Also verified in isolation: FY22's 450 features build a
+     18.8 MB archive in ~34 s — the build math was never the problem.
+     Residual: `bench-20k-points` still shows built_v NULL (its next backoff
+     attempt should install under 0026; a benchmark dataset, not tracked).
+- **Train filed 2026-11-10**: umbrella #286 + #287–#294 (ordered
+  sub-issues for the remainder below), mapped onto #272–#284.
 - **Merged 2026-11-09**: #273 (project workspace shell, `d86607a`) + its
   perf-test repairs (`e854b51` bulk teardown, `e5ae15a` phase marks + 240 s
   budget) + the CI cost split (`8d90ad2`).

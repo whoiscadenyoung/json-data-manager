@@ -1,7 +1,11 @@
 import type { GeometryType } from "@caden/json-cms/react";
 
 import type { DatasetEntryRow, DatasetGeometryRow } from "#/lib/dataset-rows";
-import type { DatasetSummaryRow, DatasetBoundingBox } from "#/lib/store/datasets";
+import type {
+  DatasetSummaryRow,
+  DatasetBoundingBox,
+  DatasetGeometryType,
+} from "#/lib/store/datasets";
 import type { DerivedDatasetSummaryRow } from "#/lib/store/derived";
 import type { EntryRow } from "#/lib/store/entries";
 import type { GeometryRow } from "#/lib/store/geometries";
@@ -143,6 +147,37 @@ export function pgGeometryToLayerRow(
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the PG type union allows "GeometryCollection"; the app never writes one (the store's note), and the pipeline's GeometryType-typed readers would drop it otherwise (the `asBoundingBox` posture).
     type: row.type as GeometryType,
     ...(resolvedGeometry === undefined ? {} : { geometryJson: JSON.stringify(resolvedGeometry) }),
+  };
+}
+
+/**
+ * The row-path WORKER's row as a seam row (ADR 0025's hand-off shape,
+ * [remedies 1]): same re-keying rule as {@link pgGeometryToLayerRow}, but
+ * the parsed geometry crosses the worker boundary as an OBJECT
+ * (`geometryResolved` — the structured clone is the only remaining copy)
+ * instead of a `geometryJson` string, so nothing on the main thread ever
+ * stringifies or re-parses a coordinate payload. A row whose payload failed
+ * to resolve carries neither field and renders nowhere — the per-row catch
+ * posture the seam has always had.
+ */
+export interface PgResolvedGeometryRow extends DatasetGeometryRow {
+  /** The parsed GeoJSON (worker-resolved); absent when resolution failed. */
+  geometryResolved?: unknown;
+}
+
+/** One `PgGeometryWorkerRow` + its dataset as the seam row the pipeline consumes. */
+export function pgWorkerRowToLayerRow(
+  row: { entryId: string; geometry?: unknown; type: DatasetGeometryType },
+  datasetId: string,
+): PgResolvedGeometryRow {
+  return {
+    _creationTime: 0,
+    _id: row.entryId,
+    entryId: row.entryId,
+    schemaId: datasetId,
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the same "never written app-side" narrowing as `pgGeometryToLayerRow`'s.
+    type: row.type as GeometryType,
+    ...(row.geometry === undefined ? {} : { geometryResolved: row.geometry }),
   };
 }
 

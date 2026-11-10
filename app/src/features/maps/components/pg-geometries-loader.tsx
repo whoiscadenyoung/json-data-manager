@@ -1,34 +1,40 @@
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import type { DatasetGeometryRow } from "#/lib/dataset-rows";
-import { applyGeometryRowSpecs, resolveGeometryRows } from "#/lib/dataset-rows-pg";
-import { rowsForTiles, type GeometryRow } from "#/lib/store/geometries";
 
-import { pgGeometryToLayerRow } from "./pg-layer-rows";
+import { loadPgGeometryRows, subscribePgGeometryRows } from "../lib/pg-geometry-rows-client";
+import type { PgGeometryRowsWorkerOutbound } from "../lib/pg-geometry-rows.worker";
+import { pgWorkerRowToLayerRow, type PgResolvedGeometryRow } from "./pg-layer-rows";
 
 /**
- * The Postgres half of the workspace's geometry fan-out — the
- * `useGeometriesBySchemas` pattern (the Convex seam's reactive loader)
- * running on the PG store: one component per dataset, each PAGING the
- * dataset's geometry rows through `dataset_rows_for_tiles` (design §5.5 —
- * the one read that pulls coordinate payloads, "reserved for map
- * rendering"), RESOLVING them (inline jsonb synchronously; storage-backed
- * rows through short-lived signed URLs — `resolveGeometryRows`, the seam's
- * resolution half), adapting each row into the pipeline's
- * `DatasetGeometryRow` shape (`pgGeometryToLayerRow`), and reporting
- * progress up exactly like the Convex loader: partial rows stream as pages
- * land, `complete` only after a full pass (cursor-chained to exhaustion —
- * `nextCursor === null`).
+ * The Postgres half of the workspace's geometry fan-out ([remedies 1] /
+ * #287 edition) — the `useGeometriesBySchemas` pattern (the seam's reactive
+ * loader), now riding the row-path WORKER
+ * (`../lib/pg-geometry-rows.worker.ts`): one component per dataset, each
+ * driving the worker's cursor-chained pass over `dataset_rows_for_tiles`
+ * (design §5.5 — the one read that pulls coordinate payloads), with
+ * paging, signed-URL payload fetches, and parsing ALL off the main thread.
+ * Pages arrive as PARSED geometry objects (structured clone across
+ * `postMessage` — ADR 0025's hand-off; the superseded path paid a
+ * main-thread `res.json()` per page, a per-row `JSON.stringify` into
+ * `geometryJson`, and a per-row re-parse in `useResolvedGeometries`).
  *
- * Spec application rides the seam's `applyGeometryRowSpecs` (identity until
- * stage 5's geometrySource specs exist) — the same step the Convex loader
- * applies, so a future spec transform lands in both backends at once.
+ * The report contract is unchanged: partial rows stream as pages land
+ * (trailing-edge debounced, the #186 rule — one source rebuild per
+ * report), `complete` only after a full pass (cursor-chained to
+ * exhaustion — `nextCursor === null`), latching on the first finished
+ * pass so a mounted map never re-skeletons across background re-reads.
  *
- * Resolution is CACHED across pages in a ref (only rows that haven't
- * resolved yet hit Storage again), so a streaming pass signs each oversized
- * payload once.
+ * The TanStack query wrapper exists for its CACHE/invalidation semantics,
+ * not its data: the key is unchanged
+ * (`["pg:geometries","rowsForTiles",…]`), so the entry form's
+ * `invalidateQueries({ queryKey: ["pg:geometries"] })` re-runs the pass
+ * after an edit exactly as it re-paged the old `useInfiniteQuery`.
+ * `runId` tokens (per queryFn run) drop stragglers from a superseded
+ * pass: the worker aborts the old run between pages, and any page that
+ * slipped out before the abort carried the old token.
  */
 
 /** Minimum gap between partial-pass reports from one loader (the #186 rule — one source rebuild per report). */
@@ -40,16 +46,15 @@ export interface PgGeometriesReport {
   rows: DatasetGeometryRow[];
 }
 
-/** The loader's page width — the tile feed's default (§5.5), not a reactive-layer width. */
+/** The loader's page width — the tile feed's default (§5.5), not a reactive-layer width. The worker sizes the ACTUAL take per dataset by `maxGeometryRowBytes` (#183). */
 export const PG_LOADER_PAGE_ROWS = 5000;
 
 /**
- * Loads one PG dataset's geometry rows (every page of the tile feed) and
- * reports progress up via `onLoaded` as it arrives. Renders nothing.
- *
- * Cursor chaining + completeness latching mirror `SchemaGeometriesLoader`
+ * Loads one PG dataset's geometry rows (the worker streams every page of
+ * the tile feed) and reports progress up via `onLoaded` as it arrives.
+ * Renders nothing. Completeness latching mirrors `SchemaGeometriesLoader`
  * (dataset-rows-react): `complete` flips on the first finished pass and
- * stays up across background re-reads, so a mounted map never re-skeletons.
+ * stays up, so a mounted map never re-skeletons.
  */
 export function PgGeometriesLoader({
   datasetId,
@@ -58,127 +63,97 @@ export function PgGeometriesLoader({
   datasetId: string;
   onLoaded: (datasetId: string, report: PgGeometriesReport | undefined) => void;
 }) {
-  const page = useInfiniteQuery({
-      queryKey: ["pg:geometries", "rowsForTiles", { datasetId, limit: PG_LOADER_PAGE_ROWS }],
-      queryFn: async ({ pageParam }) =>
-        await rowsForTiles({ cursor: pageParam, datasetId, limit: PG_LOADER_PAGE_ROWS }),
-      initialPageParam: null as string | null,
-      // null = exhausted (the `isDone` analogue, design §5 intro).
-      getNextPageParam: (lastPage) => lastPage.nextCursor,
-    }),
+  const rowsRef = useRef<PgResolvedGeometryRow[]>([]),
     completedRef = useRef(false),
-    cancelledRef = useRef(false),
     lastReportRef = useRef(0),
-    rowsRef = useRef<GeometryRow[]>([]),
-    resolvedRef = useRef<globalThis.Map<string, unknown>>(new globalThis.Map()),
+    runIdRef = useRef(0),
     timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
-  // Auto-page: chain the next cursor while the feed has one (design §5.5's
-  // keyset). The paging machinery — and its load-more callback — is
-  // TanStack's `useInfiniteQuery`, the exact shape the Convex path hides
-  // inside `useAllPaginated`'s load-more effect (all-paginated.ts:111-115).
+  // The component-lifetime subscription: routes worker events for this
+  // dataset into accumulation + reporting, dropping any whose runId isn't
+  // the live pass's (a superseded run's straggler).
   useEffect(() => {
-    if (page.hasNextPage && !page.isFetchingNextPage) {
-      void page.fetchNextPage();
-    }
-  }, [page]);
-
-  // Accumulate rows + resolutions, then report (trailing-edge debounced for
-  // partial passes; immediate on completion and re-reads). `page.data` is
-  // the query cache's stable reference, so this re-runs per PAGE arrival,
-  // not per render.
-  useEffect(() => {
-    const data = page.data;
-    if (data === undefined) {
-      return undefined;
-    }
-    const pages = data.pages;
-    cancelledRef.current = false;
-    if (!page.hasNextPage) {
-      completedRef.current = true;
-    }
-    const fetched: GeometryRow[] = [],
-      existingIds = new Set(rowsRef.current.map((row) => row.entryId));
-    for (const onePage of pages) {
-      for (const row of onePage.rows) {
-        if (!existingIds.has(row.entryId)) {
-          existingIds.add(row.entryId);
-          fetched.push(row);
-        }
-      }
-    }
-    rowsRef.current = dedupeById([...rowsRef.current, ...fetched]);
-    const work = async () => {
-      await resolveFreshRows(fetched, resolvedRef);
-      if (cancelledRef.current) {
+    const report = (event: PgGeometryRowsWorkerOutbound) => {
+      if (event.type !== "page" && event.type !== "load-error") {
         return;
       }
-      const resolvedMap = resolvedRef.current,
-        rows = applyGeometryRowSpecs(rowsRef.current).map((row) =>
-          pgGeometryToLayerRow(
-            row,
-            resolvedMap === null ? undefined : resolvedMap.get(row.entryId),
-          ),
-        );
-      const flush = () => {
-        lastReportRef.current = Date.now();
-        onLoaded(datasetId, { complete: completedRef.current, rows });
-      };
+      if (event.runId !== runIdRef.current) {
+        return;
+      }
+      if (event.type === "load-error") {
+        // Parity with the old query-error behavior: the pass dies, the
+        // loader never reports, the map's loading gates hold. The worker
+        // logged nothing here — the console is the surface.
+        console.error(`[pg-geometry-rows] ${datasetId}: ${event.message}`);
+        return;
+      }
+      const mapped = event.rows.map((row) => pgWorkerRowToLayerRow(row, datasetId));
+      rowsRef.current = [...rowsRef.current, ...mapped];
+      if (event.nextCursor === null) {
+        completedRef.current = true;
+      }
+      const rows = rowsRef.current,
+        complete = completedRef.current,
+        flush = () => {
+          lastReportRef.current = Date.now();
+          onLoaded(datasetId, { complete, rows });
+        };
       const wait = lastReportRef.current + GEOMETRY_REPORT_INTERVAL_MS - Date.now();
-      if (completedRef.current || wait <= 0) {
+      if (complete || wait <= 0) {
         flush();
         return;
       }
       const timer = setTimeout(() => {
-        if (!cancelledRef.current) {
-          flush();
-        }
+        flush();
       }, wait);
       timersRef.current.push(timer);
     };
-    void work();
+    const unsubscribe = subscribePgGeometryRows(datasetId, report);
     return () => {
-      cancelledRef.current = true;
+      unsubscribe();
       for (const timer of timersRef.current) {
         clearTimeout(timer);
       }
       timersRef.current = [];
     };
-  }, [datasetId, onLoaded, page.data, page.hasNextPage]);
+  }, [datasetId, onLoaded]);
+
+  // The invalidation carrier: the key is the OLD useInfiniteQuery's, so
+  // existing `invalidateQueries({ queryKey: ["pg:geometries"] })` calls
+  // re-run the pass. Each run resets accumulation (fresh rows underneath)
+  // — but NOT the completeness latch (a re-read must not re-skeleton a
+  // mounted map; the latch keeps its first-pass value).
+  useQuery({
+    queryKey: ["pg:geometries", "rowsForTiles", { datasetId, limit: PG_LOADER_PAGE_ROWS }],
+    queryFn: async ({ signal }) => {
+      runIdRef.current += 1;
+      rowsRef.current = [];
+      loadPgGeometryRows(datasetId, runIdRef.current);
+      return await new Promise<void>((resolve, reject) => {
+        const expected = runIdRef.current,
+          unsubscribe = subscribePgGeometryRows(datasetId, (event) => {
+            if (
+              (event.type === "page" && event.nextCursor === null && event.runId === expected) ||
+              (event.type === "load-error" && event.runId === expected)
+            ) {
+              unsubscribe();
+              if (event.type === "load-error") {
+                reject(new Error(event.message));
+              } else {
+                resolve();
+              }
+            }
+          });
+        signal.addEventListener("abort", () => {
+          unsubscribe();
+          reject(new Error("Geometry pass cancelled."));
+        });
+      });
+    },
+    refetchOnWindowFocus: false,
+  });
 
   return null;
-}
-
-/** Rows keyed by entry id, first occurrence wins (a re-read page must not duplicate a row). */
-function dedupeById(rows: GeometryRow[]): GeometryRow[] {
-  const seen = new Set<string>(),
-    kept: GeometryRow[] = [];
-  for (const row of rows) {
-    if (!seen.has(row.entryId)) {
-      seen.add(row.entryId);
-      kept.push(row);
-    }
-  }
-  return kept;
-}
-
-/** Resolves the rows that have no cached resolution yet into the ref's map (inline rows resolve synchronously; storage rows fetch). */
-async function resolveFreshRows(
-  freshRows: GeometryRow[],
-  resolvedRef: React.RefObject<globalThis.Map<string, unknown>>,
-): Promise<void> {
-  const resolvedMap = resolvedRef.current;
-  if (resolvedMap === null) {
-    return;
-  }
-  const pending = freshRows.filter((row) => !resolvedMap.has(row.entryId));
-  if (pending.length === 0) {
-    return;
-  }
-  const resolved = await resolveGeometryRows(pending);
-  for (const [entryId, geometry] of resolved) {
-    resolvedMap.set(entryId, geometry);
-  }
 }
 
 /**
