@@ -36,6 +36,10 @@ export function emptyBuilderOperation(): BuilderOperation {
     kind: "lookup",
     lookupDatasetId: NO_COLUMN,
     lookupKey: NO_COLUMN,
+    // New joins collect by default (ADR 0026): a 1-N relation must not
+    // silently lose rows — the picker writes the policy explicitly, and
+    // legacy specs keep their stored "first" (the reader maps it).
+    onDuplicateKey: "collect",
   };
 }
 
@@ -116,9 +120,12 @@ function builderOperationFromRecord(
     onDuplicateKey:
       operation.onDuplicateKey === "error" ||
       operation.onDuplicateKey === "first" ||
-      operation.onDuplicateKey === "last"
-        ? operation.onDuplicateKey
-        : undefined,
+      operation.onDuplicateKey === "last" ||
+      operation.onDuplicateKey === "collect"
+        ? // Legacy specs stored no policy (the engine's "first" default);
+          // collect joins always carry it explicitly (ADR 0026).
+          operation.onDuplicateKey
+        : "first",
   });
 }
 
@@ -172,9 +179,14 @@ export function matchStatLine(diagnostics: LookupDiagnostics, baseKey: string): 
   }
   const percent = Math.round((diagnostics.matchedRows / diagnostics.totalSourceRows) * 100);
   const base = `${percent}% matched; ${diagnostics.unmatchedRows} orphan ${baseKey}`;
-  // #282: a keeping duplicate policy silently drops lookup rows that share a
-  // key (1-N: one award, several corridors) — the stats say so explicitly
-  // instead of the numbers quietly disagreeing with the source.
+  // The stats say which duplicate policy ran and what it did (the #282
+  // visibility rule): a keeping policy drops the extras, collect keeps them
+  // as arrays (ADR 0026). Exactly one of the two counts is non-zero.
+  if (diagnostics.collectedLookupRows > 0) {
+    return `${base}; ${diagnostics.collectedLookupRows} duplicate lookup row${
+      diagnostics.collectedLookupRows === 1 ? "" : "s"
+    } collected into arrays (1-N)`;
+  }
   if (diagnostics.droppedLookupRows > 0) {
     return `${base}; ${diagnostics.droppedLookupRows} duplicate lookup row${
       diagnostics.droppedLookupRows === 1 ? "" : "s"

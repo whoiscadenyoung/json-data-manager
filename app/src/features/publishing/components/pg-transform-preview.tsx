@@ -299,5 +299,14 @@ function previewCell(value: unknown): string {
   if (typeof value === "number" || typeof value === "boolean") {
     return String(value);
   }
+  // A collect-join's enrichment (ADR 0026) lands as per-field arrays: the
+  // preview joins them readably, object cells still stringify.
+  if (Array.isArray(value)) {
+    return value
+      .map((cell) =>
+        cell !== null && typeof cell === "object" ? JSON.stringify(cell) : String(cell),
+      )
+      .join(", ");
+  }
   return JSON.stringify(value);
 }

@@ -516,7 +516,7 @@ export function PolicySelects({
   index: number;
   match: "inner" | "left" | undefined;
   onChange: (patch: Partial<BuilderOperation>) => void;
-  onDuplicateKey: "error" | "first" | "last" | undefined;
+  onDuplicateKey: "collect" | "error" | "first" | "last" | undefined;
 }) {
   return (
     <div className="grid gap-4 sm:grid-cols-2">
@@ -540,15 +540,22 @@ export function PolicySelects({
       <div className="flex flex-col gap-2">
         <Label htmlFor={`transform-dupes-${index}`}>Duplicate keys in the lookup</Label>
         <Select
-          value={onDuplicateKey ?? "first"}
+          value={onDuplicateKey ?? "collect"}
           onValueChange={(next) => {
-            onChange({ onDuplicateKey: next === "last" || next === "error" ? next : undefined });
+            // "first" is the engine's omitted-field default — a legacy spec's
+            // round trip stays byte-stable by omitting it; every other choice
+            // is written explicitly (ADR 0026: collect is the new-join
+            // default, never a silent fallback).
+            onChange({
+              onDuplicateKey: next === "first" ? undefined : (next as "collect" | "last" | "error"),
+            });
           }}
         >
           <SelectTrigger id={`transform-dupes-${index}`} className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value="collect">Collect every match (1-N arrays)</SelectItem>
             <SelectItem value="first">Keep the first match</SelectItem>
             <SelectItem value="last">Keep the last match</SelectItem>
             <SelectItem value="error">Treat as an error</SelectItem>

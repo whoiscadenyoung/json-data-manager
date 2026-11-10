@@ -28,7 +28,9 @@
  * - **Duplicate-key policy.** §6 demands this be decided, not implicit:
  *   several lookup rows sharing one normalized key resolve per
  *   `onDuplicateKey` — "first" (default) keeps the first, "last" the last,
- *   "error" rejects the whole call with `LookupKeyConflictError`.
+ *   "error" rejects the whole call with `LookupKeyConflictError`, "collect"
+ *   keeps them ALL as per-field arrays (the non-lossy 1-N answer, ADR 0026
+ *   / #288 — row count unchanged, unmatched rows still land null).
  * - **Namespacing.** Enrichment lands as `<namespace>.<field>` (default
  *   namespace: the lookup dataset id — see `LookupOperation.namespace`),
  *   so exports and popup labels stay unambiguous (§6). When a base row
@@ -97,9 +99,17 @@ export interface LookupDiagnostics {
    * Lookup-side rows that lost the duplicate-key policy ("first" keeps the
    * first row per key, "last" keeps the last — every other row sharing a
    * key drops). 1-N lookups (one award, several corridors) lose rows here
-   * silently, so the preview stats surface the count (#282).
+   * silently, so the preview stats surface the count (#282). Always 0
+   * under "collect" and "error".
    */
   droppedLookupRows: number;
+  /**
+   * Lookup-side rows "collect" kept BEYOND each key's first (exactly the
+   * rows "first" would drop — the 1-N loss signal, preserved instead:
+   * ADR 0026 / #288). Always 0 under the keeping policies and "error", so
+   * the preview's stat line can say which policy ran and what it did.
+   */
+  collectedLookupRows: number;
 }
 
 /** The result of one `applyLookup` call: fresh rows plus match-rate diagnostics. */
@@ -128,19 +138,43 @@ export class LookupKeyConflictError extends Error {
 /**
  * One index entry per normalized lookup key, resolved per the op's
  * duplicate-key policy (§6): "first" keeps the first row per key, "last"
- * overwrites, "error" rejects the whole lookup. Keyless lookup rows are
- * never indexed — they can match nothing, by design.
+ * overwrites, "error" rejects the whole lookup, "collect" keeps them all
+ * (the non-lossy 1-N answer, ADR 0026 — the enrichment turns per-field
+ * arrays). Keyless lookup rows are never indexed — they can match nothing,
+ * by design.
  */
 function buildKeyMap(
   operation: LookupOperation,
   lookupRows: readonly Record<string, unknown>[],
-): { map: Map<string, Record<string, unknown>>; droppedLookupRows: number } {
+): {
+  collectedLookupRows: number;
+  droppedLookupRows: number;
+  map: Map<string, Record<string, unknown>>;
+  /** Populated only under "collect" (ADR 0026); undefined under the other policies. */
+  rowsMap: Map<string, Record<string, unknown>[]> | undefined;
+} {
   const policy = operation.onDuplicateKey ?? "first",
-    byKey = new Map<string, Record<string, unknown>>();
-  let droppedLookupRows = 0;
+    byKey = new Map<string, Record<string, unknown>>(),
+    // Only populated under "collect" — the keeping policies never consult
+    // it, and building both unconditionally would double every index.
+    rowsByKey = policy === "collect" ? new Map<string, Record<string, unknown>[]>() : undefined;
+  let droppedLookupRows = 0,
+    collectedLookupRows = 0;
   for (const row of lookupRows) {
     const key = normalizeKey(row[operation.lookupKey]);
     if (key === undefined) {
+      continue;
+    }
+    if (rowsByKey !== undefined) {
+      const bucket = rowsByKey.get(key);
+      if (bucket === undefined) {
+        rowsByKey.set(key, [row]);
+      } else {
+        bucket.push(row);
+        // The rows beyond each key's first are exactly what "first" would
+        // drop — the preserved 1-N loss signal (ADR 0026).
+        collectedLookupRows += 1;
+      }
       continue;
     }
     const indexed = byKey.get(key);
@@ -160,7 +194,7 @@ function buildKeyMap(
       byKey.set(key, row);
     }
   }
-  return { map: byKey, droppedLookupRows };
+  return { collectedLookupRows, droppedLookupRows, map: byKey, rowsMap: rowsByKey };
 }
 
 /**
@@ -210,6 +244,28 @@ function enrichmentFor(
   return enrichment;
 }
 
+/**
+ * The namespaced enrichment for one source row under "collect" (ADR 0026):
+ * each field lands as an array of the matched rows' values, in lookup-table
+ * order. Every match contributes a cell — null when its row lacks the
+ * field — so the per-field arrays stay ALIGNED per match (a popup reading
+ * `Ns.Corridor_Name[i]` alongside `Ns.Corridor_Status[i]` reads one match).
+ * An unmatched row gets null (not an empty array) — the §6 "null enriched
+ * fields" literal, same as the keeping policies.
+ */
+function collectEnrichmentFor(
+  namespace: string,
+  fields: readonly string[],
+  matches: readonly Record<string, unknown>[] | undefined,
+): Record<string, unknown> {
+  const enrichment: Record<string, unknown> = {};
+  for (const field of fields) {
+    enrichment[`${namespace}.${field}`] =
+      matches === undefined ? null : matches.map((match) => ownCellOf(match, field));
+  }
+  return enrichment;
+}
+
 /** The row's OWN cell under `field`, null when the row is unmatched, lacks it, or only INHERITS it (`Object.hasOwn` — an inherited `constructor` is not data, #133 item 13). */
 function ownCellOf(row: Record<string, unknown> | undefined, field: string): unknown {
   if (row === undefined || !Object.hasOwn(row, field)) {
@@ -251,6 +307,48 @@ function geometryReferenceOf(
 }
 
 /**
+ * One source row's matches, resolved per the op's policy: `matches` (the
+ * collect bucket) is populated only under "collect", `matched` (the single
+ * keeping-policy row, or the collect bucket's FIRST row for the geometry
+ * reference) only when something matched. Undefined `matched` = no match.
+ */
+interface ResolvedMatches {
+  matched: Record<string, unknown> | undefined;
+  matches: readonly Record<string, unknown>[] | undefined;
+}
+
+/** The keeping policies' single-row resolution (buildKeyMap's `map`). */
+function keepingMatchOf(
+  key: string | undefined,
+  byKey: Map<string, Record<string, unknown>>,
+): ResolvedMatches {
+  const matched = key === undefined ? undefined : byKey.get(key);
+  return { matched, matches: undefined };
+}
+
+/** The collect policy's bucket resolution (buildKeyMap's `rowsMap`, ADR 0026). */
+function collectMatchOf(
+  key: string | undefined,
+  rowsByKey: Map<string, Record<string, unknown>[]> | undefined,
+): ResolvedMatches {
+  const matches = key === undefined || rowsByKey === undefined ? undefined : rowsByKey.get(key),
+    matched = matches === undefined ? undefined : matches[0];
+  return { matched, matches };
+}
+
+/** The namespaced enrichment one resolved row gets — collect arrays vs the keeping policies' single cells (ADR 0026). */
+function enrichmentOf(
+  namespace: string,
+  fields: readonly string[],
+  resolved: ResolvedMatches,
+  collect: boolean,
+): Record<string, unknown> {
+  return collect
+    ? collectEnrichmentFor(namespace, fields, resolved.matches)
+    : enrichmentFor(namespace, fields, resolved.matched);
+}
+
+/**
  * Applies one lookup operation (§4.1): enrich `sourceRows` with namespaced
  * fields from `lookupRows` — many-to-one, per the op's match, duplicate-key
  * and namespacing policies documented on `LookupOperation` and in the
@@ -271,6 +369,12 @@ export function applyLookup<R extends Record<string, unknown>>(
     fields = enrichmentFields(operation, lookupRows),
     keyed = buildKeyMap(operation, lookupRows),
     byKey = keyed.map,
+    // "collect" (ADR 0026): the non-lossy 1-N policy — every match's fields
+    // land as per-field arrays and the row count never changes. The
+    // geometry rule reads the FIRST matched row (the references stay
+    // one-per-output-row; a collect join wanting a specific match's
+    // geometry should use a keeping policy instead).
+    collect = keyed.rowsMap !== undefined,
     matchPolicy = operation.match ?? "left",
     geometry = geometrySource,
     references = geometry === undefined ? undefined : ([] as unknown[]),
@@ -286,10 +390,12 @@ export function applyLookup<R extends Record<string, unknown>>(
   for (const row of sourceRows) {
     const rawKey = row[operation.baseKey],
       key = normalizeKey(rawKey),
-      matched = key === undefined ? undefined : byKey.get(key);
+      { matches, matched } = collect
+        ? collectMatchOf(key, keyed.rowsMap)
+        : keepingMatchOf(key, byKey);
     if (matched !== undefined) {
       matchedRows += 1;
-      rows.push({ ...row, ...enrichmentFor(namespace, fields, matched) });
+      rows.push({ ...row, ...enrichmentOf(namespace, fields, { matches, matched }, collect) });
       pushReference(row, matched);
       continue;
     }
@@ -301,12 +407,16 @@ export function applyLookup<R extends Record<string, unknown>>(
       droppedRows += 1;
       continue;
     }
-    rows.push({ ...row, ...enrichmentFor(namespace, fields, undefined) });
+    rows.push({
+      ...row,
+      ...enrichmentOf(namespace, fields, { matched: undefined, matches: undefined }, collect),
+    });
     pushReference(row, undefined);
   }
   const result: LookupResult<R> = {
     rows,
     diagnostics: {
+      collectedLookupRows: keyed.collectedLookupRows,
       totalSourceRows: sourceRows.length,
       matchedRows,
       unmatchedRows: sourceRows.length - matchedRows,
