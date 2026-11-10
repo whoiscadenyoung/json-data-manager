@@ -260,9 +260,34 @@ the states with no links. Neither changes the output.
   3. It writes a `view_runs` row: status, row count, input versions,
      diagnostics and any error.
 
-  Where the runner lives (an app server function or a Postgres RPC pair)
-  is decided in [views 2]. The requirement is that user SQL never runs
-  in a transaction that can write.
+  **Runner location (decided in [views 2], #300): a Postgres RPC pair,
+  orchestrated by a transport-agnostic TypeScript module** (`app/src/lib/views/view-runner.ts`
+  over a `ViewsRpc`; supabase-js today, a server function later without
+  change). The compiler is injected (`ViewCompiler`); the single wiring file
+  is `view-compiler-wiring.ts`.
+  - Phase 1 = `view_input_versions` (the gate, plus input `data_version`s
+    captured _before_ the read) and `view_query` (one statement, PREPAREd so
+    Postgres infers bind types, `transaction_read_only` forced on and
+    unflippable, `SECURITY INVOKER` so RLS applies, result capped).
+  - Phase 2 = `view_apply_run` / `view_record_failure` (`SECURITY DEFINER`,
+    require `can_edit_dataset(view)` and `can_view_dataset` on every input).
+    They receive rows as _data_ and execute no user SQL.
+  - Separate RPCs are separate transactions on every transport, so user SQL
+    can never share a transaction with a write. Entries of a view can only be
+    written by `view_apply_run` (statement-level guard triggers bind a token
+    to `<view id>:<xid>`), which diffs by a deterministic entry id
+    (`md5(view || row_id || occurrence)`, not the input's `row_id`, which is
+    a global primary key already taken) so re-runs touch only changed rows.
+  - Why not a server function: the app has no server-side Postgres access
+    (no driver, no JWT-to-role plumbing); adding one is a larger surface
+    than this feature. Trade-offs accepted: rows are ferried through the
+    caller (an editor could call `view_apply_run` with hand-made rows, which
+    they were already allowed to do to any dataset they edit), and
+    `statement_timeout` cannot be set from inside a function, so the phase-1
+    timeout is the caller's (the role setting over PostgREST, or
+    `set local statement_timeout` on a direct session). Run payload size is
+    bounded by the transport; chunked staging is a follow-up if real views
+    outgrow it.
 
 - **Stale** means any input's current `data_version` differs from the
   last successful run's. It is computed in the catalog query and shown as
@@ -348,14 +373,24 @@ input_versions jsonb, diagnostics jsonb, error text, created_by)`.
 - **Dropped:** `derived_datasets`, the `derived` artifact kind, the
   relation join mint RPCs, and the derived-row read paths in
   `dataset-rows-pg.ts` and the bundle publish.
-- **Visibility (proposed default; confirm in [views 2]):**
+- **Visibility (implemented in [views 2]; owner to confirm):**
   - Saved rows of a view follow the view dataset's own gates, like any
     dataset.
-  - Saving or running a view requires `can_view_dataset` on every input.
+  - Saving (`create_view` / `save_view`) or running a view requires
+    `can_view_dataset` on every input, with no lifecycle gate: unpublished
+    project drafts are valid inputs.
   - Live reads run as the invoker, so they also require it.
+  - Run history (`view_runs`, which holds diagnostics with sample input
+    values) is readable by the view's editors and creator only.
+  - `view_stale` is `SECURITY DEFINER` and leaks one boolean about inputs
+    the reader may not see.
 
-  This mirrors publishing: whoever builds the view decides what it
-  exposes.
+  This mirrors publishing: whoever builds the view decides what it exposes.
+  Other implemented facts: a client cannot INSERT a view directly (only
+  `create_view`); an input dataset cannot be deleted while a view reads it
+  (NO ACTION FK); run history keeps the last 50 runs per view; a view is
+  stale with no good run yet, when its definition hash changed, or when any
+  unpinned input's `data_version` moved.
 
 ## 11. Test plan
 

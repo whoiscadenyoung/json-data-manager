@@ -119,6 +119,8 @@ function datasetOf(): DatasetRow {
     },
     lifecycle: "published",
     lineage: null,
+    kind: "source",
+    dataVersion: 0,
     mapTileArchiveBytes: null,
     mapTileArchiveBuiltVersion: null,
     mapTileArchiveFormat: null,

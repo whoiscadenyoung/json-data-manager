@@ -42,6 +42,12 @@ import type { VisibilityLevel } from "./visibility";
  */
 export type DatasetGeometryType = GeometryTypeArg | "GeometryCollection";
 
+/** `datasets.kind` (migration 0027): a source dataset holds imported rows, a view holds its runs' output. */
+export type DatasetKind = "source" | "view";
+
+/** `datasets.refresh_mode` — views only. */
+export type ViewRefreshMode = "manual" | "auto" | "live";
+
 /**
  * The dataset's expand-only bbox envelope (`datasets.bbox`, design §3.2).
  * PostgREST renders the PostGIS polygon as GeoJSON; only consumers in the
@@ -73,6 +79,10 @@ export interface DatasetRow {
   lifecycle: "draft" | "published";
   lineage: unknown;
   source: unknown;
+  /** 'view' = rows are written only by the view's run (migration 0027). */
+  kind: DatasetKind;
+  /** Bumped per write statement on entries/geometries; the staleness signal. */
+  dataVersion: number;
   simplifyGeometry: boolean;
   sourceFileName: string | null;
   sourceFileSize: number | null;
@@ -113,6 +123,12 @@ export interface DatasetSummaryRow {
   lifecycle: "draft" | "published";
   lineage: unknown;
   source: unknown;
+  /** 'view' = a saved-steps dataset whose rows come from its runs (migration 0027). */
+  kind: DatasetKind;
+  /** The view's refresh mode; null for a source dataset. */
+  refreshMode: ViewRefreshMode | null;
+  /** True when a view's inputs or definition changed since its last good run (`view_stale`); always false for a source. */
+  stale: boolean;
   groupId: string | null;
   createdBy: string;
   createdAt: string;
@@ -139,6 +155,10 @@ export const SUMMARY_SELECT = [
   "lifecycle",
   "lineage",
   "source",
+  "kind",
+  "refreshMode:refresh_mode",
+  // PostgREST computed column: the view_stale(datasets) function (0027).
+  "stale:view_stale",
   "groupId:group_id",
   "createdBy:created_by",
   "createdAt:created_at",
@@ -167,6 +187,8 @@ export const DATASET_FULL_SELECT = [
   "lifecycle",
   "lineage",
   "source",
+  "kind",
+  "dataVersion:data_version",
   "simplifyGeometry:simplify_geometry",
   "sourceFileName:source_file_name",
   "sourceFileSize:source_file_size",
