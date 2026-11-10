@@ -118,12 +118,14 @@ function tileIndexOf(lon: number, lat: number, z: number): { x: number; y: numbe
 }
 
 /**
- * The highest zoom in [minZoom, maxZoom] whose estimated tile count stays
- * under `tileBudget` — the tile count of a feature is bounded by the tiles
- * its bounding box spans, summed over features. Points and small shapes
- * cost ~1 tile per zoom so they keep `maxZoom`; large polygons (states,
- * countries) grow 4x per zoom, and building them at z14 exhausts browser
- * memory (a 52-state dataset: 74 s / 1.7 GB at z13, a crashed tab at z14).
+ * The highest zoom in [minZoom, maxZoom] whose estimated EXTRA tile count
+ * stays under `tileBudget`. A feature's extra tiles are the tiles its
+ * bounding box spans beyond the one it must occupy at any zoom, summed over
+ * features. Points and small shapes add ~0 so they keep `maxZoom` however
+ * many there are (counting their one tile each would push a 1M-point
+ * dataset to minZoom); large polygons (states, countries) grow 4x per zoom,
+ * and building them at z14 exhausts browser memory (a 48-state dataset:
+ * 5 s at z12, 46 s / +750 MB at z13, a crashed tab at z14).
  */
 export function suggestMaxZoom(
   features: readonly (GeoJSONFeature | null | undefined)[],
@@ -167,13 +169,13 @@ function featureBoxes(features: readonly (GeoJSONFeature | null | undefined)[]):
   return boxes;
 }
 
-/** Sum of bbox-spanned tiles at zoom `z`, stopping early once past `limit`. */
+/** Sum of bbox-spanned tiles beyond one per feature at zoom `z`, stopping early once past `limit`. */
 function estimatedTiles(boxes: readonly Bounds[], z: number, limit: number): number {
   let tiles = 0;
   for (const box of boxes) {
     const low = tileIndexOf(box.minLon, box.maxLat, z),
       high = tileIndexOf(box.maxLon, box.minLat, z);
-    tiles += (high.x - low.x + 1) * (high.y - low.y + 1);
+    tiles += (high.x - low.x + 1) * (high.y - low.y + 1) - 1;
     if (tiles > limit) {
       break;
     }

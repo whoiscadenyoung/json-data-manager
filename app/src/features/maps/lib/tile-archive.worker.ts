@@ -292,8 +292,13 @@ async function uploadPgArchive(
   return path;
 }
 
-/** Estimated-tile ceiling for one archive build; above it the max zoom drops (z13 of 52 state polygons: 74 s / 1.7 GB). */
-const ARCHIVE_TILE_BUDGET = 1_000_000;
+/**
+ * Estimated extra-tile ceiling for one archive build; above it the max zoom
+ * drops. Calibrated on 48 dense state-sized polygons (9k vertices each):
+ * the estimate is under 300k at z12 (5 s) and 800k-1M at z13 (46 s, +750 MB), so
+ * 400k keeps z12 and refuses z13. The old 1M budget sat just above z13.
+ */
+const ARCHIVE_TILE_BUDGET = 400_000;
 
 function archiveMaxZoom(features: Array<GeoJSONFeature>): number {
   return suggestMaxZoom(features, DEFAULT_MIN_ZOOM, DEFAULT_MAX_ZOOM, ARCHIVE_TILE_BUDGET);
