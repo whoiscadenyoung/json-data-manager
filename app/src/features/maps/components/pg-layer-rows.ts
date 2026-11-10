@@ -6,11 +6,10 @@ import type {
   DatasetBoundingBox,
   DatasetGeometryType,
 } from "#/lib/store/datasets";
-import type { DerivedDatasetSummaryRow } from "#/lib/store/derived";
 import type { EntryRow } from "#/lib/store/entries";
 import type { GeometryRow } from "#/lib/store/geometries";
 
-import type { DatasetSummary, DerivedDatasetSummary } from "../lib/map-layers";
+import type { DatasetSummary } from "../lib/map-layers";
 
 /**
  * The workspace's PG → pipeline adapters (the transitional split, design
@@ -214,19 +213,3 @@ export function pgEntryToEntryRow(row: EntryRow): DatasetEntryRow {
  * the pair (the pipeline reads memberships by collection/schemaId only —
  * nothing consumes the row id).
  */
-/** One PG derived-registry summary as the pipeline's `DerivedDatasetSummary`. */
-export function pgDerivedToDerivedSummary(row: DerivedDatasetSummaryRow): DerivedDatasetSummary {
-  return {
-    _creationTime: 0,
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the pipeline's `DerivedDatasetSummary._id` carries the Convex registry's branded id; the PG registry's uuid keys the same string-typed render-id space (the pipeline reads it as a plain string).
-    _id: row.id as DerivedDatasetSummary["_id"],
-    carriesSql: row.carriesSql,
-    createdBy: row.createdBy,
-    description: row.description ?? undefined,
-    health: row.health,
-    healthReason: row.healthReason,
-    sourceDatasetId: row.sourceDatasetId,
-    status: row.status,
-    title: row.title,
-  };
-}

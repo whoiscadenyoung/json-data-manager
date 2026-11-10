@@ -234,11 +234,12 @@ describe.skipIf(!dbUp())("project membership — the role access matrix (ADR 001
     const seed = await seedMatrix();
     try {
       // EDITOR (BOB): every content write on project-held work.
+      const bobDataset = await createDataset(s(), { createdBy: ALICE });
       await s().asUser(BOB);
       const bobArtifact = crypto.randomUUID();
       await s().expectOk(
         `insert into public.project_artifacts (id, project_id, artifact_id, artifact_kind)
-         values (${sqlLit(bobArtifact)}, ${sqlLit(seed.projectA)}, ${sqlLit(seed.datasetId)}, 'derived')`,
+         values (${sqlLit(bobArtifact)}, ${sqlLit(seed.projectA)}, ${sqlLit(bobDataset)}, 'dataset')`,
       );
       await s().expectOk(`delete from public.project_artifacts where id = ${sqlLit(bobArtifact)}`);
       await s().expectOk(

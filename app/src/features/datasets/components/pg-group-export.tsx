@@ -1,14 +1,10 @@
 import { Button } from "@caden/ui/components/button";
-import { queryOptions, useQuery } from "@tanstack/react-query";
 import { Download } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { errorMessage } from "#/lib/errors";
 import * as datasetsStore from "#/lib/store/datasets";
 import type { DatasetSummaryRow } from "#/lib/store/datasets";
-import * as derivedStore from "#/lib/store/derived";
-import type { DerivedDatasetSummaryRow } from "#/lib/store/derived";
 
 import {
   buildGeoJsonCollection,
@@ -18,7 +14,7 @@ import {
   exportExcelWorkbook,
   slugify,
 } from "../lib/export";
-import { pgApplyJoinedFields, pgExportEntries, pgExportGeometries } from "../lib/pg-export";
+import { pgExportEntries, pgExportGeometries } from "../lib/pg-export";
 import { ExportDialog } from "./export-dialog";
 import type { ExportFormat, ExportFormatOption } from "./export-dialog";
 
@@ -45,35 +41,6 @@ export function PgGroupExport({
 }) {
   const [open, setOpen] = useState(false),
     memberIds = members.map((member) => member.id),
-    memberIdsKey = memberIds.join(","),
-    // The members' saved registry rows, flattened over per-source reads —
-    // `api.versions.derivedDatasets.summaries`' PG counterpart (the store's
-    // derived module exposes listBySource; the group scopes it to members).
-    memberRows = useQuery({
-      ...queryOptions({
-        enabled: memberIds.length > 0,
-        queryFn: async () => {
-          const all: DerivedDatasetSummaryRow[] = [];
-          for (const id of memberIds) {
-            // oxlint-disable-next-line no-await-in-loop -- one registry read per member, bounded by the group's size; order keeps the flattened list stable.
-            const rows = await readStoreDerivedRows(id);
-            all.push(...rows);
-          }
-          return all;
-        },
-        queryKey: ["pg:derived", "listByMembers", memberIdsKey],
-      }),
-    }).data,
-    memberSavedRows =
-      memberRows === undefined
-        ? undefined
-        : memberRows.filter((row) => memberIds.includes(row.sourceDatasetId)),
-    // The Convex group page's count: ready saved rows only (drafts and
-    // stale specs never back the export toggle).
-    savedCount =
-      memberSavedRows === undefined
-        ? undefined
-        : memberSavedRows.filter((row) => row.status === "saved" && row.health === "ready").length,
     geospatialCount = members.filter((member) => member.isGeospatial).length,
     exportFormats: ExportFormatOption[] =
       geospatialCount > 0
@@ -108,11 +75,7 @@ export function PgGroupExport({
           ];
 
   // oxlint-disable-next-line eslint/complexity -- per-format download paths; ad hoc splitting risks these render paths (the same #82 phase-2 note the Convex group page carries).
-  const handleConfirm = async (
-    format: ExportFormat,
-    includeSchema: boolean,
-    includeJoinedFields: boolean,
-  ) => {
+  const handleConfirm = async (format: ExportFormat, includeSchema: boolean) => {
     // Row-streams read through the seam: each member's export rows
     // materialize per dataset through the seam's paginated reads — the
     // completeness rule (every page, cursor to exhaustion).
@@ -126,29 +89,10 @@ export function PgGroupExport({
       toast.error("Could not load all rows for the export.");
       return;
     }
-    // "Include joined fields": each member's saved transforms fold through
-    // the pinned enrichment fold — one lookup-row fetch per lookup dataset,
-    // shared across members, scoped to THIS group's members.
-    let skippedTransforms = 0;
-    if (includeJoinedFields && memberSavedRows !== undefined) {
-      try {
-        skippedTransforms = await pgApplyJoinedFields({
-          rows: memberSavedRows,
-          rowsBySource: rowsByDataset,
-        });
-      } catch (error) {
-        toast.error(errorMessage(error, "Could not apply the saved transforms."));
-        return;
-      }
-    }
-    const skippedNotice =
-        skippedTransforms === 0
-          ? undefined
-          : `Skipped ${skippedTransforms} saved transform(s) that aren't currently ready.`,
-      // Dataset rows are summaries — the JSON-schema payloads only exist on
-      // the full docs, so an export that wants them reads each one here, on
-      // demand, instead of the page carrying them all the time.
-      schemasById = await readSchemasById(memberIds),
+    // Dataset rows are summaries — the JSON-schema payloads only exist on
+    // the full docs, so an export that wants them reads each one here, on
+    // demand, instead of the page carrying them all the time.
+    const schemasById = await readSchemasById(memberIds),
       entriesOf = (dataset: DatasetSummaryRow) => rowsByDataset.get(dataset.id) ?? [],
       downloadSchemaFile = (dataset: DatasetSummaryRow) => {
         if (!includeSchema) {
@@ -173,7 +117,7 @@ export function PgGroupExport({
         );
         downloadSchemaFile(member);
       }
-      toast.success(`Exported ${geospatialCount} GeoJSON file(s).`, { description: skippedNotice });
+      toast.success(`Exported ${geospatialCount} GeoJSON file(s).`);
       return;
     }
     if (format === "json") {
@@ -184,14 +128,14 @@ export function PgGroupExport({
         );
         downloadSchemaFile(member);
       }
-      toast.success(`Exported ${members.length} JSON file(s).`, { description: skippedNotice });
+      toast.success(`Exported ${members.length} JSON file(s).`);
       return;
     }
     await exportExcelWorkbook(
       members.map((member) => ({ name: member.title, rows: entryRows(entriesOf(member)) })),
       `${slugify(groupName)}.xlsx`,
     );
-    toast.success("Exported workbook.", { description: skippedNotice });
+    toast.success("Exported workbook.");
   };
 
   return (
@@ -213,29 +157,10 @@ export function PgGroupExport({
         formatOptions={exportFormats}
         defaultFormat={geospatialCount > 0 ? "geojson" : "json"}
         schemaLabel="each dataset"
-        joinedFieldsHint={
-          savedCount === undefined || savedCount === 0
-            ? undefined
-            : `Include joined fields from ${
-                savedCount === 1
-                  ? "its members' saved transform"
-                  : `its members' ${savedCount} saved transforms`
-              }`
-        }
         onConfirm={handleConfirm}
       />
     </>
   );
-}
-
-/** The members' saved registry rows, read imperatively (a one-shot export read — the press's `runStoreRead` rule). */
-async function readStoreDerivedRows(sourceDatasetId: string): Promise<DerivedDatasetSummaryRow[]> {
-  const queryFn = derivedStore.listBySourceQueryOptions({ sourceDatasetId }).queryFn;
-  if (queryFn === undefined) {
-    throw new Error("The derived store read carries no queryFn.");
-  }
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the store's queryFns never read the v5 context; `never` satisfies the parameter without constructing a QueryClient for nothing (pg-bundle-publish's rule).
-  return await queryFn({} as never);
 }
 
 /** One store dataset row, read imperatively — same rule, for the schema payloads. */

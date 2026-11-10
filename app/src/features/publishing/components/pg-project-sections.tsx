@@ -12,7 +12,6 @@ import { toast } from "sonner";
 
 import { errorMessage } from "@/lib/errors";
 import * as datasetsStore from "@/lib/store/datasets";
-import * as derivedStore from "@/lib/store/derived";
 import * as projectsStore from "@/lib/store/projects";
 
 import { VIEWER_REASON } from "../lib/pg-viewer-posture";
@@ -150,24 +149,21 @@ export function PgProjectSettings() {
   );
 }
 
-/** The Data → Analysis section (issue #271): the project's datasets with one-click entry to each dataset's Transform / Analyze tabs, and its derived datasets (outputs also appear in the catalog as Derived). */
+/** The Data → Analysis section (issue #271): the project's datasets with one-click entry to each dataset's Analyze tab. Joins and aggregations live in Views (the catalog's Views section). */
 export function PgProjectAnalysis() {
   const { catalog, projectId } = useProjectShell(),
     datasetsQuery = useQuery(datasetsStore.listQueryOptions()),
-    derivedQuery = useQuery(derivedStore.summariesQueryOptions()),
-    titleOf = (id: string, kind: "dataset" | "derived"): string => {
-      const source = kind === "dataset" ? datasetsQuery.data : derivedQuery.data,
-        match = (source ?? []).find((item) => item.id === id);
+    titleOf = (id: string): string => {
+      const match = (datasetsQuery.data ?? []).find((item) => item.id === id);
       return match === undefined ? "Not visible to you" : match.title;
     },
-    datasets = catalog.filter((row) => row.artifact.artifactKind === "dataset"),
-    derived = catalog.filter((row) => row.artifact.artifactKind === "derived");
+    datasets = catalog.filter((row) => row.artifact.artifactKind === "dataset");
   return (
     <main className="mx-auto max-w-5xl px-6 py-6">
       <h1 className="mb-1 text-2xl font-bold text-primary">Analysis</h1>
       <p className="mb-4 text-sm text-muted-foreground">
-        Run SQL or build a transform over a project dataset. Outputs land in the catalog as Derived
-        datasets.
+        Run a scratch SQL query over a project dataset. To keep a result, build a view from the
+        catalog.
       </p>
       <h2 className="mb-2 text-sm font-semibold text-muted-foreground">
         Datasets ({datasets.length})
@@ -181,7 +177,7 @@ export function PgProjectAnalysis() {
           {datasets.map((row) => (
             <Card className="flex-row items-center gap-3 px-4 py-3" key={row.artifact.id}>
               <p className="min-w-0 flex-1 truncate text-sm font-medium">
-                {titleOf(row.artifact.artifactId, "dataset")}
+                {titleOf(row.artifact.artifactId)}
               </p>
               <Link
                 className="rounded-md border px-3 py-1 text-sm hover:bg-muted"
@@ -191,38 +187,9 @@ export function PgProjectAnalysis() {
               >
                 Analyze
               </Link>
-              <Link
-                className="rounded-md border px-3 py-1 text-sm hover:bg-muted"
-                params={{ projectId, schemaId: row.artifact.artifactId }}
-                search={{ view: "transform" }}
-                to="/projects/$projectId/datasets/$schemaId"
-              >
-                Transform
-              </Link>
             </Card>
           ))}
         </div>
-      )}
-      {derived.length > 0 && (
-        <>
-          <h2 className="mt-6 mb-2 text-sm font-semibold text-muted-foreground">
-            Derived ({derived.length})
-          </h2>
-          <div className="flex flex-col gap-2">
-            {derived.map((row) => (
-              <Card className="flex-row items-center gap-3 px-4 py-3" key={row.artifact.id}>
-                <Badge variant="outline">Derived</Badge>
-                <Link
-                  className="min-w-0 flex-1 truncate text-sm font-medium hover:underline"
-                  params={{ derivedId: row.artifact.artifactId, projectId }}
-                  to="/projects/$projectId/derived/$derivedId"
-                >
-                  {titleOf(row.artifact.artifactId, "derived")}
-                </Link>
-              </Card>
-            ))}
-          </div>
-        </>
       )}
     </main>
   );

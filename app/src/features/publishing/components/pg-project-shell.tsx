@@ -176,6 +176,9 @@ function sectionLabel(rest: string, name: string | undefined): string {
   if (rest.startsWith("/datasets/")) {
     return name ?? "Dataset";
   }
+  if (rest.startsWith("/views/")) {
+    return name ?? "View";
+  }
   const labels: Record<string, string> = {
     "": "Overview",
     "/analysis": "Analysis",
@@ -214,7 +217,8 @@ function PgProjectShellBody({
     myMembershipQuery = useQuery(listMineQueryOptions({ userId })),
     mapsQuery = useQuery({ ...mapsStore.listForProjectQueryOptions({ projectId }) }),
     appsQuery = useQuery({ ...appsStore.listForProjectQueryOptions({ projectId }) }),
-    datasetId = rest.startsWith("/datasets/") ? (rest.split("/")[2] ?? "") : "",
+    datasetId =
+      rest.startsWith("/datasets/") || rest.startsWith("/views/") ? (rest.split("/")[2] ?? "") : "",
     datasetQuery = useQuery({
       ...datasetsStore.getQueryOptions({ datasetId }),
       enabled: datasetId !== "",
@@ -301,11 +305,6 @@ function PgProjectShellBody({
         .filter((row) => row.artifact.artifactKind === "dataset")
         .map((r) => r.artifact.artifactId),
     ),
-    addedDerivedIds = new Set(
-      catalog
-        .filter((row) => row.artifact.artifactKind === "derived")
-        .map((r) => r.artifact.artifactId),
-    ),
     currentMap = maps.find((map) => rest === `/maps/${map.id}`),
     currentApp = apps.find((app) => rest.startsWith(`/apps/${app.id}`)),
     currentDataset = datasetQuery.data === null ? undefined : datasetQuery.data,
@@ -319,7 +318,7 @@ function PgProjectShellBody({
         : currentMap.name,
     onDataset = datasetId !== "",
     section = sectionLabel(rest, currentName),
-    onCatalog = rest === "/catalog" || rest === "/create",
+    onCatalog = rest === "/catalog" || rest === "/create" || rest.startsWith("/views/"),
     CreateAppDialog = createAppDialog,
     pressTitle = !canEdit
       ? VIEWER_REASON
@@ -625,7 +624,6 @@ function PgProjectShellBody({
       />
       <PgAddReferenceSheet
         addedDatasetIds={addedDatasetIds}
-        addedDerivedIds={addedDerivedIds}
         onAdded={invalidateAll}
         onOpenChange={setAddOpen}
         open={addOpen}

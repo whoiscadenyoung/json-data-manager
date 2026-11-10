@@ -1,6 +1,5 @@
 // Public API of the publishing feature (ADR 0014). Code outside `features/publishing/`
 // imports from here, never from its subfolders.
-export { PgDerivedDatasetPage } from "./components/pg-derived-dataset-page";
 export { PgProjectAnalysis, PgProjectSettings } from "./components/pg-project-sections";
 export { PgProjectShell } from "./components/pg-project-shell";
 export {
@@ -12,8 +11,6 @@ export {
 export { PgProjectsBrowser } from "./components/pg-projects-browser";
 export { PgPublishBundleDialog } from "./components/pg-publish-bundle-dialog";
 export { PgPublishDialog } from "./components/pg-publish-dialog";
-export { PgTransformBuilder } from "./components/pg-transform-builder";
-export { TransformBuilder } from "./components/transform-builder";
 export {
   PgAddToProjectSheet,
   PgDatasetCardAddToProjectButton,
@@ -21,5 +18,3 @@ export {
 export { PgProjectTargetSheet } from "./components/pg-project-target-sheet";
 export { pgPublishProjectBundle } from "./lib/pg-bundle-publish";
 export { mintPublishKey } from "./lib/pg-publish";
-export { publishProjectBundle } from "./lib/bundle-publish";
-export { publishDataset } from "./lib/publish";

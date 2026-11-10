@@ -66,13 +66,6 @@ vi.mock("../lib/analysis", () => ({
   runAnalysis: mocks.runAnalysis,
 }));
 
-vi.mock("#/lib/store/derived", () => ({
-  getQueryOptions: (args: { id: string }) => ({ queryKey: ["pg:derived", "get", args] }),
-  listBySourceQueryOptions: (args: { sourceDatasetId: string }) => ({
-    queryKey: ["pg:derived", "listBySource", args],
-  }),
-}));
-
 vi.mock("@tanstack/react-query", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useQuery: mocks.useQuery,
@@ -164,7 +157,6 @@ async function openEditorAndRun() {
       }),
     ),
   );
-  fireEvent.click(screen.getByRole("button", { name: /new analysis/i }));
   const sqlField = await screen.findByLabelText("SQL");
   fireEvent.change(sqlField, {
     target: { value: "SELECT state, count(*) AS n FROM source GROUP BY state" },

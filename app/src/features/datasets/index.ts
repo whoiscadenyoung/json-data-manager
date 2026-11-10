@@ -2,7 +2,6 @@
 // imports from here, never from its subfolders.
 export { DatasetList } from "./components/dataset-list";
 export type { Dataset, GroupDoc } from "./components/dataset-list";
-export { DatasetOverview } from "./components/dataset-overview";
 export { EntriesTable } from "./components/entries-table";
 export { EntryFormPanel } from "./components/entry-form-panel";
 export type { PanelEntry, PanelSchema } from "./components/entry-form-panel";
@@ -22,7 +21,6 @@ export { SimplifyGeometryPanel } from "./components/simplify-geometry-panel";
 export { withDrafts } from "./lib/dataset-drafts";
 export { LOCKED_DATASET_HINT, isLockedForViewer } from "./lib/edit-policy";
 export {
-  applyJoinedFields,
   buildGeoJsonCollection,
   buildJsonPayload,
   downloadBlob,

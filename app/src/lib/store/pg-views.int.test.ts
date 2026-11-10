@@ -13,6 +13,7 @@
 
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "vitest";
 
+import { definitionFromRelation } from "#/features/views/lib/view-model";
 import type { CompileInputMeta, ViewCompiler, ViewDefinition } from "#/lib/views/view-compiler";
 import { defaultViewCompiler, inputsOfDefinition } from "#/lib/views/view-compiler-wiring";
 import { createView, saveView, type ViewDeps, type ViewsRpc } from "#/lib/views/view-save";
@@ -659,5 +660,73 @@ describe.skipIf(!dbUp())("views (#300)", () => {
     );
     expect(geoms.n).toBe("2");
     expect(await stale(view)).toBe(false);
+  });
+
+  test("views 3 (#301): create from a relation, save, run, rows exist; the derived tables are gone", async () => {
+    // "Deployments per state": states 1-N deployments on states.id = deployments.stateId.
+    const states = await source({ rows: 0 });
+    const deployments = await source({ rows: 0 });
+    await s().expectOk(
+      `update public.datasets set title = 'States', properties = '["id","name"]'::jsonb where id = ${sqlLit(states)}`,
+    );
+    await s().expectOk(
+      `update public.datasets set title = 'Deployments', properties = '["stateId","cost"]'::jsonb where id = ${sqlLit(deployments)}`,
+    );
+    await s().expectOk(
+      `insert into public.entries (dataset_id, data) values
+         (${sqlLit(states)}, '{"id":"s1","name":"Alpha"}'),
+         (${sqlLit(states)}, '{"id":"s2","name":"Beta"}'),
+         (${sqlLit(deployments)}, '{"stateId":"s1","cost":10}'),
+         (${sqlLit(deployments)}, '{"stateId":"s1","cost":5}'),
+         (${sqlLit(deployments)}, '{"stateId":"s2","cost":1}')`,
+    );
+    const seeded = definitionFromRelation({
+      cardinality: "1-N",
+      fromDataset: states,
+      fromKey: "id",
+      fromTitle: "States",
+      toDataset: deployments,
+      toKey: "stateId",
+      toTitle: "Deployments",
+    });
+    const view = await createView(savePath(ALICE, defaultViewCompiler), {
+      title: seeded.title,
+      definition: seeded.definition,
+      inputs: inputsOfDefinition(seeded.definition),
+      lifecycle: "draft",
+      visibility: "members",
+    });
+    created.views.push(view);
+
+    // Save (save_view) the same definition again, as the editor's Save does.
+    await saveView(savePath(ALICE, defaultViewCompiler), view, {
+      definition: seeded.definition,
+      inputs: inputsOfDefinition(seeded.definition),
+    });
+
+    const real = runnerDeps({ compiler: defaultViewCompiler });
+    const outcome = await runViewAs(real, who(ALICE), view);
+    expect(outcome.status).toBe("ok");
+    const rows = await s().expectOk(
+      `select data->>'name' as name, data->>'deployments_count' as n
+       from public.entries where dataset_id = ${sqlLit(view)} order by data->>'name'`,
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ name: "Alpha", n: "2" });
+    expect(rows[1]).toMatchObject({ name: "Beta", n: "1" });
+    expect(await stale(view)).toBe(false);
+
+    // The legacy derived system is gone (migration 0028).
+    const gone = await one(`select to_regclass('public.derived_datasets') as t`);
+    expect(gone.t).toBeNull();
+
+    // A dataset a view still reads cannot be deleted; the dependents are listable by title.
+    const dependents = await s().expectOk(
+      `select v.title from public.view_inputs vi join public.datasets v on v.id = vi.view_id
+       where vi.input_dataset_id = ${sqlLit(states)}`,
+    );
+    expect(dependents.map((row) => row.title)).toStrictEqual(["States + Deployments"]);
+    const refused = await s().query(`delete from public.datasets where id = ${sqlLit(states)}`);
+    expect(refused.error).toMatch(/foreign key|23503|violates/);
   });
 });

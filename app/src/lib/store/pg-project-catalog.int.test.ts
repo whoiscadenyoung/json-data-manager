@@ -305,11 +305,12 @@ describe.skipIf(!dbUp())("project catalog — owned vs linked (ADR 0018, #256)",
          values (${sqlLit(seed.projectA)}, ${sqlLit(dataset)}, 'dataset', 'linked', 'manual')`,
       );
       expect(duplicate).toMatch(/duplicate key/);
-      // derived stays a legal kind (the catalog's second section).
-      await s().expectOk(
+      // derived left the kind domain with 0028 (views are datasets now).
+      const derived = await expectRaises(
         `insert into public.project_artifacts (project_id, artifact_id, artifact_kind, role, sync_mode)
          values (${sqlLit(seed.projectA)}, ${sqlLit(dataset)}, 'derived', 'linked', 'manual')`,
       );
+      expect(derived).toMatch(/check constraint|artifact_kind/);
       await s().rollback();
     } finally {
       await dropDatasets(s(), [dataset]);

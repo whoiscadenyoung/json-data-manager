@@ -24,15 +24,14 @@ import { publishPgDatasetVersion } from "./pg-publish";
  * The bundle press — the client orchestrator of the Postgres bundle
  * (stage 4, #203; lifecycle doc §5–§6, ADR 0008), driving the publishing
  * store's press legs exactly the way `./bundle-publish.ts` drove the Convex
- * host mutations: `startBundle` (join-or-create + member plan, canonical
- * datasets → derived order) → per-dataset `publishDataset` with
+ * host mutations: `startBundle` (join-or-create + member plan, datasets only) → per-dataset `publishDataset` with
  * `recordMember` checkpoints → the promoted collection (create-once,
  * file-every-published-or-referenced-member) → `completeBundle`.
  *
  * The member plan IS ADR 0008's bundle rule ("one project publishes as one
  * bundle — a collection plus its datasets"): the plan is the project's
  * artifacts, deduped by id. Map members leave with #256/ADR 0018 — the
- * artifact-kind domain narrowed to dataset|derived (0019) — and return as
+ * artifact-kind domain narrowed to dataset (0019; derived left in 0028) — and return as
  * project-owned maps in [project 3], whose layer legs re-land then
  * (`linkMapLayers` stays in the publishing store, unused until that phase).
  *
@@ -149,11 +148,11 @@ export async function pgPublishProjectBundle(options: {
   // freeze; already-published ones join referenced (deduped by id).
   // Collection/group layers stay out of the plan — the recorded
   // live-expansion asymmetry (bundles.ts): they expand at read time and
-  // become members only at the next press. Derived/layer/app memberships
+  // become members only at the next press. Layer/app memberships
   // stay out too (#262): layers and apps publish per-artifact (D6 — their
-  // frozen forms live in layer_versions/app_versions), and derived rows
-  // are re-executed registry entries with no freeze of their own — a press
-  // is a DATASET projection plus the promoted collection.
+  // frozen forms live in layer_versions/app_versions). A view is a dataset
+  // with saved rows, so it freezes like one — a press is a DATASET
+  // projection plus the promoted collection.
   const datasetPlans = new Map<string, BundleMemberPlan>();
   const planDataset = async (datasetId: string): Promise<void> => {
     if (datasetPlans.has(datasetId)) {
@@ -173,7 +172,6 @@ export async function pgPublishProjectBundle(options: {
       await planDataset(artifact.artifactId);
     }
   }
-  // Already in canonical order: datasets, then derived.
   const members: BundleMemberPlan[] = [...datasetPlans.values()];
 
   // The ladder leg (#260): the promotion plan comes from a SERVER-DERIVED

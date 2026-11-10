@@ -12,8 +12,8 @@ const entryPanelSearchSchema = z.object({
   entryId: z.string().optional(),
   panel: z.enum(["create", "edit"]).optional(),
   // Active tab ("overview" is the default and deliberately absent from the URL).
-  // Stage 9 (#105) added "analyze" — the SQL escape hatch beside "transform".
-  view: z.enum(["overview", "entries", "history", "structure", "transform", "analyze"]).optional(),
+  // Stage 9 (#105) added "analyze" — the SQL escape hatch.
+  view: z.enum(["overview", "entries", "history", "structure", "analyze"]).optional(),
   // The Postgres table's server-driven state (design doc §8.4): the search
   // box, the sort, and the filter-menu rows ride the URL and drive the
   // `search_entries` RPC.

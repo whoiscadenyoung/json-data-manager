@@ -163,11 +163,11 @@ function DatasetsPage() {
     pgCollectionNames.set(collection.id, collection.name);
   }
   // The per-dataset project chips: one membership read for every card —
-  // dataset/derived edges only (layer/app edges belong to their own
+  // dataset edges only (layer/app edges belong to their own
   // explorers' reads).
   const projectsByDataset = new Map<string, { id: string; title: string }[]>();
   for (const membership of pg.memberships ?? []) {
-    if (membership.artifactKind !== "dataset" && membership.artifactKind !== "derived") {
+    if (membership.artifactKind !== "dataset") {
       continue;
     }
     const chips = projectsByDataset.get(membership.artifactId) ?? [];

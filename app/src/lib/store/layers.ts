@@ -257,9 +257,9 @@ export function listVersionsQueryOptions(args: { layerId: string }, options?: St
 /** One project_artifacts row as the layer flows resolve it (the membership → artifact hop). */
 export interface ArtifactRefRow {
   id: string;
-  /** The referenced artifact — owned layer memberships name a layers row; linked ones a layer_versions row; dataset/derived memberships name their catalog row. */
+  /** The referenced artifact — owned layer memberships name a layers row; linked ones a layer_versions row; dataset memberships name their catalog row. */
   artifactId: string;
-  artifactKind: "dataset" | "derived" | "layer";
+  artifactKind: "dataset" | "layer";
   role: "owned" | "linked";
 }
 
@@ -304,16 +304,16 @@ export async function membershipIdForLayer(
   return row === null ? null : row.id;
 }
 
-/** One dataset/derived membership of a project (the auto-layer picker's candidates). */
+/** One dataset membership of a project (the auto-layer picker's candidates). */
 export interface DatasetMembershipRow {
   id: string;
-  /** The catalog row this membership names (a datasets or derived_datasets id — `artifactKind` says which table answers). */
+  /** The catalog row this membership names (a datasets id — views are datasets too). */
   artifactId: string;
-  artifactKind: "dataset" | "derived";
+  artifactKind: "dataset";
 }
 
 /**
- * A project's dataset + derived memberships, oldest first — the add-dataset
+ * A project's dataset memberships, oldest first — the add-dataset
  * sheet's candidates (the auto-layer styles an EXISTING membership;
  * "references, never copies").
  */
@@ -326,7 +326,7 @@ export async function listDatasetMemberships(
       .from("project_artifacts")
       .select("id,artifactId:artifact_id,artifactKind:artifact_kind")
       .eq("project_id", args.projectId)
-      .in("artifact_kind", ["dataset", "derived"])
+      .eq("artifact_kind", "dataset")
       .order("id", { ascending: true })
       .limit(CATALOG_READ_LIMIT),
   );

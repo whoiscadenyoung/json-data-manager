@@ -17,6 +17,10 @@ export type MapLayerOverride = FunctionReturnType<
   typeof api.cms.maps.listMapLayerOverrides
 >[number];
 
+/** Views are plain datasets, so a map has no derived render targets any more (the registry retired in #301); the pipeline's derived inputs stay as these shared empties. */
+export const NO_RENDERABLE_DERIVED: globalThis.Map<string, string> = new globalThis.Map();
+export const NO_DERIVED_TITLES: globalThis.Map<string, string> = new globalThis.Map();
+
 export type LayerTargetType = "collection" | "group" | "dataset" | "derived";
 
 /** A child entry under an expandable layer: a group (with its member datasets) or a single dataset. */

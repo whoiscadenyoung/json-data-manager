@@ -208,12 +208,12 @@ export const DATASET_FULL_SELECT = [
 /** Widest bound one catalog list read may ask for (the `CATALOG_READ_LIMIT` parity — Convex's per-execution cap is gone, but an unbounded catalog select is still an unbounded read). */
 export const CATALOG_READ_LIMIT = 1000;
 
-interface DatasetSummaryWire extends Omit<DatasetSummaryRow, "fieldCount"> {
+export interface DatasetSummaryWire extends Omit<DatasetSummaryRow, "fieldCount"> {
   properties: string[] | null;
 }
 
 /** Derives `fieldCount` from the declared `properties` column (the #53 projection rule). */
-function summaryOf(row: DatasetSummaryWire): DatasetSummaryRow {
+export function summaryOf(row: DatasetSummaryWire): DatasetSummaryRow {
   const { properties, ...rest } = row;
   return { fieldCount: properties === null ? 0 : properties.length, ...rest };
 }
@@ -570,17 +570,70 @@ export async function markImportComplete(
   return rows.length;
 }
 
+/** Thrown by `remove` when views still read the dataset: the message lists them by title. */
+export class DatasetInUseError extends Error {
+  readonly views: string[];
+  constructor(views: string[]) {
+    super(
+      views.length === 0
+        ? "Other views still read this dataset, so it can't be deleted. Delete or re-point those views first."
+        : `Can't delete this dataset: ${views.length === 1 ? "this view reads" : "these views read"} it: ${views.join(", ")}. Delete or re-point ${views.length === 1 ? "it" : "them"} first.`,
+    );
+    this.name = "DatasetInUseError";
+    this.views = views;
+  }
+}
+
+/** Titles of the (visible) views whose inputs include the dataset. */
+export async function dependentViewTitles(
+  args: { datasetId: string },
+  options?: StoreOptions,
+): Promise<string[]> {
+  const rows = await queryRows<{ view: { title: string } | { title: string }[] | null }>(
+    clientOf(options)
+      .from("view_inputs")
+      .select("view:view_id(title)")
+      .eq("input_dataset_id", args.datasetId),
+  );
+  const titles: string[] = [];
+  for (const row of rows) {
+    const views = Array.isArray(row.view) ? row.view : row.view === null ? [] : [row.view];
+    for (const view of views) {
+      if (!titles.includes(view.title)) {
+        titles.push(view.title);
+      }
+    }
+  }
+  return titles;
+}
+
 /**
  * Deletes a dataset. Every child (entries, geometries, references, imports,
  * memberships, versions) goes with it by ON DELETE CASCADE — the component's
  * explicit delete walks become foreign keys (design §3.4 note). Returns the
  * affected row count (0 = denied — the frozen-row delete denies everyone).
+ *
+ * A view's inputs are NO ACTION foreign keys: deleting a dataset that a view
+ * still reads is refused by the database. This pre-checks and throws a
+ * `DatasetInUseError` that names the dependent views (and maps the raw 23503
+ * for views the caller cannot see).
  */
 export async function remove(args: { datasetId: string }, options?: StoreOptions): Promise<number> {
-  const rows = await queryRows<unknown>(
-    clientOf(options).from("datasets").delete().eq("id", args.datasetId).select("id"),
-  );
-  return rows.length;
+  const dependents = await dependentViewTitles(args, options);
+  if (dependents.length > 0) {
+    throw new DatasetInUseError(dependents);
+  }
+  try {
+    const rows = await queryRows<unknown>(
+      clientOf(options).from("datasets").delete().eq("id", args.datasetId).select("id"),
+    );
+    return rows.length;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("(23503)")) {
+      throw new DatasetInUseError([]);
+    }
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------

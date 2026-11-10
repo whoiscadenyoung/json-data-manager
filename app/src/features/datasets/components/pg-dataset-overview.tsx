@@ -919,8 +919,7 @@ function PgUsedInCard({ datasetId }: { datasetId: string }) {
     inProjects = (memberships.data ?? [])
       .filter(
         (membership) =>
-          membership.artifactId === datasetId &&
-          (membership.artifactKind === "dataset" || membership.artifactKind === "derived"),
+          membership.artifactId === datasetId && membership.artifactKind === "dataset",
       )
       .map((membership) => membership.project),
     usingApps = (apps.data ?? []).filter((app) => appsStore.appUsesDataset(app, datasetId)),

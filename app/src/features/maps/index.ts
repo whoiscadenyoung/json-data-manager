@@ -5,11 +5,7 @@ export { EntriesMap } from "./components/entries-map";
 export { GroupMap } from "./components/group-map";
 export { LayersMap } from "./components/layers-map";
 export { StoredMapCanvas } from "./components/stored-map-canvas";
-export {
-  pgDerivedToDerivedSummary,
-  pgGeometryToLayerRow,
-  pgSummaryToDatasetSummary,
-} from "./components/pg-layer-rows";
+export { pgGeometryToLayerRow, pgSummaryToDatasetSummary } from "./components/pg-layer-rows";
 export { useGeometriesByPgDatasets } from "./components/pg-geometries-loader";
 export type { LayersMapExtension, LayersMapLayerArgs } from "./components/layers-map";
 export { TileBuildStatus } from "./components/tile-build-status";
@@ -28,7 +24,8 @@ export {
   colorForIndex,
   expandLayerDatasets,
   overridesByLayerId,
-  renderTargetsForDerivedLayers,
+  NO_DERIVED_TITLES,
+  NO_RENDERABLE_DERIVED,
   resolveVisibleSchemaIds,
 } from "./lib/map-layers";
 export { MAP_TILE_ARCHIVE_FORMAT, MAP_TILE_ARCHIVE_MIN_BYTES } from "./lib/pg-tile-archives";
