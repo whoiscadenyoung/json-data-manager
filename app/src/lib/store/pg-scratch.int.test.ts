@@ -104,6 +104,10 @@ async function fixture() {
   await addEntry(s(), deployments, { stateId: "s2", cost: 7 });
   const project = crypto.randomUUID();
   created.projects.push(project);
+  // The projects/project_artifacts stamp triggers take the owner from the
+  // request identity, so the project is created as ALICE inside a transaction.
+  await s().begin();
+  await s().asUser(ALICE);
   await s().expectOk(
     `insert into public.projects (id, title, created_by) values (${sqlLit(project)}, 'scratch', ${sqlLit(ALICE)})`,
   );
@@ -116,6 +120,8 @@ async function fixture() {
        values (${sqlLit(project)}, ${sqlLit(id)}, 'dataset', 'owned', 'manual')`,
     );
   }
+  await s().commit();
+  await s().asAdmin();
   return { project, states, deployments };
 }
 
