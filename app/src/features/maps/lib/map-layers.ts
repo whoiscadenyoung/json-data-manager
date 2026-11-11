@@ -6,9 +6,6 @@ import { api } from "#convex/_generated/api";
 
 export type MapLayerDoc = FunctionReturnType<typeof api.cms.maps.listLayers>[number];
 export type DatasetSummary = FunctionReturnType<typeof api.cms.schemas.listSummaries>[number];
-export type DerivedDatasetSummary = FunctionReturnType<
-  typeof api.versions.derivedDatasets.summaries
->[number];
 export type GroupSummary = FunctionReturnType<typeof api.cms.groups.list>[number];
 export type MembershipRow = FunctionReturnType<
   typeof api.cms.collections.listSchemaCollections
@@ -17,11 +14,7 @@ export type MapLayerOverride = FunctionReturnType<
   typeof api.cms.maps.listMapLayerOverrides
 >[number];
 
-/** Views are plain datasets, so a map has no derived render targets any more (the registry retired in #301); the pipeline's derived inputs stay as these shared empties. */
-export const NO_RENDERABLE_DERIVED: globalThis.Map<string, string> = new globalThis.Map();
-export const NO_DERIVED_TITLES: globalThis.Map<string, string> = new globalThis.Map();
-
-export type LayerTargetType = "collection" | "group" | "dataset" | "derived";
+export type LayerTargetType = "collection" | "group" | "dataset";
 
 /** A child entry under an expandable layer: a group (with its member datasets) or a single dataset. */
 export type LayerChild =
@@ -42,32 +35,26 @@ export function groupChildKey(groupId: string): string {
 }
 
 /**
- * A geometry row re-keyed for a derived layer (3a, #96): the source dataset's
- * geometry row drawn under the derived dataset's id — `sourceSchemaId`
+ * A geometry row re-keyed for a chain layer (7b, #103): the resolved frozen
+ * row's geometry drawn under the anchor dataset's id — `sourceSchemaId`
  * preserves where the entry actually lives, which is what the click payload
  * carries.
  */
 export type KeyedGeometryEntry = DatasetGeometryRow & { sourceSchemaId?: string };
 
 /**
- * Re-keys rows for derived layers (3a, #96): every row draws once as itself,
- * plus once per derived layer whose bottom source it belongs to — each copy
- * under the derived id with `sourceSchemaId` preserved for the click
- * payload. Built in a loop, not a map callback (the map-spread rule).
- *
- * The third parameter is 7b's chain leg (#103): a published map's dataset
- * layer resolves its (draft) target through the target's version chain and
- * renders the RESOLVED row's data under the anchor's own render id — the
- * anchor's live rows never draw (the layer draws its published head, not the
- * draft's edits), while copies of the resolved rows draw under the anchor id
- * with `sourceSchemaId` pointing at the frozen row so the click payload
- * lands on the published dataset's page. Copies are never re-keyed again
- * (one pass over the fetched rows); a resolved anchor that is ALSO a derived
- * bottom source still feeds its derived copies.
+ * Re-keys rows for a 7b chain layer (#103): a published map's dataset layer
+ * resolves its (draft) target through the target's version chain and renders
+ * the RESOLVED row's data under the anchor's own render id — the anchor's
+ * live rows never draw (the layer draws its published head, not the draft's
+ * edits), while copies of the resolved rows draw under the anchor id with
+ * `sourceSchemaId` pointing at the frozen row so the click payload lands on
+ * the published dataset's page. Copies are never re-keyed again (one pass
+ * over the fetched rows). Built in a loop, not a map callback (the
+ * map-spread rule).
  */
 export function keyedGeometryRows(
   geometries: readonly DatasetGeometryRow[],
-  derivedIdsBySource: ReadonlyMap<string, string[]>,
   chainSourceByRenderId: ReadonlyMap<string, string> = new globalThis.Map(),
 ): KeyedGeometryEntry[] {
   const chainRendersBySource = new globalThis.Map<string, string[]>();
@@ -81,14 +68,6 @@ export function keyedGeometryRows(
   }
   const keyed: KeyedGeometryEntry[] = [];
   for (const row of geometries) {
-    const derivedIds = derivedIdsBySource.get(row.schemaId);
-    if (derivedIds !== undefined) {
-      for (const derivedId of derivedIds) {
-        const copy: KeyedGeometryEntry = { ...row, schemaId: derivedId };
-        copy.sourceSchemaId = row.schemaId;
-        keyed.push(copy);
-      }
-    }
     const chainRenderIds = chainRendersBySource.get(row.schemaId);
     if (chainRenderIds !== undefined) {
       for (const renderId of chainRenderIds) {
@@ -169,8 +148,8 @@ export function chainViewOf(
 
 /**
  * Builds a map-renderable feature row given its already-resolved `Geometry`.
- * A derived layer's feature still points at the entry's real home (the
- * source dataset) so the popup and its "View details" link keep working —
+ * A chain layer's feature still points at the entry's real home (the
+ * published dataset) so the popup and its "View details" link keep working —
  * the `{entryId, schemaId}` payload shape is 3b's contract (issue #96).
  */
 export function toFeatureRow(geometry: KeyedGeometryEntry, resolved: Geometry) {
@@ -201,87 +180,20 @@ export function colorForIndex(index: number) {
 }
 
 /**
- * Which saved derived datasets can render as map layers, and what each one's
- * geometry rides on (roadmap 3a, #96): the registry summary's `sourceDatasetId`
- * is followed through OTHER registry summaries to the bottom component
- * dataset — geometry has no derived form until stage 4's `geometrySource`, so
- * a derived layer draws its bottom source's geometry rows under the derived
- * id's own key. A derived dataset is renderable only when:
- *
- * - its read-time health is "ready" (the one staleness signal, derivedSpec
- *   `specStatus` — a registry reference inherits its chain's health, so the
- *   top summary's health covers multi-hop chains), and
- * - the chain bottoms out at a GEOSPATIAL component dataset (risk 6:
- *   non-renderable deriveds are filtered out here, never offered silently).
- *
- * Summaries are `api.versions.derivedDatasets.summaries` — the single catalog
- * projection its doc comment designates for stage 3's consumers. The walk
- * guards against revisits (the save gate rejects cycles; the guard is
- * defensive), and a bottom id that isn't a known geospatial dataset — a
- * missing dataset or another registry id that fell out of the projection —
- * renders nothing.
- */
-export function renderTargetsForDerivedLayers(
-  summaries: readonly DerivedDatasetSummary[],
-  datasets: readonly DatasetSummary[],
-): globalThis.Map<string, string> {
-  const datasetById = new globalThis.Map(datasets.map((dataset) => [dataset._id, dataset])),
-    // Keyed by plain string (the ids arrive as branded component/registry
-    // ids from the validators; the walk itself is string-typed).
-    summaryById = new globalThis.Map<string, DerivedDatasetSummary>(
-      summaries.map((summary) => [summary._id, summary]),
-    ),
-    targets = new globalThis.Map<string, string>();
-  for (const summary of summaries) {
-    if (summary.health !== "ready") {
-      continue;
-    }
-    let current = summary.sourceDatasetId,
-      bottom: string | undefined;
-    const visited = new globalThis.Set<string>([summary._id]);
-    for (;;) {
-      if (visited.has(current)) {
-        break;
-      }
-      visited.add(current);
-      const row = summaryById.get(current);
-      if (row === undefined) {
-        bottom = current;
-        break;
-      }
-      current = row.sourceDatasetId;
-    }
-    if (bottom === undefined) {
-      continue;
-    }
-    const dataset = datasetById.get(bottom);
-    if (dataset !== undefined && dataset.kind === "geospatial") {
-      targets.set(summary._id, bottom);
-    }
-  }
-  return targets;
-}
-
-/**
  * Expands each layer to the ids it currently contributes, in the map's RENDER
  * id space: a dataset layer to itself; a group layer via member datasets'
  * `groupId`; a collection layer via its `schemaCollections` memberships PLUS
  * every dataset of a group living in that collection (a group joins a
  * collection as a single unit and brings its members along — see
- * CollectionAddSheet); and (3a, #96) a derived layer to its registry id when
- * `renderTargetsForDerivedLayers` says it can render. Membership changes flow
- * through on every read — nothing is denormalized. Standard datasets never
- * render geometry, so a target holding only standard datasets expands to an
- * empty list; a derived id contributes ITSELF here (not its source) so
- * colors/visibility/click payloads stay per-derived-layer — geometry
- * subscription re-keys to the bottom source at the seam boundary (layer-source.ts).
+ * CollectionAddSheet). Membership changes flow through on every read —
+ * nothing is denormalized. Standard datasets never render geometry, so a
+ * target holding only standard datasets expands to an empty list.
  */
 export function expandLayerDatasets(
   layers: MapLayerDoc[],
   datasets: DatasetSummary[],
   memberships: MembershipRow[],
   groups: GroupSummary[],
-  renderableDerived: ReadonlyMap<string, string>,
 ): Map<string, string[]> {
   const datasetById = new Map(datasets.map((dataset) => [dataset._id, dataset])),
     groupIdsByCollection = new Map<string, string[]>();
@@ -316,24 +228,12 @@ export function expandLayerDatasets(
       rawSchemaIds = datasets
         .filter((dataset) => dataset.groupId === layer.targetId)
         .map((dataset) => dataset._id);
-    } else if (layer.targetType === "derived") {
-      // Render-gated: only ready deriveds whose chain bottoms out at a
-      // geospatial dataset contribute themselves (the walk in
-      // `renderTargetsForDerivedLayers`); everything else expands to an
-      // empty list, so a layer whose spec went stale draws nothing rather
-      // than erroring.
-      rawSchemaIds = renderableDerived.has(layer.targetId) ? [layer.targetId] : [];
     } else {
       rawSchemaIds = [layer.targetId];
     }
     expanded.set(
       layer._id,
       rawSchemaIds.filter((schemaId) => {
-        // A derived render id has no schemas row by design — its render
-        // gating already happened in the branch above.
-        if (renderableDerived.has(schemaId)) {
-          return true;
-        }
         const dataset = datasetById.get(schemaId);
         return dataset !== undefined && dataset.kind === "geospatial";
       }),

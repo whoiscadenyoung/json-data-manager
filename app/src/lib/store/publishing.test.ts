@@ -69,9 +69,8 @@ function memberWire(overrides: Record<string, unknown> = {}): BundleMemberRow {
 }
 
 describe("publishing member machine — the pure parts", () => {
-  it("memberOrder sorts datasets, then derived, then maps (the canonical press order)", () => {
-    expect(memberOrder("dataset")).toBeLessThan(memberOrder("derived"));
-    expect(memberOrder("derived")).toBeLessThan(memberOrder("map"));
+  it("memberOrder sorts datasets, then maps (the canonical press order)", () => {
+    expect(memberOrder("dataset")).toBeLessThan(memberOrder("map"));
   });
 
   it("survivingMembers keeps only published members whose frozen row still resolves", () => {

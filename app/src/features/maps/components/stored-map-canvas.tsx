@@ -11,7 +11,6 @@ import * as layersStore from "#/lib/store/layers";
 import * as mapsStore from "#/lib/store/maps";
 
 import { splitSchemaIdsByDecision, useTileArchiveSources } from "../lib/layer-source";
-import { NO_DERIVED_TITLES, NO_RENDERABLE_DERIVED } from "../lib/map-layers";
 import { popupInputsOf, usePopupFieldsFor } from "../lib/popup-fields";
 import { LayersMap } from "./layers-map";
 import { useGeometriesByPgDatasets } from "./pg-geometries-loader";
@@ -183,11 +182,9 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
 
   const datasetsDocs =
       pgSummaries.data === undefined ? undefined : pgSummaries.data.map(pgSummaryToDatasetSummary),
-    renderableDerived: globalThis.Map<string, string> = NO_RENDERABLE_DERIVED,
     datasetTitleById = new globalThis.Map(
       (pgSummaries.data ?? []).map((row) => [row.id, row.title]),
-    ),
-    derivedTitleById = NO_DERIVED_TITLES;
+    );
 
   /** Flattens one placed layer into its data entries (groups recurse; linked rows resolve through their frozen pin). */
   // The kind ladder (owned data / owned group / linked) plus the visibility
@@ -225,10 +222,7 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
       if (sourceMember === undefined) {
         return [];
       }
-      const title =
-        datasetTitleById.get(sourceMember.artifactId) ??
-        derivedTitleById.get(sourceMember.artifactId) ??
-        "Linked layer";
+      const title = datasetTitleById.get(sourceMember.artifactId) ?? "Linked layer";
       return [
         {
           layerId: undefined,
@@ -254,10 +248,7 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
     if (member === undefined) {
       return [];
     }
-    const title =
-      datasetTitleById.get(member.artifactId) ??
-      derivedTitleById.get(member.artifactId) ??
-      layer.name;
+    const title = datasetTitleById.get(member.artifactId) ?? layer.name;
     return [
       {
         layerId: layer.id,
@@ -313,10 +304,7 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
       (row) => schemaIds.includes(row.id) && row.isGeospatial && row.geometryType !== null,
     ),
     decisions = useTileArchiveSources(pgDecisionRows),
-    derivedRowIds = schemaIds.filter((schemaId) =>
-      renderableDerived === undefined ? false : renderableDerived.has(schemaId),
-    ),
-    split = splitSchemaIdsByDecision(schemaIds, decisions, derivedRowIds),
+    split = splitSchemaIdsByDecision(schemaIds, decisions),
     popupFieldsFor = usePopupFieldsFor(
       popupInputsOf(dataEntries, layersById),
       new Set((pgSummaries.data ?? []).filter((row) => row.kind === "view").map((row) => row.id)),
@@ -328,20 +316,14 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
       pgFan.geometries !== undefined &&
       !split.sourcesPending &&
       split.tileSources.every((source) => arrivedTileSchemaIds.has(source.schemaId)),
-    entrySourceOf = (renderId: string): string => {
-      const derivedSource =
-        renderableDerived === undefined ? undefined : renderableDerived.get(renderId);
-      return derivedSource ?? renderId;
-    },
     // The styling hook rides the layer adapter (ADR 0019): placed layers'
     // fragments, render-keyed by their dataset id. The canvas restyles
     // nothing — a styling write happens in the map editor.
     layerStyles = useLayerStyles({
       colorBySchema,
-      entrySourceFor: (renderId) => entrySourceOf(renderId),
+      entrySourceFor: (renderId) => renderId,
       geometryTypeFor: (renderId) => {
-        const sourceId = entrySourceOf(renderId),
-          dataset = (datasetsDocs ?? []).find((item) => item._id === sourceId);
+        const dataset = (datasetsDocs ?? []).find((item) => item._id === renderId);
         return dataset === undefined ? undefined : dataset.geometryType;
       },
       resetStyle: async () => {
@@ -383,11 +365,6 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
           popupFieldsFor={popupFieldsFor}
           colorBySchema={styledColorBySchema}
           datasets={mapDatasets}
-          derivedLayers={derivedRowIds.flatMap((derivedId) => {
-            const source =
-              renderableDerived === undefined ? undefined : renderableDerived.get(derivedId);
-            return source === undefined ? [] : [{ derivedId, sourceSchemaId: source }];
-          })}
           extension={layerStyles.extension}
           geometries={withEmptyRows(pgFan.servedGeometries)}
           onTileSourceIdle={(schemaId) => {
@@ -396,7 +373,7 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
           relationRuntime={{ projectId }}
           sourcesPending={split.sourcesPending}
           tileSources={split.tileSources}
-          titlesById={new globalThis.Map([...datasetTitleById, ...derivedTitleById])}
+          titlesById={datasetTitleById}
           visibleSchemaIds={new Set(visibleEntries.map((entry) => entry.renderId))}
         />
       ) : (

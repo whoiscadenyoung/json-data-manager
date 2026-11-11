@@ -56,9 +56,7 @@ import { ArchivedConvexSurface } from "#/components/archived-convex-surface";
 import { useLayerStyles } from "#/features/layer-styles";
 import {
   LayersMap,
-  NO_DERIVED_TITLES,
   PopupFieldsDialog,
-  NO_RENDERABLE_DERIVED,
   pgSummaryToDatasetSummary,
   popupInputsOf,
   splitSchemaIdsByDecision,
@@ -283,7 +281,6 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
         : [...pgSummaries.data, ...pgDraftSummaries.data],
     datasetsDocs =
       allSummaries === undefined ? undefined : allSummaries.map(pgSummaryToDatasetSummary),
-    renderableDerived: globalThis.Map<string, string> = NO_RENDERABLE_DERIVED,
     datasetTitleById = new globalThis.Map((allSummaries ?? []).map((row) => [row.id, row.title])),
     // The add-dataset picker only offers rows that can draw: geospatial
     // datasets.
@@ -292,7 +289,6 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
       allSummaries === undefined
         ? undefined
         : new Set(allSummaries.filter((row) => row.isGeospatial).map((row) => row.id)),
-    derivedTitleById = NO_DERIVED_TITLES,
     // ---- editor state ----
     [editingMap, setEditingMap] = useState(false),
     [sidebarOpen, setSidebarOpen] = useState(true),
@@ -357,10 +353,7 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
       if (sourceMember === undefined) {
         return [];
       }
-      const title =
-        datasetTitleById.get(sourceMember.artifactId) ??
-        derivedTitleById.get(sourceMember.artifactId) ??
-        "Linked layer";
+      const title = datasetTitleById.get(sourceMember.artifactId) ?? "Linked layer";
       return [
         {
           layerId: undefined,
@@ -386,10 +379,7 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
     if (member === undefined) {
       return [];
     }
-    const title =
-      datasetTitleById.get(member.artifactId) ??
-      derivedTitleById.get(member.artifactId) ??
-      layer.name;
+    const title = datasetTitleById.get(member.artifactId) ?? layer.name;
     return [
       {
         layerId: layer.id,
@@ -441,10 +431,7 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
       (row) => schemaIds.includes(row.id) && row.isGeospatial && row.geometryType !== null,
     ),
     decisions = useTileArchiveSources(pgDecisionRows),
-    derivedRowIds = schemaIds.filter((schemaId) =>
-      renderableDerived === undefined ? false : renderableDerived.has(schemaId),
-    ),
-    split = splitSchemaIdsByDecision(schemaIds, decisions, derivedRowIds),
+    split = splitSchemaIdsByDecision(schemaIds, decisions),
     popupFieldsFor = usePopupFieldsFor(
       popupInputsOf(dataEntries, layersById),
       new Set((allSummaries ?? []).filter((row) => row.kind === "view").map((row) => row.id)),
@@ -458,20 +445,14 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
       geometries !== undefined &&
       !split.sourcesPending &&
       split.tileSources.every((source) => arrivedTileSchemaIds.has(source.schemaId)),
-    entrySourceOf = (renderId: string): string => {
-      const derivedSource =
-        renderableDerived === undefined ? undefined : renderableDerived.get(renderId);
-      return derivedSource ?? renderId;
-    },
     // The styling hook rides the layer adapter (ADR 0019): owned placed
     // layers' fragments, render-keyed by their dataset id; linked rows are
     // read-only (the save/reset callbacks refuse them).
     layerStyles = useLayerStyles({
       colorBySchema,
-      entrySourceFor: (renderId) => entrySourceOf(renderId),
+      entrySourceFor: (renderId) => renderId,
       geometryTypeFor: (renderId) => {
-        const sourceId = entrySourceOf(renderId),
-          dataset = (datasetsDocs ?? []).find((item) => item._id === sourceId);
+        const dataset = (datasetsDocs ?? []).find((item) => item._id === renderId);
         return dataset === undefined ? undefined : dataset.geometryType;
       },
       resetStyle: async ({ renderId }) => {
@@ -695,11 +676,6 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
                 popupFieldsFor={popupFieldsFor}
                 colorBySchema={styledColorBySchema}
                 datasets={mapDatasets}
-                derivedLayers={derivedRowIds.flatMap((derivedId) => {
-                  const source =
-                    renderableDerived === undefined ? undefined : renderableDerived.get(derivedId);
-                  return source === undefined ? [] : [{ derivedId, sourceSchemaId: source }];
-                })}
                 extension={layerStyles.extension}
                 geometries={withEmptyRows(servedGeometries)}
                 onTileSourceIdle={(schemaId) => {
@@ -710,9 +686,9 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
                 sourcesPending={split.sourcesPending}
                 tileSources={split.tileSources}
                 titlesById={
-                  // Dataset titles first, derived over them — the relation
-                  // runtime names off-map relation ends from the same read.
-                  new globalThis.Map([...datasetTitleById, ...derivedTitleById])
+                  // The relation runtime names off-map relation ends from the
+                  // same read.
+                  datasetTitleById
                 }
                 visibleSchemaIds={new Set(visibleEntries.map((entry) => entry.renderId))}
               />
@@ -750,7 +726,7 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
         placedMembershipIds={addedDatasetMembershipIds}
         projectId={projectId}
         run={run}
-        titlesById={new globalThis.Map([...datasetTitleById, ...derivedTitleById])}
+        titlesById={datasetTitleById}
       />
 
       <PgLinkLayerSheet

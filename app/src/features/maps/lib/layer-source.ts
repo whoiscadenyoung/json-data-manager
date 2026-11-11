@@ -298,14 +298,6 @@ export function useTileArchiveSource(
 export interface LayerSourceSplit {
   /** Datasets the row path serves (paginated geometry rows). */
   rowSchemaIds: string[];
-  /**
-   * Derived datasets on the row path by RULE (3a, #96): their geometry rides
-   * the bottom source dataset of their spec chain, so these ids key
-   * rendering/visibility while their SOURCE ids key the geometry
-   * subscription (the caller re-keys via `renderTargetsForDerivedLayers`).
-   * Never a tile candidate: no schemas row, no archive, ever.
-   */
-  derivedRowIds: string[];
   /** Datasets rendering from their fresh tile archive (`pmtiles://`). */
   tileSources: Array<{ schemaId: string; url: string }>;
   /** True while any id's decision is still resolving — hold rather than render either path. */
@@ -313,16 +305,14 @@ export interface LayerSourceSplit {
 }
 
 /**
- * Decides rendering per schema id from its dataset list and decisions.
- * `derivedRowIds` are the render ids `expandLayerDatasets` contributed for
- * derived layers (3a): they take the row path explicitly instead of the old
- * silent drop (any id without a decision was skipped), and their geometry
- * subscription keys are the caller's job (the bottom source ids).
+ * Decides rendering per schema id from its dataset list and decisions. An id
+ * with no decision (not geospatial, or still resolving) contributes nothing
+ * to the rows/tiles lists — `sourcesPending` distinguishes "hold" from
+ * "skip".
  */
 export function splitSchemaIdsByDecision(
   schemaIds: string[],
   decisions: globalThis.Map<string, TileSourceDecision>,
-  derivedRowIds: readonly string[] = [],
 ): LayerSourceSplit {
   const rows: string[] = [],
     tileSources: Array<{ schemaId: string; url: string }> = [];
@@ -340,17 +330,14 @@ export function splitSchemaIdsByDecision(
       sourcesPending = true;
     }
   }
-  return { derivedRowIds: [...derivedRowIds], rowSchemaIds: rows, sourcesPending, tileSources };
+  return { rowSchemaIds: rows, sourcesPending, tileSources };
 }
 
 /**
  * This map's component geospatial datasets, in schema-id order — the ONLY
- * rows a tile decision may see (the explicit 3a rule, #96): a derived
- * dataset's registry id has no schemas row, so it can never be mistaken for
- * a tile candidate — the filter drops it here, before
- * `useTileArchiveSources` would subscribe archive metadata for it. The map
- * page passes every render id (datasets and derived layers together) and
- * only component rows come back.
+ * rows a tile decision may see: the filter drops any render id without a
+ * geospatial dataset behind it here, before `useTileArchiveSources` would
+ * subscribe archive metadata for it.
  */
 export function geospatialDatasetsFor(
   schemaIds: readonly string[],
