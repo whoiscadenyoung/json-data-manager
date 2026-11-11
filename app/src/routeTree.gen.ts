@@ -30,14 +30,15 @@ import { Route as DatasetsSchemaIdEntryIdRouteImport } from './routes/datasets/$
 import { Route as DatasetsSchemaIdBulkUploadRouteImport } from './routes/datasets/$schemaId/bulk-upload'
 import { Route as DatasetsSchemaIdEditRouteImport } from './routes/datasets/$schemaId/edit'
 import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects/$projectId/index'
-import { Route as ProjectsProjectIdAnalysisRouteImport } from './routes/projects/$projectId/analysis'
 import { Route as ProjectsProjectIdCatalogRouteImport } from './routes/projects/$projectId/catalog'
 import { Route as ProjectsProjectIdCreateRouteImport } from './routes/projects/$projectId/create'
+import { Route as ProjectsProjectIdLineageRouteImport } from './routes/projects/$projectId/lineage'
 import { Route as ProjectsProjectIdMembersRouteImport } from './routes/projects/$projectId/members'
 import { Route as ProjectsProjectIdPublishRouteImport } from './routes/projects/$projectId/publish'
+import { Route as ProjectsProjectIdScratchRouteImport } from './routes/projects/$projectId/scratch'
 import { Route as ProjectsProjectIdSettingsRouteImport } from './routes/projects/$projectId/settings'
-import { Route as ProjectsProjectIdDerivedDerivedIdRouteImport } from './routes/projects/$projectId/derived/$derivedId'
 import { Route as ProjectsProjectIdMapsMapIdRouteImport } from './routes/projects/$projectId/maps/$mapId'
+import { Route as ProjectsProjectIdViewsViewIdRouteImport } from './routes/projects/$projectId/views/$viewId'
 import { Route as ProjectsProjectIdAppsAppIdEditRouteImport } from './routes/projects/$projectId/apps/$appId/edit'
 import { Route as ProjectsProjectIdDatasetsSchemaIdIndexRouteImport } from './routes/projects/$projectId/datasets/$schemaId/index'
 import { Route as ProjectsProjectIdDatasetsSchemaIdEntryIdRouteImport } from './routes/projects/$projectId/datasets/$schemaId/$entryId'
@@ -149,12 +150,6 @@ const ProjectsProjectIdIndexRoute = ProjectsProjectIdIndexRouteImport.update({
   path: '/',
   getParentRoute: () => ProjectsProjectIdRouteRoute,
 } as any)
-const ProjectsProjectIdAnalysisRoute =
-  ProjectsProjectIdAnalysisRouteImport.update({
-    id: '/analysis',
-    path: '/analysis',
-    getParentRoute: () => ProjectsProjectIdRouteRoute,
-  } as any)
 const ProjectsProjectIdCatalogRoute =
   ProjectsProjectIdCatalogRouteImport.update({
     id: '/catalog',
@@ -166,6 +161,12 @@ const ProjectsProjectIdCreateRoute = ProjectsProjectIdCreateRouteImport.update({
   path: '/create',
   getParentRoute: () => ProjectsProjectIdRouteRoute,
 } as any)
+const ProjectsProjectIdLineageRoute =
+  ProjectsProjectIdLineageRouteImport.update({
+    id: '/lineage',
+    path: '/lineage',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
 const ProjectsProjectIdMembersRoute =
   ProjectsProjectIdMembersRouteImport.update({
     id: '/members',
@@ -178,22 +179,28 @@ const ProjectsProjectIdPublishRoute =
     path: '/publish',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
+const ProjectsProjectIdScratchRoute =
+  ProjectsProjectIdScratchRouteImport.update({
+    id: '/scratch',
+    path: '/scratch',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
 const ProjectsProjectIdSettingsRoute =
   ProjectsProjectIdSettingsRouteImport.update({
     id: '/settings',
     path: '/settings',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
-const ProjectsProjectIdDerivedDerivedIdRoute =
-  ProjectsProjectIdDerivedDerivedIdRouteImport.update({
-    id: '/derived/$derivedId',
-    path: '/derived/$derivedId',
-    getParentRoute: () => ProjectsProjectIdRouteRoute,
-  } as any)
 const ProjectsProjectIdMapsMapIdRoute =
   ProjectsProjectIdMapsMapIdRouteImport.update({
     id: '/maps/$mapId',
     path: '/maps/$mapId',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
+const ProjectsProjectIdViewsViewIdRoute =
+  ProjectsProjectIdViewsViewIdRouteImport.update({
+    id: '/views/$viewId',
+    path: '/views/$viewId',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
 const ProjectsProjectIdAppsAppIdEditRoute =
@@ -233,18 +240,19 @@ export interface FileRoutesByFullPath {
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
   '/datasets/$schemaId/bulk-upload': typeof DatasetsSchemaIdBulkUploadRoute
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
-  '/projects/$projectId/analysis': typeof ProjectsProjectIdAnalysisRoute
   '/projects/$projectId/catalog': typeof ProjectsProjectIdCatalogRoute
   '/projects/$projectId/create': typeof ProjectsProjectIdCreateRoute
+  '/projects/$projectId/lineage': typeof ProjectsProjectIdLineageRoute
   '/projects/$projectId/members': typeof ProjectsProjectIdMembersRoute
   '/projects/$projectId/publish': typeof ProjectsProjectIdPublishRoute
+  '/projects/$projectId/scratch': typeof ProjectsProjectIdScratchRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
   '/apps/$appId/': typeof AppsAppIdIndexRoute
   '/collections/$collectionId/': typeof CollectionsCollectionIdIndexRoute
   '/datasets/$schemaId/': typeof DatasetsSchemaIdIndexRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
-  '/projects/$projectId/derived/$derivedId': typeof ProjectsProjectIdDerivedDerivedIdRoute
   '/projects/$projectId/maps/$mapId': typeof ProjectsProjectIdMapsMapIdRoute
+  '/projects/$projectId/views/$viewId': typeof ProjectsProjectIdViewsViewIdRoute
   '/projects/$projectId/apps/$appId/edit': typeof ProjectsProjectIdAppsAppIdEditRoute
   '/projects/$projectId/datasets/$schemaId/$entryId': typeof ProjectsProjectIdDatasetsSchemaIdEntryIdRoute
   '/projects/$projectId/datasets/$schemaId/': typeof ProjectsProjectIdDatasetsSchemaIdIndexRoute
@@ -266,18 +274,19 @@ export interface FileRoutesByTo {
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
   '/datasets/$schemaId/bulk-upload': typeof DatasetsSchemaIdBulkUploadRoute
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
-  '/projects/$projectId/analysis': typeof ProjectsProjectIdAnalysisRoute
   '/projects/$projectId/catalog': typeof ProjectsProjectIdCatalogRoute
   '/projects/$projectId/create': typeof ProjectsProjectIdCreateRoute
+  '/projects/$projectId/lineage': typeof ProjectsProjectIdLineageRoute
   '/projects/$projectId/members': typeof ProjectsProjectIdMembersRoute
   '/projects/$projectId/publish': typeof ProjectsProjectIdPublishRoute
+  '/projects/$projectId/scratch': typeof ProjectsProjectIdScratchRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
   '/apps/$appId': typeof AppsAppIdIndexRoute
   '/collections/$collectionId': typeof CollectionsCollectionIdIndexRoute
   '/datasets/$schemaId': typeof DatasetsSchemaIdIndexRoute
   '/projects/$projectId': typeof ProjectsProjectIdIndexRoute
-  '/projects/$projectId/derived/$derivedId': typeof ProjectsProjectIdDerivedDerivedIdRoute
   '/projects/$projectId/maps/$mapId': typeof ProjectsProjectIdMapsMapIdRoute
+  '/projects/$projectId/views/$viewId': typeof ProjectsProjectIdViewsViewIdRoute
   '/projects/$projectId/apps/$appId/edit': typeof ProjectsProjectIdAppsAppIdEditRoute
   '/projects/$projectId/datasets/$schemaId/$entryId': typeof ProjectsProjectIdDatasetsSchemaIdEntryIdRoute
   '/projects/$projectId/datasets/$schemaId': typeof ProjectsProjectIdDatasetsSchemaIdIndexRoute
@@ -301,18 +310,19 @@ export interface FileRoutesById {
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
   '/datasets/$schemaId/bulk-upload': typeof DatasetsSchemaIdBulkUploadRoute
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
-  '/projects/$projectId/analysis': typeof ProjectsProjectIdAnalysisRoute
   '/projects/$projectId/catalog': typeof ProjectsProjectIdCatalogRoute
   '/projects/$projectId/create': typeof ProjectsProjectIdCreateRoute
+  '/projects/$projectId/lineage': typeof ProjectsProjectIdLineageRoute
   '/projects/$projectId/members': typeof ProjectsProjectIdMembersRoute
   '/projects/$projectId/publish': typeof ProjectsProjectIdPublishRoute
+  '/projects/$projectId/scratch': typeof ProjectsProjectIdScratchRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
   '/apps/$appId/': typeof AppsAppIdIndexRoute
   '/collections/$collectionId/': typeof CollectionsCollectionIdIndexRoute
   '/datasets/$schemaId/': typeof DatasetsSchemaIdIndexRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
-  '/projects/$projectId/derived/$derivedId': typeof ProjectsProjectIdDerivedDerivedIdRoute
   '/projects/$projectId/maps/$mapId': typeof ProjectsProjectIdMapsMapIdRoute
+  '/projects/$projectId/views/$viewId': typeof ProjectsProjectIdViewsViewIdRoute
   '/projects/$projectId/apps/$appId/edit': typeof ProjectsProjectIdAppsAppIdEditRoute
   '/projects/$projectId/datasets/$schemaId/$entryId': typeof ProjectsProjectIdDatasetsSchemaIdEntryIdRoute
   '/projects/$projectId/datasets/$schemaId/': typeof ProjectsProjectIdDatasetsSchemaIdIndexRoute
@@ -337,18 +347,19 @@ export interface FileRouteTypes {
     | '/datasets/$schemaId/$entryId'
     | '/datasets/$schemaId/bulk-upload'
     | '/datasets/$schemaId/edit'
-    | '/projects/$projectId/analysis'
     | '/projects/$projectId/catalog'
     | '/projects/$projectId/create'
+    | '/projects/$projectId/lineage'
     | '/projects/$projectId/members'
     | '/projects/$projectId/publish'
+    | '/projects/$projectId/scratch'
     | '/projects/$projectId/settings'
     | '/apps/$appId/'
     | '/collections/$collectionId/'
     | '/datasets/$schemaId/'
     | '/projects/$projectId/'
-    | '/projects/$projectId/derived/$derivedId'
     | '/projects/$projectId/maps/$mapId'
+    | '/projects/$projectId/views/$viewId'
     | '/projects/$projectId/apps/$appId/edit'
     | '/projects/$projectId/datasets/$schemaId/$entryId'
     | '/projects/$projectId/datasets/$schemaId/'
@@ -370,18 +381,19 @@ export interface FileRouteTypes {
     | '/datasets/$schemaId/$entryId'
     | '/datasets/$schemaId/bulk-upload'
     | '/datasets/$schemaId/edit'
-    | '/projects/$projectId/analysis'
     | '/projects/$projectId/catalog'
     | '/projects/$projectId/create'
+    | '/projects/$projectId/lineage'
     | '/projects/$projectId/members'
     | '/projects/$projectId/publish'
+    | '/projects/$projectId/scratch'
     | '/projects/$projectId/settings'
     | '/apps/$appId'
     | '/collections/$collectionId'
     | '/datasets/$schemaId'
     | '/projects/$projectId'
-    | '/projects/$projectId/derived/$derivedId'
     | '/projects/$projectId/maps/$mapId'
+    | '/projects/$projectId/views/$viewId'
     | '/projects/$projectId/apps/$appId/edit'
     | '/projects/$projectId/datasets/$schemaId/$entryId'
     | '/projects/$projectId/datasets/$schemaId'
@@ -404,18 +416,19 @@ export interface FileRouteTypes {
     | '/datasets/$schemaId/$entryId'
     | '/datasets/$schemaId/bulk-upload'
     | '/datasets/$schemaId/edit'
-    | '/projects/$projectId/analysis'
     | '/projects/$projectId/catalog'
     | '/projects/$projectId/create'
+    | '/projects/$projectId/lineage'
     | '/projects/$projectId/members'
     | '/projects/$projectId/publish'
+    | '/projects/$projectId/scratch'
     | '/projects/$projectId/settings'
     | '/apps/$appId/'
     | '/collections/$collectionId/'
     | '/datasets/$schemaId/'
     | '/projects/$projectId/'
-    | '/projects/$projectId/derived/$derivedId'
     | '/projects/$projectId/maps/$mapId'
+    | '/projects/$projectId/views/$viewId'
     | '/projects/$projectId/apps/$appId/edit'
     | '/projects/$projectId/datasets/$schemaId/$entryId'
     | '/projects/$projectId/datasets/$schemaId/'
@@ -593,13 +606,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdIndexRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/projects/$projectId/analysis': {
-      id: '/projects/$projectId/analysis'
-      path: '/analysis'
-      fullPath: '/projects/$projectId/analysis'
-      preLoaderRoute: typeof ProjectsProjectIdAnalysisRouteImport
-      parentRoute: typeof ProjectsProjectIdRouteRoute
-    }
     '/projects/$projectId/catalog': {
       id: '/projects/$projectId/catalog'
       path: '/catalog'
@@ -612,6 +618,13 @@ declare module '@tanstack/react-router' {
       path: '/create'
       fullPath: '/projects/$projectId/create'
       preLoaderRoute: typeof ProjectsProjectIdCreateRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/lineage': {
+      id: '/projects/$projectId/lineage'
+      path: '/lineage'
+      fullPath: '/projects/$projectId/lineage'
+      preLoaderRoute: typeof ProjectsProjectIdLineageRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
     '/projects/$projectId/members': {
@@ -628,6 +641,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdPublishRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
+    '/projects/$projectId/scratch': {
+      id: '/projects/$projectId/scratch'
+      path: '/scratch'
+      fullPath: '/projects/$projectId/scratch'
+      preLoaderRoute: typeof ProjectsProjectIdScratchRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
     '/projects/$projectId/settings': {
       id: '/projects/$projectId/settings'
       path: '/settings'
@@ -635,18 +655,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdSettingsRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
-    '/projects/$projectId/derived/$derivedId': {
-      id: '/projects/$projectId/derived/$derivedId'
-      path: '/derived/$derivedId'
-      fullPath: '/projects/$projectId/derived/$derivedId'
-      preLoaderRoute: typeof ProjectsProjectIdDerivedDerivedIdRouteImport
-      parentRoute: typeof ProjectsProjectIdRouteRoute
-    }
     '/projects/$projectId/maps/$mapId': {
       id: '/projects/$projectId/maps/$mapId'
       path: '/maps/$mapId'
       fullPath: '/projects/$projectId/maps/$mapId'
       preLoaderRoute: typeof ProjectsProjectIdMapsMapIdRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/views/$viewId': {
+      id: '/projects/$projectId/views/$viewId'
+      path: '/views/$viewId'
+      fullPath: '/projects/$projectId/views/$viewId'
+      preLoaderRoute: typeof ProjectsProjectIdViewsViewIdRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
     '/projects/$projectId/apps/$appId/edit': {
@@ -674,15 +694,16 @@ declare module '@tanstack/react-router' {
 }
 
 interface ProjectsProjectIdRouteRouteChildren {
-  ProjectsProjectIdAnalysisRoute: typeof ProjectsProjectIdAnalysisRoute
   ProjectsProjectIdCatalogRoute: typeof ProjectsProjectIdCatalogRoute
   ProjectsProjectIdCreateRoute: typeof ProjectsProjectIdCreateRoute
+  ProjectsProjectIdLineageRoute: typeof ProjectsProjectIdLineageRoute
   ProjectsProjectIdMembersRoute: typeof ProjectsProjectIdMembersRoute
   ProjectsProjectIdPublishRoute: typeof ProjectsProjectIdPublishRoute
+  ProjectsProjectIdScratchRoute: typeof ProjectsProjectIdScratchRoute
   ProjectsProjectIdSettingsRoute: typeof ProjectsProjectIdSettingsRoute
   ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
-  ProjectsProjectIdDerivedDerivedIdRoute: typeof ProjectsProjectIdDerivedDerivedIdRoute
   ProjectsProjectIdMapsMapIdRoute: typeof ProjectsProjectIdMapsMapIdRoute
+  ProjectsProjectIdViewsViewIdRoute: typeof ProjectsProjectIdViewsViewIdRoute
   ProjectsProjectIdAppsAppIdEditRoute: typeof ProjectsProjectIdAppsAppIdEditRoute
   ProjectsProjectIdDatasetsSchemaIdEntryIdRoute: typeof ProjectsProjectIdDatasetsSchemaIdEntryIdRoute
   ProjectsProjectIdDatasetsSchemaIdIndexRoute: typeof ProjectsProjectIdDatasetsSchemaIdIndexRoute
@@ -690,16 +711,16 @@ interface ProjectsProjectIdRouteRouteChildren {
 
 const ProjectsProjectIdRouteRouteChildren: ProjectsProjectIdRouteRouteChildren =
   {
-    ProjectsProjectIdAnalysisRoute: ProjectsProjectIdAnalysisRoute,
     ProjectsProjectIdCatalogRoute: ProjectsProjectIdCatalogRoute,
     ProjectsProjectIdCreateRoute: ProjectsProjectIdCreateRoute,
+    ProjectsProjectIdLineageRoute: ProjectsProjectIdLineageRoute,
     ProjectsProjectIdMembersRoute: ProjectsProjectIdMembersRoute,
     ProjectsProjectIdPublishRoute: ProjectsProjectIdPublishRoute,
+    ProjectsProjectIdScratchRoute: ProjectsProjectIdScratchRoute,
     ProjectsProjectIdSettingsRoute: ProjectsProjectIdSettingsRoute,
     ProjectsProjectIdIndexRoute: ProjectsProjectIdIndexRoute,
-    ProjectsProjectIdDerivedDerivedIdRoute:
-      ProjectsProjectIdDerivedDerivedIdRoute,
     ProjectsProjectIdMapsMapIdRoute: ProjectsProjectIdMapsMapIdRoute,
+    ProjectsProjectIdViewsViewIdRoute: ProjectsProjectIdViewsViewIdRoute,
     ProjectsProjectIdAppsAppIdEditRoute: ProjectsProjectIdAppsAppIdEditRoute,
     ProjectsProjectIdDatasetsSchemaIdEntryIdRoute:
       ProjectsProjectIdDatasetsSchemaIdEntryIdRoute,

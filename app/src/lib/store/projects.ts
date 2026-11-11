@@ -64,8 +64,8 @@ export interface ProjectArtifactRow {
   projectId: string;
   /** The referenced artifact — one text id space across kinds; `artifactKind` says which table answers. */
   artifactId: string;
-  /** Map/app memberships arrive with their phases ([project 3]/[project 5]) — the kind domain is dataset|derived until then (0019). */
-  artifactKind: "dataset" | "derived";
+  /** Map/app memberships arrive with their phases ([project 3]/[project 5]) — the kind domain is dataset|layer|app (0028 retired derived). */
+  artifactKind: "dataset" | "layer" | "app";
   /** Owned = created in-project (an owned draft, bound at birth); linked = added from the global catalog (ADR 0018). */
   role: "owned" | "linked";
   /** The linked reference's follow intent — manual pins at the add-time head, auto floats. Store-kept in lockstep with the edge's mode. */
@@ -289,7 +289,7 @@ export async function remove(args: { projectId: string }, options?: StoreOptions
 export interface AddArtifactArgs {
   projectId: string;
   artifactId: string;
-  artifactKind: "dataset" | "derived";
+  artifactKind: "dataset";
   /** Owned = bind a dataset created in-project (no edge minted); linked = add a catalog artifact by reference (ADR 0018). */
   role: "owned" | "linked";
   /** Linked datasets only — manual (the default) pins at the current chain head, auto floats. */
@@ -298,7 +298,7 @@ export interface AddArtifactArgs {
 
 export interface AddArtifactResult {
   artifact: ProjectArtifactRow | null;
-  /** Rows written for the membership's fork edge (linked datasets only; 0 for owned, derived, and denied adds). */
+  /** Rows written for the membership's fork edge (linked datasets only; 0 for owned and denied adds). */
   edgeRows: number;
   /** The ref the edge pinned to (manual linked adds whose chain had a head; null otherwise — including the versionless-chain float fallback). */
   pinnedRef: string | null;
@@ -320,8 +320,6 @@ export interface AddArtifactResult {
  *     (project, kind, artifact) raises the 23505 constraint (the DB
  *     PK/UQ enforces what the Convex in-transaction re-check did) — the UI
  *     surfaces it verbatim.
- *   - linked derived → no edge (`consumer_references.source_dataset_id`
- *     cannot name a registry row — the 0010 recorded gap).
  *
  * Returns the membership row (null = denied — not an editor of the
  * project), the edge rows written, and the pinned ref.
@@ -348,7 +346,7 @@ export async function addArtifact(
   if (artifact === null) {
     return { artifact: null, edgeRows: 0, pinnedRef: null };
   }
-  if (args.role !== "linked" || args.artifactKind !== "dataset") {
+  if (args.role !== "linked") {
     return { artifact, edgeRows: 0, pinnedRef: null };
   }
   // The head the manual pin names (newest version — the chain read the
@@ -533,7 +531,7 @@ export async function removeArtifact(
 /** The catalog's one-row merge: the membership, its edge (linked datasets only), and the source chain's head. */
 export interface CatalogRow {
   artifact: ProjectArtifactRow;
-  /** The membership's fork edge — linked datasets only (owned and derived rows carry none). */
+  /** The membership's fork edge — linked datasets only (owned rows carry none). */
   edge: ConsumerReferenceRow | null;
   /** The source chain's current head (linked datasets; null when the chain is empty — never published a version). */
   head: { ref: string; versionLabel: string } | null;
@@ -547,9 +545,8 @@ export interface CatalogRow {
  * (the versions card's per-consumer read, batched); heads arrive as one
  * read per linked source, in parallel — a catalog holds tens of members,
  * and the per-dataset newest-version read is exactly the one the versions
- * card and the bundle press already make. Derived memberships answer no
- * edge (source_dataset_id cannot name a registry row — the 0010 gap), owned
- * memberships answer no edge by design (ADR 0018).
+ * card and the bundle press already make. Owned memberships answer no
+ * edge by design (ADR 0018).
  */
 export function listCatalogQueryOptions(args: { projectId: string }, options?: StoreOptions) {
   return queryOptions({

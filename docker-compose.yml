@@ -257,6 +257,13 @@ services:
       HOST: 0.0.0.0
       PORT: "3000"
       NODE_ENV: production
+      # The server-side VIEW RUNNER (docs/views-design.md §7): a Postgres login
+      # that is a member of `view_runner` (jdm_server, created by
+      # deploy/postgres/zz-supabase-roles.sh), and the secret that verifies
+      # the caller's Supabase access token. Server-only; never VITE_-prefixed.
+      DATABASE_URL: postgresql://jdm_server:${POSTGRES_PASSWORD}@db:5432/app
+      JWT_SECRET: ${JWT_SECRET}
+      VIEW_RUN_TIMEOUT_MS: ${VIEW_RUN_TIMEOUT_MS:-60000}
 
   # --- optional ops UI: docker compose --profile studio up -d -----------
   # Loopback-only; reach it through an SSH tunnel. Not routed by kong.

@@ -18,6 +18,8 @@ const config = defineConfig({
     tanstackStart(),
     nitro({
       preset: "bun",
+      // The `auto` view-refresh drain (issue #305) starts with the server.
+      plugins: ["./src/server/views/refresh-plugin.ts"],
       rolldownConfig: {
         external: SSR_EXTERNALS,
         output: {

@@ -20,7 +20,9 @@
   "dependencies": {
     "@base-ui/react": "^1.7.0",
     "@caden/maps": "workspace:*",
+    "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lang-sql": "^6.10.0",
     "@codemirror/language": "^6.12.4",
     "@codemirror/lint": "^6.9.7",
     "@dnd-kit/core": "^6.3.1",

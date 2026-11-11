@@ -7,15 +7,15 @@ import { useState } from "react";
 import { useLayerStyles } from "#/features/layer-styles";
 import { isPostgresDatasetId } from "#/lib/dataset-source";
 import { listSummariesQueryOptions } from "#/lib/store/datasets";
-import * as derivedStore from "#/lib/store/derived";
 import * as layersStore from "#/lib/store/layers";
 import * as mapsStore from "#/lib/store/maps";
 
 import { splitSchemaIdsByDecision, useTileArchiveSources } from "../lib/layer-source";
-import { renderTargetsForDerivedLayers } from "../lib/map-layers";
+import { NO_DERIVED_TITLES, NO_RENDERABLE_DERIVED } from "../lib/map-layers";
+import { popupInputsOf, usePopupFieldsFor } from "../lib/popup-fields";
 import { LayersMap } from "./layers-map";
 import { useGeometriesByPgDatasets } from "./pg-geometries-loader";
-import { pgDerivedToDerivedSummary, pgSummaryToDatasetSummary } from "./pg-layer-rows";
+import { pgSummaryToDatasetSummary } from "./pg-layer-rows";
 
 /**
  * A stored project map, rendered — the app builder's map widget canvas
@@ -113,7 +113,6 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
       ...layersStore.listForProjectQueryOptions({ projectId }),
     }),
     pgSummaries = useStoreQuery(listSummariesQueryOptions()),
-    pgDerivedRows = useStoreQuery(derivedStore.summariesQueryOptions()),
     placements = placementsQuery.data ?? [],
     projectLayers = projectLayersQuery.data ?? [],
     layersById = new globalThis.Map(projectLayers.map((layer) => [layer.id, layer])),
@@ -182,24 +181,13 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
     childrenLists.set(child.groupId, list);
   }
 
-  const derivedSummaries =
-      pgDerivedRows.data === undefined
-        ? undefined
-        : pgDerivedRows.data.map(pgDerivedToDerivedSummary),
-    datasetsDocs =
+  const datasetsDocs =
       pgSummaries.data === undefined ? undefined : pgSummaries.data.map(pgSummaryToDatasetSummary),
-    renderableDerived =
-      derivedSummaries === undefined || datasetsDocs === undefined
-        ? undefined
-        : renderTargetsForDerivedLayers(derivedSummaries, datasetsDocs),
+    renderableDerived: globalThis.Map<string, string> = NO_RENDERABLE_DERIVED,
     datasetTitleById = new globalThis.Map(
       (pgSummaries.data ?? []).map((row) => [row.id, row.title]),
     ),
-    derivedTitleById = new globalThis.Map(
-      // The Convex doc's branded id flattens to its string value (the PG
-      // ids the canvas resolves are plain strings).
-      (derivedSummaries ?? []).map((summary) => [String(summary._id), summary.title]),
-    );
+    derivedTitleById = NO_DERIVED_TITLES;
 
   /** Flattens one placed layer into its data entries (groups recurse; linked rows resolve through their frozen pin). */
   // The kind ladder (owned data / owned group / linked) plus the visibility
@@ -329,6 +317,10 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
       renderableDerived === undefined ? false : renderableDerived.has(schemaId),
     ),
     split = splitSchemaIdsByDecision(schemaIds, decisions, derivedRowIds),
+    popupFieldsFor = usePopupFieldsFor(
+      popupInputsOf(dataEntries, layersById),
+      new Set((pgSummaries.data ?? []).filter((row) => row.kind === "view").map((row) => row.id)),
+    ),
     pgRowIds = split.rowSchemaIds.filter((schemaId) => isPostgresDatasetId(schemaId)),
     pgFan = useGeometriesByPgDatasets(pgRowIds),
     [arrivedTileSchemaIds, setArrivedTileSchemaIds] = useState<Set<string>>(() => new Set()),
@@ -376,7 +368,6 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
     placementsQuery.data === undefined ||
     projectLayersQuery.data === undefined ||
     pgSummaries.data === undefined ||
-    pgDerivedRows.data === undefined ||
     datasetsDocs === undefined
   ) {
     return <Skeleton className="size-full rounded-none" />;
@@ -389,6 +380,7 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
       {shouldMount ? (
         <LayersMap
           chainLayers={[]}
+          popupFieldsFor={popupFieldsFor}
           colorBySchema={styledColorBySchema}
           datasets={mapDatasets}
           derivedLayers={derivedRowIds.flatMap((derivedId) => {

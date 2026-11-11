@@ -1,6 +1,6 @@
 # ADR 0027: Join outputs are project-owned derived artifacts with a joined-table route
 
-Date: 2026-11-10 · Status: accepted · Issue: [#289](https://github.com/whoiscadenyoung/json-data-manager/issues/289) ([remedies 3]) ·
+Date: 2026-11-10 · Status: superseded by [ADR 0028](0028-views.md) (views are datasets; the derived registry and route are retired) · Issue: [#289](https://github.com/whoiscadenyoung/json-data-manager/issues/289) ([remedies 3]) ·
 Train: [remedies umbrella #286]
 
 ## Context

@@ -250,11 +250,32 @@ describe("datasets policy + lifecycle writes", () => {
     ]);
   });
 
-  it("remove deletes by id", async () => {
-    const { client, queries } = stubSupabase(() => ({ data: [{ id: "d1" }], error: null }));
+  it("remove deletes by id (after the dependent-views pre-check)", async () => {
+    const { client, queries } = stubSupabase((query) =>
+      query.table === "view_inputs"
+        ? { data: [], error: null }
+        : { data: [{ id: "d1" }], error: null },
+    );
     await remove({ datasetId: "d1" }, { supabase: client });
-    const first = queryAt(queries, 0);
-    expect(methodList(first)[0]).toBe("delete");
-    expect(argsOf(first, "eq")).toStrictEqual(["id", "d1"]);
+    expect(queryAt(queries, 0).table).toBe("view_inputs");
+    const second = queryAt(queries, 1);
+    expect(methodList(second)[0]).toBe("delete");
+    expect(argsOf(second, "eq")).toStrictEqual(["id", "d1"]);
+  });
+
+  it("remove refuses a dataset a view still reads and names the views", async () => {
+    const { client, queries } = stubSupabase((query) =>
+      query.table === "view_inputs"
+        ? {
+            data: [{ view: { title: "Deployments per state" } }, { view: { title: "Links" } }],
+            error: null,
+          }
+        : { data: [{ id: "d1" }], error: null },
+    );
+    await expect(remove({ datasetId: "d1" }, { supabase: client })).rejects.toThrow(
+      /Deployments per state, Links/,
+    );
+    // The delete never ran.
+    expect(queries.length).toBe(1);
   });
 });

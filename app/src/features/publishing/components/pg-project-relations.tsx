@@ -17,17 +17,16 @@ import {
 } from "@caden/ui/components/sheet";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { ArrowRight, KeyRound, Loader2, MapPinned, Plus, Sparkles, Trash2 } from "lucide-react";
+import { ArrowRight, KeyRound, Loader2, MapPinned, Plus, Workflow, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { createProjectView, definitionFromRelation } from "#/features/views";
 import { errorMessage } from "@/lib/errors";
 import * as datasetsStore from "@/lib/store/datasets";
 import type { DatasetRow } from "@/lib/store/datasets";
-import * as derivedStore from "@/lib/store/derived";
 import * as layersStore from "@/lib/store/layers";
 import type { DatasetMembershipRow } from "@/lib/store/layers";
-import * as projectsStore from "@/lib/store/projects";
 import * as relationsStore from "@/lib/store/relations";
 import type { DatasetRelationRow } from "@/lib/store/relations";
 
@@ -40,8 +39,8 @@ import { VIEWER_REASON } from "../lib/pg-viewer-posture";
  * section lists every relation touching a member dataset (including ones
  * declared elsewhere), and declaring one here makes it reusable by any
  * project holding both datasets. Key relations carry the one-click
- * lookup-join offer (the transform engine's op — "relate" and "join into a
- * table" are one declaration, two consumers).
+ * "Create view from relation" offer (a view pre-filled with the relation's
+ * keys — "relate" and "join" are one declaration, two consumers).
  */
 
 type RelationKind = "key" | "spatial";
@@ -91,9 +90,10 @@ export function PgProjectRelationsSection({
   const queryClient = useQueryClient(),
     invalidate = (): void => {
       void queryClient.invalidateQueries({ queryKey: ["pg:relations"] });
-      void queryClient.invalidateQueries({ queryKey: ["pg:derived"] });
-      // The mint now adds an OWNED membership (#289) — the shell's catalog
-      // feed must refetch too, or the Derived section misses the new row.
+      void queryClient.invalidateQueries({ queryKey: ["pg:views"] });
+      void queryClient.invalidateQueries({ queryKey: ["pg:datasets"] });
+      // Creating a view adds an OWNED membership — the shell's catalog feed
+      // must refetch too, or the Views section misses the new row.
       void queryClient.invalidateQueries({ queryKey: ["pg:projects", "catalog"] });
     },
     membershipsQuery = useQuery({
@@ -205,61 +205,36 @@ function PgRelationRow({
         ? // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the record guard above is the runtime check; the key config's documented shape is the contract.
           (relation.config as Record<string, unknown>)
         : undefined,
-    join = async (): Promise<void> => {
-      // The one-click lookup-join (the acceptance's "relate and join into a
-      // table share the declaration"): left-join the TO side's rows onto
-      // the FROM side by the relation's own key fields.
-      setBusy("join");
+    createView = async (): Promise<void> => {
+      // "Create view from relation": the base is the FROM side, with one Join
+      // step to the TO side on the relation's own key fields. The view is
+      // project-owned like any dataset; the editor opens on it.
+      setBusy("view");
       try {
         const fromKey = keyConfig === undefined ? undefined : keyConfig.fromKey,
           toKey = keyConfig === undefined ? undefined : keyConfig.toKey;
         if (typeof fromKey !== "string" || typeof toKey !== "string") {
           throw new Error("This relation's key fields are missing.");
         }
-        // The registry row is the engine-level store; the OWNED catalog
-        // membership is what makes it visible ([remedies 3], #289, ADR
-        // 0027) — the same bind-at-birth posture an owned draft dataset
-        // gets. RLS denies the insert for non-editors, so a viewer can't
-        // mint an owned artifact.
-        const derivedId = await derivedStore.save({
-          spec: {
-            operations: [
-              {
-                baseKey: fromKey,
-                kind: "lookup",
-                lookupDatasetId: relation.toDataset,
-                lookupKey: toKey,
-                match: "left",
-                // The non-lossy 1-N policy (ADR 0026 / #288): a relation's
-                // join must not silently drop rows when the TO side has
-                // several matches per key (one award, several corridors) —
-                // enrichment lands as per-field arrays instead.
-                onDuplicateKey: "collect",
-                // Namespace by TITLE, not the engine's dataset-id default —
-                // UUID-prefixed output headers are unreadable (#281; the
-                // transform editor's picker flow already names this way).
-                namespace: toTitle,
-              },
-            ],
-            sourceDatasetId: relation.fromDataset,
-          },
-          status: "saved",
-          title: `${fromTitle} + ${toTitle}`,
+        const seeded = definitionFromRelation({
+          cardinality: relation.cardinality,
+          fromDataset: relation.fromDataset,
+          fromKey,
+          fromTitle,
+          toDataset: relation.toDataset,
+          toKey,
+          toTitle,
         });
-        await projectsStore.addArtifact({
-          artifactId: derivedId,
-          artifactKind: "derived",
+        const viewId = await createProjectView({
+          definition: seeded.definition,
           projectId,
-          role: "owned",
+          title: seeded.title,
         });
-        toast.success("Derived dataset created — opening its joined table.");
+        toast.success("View created from the relation. Run it to fill in its rows.");
         invalidate();
-        void navigate({
-          params: { derivedId, projectId },
-          to: "/projects/$projectId/derived/$derivedId",
-        });
+        void navigate({ params: { projectId, viewId }, to: "/projects/$projectId/views/$viewId" });
       } catch (error) {
-        toast.error(errorMessage(error, "Failed to create the derived dataset."));
+        toast.error(errorMessage(error, "Failed to create the view."));
       } finally {
         setBusy(undefined);
       }
@@ -314,18 +289,18 @@ function PgRelationRow({
             <Button
               disabled={busy !== undefined}
               onClick={() => {
-                void join();
+                void createView();
               }}
               size="sm"
-              title="Materialize the join as a derived dataset (the transform engine's lookup op — left-joined by this relation's key fields)."
+              title="Start a view with this relation's keys pre-filled: the FROM dataset joined to the TO dataset."
               variant="outline"
             >
-              {busy === "join" ? (
+              {busy === "view" ? (
                 <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
               ) : (
-                <Sparkles className="mr-1 h-3.5 w-3.5" />
+                <Workflow className="mr-1 h-3.5 w-3.5" />
               )}
-              Join into a table
+              Create view from relation
             </Button>
           )}
           <Button

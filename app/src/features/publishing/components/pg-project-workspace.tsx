@@ -49,12 +49,12 @@ import { useState, type ComponentType } from "react";
 import { toast } from "sonner";
 
 import { PgDatasetTagsWithCount } from "#/features/catalog";
+import { ProjectViewsSection } from "#/features/views";
 import { RouterButton } from "@/components/router-button";
 import { errorMessage } from "@/lib/errors";
 import * as appVersionsStore from "@/lib/store/app-versions";
 import * as appsStore from "@/lib/store/apps";
 import * as datasetsStore from "@/lib/store/datasets";
-import * as derivedStore from "@/lib/store/derived";
 import * as mapsStore from "@/lib/store/maps";
 import { ROLE_LABELS } from "@/lib/store/project-members";
 import * as projectsStore from "@/lib/store/projects";
@@ -84,7 +84,7 @@ import { PgProjectRelationsSection } from "./pg-project-relations";
  * the reason. A non-member's project reads exactly as a missing one, and
  * this page renders the same not-found card for both. Map/app artifacts
  * arrive with their phases ([project 3]/[project 5]) — the catalog holds
- * datasets and derived datasets only.
+ * datasets and views (a view is a dataset whose rows come from its steps, #301).
  */
 
 /** The stale-press window (the syncRuns/publishAttempts value): a press whose checkpoint hasn't moved this long was abandoned by its browser, and pressing again RESUMES it (joining the running bundle). */
@@ -388,14 +388,12 @@ function PgLinkedVersionActions({
 function PgCatalogRow({
   canEdit,
   datasetsById,
-  derivedById,
   onRemoved,
   projectId,
   row,
 }: {
   canEdit: boolean;
   datasetsById: globalThis.Map<string, { lifecycle: string; title: string }>;
-  derivedById: globalThis.Map<string, { title: string }>;
   onRemoved: () => void;
   projectId: string;
   row: CatalogRow;
@@ -423,18 +421,9 @@ function PgCatalogRow({
     };
   const dataset =
       artifact.artifactKind === "dataset" ? datasetsById.get(artifact.artifactId) : undefined,
-    derived =
-      artifact.artifactKind === "derived" ? derivedById.get(artifact.artifactId) : undefined,
-    exists = dataset !== undefined || derived !== undefined,
+    exists = dataset !== undefined,
     draft = dataset !== undefined && dataset.lifecycle === "draft",
-    label =
-      dataset !== undefined
-        ? dataset.title
-        : derived !== undefined
-          ? derived.title
-          : artifact.artifactKind === "derived"
-            ? "Derived dataset (no longer visible)"
-            : "Deleted dataset";
+    label = dataset !== undefined ? dataset.title : "Deleted dataset";
   return (
     <Card className="flex-row items-center gap-4 px-4 py-3 transition-shadow hover:shadow-md">
       {dataset !== undefined ? (
@@ -444,18 +433,6 @@ function PgCatalogRow({
           to="/projects/$projectId/datasets/$schemaId"
         >
           <PgProvenanceChips draft={draft} row={row} />
-          <p className="truncate text-sm font-medium">{label}</p>
-        </Link>
-      ) : derived !== undefined ? (
-        // An OWNED derived artifact opens its joined-table view ([remedies 3],
-        // #289, ADR 0027); a LINKED one opens the same route — the registry
-        // row is saved-and-readable, so the view is identical.
-        <Link
-          className="flex min-w-0 flex-1 flex-col gap-1.5 py-0"
-          params={{ derivedId: artifact.artifactId, projectId }}
-          to="/projects/$projectId/derived/$derivedId"
-        >
-          <PgProvenanceChips draft={false} row={row} />
           <p className="truncate text-sm font-medium">{label}</p>
         </Link>
       ) : (
@@ -518,17 +495,15 @@ function PgAddCandidateRow({
   );
 }
 
-/** The add-existing sheet — the D1 picker over the GLOBAL catalog (every visible dataset is addable, incl. from other projects): published datasets + saved derived rows, already-added ids excluded. Each add lands as a linked reference; the sheet's sync toggle picks its follow intent (pin at head / float). */
+/** The add-existing sheet — the D1 picker over the GLOBAL catalog (every visible dataset is addable, incl. from other projects): published datasets (views included), already-added ids excluded. Each add lands as a linked reference; the sheet's sync toggle picks its follow intent (pin at head / float). */
 export function PgAddReferenceSheet({
   addedDatasetIds,
-  addedDerivedIds,
   onAdded,
   onOpenChange,
   open,
   projectId,
 }: {
   addedDatasetIds: Set<string>;
-  addedDerivedIds: Set<string>;
   onAdded: () => void;
   onOpenChange: (open: boolean) => void;
   open: boolean;
@@ -538,24 +513,18 @@ export function PgAddReferenceSheet({
     [auto, setAuto] = useState(false),
     [pendingId, setPendingId] = useState<string>(),
     datasetsQuery = useQuery({ ...datasetsStore.listSummariesQueryOptions(), enabled: open }),
-    derivedQuery = useQuery({ ...derivedStore.summariesQueryOptions(), enabled: open }),
     normalized = search.trim().toLowerCase(),
     datasetCandidates = (datasetsQuery.data ?? [])
       .filter((dataset) => !addedDatasetIds.has(dataset.id))
       .filter((dataset) =>
         normalized === "" ? true : dataset.title.toLowerCase().includes(normalized),
       ),
-    derivedCandidates = (derivedQuery.data ?? [])
-      .filter((derived) => !addedDerivedIds.has(derived.id))
-      .filter((derived) =>
-        normalized === "" ? true : derived.title.toLowerCase().includes(normalized),
-      ),
-    add = async (artifactId: string, artifactKind: "dataset" | "derived"): Promise<void> => {
+    add = async (artifactId: string): Promise<void> => {
       setPendingId(artifactId);
       try {
         const outcome = await projectsStore.addArtifact({
           artifactId,
-          artifactKind,
+          artifactKind: "dataset",
           projectId,
           role: "linked",
           syncMode: auto ? "auto" : "manual",
@@ -565,11 +534,9 @@ export function PgAddReferenceSheet({
           return;
         }
         toast.success(
-          artifactKind === "dataset" && outcome.pinnedRef !== null
+          outcome.pinnedRef !== null
             ? `Added — pinned at ${outcome.pinnedRef}. The source republishing past it shows "update available".`
-            : artifactKind === "dataset"
-              ? "Added — it floats on this dataset's chain (no frozen version to pin yet)."
-              : "Added to project.",
+            : "Added — it floats on this dataset's chain (no frozen version to pin yet).",
         );
         onAdded();
         onOpenChange(false);
@@ -626,7 +593,7 @@ export function PgAddReferenceSheet({
               onChange={(event) => {
                 setSearch(event.target.value);
               }}
-              placeholder="Search datasets and derived…"
+              placeholder="Search datasets…"
               value={search}
             />
           </div>
@@ -643,7 +610,7 @@ export function PgAddReferenceSheet({
                     disabled={pendingId !== undefined}
                     hint={dataset.description}
                     onPick={() => {
-                      void add(dataset.id, "dataset");
+                      void add(dataset.id);
                     }}
                     title={dataset.title}
                   />
@@ -651,26 +618,6 @@ export function PgAddReferenceSheet({
                     <PgDatasetTagsWithCount dataset={dataset} />
                   </div>
                 </div>
-              ))
-            )}
-          </section>
-          <section className="flex flex-col gap-1">
-            <p className="text-sm font-semibold">Derived</p>
-            {derivedCandidates.length === 0 ? (
-              <p className="rounded-lg border px-4 py-3 text-center text-sm text-muted-foreground">
-                {derivedQuery.isPending ? "Loading derived…" : "No derived datasets left to add."}
-              </p>
-            ) : (
-              derivedCandidates.map((derived) => (
-                <PgAddCandidateRow
-                  disabled={pendingId !== undefined}
-                  hint={derived.description}
-                  key={derived.id}
-                  onPick={() => {
-                    void add(derived.id, "derived");
-                  }}
-                  title={derived.title}
-                />
               ))
             )}
           </section>
@@ -966,22 +913,25 @@ export function PgProjectOverview() {
 export function PgProjectCatalog() {
   const { canEdit, catalog, invalidateAll, openAdd, projectId } = useProjectShell(),
     datasetsQuery = useQuery(datasetsStore.listQueryOptions()),
-    derivedQuery = useQuery(derivedStore.summariesQueryOptions()),
     datasetsById = new globalThis.Map(
       (datasetsQuery.data ?? []).map((dataset) => [
         dataset.id,
-        { lifecycle: dataset.lifecycle, title: dataset.title },
+        { kind: dataset.kind, lifecycle: dataset.lifecycle, title: dataset.title },
       ]),
     ),
-    derivedById = new globalThis.Map(
-      (derivedQuery.data ?? []).map((derived) => [derived.id, { title: derived.title }]),
-    ),
-    datasetSection = catalog.filter((row) => row.artifact.artifactKind === "dataset"),
-    derivedSection = catalog.filter((row) => row.artifact.artifactKind === "derived"),
-    sections = [
-      { label: "Datasets", rows: datasetSection },
-      { label: "Derived", rows: derivedSection },
-    ];
+    datasetRows = catalog.filter((row) => row.artifact.artifactKind === "dataset"),
+    // Views are datasets too; they get their own section, with their own cards.
+    isView = (row: CatalogRow): boolean => {
+      const dataset = datasetsById.get(row.artifact.artifactId);
+      return dataset !== undefined && dataset.kind === "view";
+    },
+    datasetSection = datasetRows.filter((row) => !isView(row)),
+    viewMemberships = datasetRows.flatMap((row) => {
+      const dataset = datasetsById.get(row.artifact.artifactId);
+      return dataset === undefined
+        ? []
+        : [{ id: row.artifact.artifactId, kind: dataset.kind, title: dataset.title }];
+    });
   return (
     <main className="mx-auto max-w-5xl px-6 py-6">
       {catalog.length === 0 ? (
@@ -1017,32 +967,29 @@ export function PgProjectCatalog() {
         </Empty>
       ) : (
         <div className="flex flex-col gap-6">
-          {sections.map(
-            (section) =>
-              section.rows.length > 0 && (
-                <section key={section.label}>
-                  <h2 className="mb-2 text-sm font-semibold text-muted-foreground">
-                    {section.label}{" "}
-                    <span className="font-normal">
-                      ({section.rows.length} {section.rows.length === 1 ? "artifact" : "artifacts"})
-                    </span>
-                  </h2>
-                  <div className="flex flex-col gap-3">
-                    {section.rows.map((row) => (
-                      <PgCatalogRow
-                        canEdit={canEdit}
-                        datasetsById={datasetsById}
-                        derivedById={derivedById}
-                        key={row.artifact.id}
-                        onRemoved={invalidateAll}
-                        projectId={projectId}
-                        row={row}
-                      />
-                    ))}
-                  </div>
-                </section>
-              ),
+          {datasetSection.length > 0 && (
+            <section>
+              <h2 className="mb-2 text-sm font-semibold text-muted-foreground">
+                Datasets{" "}
+                <span className="font-normal">
+                  ({datasetSection.length} {datasetSection.length === 1 ? "artifact" : "artifacts"})
+                </span>
+              </h2>
+              <div className="flex flex-col gap-3">
+                {datasetSection.map((row) => (
+                  <PgCatalogRow
+                    canEdit={canEdit}
+                    datasetsById={datasetsById}
+                    key={row.artifact.id}
+                    onRemoved={invalidateAll}
+                    projectId={projectId}
+                    row={row}
+                  />
+                ))}
+              </div>
+            </section>
           )}
+          <ProjectViewsSection canEdit={canEdit} datasets={viewMemberships} projectId={projectId} />
         </div>
       )}
       {datasetSection.length > 0 && (

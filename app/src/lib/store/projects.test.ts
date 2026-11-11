@@ -239,27 +239,6 @@ describe("projects writes — rows-affected returns (the silent-denial rule)", (
     expect(queries.some((query) => query.table === "dataset_versions")).toBe(false);
   });
 
-  it("addArtifact mints NO edge for linked derived rows (source_dataset_id cannot name a registry row)", async () => {
-    const { client, queries, respond } = stubSupabase();
-    respond((_query) => ({
-      data: {
-        addedBy: "user-1",
-        artifactId: "derived-1",
-        artifactKind: "derived",
-        id: "m4",
-        projectId: "p1",
-        role: "linked",
-        syncMode: "manual",
-      },
-    }));
-    const result = await addArtifact(
-      { artifactId: "derived-1", artifactKind: "derived", projectId: "p1", role: "linked" },
-      { supabase: client },
-    );
-    expect(result.edgeRows).toBe(0);
-    expect(queries.some((query) => query.table === "consumer_references")).toBe(false);
-  });
-
   it("removeArtifact deletes the membership's fork edge then the membership", async () => {
     const { client, queries, respond } = stubSupabase();
     respond((query) => {

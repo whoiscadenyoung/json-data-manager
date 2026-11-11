@@ -25,10 +25,7 @@ export interface ExportFormatOption {
  * Export-format picker for datasets and groups. Purely presentational over
  * the export itself: `onConfirm` receives the chosen format, whether a
  * JSON-schema file should accompany the data (GeoJSON / JSON only), and
- * whether the export should carry the joined fields of the saved transform
- * specs targeting the exported dataset(s) (roadmap 3a, #96 — undefined hint
- * hides the toggle), and returns a promise the dialog awaits for its busy
- * state.
+ * and returns a promise the dialog awaits for its busy state.
  */
 export function ExportDialog({
   open,
@@ -37,7 +34,6 @@ export function ExportDialog({
   formatOptions,
   defaultFormat,
   schemaLabel,
-  joinedFieldsHint,
   onConfirm,
 }: {
   open: boolean;
@@ -49,24 +45,13 @@ export function ExportDialog({
   defaultFormat: ExportFormat;
   /** Label for the include-schema checkbox target, e.g. "dataset" / "each dataset". */
   schemaLabel: string;
-  /**
-   * Label for the "include joined fields" checkbox, or `undefined` when the
-   * export target has no ready saved transforms (a toggle that could never
-   * change the output must not render — the no-op-control rule).
-   */
-  joinedFieldsHint: string | undefined;
-  onConfirm: (
-    format: ExportFormat,
-    includeSchema: boolean,
-    includeJoinedFields: boolean,
-  ) => Promise<void>;
+  onConfirm: (format: ExportFormat, includeSchema: boolean) => Promise<void>;
 }) {
   // The selected format persists across re-opens on purpose (re-exporting in
   // the same format is the common case); it only resets when the dialog
   // remounts on a different page.
   const [format, setFormat] = useState(defaultFormat),
     [includeSchema, setIncludeSchema] = useState(false),
-    [includeJoinedFields, setIncludeJoinedFields] = useState(false),
     [isExporting, setIsExporting] = useState(false);
 
   const supportsSchema = format === "geojson" || format === "json",
@@ -75,11 +60,7 @@ export function ExportDialog({
   const handleConfirm = async () => {
     setIsExporting(true);
     try {
-      // The joined-fields answer is gated on the toggle being VISIBLE: the
-      // flag persists across re-opens like the format, but if every ready
-      // transform vanished between exports the checkbox disappears — and a
-      // hidden control must never still change the output.
-      await onConfirm(format, includeSchema, joinedFieldsHint !== undefined && includeJoinedFields);
+      await onConfirm(format, includeSchema);
       onOpenChange(false);
     } catch (error) {
       // The export callers surface the failure themselves (download helpers
@@ -144,19 +125,6 @@ export function ExportDialog({
               <span className="text-sm">
                 Also download the JSON schema file for the {schemaLabel}
               </span>
-            </label>
-          )}
-
-          {joinedFieldsHint !== undefined && (
-            <label className="flex cursor-pointer items-center gap-2">
-              <Checkbox
-                checked={includeJoinedFields}
-                onCheckedChange={(checked) => {
-                  // oxlint-disable-next-line typescript/no-unnecessary-boolean-literal-compare -- Radix types `checked` as boolean | "indeterminate"; the compare narrows out "indeterminate".
-                  setIncludeJoinedFields(checked === true);
-                }}
-              />
-              <span className="text-sm">{joinedFieldsHint}</span>
             </label>
           )}
         </div>

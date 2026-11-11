@@ -38,6 +38,7 @@ import {
   FolderPlus,
   Layers as LayersIcon,
   Link2,
+  List,
   Loader2,
   PanelLeftClose,
   PanelLeftOpen,
@@ -55,10 +56,13 @@ import { ArchivedConvexSurface } from "#/components/archived-convex-surface";
 import { useLayerStyles } from "#/features/layer-styles";
 import {
   LayersMap,
-  pgDerivedToDerivedSummary,
+  NO_DERIVED_TITLES,
+  PopupFieldsDialog,
+  NO_RENDERABLE_DERIVED,
   pgSummaryToDatasetSummary,
-  renderTargetsForDerivedLayers,
+  popupInputsOf,
   splitSchemaIdsByDecision,
+  usePopupFieldsFor,
   useGeometriesByPgDatasets,
   useTileArchiveSources,
 } from "#/features/maps";
@@ -66,7 +70,6 @@ import { isPostgresDatasetId } from "#/lib/dataset-source";
 import { errorMessage } from "#/lib/errors";
 import type { DatasetSummaryRow } from "#/lib/store/datasets";
 import { listDraftSummariesQueryOptions, listSummariesQueryOptions } from "#/lib/store/datasets";
-import * as derivedStore from "#/lib/store/derived";
 import * as layersStore from "#/lib/store/layers";
 import type { LayerRow } from "#/lib/store/layers";
 import * as mapsStore from "#/lib/store/maps";
@@ -191,7 +194,6 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
     pgSummaries = useStoreQuery(listSummariesQueryOptions()),
     // Owned drafts (the project's in-flight datasets) carry titles too — the add-dataset picker names them.
     pgDraftSummaries = useStoreQuery(listDraftSummariesQueryOptions()),
-    pgDerivedRows = useStoreQuery(derivedStore.summariesQueryOptions()),
     linkableVersionsQuery = useQuery({ ...layersStore.listLinkableVersionsQueryOptions() }),
     projectDatasetsQuery = useQuery({
       ...layersStore.listDatasetMembershipsQueryOptions({
@@ -266,35 +268,23 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
     childrenLists.set(child.groupId, list);
   }
 
-  const derivedSummaries =
-      pgDerivedRows.data === undefined
-        ? undefined
-        : pgDerivedRows.data.map(pgDerivedToDerivedSummary),
-    // Published + the project's owned drafts: a project map renders its in-flight datasets too.
-    allSummaries =
+  // Published + the project's owned drafts: a project map renders its in-flight datasets too.
+  const allSummaries =
       pgSummaries.data === undefined || pgDraftSummaries.data === undefined
         ? undefined
         : [...pgSummaries.data, ...pgDraftSummaries.data],
     datasetsDocs =
       allSummaries === undefined ? undefined : allSummaries.map(pgSummaryToDatasetSummary),
-    renderableDerived =
-      derivedSummaries === undefined || datasetsDocs === undefined
-        ? undefined
-        : renderTargetsForDerivedLayers(derivedSummaries, datasetsDocs),
+    renderableDerived: globalThis.Map<string, string> = NO_RENDERABLE_DERIVED,
     datasetTitleById = new globalThis.Map((allSummaries ?? []).map((row) => [row.id, row.title])),
     // The add-dataset picker only offers rows that can draw: geospatial
-    // datasets (derived stays offered — its geometry resolves at render time
-    // and the summaries projection carries no geometry flag for it).
+    // datasets.
     // Undefined while the summaries load, so the sheet never flashes empty.
     geospatialDatasetIds =
       allSummaries === undefined
         ? undefined
         : new Set(allSummaries.filter((row) => row.isGeospatial).map((row) => row.id)),
-    derivedTitleById = new globalThis.Map(
-      // The Convex doc's branded id flattens to its string value (the PG
-      // ids the editor resolves are plain strings).
-      (derivedSummaries ?? []).map((summary) => [String(summary._id), summary.title]),
-    ),
+    derivedTitleById = NO_DERIVED_TITLES,
     // ---- editor state ----
     [editingMap, setEditingMap] = useState(false),
     [sidebarOpen, setSidebarOpen] = useState(true),
@@ -447,6 +437,10 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
       renderableDerived === undefined ? false : renderableDerived.has(schemaId),
     ),
     split = splitSchemaIdsByDecision(schemaIds, decisions, derivedRowIds),
+    popupFieldsFor = usePopupFieldsFor(
+      popupInputsOf(dataEntries, layersById),
+      new Set((allSummaries ?? []).filter((row) => row.kind === "view").map((row) => row.id)),
+    ),
     pgRowIds = split.rowSchemaIds.filter((schemaId) => isPostgresDatasetId(schemaId)),
     pgFan = useGeometriesByPgDatasets(pgRowIds),
     geometries = pgFan.geometries,
@@ -505,8 +499,6 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
     placementsQuery.data === undefined ||
     projectLayersQuery.data === undefined ||
     allSummaries === undefined ||
-    pgDerivedRows.data === undefined ||
-    renderableDerived === undefined ||
     datasetsDocs === undefined
   ) {
     return (
@@ -686,6 +678,7 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
             {(servedGeometries !== undefined || split.tileSources.length > 0) && (
               <LayersMap
                 chainLayers={[]}
+                popupFieldsFor={popupFieldsFor}
                 colorBySchema={styledColorBySchema}
                 datasets={mapDatasets}
                 derivedLayers={derivedRowIds.flatMap((derivedId) => {
@@ -892,6 +885,7 @@ function PlacementRowBody(
         ? datasetMember.artifactId
         : undefined,
     [busy, setBusy] = useState<string | undefined>(),
+    [popupOpen, setPopupOpen] = useState(false),
     act = async (action: string, job: () => Promise<unknown>, success: string): Promise<void> => {
       setBusy(action);
       if (await props.run(job, "The action didn't land — you may not have access.")) {
@@ -1048,6 +1042,19 @@ function PlacementRowBody(
                 Clone (editable copy)
               </DropdownMenuItem>
             )}
+            {!linked &&
+              layer !== undefined &&
+              layer.kind === "data" &&
+              viewDatasetId !== undefined && (
+                <DropdownMenuItem
+                  onClick={() => {
+                    setPopupOpen(true);
+                  }}
+                >
+                  <List className="mr-2 h-4 w-4" />
+                  Popup fields…
+                </DropdownMenuItem>
+              )}
             {!linked && layer !== undefined && (
               <DropdownMenuItem
                 onClick={() => {
@@ -1096,6 +1103,23 @@ function PlacementRowBody(
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      {layer !== undefined && viewDatasetId !== undefined && (
+        <PopupFieldsDialog
+          datasetId={viewDatasetId}
+          onOpenChange={setPopupOpen}
+          onSave={async (popup) => {
+            await act(
+              "popup",
+              async () => {
+                await layersStore.update({ layerId: layer.id, popup });
+              },
+              popup === null ? "Popup fields follow the view." : "Popup fields saved.",
+            );
+          }}
+          open={popupOpen}
+          popup={layer.popup}
+        />
+      )}
       {isGroup && expanded && (
         <PgGroupChildren
           act={act}
@@ -1456,10 +1480,9 @@ function PgAddDatasetSheet(props: {
     candidates = props.memberships.filter(
       (membership) =>
         // A plain table can never draw — offering it mints a dead layer
-        // (#278). Derived stays: its geometry resolves at render time.
+        // (#278).
         !props.placedMembershipIds.has(membership.id) &&
-        (membership.artifactKind === "derived" ||
-          props.geospatialDatasetIds === undefined ||
+        (props.geospatialDatasetIds === undefined ||
           props.geospatialDatasetIds.has(membership.artifactId)),
     ),
     add = async (membershipId: string): Promise<void> => {

@@ -31,6 +31,14 @@ WHERE rolname IN (
 )
 \gexec
 
+-- The app's server-side view runner connects as this login role. It becomes a
+-- member of `view_runner` when migration 0027 runs (that migration grants it
+-- if the role already exists); creating it here keeps the password pinned to
+-- POSTGRES_PASSWORD like every other service role.
+SELECT format('CREATE ROLE jdm_server LOGIN PASSWORD %L', :'pw')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'jdm_server')
+\gexec
+
 CREATE SCHEMA IF NOT EXISTS _realtime;
 DO \$\$
 BEGIN

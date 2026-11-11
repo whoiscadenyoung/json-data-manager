@@ -12,7 +12,6 @@ import { sharedClient } from "#/lib/store/client";
 import { allArgs, firstArg, queryAt, stubSupabase } from "#/lib/store/test-support";
 
 import {
-  applyEntryRowSpec,
   applyEntryRowSpecs,
   applyGeometryRowSpec,
   applyGeometryRowSpecs,
@@ -26,7 +25,6 @@ import {
   forEachDatasetEntryPage,
   forEachDatasetGeometryPage,
   GEOMETRY_PAGE_ROWS,
-  lookupOperationsOfSpec,
   resolveDatasetGeometryRows,
   resolveGeometryRows,
 } from "./dataset-rows-pg";
@@ -261,96 +259,17 @@ describe("spec stubs", () => {
   it("are identity — same rows, same reference — until specs are handed in", () => {
     const entries = [entryRow("e1")];
     const geometries = [geometryRow("e1")];
-    const firstEntry = entries[0];
     const firstGeometry = geometries[0];
     expect(applyEntryRowSpecs(entries)).toBe(entries);
     expect(applyGeometryRowSpecs(geometries)).toBe(geometries);
-    expect(applyEntryRowSpec(entryRow("e2"))).not.toBe(entries[0]);
-    expect(applyEntryRowSpec(firstEntry)).toBe(firstEntry);
     expect(applyGeometryRowSpec(firstGeometry)).toBe(firstGeometry);
   });
 });
 
-/** One stored lookup operation, in its registry shape (spec is stored untyped). */
-function lookupOp(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    baseKey: "grantId",
-    kind: "lookup",
-    lookupDatasetId: "grants",
-    lookupKey: "id",
-    ...overrides,
-  };
-}
-
-/** One stored spec: the source dataset plus its operations, exactly as `save` persists it. */
-function storedSpec(operations: unknown[]): unknown {
-  return { operations, sourceDatasetId: "d1" };
-}
-
-describe("applyEntryRowSpec — the popup executor over PG rows", () => {
-  it("enriches the clicked entry with namespaced fields, base keys intact, input untouched", () => {
-    const row = entryRow("e1", { data: { grantId: "G1", site: "Dock A" } });
-    const sides = new globalThis.Map([["grants", [{ id: "G1", region: "west", status: "open" }]]]);
-    const enriched = applyEntryRowSpec(
-      row,
-      [storedSpec([lookupOp({ fields: ["status", "region"] })])],
-      sides,
-    );
-    expect(enriched.data).toStrictEqual({
-      grantId: "G1",
-      site: "Dock A",
-      "grants.status": "open",
-      "grants.region": "west",
-    });
-    expect(row.data).toStrictEqual({ grantId: "G1", site: "Dock A" });
-  });
-
-  it("returns the row untouched when an operation's side has not streamed, and keeps the base row on an inner-match miss", () => {
-    const row = entryRow("e1", { data: { grantId: "G1" } });
-    expect(
-      applyEntryRowSpec(
-        row,
-        [storedSpec([lookupOp({ fields: ["status"] })])],
-        new globalThis.Map(),
-      ),
-    ).toBe(row);
-    const missing = entryRow("e1", { data: { grantId: "GX" } });
-    expect(
-      applyEntryRowSpec(
-        missing,
-        [storedSpec([lookupOp({ fields: ["status"], match: "inner" })])],
-        new globalThis.Map([["grants", [{ id: "G1", status: "open" }]]]),
-      ),
-    ).toBe(missing);
-  });
-
-  it("is identity when no specs are handed in, even with a record data shape", () => {
-    const row = entryRow("e1", { data: { grantId: "G1" } });
-    expect(applyEntryRowSpec(row)).toBe(row);
-  });
-});
-
-describe("entryDataRecord / lookupOperationsOfSpec", () => {
+describe("entryDataRecord", () => {
   it("adapt object data as the engine's record and non-object data as keyless", () => {
     expect(entryDataRecord(entryRow("e1", { data: { a: 1 } }))).toStrictEqual({ a: 1 });
     expect(entryDataRecord(entryRow("e1", { data: [1, 2] }))).toStrictEqual({});
-  });
-
-  it("reads well-formed lookup operations structurally and skips malformed ones", () => {
-    expect(lookupOperationsOfSpec(storedSpec([lookupOp({ namespace: "grants" })]))).toStrictEqual([
-      {
-        baseKey: "grantId",
-        fields: undefined,
-        kind: "lookup",
-        lookupDatasetId: "grants",
-        lookupKey: "id",
-        match: undefined,
-        namespace: "grants",
-        onDuplicateKey: undefined,
-      },
-    ]);
-    expect(lookupOperationsOfSpec("nope")).toStrictEqual([]);
-    expect(lookupOperationsOfSpec(storedSpec([{ kind: "rollup" }]))).toStrictEqual([]);
   });
 });
 

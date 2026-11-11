@@ -19,6 +19,7 @@ import {
   type SearchFilter,
   type SearchSort,
 } from "#/lib/store/entries";
+import { liveSearchPageQueryOptions } from "#/lib/store/views";
 
 /**
  * The Postgres entries table's state layer (design doc §8.4): the
@@ -349,6 +350,8 @@ export function useSearchEntriesPages(
   datasetId: string,
   state: PgTableState,
   columnTypes?: ReadonlyMap<string, PgPropertyType>,
+  /** A live view: no saved rows to page, so one capped server read is searched/sorted client-side. */
+  live = false,
 ) {
   const stateKey = stateKeyOf(state),
     // Keyed on the state so navigating between datasets (or a changed
@@ -362,9 +365,10 @@ export function useSearchEntriesPages(
     // hashes the keys structurally, so a fresh args object per render still
     // matches the cached page.
     results = useQueries({
-      queries: cursors.map((cursor) =>
-        searchEntriesQueryOptions(searchArgsOf(datasetId, state, cursor, columnTypes)),
-      ),
+      queries: cursors.map((cursor) => {
+        const args = searchArgsOf(datasetId, state, cursor, columnTypes);
+        return live ? liveSearchPageQueryOptions(args) : searchEntriesQueryOptions(args);
+      }),
     }),
     firstResult = results[0],
     lastResult = results[cursors.length - 1],

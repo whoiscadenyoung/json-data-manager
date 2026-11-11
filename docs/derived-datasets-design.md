@@ -1,5 +1,8 @@
 # Derived datasets — a Tableau-like transformation layer over the catalog
 
+> **Superseded (2026-11-10)** by [`views-design.md`](views-design.md) and
+> [ADR 0028](decisions/0028-views.md). Kept as history; don't build from it.
+
 Design for data transformation in the Tableau mold: declarative **transform
 specs** that produce **virtual derived datasets** over the existing catalog —
 joins for tooltip/export enrichment, group-by rollups for long/relational

@@ -68,14 +68,9 @@ import {
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { PgAnalysisPanel } from "#/features/analysis";
-import {
-  PgAddToProjectSheet,
-  PgTransformBuilder,
-  PgPublishDialog,
-  mintPublishKey,
-} from "#/features/publishing";
+import { PgAddToProjectSheet, PgPublishDialog, mintPublishKey } from "#/features/publishing";
 import { QueryErrorBoundary } from "@/components/query-error-boundary";
+import { RouterButton } from "@/components/router-button";
 import { useSession } from "@/integrations/supabase/provider";
 import type { DatasetEntryRow } from "@/lib/dataset-rows";
 import { resolveGeometryRows } from "@/lib/dataset-rows-pg";
@@ -101,6 +96,7 @@ import {
   type PgTableParams,
 } from "../lib/pg-entries-table";
 import { useSplitReferenceLabels } from "../lib/pg-reference-labels";
+import { viewRowsReadOnlyReason } from "../lib/view-rows";
 import { EntriesTable } from "./entries-table";
 import { EntryFormPanel } from "./entry-form-panel";
 import { PgBindingCard } from "./pg-binding-card";
@@ -120,9 +116,8 @@ import { SchemaVisualizer } from "./schema-visualizer";
  * — stage 3), the Data tab over `search_entries` (server-side
  * sort/filter/search in the URL, keyset pages), Structure (client-side
  * schema rendering), the create/edit/delete row flows, the publish-version
- * dialog (stage 4), and — stage 5 — the Transform tab (lookup specs over
- * the store's derived registry) and the Analyze tab (SQL over the PG
- * row-resolution seam). Stage 7 (#206) adds the bound-dataset surfaces for
+ * dialog (stage 4). (The Analyze tab retired in #306: scratch SQL now lives in
+ * the project's Scratch query section.) Stage 7 (#206) adds the bound-dataset surfaces for
  * datasets carrying the `source` marker: the sync card (Overview) and the
  * History tab (commit rail + per-sync feed over the store's bindings
  * reads); ordinary datasets keep the tabs below. The map/tile path landed
@@ -136,7 +131,7 @@ export interface PgDatasetPageSearch {
   panel?: "create" | "edit";
   q?: string;
   sort?: string;
-  view?: "analyze" | "entries" | "history" | "overview" | "structure" | "transform";
+  view?: "entries" | "history" | "overview" | "structure";
 }
 
 /**
@@ -308,14 +303,12 @@ function PostgresDatasetBody({
     isBound = dataset !== null && dataset !== undefined && dataset.source !== null,
     // The active tab rides ?view= (merge-form navigations only); "overview"
     // is the default and deliberately ABSENT from the URL (the ui-polish
-    // rule). Stage 5 mounts transform/analyze; stage 7 mounts "history" for
+    // rule). Stage 7 mounts "history" for
     // BOUND datasets only (an ordinary dataset's ?view=history degrades to
     // overview — the tab doesn't exist for it).
     view =
       search.view === "entries" ||
       search.view === "structure" ||
-      search.view === "transform" ||
-      search.view === "analyze" ||
       (search.view === "history" && isBound)
         ? search.view
         : "overview",
@@ -335,7 +328,8 @@ function PostgresDatasetBody({
     columnTypes = declaredPropertyTypes(
       dataset === undefined || dataset === null ? {} : dataset.jsonSchema,
     ),
-    pages = useSearchEntriesPages(schemaId, tableState, columnTypes),
+    isLive = dataset !== undefined && dataset !== null && dataset.refreshMode === "live",
+    pages = useSearchEntriesPages(schemaId, tableState, columnTypes, isLive),
     rows: DatasetEntryRow[] = pages.rows.map(tableRowOf),
     referenceFields =
       dataset === undefined || dataset === null ? [] : getReferenceFields(dataset.jsonSchema),
@@ -376,8 +370,10 @@ function PostgresDatasetBody({
   const me = session === null ? undefined : { authId: session.user.id },
     isCreator = me !== undefined && me.authId === dataset.createdBy,
     lockedForViewer = isLockedForViewer(dataset, me),
+    viewReason = viewRowsReadOnlyReason(dataset),
+    isView = viewReason !== undefined,
     groupForBreadcrumb = groupQuery.data,
-    displayCount = dataset.entryCount,
+    displayCount = isLive ? pages.rows.length : dataset.entryCount,
     isEmpty = displayCount === 0 && pages.isComplete,
     // Table-state patches ride the route's merge-form navigation — only the
     // changed keys are passed, and an explicit `undefined` deletes the param.
@@ -427,6 +423,10 @@ function PostgresDatasetBody({
       }
     },
     openEditPanel = (entry: DatasetEntryRow) => {
+      if (isView) {
+        toast.info(viewReason);
+        return;
+      }
       if (lockedForViewer) {
         toast.info(LOCKED_DATASET_HINT);
         return;
@@ -498,12 +498,22 @@ function PostgresDatasetBody({
           <p className="text-lg text-muted-foreground mt-2">{dataset.description}</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {isView && links.projectId !== null && (
+            <RouterButton
+              params={{ projectId: links.projectId, viewId: schemaId }}
+              to="/projects/$projectId/views/$viewId"
+              variant="outline"
+            >
+              <Workflow className="h-4 w-4 mr-2" />
+              Open view editor
+            </RouterButton>
+          )}
           <Button
-            disabled={lockedForViewer}
+            disabled={lockedForViewer || isView}
             onClick={() => {
               onPatchSearch({ panel: "create" });
             }}
-            title={lockedForViewer ? LOCKED_DATASET_HINT : undefined}
+            title={viewReason ?? (lockedForViewer ? LOCKED_DATASET_HINT : undefined)}
           >
             <Plus className="h-4 w-4 mr-2" />
             Create Entry
@@ -601,8 +611,6 @@ function PostgresDatasetBody({
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="entries">Data ({displayCount})</TabsTrigger>
           <TabsTrigger value="structure">Structure</TabsTrigger>
-          <TabsTrigger value="transform">Transform</TabsTrigger>
-          <TabsTrigger value="analyze">Analyze</TabsTrigger>
           {isBound && <TabsTrigger value="history">History</TabsTrigger>}
         </TabsList>
 
@@ -634,18 +642,24 @@ function PostgresDatasetBody({
                       <FilePlus />
                     </EmptyMedia>
                     <EmptyTitle>No data yet</EmptyTitle>
-                    <EmptyDescription>Add your first entry to this schema.</EmptyDescription>
+                    <EmptyDescription>
+                      {isView
+                        ? "This view has no rows yet. Run it from the view editor to fill it."
+                        : "Add your first entry to this schema."}
+                    </EmptyDescription>
                   </EmptyHeader>
-                  <EmptyContent>
-                    <Button
-                      onClick={() => {
-                        onPatchSearch({ panel: "create" });
-                      }}
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Create First Entry
-                    </Button>
-                  </EmptyContent>
+                  {!isView && (
+                    <EmptyContent>
+                      <Button
+                        onClick={() => {
+                          onPatchSearch({ panel: "create" });
+                        }}
+                      >
+                        <Plus className="h-4 w-4 mr-2" />
+                        Create First Entry
+                      </Button>
+                    </EmptyContent>
+                  )}
                 </Empty>
               ) : rows.length === 0 && !pages.isComplete ? (
                 // First page still in flight — the spinner holds until the
@@ -665,9 +679,13 @@ function PostgresDatasetBody({
                   labelsByField={labelsByField}
                   onLoadMore={pages.loadMore}
                   onEdit={openEditPanel}
-                  onDelete={(entry) => {
-                    setDeleteTarget(entry);
-                  }}
+                  onDelete={
+                    isView
+                      ? undefined
+                      : (entry) => {
+                          setDeleteTarget(entry);
+                        }
+                  }
                   properties={Object.keys(schemaPropertiesOf(dataset))}
                   schema={schemaObjectOf(dataset)}
                   schemaId={schemaId}
@@ -683,23 +701,6 @@ function PostgresDatasetBody({
               )}
             </CardContent>
           </Card>
-        </TabsContent>
-
-        <TabsContent value="transform">
-          {/* Stage 5 (#204): lookup transforms over the store's derived
-              registry — specs write through `#/lib/store/derived`, the
-              preview reads rows through the PG seam. */}
-          <PgTransformBuilder
-            columns={Object.keys(schemaPropertiesOf(dataset))}
-            datasetTitle={dataset.title}
-            schemaId={schemaId}
-          />
-        </TabsContent>
-
-        <TabsContent value="analyze">
-          {/* Stage 5 (#204): freeform read-only SQL — the same worker and
-              DuckDB-WASM engine as the Convex tab, fed from the PG seam. */}
-          <PgAnalysisPanel dataset={dataset} datasetTitle={dataset.title} schemaId={schemaId} />
         </TabsContent>
 
         {/* Stage 7 (#206): the bound dataset's History tab — the applied
@@ -757,13 +758,16 @@ function PostgresDatasetBody({
         </TabsContent>
       </Tabs>
 
-      <PgEntryPanelHost
-        dataset={dataset}
-        onPatchSearch={onPatchSearch}
-        rows={rows}
-        schemaId={schemaId}
-        search={search}
-      />
+      {/* A view's rows are written only by its run: never open the entry form. */}
+      {!isView && (
+        <PgEntryPanelHost
+          dataset={dataset}
+          onPatchSearch={onPatchSearch}
+          rows={rows}
+          schemaId={schemaId}
+          search={search}
+        />
+      )}
 
       {/* Stage 4 (#203): the PG publish flow — freeze the current rows as an
           immutable version (drafts flip into the catalog with it). */}

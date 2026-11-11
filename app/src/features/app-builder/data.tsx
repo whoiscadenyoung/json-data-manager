@@ -78,6 +78,8 @@ function frozenDocOf(pin: AppVersionDefinition["datasetPins"][number]): DatasetR
     jsonSchema: pin.jsonSchema,
     lifecycle: "published",
     lineage: null,
+    kind: "source",
+    dataVersion: 0,
     mapTileArchiveBuiltVersion: null,
     mapTileArchiveBytes: null,
     mapTileArchiveFormat: null,

@@ -1,5 +1,8 @@
 # Analysis layer — SQL over catalog and project data (future design)
 
+> **Superseded (2026-11-10)** by [`views-design.md`](views-design.md) and
+> [ADR 0028](decisions/0028-views.md). Kept as history; don't build from it.
+
 Design futures for ad-hoc analytics over datasets — DuckDB-style SQL on the
 data users already have in the app ("how many restaurants in each state,"
 "average locations per restaurant brand"). Captured 2026-09-21; **nothing to

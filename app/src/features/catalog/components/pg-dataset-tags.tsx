@@ -1,5 +1,5 @@
 import { Badge } from "@caden/ui/components/badge";
-import { CircleDashed, Database, Lock, MapPin, PencilOff } from "lucide-react";
+import { CircleDashed, Database, Lock, MapPin, PencilOff, Workflow } from "lucide-react";
 
 import type { DatasetSummaryRow } from "#/lib/store/datasets";
 
@@ -20,6 +20,15 @@ import { datasetCountLabel } from "../lib/pg-dataset-view";
 export function PgDatasetTypeTags({ dataset }: { dataset: DatasetSummaryRow }) {
   return (
     <>
+      {dataset.kind === "view" && (
+        <Badge
+          variant="outline"
+          title="A view: its rows come from running saved steps, so they are read-only here."
+        >
+          <Workflow />
+          View
+        </Badge>
+      )}
       {dataset.isGeospatial ? (
         <Badge variant="default">
           <MapPin />
