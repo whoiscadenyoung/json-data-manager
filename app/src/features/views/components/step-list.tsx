@@ -8,7 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@caden/ui/components/dropdown-menu";
-import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Plus, Trash2, Workflow } from "lucide-react";
 import { useState } from "react";
 
 import { stepDiagnosticsOf, type StepDiagnostics } from "../lib/diagnostics";
@@ -26,6 +26,7 @@ import {
   stepSummary,
   STEP_TITLES,
   type InputInfo,
+  type PickerDataset,
 } from "../lib/view-model";
 import { CalculateForm } from "./calculate-form";
 import { SqlForm } from "./sql-form";
@@ -33,7 +34,7 @@ import { FilterForm, GroupByForm, JoinForm } from "./step-forms";
 
 /** What every step form needs from the editor page, shared by the top-level list and nested sub-pipelines. */
 export interface StepEditorContext {
-  datasets: { id: string; title: string }[];
+  datasets: PickerDataset[];
   infos: InputInfo[];
   /** Declares (or reuses) an input for a dataset and returns its alias. */
   ensureInput: (datasetId: string) => string;
@@ -41,6 +42,12 @@ export interface StepEditorContext {
   errors: ValidationError[];
   /** The raw diagnostics payload of the current preview. */
   diagnostics: unknown;
+  /** "Extract to view" on a join's sub-pipeline (absent = not offered). */
+  extract?: {
+    /** Why extracting is unavailable right now (shown as the button's reason). */
+    disabledReason: string | undefined;
+    onExtract: (path: string, rightTitle: string) => void;
+  };
 }
 
 export type AddableKind = "join" | "filter" | "groupBy" | "calculate" | "sql";
@@ -276,6 +283,7 @@ function SubPipeline({
 }) {
   const [expanded, setExpanded] = useState<number | undefined>(undefined);
   const rightTitle = titleOf(ctx.infos, step.right.input);
+  const { extract } = ctx;
   const rightInfo = ctx.infos.find((info) => info.alias === step.right.input);
   const rightStart = rightInfo === undefined ? undefined : rightInfo.fields;
   if (step.right.steps === undefined) {
@@ -311,17 +319,37 @@ function SubPipeline({
         <p className="text-sm font-medium">
           Steps on <span className="text-primary">{rightTitle}</span> before joining
         </p>
-        <Button
-          onClick={() => {
-            const { steps: _dropped, ...right } = step.right;
-            onChange({ ...step, right });
-          }}
-          size="xs"
-          type="button"
-          variant="ghost"
-        >
-          Remove these steps
-        </Button>
+        <div className="flex items-center gap-1">
+          {extract !== undefined && step.right.steps.length > 0 && (
+            <Button
+              disabled={extract.disabledReason !== undefined}
+              onClick={() => {
+                extract.onExtract(path, rightTitle);
+              }}
+              size="xs"
+              title={
+                extract.disabledReason ??
+                "Move these steps into their own view, and join that view instead."
+              }
+              type="button"
+              variant="outline"
+            >
+              <Workflow className="h-3.5 w-3.5" />
+              Extract to view
+            </Button>
+          )}
+          <Button
+            onClick={() => {
+              const { steps: _dropped, ...right } = step.right;
+              onChange({ ...step, right });
+            }}
+            size="xs"
+            type="button"
+            variant="ghost"
+          >
+            Remove these steps
+          </Button>
+        </div>
       </div>
       <p className="text-xs text-muted-foreground">
         Counts and previews here describe this input only. The join above is previewed in the panel

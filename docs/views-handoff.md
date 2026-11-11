@@ -67,17 +67,17 @@ one after the other or split files carefully.
 
 ## Status
 
-| Issue | State                  | PR   |
-| ----- | ---------------------- | ---- |
-| #299  | PR open                | #309 |
-| #300  | PR open                | #310 |
-| #301  | PR open                | #314 |
-| #302  | PR (compiler + editor) | #313 |
-| #303  | open                   |      |
-| #304  | PR open                | #311 |
-| #305  | open                   |      |
-| #306  | open                   |      |
-| #307  | open                   |      |
+| Issue | State                  | PR        |
+| ----- | ---------------------- | --------- |
+| #299  | PR open                | #309      |
+| #300  | PR open                | #310      |
+| #301  | PR open                | #314      |
+| #302  | PR (compiler + editor) | #313      |
+| #303  | PR open                | #318      |
+| #304  | PR open                | #311      |
+| #305  | PR open                | #317      |
+| #306  | PR open                | #316      |
+| #307  | PR open                | PR_NUMBER |
 
 ## Related, outside the train
 

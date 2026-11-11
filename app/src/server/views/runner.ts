@@ -147,8 +147,11 @@ async function metaOf(tx: Tx, inputs: ViewInputRef[]): Promise<CompileInputMeta[
       alias: entry.alias,
       datasetId: entry.datasetId,
       title: entry.title,
-      fields: entry.fields.map((name) => ({ name })),
     };
+    // A view that has never run declares no fields yet: leave them unknown rather than "none".
+    if (entry.fields.length > 0) {
+      meta.fields = entry.fields.map((name) => ({ name }));
+    }
     if (entry.pinnedVersion !== null && entry.pinnedVersion !== undefined) {
       meta.pinnedVersion = entry.pinnedVersion;
     }

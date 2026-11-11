@@ -1,9 +1,15 @@
 import { Badge } from "@caden/ui/components/badge";
 import { Button } from "@caden/ui/components/button";
 import { Card } from "@caden/ui/components/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@caden/ui/components/dropdown-menu";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Plus, Workflow } from "lucide-react";
+import { Copy, MoreHorizontal, Plus, Workflow } from "lucide-react";
 import { useState } from "react";
 
 import { latestRunsQueryOptions, listViewSummariesQueryOptions } from "@/lib/store/view-reads";
@@ -11,6 +17,7 @@ import type { ViewLatestRun, ViewSummary } from "@/lib/store/view-reads";
 
 import { relativeTime } from "../lib/format";
 import { CreateViewSheet } from "./create-view-sheet";
+import { DuplicateViewDialog } from "./duplicate-view-dialog";
 
 const VIEWER_REASON = "You have read-only access to this project.";
 
@@ -18,11 +25,14 @@ const VIEWER_REASON = "You have read-only access to this project.";
 export function ViewCard({
   inputTitles,
   lastRun,
+  onDuplicate,
   projectId,
   view,
 }: {
   inputTitles: string[];
   lastRun: ViewLatestRun | undefined;
+  /** Offers "Duplicate" in the card menu (absent = no menu). */
+  onDuplicate?: { disabledReason: string | undefined; open: () => void };
   projectId: string;
   view: ViewSummary;
 }) {
@@ -66,6 +76,32 @@ export function ViewCard({
           {view.entryCount > 0 ? ` · ${view.entryCount.toLocaleString()} rows` : ""}
         </p>
       </Link>
+      {onDuplicate !== undefined && (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                aria-label={`Actions for ${view.title}`}
+                size="icon-sm"
+                type="button"
+                variant="ghost"
+              >
+                <MoreHorizontal />
+              </Button>
+            }
+          />
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              disabled={onDuplicate.disabledReason !== undefined}
+              onClick={onDuplicate.open}
+              title={onDuplicate.disabledReason}
+            >
+              <Copy />
+              Duplicate
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </Card>
   );
 }
@@ -86,6 +122,7 @@ export function ProjectViewsSection({
   projectId: string;
 }) {
   const [createOpen, setCreateOpen] = useState(false),
+    [duplicating, setDuplicating] = useState<ViewSummary | undefined>(undefined),
     summaries = useQuery(listViewSummariesQueryOptions()),
     memberIds = new Set(datasets.map((dataset) => dataset.id)),
     views = (summaries.data ?? []).filter((view) => memberIds.has(view.id)),
@@ -127,14 +164,34 @@ export function ProjectViewsSection({
               )}
               key={view.id}
               lastRun={runs === undefined ? undefined : runs.get(view.id)}
+              onDuplicate={{
+                disabledReason: canEdit ? undefined : VIEWER_REASON,
+                open: () => {
+                  setDuplicating(view);
+                },
+              }}
               projectId={projectId}
               view={view}
             />
           ))}
         </div>
       )}
+      {duplicating !== undefined && (
+        <DuplicateViewDialog
+          datasets={datasets}
+          onOpenChange={(next) => {
+            if (!next) {
+              setDuplicating(undefined);
+            }
+          }}
+          open
+          projectId={projectId}
+          title={duplicating.title}
+          viewId={duplicating.id}
+        />
+      )}
       <CreateViewSheet
-        datasets={datasets.map((dataset) => ({ id: dataset.id, title: dataset.title }))}
+        datasets={datasets}
         onOpenChange={setCreateOpen}
         open={createOpen}
         projectId={projectId}

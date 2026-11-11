@@ -80,3 +80,39 @@ metadata:
   inputs yet).
 
 Related: [[views-initiative]], [[views-server-runner]], [[ui-polish-expectations]].
+
+## #307 reuse: Duplicate, remap, chaining, Extract to view
+
+- **Pure logic is `data-core/src/views/reuse.ts`** (`remapInputs`, `remapReport`,
+  `planExtract`/`applyExtract`, `pruneInputs`); the app wires it
+  (`features/views/lib/reuse-actions.ts`, `duplicate-view-dialog.tsx`,
+  `extract-view-dialog.tsx`). Extract is tested by running BOTH definitions
+  on PGlite (`reuse.pglite.test.ts`): the new view is "run" by saving its
+  compiled rows as entries of a new dataset id.
+- **A view's field list (`datasets.properties`) only exists after its first
+  run** (`view_apply_run` writes it from the row keys). So a freshly created
+  view as an input has `fields: []`; the editor/save/runner metas now leave
+  `fields` UNKNOWN when the list is empty (otherwise every key picker and the
+  validator reject the join). Extract therefore runs the new view BEFORE
+  saving the edited one and refuses to rewrite the original when that first
+  run fails (the new view stays, with a message).
+- **A join's default prefix is a slug of the right input's TITLE**, so
+  swapping the right input (remap) or replacing it with the extracted view
+  would silently rename copied columns (`deployments.name`). `remapInputs` and
+  `planExtract` write the old default prefix down explicitly (only for
+  first/last/error/text/list; summarize/spread never use it).
+- **Extract output = `fields: []` (every field as named), `emptyFields: keep`.**
+  The join then reads the SAVED rows of the new view, not live steps: refresh
+  the new view when its inputs change. `first`/`last` without `orderBy` fall
+  back to `row_id`, which is new for a view's rows, so such a join can pick a
+  different row after Extract (add an `orderBy` to make it stable).
+- **Duplicate** copies definition + output labels, drops pinned versions of
+  remapped inputs, never copies export profiles and creates with
+  `refresh_mode = manual` (auto/live are server-gated).
+- **Cycle errors** from `save_view` ("saving this view would create a cycle")
+  are rewritten by `explainCycle` using the view summaries' inputs ("X already
+  reads this view").
+- Tests that mock `@/lib/store/datasets` and render the page must also mock
+  `../lib/create-view` (it pulls the projects store, which reads
+  `CATALOG_READ_LIMIT` from the mocked module) and add
+  `listViewSummariesQueryOptions` to the `view-reads` mock.

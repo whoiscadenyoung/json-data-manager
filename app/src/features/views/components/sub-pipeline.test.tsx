@@ -15,6 +15,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
     ...actual,
     Link: (props: { children?: React.ReactNode; className?: string; to?: string }) =>
       createElement("a", { className: props.className, "data-to": props.to }, props.children),
+    useNavigate: () => vi.fn<(args: unknown) => Promise<void>>(),
   };
 });
 
@@ -63,7 +64,13 @@ const mocks = vi.hoisted(() => ({
   saveView: vi.fn<(...args: unknown[]) => Promise<void>>(),
 }));
 
+vi.mock("../lib/create-view", () => ({ createProjectView: vi.fn<() => Promise<string>>() }));
+
 vi.mock("@/lib/store/view-reads", () => ({
+  listViewSummariesQueryOptions: () => ({
+    queryFn: async () => [],
+    queryKey: ["test:summaries"],
+  }),
   distinctFieldValuesQueryOptions: () => ({ queryFn: async () => [], queryKey: ["test:distinct"] }),
   inputMetaQueryOptions: (inputs: unknown[]) => ({
     queryFn: async () => [

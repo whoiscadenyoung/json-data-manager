@@ -1,4 +1,4 @@
-import { analyzeSqlStep, slugifyViewName } from "@caden/data-core/views";
+import { analyzeSqlStep, pruneInputs, slugifyViewName } from "@caden/data-core/views";
 import type {
   CompileInputMeta,
   Condition,
@@ -19,6 +19,24 @@ import type {
  * pickers offer real columns), and the "create view from relation" pre-fill.
  * No React, no I/O.
  */
+
+/** A dataset or view an input may read, as the pickers list it. */
+export interface PickerDataset {
+  id: string;
+  title: string;
+  kind?: "source" | "view";
+}
+
+/** Picker options for datasets and views, grouped under "Datasets" and "Views" (a view is a valid input anywhere a dataset is). */
+export function inputPickerOptions(
+  datasets: readonly PickerDataset[],
+): { value: string; label: string; group: string }[] {
+  return datasets.map((dataset) => ({
+    value: dataset.id,
+    label: dataset.title,
+    group: dataset.kind === "view" ? "Views" : "Datasets",
+  }));
+}
 
 /** An input as the editor shows it: alias, the dataset's TITLE (never the uuid) and its declared fields. */
 export interface InputInfo {
@@ -502,8 +520,11 @@ export function toCompileMeta(
       alias: info.alias,
       datasetId: info.datasetId,
       title: info.title,
-      fields: info.fields.map((name) => ({ name })),
     };
+    // A view that has never run declares no fields yet: leave them unknown rather than "none".
+    if (info.fields.length > 0) {
+      meta.fields = info.fields.map((name) => ({ name }));
+    }
     const pin = pinned[info.alias];
     if (pin !== undefined) {
       meta.pinnedVersion = pin;
@@ -523,24 +544,9 @@ export function inputRefsOf(
   );
 }
 
-function collectUsedAliases(steps: readonly Step[], used: Set<string>): void {
-  for (const step of steps) {
-    if (step.kind === "join") {
-      used.add(step.right.input);
-      collectUsedAliases(step.right.steps ?? [], used);
-    } else if (step.kind === "sql") {
-      for (const match of step.query.matchAll(/\bin_([A-Za-z0-9_]+)/g)) {
-        used.add(match[1] ?? "");
-      }
-    }
-  }
-}
-
 /** Drops inputs no step reads (never the base), so Save does not declare dead inputs. Sub-pipelines and SQL `in_<alias>` reads count. */
 export function prunedInputs(definition: ViewDefinition): ViewDefinition {
-  const used = new Set<string>([definition.base]);
-  collectUsedAliases(definition.steps, used);
-  return { ...definition, inputs: definition.inputs.filter((input) => used.has(input.alias)) };
+  return pruneInputs(definition);
 }
 
 /** A key relation, as the relations section holds it. */

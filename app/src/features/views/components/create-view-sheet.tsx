@@ -17,7 +17,7 @@ import { toast } from "sonner";
 import { errorMessage } from "@/lib/errors";
 
 import { createProjectView } from "../lib/create-view";
-import { blankDefinition } from "../lib/view-model";
+import { blankDefinition, inputPickerOptions, type PickerDataset } from "../lib/view-model";
 import { LabeledSelect } from "./labeled-select";
 
 /**
@@ -32,7 +32,7 @@ export function CreateViewSheet({
   projectId,
 }: {
   /** The datasets (and views) of the project, by title. */
-  datasets: { id: string; title: string }[];
+  datasets: PickerDataset[];
   onOpenChange: (open: boolean) => void;
   open: boolean;
   projectId: string;
@@ -104,7 +104,7 @@ export function CreateViewSheet({
             <LabeledSelect
               ariaLabel="Base dataset"
               onChange={setBaseId}
-              options={datasets.map((dataset) => ({ value: dataset.id, label: dataset.title }))}
+              options={inputPickerOptions(datasets)}
               placeholder="Pick a dataset"
               value={baseId}
             />

@@ -10,8 +10,8 @@ import {
   CardTitle,
 } from "@caden/ui/components/card";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
-import { Database, Loader2, Play, Save, Table2 } from "lucide-react";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { Copy, Database, Loader2, Play, Save, Table2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -20,6 +20,7 @@ import { errorMessage } from "@/lib/errors";
 import * as datasetsStore from "@/lib/store/datasets";
 import {
   inputMetaQueryOptions,
+  listViewSummariesQueryOptions,
   savedDefinitionQueryOptions,
   viewHeaderQueryOptions,
 } from "@/lib/store/view-reads";
@@ -29,6 +30,7 @@ import { saveView } from "@/lib/views/view-save";
 
 import { stepDiagnosticsOf } from "../lib/diagnostics";
 import { relativeTime, stableJson } from "../lib/format";
+import { explainCycle, extractJoinToView, joinPathOf } from "../lib/reuse-actions";
 import {
   fieldsAfter,
   inputRefsOf,
@@ -41,7 +43,9 @@ import {
   withManualMapEntry,
   type InputInfo,
 } from "../lib/view-model";
+import { DuplicateViewDialog } from "./duplicate-view-dialog";
 import { ExportProfilesCard } from "./export-profiles-card";
+import { ExtractViewDialog } from "./extract-view-dialog";
 import { OutputCard } from "./output-card";
 import { PreviewPane, type PreviewRow } from "./preview-pane";
 import { StepList, type StepEditorContext } from "./step-list";
@@ -157,6 +161,13 @@ function ViewEditor({
     [savedOutput, setSavedOutput] = useState(initial.output),
     [saving, setSaving] = useState(false),
     [running, setRunning] = useState(false),
+    [duplicateOpen, setDuplicateOpen] = useState(false),
+    [extracting, setExtracting] = useState<{ path: string; rightTitle: string } | undefined>(
+      undefined,
+    ),
+    [extractBusy, setExtractBusy] = useState(false),
+    navigate = useNavigate(),
+    viewSummaries = useQuery(listViewSummariesQueryOptions()),
     datasetsQuery = useQuery(datasetsStore.listQueryOptions()),
     datasets = (datasetsQuery.data ?? []).filter((dataset) => dataset.id !== viewId),
     refs = inputRefsOf(draft),
@@ -229,6 +240,16 @@ function ViewEditor({
     diagnostics: previewQuery.data === undefined ? undefined : previewQuery.data.diagnostics,
     ensureInput,
     errors: validation.ok ? [] : validation.errors,
+    extract: {
+      disabledReason: !metaReady
+        ? "Loading the inputs…"
+        : blockedReason === undefined
+          ? undefined
+          : `Fix the steps first: ${blockedReason}`,
+      onExtract: (path, rightTitle) => {
+        setExtracting({ path, rightTitle });
+      },
+    },
     infos,
   };
 
@@ -264,9 +285,60 @@ function ViewEditor({
       refreshAll();
       toast.success("View saved. Run it to refresh its rows.");
     } catch (error) {
-      toast.error(errorMessage(error, "Couldn't save the view."));
+      toast.error(
+        explainCycle(error, {
+          inputIds: draft.inputs.map((input) => input.ref.id),
+          viewId,
+          views: (viewSummaries.data ?? []).map((view) => ({
+            id: view.id,
+            inputs: view.inputs,
+            title: view.title,
+          })),
+        }) ?? errorMessage(error, "Couldn't save the view."),
+      );
     } finally {
       setSaving(false);
+    }
+  };
+
+  const extract = async (newTitle: string): Promise<void> => {
+    if (extracting === undefined) {
+      return;
+    }
+    setExtractBusy(true);
+    try {
+      const outcome = await extractJoinToView({
+        definition: draft,
+        newTitle,
+        path: joinPathOf(extracting.path),
+        projectId,
+        rightTitle: extracting.rightTitle,
+        viewId,
+      });
+      setDraft(outcome.definition);
+      setBaseline(stableJson(outcome.definition));
+      setSavedOutput(outcome.definition.output);
+      setExtracting(undefined);
+      refreshAll();
+      void queryClient.invalidateQueries({ queryKey: ["pg:projects"] });
+      toast.success(`Extracted "${newTitle}" (${outcome.rowCount.toLocaleString()} rows).`, {
+        action: {
+          label: "Open it",
+          onClick: () => {
+            void navigate({
+              params: { projectId, viewId: outcome.newViewId },
+              to: "/projects/$projectId/views/$viewId",
+            });
+          },
+        },
+      });
+    } catch (error) {
+      void queryClient.invalidateQueries({ queryKey: ["pg:views"] });
+      void queryClient.invalidateQueries({ queryKey: ["pg:datasets"] });
+      setExtracting(undefined);
+      toast.error(errorMessage(error, "Couldn't extract the steps."));
+    } finally {
+      setExtractBusy(false);
     }
   };
 
@@ -296,6 +368,9 @@ function ViewEditor({
         dirty={dirty}
         header={header}
         lastRun={lastRun}
+        onDuplicate={() => {
+          setDuplicateOpen(true);
+        }}
         onRun={() => {
           void run();
         }}
@@ -382,6 +457,31 @@ function ViewEditor({
           <RunHistory viewId={viewId} />
         </section>
       </div>
+      <DuplicateViewDialog
+        datasets={datasets}
+        onOpenChange={setDuplicateOpen}
+        open={duplicateOpen}
+        projectId={projectId}
+        title={header.title}
+        viewId={viewId}
+      />
+      {extracting !== undefined && (
+        <ExtractViewDialog
+          busy={extractBusy}
+          defaultTitle={`${extracting.rightTitle} (extracted)`}
+          dirty={dirty}
+          onConfirm={(newTitle) => {
+            void extract(newTitle);
+          }}
+          onOpenChange={(next) => {
+            if (!next && !extractBusy) {
+              setExtracting(undefined);
+            }
+          }}
+          open
+          rightTitle={extracting.rightTitle}
+        />
+      )}
     </main>
   );
 }
@@ -390,6 +490,7 @@ function ViewHeader({
   dirty,
   header,
   lastRun,
+  onDuplicate,
   onRun,
   onSave,
   projectId,
@@ -400,6 +501,7 @@ function ViewHeader({
   viewId,
 }: {
   dirty: boolean;
+  onDuplicate: () => void;
   header: ViewHeaderRow;
   lastRun:
     | { status: "ok" | "error"; finishedAt: string; rowCount: number | null; error: string | null }
@@ -458,6 +560,19 @@ function ViewHeader({
             <Table2 className="mr-2 h-4 w-4" />
             View rows
           </RouterButton>
+          <Button
+            onClick={onDuplicate}
+            title={
+              dirty
+                ? "Copies the saved steps (your unsaved changes are not included)."
+                : "Copy this view, optionally pointing its inputs at other datasets."
+            }
+            type="button"
+            variant="outline"
+          >
+            <Copy className="mr-2 h-4 w-4" />
+            Duplicate
+          </Button>
           <Button disabled={saveBlocked !== undefined || saving} onClick={onSave} type="button">
             {saving ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />

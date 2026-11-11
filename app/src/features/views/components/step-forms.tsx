@@ -18,10 +18,12 @@ import {
   filterLeaves,
   filterValue,
   filterValueText,
+  inputPickerOptions,
   leavesToWhere,
   rightFieldsOf,
   withoutManualMapEntry,
   type InputInfo,
+  type PickerDataset,
 } from "../lib/view-model";
 import { LabeledSelect } from "./labeled-select";
 import { MeasuresEditor } from "./measures-editor";
@@ -339,8 +341,8 @@ export function JoinForm({
   subSteps,
   undeclaredCategories = [],
 }: {
-  /** Datasets the right side may be (titles, never ids). */
-  datasets: { id: string; title: string }[];
+  /** Datasets and views the right side may be (titles, never ids). */
+  datasets: PickerDataset[];
   infos: InputInfo[];
   /** Fields in the rows reaching this step. */
   leftFields: string[];
@@ -366,7 +368,7 @@ export function JoinForm({
           ariaLabel="Right dataset"
           className="w-72"
           onChange={onPickRight}
-          options={datasets.map((dataset) => ({ value: dataset.id, label: dataset.title }))}
+          options={inputPickerOptions(datasets)}
           placeholder="Pick a dataset or view"
           value={rightDatasetId}
         />

@@ -3,6 +3,7 @@ import type { ViewDefinition } from "@caden/data-core/views";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
+import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("#/env", () => ({
@@ -15,6 +16,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
     ...actual,
     Link: (props: { children?: React.ReactNode; className?: string; to?: string }) =>
       createElement("a", { className: props.className, "data-to": props.to }, props.children),
+    useNavigate: () => vi.fn<(args: unknown) => Promise<void>>(),
   };
 });
 
@@ -51,6 +53,7 @@ const mocks = vi.hoisted(() => ({
   previewDraftView: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   runView: vi.fn<(id: string) => Promise<unknown>>(),
   saveView: vi.fn<(...args: unknown[]) => Promise<void>>(),
+  summaries: [] as unknown[],
   header: {
     createdBy: "u1",
     dataVersion: 1,
@@ -65,7 +68,13 @@ const mocks = vi.hoisted(() => ({
   } as Record<string, unknown>,
 }));
 
+vi.mock("../lib/create-view", () => ({ createProjectView: vi.fn<() => Promise<string>>() }));
+
 vi.mock("@/lib/store/view-reads", () => ({
+  listViewSummariesQueryOptions: () => ({
+    queryFn: async () => mocks.summaries,
+    queryKey: ["test:summaries"],
+  }),
   inputMetaQueryOptions: (inputs: unknown[]) => ({
     queryFn: async () => [
       { alias: "states", datasetId: STATES, title: "States", fields: ["id", "name"] },
@@ -211,5 +220,39 @@ describe("PgViewPage (view editor)", () => {
     fireEvent.change(name, { target: { value: "" } });
     expect(await screen.findByText(/Can't save yet: .*output name/)).toBeTruthy();
     expect(screen.getByRole("button", { name: /^Save$/ })).toHaveProperty("disabled", true);
+  });
+
+  it("explains a cycle error from Save in plain words, naming the view that reads this one", async () => {
+    mocks.summaries = [
+      {
+        id: DEPLOYMENTS,
+        inputs: [{ alias: "me", inputDatasetId: "v1" }],
+        title: "Deployments 2024",
+      },
+    ];
+    mocks.saveView.mockRejectedValueOnce(new Error("saving this view would create a cycle"));
+    mount();
+    await screen.findByText("Deployments per state");
+    fireEvent.change(await screen.findByLabelText("Measure 1 name"), {
+      target: { value: "n" },
+    });
+    const save = screen.getByRole("button", { name: /^Save$/ });
+    await waitFor(() => {
+      expect(save).toHaveProperty("disabled", false);
+    });
+    fireEvent.click(save);
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringContaining('"Deployments 2024" already reads this view'),
+      );
+    });
+    mocks.summaries = [];
+  });
+
+  it("offers Duplicate in the header", async () => {
+    mount();
+    await screen.findByText("Deployments per state");
+    fireEvent.click(screen.getByRole("button", { name: /Duplicate/ }));
+    expect(await screen.findByText("Duplicate view")).toBeTruthy();
   });
 });

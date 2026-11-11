@@ -15,6 +15,27 @@ export { ViewCompileError, ViewStepNotSupportedError } from "./errors.js";
 export { analyzeSqlStep, DENIED_FUNCTIONS } from "./sql-step.js";
 export type { SqlStepAnalysis, SqlStepResult } from "./sql-step.js";
 export { slugify as slugifyViewName } from "./sql-util.js";
+export {
+  applyExtract,
+  canExtract,
+  copyTitle,
+  duplicateDefinition,
+  freshAlias,
+  joinAt,
+  planExtract,
+  pruneInputs,
+  remapInputs,
+  remapReport,
+  stepLabelOfPath,
+} from "./reuse.js";
+export type {
+  ExtractPlan,
+  ExtractResult,
+  InputRemap,
+  JoinPath,
+  RemapProblem,
+  RemapReport,
+} from "./reuse.js";
 export { validateViewDefinition } from "./validate.js";
 export type {
   CompileInputMeta,

@@ -1,7 +1,9 @@
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@caden/ui/components/select";
@@ -9,6 +11,30 @@ import {
 export interface SelectOption {
   value: string;
   label: string;
+  /** A heading to list the option under ("Datasets", "Views"); options without one come first. */
+  group?: string;
+}
+
+/** The options in display order: ungrouped first, then each group in order of first appearance. */
+function sections(
+  options: SelectOption[],
+): { heading: string | undefined; items: SelectOption[] }[] {
+  const result: { heading: string | undefined; items: SelectOption[] }[] = [];
+  for (const option of options) {
+    const found = result.find((section) => section.heading === option.group);
+    if (found === undefined) {
+      result.push({ heading: option.group, items: [option] });
+    } else {
+      found.items.push(option);
+    }
+  }
+  return result.toSorted(
+    (a, b) => Number(a.heading !== undefined) - Number(b.heading !== undefined),
+  );
+}
+
+function Item({ option }: { option: SelectOption }) {
+  return <SelectItem value={option.value}>{option.label}</SelectItem>;
 }
 
 /**
@@ -50,11 +76,18 @@ export function LabeledSelect({
         </SelectValue>
       </SelectTrigger>
       <SelectContent>
-        {options.map((option) => (
-          <SelectItem key={option.value} value={option.value}>
-            {option.label}
-          </SelectItem>
-        ))}
+        {sections(options).map((section) =>
+          section.heading === undefined ? (
+            section.items.map((option) => <Item key={option.value} option={option} />)
+          ) : (
+            <SelectGroup key={section.heading}>
+              <SelectLabel>{section.heading}</SelectLabel>
+              {section.items.map((option) => (
+                <Item key={option.value} option={option} />
+              ))}
+            </SelectGroup>
+          ),
+        )}
       </SelectContent>
     </Select>
   );
