@@ -68,12 +68,15 @@ import {
 } from "#/features/maps";
 import { isPostgresDatasetId } from "#/lib/dataset-source";
 import { errorMessage } from "#/lib/errors";
+import { relationEndsOf, relationPhrase } from "#/lib/relation-phrases";
 import type { DatasetSummaryRow } from "#/lib/store/datasets";
 import { listDraftSummariesQueryOptions, listSummariesQueryOptions } from "#/lib/store/datasets";
 import * as layersStore from "#/lib/store/layers";
 import type { LayerRow } from "#/lib/store/layers";
 import * as mapsStore from "#/lib/store/maps";
 import type { MapPlacementRow } from "#/lib/store/maps";
+import * as relationsStore from "#/lib/store/relations";
+import type { DatasetRelationRow } from "#/lib/store/relations";
 
 export const Route = createFileRoute("/projects/$projectId/maps/$mapId")({
   component: ProjectMapRoutePage,
@@ -221,6 +224,11 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
     }),
     memberships = new globalThis.Map(
       (membershipsQuery.data ?? []).map((membership) => [membership.id, membership]),
+    ),
+    // #294: the declared relations among the datasets this map's layers draw.
+    mapDatasetIds = mapDatasetIdsOf(placements, memberships, layersById),
+    mapRelationsQuery = useQuery(
+      relationsStore.listForDatasetsQueryOptions({ datasetIds: mapDatasetIds }),
     ),
     // Linked placements name layer_versions rows — resolve the ones the map shows.
     linkedVersionIds = [
@@ -648,6 +656,12 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
               onRemove={setPendingRemove}
               placements={placements}
               projectId={projectId}
+              relationNotes={relationNotesOf(mapRelationsQuery.data ?? [], mapDatasetIds, (id) => {
+                const summary =
+                  (pgSummaries.data ?? []).find((row) => row.id === id) ??
+                  (pgDraftSummaries.data ?? []).find((row) => row.id === id);
+                return summary === undefined ? "another dataset" : summary.title;
+              })}
               run={run}
               toggleCollapsed={toggleCollapsed}
               versionsById={versionsById}
@@ -833,6 +847,47 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
 // The row renders every placement kind's honest state as one flat ladder —
 // the same disposition as the pre-layers route editor's row.
 // oxlint-disable-next-line eslint/complexity -- the per-kind ladder is the row's whole contract.
+/** The datasets the map's placed owned data layers draw (groups' children and linked layers aside). */
+function mapDatasetIdsOf(
+  placements: readonly MapPlacementRow[],
+  memberships: globalThis.Map<string, layersStore.ArtifactRefRow>,
+  layersById: globalThis.Map<string, LayerRow>,
+): string[] {
+  const ids = new Set<string>();
+  for (const placement of placements) {
+    const membership = memberships.get(placement.layerMemberId),
+      layer =
+        membership !== undefined && membership.role === "owned"
+          ? layersById.get(membership.artifactId)
+          : undefined,
+      datasetMember =
+        layer === undefined || layer.datasetMemberId === null
+          ? undefined
+          : memberships.get(layer.datasetMemberId);
+    if (datasetMember !== undefined && datasetMember.artifactKind === "dataset") {
+      ids.add(datasetMember.artifactId);
+    }
+  }
+  return [...ids].toSorted();
+}
+
+/** Per dataset on the map, the phrases naming the other map datasets it relates to (#294). */
+function relationNotesOf(
+  relations: readonly DatasetRelationRow[],
+  datasetIds: readonly string[],
+  titleOf: (id: string) => string,
+): globalThis.Map<string, string[]> {
+  const onMap = new Set(datasetIds),
+    notes = new globalThis.Map<string, string[]>();
+  for (const id of datasetIds) {
+    const phrases = relationEndsOf(relations, id, onMap).map((end) => relationPhrase(end, titleOf));
+    if (phrases.length > 0) {
+      notes.set(id, phrases);
+    }
+  }
+  return notes;
+}
+
 interface PanelProps {
   childrenLists: globalThis.Map<string, layersStore.LayerChildRow[]>;
   collapsedGroups: ReadonlySet<string>;
@@ -843,6 +898,8 @@ interface PanelProps {
   onRemove: (pending: { label: string; run: () => Promise<unknown> }) => void;
   placements: MapPlacementRow[];
   projectId: string;
+  /** #294: "Related to … via …" lines per dataset id, bounded to this map's layers. */
+  relationNotes: globalThis.Map<string, string[]>;
   run: (job: () => Promise<unknown>, fallback: string) => Promise<boolean>;
   toggleCollapsed: (key: string) => void;
   versionsById: globalThis.Map<string, layersStore.LayerVersionRow>;
@@ -938,6 +995,13 @@ function PlacementRowBody(
             <p className="truncate text-xs text-amber-600" title={needsAttention}>
               Needs attention — {needsAttention}
             </p>
+          )}
+          {(viewDatasetId === undefined ? [] : (props.relationNotes.get(viewDatasetId) ?? [])).map(
+            (note) => (
+              <p className="truncate text-xs text-muted-foreground" key={note} title={note}>
+                {note}
+              </p>
+            ),
           )}
         </button>
         {layer !== undefined && layer.lifecycle === "published" && !linked && (

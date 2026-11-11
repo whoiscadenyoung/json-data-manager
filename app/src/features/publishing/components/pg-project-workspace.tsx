@@ -52,6 +52,8 @@ import { PgDatasetTagsWithCount } from "#/features/catalog";
 import { ProjectViewsSection } from "#/features/views";
 import { RouterButton } from "@/components/router-button";
 import { errorMessage } from "@/lib/errors";
+import { relationEndsOf } from "@/lib/relation-phrases";
+import type { RelationEnd } from "@/lib/relation-phrases";
 import * as appVersionsStore from "@/lib/store/app-versions";
 import * as appsStore from "@/lib/store/apps";
 import * as datasetsStore from "@/lib/store/datasets";
@@ -60,12 +62,14 @@ import { ROLE_LABELS } from "@/lib/store/project-members";
 import * as projectsStore from "@/lib/store/projects";
 import type { CatalogRow } from "@/lib/store/projects";
 import { latestBundleQueryOptions, listMembersQueryOptions } from "@/lib/store/publishing";
+import * as relationsStore from "@/lib/store/relations";
 import * as versionsStore from "@/lib/store/versions";
 
 import { VIEWER_REASON } from "../lib/pg-viewer-posture";
 import { useProjectShell } from "./pg-project-context";
 import { PgProjectMembersPanel } from "./pg-project-members-dialog";
 import { PgProjectRelationsSection } from "./pg-project-relations";
+import { RelationBadge } from "./relation-badge";
 
 /**
  * The Postgres project workspace — the project CATALOG (issue #256, the
@@ -390,12 +394,15 @@ function PgCatalogRow({
   datasetsById,
   onRemoved,
   projectId,
+  relationEnds,
   row,
 }: {
   canEdit: boolean;
   datasetsById: globalThis.Map<string, { lifecycle: string; title: string }>;
   onRemoved: () => void;
   projectId: string;
+  /** #294: this dataset's declared relations, from its side. */
+  relationEnds: readonly RelationEnd[];
   row: CatalogRow;
 }) {
   const artifact = row.artifact,
@@ -448,6 +455,14 @@ function PgCatalogRow({
           )}
         </div>
       )}
+      <RelationBadge
+        ends={relationEnds}
+        projectId={projectId}
+        titleOf={(id) => {
+          const other = datasetsById.get(id);
+          return other === undefined ? "a dataset you can't see" : other.title;
+        }}
+      />
       {artifact.artifactKind === "dataset" && artifact.role === "linked" && (
         <PgLinkedVersionActions onDone={onRemoved} projectId={projectId} row={row} />
       )}
@@ -926,6 +941,13 @@ export function PgProjectCatalog() {
       return dataset !== undefined && dataset.kind === "view";
     },
     datasetSection = datasetRows.filter((row) => !isView(row)),
+    // #294: one bounded read of the relations touching this catalog's datasets.
+    relationsQuery = useQuery(
+      relationsStore.listForDatasetsQueryOptions({
+        datasetIds: datasetSection.map((row) => row.artifact.artifactId),
+      }),
+    ),
+    relations = relationsQuery.data ?? [],
     viewMemberships = datasetRows.flatMap((row) => {
       const dataset = datasetsById.get(row.artifact.artifactId);
       return dataset === undefined
@@ -983,6 +1005,7 @@ export function PgProjectCatalog() {
                     key={row.artifact.id}
                     onRemoved={invalidateAll}
                     projectId={projectId}
+                    relationEnds={relationEndsOf(relations, row.artifact.artifactId)}
                     row={row}
                   />
                 ))}
