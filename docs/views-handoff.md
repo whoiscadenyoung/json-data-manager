@@ -65,6 +65,8 @@ one after the other or split files carefully.
 6. When an issue merges, update this file's table (mark it merged, with
    its PR) and tick the umbrella.
 
+> **Next:** [`views-verification-handoff.md`](views-verification-handoff.md) covers the browser checks, follow-ups and next issues.
+
 ## Status
 
 **All merged 2026-11-11** via #320 (merge commit `c01407e`), the integration of the whole stack. The stacked PRs #309–#319 were closed in favor of #320, with their commits included unchanged.
