@@ -112,26 +112,6 @@ export type { Geometry, GeometryType, Feature, FeatureCollection } from "@caden/
 export { looksLikeGeoJson, parseGeoJsonFeatures } from "./lib/geojson-import.js";
 export type { GeoJsonRow, GeoJsonParseResult, GeoJsonFeatureError } from "./lib/geojson-import.js";
 
-// SQL escape hatch engine (stage 9, #105; applySql + typed-table
-// materialization, DuckDB handle injected). The lookup/rollup executors and
-// TransformSpec went with the derived registry (#301).
-export {
-  applySql,
-  declaredColumnTypes,
-  materializeSqlTable,
-  sqlSourceName,
-} from "@caden/data-core/transform";
-export type {
-  SqlApplyOptions,
-  SqlColumnSpec,
-  SqlDiagnostics,
-  SqlEngine,
-  SqlResult,
-  SqlSideTable,
-  SqlTable,
-} from "@caden/data-core/transform";
-export type { SqlOperation, SqlTableRef } from "@caden/data-core/transform";
-
 // Resolves a `GeometryDoc`'s `geometryJson`/`geometryUrl` (see its doc
 // comment in types.ts) into an actual `Geometry` — handles the client-side
 // fetch + cache for the (rare) storage-backed case transparently.

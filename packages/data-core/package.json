@@ -1,7 +1,7 @@
 {
   "name": "@caden/data-core",
   "version": "0.1.0",
-  "description": "Backend-free data primitives shared by json-cms and the app: GeoJSON types and helpers, value coercion, reference fields, coordinate-column detection, and the transform engine.",
+  "description": "Backend-free data primitives shared by json-cms and the app: GeoJSON types and helpers, value coercion, reference fields, coordinate-column detection, and the Views compiler.",
   "license": "Apache-2.0",
   "repository": "github:whoiscadenyoung/json-data-manager",
   "files": [
@@ -26,10 +26,6 @@
     "./reference": {
       "types": "./dist/reference.d.ts",
       "default": "./dist/reference.js"
-    },
-    "./transform": {
-      "types": "./dist/transform/index.d.ts",
-      "default": "./dist/transform/index.js"
     },
     "./views": {
       "types": "./dist/views/index.d.ts",

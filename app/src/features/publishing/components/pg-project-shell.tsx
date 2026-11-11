@@ -181,7 +181,7 @@ function sectionLabel(rest: string, name: string | undefined): string {
   }
   const labels: Record<string, string> = {
     "": "Overview",
-    "/analysis": "Analysis",
+    "/scratch": "Scratch query",
     "/catalog": "Catalog",
     "/create": "Import",
     "/members": "Members",
@@ -514,10 +514,10 @@ function PgProjectShellBody({
                   linkProps={{ params: { projectId }, to: "/projects/$projectId/catalog" }}
                 />
                 <NavItem
-                  active={rest === "/analysis"}
+                  active={rest === "/scratch"}
                   icon={FlaskConical}
-                  label="Analysis"
-                  linkProps={{ params: { projectId }, to: "/projects/$projectId/analysis" }}
+                  label="Scratch query"
+                  linkProps={{ params: { projectId }, to: "/projects/$projectId/scratch" }}
                   rail={rail}
                 />
                 <NavItem

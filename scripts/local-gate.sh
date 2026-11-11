@@ -108,7 +108,7 @@ bun run lint
 
 step "typechecks"
 for p in @caden/data-core @caden/importers @caden/json-cms @caden/geometry-archive \
-         @caden/ui @caden/maps @caden/layer-styles @caden/analysis @caden/data-export; do
+         @caden/ui @caden/maps @caden/layer-styles @caden/data-export; do
   echo "  ${p}"
   bun --filter="${p}" run typecheck
 done
@@ -117,7 +117,7 @@ echo "  app"
 
 step "package tests"
 for p in @caden/data-core @caden/importers @caden/json-cms @caden/geometry-archive \
-         @caden/maps @caden/layer-styles @caden/analysis @caden/data-export; do
+         @caden/maps @caden/layer-styles @caden/data-export; do
   echo "  ${p}"
   bun --filter="${p}" run test
 done

@@ -68,7 +68,6 @@ import {
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { PgAnalysisPanel } from "#/features/analysis";
 import { PgAddToProjectSheet, PgPublishDialog, mintPublishKey } from "#/features/publishing";
 import { QueryErrorBoundary } from "@/components/query-error-boundary";
 import { RouterButton } from "@/components/router-button";
@@ -117,8 +116,8 @@ import { SchemaVisualizer } from "./schema-visualizer";
  * — stage 3), the Data tab over `search_entries` (server-side
  * sort/filter/search in the URL, keyset pages), Structure (client-side
  * schema rendering), the create/edit/delete row flows, the publish-version
- * dialog (stage 4), and — stage 5 — the Analyze tab (SQL over the PG
- * row-resolution seam). Stage 7 (#206) adds the bound-dataset surfaces for
+ * dialog (stage 4). (The Analyze tab retired in #306: scratch SQL now lives in
+ * the project's Scratch query section.) Stage 7 (#206) adds the bound-dataset surfaces for
  * datasets carrying the `source` marker: the sync card (Overview) and the
  * History tab (commit rail + per-sync feed over the store's bindings
  * reads); ordinary datasets keep the tabs below. The map/tile path landed
@@ -132,7 +131,7 @@ export interface PgDatasetPageSearch {
   panel?: "create" | "edit";
   q?: string;
   sort?: string;
-  view?: "analyze" | "entries" | "history" | "overview" | "structure";
+  view?: "entries" | "history" | "overview" | "structure";
 }
 
 /**
@@ -304,13 +303,12 @@ function PostgresDatasetBody({
     isBound = dataset !== null && dataset !== undefined && dataset.source !== null,
     // The active tab rides ?view= (merge-form navigations only); "overview"
     // is the default and deliberately ABSENT from the URL (the ui-polish
-    // rule). Stage 5 mounts transform/analyze; stage 7 mounts "history" for
+    // rule). Stage 7 mounts "history" for
     // BOUND datasets only (an ordinary dataset's ?view=history degrades to
     // overview — the tab doesn't exist for it).
     view =
       search.view === "entries" ||
       search.view === "structure" ||
-      search.view === "analyze" ||
       (search.view === "history" && isBound)
         ? search.view
         : "overview",
@@ -613,7 +611,6 @@ function PostgresDatasetBody({
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="entries">Data ({displayCount})</TabsTrigger>
           <TabsTrigger value="structure">Structure</TabsTrigger>
-          <TabsTrigger value="analyze">Analyze</TabsTrigger>
           {isBound && <TabsTrigger value="history">History</TabsTrigger>}
         </TabsList>
 
@@ -704,12 +701,6 @@ function PostgresDatasetBody({
               )}
             </CardContent>
           </Card>
-        </TabsContent>
-
-        <TabsContent value="analyze">
-          {/* Stage 5 (#204): freeform read-only SQL — the same worker and
-              DuckDB-WASM engine as the Convex tab, fed from the PG seam. */}
-          <PgAnalysisPanel dataset={dataset} datasetTitle={dataset.title} schemaId={schemaId} />
         </TabsContent>
 
         {/* Stage 7 (#206): the bound dataset's History tab — the applied

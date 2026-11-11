@@ -25,6 +25,20 @@ const previewInput = z.object({
   inputs: z.array(inputRef).optional(),
 });
 
+const scratchInput = z.object({
+  accessToken: z.string().min(1),
+  projectId: z.string().min(1),
+  sql: z.string().max(100_000).optional(),
+});
+
+/** Scratch query (#306): the project's table names, plus the result when `sql` is given. Read-only as the caller. */
+export const scratchQueryFn = createServerFn({ method: "POST" })
+  .inputValidator((input: unknown) => scratchInput.parse(input))
+  .handler(async ({ data }) => {
+    const { scratchForToken } = await import("./entry.server");
+    return await scratchForToken(data.accessToken, data.projectId, data.sql);
+  });
+
 export const runViewFn = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => runInput.parse(input))
   .handler(async ({ data }) => {

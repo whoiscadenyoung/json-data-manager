@@ -7,6 +7,7 @@ import {
   previewViewFn,
   readLiveViewFn,
   runViewFn,
+  scratchQueryFn,
   setRefreshModeFn,
 } from "#/server/views/functions";
 
@@ -72,6 +73,16 @@ export async function previewDraftView(
 ) {
   return await previewViewFn({
     data: { accessToken: await accessTokenOf(options), definition, inputs, uptoStep },
+  });
+}
+
+/**
+ * Scratch query (#306): the project's table names and, with `sql`, the result
+ * of running it read-only on the server as you. Nothing is saved.
+ */
+export async function scratchQuery(projectId: string, sql?: string, options?: StoreOptions) {
+  return await scratchQueryFn({
+    data: { accessToken: await accessTokenOf(options), projectId, sql },
   });
 }
 

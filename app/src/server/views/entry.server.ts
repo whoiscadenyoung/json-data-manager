@@ -15,6 +15,7 @@ import {
   type RunOutcome,
   type RunnerDeps,
 } from "./runner";
+import { scratchAs, type ScratchResult } from "./scratch";
 
 /**
  * Server-only wiring for the view runner: the environment, the Postgres
@@ -144,4 +145,14 @@ export async function readOnlyForToken(
 ) {
   const who = verifyAccessToken(accessToken, requireEnv("JWT_SECRET"));
   return await runReadOnlyAsUser(depsFromEnv(), who, sql, params, { maxRows });
+}
+
+/** The project's scratch tables, and (when `sql` is given) the result of running it, as the token's user (#306). */
+export async function scratchForToken(
+  accessToken: string,
+  projectId: string,
+  sql: string | undefined,
+): Promise<ScratchResult> {
+  const who = verifyAccessToken(accessToken, requireEnv("JWT_SECRET"));
+  return await scratchAs(depsFromEnv(), who, projectId, sql);
 }
