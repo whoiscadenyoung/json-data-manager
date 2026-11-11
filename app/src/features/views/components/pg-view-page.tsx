@@ -531,7 +531,12 @@ function ViewEditor({
                 : `Step ${Number(selected) + 1}: ${STEP_TITLES[selectedStep.kind]}`
             }
           />
-          <ExportProfilesCard datasetId={viewId} output={savedOutput} title={header.title} />
+          <ExportProfilesCard
+            datasetId={viewId}
+            live={live}
+            output={savedOutput}
+            title={header.title}
+          />
           <RunHistory viewId={viewId} />
         </section>
       </div>
