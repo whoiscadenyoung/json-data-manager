@@ -83,7 +83,6 @@ describe("splitSchemaIdsByDecision", () => {
     const split = splitSchemaIdsByDecision(["tiled", "rowish"], decisions);
     expect(split.tileSources).toStrictEqual([{ schemaId: "tiled", url: "pmtiles://x" }]);
     expect(split.rowSchemaIds).toStrictEqual(["rowish"]);
-    expect(split.derivedRowIds).toStrictEqual([]);
     expect(split.sourcesPending).toBe(false);
   });
 
@@ -101,16 +100,6 @@ describe("splitSchemaIdsByDecision", () => {
   it("still drops a component id without a decision (a non-geospatial dataset)", () => {
     const split = splitSchemaIdsByDecision(["rowish", "standard"], decisions);
     expect(split.rowSchemaIds).toStrictEqual(["rowish"]);
-  });
-
-  it("takes derived ids explicitly onto the row path even though no decision exists for them (3a's rule)", () => {
-    const split = splitSchemaIdsByDecision(["tiled"], decisions, ["d1", "d2"]);
-    expect(split.derivedRowIds).toStrictEqual(["d1", "d2"]);
-    expect(split.rowSchemaIds).toStrictEqual([]);
-    // A derived id with no decision must never re-enter the decision split.
-    const unlisted = splitSchemaIdsByDecision(["d1"], decisions, []);
-    expect(unlisted.derivedRowIds).toStrictEqual([]);
-    expect(unlisted.rowSchemaIds).toStrictEqual([]);
   });
 });
 

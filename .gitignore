@@ -32,3 +32,10 @@ exports
 
 # Local-only test-account reference — credentials never ship in the repo.
 docs/local-test-accounts.md
+
+# Local pg_dumps of the compose db (the pre-Views backup the handoff names) —
+# never ship data snapshots in the repo.
+backups/
+
+# Docker compose local overrides — per-machine port/env tweaks only.
+docker-compose.override.yml

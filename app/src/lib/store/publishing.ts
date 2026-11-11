@@ -21,8 +21,8 @@ import type { VisibilityLevel } from "./visibility";
  *     the RPC's atomicity (the issue's recorded collapse).
  *   - The press is CLIENT-orchestrated exactly like the Convex one
  *     (bundles.ts): `startBundle` mints the bundle + member rows in the
- *     canonical order (datasets, then derived, then maps — the order the
- *     publish legs must run in, bundles.ts:204-212); a running bundle is
+ *     canonical order (datasets, then maps — the order the publish legs
+ *     must run in); a running bundle is
  *     JOINED, never forked (start's join-or-revive); `recordMember`
  *     checkpoints each member; the promoted collection is created once and
  *     REUSED across presses; `completeRun` closes completed/failed with
@@ -68,8 +68,8 @@ export interface PublishBundleRow {
 export interface BundleMemberRow {
   id: string;
   bundleId: string;
-  kind: "dataset" | "derived" | "map";
-  /** The member artifact's id (a dataset, a derived registry row, or a map — the text id space). */
+  kind: "dataset" | "map";
+  /** The member artifact's id (a dataset or a map — the text id space). */
   datasetKey: string;
   /** The draft's group, so the frozen row joins it at the collection leg. */
   groupId: string | null;
@@ -104,12 +104,9 @@ export const BUNDLE_MEMBER_STATUSES: ReadonlyArray<BundleMemberStatus> = [
   "failed",
 ];
 
-/** The canonical member write order of a press (bundles.ts:210-212): datasets, then derived, then maps. */
-export function memberOrder(kind: "dataset" | "derived" | "map"): number {
-  if (kind === "dataset") {
-    return 0;
-  }
-  return kind === "derived" ? 1 : 2;
+/** The canonical member write order of a press: datasets, then maps. */
+export function memberOrder(kind: "dataset" | "map"): number {
+  return kind === "dataset" ? 0 : 1;
 }
 
 /**
@@ -255,7 +252,7 @@ export function listMembersQueryOptions(args: { bundleId: string }, options?: St
 
 /** One member row to mint at press start (the bundleClosure output shape). */
 export interface BundleMemberPlan {
-  kind: "dataset" | "derived" | "map";
+  kind: "dataset" | "map";
   datasetKey: string;
   groupId?: string;
   /** False for already-published dataset members (referenced, no new version). */
@@ -277,7 +274,7 @@ export interface StartBundleArgs {
   visibility?: VisibilityLevel;
   /** The prior press's collection id — REUSED across presses (the recorded invariant); omit on the first press. */
   collectionId?: string;
-  /** The closure plan, already ordered datasets → derived → maps by the caller. */
+  /** The closure plan, already ordered datasets → maps by the caller. */
   members: BundleMemberPlan[];
 }
 
@@ -352,10 +349,9 @@ function initialStatusOf(member: BundleMemberPlan): BundleMemberStatus {
 }
 
 /**
- * Mints the member rows in the CANONICAL write order (datasets, then
- * derived, then maps — the order the publish legs must run in,
- * bundles.ts:204-212). Sequential on purpose: the by_bundle scan IS the
- * order, so parallel inserts would lose it.
+ * Mints the member rows in the CANONICAL write order (datasets, then maps
+ * — the order the publish legs must run in). Sequential on purpose: the
+ * by_bundle scan IS the order, so parallel inserts would lose it.
  */
 async function mintBundleMembers(
   client: SupabaseClient,

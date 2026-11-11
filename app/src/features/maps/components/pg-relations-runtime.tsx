@@ -65,17 +65,11 @@ export interface TouchingRelation {
   relation: DatasetRelationRow;
 }
 
-/** Render id → source dataset id (derived + chain re-keying; plain ids pass through). */
+/** Render id → source dataset id (chain re-keying; plain ids pass through). */
 export function sourceDatasetOfRenderId(
   renderId: string,
-  derivedLayers: ReadonlyArray<{ derivedId: string; sourceSchemaId: string }>,
   chainLayers: ReadonlyArray<{ renderId: string; sourceSchemaId: string }>,
 ): string {
-  for (const derived of derivedLayers) {
-    if (derived.derivedId === renderId) {
-      return derived.sourceSchemaId;
-    }
-  }
   for (const chain of chainLayers) {
     if (chain.renderId === renderId) {
       return chain.sourceSchemaId;
@@ -97,7 +91,6 @@ export function useRelationsRuntime(args: {
   /** The map's source-dataset ids (render ids resolved through the re-key maps). */
   datasetIds: readonly string[];
   chainLayers: ReadonlyArray<{ renderId: string; sourceSchemaId: string }>;
-  derivedLayers: ReadonlyArray<{ derivedId: string; sourceSchemaId: string }>;
   runtime: RelationRuntimeOptions | undefined;
   selected: FeatureSelection | undefined;
   titlesById: globalThis.Map<string, string>;
@@ -105,7 +98,7 @@ export function useRelationsRuntime(args: {
   const clickedDatasetId =
       args.selected === undefined
         ? undefined
-        : sourceDatasetOfRenderId(args.selected.schemaId, args.derivedLayers, args.chainLayers),
+        : sourceDatasetOfRenderId(args.selected.schemaId, args.chainLayers),
     relationsQuery = useQuery({
       ...relationsStore.listForDatasetsQueryOptions({ datasetIds: args.datasetIds }),
       enabled: args.runtime !== undefined && args.datasetIds.length > 0,

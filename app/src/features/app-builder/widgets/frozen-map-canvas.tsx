@@ -366,7 +366,6 @@ export function FrozenMapCanvas({
           chainLayers={[]}
           colorBySchema={layerStyles.colorBySchema}
           datasets={summaries.map(pgSummaryToDatasetSummary)}
-          derivedLayers={[]}
           extension={layerStyles.extension}
           geometries={geometries}
           onTileSourceIdle={(datasetId) => {

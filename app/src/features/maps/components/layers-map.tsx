@@ -313,27 +313,8 @@ function MapInstanceSink({ token }: { token: object }) {
   return null;
 }
 
-/** The stable empty list behind LayersMap's `derivedLayers` default (the default-prop rule). */
-const NO_DERIVED_LAYERS: Array<{ derivedId: string; sourceSchemaId: string }> = [];
-
 /** The stable empty list behind LayersMap's `chainLayers` default (the default-prop rule). */
 const NO_CHAIN_LAYERS: Array<{ renderId: string; sourceSchemaId: string }> = [];
-
-/** A derived layer's source id → the derived ids drawing it (multi-layer sharing of one source). */
-function derivedIdsBySourceOf(
-  derivedLayers: Array<{ derivedId: string; sourceSchemaId: string }>,
-): globalThis.Map<string, string[]> {
-  const bySource = new globalThis.Map<string, string[]>();
-  for (const layer of derivedLayers) {
-    const ids = bySource.get(layer.sourceSchemaId);
-    if (ids === undefined) {
-      bySource.set(layer.sourceSchemaId, [layer.derivedId]);
-    } else {
-      ids.push(layer.derivedId);
-    }
-  }
-  return bySource;
-}
 
 /** The 7b chain map: resolved row id → the render ids drawing it (render id → source, inverted once). */
 function chainSourceByRenderIdOf(
@@ -377,15 +358,6 @@ function geometryRowsBySchema(
  * Tile features carry id-only properties (`entryId`), so both paths click
  * through the same `{entryId, schemaId}` pair.
  *
- * Derived-dataset layers (roadmap 3a, #96) render ROW-PATH ONLY, from their
- * spec chain's bottom source dataset: geometry has no derived form until
- * stage 4's `geometrySource`, so each `derivedLayers` entry re-keys its
- * source's geometry rows under the derived id — the source's rows draw once
- * per derived layer that shows them (and once more if the source itself is
- * also a layer), each with its own color and visibility toggle. A feature
- * from a derived layer clicks through to the SOURCE dataset's entry (the
- * popup stays un-enriched until 3b).
- *
  * Entry properties load on demand (issue #52): clicking a feature starts one
  * indexed single-entry read (`entries.get`), subscribed — and live — only
  * while the popup is open. The map's first paint no longer pays an
@@ -402,16 +374,12 @@ function geometryRowsBySchema(
  * `boundingBox` extents via a lazy initializer and never change afterwards.
  * Hiding or showing layers (or any of their datasets), adding or removing
  * layers, or late-resolving payloads never moves the camera again; a fresh
- * page load re-fits. Derived layers contribute no bounds — a registry row is
- * deliberately virtual (no `boundingBox`, no stored extent), so a map whose
- * ONLY layers are derived ones opens on the default world view rather than
- * deriving bounds from rows (row-derived bounds would understate the extent
+ * page load re-fits (row-derived bounds would understate the extent
  * mid-stream — the exact bug the stored extents exist to prevent).
  */
 // oxlint-disable-next-line eslint/complexity -- the render paths (row/tile/extension/popup split) are the component's real shape; the deferred #82 phase-2 cleanup owns the decomposition, as in the route workspaces.
 export function LayersMap({
   datasets,
-  derivedLayers = NO_DERIVED_LAYERS,
   chainLayers = NO_CHAIN_LAYERS,
   geometries,
   titlesById,
@@ -426,8 +394,6 @@ export function LayersMap({
   relationRuntime,
 }: {
   datasets: LayersMapDataset[];
-  /** Derived layers on this map: render id → the bottom source dataset its geometry rides. */
-  derivedLayers?: Array<{ derivedId: string; sourceSchemaId: string }>;
   /**
    * 7b chain layers (#103): a dataset layer whose target resolves through a
    * version chain — render id (the layer's own target id, never rewritten) →
@@ -469,15 +435,10 @@ export function LayersMap({
   const [mapToken] = useState(() => ({})),
     datasetById = new globalThis.Map(datasets.map((dataset) => [dataset._id, dataset])),
     resolvedGeometries = useResolvedGeometries(geometries),
-    // Derived layers re-key their source's rows (see `keyedGeometryRows`):
-    // the plain rows stay so a source that is ALSO a layer keeps drawing as
-    // itself; each showing derived layer gets its own copy of the row under
-    // its id (shared objects re-wrapped, not re-fetched).
-    keyedGeometries = keyedGeometryRows(
-      geometries,
-      derivedIdsBySourceOf(derivedLayers),
-      chainSourceByRenderIdOf(chainLayers),
-    ),
+    // Chain layers re-key their resolved rows (see `keyedGeometryRows`):
+    // the anchor's live rows draw nothing; each resolution draws the frozen
+    // row's copy under the anchor's render id.
+    keyedGeometries = keyedGeometryRows(geometries, chainSourceByRenderIdOf(chainLayers)),
     // Most rows resolve synchronously (inline `geometryJson`); a row backed
     // by external storage is simply absent until its `fetch` completes.
     visibleGeometries = keyedGeometries.flatMap((g) => {
@@ -575,10 +536,7 @@ export function LayersMap({
     })(),
     relations = useRelationsRuntime({
       chainLayers,
-      datasetIds: schemaIds.map((schemaId) =>
-        sourceDatasetOfRenderId(schemaId, derivedLayers, chainLayers),
-      ),
-      derivedLayers,
+      datasetIds: schemaIds.map((schemaId) => sourceDatasetOfRenderId(schemaId, chainLayers)),
       runtime: relationRuntime,
       selected: selected === null ? undefined : selected,
       titlesById: runtimeTitles,
