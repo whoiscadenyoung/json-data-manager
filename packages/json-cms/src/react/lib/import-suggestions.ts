@@ -6,7 +6,7 @@
  * on its own: every change is a per-column confirmation (the #279 "never
  * silent" posture), and declining leaves the import byte-identical.
  */
-import { convertCurrencyColumn } from "@caden/data-core/currency";
+import { CURRENCY_KEYWORD, convertCurrencyColumn } from "@caden/data-core/currency";
 import type { CurrencyConversionFailure } from "@caden/data-core/currency";
 
 export interface SuggestionRow {
@@ -35,14 +35,16 @@ export function describeFailures(
 }
 
 /**
- * The schema with `field` typed as a number. Its title/description and any
- * other annotations stay; the type becomes `number`, and `field` leaves
+ * The schema with `field` typed as a number carrying the `x-currency`
+ * display hint (#292). Its title/description and any other annotations
+ * stay; the type becomes `number`, and `field` leaves
  * `required` when some rows no longer carry it (blank text and nulls are
  * dropped by the conversion, never stored as 0).
  */
 function retypeSchema(
   schemaJson: string,
   field: string,
+  symbol: string,
   rows: readonly Record<string, unknown>[],
 ): string {
   const parsed: unknown = JSON.parse(schemaJson);
@@ -63,7 +65,10 @@ function retypeSchema(
   return JSON.stringify(
     {
       ...parsed,
-      properties: { ...parsed.properties, [field]: { ...kept, type: "number" } },
+      properties: {
+        ...parsed.properties,
+        [field]: { ...kept, type: "number", [CURRENCY_KEYWORD]: symbol },
+      },
       ...(required === undefined ? {} : { required }),
     },
     null,
@@ -81,6 +86,8 @@ export function applyCurrencySuggestion<T extends SuggestionRow>(
   rows: readonly T[],
   schemaJson: string,
   field: string,
+  /** The detected symbol; `null`/`""` marks an amount column with no symbol. */
+  symbol: string | null = null,
 ): CurrencyApplyResult<T> {
   const data = rows.map((row) => (isRecord(row.data) ? row.data : {})),
     conversion = convertCurrencyColumn(data, field);
@@ -98,6 +105,6 @@ export function applyCurrencySuggestion<T extends SuggestionRow>(
     rows: rows.map((row, index) =>
       isRecord(row.data) ? { ...row, data: conversion.rows[index] } : row,
     ),
-    schemaJson: retypeSchema(schemaJson, field, conversion.rows),
+    schemaJson: retypeSchema(schemaJson, field, symbol ?? "", conversion.rows),
   };
 }

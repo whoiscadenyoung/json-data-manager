@@ -935,7 +935,13 @@ export function DatasetImporter({
       if (rows === null) {
         return;
       }
-      const result = applyCurrencySuggestion(rows, inferredJson, field),
+      const guess = currencyGuesses.find((candidate) => candidate.field === field),
+        result = applyCurrencySuggestion(
+          rows,
+          inferredJson,
+          field,
+          guess === undefined ? null : guess.symbol,
+        ),
         id: SuggestionId = `currency:${field}`;
       if (!result.ok) {
         setSuggestionErrors((current) => ({ ...current, [id]: result.message }));

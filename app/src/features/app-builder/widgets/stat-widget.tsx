@@ -1,3 +1,5 @@
+import { currencyFieldsOf, formatCurrency } from "@caden/data-core/currency";
+
 import { useDatasetRecords } from "../data";
 import { AGGREGATE_LABELS, computeStat, formatNumberFull, formatStatValue } from "../lib/aggregate";
 import { numericFields } from "../lib/fields";
@@ -13,12 +15,26 @@ import {
 } from "./shared";
 
 /** A headline number — count of rows, or a sum/average/min/max of one field. */
+/** The headline text: a currency field's sum/average/min/max keeps its symbol (#292); counts never do. */
+function statText(
+  value: number,
+  aggregate: WidgetViewProps<"stat">["widget"]["aggregate"],
+  currency: string | undefined,
+): string {
+  return currency === undefined || aggregate === "count"
+    ? formatStatValue(value, aggregate)
+    : formatCurrency(value, currency);
+}
+
 function StatValue({
   widget,
   title,
+  currency,
 }: {
   widget: WidgetViewProps<"stat">["widget"];
   title: string;
+  /** The measured field's `x-currency` symbol, when it is a currency column. */
+  currency: string | undefined;
 }) {
   const { records, complete } = useDatasetRecords(widget.datasetId);
   if (!complete) {
@@ -35,7 +51,7 @@ function StatValue({
         className="text-3xl font-semibold tracking-tight tabular-nums"
         title={value === null ? undefined : formatNumberFull(value)}
       >
-        {value === null ? "—" : formatStatValue(value, widget.aggregate)}
+        {value === null ? "—" : statText(value, widget.aggregate, currency)}
       </span>
       <span className="truncate text-xs text-muted-foreground">{caption}</span>
     </div>
@@ -48,7 +64,17 @@ export function StatWidgetView({ widget }: WidgetViewProps<"stat">) {
   }
   return (
     <WithDataset datasetId={widget.datasetId}>
-      {(state) => <StatValue widget={widget} title={state.doc.title} />}
+      {(state) => (
+        <StatValue
+          currency={
+            widget.field === undefined
+              ? undefined
+              : currencyFieldsOf(state.doc.jsonSchema)[widget.field]
+          }
+          title={state.doc.title}
+          widget={widget}
+        />
+      )}
     </WithDataset>
   );
 }

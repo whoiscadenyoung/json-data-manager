@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { convertCurrencyColumn, detectCurrencyColumns, parseCurrencyValue } from "./currency.js";
+import {
+  convertCurrencyColumn,
+  currencyFieldsOf,
+  detectCurrencyColumns,
+  formatCurrency,
+  parseCurrencyValue,
+} from "./currency.js";
 
 function marked(text: string): boolean {
   const parsed = parseCurrencyValue(text);
@@ -137,5 +143,40 @@ describe("convertCurrencyColumn", () => {
     const input = [{ A: "$5" }];
     convertCurrencyColumn(input, "A");
     expect(input).toStrictEqual([{ A: "$5" }]);
+  });
+});
+
+describe("currencyFieldsOf", () => {
+  it("lists x-currency properties with their symbol", () => {
+    const schema = {
+      properties: {
+        Amount: { type: "number", "x-currency": "$" },
+        Count: { type: "integer" },
+        Plain: { type: "number", "x-currency": "" },
+      },
+      type: "object",
+    };
+    expect(currencyFieldsOf(schema)).toStrictEqual({ Amount: "$", Plain: "" });
+  });
+
+  it("is empty for non-schemas", () => {
+    expect(currencyFieldsOf(null)).toStrictEqual({});
+    expect(currencyFieldsOf({ properties: [] })).toStrictEqual({});
+  });
+});
+
+describe("formatCurrency", () => {
+  it.each([
+    [1234.5, "$", "$1,234.50"],
+    [-1250, "$", "-$1,250.00"],
+    [0.125, "€", "€0.125"],
+    [12, "", "12.00"],
+  ])("formats %d with %j as %j", (value, symbol, expected) => {
+    expect(formatCurrency(value, symbol)).toBe(expected);
+  });
+
+  it("leaves non-numbers as text", () => {
+    expect(formatCurrency("n/a", "$")).toBe("n/a");
+    expect(formatCurrency(null, "$")).toBe("");
   });
 });

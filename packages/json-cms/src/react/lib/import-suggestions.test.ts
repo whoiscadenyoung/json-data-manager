@@ -18,7 +18,7 @@ describe("applyCurrencySuggestion", () => {
       { data: { Amount: "$1,000", Name: "A" } },
       { data: { Amount: "($250.50)", Name: "B" }, geometry: undefined },
     ];
-    const result = applyCurrencySuggestion(rows, schema, "Amount");
+    const result = applyCurrencySuggestion(rows, schema, "Amount", "$");
     expect(result.ok).toBe(true);
     if (!result.ok) {
       return;
@@ -28,7 +28,11 @@ describe("applyCurrencySuggestion", () => {
       { Amount: -250.5, Name: "B" },
     ]);
     const parsed = JSON.parse(result.schemaJson);
-    expect(parsed.properties.Amount).toStrictEqual({ description: "Award", type: "number" });
+    expect(parsed.properties.Amount).toStrictEqual({
+      description: "Award",
+      type: "number",
+      "x-currency": "$",
+    });
     expect(parsed.required).toStrictEqual(["Amount", "Name"]);
     expect(result.converted).toBe(2);
   });
