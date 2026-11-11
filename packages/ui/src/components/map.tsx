@@ -1551,11 +1551,11 @@ function MapVectorTiles<P extends TileFeatureProperties = TileFeatureProperties>
       if (next === hoveredId) return;
       const sourceExists = !!map.getSource(sourceId);
       if (hoveredId != null && sourceExists) {
-        map.setFeatureState({ source: sourceId, id: hoveredId }, { hover: false });
+        map.setFeatureState({ source: sourceId, sourceLayer, id: hoveredId }, { hover: false });
       }
       hoveredId = next;
       if (next != null && sourceExists) {
-        map.setFeatureState({ source: sourceId, id: next }, { hover: true });
+        map.setFeatureState({ source: sourceId, sourceLayer, id: next }, { hover: true });
       }
     };
 
@@ -1606,6 +1606,7 @@ function MapVectorTiles<P extends TileFeatureProperties = TileFeatureProperties>
     isLoaded,
     map,
     sourceId,
+    sourceLayer,
     fillLayerId,
     lineLayerId,
     circleLayerId,

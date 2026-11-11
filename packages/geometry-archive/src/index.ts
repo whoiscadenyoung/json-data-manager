@@ -12,7 +12,7 @@ import {
   type BuildGeometryArchiveOptions,
 } from "./types";
 
-export { SOURCE_LAYER_NAME, MVT_EXTENT, TILE_BUFFER_UNITS } from "./tiles";
+export { SOURCE_LAYER_NAME, MVT_EXTENT, TILE_BUFFER_UNITS, suggestMaxZoom } from "./tiles";
 export { DEFAULT_MIN_ZOOM, DEFAULT_MAX_ZOOM, MAX_ZOOM } from "./types";
 export type {
   ArchiveTile,

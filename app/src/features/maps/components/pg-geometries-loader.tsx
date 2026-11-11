@@ -132,7 +132,8 @@ export function PgGeometriesLoader({
       runIdRef.current += 1;
       rowsRef.current = [];
       loadPgGeometryRows(datasetId, runIdRef.current);
-      return await new Promise<void>((resolve, reject) => {
+      // TanStack Query rejects an `undefined` result, so resolve with null.
+      return await new Promise<null>((resolve, reject) => {
         const expected = runIdRef.current,
           unsubscribe = subscribePgGeometryRows(datasetId, (event) => {
             if (
@@ -143,7 +144,7 @@ export function PgGeometriesLoader({
               if (event.type === "load-error") {
                 reject(new Error(event.message));
               } else {
-                resolve();
+                resolve(null);
               }
             }
           });
