@@ -173,7 +173,7 @@ function DuplicateForm({
         ? "Checking the inputs…"
         : report.ok
           ? undefined
-          : "Fix the missing fields below, or pick different inputs.";
+          : "Fix the problems above, or pick different inputs.";
 
   const create = async (): Promise<void> => {
     if (report === undefined || !report.ok) {

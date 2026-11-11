@@ -118,6 +118,12 @@ vi.mock("@/lib/store/views", () => ({
 
 vi.mock("@/lib/views/view-save", () => ({ saveView: mocks.saveView }));
 
+vi.mock("@/lib/store/projects", () => ({
+  listVisibleArtifactMembershipsQueryOptions: () => ({
+    queryKey: ["pg:projects", "listVisibleArtifactMemberships"],
+    queryFn: async () => [],
+  }),
+}));
 vi.mock("@/lib/store/datasets", () => ({
   listQueryOptions: () => ({
     queryFn: async () => [

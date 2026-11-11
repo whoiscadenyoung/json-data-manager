@@ -48,11 +48,13 @@ export function SaveAsViewSheet({
     navigate = useNavigate(),
     queryClient = useQueryClient(),
     first = referenced[0],
+    // The default base is the table whose identity the query keeps — a
+    // qualified `alias.row_id` read (#338); the first referenced table
+    // otherwise (unqualified `row_id` selects stay on the old default).
+    keptAlias = keptRowIdAlias(sql, referenced),
     baseAlias = referenced.some((table) => table.alias === chosen)
       ? chosen
-      : first === undefined
-        ? ""
-        : first.alias,
+      : (keptAlias ?? (first === undefined ? "" : first.alias)),
     missing = title.trim() === "" ? "Give the view a title." : undefined;
   const save = async (): Promise<void> => {
     setBusy(true);
@@ -130,6 +132,21 @@ export function SaveAsViewSheet({
       </SheetContent>
     </Sheet>
   );
+}
+
+/** The referenced table whose `row_id` the query keeps (a qualified read), so the default base follows the query's identity rather than the table-list order (#338). */
+function keptRowIdAlias(
+  sql: string,
+  referenced: ReadonlyArray<{ alias: string }>,
+): string | undefined {
+  for (const match of sql.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\.row_id/g)) {
+    const alias = match[1];
+    const found = referenced.find((table) => table.alias === alias);
+    if (found !== undefined) {
+      return found.alias;
+    }
+  }
+  return undefined;
 }
 
 /** The one run after creating; a failure is a toast, the page still opens with the error in its run history. */

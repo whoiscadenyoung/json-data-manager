@@ -23,6 +23,7 @@ import { toast } from "sonner";
 import { RouterButton } from "@/components/router-button";
 import { errorMessage } from "@/lib/errors";
 import * as datasetsStore from "@/lib/store/datasets";
+import * as projectsStore from "@/lib/store/projects";
 import {
   inputMetaQueryOptions,
   listViewSummariesQueryOptions,
@@ -206,7 +207,20 @@ function ViewEditor({
     navigate = useNavigate(),
     viewSummaries = useQuery(listViewSummariesQueryOptions()),
     datasetsQuery = useQuery(datasetsStore.listQueryOptions()),
-    datasets = (datasetsQuery.data ?? []).filter((dataset) => dataset.id !== viewId),
+    // The holding-project titles (#338): pickers suffix them so same-named
+    // datasets from different projects don't look identical.
+    membershipsQuery = useQuery(projectsStore.listVisibleArtifactMembershipsQueryOptions()),
+    projectTitleByDatasetId = new globalThis.Map(
+      (membershipsQuery.data ?? [])
+        .filter((membership) => membership.artifactKind === "dataset")
+        .map((membership) => [membership.artifactId, membership.project.title]),
+    ),
+    datasets = (datasetsQuery.data ?? [])
+      .filter((dataset) => dataset.id !== viewId)
+      .map((dataset) => ({
+        ...dataset,
+        projectTitle: projectTitleByDatasetId.get(dataset.id),
+      })),
     refs = inputRefsOf(draft),
     metaQuery = useQuery({ ...inputMetaQueryOptions(refs), placeholderData: keepPreviousData }),
     infos: InputInfo[] = (metaQuery.data ?? []).map((meta) => ({
@@ -522,6 +536,11 @@ function ViewEditor({
                 toast.success("Added to the key map. The preview refreshes with it.");
               }
             }}
+            order={
+              savedOutput === undefined
+                ? undefined
+                : savedOutput.fields.map((field) => field.from ?? field.key)
+            }
             rows={
               previewQuery.data === undefined ? undefined : previewRowsOf(previewQuery.data.rows)
             }

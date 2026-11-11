@@ -134,11 +134,14 @@ function ReferenceCell({
 }
 
 function RowActions({
+  editDisabledHint,
   schemaId,
   entry,
   onEdit,
   onDelete,
 }: {
+  /** Set where editing is read-only (views, locked datasets): Edit Entry renders disabled with this reason instead of a dead click (#338, like Create Entry). */
+  editDisabledHint: string | undefined;
   schemaId: string;
   entry: Entry;
   onEdit: (entry: Entry) => void;
@@ -170,7 +173,11 @@ function RowActions({
           <Eye className="h-3.5 w-3.5" />
           View Details
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => onEdit(entry)}>
+        <DropdownMenuItem
+          disabled={editDisabledHint !== undefined}
+          onClick={() => onEdit(entry)}
+          title={editDisabledHint}
+        >
           <Pencil className="h-3.5 w-3.5" />
           Edit Entry
         </DropdownMenuItem>
@@ -228,6 +235,7 @@ function buildColumns(
   isGeospatial: boolean,
   onEdit: (entry: Entry) => void,
   onDelete: ((entry: Entry) => void) | undefined,
+  editDisabledHint: string | undefined,
   referenceFieldsByName: Map<string, ReferenceField>,
   labelsByField: Map<string, Map<string, string>>,
   surfaces: ColumnSurfaces,
@@ -309,6 +317,7 @@ function buildColumns(
     {
       cell: (info) => (
         <RowActions
+          editDisabledHint={editDisabledHint}
           schemaId={schemaId}
           entry={info.row.original}
           onDelete={onDelete}
@@ -342,6 +351,7 @@ export function EntriesTable({
   isGeospatial,
   onEdit,
   onDelete,
+  editDisabledHint,
   labelsByField,
   server,
   columnTypes,
@@ -360,6 +370,8 @@ export function EntriesTable({
   onEdit: (entry: Entry) => void;
   /** Single-entry delete — wired only where the backend serves one (the Postgres store). */
   onDelete?: (entry: Entry) => void;
+  /** Set where editing is read-only (views, locked datasets) — Edit Entry renders disabled with this reason (#338). */
+  editDisabledHint?: string | undefined;
   /**
    * Pre-resolved reference labels, grouped by field name. When given, the
    * table skips its internal Convex label query — the Postgres host resolves
@@ -403,6 +415,7 @@ export function EntriesTable({
       isGeospatial,
       onEdit,
       onDelete,
+      editDisabledHint,
       referenceFieldsByName,
       resolvedLabelsByField,
       server === undefined ? "client" : "server",
