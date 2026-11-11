@@ -122,9 +122,6 @@ jobs:
       - name: Typecheck (@caden/layer-styles)
         run: bun --filter=@caden/layer-styles run typecheck
 
-      - name: Typecheck (@caden/analysis)
-        run: bun --filter=@caden/analysis run typecheck
-
       - name: Typecheck (@caden/data-export)
         run: bun --filter=@caden/data-export run typecheck
 
@@ -154,9 +151,6 @@ jobs:
 
       - name: Test (@caden/layer-styles)
         run: bun --filter=@caden/layer-styles run test
-
-      - name: Test (@caden/analysis)
-        run: bun --filter=@caden/analysis run test
 
       - name: Test (@caden/data-export)
         run: bun --filter=@caden/data-export run test
@@ -322,9 +316,6 @@ jobs:
       - name: Typecheck (@caden/layer-styles)
         run: bun --filter=@caden/layer-styles run typecheck
 
-      - name: Typecheck (@caden/analysis)
-        run: bun --filter=@caden/analysis run typecheck
-
       - name: Typecheck (@caden/data-export)
         run: bun --filter=@caden/data-export run typecheck
 
@@ -351,9 +342,6 @@ jobs:
 
       - name: Test (@caden/layer-styles)
         run: bun --filter=@caden/layer-styles run test
-
-      - name: Test (@caden/analysis)
-        run: bun --filter=@caden/analysis run test
 
       - name: Test (app)
         run: bun --filter=app run test
