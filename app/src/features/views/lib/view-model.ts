@@ -1,4 +1,4 @@
-import { slugifyViewName } from "@caden/data-core/views";
+import { analyzeSqlStep, slugifyViewName } from "@caden/data-core/views";
 import type {
   CompileInputMeta,
   Condition,
@@ -7,7 +7,9 @@ import type {
   JoinStep,
   KeyMatching,
   Measure,
+  MultiMatch,
   Step,
+  ValidationError,
   ViewDefinition,
 } from "@caden/data-core/views";
 
@@ -33,7 +35,16 @@ export const DEFAULT_MATCHING: KeyMatching = {
   stripDiacritics: false,
 };
 
-export const MEASURE_FNS = ["count", "countDistinct", "sum", "avg", "min", "max"] as const;
+export const MEASURE_FNS = [
+  "count",
+  "countDistinct",
+  "sum",
+  "avg",
+  "min",
+  "max",
+  "topBy",
+  "text",
+] as const;
 export type EditableMeasureFn = (typeof MEASURE_FNS)[number];
 
 export const MEASURE_LABELS: Record<EditableMeasureFn, string> = {
@@ -43,6 +54,8 @@ export const MEASURE_LABELS: Record<EditableMeasureFn, string> = {
   avg: "Average",
   min: "Minimum",
   max: "Maximum",
+  topBy: "Value from the top row",
+  text: "Join as text",
 };
 
 export const FILTER_OPS: { op: ConditionOp; label: string }[] = [
@@ -90,6 +103,15 @@ export function newFilterStep(field: string): Step {
   return { kind: "filter", where: { field, op: "eq", value: "" } };
 }
 
+export function newCalculateStep(): Step {
+  return { kind: "calculate", field: "", expr: "" };
+}
+
+/** A SQL step starts as a valid pass-through so the preview works while it is edited. */
+export function newSqlStep(): Step {
+  return { kind: "sql", query: "select * from prev" };
+}
+
 export function newGroupByStep(field: string): Step {
   return { kind: "groupBy", by: [field], measures: [{ as: "count", fn: "count" }] };
 }
@@ -112,39 +134,104 @@ export function newJoinStep(args: {
   };
 }
 
+/** The measure after its function changed: only the settings the new function uses are kept. */
+export function measureWithFn(measure: Measure, fn: EditableMeasureFn): Measure {
+  const { by: _by, direction: _direction, separator: _separator, field, ...rest } = measure;
+  switch (fn) {
+    case "count":
+      return { ...rest, fn };
+    case "topBy":
+      return { ...rest, fn, ...(field === undefined ? {} : { field }), direction: "max" };
+    case "text":
+      return { ...rest, fn, ...(field === undefined ? {} : { field }), separator: ", " };
+    default:
+      return { ...rest, fn, ...(field === undefined ? {} : { field }) };
+  }
+}
+
 /** The measure a summarize policy starts with. */
 export function defaultMeasure(name: string): Measure {
   return { as: name, fn: "count" };
 }
 
+function multiMatchProblem(multiMatch: MultiMatch): string | undefined {
+  switch (multiMatch.mode) {
+    case "summarize":
+      return multiMatch.measures.length === 0 ? "Add at least one measure." : undefined;
+    case "spread":
+      if (multiMatch.by === "" || multiMatch.value === "") {
+        return "Pick the category field and the value field to spread.";
+      }
+      return multiMatch.columns.length === 0 ||
+        multiMatch.columns.some((column) => column.as.trim() === "")
+        ? "Declare at least one column, each with a name."
+        : undefined;
+    case "text":
+      return multiMatch.field === "" ? "Pick the field to join as text." : undefined;
+    default:
+      return undefined;
+  }
+}
+
+function measureProblem(measure: Measure): string | undefined {
+  if (measure.as.trim() === "") {
+    return "Every measure needs an output name.";
+  }
+  if (measure.fn !== "count" && (measure.field ?? "") === "") {
+    return `Pick the field for "${measure.as}".`;
+  }
+  return measure.fn === "topBy" && (measure.by ?? "") === ""
+    ? `Pick the field that ranks the rows for "${measure.as}".`
+    : undefined;
+}
+
+function isSet(value: string | undefined): value is string {
+  return value !== undefined;
+}
+
+function joinProblem(step: JoinStep): string | undefined {
+  if (step.right.input === "") {
+    return "Pick the dataset to join with.";
+  }
+  if (step.on.length === 0 || step.on.some((pair) => pair.left === "" || pair.right === "")) {
+    return "Pick the key fields on both sides.";
+  }
+  const { multiMatch } = step;
+  const measures = multiMatch.mode === "summarize" ? multiMatch.measures : [];
+  const measure = measures.map((m) => measureProblem(m)).find(isSet);
+  return (
+    multiMatchProblem(multiMatch) ??
+    measure ??
+    (step.right.steps ?? []).map((sub) => stepProblem(sub)).find(isSet)
+  );
+}
+
 /** Whether a step is complete enough to compile (the editor shows the rest as "needs ..."). */
 export function stepProblem(step: Step): string | undefined {
-  if (step.kind === "join") {
-    if (step.right.input === "") {
-      return "Pick the dataset to join with.";
+  switch (step.kind) {
+    case "join":
+      return joinProblem(step);
+    case "filter": {
+      const leaves = filterLeaves(step.where);
+      return leaves === undefined || (leaves.length > 0 && leaves.every((l) => l.field !== ""))
+        ? undefined
+        : "Pick a field to filter on.";
     }
-    if (step.on.length === 0 || step.on.some((pair) => pair.left === "" || pair.right === "")) {
-      return "Pick the key fields on both sides.";
-    }
-    if (step.multiMatch.mode === "summarize" && step.multiMatch.measures.length === 0) {
-      return "Add at least one measure.";
-    }
-    return undefined;
+    case "groupBy":
+      if (step.by.length === 0 || step.by.some((field) => field === "")) {
+        return "Pick at least one field to group by.";
+      }
+      return step.measures.map((measure) => measureProblem(measure)).find(isSet);
+    case "calculate":
+      if (step.field.trim() === "") {
+        return "Name the new field.";
+      }
+      return step.expr.trim() === "" ? "Write the expression to calculate." : undefined;
+    case "sql":
+      return step.query.trim() === "" ? "Write the SQL query." : undefined;
+    default:
+      return undefined;
   }
-  if (step.kind === "filter") {
-    const leaves = filterLeaves(step.where);
-    if (leaves === undefined || leaves.length === 0 || leaves.some((leaf) => leaf.field === "")) {
-      return leaves === undefined ? undefined : "Pick a field to filter on.";
-    }
-    return undefined;
-  }
-  if (step.kind === "groupBy") {
-    if (step.by.length === 0) {
-      return "Pick at least one field to group by.";
-    }
-    return undefined;
-  }
-  return undefined;
 }
 
 /** The leaves of a simple filter (one condition, or an AND of conditions), or undefined for a nested tree this form cannot edit. */
@@ -201,6 +288,29 @@ export function filterValueText(leaf: ConditionLeaf): string {
   return scalarText(value);
 }
 
+/**
+ * The join after its right side was re-picked (`alias` is the declared input
+ * for the new dataset): the key fields of the old side and the sub-pipeline
+ * built on it no longer apply, and a default prefix follows the new title.
+ */
+export function repointRight(
+  step: JoinStep,
+  alias: string,
+  titles: { old: string; next: string },
+): JoinStep {
+  if (step.right.input === alias) {
+    return step;
+  }
+  const oldDefault = slugifyViewName(titles.old);
+  const usesDefault = step.prefix === undefined || step.prefix === "" || step.prefix === oldDefault;
+  return {
+    ...step,
+    right: { input: alias },
+    on: step.on.map((pair) => ({ ...pair, right: "" })),
+    prefix: usesDefault ? slugifyViewName(titles.next) : step.prefix,
+  };
+}
+
 /** Adds one manual key-map entry (from -> to) to a join, replacing an earlier entry for the same `from`. */
 export function withManualMapEntry(step: JoinStep, from: string, to: string): JoinStep {
   const existing = (step.matching.manualMap ?? []).filter((entry) => entry.from !== from);
@@ -223,22 +333,41 @@ function inputFields(infos: readonly InputInfo[], alias: string): string[] | und
 
 /**
  * The field names present after `steps[0..upto]` (use -1 for the bare base
- * input), or undefined once the shape is unknown (after an sql step).
- * Mirrors the validator's field scope in `@caden/data-core/views`.
+ * input), or undefined once the shape is unknown (after an sql step that
+ * returns a bare `d`). Mirrors the validator's field scope in
+ * `@caden/data-core/views`.
  */
 export function fieldsAfter(
   definition: ViewDefinition,
   infos: readonly InputInfo[],
   upto: number,
 ): string[] | undefined {
-  let known: string[] | undefined = inputFields(infos, definition.base);
-  for (const step of definition.steps.slice(0, upto + 1)) {
+  return fieldsThrough(
+    inputFields(infos, definition.base),
+    definition.steps.slice(0, upto + 1),
+    infos,
+  );
+}
+
+/** The fields after running `steps` over rows that start with `start` (a sub-pipeline's right input, or the base). */
+export function fieldsThrough(
+  start: string[] | undefined,
+  steps: readonly Step[],
+  infos: readonly InputInfo[],
+): string[] | undefined {
+  let known = start;
+  for (const step of steps) {
     if (known === undefined) {
       return undefined;
     }
     known = fieldsAfterStep(known, step, infos);
   }
   return known;
+}
+
+/** The fields of a join's right side: the input, then its sub-pipeline when it has one. */
+export function rightFieldsOf(step: JoinStep, infos: readonly InputInfo[]): string[] | undefined {
+  return fieldsThrough(inputFields(infos, step.right.input), step.right.steps ?? [], infos);
 }
 
 function fieldsAfterStep(
@@ -254,11 +383,54 @@ function fieldsAfterStep(
     case "groupBy":
       return [...step.by, ...step.measures.map((measure) => measure.as)];
     case "calculate":
-      return known.includes(step.field) ? known : [...known, step.field];
+      return step.field === "" || known.includes(step.field) ? known : [...known, step.field];
     case "join":
       return fieldsAfterJoin(known, step, infos);
+    case "sql":
+      return fieldsAfterSql(step.query, infos);
     default:
       return undefined;
+  }
+}
+
+function fieldsAfterSql(query: string, infos: readonly InputInfo[]): string[] | undefined {
+  const result = analyzeSqlStep(
+    query,
+    infos.map((info) => info.alias),
+  );
+  if (!result.ok || result.analysis.columns.includes("d")) {
+    return undefined;
+  }
+  return result.analysis.columns.filter((name) => name !== "row_id" && name !== "geom");
+}
+
+/** `prefix.name`, or just the name when the prefix is empty. */
+export function prefixedName(prefix: string, name: string): string {
+  return prefix === "" ? name : `${prefix}.${name}`;
+}
+
+function joinAdded(
+  step: JoinStep,
+  infos: readonly InputInfo[],
+  right: string[] | undefined,
+): string[] | undefined {
+  const { multiMatch } = step;
+  const info = infos.find((entry) => entry.alias === step.right.input);
+  const title = info === undefined ? "" : info.title;
+  const prefix = step.prefix ?? slugifyViewName(title);
+  switch (multiMatch.mode) {
+    case "summarize":
+      return multiMatch.measures.map((measure) => measure.as);
+    case "spread":
+      return multiMatch.columns.map((column) => column.as);
+    case "text":
+      return [prefixedName(prefix, multiMatch.field)];
+    case "list":
+      return [prefix === "" ? slugifyViewName(title) : prefix];
+    default: {
+      const names = step.fields ?? right;
+      return names === undefined ? undefined : names.map((n) => prefixedName(prefix, n));
+    }
   }
 }
 
@@ -267,19 +439,7 @@ function fieldsAfterJoin(
   step: JoinStep,
   infos: readonly InputInfo[],
 ): string[] | undefined {
-  const { multiMatch } = step;
-  let added: string[] | undefined;
-  if (multiMatch.mode === "summarize") {
-    added = multiMatch.measures.map((measure) => measure.as);
-  } else if (multiMatch.mode === "spread") {
-    added = multiMatch.columns.map((column) => column.as);
-  } else if (multiMatch.mode === "first" || multiMatch.mode === "last") {
-    const info = infos.find((entry) => entry.alias === step.right.input);
-    const names = step.fields ?? (info === undefined ? undefined : info.fields);
-    const prefix = step.prefix ?? slugifyViewName(info === undefined ? "" : info.title);
-    added =
-      names === undefined ? undefined : names.map((n) => (prefix === "" ? n : `${prefix}.${n}`));
-  }
+  const added = joinAdded(step, infos, rightFieldsOf(step, infos));
   if (added === undefined) {
     return undefined;
   }
@@ -301,21 +461,20 @@ export function stepSummary(step: Step, infos: readonly InputInfo[]): string {
       const info = infos.find((entry) => entry.alias === step.right.input);
       const title = info === undefined ? step.right.input : info.title;
       const policy =
-        step.multiMatch.mode === "summarize"
-          ? "summarize"
-          : step.multiMatch.mode === "first" || step.multiMatch.mode === "last"
-            ? `${step.multiMatch.mode} match`
-            : step.multiMatch.mode;
-      return `${title} (${step.type}, ${policy})`;
+        step.multiMatch.mode === "first" || step.multiMatch.mode === "last"
+          ? `${step.multiMatch.mode} match`
+          : step.multiMatch.mode;
+      const steps = step.right.steps === undefined ? "" : ", with steps";
+      return `${title} (${step.type}, ${policy}${steps})`;
     }
     case "groupBy":
       return `by ${step.by.join(", ") || "…"}`;
     case "select":
       return `${step.fields.length} fields`;
     case "calculate":
-      return step.field;
+      return step.field === "" ? "…" : step.field;
     default:
-      return "SQL";
+      return "Custom SQL";
   }
 }
 
@@ -364,14 +523,23 @@ export function inputRefsOf(
   );
 }
 
-/** Drops inputs no step reads (never the base), so Save does not declare dead inputs. */
-export function prunedInputs(definition: ViewDefinition): ViewDefinition {
-  const used = new Set<string>([definition.base]);
-  for (const step of definition.steps) {
+function collectUsedAliases(steps: readonly Step[], used: Set<string>): void {
+  for (const step of steps) {
     if (step.kind === "join") {
       used.add(step.right.input);
+      collectUsedAliases(step.right.steps ?? [], used);
+    } else if (step.kind === "sql") {
+      for (const match of step.query.matchAll(/\bin_([A-Za-z0-9_]+)/g)) {
+        used.add(match[1] ?? "");
+      }
     }
   }
+}
+
+/** Drops inputs no step reads (never the base), so Save does not declare dead inputs. Sub-pipelines and SQL `in_<alias>` reads count. */
+export function prunedInputs(definition: ViewDefinition): ViewDefinition {
+  const used = new Set<string>([definition.base]);
+  collectUsedAliases(definition.steps, used);
   return { ...definition, inputs: definition.inputs.filter((input) => used.has(input.alias)) };
 }
 
@@ -430,4 +598,68 @@ export function validationSummary(errors: readonly { message: string }[]): strin
   const [first] = errors;
   const head = first === undefined ? "The steps are not valid yet." : first.message;
   return errors.length > 1 ? `${head} (and ${errors.length - 1} more)` : head;
+}
+
+/** The validation errors at or under `path`, leaving out those that belong to a nested sub-pipeline's own steps. */
+export function errorsForStep(errors: readonly ValidationError[], path: string): ValidationError[] {
+  const inside = (error: ValidationError): boolean =>
+    error.path === path || error.path.startsWith(`${path}.`) || error.path.startsWith(`${path}[`);
+  return errors.filter((error) => inside(error) && !error.path.startsWith(`${path}.right.steps[`));
+}
+
+const PATH_LABELS: [RegExp, (match: RegExpExecArray) => string][] = [
+  [/^multiMatch\.measures\[(\d+)\]\.(\w+)$/, (m) => `Measure ${Number(m[1]) + 1} ${m[2]}`],
+  [/^measures\[(\d+)\]\.(\w+)$/, (m) => `Measure ${Number(m[1]) + 1} ${m[2]}`],
+  [/^multiMatch\.columns\[(\d+)\]$/, (m) => `Spread column ${Number(m[1]) + 1}`],
+  [/^multiMatch\.(by|value|field)$/, (m) => `Spread ${m[1]} field`],
+  [/^on\[(\d+)\]\.(left|right)$/, (m) => `Key pair ${Number(m[1]) + 1} (${m[2]})`],
+  [/^on\[(\d+)\]$/, (m) => `Key pair ${Number(m[1]) + 1}`],
+  [/^by\[(\d+)\]$/, (m) => `Group field ${Number(m[1]) + 1}`],
+  [/^where.*$/, () => "Condition"],
+];
+
+/** Where in the step a validation error points, in the form's own words (the part of `path` after the step). */
+export function errorLabel(path: string, stepPath: string): string {
+  const tail = path === stepPath ? "" : path.slice(stepPath.length).replace(/^\./, "");
+  for (const [pattern, label] of PATH_LABELS) {
+    const match = pattern.exec(tail);
+    if (match !== null) {
+      return label(match);
+    }
+  }
+  return tail;
+}
+
+/** A category value as a column name the spread proposes: letters and digits, camel-cased. */
+export function columnNameFor(category: string): string {
+  const words = category.split(/[^A-Za-z0-9]+/).filter((word) => word !== "");
+  const joined = words
+    .map((word, i) => (i === 0 ? word : `${word.charAt(0).toUpperCase()}${word.slice(1)}`))
+    .join("");
+  return joined === "" ? "value" : joined;
+}
+
+/** Columns for categories not yet declared; names stay unique among `taken`. */
+export function proposeSpreadColumns(
+  categories: readonly string[],
+  existing: readonly { category: string; as: string }[],
+  taken: readonly string[],
+): { category: string; as: string }[] {
+  const used = new Set([...existing.map((column) => column.as), ...taken]);
+  const declared = new Set(existing.map((column) => column.category));
+  const added: { category: string; as: string }[] = [];
+  for (const category of categories) {
+    if (declared.has(category) || category === "") {
+      continue;
+    }
+    declared.add(category);
+    const base = columnNameFor(category);
+    let name = base;
+    for (let n = 2; used.has(name); n += 1) {
+      name = `${base}_${n}`;
+    }
+    used.add(name);
+    added.push({ category, as: name });
+  }
+  return added;
 }

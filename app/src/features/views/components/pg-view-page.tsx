@@ -1,5 +1,5 @@
-import { slugifyViewName, validateViewDefinition } from "@caden/data-core/views";
-import type { JoinStep, Step, ViewDefinition } from "@caden/data-core/views";
+import { validateViewDefinition } from "@caden/data-core/views";
+import type { ViewDefinition } from "@caden/data-core/views";
 import { Badge } from "@caden/ui/components/badge";
 import { Button } from "@caden/ui/components/button";
 import {
@@ -10,25 +10,9 @@ import {
   CardTitle,
 } from "@caden/ui/components/card";
 import { Checkbox } from "@caden/ui/components/checkbox";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@caden/ui/components/dropdown-menu";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import {
-  ArrowDown,
-  ArrowUp,
-  Database,
-  Loader2,
-  Play,
-  Plus,
-  Save,
-  Table2,
-  Trash2,
-} from "lucide-react";
+import { Database, Loader2, Play, Save, Table2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -49,12 +33,8 @@ import { relativeTime, stableJson } from "../lib/format";
 import {
   fieldsAfter,
   inputRefsOf,
-  newFilterStep,
-  newGroupByStep,
-  newJoinStep,
   prunedInputs,
   stepProblem,
-  stepSummary,
   STEP_TITLES,
   toCompileMeta,
   uniqueAlias,
@@ -63,7 +43,7 @@ import {
   type InputInfo,
 } from "../lib/view-model";
 import { PreviewPane, type PreviewRow } from "./preview-pane";
-import { FilterForm, GroupByForm, JoinForm } from "./step-forms";
+import { StepList, type StepEditorContext } from "./step-list";
 
 /**
  * The view editor (issue #301; docs/views-design.md §9): a linear step list
@@ -222,56 +202,32 @@ function ViewEditor({
   const patchDraft = (next: ViewDefinition): void => {
     setDraft(next);
   };
-  const setStep = (index: number, step: Step): void => {
-    patchDraft({ ...draft, steps: draft.steps.map((s, i) => (i === index ? step : s)) });
-  };
-  const addStep = (step: Step): void => {
-    patchDraft({ ...draft, steps: [...draft.steps, step] });
-    setSelected(draft.steps.length);
-  };
-  const removeStep = (index: number): void => {
-    patchDraft({ ...draft, steps: draft.steps.filter((_, i) => i !== index) });
-    setSelected(OUTPUT);
-  };
-  const moveStep = (index: number, delta: -1 | 1): void => {
-    const target = index + delta;
-    if (target < 0 || target >= draft.steps.length) {
-      return;
-    }
-    const steps = [...draft.steps];
-    const [moved] = steps.splice(index, 1);
-    if (moved !== undefined) {
-      steps.splice(target, 0, moved);
-    }
-    patchDraft({ ...draft, steps });
-    setSelected(target);
-  };
-
-  /** The join's right side was re-picked: reuse the input for that dataset or declare a new one. */
-  const pickRight = (index: number, step: JoinStep, datasetId: string): void => {
-    const title = nameOfDataset(datasets, datasetId);
+  /** Declares (or reuses) an input for a dataset. Functional updates, so it composes with the step edit that follows. */
+  const ensureInput = (datasetId: string): string => {
     const existing = draft.inputs.find((input) => input.ref.id === datasetId);
-    let inputs = draft.inputs;
-    let alias = existing === undefined ? "" : existing.alias;
-    if (existing === undefined) {
-      alias = uniqueAlias(
-        title,
-        draft.inputs.map((input) => input.alias),
-      );
-      inputs = [...draft.inputs, { alias, ref: { kind: "dataset", id: datasetId } }];
+    if (existing !== undefined) {
+      return existing.alias;
     }
-    const oldInfo = infos.find((info) => info.alias === step.right.input);
-    const oldDefault = oldInfo === undefined ? "" : slugifyViewName(oldInfo.title);
-    const next: JoinStep = {
-      ...step,
-      right: { input: alias },
-      on: step.on.map((pair) => ({ ...pair, right: "" })),
-      prefix:
-        step.prefix === undefined || step.prefix === "" || step.prefix === oldDefault
-          ? slugifyViewName(title)
-          : step.prefix,
-    };
-    setDraft({ ...draft, inputs, steps: draft.steps.map((s, i) => (i === index ? next : s)) });
+    const alias = uniqueAlias(
+      nameOfDataset(datasets, datasetId),
+      draft.inputs.map((input) => input.alias),
+    );
+    setDraft((current) =>
+      current.inputs.some((input) => input.alias === alias)
+        ? current
+        : {
+            ...current,
+            inputs: [...current.inputs, { alias, ref: { kind: "dataset", id: datasetId } }],
+          },
+    );
+    return alias;
+  };
+  const stepContext: StepEditorContext = {
+    datasets,
+    diagnostics: previewQuery.data === undefined ? undefined : previewQuery.data.diagnostics,
+    ensureInput,
+    errors: validation.ok ? [] : validation.errors,
+    infos,
   };
 
   const baseInfo = infos.find((info) => info.alias === draft.base);
@@ -359,77 +315,19 @@ function ViewEditor({
               {baseInfo === undefined ? "Loading…" : baseInfo.title}
             </p>
           </Card>
-          {draft.steps.map((step, index) => (
-            <StepCard
-              expanded={selected === index}
-              index={index}
-              infos={infos}
-              key={`${index}-${step.kind}`}
-              onMove={(delta) => {
-                moveStep(index, delta);
-              }}
-              onRemove={() => {
-                removeStep(index);
-              }}
-              onSelect={() => {
-                setSelected(index);
-              }}
-              problem={stepProblems[index]}
-              step={step}
-              stepCount={draft.steps.length}
-            >
-              {step.kind === "filter" && (
-                <FilterForm
-                  fields={fieldsAfter(draft, infos, index - 1) ?? []}
-                  onChange={(next) => {
-                    setStep(index, next);
-                  }}
-                  step={step}
-                />
-              )}
-              {step.kind === "groupBy" && (
-                <GroupByForm
-                  fields={fieldsAfter(draft, infos, index - 1) ?? []}
-                  onChange={(next) => {
-                    setStep(index, next);
-                  }}
-                  step={step}
-                />
-              )}
-              {step.kind === "join" && (
-                <JoinForm
-                  datasets={datasets}
-                  infos={infos}
-                  leftFields={fieldsAfter(draft, infos, index - 1) ?? []}
-                  onChange={(next) => {
-                    setStep(index, next);
-                  }}
-                  onPickRight={(datasetId) => {
-                    pickRight(index, step, datasetId);
-                  }}
-                  step={step}
-                />
-              )}
-              {step.kind !== "filter" && step.kind !== "groupBy" && step.kind !== "join" && (
-                <p className="text-sm text-muted-foreground">
-                  This step type is edited in a later release. It still runs as saved.
-                </p>
-              )}
-            </StepCard>
-          ))}
-          <AddStepMenu
-            disabled={baseInfo === undefined}
-            onAdd={(kind) => {
-              const fields = fieldsAfter(draft, infos, draft.steps.length - 1) ?? [];
-              const first = fields[0] ?? "";
-              if (kind === "filter") {
-                addStep(newFilterStep(first));
-              } else if (kind === "groupBy") {
-                addStep(newGroupByStep(first));
-              } else {
-                addStep(newJoinStep({ rightAlias: "", rightTitle: "" }));
-              }
+          <StepList
+            ctx={stepContext}
+            expanded={selected === OUTPUT ? undefined : selected}
+            nested={false}
+            onChange={(steps) => {
+              setDraft((current) => ({ ...current, steps }));
             }}
+            onExpand={(index) => {
+              setSelected(index ?? OUTPUT);
+            }}
+            pathPrefix="steps"
+            startFields={fieldsAfter(draft, infos, -1)}
+            steps={draft.steps}
           />
           <OutputCard
             draft={draft}
@@ -459,7 +357,12 @@ function ViewEditor({
             }
             onAddToKeyMap={(from, to) => {
               if (keyMapStep !== undefined && selected !== OUTPUT) {
-                setStep(selected, withManualMapEntry(keyMapStep, from, to));
+                const index = selected;
+                const next = withManualMapEntry(keyMapStep, from, to);
+                setDraft((current) => ({
+                  ...current,
+                  steps: current.steps.map((s, i) => (i === index ? next : s)),
+                }));
                 toast.success("Added to the key map. The preview refreshes with it.");
               }
             }}
@@ -589,136 +492,6 @@ function ViewHeader({
         </p>
       )}
     </header>
-  );
-}
-
-function StepCard({
-  children,
-  expanded,
-  index,
-  infos,
-  onMove,
-  onRemove,
-  onSelect,
-  problem,
-  step,
-  stepCount,
-}: {
-  children: React.ReactNode;
-  expanded: boolean;
-  index: number;
-  infos: InputInfo[];
-  onMove: (delta: -1 | 1) => void;
-  onRemove: () => void;
-  onSelect: () => void;
-  problem: string | undefined;
-  step: Step;
-  stepCount: number;
-}) {
-  return (
-    <Card className={expanded ? "border-primary/40" : undefined}>
-      <div className="flex items-center gap-2 px-4 pt-3">
-        <button
-          aria-expanded={expanded}
-          className="flex min-w-0 flex-1 flex-col items-start text-left"
-          onClick={onSelect}
-          type="button"
-        >
-          <span className="text-sm font-medium">
-            {index + 1}. {STEP_TITLES[step.kind]}
-          </span>
-          <span className="max-w-full truncate text-xs text-muted-foreground">
-            {stepSummary(step, infos)}
-          </span>
-        </button>
-        {problem !== undefined && <Badge variant="secondary">Needs input</Badge>}
-        <Button
-          aria-label={`Move step ${index + 1} up`}
-          disabled={index === 0}
-          onClick={() => {
-            onMove(-1);
-          }}
-          size="icon-sm"
-          type="button"
-          variant="ghost"
-        >
-          <ArrowUp />
-        </Button>
-        <Button
-          aria-label={`Move step ${index + 1} down`}
-          disabled={index === stepCount - 1}
-          onClick={() => {
-            onMove(1);
-          }}
-          size="icon-sm"
-          type="button"
-          variant="ghost"
-        >
-          <ArrowDown />
-        </Button>
-        <Button
-          aria-label={`Delete step ${index + 1}`}
-          onClick={onRemove}
-          size="icon-sm"
-          type="button"
-          variant="ghost"
-        >
-          <Trash2 />
-        </Button>
-      </div>
-      {expanded ? (
-        <CardContent className="pt-3">
-          {problem !== undefined && <p className="mb-3 text-xs text-destructive">{problem}</p>}
-          {children}
-        </CardContent>
-      ) : (
-        <div className="pb-3" />
-      )}
-    </Card>
-  );
-}
-
-function AddStepMenu({
-  disabled,
-  onAdd,
-}: {
-  disabled: boolean;
-  onAdd: (kind: "filter" | "groupBy" | "join") => void;
-}) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button className="w-fit" disabled={disabled} type="button" variant="outline">
-            <Plus className="mr-2 h-4 w-4" />
-            Add step
-          </Button>
-        }
-      />
-      <DropdownMenuContent align="start">
-        <DropdownMenuItem
-          onClick={() => {
-            onAdd("join");
-          }}
-        >
-          Join another dataset
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onClick={() => {
-            onAdd("filter");
-          }}
-        >
-          Filter rows
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onClick={() => {
-            onAdd("groupBy");
-          }}
-        >
-          Group and summarize
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
   );
 }
 

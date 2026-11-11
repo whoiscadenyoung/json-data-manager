@@ -3,7 +3,12 @@ import { Button } from "@caden/ui/components/button";
 import { Input } from "@caden/ui/components/input";
 import { Plus, Trash2 } from "lucide-react";
 
-import { MEASURE_FNS, MEASURE_LABELS, type EditableMeasureFn } from "../lib/view-model";
+import {
+  MEASURE_FNS,
+  MEASURE_LABELS,
+  measureWithFn,
+  type EditableMeasureFn,
+} from "../lib/view-model";
 import { LabeledSelect } from "./labeled-select";
 
 function isEditableFn(fn: string): fn is EditableMeasureFn {
@@ -18,10 +23,70 @@ function emptyValueOf(raw: string): Measure["emptyValue"] {
   return /^-?\d+(\.\d+)?$/.test(raw.trim()) ? Number(raw) : raw;
 }
 
+function MeasureExtras({
+  fields,
+  index,
+  measure,
+  update,
+}: {
+  fields: string[];
+  index: number;
+  measure: Measure;
+  update: (patch: Partial<Measure>) => void;
+}) {
+  if (measure.fn === "topBy") {
+    return (
+      <>
+        <span className="text-xs text-muted-foreground">from the row with the</span>
+        <LabeledSelect
+          ariaLabel={`Measure ${index + 1} direction`}
+          className="w-28"
+          onChange={(direction) => {
+            if (direction === "max" || direction === "min") {
+              update({ direction });
+            }
+          }}
+          options={[
+            { value: "max", label: "highest" },
+            { value: "min", label: "lowest" },
+          ]}
+          placeholder="Highest"
+          value={measure.direction ?? "max"}
+        />
+        <LabeledSelect
+          ariaLabel={`Measure ${index + 1} ranked by`}
+          className="w-40"
+          onChange={(by) => {
+            update({ by });
+          }}
+          options={fields.map((field) => ({ value: field, label: field }))}
+          placeholder="Ranked by"
+          value={measure.by ?? ""}
+        />
+      </>
+    );
+  }
+  if (measure.fn === "text") {
+    return (
+      <Input
+        aria-label={`Measure ${index + 1} separator`}
+        className="w-24"
+        onChange={(event) => {
+          update({ separator: event.target.value });
+        }}
+        placeholder="Separator"
+        value={measure.separator ?? ""}
+      />
+    );
+  }
+  return null;
+}
+
 /**
  * The measure rows of a summarize join or a group-by: output name, function,
- * the field it reads (count needs none) and the value to use when nothing
- * matched.
+ * the field it reads (count needs none), the extra settings of "value from
+ * the top row" (which field ranks the rows, highest or lowest) and "join as
+ * text" (the separator), and the value to use when nothing matched.
  */
 export function MeasuresEditor({
   fields,
@@ -52,15 +117,10 @@ export function MeasuresEditor({
           />
           <LabeledSelect
             ariaLabel={`Measure ${index + 1} function`}
-            className="w-40"
+            className="w-52"
             onChange={(fn) => {
               if (isEditableFn(fn)) {
-                const { field: _field, ...rest } = measure;
-                onChange(
-                  measures.map((m, i) =>
-                    i === index ? (fn === "count" ? { ...rest, fn } : { ...m, fn }) : m,
-                  ),
-                );
+                onChange(measures.map((m, i) => (i === index ? measureWithFn(m, fn) : m)));
               }
             }}
             options={MEASURE_FNS.map((fn) => ({ value: fn, label: MEASURE_LABELS[fn] }))}
@@ -79,6 +139,14 @@ export function MeasuresEditor({
               value={measure.field ?? ""}
             />
           )}
+          <MeasureExtras
+            fields={fields}
+            index={index}
+            measure={measure}
+            update={(patch) => {
+              update(index, patch);
+            }}
+          />
           <Input
             aria-label={`Measure ${index + 1} value when nothing matched`}
             className="w-32"

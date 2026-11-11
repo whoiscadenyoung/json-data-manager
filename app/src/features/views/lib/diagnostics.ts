@@ -18,10 +18,18 @@ const joinSchema = z.object({
   rightUnmatchedSamples: samples,
   multiMatchKeys: count,
   policy: z.string(),
+  spread: z
+    .object({
+      undeclaredCategories: samples,
+      undeclaredRows: count,
+    })
+    .optional(),
 });
 
 const stepSchema = z.object({
   index: count,
+  /** Set for steps inside a join's sub-pipeline, e.g. `steps[0].right.steps[1]`. */
+  path: z.string().optional(),
   kind: z.string(),
   rowsIn: count,
   rowsOut: count,
@@ -35,14 +43,21 @@ const diagnosticsSchema = z.object({ steps: z.array(stepSchema) });
 export type JoinDiagnostics = z.infer<typeof joinSchema>;
 export type StepDiagnostics = z.infer<typeof stepSchema>;
 
-/** The diagnostics of step `index`, if the payload carries it. */
+/**
+ * The diagnostics of a step, if the payload carries it. A top-level step is
+ * found by `index`; a step inside a sub-pipeline by its `path`
+ * (`steps[0].right.steps[1]`), because its `index` is local to the list.
+ */
 export function stepDiagnosticsOf(
   diagnostics: unknown,
   index: number,
+  path?: string,
 ): StepDiagnostics | undefined {
   const parsed = diagnosticsSchema.safeParse(diagnostics);
   if (!parsed.success) {
     return undefined;
   }
-  return parsed.data.steps.find((step) => step.index === index);
+  return parsed.data.steps.find((step) =>
+    path === undefined ? step.path === undefined && step.index === index : step.path === path,
+  );
 }

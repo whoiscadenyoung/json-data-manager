@@ -46,4 +46,37 @@ metadata:
 - Datasets a view reads cannot be deleted (NO ACTION FK): `datasetsStore.remove`
   pre-checks `view_inputs` and throws `DatasetInUseError` naming the views.
 
+## #302 advanced steps (editor half)
+
+- **One recursive `StepList`** (`features/views/components/step-list.tsx`)
+  renders the top level AND every join's `right.steps`; nested cards find their
+  diagnostics and validation errors by `path` (`steps[0].right.steps[1]`).
+  A sub-pipeline step's diagnostics `index` is LOCAL to its list, so
+  `stepDiagnosticsOf(payload, index)` matches only entries WITHOUT a `path`;
+  nested steps need the `path` argument. Nested steps get counts and fields
+  only: the preview rows are always the selected top-level step's.
+- **Edits that add an input AND change a step must use functional
+  `setDraft`**: picking a dataset on a nested join calls `ensureInput` (adds
+  the input) and then the step `onChange`; with closure state the second
+  write drops the first. `prunedInputs` walks sub-pipelines and the SQL
+  `in_<alias>` reads, or Save would delete a nested join's input.
+- **Spread proposals come from `distinctFieldValuesQueryOptions`** (a
+  2000-row PostgREST sample of `data->>field` on the right dataset), because
+  a spread with zero columns fails validation and so can never reach the
+  diagnostics' `undeclaredCategories`. Diagnostics still drive the "no column"
+  warning for categories the sample missed.
+- **CodeMirror for expressions and SQL is `@caden/ui/components/code-editor`**
+  (lazy + `useIsClient`, same SSR rule as the JSON editor). It does not run in
+  jsdom: component tests mock the module with a textarea that exposes the
+  `diagnostics` and `completions` props as data attributes. The pure logic
+  lives in `lib/expression-assist.ts` (check, completions, SQL names).
+- **base-ui Select options do not fire in jsdom via `fireEvent.click`**; test
+  select-driven transitions through pure model helpers (`measureWithFn`,
+  `repointRight`) and render pre-set steps for the form tests. The
+  `DropdownMenu` items DO work (`findByRole("menuitem")`).
+- Unknown-typed input fields mean the Calculate form's "Result type" is often
+  "depends on the data"; the input metadata (`view_input_meta`) carries names
+  only. Output-field labels are still model-only (the Output card has no label
+  inputs yet).
+
 Related: [[views-initiative]], [[views-server-runner]], [[ui-polish-expectations]].

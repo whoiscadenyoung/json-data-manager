@@ -1,9 +1,16 @@
-import type { ConditionLeaf, ConditionOp, JoinStep, Step } from "@caden/data-core/views";
+import type {
+  ConditionLeaf,
+  ConditionOp,
+  JoinStep,
+  MultiMatch,
+  Step,
+} from "@caden/data-core/views";
 import { Button } from "@caden/ui/components/button";
 import { Checkbox } from "@caden/ui/components/checkbox";
 import { Input } from "@caden/ui/components/input";
 import { Label } from "@caden/ui/components/label";
 import { Plus, Trash2 } from "lucide-react";
+import type { ReactNode } from "react";
 
 import {
   defaultMeasure,
@@ -12,11 +19,13 @@ import {
   filterValue,
   filterValueText,
   leavesToWhere,
+  rightFieldsOf,
   withoutManualMapEntry,
   type InputInfo,
 } from "../lib/view-model";
 import { LabeledSelect } from "./labeled-select";
 import { MeasuresEditor } from "./measures-editor";
+import { SpreadEditor } from "./spread-editor";
 
 const fieldOptions = (fields: string[]) => fields.map((field) => ({ value: field, label: field }));
 
@@ -208,6 +217,117 @@ const MATCH_FLAGS: {
   { key: "stripDiacritics", label: "Ignore accents", hint: "Treat Zoë and Zoe as the same." },
 ];
 
+const MULTI_MATCH_OPTIONS = [
+  { value: "first", label: "Take the first match" },
+  { value: "last", label: "Take the last match" },
+  { value: "summarize", label: "Summarize them (count, sum, ...)" },
+  { value: "spread", label: "Spread into columns (one per category)" },
+  { value: "text", label: "Join into one text value" },
+  { value: "list", label: "Keep as a list (arrays, opt-in)" },
+  { value: "error", label: "Stop with an error" },
+];
+
+/** The multi-match a freshly chosen mode starts with. */
+function startingMultiMatch(mode: string): MultiMatch | undefined {
+  switch (mode) {
+    case "first":
+    case "last":
+      return { mode };
+    case "summarize":
+      return { mode, measures: [defaultMeasure("matches")] };
+    case "spread":
+      return { mode, by: "", value: "", columns: [] };
+    case "text":
+      return { mode, field: "", separator: ", " };
+    case "list":
+    case "error":
+      return { mode };
+    default:
+      return undefined;
+  }
+}
+
+const MODE_HINTS: Partial<Record<MultiMatch["mode"], string>> = {
+  list: "Puts every matching row into one array field. Arrays do not flatten into a GIS table, so use this only when you want nested data.",
+  error:
+    "Fails the run, naming the key, when any row has several matches. Use it to prove a join is one-to-one.",
+};
+
+function MultiMatchEditor({
+  existingFields,
+  onChange,
+  rightDatasetId,
+  rightFields,
+  step,
+  undeclared,
+}: {
+  existingFields: string[];
+  onChange: (multiMatch: MultiMatch) => void;
+  rightDatasetId: string;
+  rightFields: string[];
+  step: JoinStep;
+  undeclared: string[];
+}) {
+  const { multiMatch } = step;
+  if (multiMatch.mode === "summarize") {
+    return (
+      <div className="flex flex-col gap-2">
+        <Label>Measures over the matching rows</Label>
+        <MeasuresEditor
+          fields={rightFields}
+          measures={multiMatch.measures}
+          onChange={(measures) => {
+            onChange({ mode: "summarize", measures });
+          }}
+        />
+      </div>
+    );
+  }
+  if (multiMatch.mode === "spread") {
+    return (
+      <SpreadEditor
+        existingFields={existingFields}
+        onChange={onChange}
+        rightDatasetId={rightDatasetId}
+        rightFields={rightFields}
+        spread={multiMatch}
+        undeclared={undeclared}
+      />
+    );
+  }
+  if (multiMatch.mode === "text") {
+    return (
+      <div className="flex flex-wrap items-end gap-4">
+        <div className="flex flex-col gap-2">
+          <Label>Field to join as text</Label>
+          <LabeledSelect
+            ariaLabel="Text field"
+            className="w-56"
+            onChange={(field) => {
+              onChange({ ...multiMatch, field });
+            }}
+            options={fieldOptions(rightFields)}
+            placeholder="Field"
+            value={multiMatch.field}
+          />
+        </div>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="join-separator">Separator</Label>
+          <Input
+            className="w-32"
+            id="join-separator"
+            onChange={(event) => {
+              onChange({ ...multiMatch, separator: event.target.value });
+            }}
+            value={multiMatch.separator}
+          />
+        </div>
+      </div>
+    );
+  }
+  return null;
+}
+
 /** Join: the right dataset, key pairs, key matching, join type and the multi-match policy. */
 export function JoinForm({
   datasets,
@@ -216,6 +336,8 @@ export function JoinForm({
   onChange,
   onPickRight,
   step,
+  subSteps,
+  undeclaredCategories = [],
 }: {
   /** Datasets the right side may be (titles, never ids). */
   datasets: { id: string; title: string }[];
@@ -226,11 +348,16 @@ export function JoinForm({
   /** The page adds the input (or reuses one) and re-points the step. */
   onPickRight: (datasetId: string) => void;
   step: JoinStep;
+  /** The "steps on the right input" section (the step list wires it in; absent = not offered). */
+  subSteps?: ReactNode;
+  /** Spread categories the diagnostics found with no declared column. */
+  undeclaredCategories?: string[];
 }) {
   const right = infos.find((info) => info.alias === step.right.input),
-    rightFields = right === undefined ? [] : right.fields,
+    rightFields = rightFieldsOf(step, infos) ?? [],
     rightDatasetId = right === undefined ? "" : right.datasetId,
-    { multiMatch } = step;
+    { multiMatch } = step,
+    copiesRows = multiMatch.mode !== "summarize" && multiMatch.mode !== "spread";
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-2">
@@ -243,6 +370,7 @@ export function JoinForm({
           placeholder="Pick a dataset or view"
           value={rightDatasetId}
         />
+        {subSteps}
       </div>
 
       <div className="flex flex-col gap-2">
@@ -374,38 +502,34 @@ export function JoinForm({
           <LabeledSelect
             ariaLabel="Multi-match policy"
             onChange={(mode) => {
-              if (mode === "first" || mode === "last") {
-                onChange({ ...step, multiMatch: { mode } });
-              } else if (mode === "summarize") {
-                onChange({
-                  ...step,
-                  multiMatch: { mode, measures: [defaultMeasure("matches")] },
-                });
+              const next = startingMultiMatch(mode);
+              if (next !== undefined && next.mode !== multiMatch.mode) {
+                onChange({ ...step, multiMatch: next });
               }
             }}
-            options={[
-              { value: "first", label: "Take the first match" },
-              { value: "last", label: "Take the last match" },
-              { value: "summarize", label: "Summarize them (count, sum, ...)" },
-            ]}
+            options={MULTI_MATCH_OPTIONS}
             placeholder="Policy"
             value={multiMatch.mode}
           />
         </div>
       </div>
 
-      {multiMatch.mode === "summarize" ? (
-        <div className="flex flex-col gap-2">
-          <Label>Measures over the matching rows</Label>
-          <MeasuresEditor
-            fields={rightFields}
-            measures={multiMatch.measures}
-            onChange={(measures) => {
-              onChange({ ...step, multiMatch: { mode: "summarize", measures } });
-            }}
-          />
-        </div>
-      ) : (
+      {MODE_HINTS[multiMatch.mode] !== undefined && (
+        <p className="text-xs text-muted-foreground">{MODE_HINTS[multiMatch.mode]}</p>
+      )}
+
+      <MultiMatchEditor
+        existingFields={leftFields}
+        onChange={(next) => {
+          onChange({ ...step, multiMatch: next });
+        }}
+        rightDatasetId={rightDatasetId}
+        rightFields={rightFields}
+        step={step}
+        undeclared={undeclaredCategories}
+      />
+
+      {copiesRows && (
         <div className="flex flex-col gap-2">
           <Label htmlFor="join-prefix">Name prefix for joined fields</Label>
           <Input
