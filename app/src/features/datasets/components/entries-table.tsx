@@ -1,3 +1,4 @@
+import { currencyFieldsOf, formatCurrency } from "@caden/data-core/currency";
 import type { ReferenceField } from "@caden/json-cms/react";
 import { getReferenceFields } from "@caden/json-cms/react";
 import { Button } from "@caden/ui/components/button";
@@ -50,14 +51,18 @@ function formatCellValue(value: unknown): string {
 }
 
 /** Render a JSON value as a table cell: dashes for missing, italic for null, mono/truncated otherwise. */
-function ValueCell({ value }: { value: unknown }) {
+function ValueCell({ value, currency }: { value: unknown; currency?: string | undefined }) {
   if (value === undefined) {
     return <span className="text-muted-foreground/50">—</span>;
   }
   if (value === null) {
     return <span className="text-xs italic text-muted-foreground">null</span>;
   }
-  const text = formatCellValue(value);
+  // #292: an `x-currency` column shows its symbol; the stored value stays a plain number.
+  const text =
+    currency !== undefined && typeof value === "number"
+      ? formatCurrency(value, currency)
+      : formatCellValue(value);
   return (
     <span className="block max-w-60 truncate font-mono text-xs" title={text}>
       {text}
@@ -227,6 +232,7 @@ function buildColumns(
   labelsByField: Map<string, Map<string, string>>,
   surfaces: ColumnSurfaces,
   columnTypes: ReadonlyMap<string, PgPropertyType>,
+  currencyByField: Readonly<Record<string, string>>,
 ): DataTableColumnDef<Entry>[] {
   const server = surfaces === "server",
     // The Postgres filter menu's field selector lists data columns only (see
@@ -253,7 +259,7 @@ function buildColumns(
             labelsById={labelsByField.get(name) ?? new Map()}
           />
         ) : (
-          <ValueCell value={info.getValue()} />
+          <ValueCell value={info.getValue()} currency={currencyByField[name]} />
         ),
       enableColumnFilter: true,
       header: () => <SortableHeader title={name} />,
@@ -401,6 +407,7 @@ export function EntriesTable({
       resolvedLabelsByField,
       server === undefined ? "client" : "server",
       columnTypes ?? new Map(),
+      currencyFieldsOf(schema),
     ),
     // The controlled-state projection: server mode mirrors the URL-owned
     // state into the table so the toolbar's Reset button sees it (and its

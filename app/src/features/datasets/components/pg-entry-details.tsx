@@ -1,3 +1,4 @@
+import { currencyFieldsOf, formatCurrency } from "@caden/data-core/currency";
 import type { ReferenceField } from "@caden/json-cms/react";
 import { getReferenceFields } from "@caden/json-cms/react";
 import {
@@ -59,7 +60,14 @@ function PgEntryNotFoundCard() {
 }
 
 /** The entry's properties as a key-value table — the same face the Convex page renders. */
-function PropertiesTable({ data }: { data: unknown }) {
+function PropertiesTable({
+  data,
+  currencyByField,
+}: {
+  data: unknown;
+  /** #292: `x-currency` fields render with their symbol. */
+  currencyByField: Readonly<Record<string, string>>;
+}) {
   if (!isRecord(data)) {
     return (
       <div className="bg-muted rounded-lg p-4 overflow-x-auto">
@@ -82,7 +90,11 @@ function PropertiesTable({ data }: { data: unknown }) {
             >
               {key}
             </th>
-            <td className="py-2 break-words">{formatPropertyValue(value)}</td>
+            <td className="py-2 break-words">
+              {currencyByField[key] !== undefined && typeof value === "number"
+                ? formatCurrency(value, currencyByField[key])
+                : formatPropertyValue(value)}
+            </td>
           </tr>
         ))}
       </tbody>
@@ -333,7 +345,14 @@ export function PostgresEntryDetailsPage({
               <CardDescription>The data stored for this entry</CardDescription>
             </CardHeader>
             <CardContent>
-              <PropertiesTable data={entry.data} />
+              <PropertiesTable
+                currencyByField={
+                  dataset === undefined || dataset === null
+                    ? {}
+                    : currencyFieldsOf(dataset.jsonSchema)
+                }
+                data={entry.data}
+              />
             </CardContent>
           </Card>
 

@@ -295,3 +295,49 @@ export function convertCurrencyColumn<T extends Record<string, unknown>>(
   }
   return { blanks, converted, failures, rows: out };
 }
+
+/**
+ * The custom JSON Schema keyword a currency column carries (issue #292): a
+ * `number` property annotated `"x-currency": "$"` (or `""` for amounts with
+ * no symbol). Like `x-reference`, validators ignore it; it is a DISPLAY hint
+ * only — values are stored and exported as plain numbers.
+ */
+export const CURRENCY_KEYWORD = "x-currency";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Top-level properties annotated with `x-currency`, mapped to their symbol (`""` = no symbol). */
+export function currencyFieldsOf(schema: unknown): Record<string, string> {
+  if (!isRecord(schema) || !isRecord(schema.properties)) {
+    return {};
+  }
+  const fields: Record<string, string> = {};
+  for (const [name, property] of Object.entries(schema.properties)) {
+    if (isRecord(property) && typeof property[CURRENCY_KEYWORD] === "string") {
+      fields[name] = property[CURRENCY_KEYWORD];
+    }
+  }
+  return fields;
+}
+
+/**
+ * `1234.5` with `"$"` → `$1,234.50`; negatives as `-$1,234.50`. Two decimals
+ * unless the amount has more (never rounds data away). Non-numbers are
+ * returned as their string form.
+ */
+export function formatCurrency(value: unknown, symbol: string): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    if (value === null || value === undefined) {
+      return "";
+    }
+    return typeof value === "string" ? value : JSON.stringify(value);
+  }
+  const decimals = (String(value).split(".")[1] ?? "").length,
+    digits = Math.abs(value).toLocaleString("en-US", {
+      maximumFractionDigits: Math.max(2, decimals),
+      minimumFractionDigits: 2,
+    });
+  return `${value < 0 ? "-" : ""}${symbol}${digits}`;
+}

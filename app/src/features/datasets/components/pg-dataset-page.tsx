@@ -97,6 +97,7 @@ import {
 } from "../lib/pg-entries-table";
 import { useSplitReferenceLabels } from "../lib/pg-reference-labels";
 import { viewRowsReadOnlyReason } from "../lib/view-rows";
+import { CurrencyColumnsCard } from "./currency-columns-card";
 import { EntriesTable } from "./entries-table";
 import { EntryFormPanel } from "./entry-form-panel";
 import { PgBindingCard } from "./pg-binding-card";
@@ -726,6 +727,9 @@ function PostgresDatasetBody({
               <SchemaVisualizer schema={schemaNodeOf(dataset)} />
             </CardContent>
           </Card>
+
+          {/* #292: type a text column as currency (editors, never views). */}
+          {!isView && !lockedForViewer && <CurrencyColumnsCard dataset={dataset} />}
 
           <Collapsible
             open={jsonDefinitionOpen}

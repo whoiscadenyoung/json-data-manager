@@ -5,6 +5,7 @@ import {
   nextPageCursor,
   queryRow,
   queryRows,
+  queryScalar,
   type PagedRpcRow,
   type StoreOptions,
 } from "./client";
@@ -234,6 +235,52 @@ export async function searchEntries(
     nextCursor: nextPageCursor(rows),
     rows: rows.map((row) => searchRowOf(row, args.datasetId)),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Column rewrite (#292)
+
+/** Entries per `rewrite_entry_field` call — small enough to stay well under PostgREST's body limit. */
+export const REWRITE_CHUNK_SIZE = 2000;
+
+export interface RewriteFieldArgs {
+  datasetId: string;
+  field: string;
+  /** `value: null` removes the key from that entry's data. */
+  values: ReadonlyArray<{ id: string; value: unknown }>;
+}
+
+/**
+ * Rewrites one field across a dataset's entries through the set-based
+ * `rewrite_entry_field` RPC (0031), in chunks. RLS gates every row; the
+ * return is the number of entries actually changed (fewer than sent means
+ * some were denied or belong elsewhere — callers report it, never assume).
+ * Chunks are separate statements: a failure mid-way leaves earlier chunks
+ * applied, so callers re-run the whole rewrite (it is idempotent).
+ */
+export async function rewriteField(
+  args: RewriteFieldArgs,
+  options?: StoreOptions,
+  onProgress?: (done: number, total: number) => void,
+): Promise<number> {
+  let changed = 0;
+  for (let start = 0; start < args.values.length; start += REWRITE_CHUNK_SIZE) {
+    const chunk = args.values.slice(start, start + REWRITE_CHUNK_SIZE);
+    // Sequential on purpose: one chunk at a time keeps the write load and
+    // the lock footprint small, and a failure stops before the next chunk.
+    // oxlint-disable-next-line eslint/no-await-in-loop
+    changed += await queryScalar<number>(
+      clientOf(options).rpc("rewrite_entry_field", {
+        p_dataset: args.datasetId,
+        p_field: args.field,
+        p_values: chunk.map((item) => ({ id: item.id, value: item.value ?? null })),
+      }),
+    );
+    if (onProgress !== undefined) {
+      onProgress(Math.min(start + chunk.length, args.values.length), args.values.length);
+    }
+  }
+  return changed;
 }
 
 // ---------------------------------------------------------------------------
