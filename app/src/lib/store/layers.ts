@@ -690,7 +690,9 @@ function definitionOf(layer: LayerRow): Record<string, unknown> {
  * version; no chain yet → honest nulls). A GROUP version publishes its
  * draft children FIRST (the bundle-closure pattern — publishLayer
  * recurses), then freezes each child's pinned version.
- * Returns the new version's id (null = denied).
+ * Returns the new version's id (null = denied). Throws when the pinned
+ * dataset has no version at all (#328) — the refusal names the dataset and
+ * the repair, never freezing an empty pin.
  */
 // The publish walks the dataset pin, the recursive child closure, and the
 // freeze — three legs whose branches are the layer kinds' contracts, read
@@ -706,6 +708,9 @@ export async function publishLayer(
     return null;
   }
   // The dataset pin (data kind): the membership's dataset + its chain head.
+  // A dataset with NO version refuses the freeze (#328): the empty pin froze
+  // a layer that renders nothing forever, and the app walk would silently
+  // reuse it — the honest answer is to block and say what to do first.
   let dataset: Record<string, unknown> | null = null;
   if (layer.kind === "data" && layer.datasetMemberId !== null) {
     const membership = await queryRow<{ artifactId: string }>(
@@ -724,9 +729,19 @@ export async function publishLayer(
           .order("created_at", { ascending: false })
           .limit(1),
       );
+      if (head === null) {
+        // oxlint-disable-next-line no-await-in-loop -- the refusal needs the dataset's name; one read on the refusal path only.
+        const datasetRow = await queryRow<{ title: string }>(
+          client.from("datasets").select("title").eq("id", membership.artifactId).limit(1),
+        );
+        const datasetTitle = datasetRow === null ? "its dataset" : `"${datasetRow.title}"`;
+        throw new Error(
+          `${datasetTitle} has no published version yet — publish one from the dataset page first, then publish "${layer.name}" again.`,
+        );
+      }
       dataset = {
-        pinnedRef: head === null ? null : head.ref,
-        pinnedVersionId: head === null ? null : head.id,
+        pinnedRef: head.ref,
+        pinnedVersionId: head.id,
         sourceMemberId: layer.datasetMemberId,
       };
     }

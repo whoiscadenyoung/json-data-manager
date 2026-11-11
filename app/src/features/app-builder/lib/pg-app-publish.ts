@@ -11,6 +11,15 @@ import * as datasetsStore from "@/lib/store/datasets";
 import * as layersStore from "@/lib/store/layers";
 import * as mapsStore from "@/lib/store/maps";
 
+/** A layer_versions pin with no dataset version — the stale-empty freeze #328 refuses to reuse. */
+function pinIsEmpty(pin: unknown): boolean {
+  if (pin === null || typeof pin !== "object") {
+    return true;
+  }
+  const pinned = Reflect.get(pin, "pinnedVersionId");
+  return typeof pinned !== "string" || pinned === "";
+}
+
 /**
  * The app publish walk (issue #259 — the project-centric train's phase 5;
  * ADR 0021): freezes one app's config snapshot into an append-only
@@ -237,7 +246,15 @@ export async function publishApp(
             "One of the map's layers isn't visible — publish from the map's own project.",
           );
         }
-        const headVersion = await layersStore.headVersion({ layerId: layer.id }, options);
+        let headVersion = await layersStore.headVersion({ layerId: layer.id }, options);
+        // A stale-empty DATA head must not be silently reused (#328): a
+        // layer published before its dataset ever had a version froze an
+        // empty pin (renders nothing forever). The walk republishes the
+        // layer so the snapshot pins real data; when the dataset still has
+        // no version, publishLayer refuses with the named repair.
+        if (layer.kind === "data" && headVersion !== null && pinIsEmpty(headVersion.dataset)) {
+          headVersion = null;
+        }
         // A layer with no version yet publishes first (a draft can't be
         // snapshotted); a published layer freezes its existing head — the
         // next layer publish moves the NEXT app snapshot, like a dataset pin.
