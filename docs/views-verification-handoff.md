@@ -5,7 +5,34 @@ Date: 2026-11-11 · Umbrella: #298 · Previous handoff:
 [`views-design.md`](views-design.md) · Decision:
 [ADR 0028](decisions/0028-views.md)
 
-## Where things stand
+## Progress (2026-11-11, second session) — read this first
+
+This handoff has been worked through. Status:
+
+- **§3 browser checklist: done**, recorded on #298 (comment 6789267939):
+  12 passed outright, 7 and 8 passed after fixes, 13 is partial (no
+  dataset-delete UI → #329), 15 confirmed the published-map gap (#330; and
+  #328, an app over a never-versioned view freezes an empty layer).
+- **Fixes merged:** #323 (live view ids persisted as a Set → "Dataset Not
+  Found"), #324 (a view's fields as table columns), #325 (live view export
+  runs once first), #326 (auto refresh shows without a reload), #327 (entry
+  geometry read selected a missing column → 400).
+- **§4 follow-ups filed:** #330–#337 (#337 = required checks on `main`, the
+  owner's call; no settings changed). Polish from the walkthrough: #338.
+- **§5:** #290 closed. #291 merged (#339: `@caden/data-core/currency` +
+  import Suggestions card). #292 merged (#340: Structure-tab "Currency
+  columns", migration 0031 `rewrite_entry_field`, `x-currency` hint). #293 →
+  PR #341 (Structure-tab "Make points from coordinates", migration 0032
+  `points_from_coordinates`). #294 → PR #343 (catalog relation badges + map
+  layer indicators); related-set grouping split out as #342.
+- **Next:** merge #341/#343 when green, close #298, then the GIS backlog
+  (#158; #161 re-scoped to a spatial-join view step).
+- Local compose db: migrations 0031 and 0032 are applied; the walkthrough
+  project gained test datasets ("Grants sample (291)", "Awards as text
+  (292)", "Sites table (293)"), a map with three layers, a published link app
+  and a States→Deployments key relation.
+
+## Where things stood at the start
 
 The whole Views initiative (#299–#307) is merged on `main` via #320. CI, the
 local gate and one browser walkthrough passed before the merge. The
