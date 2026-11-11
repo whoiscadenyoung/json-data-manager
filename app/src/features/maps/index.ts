@@ -33,6 +33,10 @@ export { buildFrozenTileArchive } from "./lib/frozen-archive-build";
 export type { FrozenArchiveStamp } from "./lib/frozen-archive-build";
 export { bboxFeature, buildPointFeatureCollection } from "./lib/point-geometry";
 export {
+  outputOfDefinition,
+  outputOfViewDefinition,
+  outputSchemaOf,
+  popupFieldsFromView,
   popupInputsOf,
   popupOverrideOf,
   resolvePopupFields,

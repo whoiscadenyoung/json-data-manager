@@ -5,7 +5,14 @@ vi.mock("#/env", () => ({
   env: { VITE_SUPABASE_ANON_KEY: "test-anon-key", VITE_SUPABASE_URL: "http://127.0.0.1:54321" },
 }));
 
-import { popupFieldsFromView, popupOverrideOf, resolvePopupFields } from "./popup-fields";
+import {
+  outputOfDefinition,
+  outputOfViewDefinition,
+  outputSchemaOf,
+  popupFieldsFromView,
+  popupOverrideOf,
+  resolvePopupFields,
+} from "./popup-fields";
 
 const OUTPUT: OutputSchema = {
   emptyFields: "keep",
@@ -33,5 +40,26 @@ describe("layer popup fields", () => {
   test("no output preference shows every property", () => {
     expect(popupFieldsFromView({ fields: [], emptyFields: "keep" })).toBeUndefined();
     expect(resolvePopupFields(null, undefined)).toBeUndefined();
+  });
+});
+
+describe("output extraction (#330 — the publish/anon-popup stamps)", () => {
+  test("outputSchemaOf reads a raw output jsonb and rejects everything else", () => {
+    expect(outputSchemaOf(OUTPUT)).toBe(OUTPUT);
+    expect(outputSchemaOf({ fields: "no" })).toBeUndefined();
+    expect(outputSchemaOf(null)).toBeUndefined();
+    expect(outputSchemaOf("rows")).toBeUndefined();
+  });
+
+  test("outputOfDefinition reads the saved view definition's output block", () => {
+    expect(outputOfDefinition({ definition: { output: OUTPUT } })).toBe(OUTPUT);
+    expect(outputOfDefinition({ definition: {} })).toBeUndefined();
+    expect(outputOfDefinition(null)).toBeUndefined();
+  });
+
+  test("outputOfViewDefinition reads the raw datasets.definition column shape", () => {
+    expect(outputOfViewDefinition({ output: OUTPUT, steps: [] })).toBe(OUTPUT);
+    expect(outputOfViewDefinition({ steps: [] })).toBeUndefined();
+    expect(outputOfViewDefinition("rows")).toBeUndefined();
   });
 });

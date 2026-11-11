@@ -89,8 +89,8 @@ export interface AppSnapshotLayerVersion {
   kind: "data" | "group";
   /** The frozen name/style/filter/labels/popup/opacity/visible at publish. */
   definition: Record<string, unknown>;
-  /** Data kind: the resolved dataset ref at publish; null on groups. */
-  dataset: { datasetId: string; versionId: string; ref: string | null } | null;
+  /** Data kind: the resolved dataset ref at publish; null on groups. `output` is the view's output-labels stamp (#330) — present only when the pinned dataset is a view; anon popups read it because `view_definition` is authenticated-only. */
+  dataset: { datasetId: string; output?: unknown; versionId: string; ref: string | null } | null;
   /** Group versions: the frozen children (child version ids resolve in this same list). */
   frozenChildren: Array<{
     childKind: "owned" | "linked";
