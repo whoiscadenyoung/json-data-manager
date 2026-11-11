@@ -67,3 +67,4 @@
 - [Views editor + derived retire](views-editor-and-derived-retire.md) — #301: draft-input pickers via view_input_meta (no lifecycle gate), PostgREST embed hint, base-ui Select shows raw values, routeTree regen, what was retired vs left
 - [Views output & exports](views-output-and-exports.md) — #303: output labels/hidden in definition.output (+ new OutputField.from for renames), export_profiles (0030), layer popup "from view"
 - [Views graphs](views-graphs-notes.md) — 2026-11-10 #304 React Flow lineage + step graphs: lazy client-only impl, elk bundled, layout via useQuery, jsdom stubs, edge direction
+- [Views integration branch](views-integration-branch.md) — integration/views merge seams (scratch guard on analyzeSqlStep, stamp-trigger/jsonb test gotchas) + walkthrough seed recipe
