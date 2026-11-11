@@ -36,3 +36,5 @@ could provide cleanly.
 
 Related: [[derived-datasets-brainstorm]], [[analysis-layer-design]],
 [[int-test-db-split-ri-teardown]].
+
+2026-11-11: the whole train merged via #320. **Next session: start at `docs/views-verification-handoff.md`**, which covers the browser checks, follow-ups to file, and remedies 5–8.
