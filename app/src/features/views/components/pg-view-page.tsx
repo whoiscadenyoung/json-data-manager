@@ -55,8 +55,8 @@ import { ExportProfilesCard } from "./export-profiles-card";
 import { ExtractViewDialog } from "./extract-view-dialog";
 import { OutputCard } from "./output-card";
 import { PreviewPane, type PreviewRow } from "./preview-pane";
-import { StepList, type StepEditorContext } from "./step-list";
 import { RefreshModeControl, type RefreshMode } from "./refresh-mode-control";
+import { StepList, type StepEditorContext } from "./step-list";
 
 /**
  * The view editor (issue #301; docs/views-design.md §9): a linear step list
