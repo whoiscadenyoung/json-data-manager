@@ -113,7 +113,9 @@ vi.mock("@/lib/store/view-reads", () => ({
 vi.mock("@/lib/store/views", () => ({
   listRunsQueryOptions: () => ({ queryFn: async () => [], queryKey: ["test:runs"] }),
   previewDraftView: mocks.previewDraftView,
+  refreshQueueQueryOptions: () => ({ queryFn: async () => null, queryKey: ["test:queue"] }),
   runView: vi.fn<(id: string) => Promise<unknown>>(),
+  setViewRefreshMode: vi.fn<(id: string, mode: string) => Promise<void>>(),
   viewDeps: () => ({}),
 }));
 
