@@ -67,17 +67,38 @@ one after the other or split files carefully.
 
 ## Status
 
-| Issue | State                  | PR   |
-| ----- | ---------------------- | ---- |
-| #299  | PR open                | #309 |
-| #300  | PR open                | #310 |
-| #301  | PR open                | #314 |
-| #302  | PR (compiler + editor) | #313 |
-| #303  | PR open                | #318 |
-| #304  | PR open                | #311 |
-| #305  | PR open                | #317 |
-| #306  | PR open                | #316 |
-| #307  | PR open                | #319 |
+**All merged 2026-11-11** via #320 (merge commit `c01407e`), the integration of the whole stack. The stacked PRs #309–#319 were closed in favor of #320, with their commits included unchanged.
+
+| Issue | PR   | Merged via |
+| ----- | ---- | ---------- |
+| #299  | #309 | #320       |
+| #300  | #310 | #320       |
+| #301  | #314 | #320       |
+| #302  | #313 | #320       |
+| #303  | #318 | #320       |
+| #304  | #311 | #320       |
+| #305  | #317 | #320       |
+| #306  | #316 | #320       |
+| #307  | #319 | #320       |
+
+Verified before merge: full CI (run 42962411802), the local gate, and a browser walkthrough of join + summarize, run, lineage and scratch query.
+
+Not yet verified in a browser:
+
+- advanced steps (spread, sub-pipelines, calculate, sql)
+- export profiles and popup labels
+- auto/live refresh
+- Duplicate and Extract
+- a view on a map
+
+## Follow-ups (not filed yet)
+
+- Published maps don't pick up view labels, because anonymous viewers can't read `view_definition`.
+- Live views: popups have no entry details, there's no fit-to-bounds, and truncation isn't surfaced in the UI.
+- `first`/`last` joins without `orderBy` can pick a different row after Extract.
+- CHECKs on `publish_bundle_members.kind` and `consumer_references.consumer_kind` still allow `'derived'`; derived helpers remain in `map-layers.ts` and the archived `app/convex/**`.
+- Nested-step previews show counts only (no rows).
+- #290 can close once renames are checked in a browser.
 
 ## Related, outside the train
 
