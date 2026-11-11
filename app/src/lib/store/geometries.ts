@@ -554,3 +554,40 @@ export async function installTileArchive(
     }),
   );
 }
+
+/** Points per `points_from_coordinates` call (tiny payloads; well under PostgREST's body limit). */
+export const POINTS_CHUNK_SIZE = 2000;
+
+/**
+ * Writes Point geometry rows for a spreadsheet dataset's entries (#293)
+ * through the set-based `points_from_coordinates` RPC (0032), in chunks.
+ * The geometry triggers maintain bbox, feature_count and the tile-cache
+ * version; the caller flips the dataset's geospatial flags afterwards
+ * (`datasets.setGeospatial`). Returns the entries that got a point.
+ * Chunks are separate statements; a re-run upserts, so it is safe to retry.
+ */
+export async function pointsFromCoordinates(
+  args: {
+    datasetId: string;
+    points: ReadonlyArray<{ id: string; geometry: { type: "Point"; coordinates: number[] } }>;
+  },
+  options?: StoreOptions,
+  onProgress?: (done: number, total: number) => void,
+): Promise<number> {
+  let written = 0;
+  for (let start = 0; start < args.points.length; start += POINTS_CHUNK_SIZE) {
+    const chunk = args.points.slice(start, start + POINTS_CHUNK_SIZE);
+    // Sequential on purpose: one chunk at a time, stop at the first failure.
+    // oxlint-disable-next-line eslint/no-await-in-loop
+    written += await queryScalar<number>(
+      clientOf(options).rpc("points_from_coordinates", {
+        p_dataset: args.datasetId,
+        p_points: chunk,
+      }),
+    );
+    if (onProgress !== undefined) {
+      onProgress(Math.min(start + chunk.length, args.points.length), args.points.length);
+    }
+  }
+  return written;
+}

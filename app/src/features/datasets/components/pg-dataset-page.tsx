@@ -106,6 +106,7 @@ import { PgDatasetExport } from "./pg-dataset-export";
 import { PgDatasetMap } from "./pg-dataset-map";
 import { PgDatasetOverview } from "./pg-dataset-overview";
 import { PgDatasetVisibilityDialog } from "./pg-dataset-visibility-dialog";
+import { PointConversionCard } from "./point-conversion-card";
 import { SchemaVisualizer } from "./schema-visualizer";
 
 /**
@@ -730,6 +731,10 @@ function PostgresDatasetBody({
 
           {/* #292: type a text column as currency (editors, never views). */}
           {!isView && !lockedForViewer && <CurrencyColumnsCard dataset={dataset} />}
+          {/* #293: a plain table with lat/lon columns can become a point dataset. */}
+          {!isView && !lockedForViewer && !dataset.isGeospatial && (
+            <PointConversionCard dataset={dataset} />
+          )}
 
           <Collapsible
             open={jsonDefinitionOpen}
