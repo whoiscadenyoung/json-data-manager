@@ -1,4 +1,7 @@
 import { detectCoordinateColumns, extractPointGeometry } from "@caden/data-core/coordinate-columns";
+import type { CoordinateColumnGuess } from "@caden/data-core/coordinate-columns";
+import { detectCurrencyColumns } from "@caden/data-core/currency";
+import type { CurrencyColumnGuess } from "@caden/data-core/currency";
 import type { GeometryType } from "@caden/data-core/geojson";
 import { enabledAcceptString, enabledExtensionsHint, findImportParser } from "@caden/importers";
 import type { ImportParseResult, ParsedSheet } from "@caden/importers";
@@ -11,11 +14,13 @@ import {
   Upload,
   XCircle,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { looksLikeGeoJson, parseGeoJsonFeatures } from "../lib/geojson-import.js";
+import { applyCurrencySuggestion } from "../lib/import-suggestions.js";
 import { inferSchemaFromData } from "../lib/infer-schema.js";
+import { ImportSuggestions, type SuggestionId } from "./import-suggestions.js";
 import { errorMessage } from "./lib/errors.js";
 import { cn } from "./lib/utils.js";
 import { Button } from "./primitives/button.js";
@@ -495,6 +500,8 @@ function DatasetReview({
   showCoordinatePicker,
   coordinateFields,
   onCoordinateFieldsChange,
+  suggestions,
+  schemaRevision,
 }: {
   rows: DatasetImportRow[];
   fileName: string | null;
@@ -515,6 +522,10 @@ function DatasetReview({
   showCoordinatePicker: boolean;
   coordinateFields: { latField: string; lonField: string } | undefined;
   onCoordinateFieldsChange: (fields: { latField: string; lonField: string }) => void;
+  /** The Suggestions card (#291), rendered above the schema editor. */
+  suggestions: ReactNode;
+  /** Bumped when a suggestion rewrote the inferred schema: the editor remounts from it. */
+  schemaRevision: number;
 }) {
   const reuploadInputRef = useRef<HTMLInputElement>(null);
   return (
@@ -561,7 +572,9 @@ function DatasetReview({
         The schema below was inferred from your data. Refine it as needed — every imported row must
         stay valid, or re-upload data that matches. Saving creates the dataset and imports the rows.
       </div>
+      {suggestions}
       <SchemaEditor
+        key={schemaRevision}
         initialJson={inferredJson}
         dataText={dataText}
         requireValidData
@@ -660,6 +673,24 @@ function coordinateAwareGeometryProps(
     : { geometryType, geometryTypeReadOnly, geometryTypeSummary };
 }
 
+/** The success toast after a currency column was typed (#291). */
+function typedAsNumberMessage(field: string, converted: number, blanks: number): string {
+  const blankNote = blanks > 0 ? `, ${blanks.toLocaleString()} blank cells left empty` : "";
+  return `Typed "${field}" as a number: ${converted.toLocaleString()} values converted${blankNote}.`;
+}
+
+/** The coordinate suggestion to show: only for tabular rows still imported as a plain table, until dismissed. */
+function offeredCoordinates(
+  guess: CoordinateColumnGuess | undefined,
+  rowsAreTabular: boolean,
+  datasetKind: "standard" | "geospatial",
+  dismissed: readonly SuggestionId[],
+): CoordinateColumnGuess | undefined {
+  const offered =
+    rowsAreTabular && datasetKind === "standard" && !dismissed.includes("coordinates");
+  return offered ? guess : undefined;
+}
+
 /** The review rows after the coordinate-columns mapping is applied (a tabular-geospatial save/retry), or the reason it can't be. */
 type FinalRows =
   | { error: string; rows?: undefined; warning?: undefined }
@@ -714,6 +745,23 @@ export function DatasetImporter({
     // True while a failed-import recovery action (Retry/Discard) runs — the
     // recovery buttons disable so a double-click can't double-clear.
     [recovering, setRecovering] = useState(false),
+    // Import-time suggestions (#291): what the detectors found in the parsed
+    // rows, which ones the user dismissed, and why an apply was refused.
+    [currencyGuesses, setCurrencyGuesses] = useState<CurrencyColumnGuess[]>([]),
+    [coordinateGuess, setCoordinateGuess] = useState<CoordinateColumnGuess | undefined>(),
+    [dismissed, setDismissed] = useState<SuggestionId[]>([]),
+    [suggestionErrors, setSuggestionErrors] = useState<Record<string, string>>({}),
+    // Bumped when a suggestion rewrites the inferred schema, to remount the editor from it.
+    [schemaRevision, setSchemaRevision] = useState(0),
+    resetSuggestions = (
+      records: readonly Record<string, unknown>[],
+      coordinates: CoordinateColumnGuess | undefined,
+    ) => {
+      setCurrencyGuesses(detectCurrencyColumns(records));
+      setCoordinateGuess(coordinates);
+      setDismissed([]);
+      setSuggestionErrors({});
+    },
     // A FeatureCollection / bare Feature array: geometry is split out into its
     // own rows shape and never enters the inferred JSON Schema.
     ingestGeoJson = (parsedJson: unknown, file: File, keepSchema: boolean) => {
@@ -748,6 +796,13 @@ export function DatasetImporter({
       );
       setRowsAreTabular(false);
       setCoordinateFields(undefined);
+      resetSuggestions(
+        properties.filter(
+          (data): data is Record<string, unknown> =>
+            typeof data === "object" && data !== null && !Array.isArray(data),
+        ),
+        undefined,
+      );
       if (keepSchema) {
         toast.success(`Reloaded ${result.rows.length} features from ${file.name}.`);
       } else {
@@ -768,7 +823,7 @@ export function DatasetImporter({
           (row): row is Record<string, unknown> =>
             typeof row === "object" && row !== null && !Array.isArray(row),
         ),
-        coordinateGuess = detectCoordinateColumns(recordRows);
+        detectedCoordinates = detectCoordinateColumns(recordRows);
       setRows(parsedRows.map((data) => ({ data })));
       setFileName(sourceName);
       setDataText(JSON.stringify(parsedRows, null, 2));
@@ -778,21 +833,17 @@ export function DatasetImporter({
       setGeometryTypeSummary(undefined);
       setRowsAreTabular(true);
       setCoordinateFields(
-        coordinateGuess
-          ? { latField: coordinateGuess.latField, lonField: coordinateGuess.lonField }
+        detectedCoordinates
+          ? { latField: detectedCoordinates.latField, lonField: detectedCoordinates.lonField }
           : undefined,
       );
       setWorkbookSheets(null);
+      resetSuggestions(recordRows, detectedCoordinates);
       if (keepSchema) {
         toast.success(`Reloaded ${parsedRows.length} rows from ${sourceName}.`);
       } else {
         setInferredJson(JSON.stringify(inferSchemaFromData(parsedRows), null, 2));
         toast.success(`Inferred a schema from ${parsedRows.length} rows in ${sourceName}.`);
-      }
-      if (coordinateGuess) {
-        toast.message(
-          `Detected latitude/longitude columns "${coordinateGuess.latField}"/"${coordinateGuess.lonField}" — switch Dataset Type to Geospatial to import as a map dataset.`,
-        );
       }
     },
     // A registry parser's result may have zero sheets (nothing usable),
@@ -875,6 +926,53 @@ export function DatasetImporter({
       applySheet(sheet, workbookFileName, workbookKeepSchema);
     },
     showCoordinatePicker = needsCoordinatePicker(rowsAreTabular, datasetKind),
+    dismiss = (id: SuggestionId) => {
+      setDismissed((current) => (current.includes(id) ? current : [...current, id]));
+    },
+    // Types one currency-shaped column (#291): every value goes through the
+    // shared parser, or nothing changes and the failing rows are listed.
+    applyCurrency = (field: string) => {
+      if (rows === null) {
+        return;
+      }
+      const result = applyCurrencySuggestion(rows, inferredJson, field),
+        id: SuggestionId = `currency:${field}`;
+      if (!result.ok) {
+        setSuggestionErrors((current) => ({ ...current, [id]: result.message }));
+        return;
+      }
+      setRows(result.rows);
+      setDataText(
+        JSON.stringify(
+          result.rows.map((row) => row.data),
+          null,
+          2,
+        ),
+      );
+      setInferredJson(result.schemaJson);
+      setSchemaRevision((revision) => revision + 1);
+      dismiss(id);
+      toast.success(typedAsNumberMessage(field, result.converted, result.blanks));
+    },
+    adoptCoordinates = (guess: CoordinateColumnGuess) => {
+      setDatasetKind("geospatial");
+      setCoordinateFields({ latField: guess.latField, lonField: guess.lonField });
+      dismiss("coordinates");
+    },
+    suggestions = (
+      <ImportSuggestions
+        currency={currencyGuesses.filter((guess) => !dismissed.includes(`currency:${guess.field}`))}
+        coordinates={offeredCoordinates(coordinateGuess, rowsAreTabular, datasetKind, dismissed)}
+        errors={suggestionErrors}
+        onApplyCurrency={applyCurrency}
+        onUseCoordinates={() => {
+          if (coordinateGuess !== undefined) {
+            adoptCoordinates(coordinateGuess);
+          }
+        }}
+        onDismiss={dismiss}
+      />
+    ),
     // The rows an import actually writes: the review rows, with the
     // coordinate-columns mapping applied for a tabular-geospatial save.
     // Shared by the save and the failed-import Retry (issue #129) so a retry
@@ -1021,6 +1119,8 @@ export function DatasetImporter({
         showCoordinatePicker={showCoordinatePicker}
         coordinateFields={coordinateFields}
         onCoordinateFieldsChange={setCoordinateFields}
+        suggestions={suggestions}
+        schemaRevision={schemaRevision}
       />
     );
   }

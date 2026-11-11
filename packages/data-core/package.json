@@ -19,6 +19,10 @@
       "types": "./dist/coordinate-columns.d.ts",
       "default": "./dist/coordinate-columns.js"
     },
+    "./currency": {
+      "types": "./dist/currency.d.ts",
+      "default": "./dist/currency.js"
+    },
     "./geojson": {
       "types": "./dist/geojson/index.d.ts",
       "default": "./dist/geojson/index.js"
