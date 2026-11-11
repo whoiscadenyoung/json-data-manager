@@ -48,7 +48,7 @@ import {
 } from "@caden/ui/components/empty";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@caden/ui/components/tabs";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import type { SortingState, Updater } from "@tanstack/react-table";
 import {
   ChevronDown,
@@ -63,6 +63,7 @@ import {
   Plus,
   RefreshCw,
   Rocket,
+  Trash2,
   Workflow,
 } from "lucide-react";
 import { useState } from "react";
@@ -355,7 +356,11 @@ function PostgresDatasetBody({
     [publishKey, setPublishKey] = useState(""),
     // #256: the add-to-project sheet — the dataset referenced (linked, a pin
     // at head) from a project the viewer can edit.
-    [addToProjectOpen, setAddToProjectOpen] = useState(false);
+    [addToProjectOpen, setAddToProjectOpen] = useState(false),
+    // #329: the delete-dataset confirm — the store's view-dependency guard
+    // (DatasetInUseError) is only reachable once a page calls `remove`.
+    [deleteDatasetOpen, setDeleteDatasetOpen] = useState(false),
+    navigate = useNavigate();
 
   if (datasetQuery.isPending) {
     return (
@@ -374,6 +379,10 @@ function PostgresDatasetBody({
     lockedForViewer = isLockedForViewer(dataset, me),
     viewReason = viewRowsReadOnlyReason(dataset),
     isView = viewReason !== undefined,
+    // #329: the delete gate mirrors the store's RLS (`can_edit_dataset` —
+    // open policy or creator, never a view's read-only rows, and frozen rows
+    // (`lineage` set) deny everyone).
+    datasetDeletable = !isView && !lockedForViewer && dataset.lineage === null,
     groupForBreadcrumb = groupQuery.data,
     displayCount = isLive ? pages.rows.length : dataset.entryCount,
     isEmpty = displayCount === 0 && pages.isComplete,
@@ -434,6 +443,26 @@ function PostgresDatasetBody({
         return;
       }
       onPatchSearch({ entryId: entry._id, panel: "edit" });
+    },
+    // #329: the delete runs through the store's guard — a dataset a view
+    // still reads throws `DatasetInUseError`, whose message names the views.
+    deleteDataset = async () => {
+      try {
+        await datasetsStore.remove({ datasetId: schemaId });
+        // Memberships, artifacts and children cascade; every catalog read
+        // refreshes (the page is leaving anyway).
+        void queryClient.invalidateQueries();
+        toast.success(`Deleted “${dataset.title}”.`);
+        if (links.projectId !== null) {
+          void navigate({ to: "/projects/$projectId", params: { projectId: links.projectId } });
+        } else {
+          void navigate({ to: "/datasets" });
+        }
+      } catch (error) {
+        toast.error(errorMessage(error, "Couldn't delete this dataset."));
+      } finally {
+        setDeleteDatasetOpen(false);
+      }
     };
 
   return (
@@ -553,7 +582,7 @@ function PostgresDatasetBody({
             <Rocket className="h-4 w-4 mr-2" />
             Publish version
           </Button>
-          {isCreator && (
+          {(isCreator || datasetDeletable) && (
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={<Button variant="outline" size="icon" aria-label="More actions" />}
@@ -561,36 +590,51 @@ function PostgresDatasetBody({
                 <Ellipsis className="h-4 w-4" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  onClick={() => {
-                    setVisibilityOpen(true);
-                  }}
-                  title={`Currently visible at “${dataset.visibility}” — click to change who can see this dataset.`}
-                >
-                  {dataset.visibility === "members" ? (
-                    <Lock className="h-4 w-4 mr-2" />
-                  ) : (
-                    <Globe className="h-4 w-4 mr-2" />
-                  )}
-                  Share dataset…
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => {
-                    void flipEditPolicy();
-                  }}
-                  title={
-                    dataset.editPolicy === "locked"
-                      ? "Currently only you can edit this dataset — click to let every signed-in collaborator edit."
-                      : "Currently every signed-in collaborator can edit this dataset — click to restrict editing to you."
-                  }
-                >
-                  {dataset.editPolicy === "locked" ? (
-                    <LockOpen className="h-4 w-4 mr-2" />
-                  ) : (
-                    <Lock className="h-4 w-4 mr-2" />
-                  )}
-                  {dataset.editPolicy === "locked" ? "Unlock editing" : "Lock editing"}
-                </DropdownMenuItem>
+                {isCreator && (
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setVisibilityOpen(true);
+                    }}
+                    title={`Currently visible at “${dataset.visibility}” — click to change who can see this dataset.`}
+                  >
+                    {dataset.visibility === "members" ? (
+                      <Lock className="h-4 w-4 mr-2" />
+                    ) : (
+                      <Globe className="h-4 w-4 mr-2" />
+                    )}
+                    Share dataset…
+                  </DropdownMenuItem>
+                )}
+                {isCreator && (
+                  <DropdownMenuItem
+                    onClick={() => {
+                      void flipEditPolicy();
+                    }}
+                    title={
+                      dataset.editPolicy === "locked"
+                        ? "Currently only you can edit this dataset — click to let every signed-in collaborator edit."
+                        : "Currently every signed-in collaborator can edit this dataset — click to restrict editing to you."
+                    }
+                  >
+                    {dataset.editPolicy === "locked" ? (
+                      <LockOpen className="h-4 w-4 mr-2" />
+                    ) : (
+                      <Lock className="h-4 w-4 mr-2" />
+                    )}
+                    {dataset.editPolicy === "locked" ? "Unlock editing" : "Lock editing"}
+                  </DropdownMenuItem>
+                )}
+                {datasetDeletable && (
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setDeleteDatasetOpen(true);
+                    }}
+                    title="Permanently delete this dataset and all of its rows, geometries and versions."
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Delete dataset…
+                  </DropdownMenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           )}
@@ -825,6 +869,31 @@ function PostgresDatasetBody({
               }}
             >
               Delete Entry
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* #329: the delete confirm — the guard's message (which views read
+          this dataset) surfaces as the error toast when the store refuses. */}
+      <AlertDialog onOpenChange={setDeleteDatasetOpen} open={deleteDatasetOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete “{dataset.title}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes the dataset and everything inside it: entries, geometries,
+              versions, memberships and its retained source file. Views that read this dataset block
+              the delete until they are re-pointed or removed. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                void deleteDataset();
+              }}
+            >
+              Delete Dataset
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
