@@ -249,7 +249,14 @@ describe.skipIf(!dbUp())("scratch query (#306)", () => {
         }
         await s().commit();
         const first = result.rows[0];
-        return first === undefined ? null : first.r;
+        const raw = first === undefined ? null : first.r;
+        if (raw === null || raw === undefined) return null;
+        // The wire client returns jsonb as text; the callers expect parsed values.
+        try {
+          return JSON.parse(raw);
+        } catch {
+          return raw;
+        }
       },
     };
     const viewDeps: ViewDeps = { rpc, compiler: defaultViewCompiler };
