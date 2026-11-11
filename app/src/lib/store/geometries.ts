@@ -46,6 +46,15 @@ import type { DatasetGeometryType } from "./datasets";
  * oversized rows (> `INLINE_GEOMETRY_SOURCE_BYTES`) ride Storage with a
  * client-supplied `bbox` and no inline source.
  */
+/**
+ * The `GeometryRow` projection for direct `geometries` table reads. The
+ * verbatim GeoJSON column is `source` (0003), aliased to the row's
+ * `geometry`: a bare `geometry` names no column and PostgREST answers 400
+ * (the entry page's geometry read failed that way since stage 2).
+ */
+const GEOMETRY_ROW_SELECT =
+  "entryId:entry_id,datasetId:dataset_id,geometry:source,sourcePath:source_path,bbox,type";
+
 export interface GeometryRow {
   entryId: string;
   datasetId: string;
@@ -163,7 +172,7 @@ export async function getByEntry(
   const rows = await queryRows<GeometryRow>(
     clientOf(options)
       .from("geometries")
-      .select("entryId:entry_id,datasetId:dataset_id,geometry,sourcePath:source_path,bbox,type")
+      .select(GEOMETRY_ROW_SELECT)
       .eq("entry_id", args.entryId)
       .limit(1),
   );
@@ -313,11 +322,7 @@ export async function create(
   // rejected shape must not leave a half-recorded query behind.
   const payload = geometryPayload(args);
   const row = await queryRow<GeometryRow>(
-    clientOf(options)
-      .from("geometries")
-      .insert(payload)
-      .select("entryId:entry_id,datasetId:dataset_id,geometry,sourcePath:source_path,bbox,type")
-      .single(),
+    clientOf(options).from("geometries").insert(payload).select(GEOMETRY_ROW_SELECT).single(),
   );
   if (row === null) {
     throw new Error("Geometry insert returned no row.");
@@ -340,7 +345,7 @@ export async function replace(
     clientOf(options)
       .from("geometries")
       .upsert(payload, { onConflict: "entry_id" })
-      .select("entryId:entry_id,datasetId:dataset_id,geometry,sourcePath:source_path,bbox,type")
+      .select(GEOMETRY_ROW_SELECT)
       .single(),
   );
   if (row === null) {
