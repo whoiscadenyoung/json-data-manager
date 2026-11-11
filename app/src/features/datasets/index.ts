@@ -9,7 +9,6 @@ export { ExportDialog } from "./components/export-dialog";
 export type { ExportFormat, ExportFormatOption } from "./components/export-dialog";
 export { GeometryCard } from "./components/geometry-card";
 export type { GeometryCardRow } from "./components/geometry-card";
-export { GeospatialConversionPanel } from "./components/geospatial-conversion-panel";
 export { PostgresCreateDatasetPage } from "./components/pg-create-flow";
 export { PostgresDatasetPage } from "./components/pg-dataset-page";
 export type { PgDatasetPageSearch } from "./components/pg-dataset-page";

@@ -521,6 +521,25 @@ export async function update(args: UpdateDatasetArgs, options?: StoreOptions): P
   return rows.length;
 }
 
+/**
+ * Marks a dataset geospatial with one geometry type (#293's conversion, after
+ * its geometry rows are written). Returns the affected row count (0 = denied
+ * — the stage-4 silent-denial rule).
+ */
+export async function setGeospatial(
+  args: { datasetId: string; geometryType: DatasetGeometryType },
+  options?: StoreOptions,
+): Promise<number> {
+  const rows = await queryRows<unknown>(
+    clientOf(options)
+      .from("datasets")
+      .update({ geometry_type: args.geometryType, is_geospatial: true })
+      .eq("id", args.datasetId)
+      .select("id"),
+  );
+  return rows.length;
+}
+
 /** Creator-side edit policy (ADR 0010) — `api.cms.schemas.setEditPolicy` parity; the creator-only flip rule is RLS's (design §4 policy matrix). Returns the affected row count (0 = denied — the stage-4 silent-denial rule). */
 export async function setEditPolicy(
   args: { datasetId: string; editPolicy: "open" | "locked" },
