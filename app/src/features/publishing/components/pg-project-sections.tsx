@@ -5,13 +5,12 @@ import { Card } from "@caden/ui/components/card";
 import { Input } from "@caden/ui/components/input";
 import { Label } from "@caden/ui/components/label";
 import { Textarea } from "@caden/ui/components/textarea";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { errorMessage } from "@/lib/errors";
-import * as datasetsStore from "@/lib/store/datasets";
 import * as projectsStore from "@/lib/store/projects";
 
 import { VIEWER_REASON } from "../lib/pg-viewer-posture";
@@ -145,52 +144,6 @@ export function PgProjectSettings() {
         open={confirmDelete}
         title={`Delete "${project.title}"?`}
       />
-    </main>
-  );
-}
-
-/** The Data → Analysis section (issue #271): the project's datasets with one-click entry to each dataset's Analyze tab. Joins and aggregations live in Views (the catalog's Views section). */
-export function PgProjectAnalysis() {
-  const { catalog, projectId } = useProjectShell(),
-    datasetsQuery = useQuery(datasetsStore.listQueryOptions()),
-    titleOf = (id: string): string => {
-      const match = (datasetsQuery.data ?? []).find((item) => item.id === id);
-      return match === undefined ? "Not visible to you" : match.title;
-    },
-    datasets = catalog.filter((row) => row.artifact.artifactKind === "dataset");
-  return (
-    <main className="mx-auto max-w-5xl px-6 py-6">
-      <h1 className="mb-1 text-2xl font-bold text-primary">Analysis</h1>
-      <p className="mb-4 text-sm text-muted-foreground">
-        Run a scratch SQL query over a project dataset. To keep a result, build a view from the
-        catalog.
-      </p>
-      <h2 className="mb-2 text-sm font-semibold text-muted-foreground">
-        Datasets ({datasets.length})
-      </h2>
-      {datasets.length === 0 ? (
-        <p className="rounded-lg border px-4 py-3 text-sm text-muted-foreground">
-          Add a dataset to the catalog first — analysis runs over catalog datasets.
-        </p>
-      ) : (
-        <div className="flex flex-col gap-2">
-          {datasets.map((row) => (
-            <Card className="flex-row items-center gap-3 px-4 py-3" key={row.artifact.id}>
-              <p className="min-w-0 flex-1 truncate text-sm font-medium">
-                {titleOf(row.artifact.artifactId)}
-              </p>
-              <Link
-                className="rounded-md border px-3 py-1 text-sm hover:bg-muted"
-                params={{ projectId, schemaId: row.artifact.artifactId }}
-                search={{ view: "analyze" }}
-                to="/projects/$projectId/datasets/$schemaId"
-              >
-                Analyze
-              </Link>
-            </Card>
-          ))}
-        </div>
-      )}
     </main>
   );
 }

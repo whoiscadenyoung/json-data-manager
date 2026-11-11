@@ -6,6 +6,12 @@ metadata:
 ---
 
 > **Superseded 2026-11-10** by the Views initiative ([[views-initiative]], ADR 0028). Kept as history.
+>
+> **RETIRED in #306** ([[views-scratch-query]]): the DuckDB-WASM engine and worker,
+> `@caden/analysis`, `applySql` and the whole `@caden/data-core/transform`
+> package, the Analyze tab and the project "Analysis" section are deleted. The
+> project's Scratch query runs Postgres on the server instead. Everything below
+> describes code that no longer exists.
 
 2026-09-21: Design futures recorded in `docs/analysis-layer-design.md` —
 ad-hoc analytics (DuckDB-style SQL: counts per state, avg locations per

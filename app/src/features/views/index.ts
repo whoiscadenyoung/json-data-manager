@@ -3,5 +3,9 @@
 export { PgViewPage } from "./components/pg-view-page";
 export { ProjectViewsSection, ViewCard } from "./components/project-views-section";
 export { createProjectView } from "./lib/create-view";
-export { definitionFromRelation } from "./lib/view-model";
-export type { RelationSeed } from "./lib/view-model";
+export {
+  definitionFromRelation,
+  definitionFromScratch,
+  referencedScratchTables,
+} from "./lib/view-model";
+export type { RelationSeed, ScratchTableInfo } from "./lib/view-model";

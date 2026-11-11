@@ -66,7 +66,7 @@ class ReadDone<T> extends Error {
   }
 }
 
-type Tx = TransactionSql;
+export type Tx = TransactionSql;
 
 /** The first row's `name` column (undefined when there is no row). */
 function cell(rows: readonly Record<string, unknown>[], name: string): unknown {
@@ -82,7 +82,7 @@ async function actAs(tx: Tx, who: VerifiedClaims): Promise<void> {
 }
 
 /** Phase 1: runs `work` as the verified user in a read-only, always-rolled-back transaction. */
-async function readAs<T>(
+export async function readAs<T>(
   deps: RunnerDeps,
   who: VerifiedClaims,
   work: (tx: Tx) => Promise<T>,

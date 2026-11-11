@@ -2,7 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 
 import { defaultViewCompiler } from "#/lib/views/view-compiler-wiring";
 import type { ViewDeps, ViewsRpc } from "#/lib/views/view-save";
-import { previewViewFn, runViewFn } from "#/server/views/functions";
+import { previewViewFn, runViewFn, scratchQueryFn } from "#/server/views/functions";
 
 import { clientOf, queryRows, throwPostgrestError, type StoreOptions } from "./client";
 
@@ -65,6 +65,16 @@ export async function previewDraftView(
 ) {
   return await previewViewFn({
     data: { accessToken: await accessTokenOf(options), definition, inputs, uptoStep },
+  });
+}
+
+/**
+ * Scratch query (#306): the project's table names and, with `sql`, the result
+ * of running it read-only on the server as you. Nothing is saved.
+ */
+export async function scratchQuery(projectId: string, sql?: string, options?: StoreOptions) {
+  return await scratchQueryFn({
+    data: { accessToken: await accessTokenOf(options), projectId, sql },
   });
 }
 

@@ -364,6 +364,16 @@ export function inputRefsOf(
   );
 }
 
+/**
+ * Whether SQL text mentions the table `name` as a whole identifier (bare or
+ * double-quoted). Textual and conservative: a mention inside a string literal
+ * counts too, which only ever keeps an input declared.
+ */
+export function sqlReadsTable(sql: string, name: string): boolean {
+  const escaped = name.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+  return new RegExp(`(?<![A-Za-z0-9_$])"?${escaped}"?(?![A-Za-z0-9_$])`, "i").test(sql);
+}
+
 /** Drops inputs no step reads (never the base), so Save does not declare dead inputs. */
 export function prunedInputs(definition: ViewDefinition): ViewDefinition {
   const used = new Set<string>([definition.base]);
@@ -371,8 +381,63 @@ export function prunedInputs(definition: ViewDefinition): ViewDefinition {
     if (step.kind === "join") {
       used.add(step.right.input);
     }
+    if (step.kind === "sql") {
+      // A sql step reads inputs by name: `in_<alias>` (Save as view from the Scratch query).
+      for (const input of definition.inputs) {
+        if (sqlReadsTable(step.query, `in_${input.alias}`)) {
+          used.add(input.alias);
+        }
+      }
+    }
   }
   return { ...definition, inputs: definition.inputs.filter((input) => used.has(input.alias)) };
+}
+
+/** A Scratch-query table: SQL name `in_<alias>` plus the dataset behind it. */
+export interface ScratchTableInfo {
+  alias: string;
+  datasetId: string;
+  fields: string[];
+  kind: "source" | "view";
+  name: string;
+  title: string;
+}
+
+/** The scratch tables the query reads, in table-list order. */
+export function referencedScratchTables(
+  sql: string,
+  tables: readonly ScratchTableInfo[],
+): ScratchTableInfo[] {
+  return tables.filter((table) => sqlReadsTable(sql, table.name));
+}
+
+/**
+ * "Save as view" (#306): one `sql` step holding the query UNCHANGED (minus a
+ * trailing `;`). The scratch names ARE the compiler's input CTE names
+ * (`in_<alias>`), so each table the query reads becomes the input of that
+ * alias. `baseAlias` is the input whose rows and geometry the view keeps.
+ */
+export function definitionFromScratch(
+  sql: string,
+  tables: readonly ScratchTableInfo[],
+  baseAlias: string,
+): ViewDefinition {
+  const referenced = referencedScratchTables(sql, tables);
+  if (referenced.length === 0) {
+    throw new Error("The query doesn't read any table, so there is nothing to build a view on.");
+  }
+  if (!referenced.some((table) => table.alias === baseAlias)) {
+    throw new Error("Pick one of the tables the query reads as the base.");
+  }
+  return {
+    inputs: referenced.map((table) => ({
+      alias: table.alias,
+      ref: { kind: "dataset", id: table.datasetId },
+    })),
+    base: baseAlias,
+    steps: [{ kind: "sql", query: sql.replace(/[\s;]+$/, "").trim() }],
+    output: emptyOutput(),
+  };
 }
 
 /** A key relation, as the relations section holds it. */
