@@ -686,7 +686,7 @@ function PostgresDatasetBody({
                           setDeleteTarget(entry);
                         }
                   }
-                  properties={Object.keys(schemaPropertiesOf(dataset))}
+                  properties={tableColumnsOf(dataset)}
                   schema={schemaObjectOf(dataset)}
                   schemaId={schemaId}
                   server={{
@@ -824,7 +824,19 @@ function PostgresDatasetBody({
   );
 }
 
-/** The stored JSON Schema's declared property keys (the table's columns). */
+/**
+ * The table's columns: the stored JSON Schema's declared property keys, or —
+ * when the schema declares none — the dataset's `properties` list. Views have
+ * no JSON Schema (`{}`); their field list is written by each run
+ * (`view_apply_run`) into `properties`, so without the fallback a view's
+ * table showed only Geometry and Created.
+ */
+function tableColumnsOf(dataset: DatasetRow): string[] {
+  const declared = Object.keys(schemaPropertiesOf(dataset));
+  return declared.length > 0 ? declared : dataset.properties;
+}
+
+/** The stored JSON Schema's declared property keys. */
 function schemaPropertiesOf(dataset: DatasetRow): Record<string, unknown> {
   const properties = schemaNodeOf(dataset).properties;
   return properties === undefined ? {} : properties;
