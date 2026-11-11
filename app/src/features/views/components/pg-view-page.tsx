@@ -9,10 +9,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@caden/ui/components/card";
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { Copy, Database, Loader2, Play, Save, Table2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { RouterButton } from "@/components/router-button";
@@ -81,6 +86,30 @@ function useDebounced<T>(value: T, delayMs: number): T {
     };
   }, [value, delayMs]);
   return debounced;
+}
+
+/**
+ * An auto refresh runs on the app server, so nothing in this tab learns that
+ * it finished: the queue poll only sees the queue row disappear. When it does
+ * (queued -> empty), re-read the header, runs and rows so the new run, its
+ * counts and the cleared "Stale" badge show without a reload.
+ */
+function useRefreshWhenQueueDrains(queued: boolean, queryClient: QueryClient): void {
+  const wasQueued = useRef(false);
+  useEffect(() => {
+    if (wasQueued.current && !queued) {
+      for (const key of [
+        "pg:views",
+        "pg:view_runs",
+        "pg:view-preview",
+        "pg:datasets",
+        "pg:entries",
+      ]) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
+    }
+    wasQueued.current = queued;
+  }, [queued, queryClient]);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -223,6 +252,7 @@ function ViewEditor({
       ...refreshQueueQueryOptions(viewId),
       enabled: header.refreshMode === "auto",
     });
+  useRefreshWhenQueueDrains(queueQuery.data !== undefined && queueQuery.data !== null, queryClient);
 
   const patchDraft = (next: ViewDefinition): void => {
     setDraft(next);
