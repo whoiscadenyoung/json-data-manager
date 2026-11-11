@@ -78,6 +78,19 @@ async function rows(def: ViewDefinition, inputs = metas): Promise<Map<string, Ro
   return new Map(result.map((row) => [String(row.d.name), row]));
 }
 
+describe("output renames", () => {
+  test("a renamed key reads its source field; missing sources are omitted", async () => {
+    const def = view([]);
+    def.output = {
+      fields: [{ key: "town", from: "name" }, { key: "id" }, { key: "gone", from: "nope" }],
+      emptyFields: "keep",
+    };
+    const result = await runQuery<Row>(db, compileView(def, metas));
+    const alpha = must(result.find((row) => row.d.town === "Alpha"));
+    expect(alpha.d).toEqual({ town: "Alpha", id: "1" });
+  });
+});
+
 describe("multi-match modes", () => {
   test("spread: declared columns, first row wins per category, missing -> null", async () => {
     const result = await rows(

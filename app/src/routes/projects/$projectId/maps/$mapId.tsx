@@ -38,6 +38,7 @@ import {
   FolderPlus,
   Layers as LayersIcon,
   Link2,
+  List,
   Loader2,
   PanelLeftClose,
   PanelLeftOpen,
@@ -56,9 +57,12 @@ import { useLayerStyles } from "#/features/layer-styles";
 import {
   LayersMap,
   NO_DERIVED_TITLES,
+  PopupFieldsDialog,
   NO_RENDERABLE_DERIVED,
   pgSummaryToDatasetSummary,
+  popupInputsOf,
   splitSchemaIdsByDecision,
+  usePopupFieldsFor,
   useGeometriesByPgDatasets,
   useTileArchiveSources,
 } from "#/features/maps";
@@ -433,6 +437,10 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
       renderableDerived === undefined ? false : renderableDerived.has(schemaId),
     ),
     split = splitSchemaIdsByDecision(schemaIds, decisions, derivedRowIds),
+    popupFieldsFor = usePopupFieldsFor(
+      popupInputsOf(dataEntries, layersById),
+      new Set((allSummaries ?? []).filter((row) => row.kind === "view").map((row) => row.id)),
+    ),
     pgRowIds = split.rowSchemaIds.filter((schemaId) => isPostgresDatasetId(schemaId)),
     pgFan = useGeometriesByPgDatasets(pgRowIds),
     geometries = pgFan.geometries,
@@ -670,6 +678,7 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
             {(servedGeometries !== undefined || split.tileSources.length > 0) && (
               <LayersMap
                 chainLayers={[]}
+                popupFieldsFor={popupFieldsFor}
                 colorBySchema={styledColorBySchema}
                 datasets={mapDatasets}
                 derivedLayers={derivedRowIds.flatMap((derivedId) => {
@@ -876,6 +885,7 @@ function PlacementRowBody(
         ? datasetMember.artifactId
         : undefined,
     [busy, setBusy] = useState<string | undefined>(),
+    [popupOpen, setPopupOpen] = useState(false),
     act = async (action: string, job: () => Promise<unknown>, success: string): Promise<void> => {
       setBusy(action);
       if (await props.run(job, "The action didn't land — you may not have access.")) {
@@ -1032,6 +1042,19 @@ function PlacementRowBody(
                 Clone (editable copy)
               </DropdownMenuItem>
             )}
+            {!linked &&
+              layer !== undefined &&
+              layer.kind === "data" &&
+              viewDatasetId !== undefined && (
+                <DropdownMenuItem
+                  onClick={() => {
+                    setPopupOpen(true);
+                  }}
+                >
+                  <List className="mr-2 h-4 w-4" />
+                  Popup fields…
+                </DropdownMenuItem>
+              )}
             {!linked && layer !== undefined && (
               <DropdownMenuItem
                 onClick={() => {
@@ -1080,6 +1103,23 @@ function PlacementRowBody(
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      {layer !== undefined && viewDatasetId !== undefined && (
+        <PopupFieldsDialog
+          datasetId={viewDatasetId}
+          onOpenChange={setPopupOpen}
+          onSave={async (popup) => {
+            await act(
+              "popup",
+              async () => {
+                await layersStore.update({ layerId: layer.id, popup });
+              },
+              popup === null ? "Popup fields follow the view." : "Popup fields saved.",
+            );
+          }}
+          open={popupOpen}
+          popup={layer.popup}
+        />
+      )}
       {isGroup && expanded && (
         <PgGroupChildren
           act={act}

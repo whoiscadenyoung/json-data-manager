@@ -34,3 +34,11 @@ export type { DerivedDatasetSummary, MapLayerDoc, MembershipRow } from "./lib/ma
 export { buildFrozenTileArchive } from "./lib/frozen-archive-build";
 export type { FrozenArchiveStamp } from "./lib/frozen-archive-build";
 export { bboxFeature, buildPointFeatureCollection } from "./lib/point-geometry";
+export {
+  popupInputsOf,
+  popupOverrideOf,
+  resolvePopupFields,
+  usePopupFieldsFor,
+} from "./lib/popup-fields";
+export type { PopupField } from "./lib/popup-fields";
+export { PopupFieldsDialog } from "./components/popup-fields-dialog";

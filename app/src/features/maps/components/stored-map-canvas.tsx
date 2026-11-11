@@ -12,6 +12,7 @@ import * as mapsStore from "#/lib/store/maps";
 
 import { splitSchemaIdsByDecision, useTileArchiveSources } from "../lib/layer-source";
 import { NO_DERIVED_TITLES, NO_RENDERABLE_DERIVED } from "../lib/map-layers";
+import { popupInputsOf, usePopupFieldsFor } from "../lib/popup-fields";
 import { LayersMap } from "./layers-map";
 import { useGeometriesByPgDatasets } from "./pg-geometries-loader";
 import { pgSummaryToDatasetSummary } from "./pg-layer-rows";
@@ -316,6 +317,10 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
       renderableDerived === undefined ? false : renderableDerived.has(schemaId),
     ),
     split = splitSchemaIdsByDecision(schemaIds, decisions, derivedRowIds),
+    popupFieldsFor = usePopupFieldsFor(
+      popupInputsOf(dataEntries, layersById),
+      new Set((pgSummaries.data ?? []).filter((row) => row.kind === "view").map((row) => row.id)),
+    ),
     pgRowIds = split.rowSchemaIds.filter((schemaId) => isPostgresDatasetId(schemaId)),
     pgFan = useGeometriesByPgDatasets(pgRowIds),
     [arrivedTileSchemaIds, setArrivedTileSchemaIds] = useState<Set<string>>(() => new Set()),
@@ -375,6 +380,7 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
       {shouldMount ? (
         <LayersMap
           chainLayers={[]}
+          popupFieldsFor={popupFieldsFor}
           colorBySchema={styledColorBySchema}
           datasets={mapDatasets}
           derivedLayers={derivedRowIds.flatMap((derivedId) => {

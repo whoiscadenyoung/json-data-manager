@@ -63,3 +63,4 @@
 - [Views compiler notes](views-compiler-notes.md) — #299: unaccent not installed (translate fallback), all values+keys bound, first/last ordering caveat, pglite sanity trick
 - [Views server runner](views-server-runner.md) — #300: server-side runner (no client SQL/rows); no in-function statement_timeout, EXECUTE defaults need explicit revokes, postgres.js double-encodes jsonb, committed int fixtures
 - [Views editor + derived retire](views-editor-and-derived-retire.md) — #301: draft-input pickers via view_input_meta (no lifecycle gate), PostgREST embed hint, base-ui Select shows raw values, routeTree regen, what was retired vs left
+- [Views output & exports](views-output-and-exports.md) — #303: output labels/hidden in definition.output (+ new OutputField.from for renames), export_profiles (0030), layer popup "from view"

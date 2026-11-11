@@ -156,6 +156,17 @@ describe("field references (with input metadata)", () => {
     expect(paths(def, true)).toContain("output.fields[0].key");
   });
 
+  test("an output rename checks its source field, not the new key", () => {
+    const ok: ViewDefinition = definition([], {
+      output: { fields: [{ key: "town", from: "name" }], emptyFields: "keep" },
+    });
+    expect(paths(ok, true)).toEqual([]);
+    const bad: ViewDefinition = definition([], {
+      output: { fields: [{ key: "town", from: "missing" }], emptyFields: "keep" },
+    });
+    expect(paths(bad, true)).toContain("output.fields[0].from");
+  });
+
   test("a sql step returning d makes the row shape unknown, so later refs are not checked", () => {
     const steps: Step[] = [
       { kind: "sql", query: "select * from prev" },

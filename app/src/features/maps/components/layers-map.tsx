@@ -19,6 +19,7 @@ import {
   buildPointFeatureCollection,
   splitPointLikeGeometries,
 } from "../lib/point-geometry";
+import type { PopupField } from "../lib/popup-fields";
 import { usePgEnrichedDatasetEntryRow } from "./pg-entry-popup";
 import {
   PgRelatedRecordsPanel,
@@ -87,6 +88,7 @@ function FeatureDetailsPanel({
   schemaId,
   datasetTitle,
   joinedPending,
+  popupFields,
   related,
   onClose,
 }: {
@@ -97,13 +99,18 @@ function FeatureDetailsPanel({
   datasetTitle: string;
   /** True while the popup executor's spec/lookup-row reads are still streaming (issue #97). */
   joinedPending: boolean;
+  /** The layer's popup fields (from its view, or its own override); every property when absent. */
+  popupFields?: PopupField[];
   /** The relation runtime's related-records slot (the in-project editor's runtime; absent elsewhere). */
   related?: ReactNode;
   onClose: () => void;
 }) {
   const data = entry !== null && entry !== undefined ? entry.data : undefined,
-    fields =
-      typeof data === "object" && data !== null && !Array.isArray(data) ? Object.entries(data) : [];
+    record = typeof data === "object" && data !== null && !Array.isArray(data) ? data : {},
+    fields: [string, string, unknown][] =
+      popupFields === undefined
+        ? Object.entries(record).map(([key, value]) => [key, key, value])
+        : popupFields.map((field) => [field.key, field.label, Reflect.get(record, field.key)]);
 
   return (
     <div className="absolute top-3 right-3 bottom-3 z-10 flex w-64 flex-col overflow-hidden rounded-lg border border-border bg-card/95 shadow-lg backdrop-blur-sm">
@@ -136,9 +143,9 @@ function FeatureDetailsPanel({
               // fields as `<namespace>.<field>` keys (issue #97) — an
               // unmatched key renders as null ("—"), never an error and
               // never a dropped popup.
-              fields.map(([key, value]) => (
+              fields.map(([key, label, value]) => (
                 <div key={key}>
-                  <dt className="text-xs font-medium text-muted-foreground">{key}</dt>
+                  <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
                   <dd className="text-sm break-words">{formatPropertyValue(value)}</dd>
                 </div>
               ))
@@ -415,6 +422,7 @@ export function LayersMap({
   rowsPending = false,
   onTileSourceIdle,
   extension,
+  popupFieldsFor,
   relationRuntime,
 }: {
   datasets: LayersMapDataset[];
@@ -454,6 +462,8 @@ export function LayersMap({
    * by the `dataset_relation_records` RPC). Absent, clicks open the plain
    * popup — zero extra reads anywhere.
    */
+  /** Popup fields per dataset (a layer over a view defaults to the view's labels and order); undefined = every property. */
+  popupFieldsFor?: (renderId: string) => PopupField[] | undefined;
   relationRuntime?: RelationRuntimeOptions;
 }) {
   const [mapToken] = useState(() => ({})),
@@ -735,6 +745,7 @@ export function LayersMap({
           schemaId={selected.schemaId}
           datasetTitle={selectedDatasetTitle}
           joinedPending={popup.joinedPending}
+          popupFields={popupFieldsFor === undefined ? undefined : popupFieldsFor(selected.schemaId)}
           related={
             relationRuntime === undefined ? undefined : (
               <PgRelatedRecordsPanel

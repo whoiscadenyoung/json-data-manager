@@ -72,7 +72,15 @@ function validateOutput(output: unknown, scope: FieldScope, issues: Issues): voi
       issues.add(`${path}.key`, `Duplicate output key "${field.key}".`);
     }
     seen.add(field.key);
-    scope.check(field.key, `${path}.key`, issues);
+    if (field.from !== undefined && (typeof field.from !== "string" || field.from === "")) {
+      issues.add(`${path}.from`, "The source field must be a name.");
+      continue;
+    }
+    scope.check(
+      field.from ?? field.key,
+      `${path}.${field.from === undefined ? "key" : "from"}`,
+      issues,
+    );
   }
 }
 

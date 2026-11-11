@@ -32,6 +32,7 @@ export type {
   Measure,
   MeasureFn,
   MultiMatch,
+  OutputField,
   OutputSchema,
   RightSide,
   Sort,

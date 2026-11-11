@@ -9,7 +9,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@caden/ui/components/card";
-import { Checkbox } from "@caden/ui/components/checkbox";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Database, Loader2, Play, Save, Table2 } from "lucide-react";
@@ -42,6 +41,8 @@ import {
   withManualMapEntry,
   type InputInfo,
 } from "../lib/view-model";
+import { ExportProfilesCard } from "./export-profiles-card";
+import { OutputCard } from "./output-card";
 import { PreviewPane, type PreviewRow } from "./preview-pane";
 import { StepList, type StepEditorContext } from "./step-list";
 
@@ -153,6 +154,7 @@ function ViewEditor({
     [draft, setDraft] = useState<ViewDefinition>(initial),
     [baseline, setBaseline] = useState(() => stableJson(initial)),
     [selected, setSelected] = useState<Selection>(initial.steps.length > 0 ? 0 : OUTPUT),
+    [savedOutput, setSavedOutput] = useState(initial.output),
     [saving, setSaving] = useState(false),
     [running, setRunning] = useState(false),
     datasetsQuery = useQuery(datasetsStore.listQueryOptions()),
@@ -258,6 +260,7 @@ function ViewEditor({
       await saveView(viewDeps(), viewId, { definition: pruned, inputs: inputRefsOf(pruned) });
       setDraft(pruned);
       setBaseline(stableJson(pruned));
+      setSavedOutput(pruned.output);
       refreshAll();
       toast.success("View saved. Run it to refresh its rows.");
     } catch (error) {
@@ -375,6 +378,7 @@ function ViewEditor({
                 : `Step ${Number(selected) + 1}: ${STEP_TITLES[selectedStep.kind]}`
             }
           />
+          <ExportProfilesCard datasetId={viewId} output={savedOutput} title={header.title} />
           <RunHistory viewId={viewId} />
         </section>
       </div>
@@ -492,84 +496,6 @@ function ViewHeader({
         </p>
       )}
     </header>
-  );
-}
-
-/** The output field list: which of the final fields the view keeps. Empty = every field. */
-function OutputCard({
-  draft,
-  expanded,
-  fields,
-  onChange,
-  onSelect,
-}: {
-  draft: ViewDefinition;
-  expanded: boolean;
-  fields: string[] | undefined;
-  onChange: (next: ViewDefinition) => void;
-  onSelect: () => void;
-}) {
-  const kept = draft.output.fields.map((field) => field.key);
-  const keepsAll = kept.length === 0;
-  const toggle = (name: string, on: boolean): void => {
-    const all = fields ?? [];
-    const current = keepsAll ? all : kept;
-    const next = on ? [...current, name] : current.filter((key) => key !== name);
-    const ordered = all.filter((field) => next.includes(field));
-    const everything = ordered.length === all.length;
-    onChange({
-      ...draft,
-      output: {
-        ...draft.output,
-        fields: everything ? [] : ordered.map((key) => ({ key })),
-      },
-    });
-  };
-  return (
-    <Card className={expanded ? "border-primary/40" : undefined}>
-      <button
-        aria-expanded={expanded}
-        className="flex flex-col items-start px-4 pt-3 pb-3 text-left"
-        onClick={onSelect}
-        type="button"
-      >
-        <span className="text-sm font-medium">Output fields</span>
-        <span className="text-xs text-muted-foreground">
-          {keepsAll
-            ? `All fields${fields === undefined ? "" : ` (${fields.length})`}`
-            : `${kept.length} of ${fields === undefined ? kept.length : fields.length} fields kept`}
-        </span>
-      </button>
-      {expanded && (
-        <CardContent>
-          {fields === undefined ? (
-            <p className="text-sm text-muted-foreground">
-              The final fields aren&apos;t known until the steps are complete.
-            </p>
-          ) : (
-            <>
-              <CardDescription className="mb-2">
-                Untick fields to leave them out of the saved rows. Labels and hidden flags come
-                later.
-              </CardDescription>
-              <div className="grid gap-1.5 sm:grid-cols-2">
-                {fields.map((name) => (
-                  <label className="flex items-center gap-2 text-sm" key={name}>
-                    <Checkbox
-                      checked={keepsAll || kept.includes(name)}
-                      onCheckedChange={(checked) => {
-                        toggle(name, checked);
-                      }}
-                    />
-                    <span className="truncate">{name}</span>
-                  </label>
-                ))}
-              </div>
-            </>
-          )}
-        </CardContent>
-      )}
-    </Card>
   );
 }
 

@@ -110,9 +110,19 @@ export type Step =
 
 export type StepKind = Step["kind"];
 
+export type OutputField = {
+  /** The output property name (a rename when it differs from `from`). */
+  key: string;
+  /** The field of the final row this column reads; defaults to `key`. */
+  from?: string;
+  label?: string;
+  /** Kept in the saved rows but left out of tooltips and exports. */
+  hidden?: boolean;
+};
+
 export type OutputSchema = {
   /** Order = display / export order. */
-  fields: { key: string; label?: string; hidden?: boolean }[];
+  fields: OutputField[];
   emptyFields: "keep" | "omit";
 };
 

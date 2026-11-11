@@ -20,9 +20,14 @@ function withClause(chain: Chain): string {
  * when the whole pipeline is compiled (a step preview shows every field).
  */
 function outputRow(def: ViewDefinition, chain: Chain): string {
-  const keys = def.output.fields.map((field) => field.key);
+  const fields = def.output.fields;
+  const keys = fields.map((field) => field.key);
   if (!chain.complete || keys.length === 0) {
     return "d";
+  }
+  if (fields.some((field) => field.from !== undefined && field.from !== field.key)) {
+    const pairs = chain.bag.jsonb(fields.map((field) => [field.key, field.from ?? field.key]));
+    return `coalesce((select jsonb_object_agg(p ->> 0, d -> (p ->> 1)) from jsonb_array_elements(${pairs}) p where d ? (p ->> 1)), '{}'::jsonb)`;
   }
   const wanted = chain.bag.jsonb(keys);
   return `coalesce((select jsonb_object_agg(e.key, e.value) from jsonb_each(d) e where e.key in (select jsonb_array_elements_text(${wanted}))), '{}'::jsonb)`;
