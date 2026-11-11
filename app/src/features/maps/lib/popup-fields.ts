@@ -63,12 +63,24 @@ export function outputOfDefinition(saved: unknown): OutputSchema | undefined {
   if (!isRecord(saved) || !isRecord(saved["definition"])) {
     return undefined;
   }
-  const output = saved["definition"]["output"];
-  if (!isRecord(output) || !Array.isArray(output["fields"])) {
+  return outputSchemaOf(saved["definition"]["output"]);
+}
+
+/** A raw output jsonb ({fields: [...]}) as an OutputSchema — the shape both the saved view definition and the app-snapshot stamp carry. */
+export function outputSchemaOf(value: unknown): OutputSchema | undefined {
+  if (!isRecord(value) || !Array.isArray(value["fields"])) {
     return undefined;
   }
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the saved definition was validated on save; only its output shape is read here.
-  return output as unknown as OutputSchema;
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the output was validated on save/publish; only its shape is read here.
+  return value as unknown as OutputSchema;
+}
+
+/** A raw ViewDefinition's output block (the `datasets.definition` column shape the publish walks read). */
+export function outputOfViewDefinition(definition: unknown): OutputSchema | undefined {
+  if (!isRecord(definition)) {
+    return undefined;
+  }
+  return outputSchemaOf(definition["output"]);
 }
 
 export interface PopupLayerInput {

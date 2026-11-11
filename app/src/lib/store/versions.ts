@@ -153,6 +153,31 @@ export function getVersionQueryOptions(args: { versionId: string }, options?: St
   });
 }
 
+/**
+ * One frozen version row by (version, entry) — the popup point read over the
+ * SNAPSHOT (issue #330): published apps' map popups run signed-out, and the
+ * live entries read denies anon. `version_entries` is anon-readable through
+ * the version's dataset visibility (0023), so a frozen row answers for both
+ * audiences; `data` is the truth (§3.5) even when the origin entry is gone.
+ */
+export function versionEntryQueryOptions(
+  args: { entryId: string; versionId: string },
+  options?: StoreOptions,
+) {
+  return queryOptions({
+    queryKey: ["pg:versions", "versionEntry", args],
+    queryFn: async () =>
+      await queryRow<VersionEntryRow>(
+        clientOf(options)
+          .from("version_entries")
+          .select(ENTRY_SELECT)
+          .eq("version_id", args.versionId)
+          .eq("entry_id", args.entryId)
+          .limit(1),
+      ),
+  });
+}
+
 export interface VersionEntriesArgs {
   versionId: string;
   /** Opaque continuation from the previous page (`nextCursor`); null/absent = first page. */

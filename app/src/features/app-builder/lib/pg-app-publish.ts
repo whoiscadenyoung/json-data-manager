@@ -1,4 +1,4 @@
-import { buildFrozenTileArchive } from "@/features/maps";
+import { buildFrozenTileArchive, outputOfViewDefinition } from "@/features/maps";
 import * as appVersionsStore from "@/lib/store/app-versions";
 import type {
   AppDatasetPin,
@@ -156,8 +156,20 @@ export async function publishApp(
           "A referenced layer's data membership isn't visible — publish from a project where every referenced layer is visible to you.",
         );
       }
+      // The view's output labels ride the snapshot (#330): anonymous popups
+      // cannot read `view_definition` (authenticated-only grant), so the
+      // publish stamps the labels next to the pin it was read for. One
+      // datasets read per data layer, publish-time only.
+      // oxlint-disable-next-line eslint/no-await-in-loop -- the freeze closure resolves layer by layer; each stamp feeds the entry below.
+      const pinnedDataset = await queryRow<{ definition: unknown; kind: string }>(
+        clientOf(options).from("datasets").select("definition,kind").eq("id", datasetId).limit(1),
+      );
       dataset = {
         datasetId,
+        output:
+          pinnedDataset !== null && pinnedDataset.kind === "view"
+            ? outputOfViewDefinition(pinnedDataset.definition)
+            : undefined,
         ref: frozen.pinnedRef,
         versionId: frozen.pinnedVersionId ?? "",
       };

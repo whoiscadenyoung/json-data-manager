@@ -20,7 +20,7 @@ import {
   splitPointLikeGeometries,
 } from "../lib/point-geometry";
 import type { PopupField } from "../lib/popup-fields";
-import { usePgEnrichedDatasetEntryRow } from "./pg-entry-popup";
+import { useFrozenVersionEntryRow, usePgEnrichedDatasetEntryRow } from "./pg-entry-popup";
 import {
   PgRelatedRecordsPanel,
   PgRelationHighlight,
@@ -378,9 +378,14 @@ function geometryRowsBySchema(
  * mid-stream — the exact bug the stored extents exist to prevent).
  */
 // oxlint-disable-next-line eslint/complexity -- the render paths (row/tile/extension/popup split) are the component's real shape; the deferred #82 phase-2 cleanup owns the decomposition, as in the route workspaces.
+/** The stable empty map behind LayersMap's `frozenEntryVersions` default (the default-prop rule). */
+const NO_FROZEN_ENTRY_VERSIONS: ReadonlyMap<string, string> = new globalThis.Map();
+
 export function LayersMap({
   datasets,
   chainLayers = NO_CHAIN_LAYERS,
+  /** Published canvases: render id → the frozen version its rows come from (#330). Present, the popup reads the FROZEN row (anon can't read live entries); absent, the live point read runs as before. */
+  frozenEntryVersions = NO_FROZEN_ENTRY_VERSIONS,
   geometries,
   titlesById,
   visibleSchemaIds,
@@ -402,6 +407,8 @@ export function LayersMap({
    * `sourceSchemaId` landing click payloads on the published dataset.
    */
   chainLayers?: Array<{ renderId: string; sourceSchemaId: string }>;
+  /** Published canvases only (#330): render id → the frozen `version_entries` source its rows page. */
+  frozenEntryVersions?: ReadonlyMap<string, string>;
   geometries: GeometryEntry[];
   /** Titles for ids that aren't component datasets (derived registry rows), for legends and popup headers. */
   titlesById?: globalThis.Map<string, string>;
@@ -482,7 +489,14 @@ export function LayersMap({
     // selections on archived datasets can't be produced anymore, so the
     // split collapses to the Postgres executor.
     pgPopup = usePgEnrichedDatasetEntryRow(selected === null ? undefined : selected),
-    popup = pgPopup,
+    // Both executors stay mounted; exactly one is live per selection (#330):
+    // a render id with a frozen version reads the snapshot (signed-out
+    // viewers), everything else reads live entries.
+    frozenPopup = useFrozenVersionEntryRow({
+      selected: selected === null ? undefined : selected,
+      versionByRenderId: frozenEntryVersions,
+    }),
+    popup = selected !== null && frozenEntryVersions.has(selected.schemaId) ? frozenPopup : pgPopup,
     selectedDatasetTitle = selected
       ? getDatasetTitle(datasetById, titlesById, selected.schemaId, "")
       : "";

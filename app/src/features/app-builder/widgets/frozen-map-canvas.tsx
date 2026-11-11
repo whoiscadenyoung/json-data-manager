@@ -9,9 +9,12 @@ import {
   colorForIndex,
   LayersMap,
   MAP_TILE_ARCHIVE_FORMAT,
+  outputSchemaOf,
   pgGeometryToLayerRow,
   pgSummaryToDatasetSummary,
+  resolvePopupFields,
 } from "#/features/maps";
+import type { PopupField } from "#/features/maps";
 import type { DatasetGeometryRow } from "#/lib/dataset-rows";
 import type {
   AppMapSnapshot,
@@ -44,12 +47,16 @@ const RESOLVE_DEPTH_LIMIT = 16;
 /** One frozen data layer to draw: its render id (the dataset), its pinned rows source, and its frozen paint. */
 interface FrozenEntry {
   layerVersionId: string;
+  /** The frozen layer's stored `popup` override jsonb (the Popup fields… dialog's write). */
+  popup: unknown;
   renderId: string;
   style: unknown;
   title: string;
   /** The pinned dataset version — null means the layer's data never published (nothing draws). */
   versionId: string | null;
   visible: boolean;
+  /** The pinned view's output-labels stamp (#330) — present only when the pin resolved to a view; undefined renders every property. */
+  output: unknown;
 }
 
 /** The versions list as a lookup (built once per render from the snapshot array). */
@@ -84,6 +91,8 @@ function entriesOfVersion(
     return [
       {
         layerVersionId: version.versionId,
+        output: version.dataset.output,
+        popup: version.definition["popup"],
         renderId: version.dataset.datasetId,
         // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- style rides the definition's shapeless jsonb; the layer-styles validators own its shape.
         style,
@@ -306,6 +315,21 @@ export function FrozenMapCanvas({
     pinTitleById = new globalThis.Map(
       datasetPins.map((pin) => [pin.datasetId, pin.title ?? "Unavailable dataset"]),
     ),
+    // #330: the popup reads the FROZEN row (the live entries read denies
+    // anon) and labels ride the layer's popup override or the pinned view's
+    // output stamp — never an anonymous `view_definition` read.
+    frozenEntryVersions = new globalThis.Map(
+      drawable.flatMap((entry) =>
+        entry.versionId === null ? [] : [[entry.renderId, entry.versionId] as const],
+      ),
+    ),
+    popupFieldsFor = (renderId: string): PopupField[] | undefined => {
+      const entry = drawable.find((candidate) => candidate.renderId === renderId);
+      if (entry === undefined) {
+        return undefined;
+      }
+      return resolvePopupFields(entry.popup, outputSchemaOf(entry.output));
+    },
     layerStyles = useLayerStyles({
       colorBySchema: new globalThis.Map(
         drawable.map((entry, index) => [entry.renderId, colorForIndex(index)]),
@@ -367,7 +391,9 @@ export function FrozenMapCanvas({
           colorBySchema={layerStyles.colorBySchema}
           datasets={summaries.map(pgSummaryToDatasetSummary)}
           extension={layerStyles.extension}
+          frozenEntryVersions={frozenEntryVersions}
           geometries={geometries}
+          popupFieldsFor={popupFieldsFor}
           onTileSourceIdle={(datasetId) => {
             setArrivedTileDatasetIds((prev) => {
               if (prev.has(datasetId)) {
