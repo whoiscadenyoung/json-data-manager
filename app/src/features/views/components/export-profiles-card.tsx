@@ -23,6 +23,7 @@ import {
   updateExportProfile,
 } from "#/lib/store/export-profiles";
 import type { ExportProfileRow } from "#/lib/store/export-profiles";
+import { runView } from "@/lib/store/views";
 
 import {
   defaultSettings,
@@ -75,14 +76,26 @@ function summary(settings: ExportSettings): string {
   return `${settings.format.toUpperCase()} · ${settings.propertyNames} · ${settings.emptyFields} empty · ${precision}`;
 }
 
-/** Reads the SAVED rows (the last run's snapshot) and writes them with the profile's settings. */
+/**
+ * Reads the SAVED rows (the last run's snapshot) and writes them with the
+ * profile's settings. A live view saves nothing on read, so its snapshot can
+ * be arbitrarily old: it is run once first (views-design §7, "exporting a
+ * live view runs it once") and a failed run aborts the export.
+ */
 async function exportFromProfile(
   datasetId: string,
   title: string,
   output: OutputSchema,
   settings: ExportSettings,
   profileName: string,
+  live: boolean,
 ): Promise<void> {
+  if (live) {
+    const outcome = await runView(datasetId);
+    if (outcome.status !== "ok") {
+      throw new Error(`Run failed: ${outcome.error}`);
+    }
+  }
   const [entries, geometries] = await Promise.all([
     fetchDatasetEntryRows(datasetId),
     settings.format === "geojson"
@@ -114,10 +127,13 @@ interface Draft {
  */
 export function ExportProfilesCard({
   datasetId,
+  live,
   output,
   title,
 }: {
   datasetId: string;
+  /** A live view: each export runs the view first, so the file matches what the table shows. */
+  live: boolean;
   output: OutputSchema;
   title: string;
 }) {
@@ -190,7 +206,14 @@ export function ExportProfilesCard({
                       void guard(
                         profile.id,
                         async () => {
-                          await exportFromProfile(datasetId, title, output, settings, profile.name);
+                          await exportFromProfile(
+                            datasetId,
+                            title,
+                            output,
+                            settings,
+                            profile.name,
+                            live,
+                          );
                           toast.success("Export downloaded.");
                         },
                         "Couldn't export the saved rows.",
