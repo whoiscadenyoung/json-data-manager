@@ -307,3 +307,51 @@ describe("the manager's PG summaries loop", () => {
     expect(mocks.invalidateQueries).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("the hard-crash watchdog (#336)", () => {
+  it("reaps a build whose worker went silent (OOM kills fire no error event), then retries on a fresh worker", async () => {
+    mocks.pgSummaries = [pgSummaryRow()];
+    renderHook(() => {
+      tiles.useMapTileArchiveManager();
+    });
+    await vi.advanceTimersByTimeAsync(5000);
+    // One build posted; the worker "dies" — no reply, no error event.
+    const buildsBefore = worker().posted.filter((m) => (m as { type: string }).type === "build");
+    expect(buildsBefore).toHaveLength(1);
+
+    // Silence past the idle timeout (checks run every minute).
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 2 * 60 * 1000);
+    const failure = tiles.getTileArchiveBuildFailure(PG_ID);
+    if (failure === undefined) {
+      throw new Error("no failure recorded for the silent build");
+    }
+    expect(failure.message).toContain("stopped responding");
+    // The scheduler unwedged: the armed retry lands on a FRESH worker.
+    const instancesBefore = FakeWorker.instances.length;
+    await vi.advanceTimersByTimeAsync(1_200_000);
+    expect(FakeWorker.instances.length).toBeGreaterThan(instancesBefore);
+    const second = FakeWorker.instances.at(-1);
+    if (second === undefined) throw new Error("no respawned worker");
+    expect(second.posted.some((m) => (m as { type: string }).type === "build")).toBe(true);
+  });
+
+  it("a build with steady progress is never reaped; only silence trips the watchdog", async () => {
+    mocks.pgSummaries = [pgSummaryRow()];
+    renderHook(() => {
+      tiles.useMapTileArchiveManager();
+    });
+    await vi.advanceTimersByTimeAsync(5000);
+    // Progress ticks every minute for two hours — always inside the window.
+    // (Sequenced on purpose: each tick must land BEFORE the next fake minute
+    // runs the reaper, which a single advanced block would not allow.)
+    for (let minute = 0; minute < 120; minute += 1) {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- each tick must land before the next fake minute runs the reaper.
+      await vi.advanceTimersByTimeAsync(60 * 1000);
+      worker().reply({ done: 1, schemaId: PG_ID, total: 10, type: "progress" });
+    }
+    expect(tiles.getTileArchiveBuildFailure(PG_ID)).toBeUndefined();
+    // Then silence: the reap fires one window after the last tick.
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 2 * 60 * 1000);
+    expect(tiles.getTileArchiveBuildFailure(PG_ID)).toBeDefined();
+  });
+});
