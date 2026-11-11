@@ -3,6 +3,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import type { DatasetGeometryRow } from "#/lib/dataset-rows";
+import type { DatasetGeometryType } from "#/lib/store/datasets";
+import { liveDatasetIdsQueryOptions, liveViewRowsQueryOptions } from "#/lib/store/views";
+import { liveRowsToEntries } from "#/lib/views/live-rows";
 
 import { loadPgGeometryRows, subscribePgGeometryRows } from "../lib/pg-geometry-rows-client";
 import type { PgGeometryRowsWorkerOutbound } from "../lib/pg-geometry-rows.worker";
@@ -157,6 +160,57 @@ export function PgGeometriesLoader({
 }
 
 /**
+ * A LIVE view's geometry rows (issue #305): no saved rows, no worker pass and
+ * no tile archive — one capped server read (the same one the table uses, so
+ * the query cache serves both), reported as a completed pass. The server's
+ * row cap is the "cap rule"; the viewport is applied by the map downstream
+ * exactly as for any row-path layer.
+ */
+export function PgLiveGeometriesLoader({
+  datasetId,
+  onLoaded,
+}: {
+  datasetId: string;
+  onLoaded: (datasetId: string, report: PgGeometriesReport | undefined) => void;
+}) {
+  const query = useQuery(liveViewRowsQueryOptions(datasetId));
+  const live = query.data;
+  useEffect(() => {
+    if (live === undefined) {
+      return;
+    }
+    const entries = liveRowsToEntries(datasetId, live.rows);
+    const rows: PgResolvedGeometryRow[] = [];
+    for (const [index, row] of live.rows.entries()) {
+      const geom = row.geom;
+      const entry = entries[index];
+      if (
+        entry !== undefined &&
+        typeof geom === "object" &&
+        geom !== null &&
+        "type" in geom &&
+        typeof geom.type === "string"
+      ) {
+        rows.push(
+          pgWorkerRowToLayerRow(
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- GeoJSON type names are the PostGIS union.
+            { entryId: entry.id, geometry: geom, type: geom.type as DatasetGeometryType },
+            datasetId,
+          ),
+        );
+      }
+    }
+    onLoaded(datasetId, { complete: true, rows });
+  }, [datasetId, live, onLoaded]);
+  useEffect(() => {
+    if (query.isError) {
+      console.error(`[live-view] ${datasetId}: ${query.error.message}`);
+    }
+  }, [datasetId, query.isError, query.error]);
+  return null;
+}
+
+/**
  * Fan-out loader for several PG datasets' geometries — the
  * `useGeometriesBySchemas` shape (one stable component per dataset, since N
  * reactive paginated queries cannot loop as hooks). Returns `loaders`
@@ -211,6 +265,12 @@ export function useGeometriesByPgDatasets(datasetIds: string[]): {
       const report = reportsByDataset.get(datasetId);
       return report === undefined ? [] : report.rows;
     },
+    // Which of these datasets are live views (read through the server, not
+    // the worker). Loaders wait for the answer so a live view never starts a
+    // doomed worker pass over zero saved rows.
+    liveQuery = useQuery(liveDatasetIdsQueryOptions(datasetIds)),
+    liveIds = liveQuery.data,
+    liveKnown = datasetIds.length === 0 || !liveQuery.isPending,
     allComplete = datasetIds.every(completeFor),
     geometries = allComplete ? datasetIds.flatMap(rowsFor) : undefined,
     anyRows = datasetIds.some((datasetId) => rowsFor(datasetId).length > 0),
@@ -218,9 +278,19 @@ export function useGeometriesByPgDatasets(datasetIds: string[]): {
 
   return {
     geometries,
-    loaders: datasetIds.map((datasetId) => (
-      <PgGeometriesLoader key={datasetId} datasetId={datasetId} onLoaded={handleLoaded} />
-    )),
+    loaders: liveKnown
+      ? datasetIds.map((datasetId) =>
+          liveIds !== undefined && liveIds.has(datasetId) ? (
+            <PgLiveGeometriesLoader
+              key={`live:${datasetId}`}
+              datasetId={datasetId}
+              onLoaded={handleLoaded}
+            />
+          ) : (
+            <PgGeometriesLoader key={datasetId} datasetId={datasetId} onLoaded={handleLoaded} />
+          ),
+        )
+      : [],
     servedGeometries,
     completedCount: datasetIds.filter(completeFor).length,
     datasetCount: datasetIds.length,

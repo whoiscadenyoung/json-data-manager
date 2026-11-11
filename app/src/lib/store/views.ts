@@ -1,10 +1,17 @@
 import { queryOptions } from "@tanstack/react-query";
 
+import { liveRowsToEntries, searchLiveEntries } from "#/lib/views/live-rows";
 import { defaultViewCompiler } from "#/lib/views/view-compiler-wiring";
 import type { ViewDeps, ViewsRpc } from "#/lib/views/view-save";
-import { previewViewFn, runViewFn } from "#/server/views/functions";
+import {
+  previewViewFn,
+  readLiveViewFn,
+  runViewFn,
+  setRefreshModeFn,
+} from "#/server/views/functions";
 
 import { clientOf, queryRows, throwPostgrestError, type StoreOptions } from "./client";
+import type { SearchEntriesArgs, SearchEntriesPage } from "./entries";
 
 /**
  * The views store (issue #300). Two transports, deliberately different:
@@ -95,5 +102,88 @@ export function listRunsQueryOptions(viewId: string, options?: StoreOptions) {
           .order("finished_at", { ascending: false })
           .limit(50),
       ),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Refresh modes (issue #305)
+// ---------------------------------------------------------------------------
+
+/** One live read: the (capped) rows of a live view, computed now as you. */
+export interface LiveViewRows {
+  rows: { row_id?: unknown; d?: unknown; geom?: unknown }[];
+  truncated: boolean;
+  rowCap: number;
+}
+
+export async function readLiveView(viewId: string, options?: StoreOptions): Promise<LiveViewRows> {
+  const result = await readLiveViewFn({
+    data: { accessToken: await accessTokenOf(options), viewId },
+  });
+  return result;
+}
+
+/** Moves a view to manual/auto/live. Auto runs as YOU from now on; live is refused for spatial views. */
+export async function setViewRefreshMode(
+  viewId: string,
+  mode: "manual" | "auto" | "live",
+  options?: StoreOptions,
+): Promise<void> {
+  await setRefreshModeFn({ data: { accessToken: await accessTokenOf(options), viewId, mode } });
+}
+
+/** When the pending auto refresh becomes due (null = none queued). Editors and the creator only (RLS). */
+export function refreshQueueQueryOptions(viewId: string, options?: StoreOptions) {
+  return queryOptions({
+    queryKey: ["pg:view_runs", "queue", viewId],
+    queryFn: async (): Promise<{ dueAt: string; running: boolean } | null> => {
+      const rows = await queryRows<{ dueAt: string; claimedAt: string | null }>(
+        clientOf(options)
+          .from("view_refresh_queue")
+          .select("dueAt:due_at,claimedAt:claimed_at")
+          .eq("view_id", viewId)
+          .limit(1),
+      );
+      const first = rows[0];
+      return first === undefined ? null : { dueAt: first.dueAt, running: first.claimedAt !== null };
+    },
+    refetchInterval: 10_000,
+  });
+}
+
+/** The subset of `datasetIds` that are live views (the map's row path reads those through the live path). */
+export function liveDatasetIdsQueryOptions(datasetIds: string[], options?: StoreOptions) {
+  return queryOptions({
+    queryKey: ["pg:datasets", "liveIds", datasetIds.toSorted()],
+    enabled: datasetIds.length > 0,
+    queryFn: async (): Promise<Set<string>> => {
+      const rows = await queryRows<{ id: string }>(
+        clientOf(options)
+          .from("datasets")
+          .select("id")
+          .in("id", datasetIds)
+          .eq("refresh_mode", "live"),
+      );
+      return new Set(rows.map((row) => row.id));
+    },
+  });
+}
+
+/** The table page of a live view: the single capped read, searched/sorted here (there is no `search_entries` over rows that are not saved). */
+export function liveSearchPageQueryOptions(args: SearchEntriesArgs, options?: StoreOptions) {
+  return queryOptions({
+    queryKey: ["pg:live", args.datasetId, "search", args.query, args.filters, args.sort],
+    queryFn: async (): Promise<SearchEntriesPage> => {
+      const live = await readLiveView(args.datasetId, options);
+      return searchLiveEntries(liveRowsToEntries(args.datasetId, live.rows), args);
+    },
+  });
+}
+
+/** A live view's rows for the table/map: one capped server read, no page chain. */
+export function liveViewRowsQueryOptions(viewId: string, options?: StoreOptions) {
+  return queryOptions({
+    queryKey: ["pg:live", viewId],
+    queryFn: async () => await readLiveView(viewId, options),
   });
 }

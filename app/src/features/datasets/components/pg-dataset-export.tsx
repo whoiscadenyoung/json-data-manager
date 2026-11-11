@@ -3,7 +3,9 @@ import { Download } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { errorMessage } from "#/lib/errors";
 import type { DatasetRow } from "#/lib/store/datasets";
+import { runView } from "#/lib/store/views";
 
 import {
   buildGeoJsonCollection,
@@ -53,6 +55,20 @@ export function PgDatasetExport({ dataset }: { dataset: DatasetRow }) {
   const handleConfirm = async (format: ExportFormat, includeSchema: boolean) => {
     // An export always writes the WHOLE dataset — the seam materializes
     // every row on demand instead of the page holding them.
+    // A live view saves no rows: an export is a snapshot, so run it once
+    // (a normal saved run) and export what that run wrote.
+    if (dataset.refreshMode === "live") {
+      try {
+        const outcome = await runView(dataset.id);
+        if (outcome.status === "error") {
+          toast.error(`Couldn't snapshot the live view: ${outcome.error}`);
+          return;
+        }
+      } catch (error) {
+        toast.error(errorMessage(error, "Couldn't snapshot the live view."));
+        return;
+      }
+    }
     let entries;
     try {
       entries = await pgExportEntries(dataset.id);
@@ -95,11 +111,17 @@ export function PgDatasetExport({ dataset }: { dataset: DatasetRow }) {
   return (
     <>
       <Button
-        disabled={dataset.entryCount === 0}
+        disabled={dataset.entryCount === 0 && dataset.refreshMode !== "live"}
         onClick={() => {
           setOpen(true);
         }}
-        title={dataset.entryCount === 0 ? "Nothing to export yet" : "Download this dataset's rows"}
+        title={
+          dataset.refreshMode === "live"
+            ? "Runs the view once, then downloads that snapshot"
+            : dataset.entryCount === 0
+              ? "Nothing to export yet"
+              : "Download this dataset's rows"
+        }
         variant="outline"
       >
         <Download className="h-4 w-4 mr-2" />

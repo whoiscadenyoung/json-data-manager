@@ -312,13 +312,69 @@ statement_timeout` (default 60 s, `VIEW_RUN_TIMEOUT_MS`), then
   a badge.
 - **Failures** keep the last good rows; the view shows the error and its
   run history.
-- **`auto` mode** queues a run when an input's `data_version` changes,
-  debounced to 60 s (pg_cron or a job table), at most one concurrent run
-  per view.
-- **`live` mode** saves no rows. Reads call a capped RPC that executes
-  the compiled SQL as the invoker. Views with spatial steps cannot be
-  live. A map layer over a live view uses the row path with the
-  viewport and cap rules; tile archives are not built.
+- **`auto` mode** (decided in [views 7], #305; migration 0029):
+  - **Mechanism: a job table drained by the app server, not pg_cron.**
+    pg_cron exists in the stack (0012), but a cron job can only run SQL and
+    a view run needs the TypeScript compiler and the server runner, so cron
+    could at most poke something. Instead an `AFTER UPDATE OF data_version`
+    trigger on `datasets` upserts one `view_refresh_queue` row per unpinned
+    `auto` view that reads the dataset (a view's own run bumps its
+    `data_version`, so chains cascade). `due_at` is first change + 60 s
+    (`jdm.view_refresh_debounce_seconds`); further changes inside the
+    window coalesce into the same row (a fixed coalescing window, not a
+    trailing debounce, so a steady stream of edits cannot starve the
+    refresh). A Nitro plugin starts a loop (`VIEW_REFRESH_POLL_MS`, default
+    15 s) that calls `view_refresh_claim` (`FOR UPDATE SKIP LOCKED`, safe for
+    several app servers) and runs each claim through the ordinary two-phase
+    runner. A claimed row is the per-view lock ("at most one concurrent
+    run"; a claim older than 15 minutes is treated as abandoned); an edit
+    that lands mid-run is remembered in `redo_at` and re-queues one more
+    run when the current one finishes.
+  - **Identity: the editor who turned `auto` on.** `datasets.auto_refresh_by`
+    is set to `auth.uid()` by `set_view_refresh_mode` (re-selecting Auto
+    takes the identity over). The drain runs the view as that user:
+    `role authenticated` plus a claim set for the stored id, so RLS and
+    `can_edit_dataset` apply exactly as for a manual run. The server trusts
+    its own database for this id; no browser token is involved. Why not the
+    creator: a creator who stopped editing would silently keep running
+    something a different editor configured; the person who enabled Auto
+    is the one who accepted its access. If that user loses access (or the
+    profile is deleted), the run fails at the gate, an errored `view_runs`
+    row is written (`view_refresh_record_failure`, which does not need edit
+    rights) and the previous rows stay. The header shows "Last run failed".
+  - `set_view_refresh_mode` is executable only by `view_runner`;
+    `create_view` / `save_view` refuse to move a view to auto/live, so the
+    server's checks cannot be bypassed through PostgREST.
+- **`live` mode** saves no rows (`view_stale` is always false for it).
+  Reads go through the `readLiveViewFn` server function: the compiled SQL
+  runs as the reader in the phase-1 envelope (read-only, rolled back,
+  `statement_timeout` 15 s by default, `VIEW_LIVE_TIMEOUT_MS`) and the
+  result is capped at 20 000 rows (`VIEW_LIVE_ROW_CAP`; longer results are
+  truncated and flagged). A reader who cannot see an input is refused
+  loudly, never shown zero rows.
+  - **Spatial steps.** `isSpatialStep` (`app/src/lib/views/spatial.ts`) is
+    the hook; it answers false for every v1 kind. `live` is refused when it
+    is true for any step, both when the mode is set and on every read (the
+    definition can change after the mode was chosen).
+  - **Table:** the table page reads the capped result once and runs
+    search, filter and sort over it in the browser (`live-rows.ts`); there
+    is no `search_entries` over rows that were never saved.
+  - **Map:** a live view's layer uses the row path through
+    `PgLiveGeometriesLoader` (one capped server read, no worker pass) and
+    the tile manager's watch feed excludes live views, so no archive is
+    ever built. The dataset's declared columns and geometry flag are
+    mirrored by an editor's read (`view_sync_live_meta`, metadata only), so
+    the table has columns and the map treats it as geospatial.
+  - **Exports** snapshot: exporting a live view runs it once (a normal saved
+    run) and exports those rows.
+  - **Measured** (5 000 point rows with five properties, local Docker,
+    Apple silicon, real compiler, warm): 180-320 ms per read for 1.2 MB of
+    JSON; 20 000 rows: 560-730 ms for 4.7 MB. A snapshot run of the same
+    views costs 1.7 s and 5.8 s (it also writes). So the row path is
+    enough at 5k: reads are interactive and the cap keeps the worst case
+    bounded. The 20k cap is also about where a single JSON response and
+    the main-thread GeoJSON build stop feeling instant; beyond that,
+    switch to manual/auto and let the tile archive carry it.
 - **Publishing and freezing** use the existing path.
   `dataset_versions.lineage` records `{ definition, inputVersions }`.
 

@@ -54,6 +54,8 @@ const mocks = vi.hoisted(() => ({
   runView: vi.fn<(id: string) => Promise<unknown>>(),
   saveView: vi.fn<(...args: unknown[]) => Promise<void>>(),
   summaries: [] as unknown[],
+  setViewRefreshMode: vi.fn<(id: string, mode: string) => Promise<void>>(),
+  queue: null as { dueAt: string; running: boolean } | null,
   header: {
     createdBy: "u1",
     dataVersion: 1,
@@ -105,7 +107,12 @@ vi.mock("@/lib/store/view-reads", () => ({
 vi.mock("@/lib/store/views", () => ({
   listRunsQueryOptions: () => ({ queryFn: async () => [], queryKey: ["test:runs"] }),
   previewDraftView: mocks.previewDraftView,
+  refreshQueueQueryOptions: () => ({
+    queryFn: async () => mocks.queue,
+    queryKey: ["test:queue"],
+  }),
   runView: mocks.runView,
+  setViewRefreshMode: mocks.setViewRefreshMode,
   viewDeps: () => ({}),
 }));
 
@@ -181,7 +188,7 @@ describe("PgViewPage (view editor)", () => {
     expect(await screen.findByText(/rows here matched/)).toBeTruthy();
   });
 
-  it("explains why Save and Run are unavailable instead of staying silently disabled", async () => {
+  it("explains why Save and Refresh now are unavailable instead of staying silently disabled", async () => {
     mount();
     await screen.findByText("Deployments per state");
     const save = screen.getByRole("button", { name: /^Save$/ });
@@ -200,7 +207,7 @@ describe("PgViewPage (view editor)", () => {
     });
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
     // Run needs the saved steps: it says so.
-    expect(screen.getByText(/Run: Save your changes first/)).toBeTruthy();
+    expect(screen.getByText(/Refresh now: Save your changes first/)).toBeTruthy();
     fireEvent.click(save);
     await waitFor(() => {
       expect(mocks.saveView).toHaveBeenCalledTimes(1);
@@ -211,6 +218,69 @@ describe("PgViewPage (view editor)", () => {
     expect(JSON.stringify(saved === undefined ? undefined : saved[2])).toContain(
       "deployment_count",
     );
+  });
+
+  it("shows the refresh mode picker with an explanation of the current mode", async () => {
+    mount();
+    await screen.findByText("Deployments per state");
+    expect(screen.getByLabelText("Refresh mode")).toBeTruthy();
+    expect(screen.getByText(/Rows are saved when you press Refresh now/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Refresh now/ })).toBeTruthy();
+  });
+
+  it("switches to live through the picker and says live is computed on read", async () => {
+    mocks.setViewRefreshMode.mockResolvedValue(undefined);
+    mount();
+    await screen.findByText("Deployments per state");
+    const trigger = screen.getByLabelText("Refresh mode");
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+    fireEvent.mouseDown(trigger, { button: 0 });
+    fireEvent.click(trigger);
+    const live = await screen.findByRole("option", { name: "Live" });
+    live.focus();
+    fireEvent.keyDown(live, { key: "Enter" });
+    fireEvent.keyUp(live, { key: "Enter" });
+    fireEvent.click(live);
+    await waitFor(() => {
+      expect(mocks.setViewRefreshMode).toHaveBeenCalledWith("v1", "live");
+    });
+  });
+
+  it("an auto view shows when its next refresh is queued and who it runs as", async () => {
+    mocks.header["refreshMode"] = "auto";
+    mocks.header["autoRefreshBy"] = "u1";
+    mocks.queue = { dueAt: new Date(Date.now() + 40_000).toISOString(), running: false };
+    try {
+      mount();
+      expect(await screen.findByTestId("refresh-queued")).toBeTruthy();
+      expect(screen.getByTestId("refresh-queued").textContent).toMatch(
+        /Next refresh queued, in \d+ seconds/,
+      );
+      expect(screen.getByText(/Runs as the view's creator/)).toBeTruthy();
+    } finally {
+      mocks.header["refreshMode"] = "manual";
+      mocks.header["autoRefreshBy"] = null;
+      mocks.queue = null;
+    }
+  });
+
+  it("a live view says it computes on read and Refresh now only re-reads", async () => {
+    mocks.header["refreshMode"] = "live";
+    try {
+      mount();
+      expect(await screen.findByText("Computed on read")).toBeTruthy();
+      expect(screen.getByText(/computed from the inputs every time they are read/)).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: /Refresh now/ }));
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: /Refresh now/ })).toHaveProperty(
+          "disabled",
+          false,
+        );
+      });
+      expect(mocks.runView).not.toHaveBeenCalled();
+    } finally {
+      mocks.header["refreshMode"] = "manual";
+    }
   });
 
   it("names the required field when the steps are incomplete", async () => {

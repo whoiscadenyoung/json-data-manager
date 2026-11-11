@@ -1,6 +1,7 @@
 import type { Sql, TransactionSql } from "postgres";
 import { z } from "zod";
 
+import type { SpatialStepPredicate } from "#/lib/views/spatial";
 import type {
   CompileInputMeta,
   ViewCompiler,
@@ -38,11 +39,20 @@ export interface RunnerDeps {
   compiler: ViewCompiler;
   /** `statement_timeout` for the phase-1 read, in ms. */
   timeoutMs: number;
+  /** `statement_timeout` for a live read, in ms (default {@link LIVE_TIMEOUT_MS}). */
+  liveTimeoutMs?: number;
+  /** Row cap of a live read (default {@link LIVE_ROW_CAP}). */
+  liveRowCap?: number;
+  /** Which steps are spatial (live refuses them); defaults to `isSpatialStep`. Tests inject a stub. */
+  isSpatialStep?: SpatialStepPredicate;
 }
 
 export const PREVIEW_ROW_LIMIT = 50;
 export const RUN_ROW_LIMIT = 1_000_000;
 export const DEFAULT_TIMEOUT_MS = 60_000;
+/** A live view recomputes on every read, so it gets a tighter budget than a saved run. */
+export const LIVE_TIMEOUT_MS = 15_000;
+export const LIVE_ROW_CAP = 20_000;
 
 const jsonValue = z.json();
 /** A JSON value (server functions only carry serializable results). */
@@ -66,15 +76,15 @@ class ReadDone<T> extends Error {
   }
 }
 
-type Tx = TransactionSql;
+export type Tx = TransactionSql;
 
 /** The first row's `name` column (undefined when there is no row). */
-function cell(rows: readonly Record<string, unknown>[], name: string): unknown {
+export function cell(rows: readonly Record<string, unknown>[], name: string): unknown {
   const row = rows[0];
   return row === undefined ? undefined : row[name];
 }
 
-async function actAs(tx: Tx, who: VerifiedClaims): Promise<void> {
+export async function actAs(tx: Tx, who: VerifiedClaims): Promise<void> {
   await tx.unsafe(
     `select set_config('request.jwt.claims', $1, true), set_config('request.jwt.claim.sub', $2, true)`,
     [JSON.stringify(who.claims), who.sub],
@@ -82,7 +92,7 @@ async function actAs(tx: Tx, who: VerifiedClaims): Promise<void> {
 }
 
 /** Phase 1: runs `work` as the verified user in a read-only, always-rolled-back transaction. */
-async function readAs<T>(
+export async function readAs<T>(
   deps: RunnerDeps,
   who: VerifiedClaims,
   work: (tx: Tx) => Promise<T>,
@@ -109,6 +119,7 @@ const jsonRows = z.array(z.record(z.string(), jsonValue));
 
 const savedSchema = z.object({
   definition: z.unknown(),
+  refreshMode: z.enum(["manual", "auto", "live"]).nullish(),
   inputs: z.array(
     z.object({ alias: z.string(), datasetId: z.string(), pinnedVersion: z.string().nullable() }),
   ),
@@ -124,7 +135,7 @@ const metaSchema = z.array(
   }),
 );
 
-function refsOf(inputs: z.infer<typeof savedSchema>["inputs"]): ViewInputRef[] {
+export function refsOf(inputs: z.infer<typeof savedSchema>["inputs"]): ViewInputRef[] {
   return inputs.map((i) =>
     i.pinnedVersion === null
       ? { alias: i.alias, datasetId: i.datasetId }
@@ -132,7 +143,7 @@ function refsOf(inputs: z.infer<typeof savedSchema>["inputs"]): ViewInputRef[] {
   );
 }
 
-async function metaOf(tx: Tx, inputs: ViewInputRef[]): Promise<CompileInputMeta[]> {
+export async function metaOf(tx: Tx, inputs: ViewInputRef[]): Promise<CompileInputMeta[]> {
   const rows = await tx.unsafe(`select public.view_input_meta($1::jsonb) as r`, [
     JSON.stringify(inputs),
   ]);
@@ -159,7 +170,7 @@ async function metaOf(tx: Tx, inputs: ViewInputRef[]): Promise<CompileInputMeta[
   });
 }
 
-function validated(
+export function validated(
   deps: RunnerDeps,
   definition: unknown,
   meta: CompileInputMeta[],
@@ -202,13 +213,29 @@ async function execute(
   maxRows: number,
   kind: "rows" | "diagnostics" | "raw",
 ): Promise<Record<string, Json>[]> {
+  const out = await executeCapped(tx, compiled, maxRows, kind);
+  if (out.truncated) {
+    throw new Error(`the view result exceeds ${maxRows} rows`);
+  }
+  return out.rows;
+}
+
+/** Like {@link execute}, but an over-cap result is cut at `maxRows` and flagged instead of refused. */
+export async function executeCapped(
+  tx: Tx,
+  compiled: { sql: string; params: unknown[] },
+  maxRows: number,
+  kind: "rows" | "diagnostics" | "raw",
+): Promise<{ rows: Record<string, Json>[]; truncated: boolean }> {
   const columns = columnsOf(kind);
   const wrapped = `select ${columns} from (${compiled.sql}) q limit ${maxRows + 1}`;
   const rows = await tx.unsafe(wrapped, compiled.params.map(paramOf));
-  if (rows.length > maxRows) {
-    throw new Error(`the view result exceeds ${maxRows} rows`);
-  }
-  return jsonRows.parse(rows.map((row) => Object.fromEntries(Object.entries(row))));
+  const truncated = rows.length > maxRows;
+  const kept = truncated ? rows.slice(0, maxRows) : rows;
+  return {
+    rows: jsonRows.parse(kept.map((row) => Object.fromEntries(Object.entries(row)))),
+    truncated,
+  };
 }
 
 function paramOf(value: unknown): string | number | boolean | null {
@@ -218,12 +245,12 @@ function paramOf(value: unknown): string | number | boolean | null {
   return JSON.stringify(value);
 }
 
-function diagnosticsOf(rows: Record<string, Json>[]): Json {
+export function diagnosticsOf(rows: Record<string, Json>[]): Json {
   const first = rows[0];
   return first === undefined ? null : (first["diagnostics"] ?? null);
 }
 
-async function loadSaved(tx: Tx, viewId: string) {
+export async function loadSaved(tx: Tx, viewId: string) {
   const rows = await tx.unsafe(`select public.view_definition($1::uuid) as r`, [viewId]);
   const raw = cell(rows, "r");
   if (raw === null || raw === undefined) {

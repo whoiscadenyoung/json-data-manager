@@ -81,6 +81,8 @@ export interface DatasetRow {
   source: unknown;
   /** 'view' = rows are written only by the view's run (migration 0027). */
   kind: DatasetKind;
+  /** A view's refresh mode (manual/auto/live); null for a source. */
+  refreshMode?: ViewRefreshMode | null;
   /** Bumped per write statement on entries/geometries; the staleness signal. */
   dataVersion: number;
   simplifyGeometry: boolean;
@@ -188,6 +190,7 @@ export const DATASET_FULL_SELECT = [
   "lineage",
   "source",
   "kind",
+  "refreshMode:refresh_mode",
   "dataVersion:data_version",
   "simplifyGeometry:simplify_geometry",
   "sourceFileName:source_file_name",
@@ -294,6 +297,8 @@ export function tileWatchSummariesQueryOptions(options?: StoreOptions) {
         clientOf(options)
           .from("datasets")
           .select(SUMMARY_SELECT)
+          // A live view saves no rows and never gets a tile archive (#305).
+          .or("refresh_mode.is.null,refresh_mode.neq.live")
           .order("created_at", { ascending: false })
           .limit(CATALOG_READ_LIMIT),
       );
