@@ -32,6 +32,7 @@ import { Route as DatasetsSchemaIdEditRouteImport } from './routes/datasets/$sch
 import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects/$projectId/index'
 import { Route as ProjectsProjectIdCatalogRouteImport } from './routes/projects/$projectId/catalog'
 import { Route as ProjectsProjectIdCreateRouteImport } from './routes/projects/$projectId/create'
+import { Route as ProjectsProjectIdLineageRouteImport } from './routes/projects/$projectId/lineage'
 import { Route as ProjectsProjectIdMembersRouteImport } from './routes/projects/$projectId/members'
 import { Route as ProjectsProjectIdPublishRouteImport } from './routes/projects/$projectId/publish'
 import { Route as ProjectsProjectIdScratchRouteImport } from './routes/projects/$projectId/scratch'
@@ -160,6 +161,12 @@ const ProjectsProjectIdCreateRoute = ProjectsProjectIdCreateRouteImport.update({
   path: '/create',
   getParentRoute: () => ProjectsProjectIdRouteRoute,
 } as any)
+const ProjectsProjectIdLineageRoute =
+  ProjectsProjectIdLineageRouteImport.update({
+    id: '/lineage',
+    path: '/lineage',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
 const ProjectsProjectIdMembersRoute =
   ProjectsProjectIdMembersRouteImport.update({
     id: '/members',
@@ -235,6 +242,7 @@ export interface FileRoutesByFullPath {
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
   '/projects/$projectId/catalog': typeof ProjectsProjectIdCatalogRoute
   '/projects/$projectId/create': typeof ProjectsProjectIdCreateRoute
+  '/projects/$projectId/lineage': typeof ProjectsProjectIdLineageRoute
   '/projects/$projectId/members': typeof ProjectsProjectIdMembersRoute
   '/projects/$projectId/publish': typeof ProjectsProjectIdPublishRoute
   '/projects/$projectId/scratch': typeof ProjectsProjectIdScratchRoute
@@ -268,6 +276,7 @@ export interface FileRoutesByTo {
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
   '/projects/$projectId/catalog': typeof ProjectsProjectIdCatalogRoute
   '/projects/$projectId/create': typeof ProjectsProjectIdCreateRoute
+  '/projects/$projectId/lineage': typeof ProjectsProjectIdLineageRoute
   '/projects/$projectId/members': typeof ProjectsProjectIdMembersRoute
   '/projects/$projectId/publish': typeof ProjectsProjectIdPublishRoute
   '/projects/$projectId/scratch': typeof ProjectsProjectIdScratchRoute
@@ -303,6 +312,7 @@ export interface FileRoutesById {
   '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
   '/projects/$projectId/catalog': typeof ProjectsProjectIdCatalogRoute
   '/projects/$projectId/create': typeof ProjectsProjectIdCreateRoute
+  '/projects/$projectId/lineage': typeof ProjectsProjectIdLineageRoute
   '/projects/$projectId/members': typeof ProjectsProjectIdMembersRoute
   '/projects/$projectId/publish': typeof ProjectsProjectIdPublishRoute
   '/projects/$projectId/scratch': typeof ProjectsProjectIdScratchRoute
@@ -339,6 +349,7 @@ export interface FileRouteTypes {
     | '/datasets/$schemaId/edit'
     | '/projects/$projectId/catalog'
     | '/projects/$projectId/create'
+    | '/projects/$projectId/lineage'
     | '/projects/$projectId/members'
     | '/projects/$projectId/publish'
     | '/projects/$projectId/scratch'
@@ -372,6 +383,7 @@ export interface FileRouteTypes {
     | '/datasets/$schemaId/edit'
     | '/projects/$projectId/catalog'
     | '/projects/$projectId/create'
+    | '/projects/$projectId/lineage'
     | '/projects/$projectId/members'
     | '/projects/$projectId/publish'
     | '/projects/$projectId/scratch'
@@ -406,6 +418,7 @@ export interface FileRouteTypes {
     | '/datasets/$schemaId/edit'
     | '/projects/$projectId/catalog'
     | '/projects/$projectId/create'
+    | '/projects/$projectId/lineage'
     | '/projects/$projectId/members'
     | '/projects/$projectId/publish'
     | '/projects/$projectId/scratch'
@@ -607,6 +620,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdCreateRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
+    '/projects/$projectId/lineage': {
+      id: '/projects/$projectId/lineage'
+      path: '/lineage'
+      fullPath: '/projects/$projectId/lineage'
+      preLoaderRoute: typeof ProjectsProjectIdLineageRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
     '/projects/$projectId/members': {
       id: '/projects/$projectId/members'
       path: '/members'
@@ -676,6 +696,7 @@ declare module '@tanstack/react-router' {
 interface ProjectsProjectIdRouteRouteChildren {
   ProjectsProjectIdCatalogRoute: typeof ProjectsProjectIdCatalogRoute
   ProjectsProjectIdCreateRoute: typeof ProjectsProjectIdCreateRoute
+  ProjectsProjectIdLineageRoute: typeof ProjectsProjectIdLineageRoute
   ProjectsProjectIdMembersRoute: typeof ProjectsProjectIdMembersRoute
   ProjectsProjectIdPublishRoute: typeof ProjectsProjectIdPublishRoute
   ProjectsProjectIdScratchRoute: typeof ProjectsProjectIdScratchRoute
@@ -692,6 +713,7 @@ const ProjectsProjectIdRouteRouteChildren: ProjectsProjectIdRouteRouteChildren =
   {
     ProjectsProjectIdCatalogRoute: ProjectsProjectIdCatalogRoute,
     ProjectsProjectIdCreateRoute: ProjectsProjectIdCreateRoute,
+    ProjectsProjectIdLineageRoute: ProjectsProjectIdLineageRoute,
     ProjectsProjectIdMembersRoute: ProjectsProjectIdMembersRoute,
     ProjectsProjectIdPublishRoute: ProjectsProjectIdPublishRoute,
     ProjectsProjectIdScratchRoute: ProjectsProjectIdScratchRoute,
