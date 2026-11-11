@@ -315,6 +315,51 @@ const pendingBuilds = new Map<
   { reject: (error: Error) => void; resolve: (outcome: TileArchiveBuildOutcome) => void }
 >();
 
+// --- Hard-crash watchdog (#336): a worker killed by an out-of-memory crash
+// usually fires NO `error` event — it just stops, the pending build promise
+// never settles, and the scheduler's single-flight stays wedged until a page
+// reload. Every build therefore carries a last-activity stamp (bumped by
+// phase/progress messages); a recurring check reaps builds silent past the
+// idle timeout exactly like the `error` path (fail + backoff + lazy respawn),
+// so an OOM-killed queue recovers itself.
+const BUILD_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+const BUILD_IDLE_CHECK_MS = 60 * 1000;
+const buildActivity = new Map<string, number>();
+
+function noteBuildActivity(schemaId: string): void {
+  buildActivity.set(schemaId, Date.now());
+}
+
+function reapSilentBuilds(): void {
+  const now = Date.now();
+  for (const [schemaId, pending] of pendingBuilds) {
+    const last = buildActivity.get(schemaId);
+    if (last !== undefined && now - last < BUILD_IDLE_TIMEOUT_MS) {
+      continue;
+    }
+    pendingBuilds.delete(schemaId);
+    buildActivity.delete(schemaId);
+    setBuildState(schemaId, "error");
+    const message =
+      "Tile-archive worker stopped responding (possible out-of-memory crash) — the build will retry.";
+    recordBuildFailure(schemaId, message);
+    pending.reject(new Error(message));
+    // Kill the wedged worker so the next build respawns a fresh one (the
+    // `error`-event posture). Builds serialize, so at most one live entry.
+    if (archiveWorker !== undefined) {
+      archiveWorker.terminate();
+      archiveWorker = undefined;
+    }
+  }
+}
+
+let reapTimer: ReturnType<typeof setInterval> | undefined;
+function ensureReapTimer(): void {
+  if (reapTimer === undefined) {
+    reapTimer = setInterval(reapSilentBuilds, BUILD_IDLE_CHECK_MS);
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -425,6 +470,7 @@ function recordBuildProgress(data: Record<string, unknown>, schemaId: string): v
 function handleWorkerProgress(event: MessageEvent<unknown>): void {
   const data: unknown = event.data;
   if (isRecord(data) && data.type === "progress" && typeof data.schemaId === "string") {
+    noteBuildActivity(data.schemaId);
     recordBuildProgress(data, data.schemaId);
   }
 }
@@ -478,6 +524,9 @@ function settleTerminalBuild(
 
 function handleWorkerMessage(event: MessageEvent<unknown>): void {
   const data: unknown = event.data;
+  if (isRecord(data) && typeof data["schemaId"] === "string") {
+    noteBuildActivity(data["schemaId"]);
+  }
   if (!isBuildStateMessage(data)) return;
   const schemaId = String(data.schemaId);
   if (data.type === "phase" && isBuildPhase(data.phase)) {
@@ -487,6 +536,7 @@ function handleWorkerMessage(event: MessageEvent<unknown>): void {
   const pending = pendingBuilds.get(schemaId);
   if (pending === undefined) return;
   pendingBuilds.delete(schemaId);
+  buildActivity.delete(schemaId);
   settleTerminalBuild(data, schemaId, pending);
 }
 
@@ -524,6 +574,8 @@ function getWorker(): Worker {
 
 async function buildViaWorker(schemaId: string): Promise<TileArchiveBuildOutcome> {
   setBuildState(schemaId, "scheduled");
+  noteBuildActivity(schemaId);
+  ensureReapTimer();
   return await new Promise<TileArchiveBuildOutcome>((resolve, reject) => {
     pendingBuilds.set(schemaId, { reject, resolve });
     // `Worker.postMessage` takes (message, transfer) — there is no
