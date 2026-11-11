@@ -11,7 +11,7 @@ import { createView, type ViewDeps, type ViewsRpc } from "#/lib/views/view-save"
 import type { VerifiedClaims } from "#/server/views/claims";
 import { connect } from "#/server/views/entry.server";
 import { runViewAs, type RunnerDeps } from "#/server/views/runner";
-import { scratchAs, wrapScratch, type ScratchTable } from "#/server/views/scratch";
+import { scratchAs, type ScratchTable } from "#/server/views/scratch";
 
 import {
   addEntry,
@@ -225,26 +225,6 @@ describe.skipIf(!dbUp())("scratch query (#306)", () => {
       output: { fields: [], emptyFields: "keep" },
     };
 
-    // Until the compiler's `sql` step lands (feat/views-4-compiler) a stand-in
-    // compiles it exactly the way Scratch does: the same `in_<alias>` CTEs
-    // around the step's query, folded to (row_id, d, geom).
-    const standIn: ViewCompiler = {
-      ...defaultViewCompiler,
-      compileView: (def, inputs) => {
-        const step = def.steps[0];
-        if (step === undefined || step.kind !== "sql") throw new Error("expected a sql step");
-        const prelude: ScratchTable[] = inputs.map((meta) => {
-          const table = tables.find((t) => t.datasetId === meta.datasetId);
-          if (table === undefined) throw new Error("unknown input");
-          return { ...table, name: `in_${meta.alias}` };
-        });
-        return {
-          sql: `select md5(q::text)::uuid as row_id, to_jsonb(q) as d, null::geometry as geom
-from (${wrapScratch(prelude, step.query)}) q`,
-          params: [],
-        };
-      },
-    };
     const rpc: ViewsRpc = {
       call: async (fn, args) => {
         const named = Object.entries(args)
@@ -266,7 +246,7 @@ from (${wrapScratch(prelude, step.query)}) q`,
         return first === undefined ? null : first.r;
       },
     };
-    const viewDeps: ViewDeps = { rpc, compiler: standIn };
+    const viewDeps: ViewDeps = { rpc, compiler: defaultViewCompiler };
     const view = await createView(viewDeps, {
       title: "Cost per state",
       definition,
@@ -276,7 +256,7 @@ from (${wrapScratch(prelude, step.query)}) q`,
     });
     created.views.push(view);
 
-    const outcome = await runViewAs(deps(standIn), who(ALICE), view);
+    const outcome = await runViewAs(deps(), who(ALICE), view);
     expect(outcome.status).toBe("ok");
     const rows = await s().expectOk(
       `select data->>'name' as name, (data->>'total')::numeric::float8 as total

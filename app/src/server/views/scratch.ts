@@ -187,12 +187,15 @@ export async function scratchAs(
   const timeoutMs = Math.min(deps.timeoutMs, options.timeoutMs ?? SCRATCH_TIMEOUT_MS);
   const maxRows = options.maxRows ?? SCRATCH_ROW_LIMIT;
   const started = performance.now();
-  const guarded = sql === undefined ? undefined : guardScratchSql(sql);
   return await readAs({ ...deps, timeoutMs }, who, async (tx) => {
     const tables = await loadScratchTables(tx, projectId);
-    if (guarded === undefined) {
+    if (sql === undefined) {
       return { tables };
     }
+    const guarded = guardScratchSql(
+      sql,
+      tables.map((table) => table.alias),
+    );
     if (!guarded.ok) {
       return {
         tables,

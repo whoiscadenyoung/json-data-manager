@@ -12,6 +12,8 @@ const table: ScratchTable = {
   fields: ["id"],
 };
 
+const ALIASES = ["states"];
+
 describe("aliasesFor", () => {
   it("slugifies titles and de-duplicates with a numeric suffix", () => {
     expect(aliasesFor(["Deployments 2024", "States", "states", "STATES!"])).toStrictEqual([
@@ -50,12 +52,12 @@ describe("scratch SQL layout", () => {
 
 describe("guardScratchSql", () => {
   it("accepts a select and strips trailing semicolons", () => {
-    expect(guardScratchSql("select 1;  ;")).toStrictEqual({ ok: true, sql: "select 1" });
-    expect(guardScratchSql("with a as (select 1) select * from a").ok).toBe(true);
+    expect(guardScratchSql("select 1;  ;", ALIASES)).toStrictEqual({ ok: true, sql: "select 1" });
+    expect(guardScratchSql("with a as (select 1) select * from a", ALIASES).ok).toBe(true);
   });
 
   it("refuses empty input and data-modifying statements with a clear message", () => {
-    expect(guardScratchSql("  ;").ok).toBe(false);
+    expect(guardScratchSql("  ;", ALIASES).ok).toBe(false);
     for (const dml of [
       "delete from public.entries",
       "-- c\nINSERT INTO t values (1)",
@@ -63,7 +65,7 @@ describe("guardScratchSql", () => {
       "drop table t",
       "/* x */ truncate t",
     ]) {
-      const result = guardScratchSql(dml);
+      const result = guardScratchSql(dml, ALIASES);
       expect(result.ok).toBe(false);
       expect(result.ok ? "" : result.error).toMatch(/read-only/);
     }
@@ -77,8 +79,22 @@ describe("guardScratchSql", () => {
       `select "set_config"('a','b',true)`,
       `select U&"set\\005fconfig"('a','b',true)`,
     ]) {
-      expect(guardScratchSql(sql).ok).toBe(false);
+      expect(guardScratchSql(sql, ALIASES).ok).toBe(false);
     }
-    expect(guardScratchSql("select my_set_config_x from t").ok).toBe(true);
+    expect(guardScratchSql("select my_set_config_x from in_states", ALIASES).ok).toBe(true);
+  });
+
+  it("keeps the scratch wording for a denied function", () => {
+    expect(guardScratchSql("select pg_sleep(1)", ALIASES)).toStrictEqual({
+      ok: false,
+      error: "The function pg_sleep() is not allowed in a scratch query.",
+    });
+  });
+
+  it("reads only the scratch tables, and tolerates view-only column rules", () => {
+    expect(guardScratchSql("select * from public.entries", ALIASES).ok).toBe(false);
+    expect(guardScratchSql("select * from nope", ALIASES).ok).toBe(false);
+    expect(guardScratchSql("select count(*) from in_states", ALIASES).ok).toBe(true);
+    expect(guardScratchSql("select 1", ALIASES).ok).toBe(true);
   });
 });
