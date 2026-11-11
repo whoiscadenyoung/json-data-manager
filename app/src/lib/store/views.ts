@@ -165,9 +165,13 @@ export function refreshQueueQueryOptions(viewId: string, options?: StoreOptions)
 /** The subset of `datasetIds` that are live views (the map's row path reads those through the live path). */
 export function liveDatasetIdsQueryOptions(datasetIds: string[], options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:datasets", "liveIds", datasetIds.toSorted()],
+    // "liveIdList" (not "liveIds"): the old key persisted a Set as `{}`.
+    queryKey: ["pg:datasets", "liveIdList", datasetIds.toSorted()],
     enabled: datasetIds.length > 0,
-    queryFn: async (): Promise<Set<string>> => {
+    // A plain array, never a Set: `pg:datasets` is a persisted light-state
+    // namespace and the persister round-trips through JSON, so a Set comes
+    // back as `{}` (`.has is not a function` on the next page load).
+    queryFn: async (): Promise<string[]> => {
       const rows = await queryRows<{ id: string }>(
         clientOf(options)
           .from("datasets")
@@ -175,7 +179,7 @@ export function liveDatasetIdsQueryOptions(datasetIds: string[], options?: Store
           .in("id", datasetIds)
           .eq("refresh_mode", "live"),
       );
-      return new Set(rows.map((row) => row.id));
+      return rows.map((row) => row.id);
     },
   });
 }
