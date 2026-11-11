@@ -281,7 +281,7 @@ export function useGeometriesByPgDatasets(datasetIds: string[]): {
     geometries,
     loaders: liveKnown
       ? datasetIds.map((datasetId) =>
-          liveIds !== undefined && liveIds.has(datasetId) ? (
+          liveIds !== undefined && liveIds.includes(datasetId) ? (
             <PgLiveGeometriesLoader
               key={`live:${datasetId}`}
               datasetId={datasetId}
