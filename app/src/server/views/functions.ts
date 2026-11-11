@@ -49,3 +49,26 @@ export const previewViewFn = createServerFn({ method: "POST" })
       ...step,
     });
   });
+
+const liveInput = z.object({ accessToken: z.string().min(1), viewId: z.string().min(1) });
+
+/** A live view's rows, computed on this read (issue #305): capped, read-only, as the reader. */
+export const readLiveViewFn = createServerFn({ method: "POST" })
+  .inputValidator((input: unknown) => liveInput.parse(input))
+  .handler(async ({ data }) => {
+    const { readLiveForToken } = await import("./entry.server");
+    return await readLiveForToken(data.accessToken, data.viewId);
+  });
+
+const modeInput = z.object({
+  accessToken: z.string().min(1),
+  viewId: z.string().min(1),
+  mode: z.enum(["manual", "auto", "live"]),
+});
+
+export const setRefreshModeFn = createServerFn({ method: "POST" })
+  .inputValidator((input: unknown) => modeInput.parse(input))
+  .handler(async ({ data }) => {
+    const { setRefreshModeForToken } = await import("./entry.server");
+    await setRefreshModeForToken(data.accessToken, data.viewId, data.mode);
+  });

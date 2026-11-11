@@ -88,6 +88,8 @@ export interface ViewHeaderRow {
   kind: "source" | "view";
   lifecycle: "draft" | "published";
   refreshMode: "manual" | "auto" | "live" | null;
+  /** Who automatic runs execute as (auto mode); null otherwise. */
+  autoRefreshBy: string | null;
   stale: boolean;
   entryCount: number;
   dataVersion: number;
@@ -102,7 +104,7 @@ export function viewHeaderQueryOptions(viewId: string, options?: StoreOptions) {
         clientOf(options)
           .from("datasets")
           .select(
-            "id,title,description,kind,lifecycle,refreshMode:refresh_mode,stale:view_stale,entryCount:entry_count,dataVersion:data_version,createdBy:created_by",
+            "id,title,description,kind,lifecycle,refreshMode:refresh_mode,autoRefreshBy:auto_refresh_by,stale:view_stale,entryCount:entry_count,dataVersion:data_version,createdBy:created_by",
           )
           .eq("id", viewId)
           .limit(1),

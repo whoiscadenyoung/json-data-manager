@@ -330,7 +330,8 @@ function PostgresDatasetBody({
     columnTypes = declaredPropertyTypes(
       dataset === undefined || dataset === null ? {} : dataset.jsonSchema,
     ),
-    pages = useSearchEntriesPages(schemaId, tableState, columnTypes),
+    isLive = dataset !== undefined && dataset !== null && dataset.refreshMode === "live",
+    pages = useSearchEntriesPages(schemaId, tableState, columnTypes, isLive),
     rows: DatasetEntryRow[] = pages.rows.map(tableRowOf),
     referenceFields =
       dataset === undefined || dataset === null ? [] : getReferenceFields(dataset.jsonSchema),
@@ -374,7 +375,7 @@ function PostgresDatasetBody({
     viewReason = viewRowsReadOnlyReason(dataset),
     isView = viewReason !== undefined,
     groupForBreadcrumb = groupQuery.data,
-    displayCount = dataset.entryCount,
+    displayCount = isLive ? pages.rows.length : dataset.entryCount,
     isEmpty = displayCount === 0 && pages.isComplete,
     // Table-state patches ride the route's merge-form navigation — only the
     // changed keys are passed, and an explicit `undefined` deletes the param.

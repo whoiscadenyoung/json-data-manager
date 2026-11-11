@@ -41,7 +41,14 @@ import {
   viewHeaderQueryOptions,
 } from "@/lib/store/view-reads";
 import type { ViewHeaderRow } from "@/lib/store/view-reads";
-import { listRunsQueryOptions, previewDraftView, runView, viewDeps } from "@/lib/store/views";
+import {
+  listRunsQueryOptions,
+  previewDraftView,
+  refreshQueueQueryOptions,
+  runView,
+  setViewRefreshMode,
+  viewDeps,
+} from "@/lib/store/views";
 import { saveView } from "@/lib/views/view-save";
 
 import { stepDiagnosticsOf } from "../lib/diagnostics";
@@ -63,6 +70,7 @@ import {
   type InputInfo,
 } from "../lib/view-model";
 import { PreviewPane, type PreviewRow } from "./preview-pane";
+import { RefreshModeControl, type RefreshMode } from "./refresh-mode-control";
 import { FilterForm, GroupByForm, JoinForm } from "./step-forms";
 
 /**
@@ -217,7 +225,11 @@ function ViewEditor({
         ? undefined
         : stepDiagnosticsOf(previewQuery.data.diagnostics, diagnosticsIndex),
     runsQuery = useQuery(listRunsQueryOptions(viewId)),
-    lastRun = (runsQuery.data ?? [])[0];
+    lastRun = (runsQuery.data ?? [])[0],
+    queueQuery = useQuery({
+      ...refreshQueueQueryOptions(viewId),
+      enabled: header.refreshMode === "auto",
+    });
 
   const patchDraft = (next: ViewDefinition): void => {
     setDraft(next);
@@ -282,11 +294,16 @@ function ViewEditor({
       : blockedReason === undefined
         ? undefined
         : `Can't save yet: ${blockedReason}`;
-  const runBlocked = dirty
-    ? "Save your changes first: a run uses the saved steps."
-    : header.kind !== "view"
-      ? "Only views can be run."
-      : undefined;
+  const live = header.refreshMode === "live";
+  // A live view computes from its saved steps on every read, so "Refresh now"
+  // only re-reads; the others run and save.
+  const runBlocked = live
+    ? undefined
+    : dirty
+      ? "Save your changes first: a run uses the saved steps."
+      : header.kind !== "view"
+        ? "Only views can be run."
+        : undefined;
 
   const refreshAll = (): void => {
     void queryClient.invalidateQueries({ queryKey: ["pg:views"] });
@@ -311,7 +328,33 @@ function ViewEditor({
     }
   };
 
+  const [modeBusy, setModeBusy] = useState(false);
+  const changeMode = async (mode: RefreshMode): Promise<void> => {
+    setModeBusy(true);
+    try {
+      await setViewRefreshMode(viewId, mode);
+      refreshAll();
+      void queryClient.invalidateQueries({ queryKey: ["pg:live"] });
+      toast.success(
+        mode === "auto"
+          ? "Auto refresh is on. Runs execute as you."
+          : mode === "live"
+            ? "This view is live: rows are computed on read."
+            : "Refresh set to manual.",
+      );
+    } catch (error) {
+      toast.error(errorMessage(error, "Couldn't change the refresh mode."));
+    } finally {
+      setModeBusy(false);
+    }
+  };
+
   const run = async (): Promise<void> => {
+    if (live) {
+      await queryClient.invalidateQueries({ queryKey: ["pg:live"] });
+      toast.success("Live rows re-read.");
+      return;
+    }
     setRunning(true);
     try {
       const outcome = await runView(viewId);
@@ -337,9 +380,14 @@ function ViewEditor({
         dirty={dirty}
         header={header}
         lastRun={lastRun}
+        onChangeMode={(mode) => {
+          void changeMode(mode);
+        }}
+        modeBusy={modeBusy}
         onRun={() => {
           void run();
         }}
+        queue={queueQuery.data}
         onSave={() => {
           void save();
         }}
@@ -480,6 +528,9 @@ function ViewEditor({
 }
 
 function ViewHeader({
+  modeBusy,
+  onChangeMode,
+  queue,
   dirty,
   header,
   lastRun,
@@ -492,6 +543,9 @@ function ViewHeader({
   saving,
   viewId,
 }: {
+  modeBusy: boolean;
+  onChangeMode: (mode: RefreshMode) => void;
+  queue: { dueAt: string; running: boolean } | null | undefined;
   dirty: boolean;
   header: ViewHeaderRow;
   lastRun:
@@ -518,7 +572,6 @@ function ViewHeader({
           </p>
           <h1 className="truncate text-2xl font-bold text-primary">{header.title}</h1>
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <Badge variant="outline">Refresh: {header.refreshMode ?? "manual"}</Badge>
             {header.stale ? (
               <Badge
                 title="Inputs or steps changed since the last successful run."
@@ -570,14 +623,27 @@ function ViewHeader({
             ) : (
               <Play className="mr-2 h-4 w-4" />
             )}
-            Run
+            Refresh now
           </Button>
         </div>
       </div>
+      <RefreshModeControl
+        autoRunsAs={
+          header.autoRefreshBy === null
+            ? undefined
+            : header.autoRefreshBy === header.createdBy
+              ? "the view's creator"
+              : "the editor who turned Auto on"
+        }
+        busy={modeBusy}
+        mode={header.refreshMode ?? "manual"}
+        onChange={onChangeMode}
+        queue={queue}
+      />
       {(saveBlocked !== undefined || runBlocked !== undefined) && (
         <ul className="text-xs text-muted-foreground" data-testid="action-reasons">
           {saveBlocked !== undefined && <li>Save: {saveBlocked}</li>}
-          {runBlocked !== undefined && <li>Run: {runBlocked}</li>}
+          {runBlocked !== undefined && <li>Refresh now: {runBlocked}</li>}
         </ul>
       )}
       {lastRun !== undefined && lastRun.status === "error" && lastRun.error !== null && (

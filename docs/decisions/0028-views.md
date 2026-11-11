@@ -63,6 +63,10 @@ compatibility and no migration of stored derived specs.
      Live is limited to views without spatial steps, and is read through
      the capped, viewport-scoped path that the map runtime already uses.
    - Exports are always a saved snapshot.
+   - (#305) `auto` is a job table (`view_refresh_queue`) filled by a
+     `data_version` trigger and drained by the app server, running as the
+     editor who turned it on; `live` reads are a capped server function.
+     Details and measurements: `docs/views-design.md` §7.
 4. **One SQL engine: Postgres.** A TanStack Start server function
    connects directly to Postgres as the signed-in user: it verifies the
    token, then sets `role authenticated` and the JWT claims, so RLS applies
