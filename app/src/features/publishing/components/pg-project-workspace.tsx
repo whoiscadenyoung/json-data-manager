@@ -34,13 +34,13 @@ import {
   FilePlus2,
   GitBranch,
   History,
-  Import,
   LayoutDashboard,
   Link2,
   ListPlus,
   Map as MapIcon,
   MapPlus,
   Loader2,
+  Plus,
   Rocket,
   Search,
   Trash2,
@@ -901,8 +901,8 @@ export function PgProjectOverview() {
           </p>
           <div className="flex flex-wrap gap-2">
             <RouterButton params={{ projectId }} to="/projects/$projectId/create">
-              <Import className="mr-2 h-4 w-4" />
-              Create / import
+              <Plus className="mr-2 h-4 w-4" />
+              Add dataset
             </RouterButton>
             <RouterButton
               params={{ projectId }}
@@ -971,8 +971,8 @@ export function PgProjectCatalog() {
           <EmptyContent>
             <div className="flex flex-wrap justify-center gap-2">
               <RouterButton params={{ projectId }} to="/projects/$projectId/create">
-                <Import className="mr-2 h-4 w-4" />
-                Create / import
+                <Plus className="mr-2 h-4 w-4" />
+                Add dataset
               </RouterButton>
               <Button
                 disabled={!canEdit}

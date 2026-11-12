@@ -7,6 +7,7 @@ import { Label } from "@caden/ui/components/label";
 import { Textarea } from "@caden/ui/components/textarea";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
+import { Rocket } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -15,10 +16,12 @@ import * as projectsStore from "@/lib/store/projects";
 
 import { VIEWER_REASON } from "../lib/pg-viewer-posture";
 import { useProjectShell } from "./pg-project-context";
+import { PgBundleStatusLine } from "./pg-project-workspace";
 
-/** The Project → Settings section (issue #271): rename + description for editors, delete for owners (memberships cascade; the datasets themselves stay). */
+/** The Project → Settings section (issue #271): rename + description for editors, delete for owners (memberships cascade; the datasets themselves stay), and — demoted from the toolbar — the publish-bundle press (#271 follow-up). */
 export function PgProjectSettings() {
-  const { canEdit, invalidateAll, myRole, project, projectId } = useProjectShell(),
+  const { canEdit, catalog, invalidateAll, myRole, openPress, pressing, project, projectId } =
+      useProjectShell(),
     queryClient = useQueryClient(),
     navigate = useNavigate(),
     [title, setTitle] = useState(project.title),
@@ -132,6 +135,31 @@ export function PgProjectSettings() {
           </Button>
         </div>
       </Card>
+      <div className="mt-8 flex flex-col gap-2">
+        <h2 className="text-sm font-semibold text-muted-foreground">Publishing</h2>
+        <p className="text-sm text-muted-foreground">
+          Publishing materialises this project's datasets into the global catalog as one bundle
+          collection.
+        </p>
+        <PgBundleStatusLine projectId={projectId} />
+        <div>
+          <Button
+            disabled={pressing || catalog.length === 0 || !canEdit}
+            onClick={openPress}
+            title={
+              !canEdit
+                ? VIEWER_REASON
+                : catalog.length === 0
+                  ? "Nothing to publish yet — add a dataset first."
+                  : undefined
+            }
+            type="button"
+          >
+            <Rocket className="mr-2 h-4 w-4" />
+            {pressing ? "Publishing…" : "Publish bundle"}
+          </Button>
+        </div>
+      </div>
       <ConfirmDialog
         confirmLabel="Delete"
         description="The project and its memberships are deleted. This cannot be undone."

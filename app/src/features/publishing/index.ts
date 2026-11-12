@@ -11,6 +11,8 @@ export {
 export { PgProjectsBrowser } from "./components/pg-projects-browser";
 export { PgPublishBundleDialog } from "./components/pg-publish-bundle-dialog";
 export { PgPublishDialog } from "./components/pg-publish-dialog";
+export { useProjectShell } from "./components/pg-project-context";
+export { VIEWER_REASON } from "./lib/pg-viewer-posture";
 export {
   PgAddToProjectSheet,
   PgDatasetCardAddToProjectButton,
