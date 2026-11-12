@@ -6,10 +6,12 @@ import type {
   DatasetImportRow,
 } from "@caden/json-cms/react/ui";
 import { DatasetImporter } from "@caden/json-cms/react/ui";
+import type { DatasetImporterPhase } from "@caden/json-cms/react/ui";
 import { Card, CardDescription, CardHeader, CardTitle } from "@caden/ui/components/card";
+import { cn } from "@caden/ui/lib/utils";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, FilePlus2, Upload } from "lucide-react";
+import { ArrowLeft, CheckCircle, FilePlus2, Upload } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -33,18 +35,67 @@ import { runPgImport } from "../lib/pg-import-pipeline";
  * drafts). Discarding a failed attempt removes the membership with the
  * dataset (the artifact reference is a text id; no FK would clean it up).
  *
- * Same two start points as the original flow — schema first, or import a
- * file (`DatasetImporter`'s client-side `@caden/importers` parse is
- * unchanged) — and every write rides the `#/lib/store/*` modules: the
- * datasets row is a Postgres insert, the rows stream through
- * `import_entries` in ~1.5 MB chunks with an `imports` history row per
- * attempt, and the original file is retained in the `source-files` bucket.
+ * The flow reads as three explicit steps — choose a method, prepare & review
+ * the data, then the import itself — with the importer's phase (dropzone →
+ * review → importing) driving the second/third boundary, and a dropped
+ * batch keeping the flow open between files (`remainingInQueue`). Same two
+ * start points as the original flow — schema first, or import a file — and
+ * every write rides the `#/lib/store/*` modules: the datasets row is a
+ * Postgres insert, the rows stream through `import_entries` in ~1.5 MB
+ * chunks with an `imports` history row per attempt, and the original file is
+ * retained in the `source-files` bucket.
  *
  * Deliberately absent here still: the tile-archive scheduling (stage 2 owns
  * the map path).
  */
 
 type Mode = "choose" | "schema" | "import";
+
+/** The zero-based step the stepper shows as current, derived from the mode + the importer's live phase. */
+function currentStep(mode: Mode, phase: DatasetImporterPhase | undefined): 0 | 1 | 2 {
+  if (mode === "choose") {
+    return 0;
+  }
+  if (mode === "schema") {
+    return 1;
+  }
+  return phase === "importing" ? 2 : 1;
+}
+
+/** The three-step header: Choose method → Prepare & review → Import. */
+function ImportFlowSteps({ current }: { current: 0 | 1 | 2 }) {
+  const steps = ["Choose method", "Prepare & review", "Import"];
+  return (
+    <ol aria-label="Import progress" className="mb-6 flex flex-wrap items-center gap-2">
+      {steps.map((label, index) => (
+        <li className="flex items-center gap-2" key={label}>
+          <span
+            aria-current={index === current ? "step" : undefined}
+            className={cn(
+              "flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium",
+              index === current
+                ? "bg-primary text-primary-foreground"
+                : index < current
+                  ? "bg-primary/10 text-primary"
+                  : "bg-muted text-muted-foreground",
+            )}
+          >
+            {index < current ? <CheckCircle className="h-3.5 w-3.5" /> : index + 1}
+          </span>
+          <span
+            className={cn(
+              "text-sm",
+              index === current ? "font-medium text-foreground" : "text-muted-foreground",
+            )}
+          >
+            {label}
+          </span>
+          {index < steps.length - 1 && <span aria-hidden className="mx-1 h-px w-8 bg-border" />}
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 /** The create args both paths send — the store's `create` arg set. Every dataset this flow births is a draft (the owned-draft rule; ADR 0018). */
 function createArgs(
@@ -76,7 +127,9 @@ function useAvailableDatasets(): Array<{ id: string; schema: unknown; title: str
 }
 
 export function PostgresCreateDatasetPage({ projectId }: { projectId: string }) {
-  const [mode, setMode] = useState<Mode>("choose");
+  const [mode, setMode] = useState<Mode>("choose"),
+    // The importer's live phase — the second/third step boundary rides it.
+    [importerPhase, setImporterPhase] = useState<DatasetImporterPhase | undefined>(undefined);
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-8">
@@ -110,9 +163,10 @@ export function PostgresCreateDatasetPage({ projectId }: { projectId: string }) 
         </p>
       </div>
 
+      <ImportFlowSteps current={currentStep(mode, importerPhase)} />
       {mode === "choose" && <PathChooser onChoose={setMode} />}
       {mode === "schema" && <SchemaFirst projectId={projectId} />}
-      {mode === "import" && <ImportFirst projectId={projectId} />}
+      {mode === "import" && <ImportFirst onPhaseChange={setImporterPhase} projectId={projectId} />}
     </main>
   );
 }
@@ -153,7 +207,7 @@ function PathChooser({ onChoose }: { onChoose: (mode: Mode) => void }) {
             <CardTitle>Import data</CardTitle>
             <CardDescription>
               Upload a JSON, CSV, or Excel file. We read every row to infer a matching schema and
-              pre-populate the dataset.
+              pre-populate the dataset. Several files at once import as a batch.
             </CardDescription>
           </CardHeader>
         </Card>
@@ -211,7 +265,44 @@ async function bindOwnedDraft(datasetId: string, projectId: string): Promise<voi
   }
 }
 
-function ImportFirst({ projectId }: { projectId: string }) {
+/**
+ * The retained original file (§10 step 4) — uploaded before the row chunks
+ * so a failed retention aborts before any row lands. A retention failure
+ * means NOTHING landed: the half-created empty draft is removed here (the
+ * owned binding cascades with it) instead of waiting for a Discard the user
+ * may never press — leaving the page used to orphan it (#274). Throws the
+ * user-facing error; `onDraftGone` tells the caller the dataset id is spent.
+ */
+async function retainSourceFile(
+  datasetId: string,
+  file: File,
+  onDraftGone: () => void,
+): Promise<void> {
+  try {
+    await datasetsStore.uploadSourceFile({ datasetId, file });
+  } catch (uploadError) {
+    let removed = true;
+    try {
+      await datasetsStore.remove({ datasetId });
+    } catch {
+      removed = false;
+    }
+    onDraftGone();
+    throw new Error(
+      `The import failed while retaining the source file: ${errorMessage(uploadError, "the upload was refused")}. No rows were imported${removed ? " and the empty draft was removed" : " — the empty draft could not be removed automatically, discard it from the project's catalog"}. Check the file size against the storage cap and retry.`,
+      { cause: uploadError },
+    );
+  }
+}
+
+function ImportFirst({
+  onPhaseChange,
+  projectId,
+}: {
+  /** The importer's live phase (dropzone → review → importing) — drives the page stepper. */
+  onPhaseChange: (phase: DatasetImporterPhase) => void;
+  projectId: string;
+}) {
   const navigate = useNavigate(),
     queryClient = useQueryClient(),
     [datasetId, setDatasetId] = useState<string | undefined>(),
@@ -247,14 +338,22 @@ function ImportFirst({ projectId }: { projectId: string }) {
     });
   }
 
-  async function navigateToDataset() {
-    toast.success("Dataset imported into the project as an owned draft.");
+  // Leaves the flow for the project page — the single-file success path and
+  // the batch card's "Back to project".
+  async function leaveFlow() {
     await navigate({ params: { projectId }, to: "/projects/$projectId" });
   }
 
   return (
     <DatasetImporter
       progress={progress}
+      onFinish={() => {
+        void leaveFlow();
+      }}
+      onResetProgress={() => {
+        setProgress(null);
+      }}
+      onPhaseChange={onPhaseChange}
       recovery={{
         // Re-import into the SAME dataset: whatever partial rows the failed
         // attempt committed are cleared first, then the full file runs again
@@ -270,7 +369,7 @@ function ImportFirst({ projectId }: { projectId: string }) {
           await entriesStore.clearDatasetRows({ datasetId });
           setProgress(null);
           await runImport(datasetId, rows, options);
-          await navigateToDataset();
+          await leaveFlow();
         },
         // Delete the dataset the failed import created — nothing left behind
         // (the cascade removes its entries, geometries, and import rows).
@@ -286,11 +385,11 @@ function ImportFirst({ projectId }: { projectId: string }) {
           toast.success("Draft dataset discarded.");
           setDatasetId(undefined);
           setProgress(null);
-          await navigate({ params: { projectId }, to: "/projects/$projectId" });
+          await leaveFlow();
         },
         // Keep the (draft) dataset and leave the flow.
         onBack: () => {
-          void navigate({ params: { projectId }, to: "/projects/$projectId" });
+          void leaveFlow();
         },
       }}
       onImport={async (
@@ -302,6 +401,7 @@ function ImportFirst({ projectId }: { projectId: string }) {
         kind,
         geometryType,
         options,
+        context,
       ) => {
         // The dataset is created as a lifecycle DRAFT and binds as the
         // project's OWNED artifact (ADR 0018) — it NEVER auto-flips: the
@@ -323,34 +423,25 @@ function ImportFirst({ projectId }: { projectId: string }) {
           // row lands (the file-retention ordering precedent).
           await bindOwnedDraft(newDatasetId, projectId);
           // The retained original file (§10 step 4) — uploaded before the
-          // chunks so a failed retention aborts before any row lands. A
-          // retention failure means NOTHING landed: the half-created empty
-          // draft is removed here (the owned binding cascades with it)
-          // instead of waiting for a Discard the user may never press —
-          // leaving the page used to orphan it (#274).
+          // chunks so a failed retention aborts before any row lands.
           if (options.sourceFile !== null) {
-            try {
-              await datasetsStore.uploadSourceFile({
-                datasetId: newDatasetId,
-                file: options.sourceFile,
-              });
-            } catch (uploadError) {
-              let removed = true;
-              try {
-                await datasetsStore.remove({ datasetId: newDatasetId });
-              } catch {
-                removed = false;
-              }
+            await retainSourceFile(newDatasetId, options.sourceFile, () => {
               setDatasetId(undefined);
-              throw new Error(
-                `The import failed while retaining the source file: ${errorMessage(uploadError, "the upload was refused")}. No rows were imported${removed ? " and the empty draft was removed" : " — the empty draft could not be removed automatically, discard it from the project's catalog"}. Check the file size against the storage cap and retry.`,
-              );
-            }
+            });
           }
           await runImport(newDatasetId, rows, options);
           void queryClient.invalidateQueries({ queryKey: ["pg:datasets"] });
           void queryClient.invalidateQueries({ queryKey: ["pg:projects"] });
-          await navigateToDataset();
+          if (context.remainingInQueue > 0) {
+            // A batch keeps the flow open — the importer's completed card
+            // offers the next file; navigating away here would strand it.
+            toast.success(
+              `Imported ${context.fileName} — ${context.remainingInQueue} file${context.remainingInQueue === 1 ? "" : "s"} still queued.`,
+            );
+            return;
+          }
+          toast.success("Dataset imported into the project as an owned draft.");
+          await leaveFlow();
         } catch (error) {
           // `runPgImport` already closed its `imports` row as failed with the
           // error text; this catch is the UI half — the progress card shows

@@ -4,17 +4,18 @@ import { detectCurrencyColumns } from "@caden/data-core/currency";
 import type { CurrencyColumnGuess } from "@caden/data-core/currency";
 import type { GeometryType } from "@caden/data-core/geojson";
 import { enabledAcceptString, enabledExtensionsHint, findImportParser } from "@caden/importers";
-import type { ImportParseResult, ParsedSheet } from "@caden/importers";
+import type { ImportParseError, ImportParseResult, ParsedSheet } from "@caden/importers";
 import {
   AlertTriangle,
   CheckCircle,
   FileJson,
+  Layers,
   Loader2,
   Trash2,
   Upload,
   XCircle,
 } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import {
@@ -63,10 +64,29 @@ export interface DatasetImportOptions {
   sourceFile: File | null;
 }
 
+/** Where the importer's UI currently sits — the host's multistep header keys off this. */
+export type DatasetImporterPhase = "dropzone" | "review" | "importing";
+
+/** What the host learns about the attempt as it starts — the batch position (how many queued files remain after this one) drives whether the host navigates away on completion. */
+export interface DatasetImportContext {
+  fileName: string;
+  remainingInQueue: number;
+}
+
+/** One file waiting in the multi-file import queue. */
+interface ImportQueueItem {
+  id: string;
+  file: File;
+  status: "ready" | "reviewing" | "importing" | "done" | "failed";
+}
+
 export interface DatasetImporterProps {
   /**
    * Create the schema + entries from the reviewed schema and imported rows.
-   * Wire this to `useDatasetImport().start` in the app.
+   * Wire this to `useDatasetImport().start` in the app. `context.remainingInQueue`
+   * is 0 for a single-file import; for a batch it's the count of queued files
+   * after the current one, so the host can hold the flow open instead of
+   * navigating away mid-queue.
    */
   onImport: (
     schemaJson: string,
@@ -77,6 +97,7 @@ export interface DatasetImporterProps {
     kind: "standard" | "geospatial",
     geometryType: GeometryType | undefined,
     options: DatasetImportOptions,
+    context: DatasetImportContext,
   ) => Promise<void>;
   /**
    * Recovery actions for a FAILED import (issue #129): retry re-runs the
@@ -86,11 +107,29 @@ export interface DatasetImporterProps {
   recovery?: ImportRecoveryActions;
   /** Live progress of the running import (drives the progress bar). */
   progress?: DatasetImportProgress | null;
+  /**
+   * Announces where the importer's UI sits ("dropzone" → "review" →
+   * "importing") so a host can render its multistep header. Fires on
+   * mount and on every change.
+   */
+  onPhaseChange?: (phase: DatasetImporterPhase) => void;
+  /**
+   * The user moved off a finished/abandoned attempt back to the queue or a
+   * new review — the host's live `progress` state belongs to the superseded
+   * attempt and should reset. Without this, a completed batch's status would
+   * keep the finished card mounted over the next file's review.
+   */
+  onResetProgress?: () => void;
+  /** Leaves the import flow entirely (the host navigates away) — the completed batch card's exit. */
+  onFinish?: () => void;
   saveLabel?: string;
 }
 
 const ACCEPT = enabledAcceptString(),
   EXTENSIONS_HINT = enabledExtensionsHint();
+
+/** Parse-warning list cap before "+ N more". */
+const MAX_PARSE_ERRORS_SHOWN = 10;
 
 /** Whether this file is JSON-shaped enough to be worth sniffing for GeoJSON before falling through to the generic parser registry (GeoJSON detection needs the raw parsed document, not a registry parser's already-flattened rows). */
 function looksLikeJsonFile(file: File): boolean {
@@ -332,8 +371,8 @@ function ImportProgressView({
   );
 }
 
-/** Empty-state dropzone for the initial data upload. */
-function DatasetDropzone({ onFile }: { onFile: (file: File) => void }) {
+/** Empty-state dropzone for the initial data upload. Several dropped files enqueue as a batch; one file starts the usual single-file review. */
+function DatasetDropzone({ onFiles }: { onFiles: (files: File[]) => void }) {
   const inputRef = useRef<HTMLInputElement>(null),
     [isDragging, setIsDragging] = useState(false),
     openPicker = () => {
@@ -347,7 +386,8 @@ function DatasetDropzone({ onFile }: { onFile: (file: File) => void }) {
         <CardTitle>Import data</CardTitle>
         <CardDescription>
           Upload a JSON, CSV, or Excel file. Every row is read to infer a schema that&apos;s valid
-          against your data; you can refine it before saving.
+          against your data; you can refine it before saving. Several files at once import as a
+          batch, one review each.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -355,12 +395,10 @@ function DatasetDropzone({ onFile }: { onFile: (file: File) => void }) {
           ref={inputRef}
           type="file"
           accept={ACCEPT}
+          multiple
           className="hidden"
           onChange={(e) => {
-            const file = firstFile(e.target.files);
-            if (file) {
-              onFile(file);
-            }
+            onFiles([...(e.target.files ?? [])]);
             e.target.value = "";
           }}
         />
@@ -396,9 +434,9 @@ function DatasetDropzone({ onFile }: { onFile: (file: File) => void }) {
           onDrop={(e) => {
             e.preventDefault();
             setIsDragging(false);
-            const file = e.dataTransfer.files[0];
-            if (file) {
-              onFile(file);
+            const files = [...e.dataTransfer.files];
+            if (files.length > 0) {
+              onFiles(files);
             }
           }}
         >
@@ -408,8 +446,124 @@ function DatasetDropzone({ onFile }: { onFile: (file: File) => void }) {
           <p className="text-sm font-medium">
             {isDragging ? "Drop your file here" : "Drag & drop a data file, or click to browse"}
           </p>
-          <p className="text-xs">{EXTENSIONS_HINT}</p>
+          <p className="text-xs">{EXTENSIONS_HINT} — drop several to import them as a batch</p>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** The parse warnings a tabular ingest skipped — the "Skipped N rows" toast's details, now inspectable (line numbers included). */
+function ParseErrorsPanel({ errors }: { errors: ImportParseError[] }) {
+  const shown = errors.slice(0, MAX_PARSE_ERRORS_SHOWN),
+    overflow = errors.length - shown.length;
+  return (
+    <div className="rounded-md border border-amber-600/40 bg-amber-500/10 px-3 py-2 text-xs">
+      <p className="mb-1.5 flex items-center gap-1.5 font-medium text-amber-700 dark:text-amber-400">
+        <AlertTriangle className="h-3.5 w-3.5" />
+        {errors.length.toLocaleString()} row{errors.length === 1 ? "" : "s"} skipped while parsing
+      </p>
+      <ul className="space-y-1 text-muted-foreground">
+        {shown.map((error, i) => (
+          // oxlint-disable-next-line react/no-array-index-key -- error list can carry repeated messages.
+          <li className="flex gap-1.5" key={i}>
+            <span className="font-mono shrink-0">
+              {error.sheet !== undefined ? `${error.sheet} · ` : ""}
+              {error.line !== undefined ? `line ${error.line}` : "row"}
+            </span>
+            <span className="truncate">{error.message}</span>
+          </li>
+        ))}
+        {overflow > 0 && <li>+ {overflow} more skipped.</li>}
+      </ul>
+    </div>
+  );
+}
+
+/** The multi-file queue: every dropped file with its status and per-file actions. One file reviews/imports at a time — the rest wait here. */
+function ImportQueueView({
+  items,
+  onReview,
+  onRemove,
+}: {
+  items: ImportQueueItem[];
+  onReview: (id: string) => void;
+  onRemove: (id: string) => void;
+}) {
+  const statusChip = (status: ImportQueueItem["status"]) => {
+    const map: Record<ImportQueueItem["status"], { className: string; label: string }> = {
+      ready: { className: "bg-muted text-muted-foreground", label: "Queued" },
+      reviewing: { className: "bg-primary/10 text-primary", label: "In review" },
+      importing: { className: "bg-primary/10 text-primary", label: "Importing" },
+      done: {
+        className: "bg-emerald-600/10 text-emerald-700 dark:text-emerald-400",
+        label: "Imported",
+      },
+      failed: { className: "bg-destructive/10 text-destructive", label: "Failed" },
+    };
+    const chip = map[status];
+    return (
+      <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-medium", chip.className)}>
+        {chip.label}
+      </span>
+    );
+  };
+  return (
+    <Card className="mx-auto w-full max-w-xl">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Layers className="h-4 w-4 text-muted-foreground" />
+          Import queue ({items.length.toLocaleString()} file{items.length === 1 ? "" : "s"})
+        </CardTitle>
+        <CardDescription>
+          Each file gets its own review and lands as its own dataset. Review them one at a time —
+          the queue keeps your place.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {items.map((item) => (
+          <div
+            className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2"
+            key={item.id}
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <FileJson className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="truncate text-sm" title={item.file.name}>
+                {item.file.name}
+              </span>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                ({Math.ceil(item.file.size / 1024).toLocaleString()} KB)
+              </span>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {statusChip(item.status)}
+              {(item.status === "ready" || item.status === "failed") && (
+                <Button
+                  onClick={() => {
+                    onReview(item.id);
+                  }}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  {item.status === "failed" ? "Review again" : "Review"}
+                </Button>
+              )}
+              {item.status !== "importing" && item.status !== "done" && (
+                <Button
+                  onClick={() => {
+                    onRemove(item.id);
+                  }}
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </div>
+          </div>
+        ))}
       </CardContent>
     </Card>
   );
@@ -561,6 +715,8 @@ function DatasetReview({
   coordinateFields,
   onCoordinateFieldsChange,
   suggestions,
+  parseErrors,
+  onBackToQueue,
   geometryPreview,
   featureFieldsChrome,
   schemaRevision,
@@ -586,6 +742,10 @@ function DatasetReview({
   onCoordinateFieldsChange: (fields: { latField: string; lonField: string }) => void;
   /** The Suggestions card (#291), rendered above the schema editor. */
   suggestions: ReactNode;
+  /** Tabular rows the parser skipped — the inspectable list behind the "N rows skipped" toast. */
+  parseErrors: ImportParseError[];
+  /** Present while a batch queue holds other files — abandons this review back to the queue. */
+  onBackToQueue?: () => void;
   /** The geospatial preview card (sketch + flagged rows), shown for geospatial imports. */
   geometryPreview?: ReactNode;
   /** The feature-fields preservation picker, shown for GeoJSON imports carrying parent-level fields. */
@@ -605,6 +765,11 @@ function DatasetReview({
           </span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {onBackToQueue !== undefined && (
+            <Button onClick={onBackToQueue} type="button" variant="ghost" size="sm">
+              Back to queue
+            </Button>
+          )}
           <input
             ref={reuploadInputRef}
             type="file"
@@ -638,6 +803,7 @@ function DatasetReview({
         The schema below was inferred from your data. Refine it as needed — every imported row must
         stay valid, or re-upload data that matches. Saving creates the dataset and imports the rows.
       </div>
+      {parseErrors.length > 0 && <ParseErrorsPanel errors={parseErrors} />}
       {geometryPreview}
       {suggestions}
       <SchemaEditor
@@ -782,6 +948,21 @@ function defaultFeatureSelection(options: readonly GeoJsonFeatureField[]): strin
   return options.some((field) => field.key === "id") ? ["id"] : [];
 }
 
+/** Marks the queue item whose import attempt just started (a no-op outside a batch review). */
+function markQueueItemImporting(
+  setQueue: (update: (current: ImportQueueItem[]) => ImportQueueItem[]) => void,
+  activeQueueId: string | null,
+): void {
+  if (activeQueueId === null) {
+    return;
+  }
+  setQueue((current) =>
+    current.map((entry) =>
+      entry.id === activeQueueId ? { ...entry, status: "importing" } : entry,
+    ),
+  );
+}
+
 /** The success toast after a currency column was typed (#291). */
 function typedAsNumberMessage(field: string, converted: number, blanks: number): string {
   const blankNote = blanks > 0 ? `, ${blanks.toLocaleString()} blank cells left empty` : "";
@@ -817,6 +998,9 @@ export function DatasetImporter({
   onImport,
   recovery,
   progress,
+  onPhaseChange,
+  onResetProgress,
+  onFinish,
   saveLabel = "Create dataset",
 }: DatasetImporterProps) {
   const [rows, setRows] = useState<DatasetImportRow[] | null>(null),
@@ -824,6 +1008,16 @@ export function DatasetImporter({
     [dataText, setDataText] = useState(""),
     [fileName, setFileName] = useState<string | null>(null),
     [submitting, setSubmitting] = useState(false),
+    // The multi-file queue: every dropped file lands here; one reviews and
+    // imports at a time. A single dropped file behaves exactly like the old
+    // one-shot flow (an implicit one-item queue).
+    [queue, setQueue] = useState<ImportQueueItem[]>([]),
+    // The queue item currently under review / import (null on the plain
+    // dropzone). Its file's name/context rides `onImport`.
+    [activeQueueId, setActiveQueueId] = useState<string | null>(null),
+    // Tabular parse warnings ("N rows skipped"), kept for the review
+    // screen's inspectable list — the toast alone only ever counted them.
+    [parseErrors, setParseErrors] = useState<ImportParseError[]>([]),
     // Dataset-level kind/geometry state, owned here and threaded into
     // `SchemaEditor`'s controlled "Dataset Type" section (see schema-editor.tsx).
     [datasetKind, setDatasetKind] = useState<"standard" | "geospatial">("standard"),
@@ -994,6 +1188,7 @@ export function DatasetImporter({
     // exactly one (the common case — apply it directly), or several (an
     // Excel workbook with multiple tabs — let the user pick one first).
     applyParseResult = (result: ImportParseResult, sourceName: string, keepSchema: boolean) => {
+      setParseErrors(result.errors);
       if (result.sheets.length === 0) {
         toast.error(
           result.errors.length > 0
@@ -1022,6 +1217,9 @@ export function DatasetImporter({
     // a JSON file that isn't GeoJSON-shaped — goes through the generic
     // parser registry (JSON/JSONL, CSV, Excel; see `import-parsers/registry.ts`).
     ingest = async (file: File, keepSchema: boolean) => {
+      // Each file's warnings start clean — parse warnings (tabular) and
+      // feature errors (GeoJSON) repopulate from the new parse.
+      setParseErrors([]);
       // Remember the exact source file — it's uploaded alongside the row
       // chunks and retained on the dataset for re-download.
       setSourceFile(file);
@@ -1058,6 +1256,28 @@ export function DatasetImporter({
         return;
       }
       applyParseResult(result, file.name, keepSchema);
+    },
+    // The dropzone's entry: one file keeps the classic immediate review;
+    // several enqueue as a batch and the first starts reviewing right away.
+    ingestFiles = (files: File[]) => {
+      if (files.length === 0) {
+        return;
+      }
+      if (files.length === 1) {
+        void ingest(files[0], false);
+        return;
+      }
+      const items: ImportQueueItem[] = files.map((file, index) => ({
+        file,
+        id: `${Date.now().toString(36)}-${index}`,
+        status: "ready",
+      }));
+      // The first file starts reviewing immediately — mark it so the batch
+      // context counts only files that are genuinely still waiting.
+      items[0].status = "reviewing";
+      setQueue(items);
+      setActiveQueueId(items[0].id);
+      void ingest(files[0], false);
     },
     handleSheetSelect = (sheetName: string) => {
       if (!workbookSheets) {
@@ -1198,6 +1418,43 @@ export function DatasetImporter({
         recovery.onBack();
       }
     },
+    // A failed batch item leaves the flow via "Back" (its dataset stays as a
+    // draft) — the queue marks it failed so the user can come back for it.
+    abandonReviewToQueue = () => {
+      if (onResetProgress !== undefined) {
+        onResetProgress();
+      }
+      setRows(null);
+      setDataText("");
+      setInferredJson("");
+      setFileName(null);
+      setWorkbookSheets(null);
+      setActiveQueueId(null);
+      setQueue((current) =>
+        current.map((entry) =>
+          entry.status === "reviewing" ? { ...entry, status: "ready" } : entry,
+        ),
+      );
+    },
+    // The next queued file's review — the completed card's primary action
+    // and the queue list's per-item Review button both land here.
+    reviewQueued = (id: string) => {
+      const item = queue.find((candidate) => candidate.id === id);
+      if (item === undefined) {
+        return;
+      }
+      if (onResetProgress !== undefined) {
+        onResetProgress();
+      }
+      setActiveQueueId(id);
+      setQueue((current) =>
+        current.map((entry) => (entry.id === id ? { ...entry, status: "reviewing" } : entry)),
+      );
+      void ingest(item.file, false);
+    },
+    removeQueued = (id: string) => {
+      setQueue((current) => current.filter((entry) => entry.id !== id));
+    },
     handleSave: SchemaEditorSave = async (
       schemaJson,
       parsedSchema,
@@ -1213,7 +1470,11 @@ export function DatasetImporter({
         toast.warning(finalRows.warning);
       }
 
+      // The batch context rides every attempt: the host holds the flow open
+      // (instead of navigating away) while queued files remain.
+      const remainingInQueue = queue.filter((entry) => entry.status === "ready").length;
       setSubmitting(true);
+      markQueueItemImporting(setQueue, activeQueueId);
       try {
         await onImport(
           schemaJson,
@@ -1224,6 +1485,10 @@ export function DatasetImporter({
           datasetKind,
           datasetKind === "geospatial" ? (geometryType ?? "Point") : undefined,
           { simplifyGeometry, sourceFile },
+          {
+            fileName: sourceFile !== null ? sourceFile.name : (fileName ?? ""),
+            remainingInQueue,
+          },
         );
       } catch (error) {
         setSubmitting(false);
@@ -1232,7 +1497,83 @@ export function DatasetImporter({
       }
     },
     status = progress ? progress.status : undefined,
-    importing = submitting || (status !== undefined && status !== "completed");
+    importing = submitting || (status !== undefined && status !== "completed"),
+    queueReadyCount = queue.filter((entry) => entry.status === "ready").length,
+    phase: DatasetImporterPhase =
+      importing || status !== undefined
+        ? "importing"
+        : rows !== null || workbookSheets !== null
+          ? "review"
+          : "dropzone";
+
+  // Mirror the attempt outcome onto the queue item, so a failed file shows
+  // as failed (reviewable again) and a completed one as imported.
+  useEffect(() => {
+    if (activeQueueId === null || status === undefined) {
+      return;
+    }
+    if (status === "completed" || status === "failed") {
+      setQueue((current) =>
+        current.map((entry) =>
+          entry.id === activeQueueId
+            ? { ...entry, status: status === "completed" ? "done" : "failed" }
+            : entry,
+        ),
+      );
+    }
+  }, [activeQueueId, setQueue, status]);
+
+  // Announce where the flow sits so the host's multistep header tracks it.
+  useEffect(() => {
+    if (onPhaseChange !== undefined) {
+      onPhaseChange(phase);
+    }
+  }, [onPhaseChange, phase]);
+
+  if (status === "completed" && queueReadyCount > 0) {
+    // A batch step finished and files remain — hold the flow open with the
+    // queue instead of letting the host navigate away.
+    return (
+      <div className="flex flex-col gap-3">
+        <Card className="mx-auto w-full max-w-xl">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <CheckCircle className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+              Dataset imported
+            </CardTitle>
+            <CardDescription>
+              {fileName !== null ? `${fileName} is in the project as an owned draft. ` : ""}
+              {queueReadyCount.toLocaleString()} file{queueReadyCount === 1 ? "" : "s"} still
+              queued.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap items-center gap-2">
+            {(() => {
+              const next = queue.find((entry) => entry.status === "ready");
+              return next !== undefined ? (
+                <Button
+                  onClick={() => {
+                    reviewQueued(next.id);
+                  }}
+                  size="sm"
+                  type="button"
+                >
+                  <Upload className="mr-1.5 h-3.5 w-3.5" />
+                  Review next file
+                </Button>
+              ) : null;
+            })()}
+            {onFinish !== undefined && (
+              <Button onClick={onFinish} size="sm" type="button" variant="outline">
+                Back to project
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+        <ImportQueueView items={queue} onRemove={removeQueued} onReview={reviewQueued} />
+      </div>
+    );
+  }
 
   if (importing || status === "completed") {
     return (
@@ -1290,6 +1631,8 @@ export function DatasetImporter({
         coordinateFields={coordinateFields}
         onCoordinateFieldsChange={setCoordinateFields}
         suggestions={suggestions}
+        parseErrors={parseErrors}
+        onBackToQueue={queue.length > 0 ? abandonReviewToQueue : undefined}
         geometryPreview={geometryPreviewFor(
           datasetKind,
           buildFinalRows().rows ?? rows,
@@ -1306,5 +1649,21 @@ export function DatasetImporter({
     );
   }
 
-  return <DatasetDropzone onFile={(file) => void ingest(file, false)} />;
+  return (
+    <div className="flex flex-col gap-3">
+      <DatasetDropzone onFiles={ingestFiles} />
+      {queue.length > 0 && (
+        <>
+          <ImportQueueView items={queue} onRemove={removeQueued} onReview={reviewQueued} />
+          {onFinish !== undefined &&
+            queueReadyCount === 0 &&
+            queue.every((entry) => entry.status === "done" || entry.status === "failed") && (
+              <Button className="mx-auto" onClick={onFinish} size="sm" type="button">
+                Back to project
+              </Button>
+            )}
+        </>
+      )}
+    </div>
+  );
 }
