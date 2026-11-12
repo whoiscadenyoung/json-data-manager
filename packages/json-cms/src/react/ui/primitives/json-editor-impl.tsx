@@ -10,29 +10,25 @@ import { useEffect, useMemo, useRef } from "react";
 import { useColorScheme } from "../lib/use-color-scheme.js";
 import { cn } from "../lib/utils.js";
 
+/**
+ * Schema-metadata lint on the code view, kept in lockstep with the form
+ * editor's rules (schema-editor's `schemaMetaError`): only `title` is
+ * required. JSON Schema itself never requires `description`, and the
+ * form's description field is optional — flagging it here but not there was
+ * an inconsistency, so the code view no longer warns about it.
+ */
 function objectMetaWarnings(parsed: object, docLength: number): Diagnostic[] {
-  const out: Diagnostic[] = [];
   if (!("title" in parsed) || typeof parsed.title !== "string" || !parsed.title.trim()) {
-    out.push({
-      from: 0,
-      message: 'Schema must have a non-empty "title" property',
-      severity: "warning",
-      to: docLength,
-    });
+    return [
+      {
+        from: 0,
+        message: 'Schema must have a non-empty "title" property',
+        severity: "warning",
+        to: docLength,
+      },
+    ];
   }
-  if (
-    !("description" in parsed) ||
-    typeof parsed.description !== "string" ||
-    !parsed.description.trim()
-  ) {
-    out.push({
-      from: 0,
-      message: 'Schema must have a non-empty "description" property',
-      severity: "warning",
-      to: docLength,
-    });
-  }
-  return out;
+  return [];
 }
 
 function semanticJsonDiagnostics(doc: string): Diagnostic[] {
@@ -94,7 +90,7 @@ export interface JsonEditorProps {
   onBlur?: () => void;
   placeholder?: string;
   height?: string;
-  /** Suppress the meta-schema linter that checks for object/title/description. Use on data editors. */
+  /** Suppress the meta-schema linter that checks for object/title. Use on data editors. */
   disableSchemaLinting?: boolean;
   /** When provided, validate the editor content against this JSON Schema using codemirror-json-schema. */
   jsonSchema?: object;

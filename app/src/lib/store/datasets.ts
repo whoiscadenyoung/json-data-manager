@@ -326,15 +326,20 @@ export function getQueryOptions(args: { datasetId: string }, options?: StoreOpti
  * A fetchable URL for the dataset's retained import source file
  * (`source-files` bucket), or null when there is none —
  * `api.cms.schemas.getSourceFileUrl` parity (source-file retention, §3.2).
+ * The URL carries the `download` disposition with the file's real name, so a
+ * re-download lands as e.g. "grant awards.csv" rather than the storage key.
  */
 export function getSourceFileUrlQueryOptions(args: { datasetId: string }, options?: StoreOptions) {
   return queryOptions({
     queryKey: ["pg:datasets", "getSourceFileUrl", args],
     queryFn: async () => {
-      const row = await queryRow<{ sourceFilePath: string | null }>(
+      const row = await queryRow<{
+        sourceFileName: string | null;
+        sourceFilePath: string | null;
+      }>(
         clientOf(options)
           .from("datasets")
-          .select("sourceFilePath:source_file_path")
+          .select("sourceFileName:source_file_name, sourceFilePath:source_file_path")
           .eq("id", args.datasetId)
           .limit(1),
       );
@@ -343,7 +348,9 @@ export function getSourceFileUrlQueryOptions(args: { datasetId: string }, option
       }
       const { data, error } = await clientOf(options)
         .storage.from("source-files")
-        .createSignedUrl(row.sourceFilePath, STORAGE_SIGNED_URL_TTL_SECONDS);
+        .createSignedUrl(row.sourceFilePath, STORAGE_SIGNED_URL_TTL_SECONDS, {
+          download: row.sourceFileName ?? true,
+        });
       if (error !== null) {
         throw new Error(error.message);
       }
@@ -684,7 +691,11 @@ export async function uploadSourceFile(
   options?: StoreOptions,
 ): Promise<{ path: string; affected: number }> {
   const client = clientOf(options);
-  const path = `${args.datasetId}/${encodeURIComponent(args.file.name)}`;
+  // The RAW file name — storage keeps decoded object keys, so an encoded
+  // path here would surface as literal "%20" everywhere the path or the
+  // re-download's name is shown (the supabase-js client URL-encodes for the
+  // wire itself; encoding at this layer double-encodes).
+  const path = `${args.datasetId}/${args.file.name}`;
   const { error } = await client.storage.from(SOURCE_FILE_BUCKET).upload(path, args.file, {
     upsert: true,
   });

@@ -13,6 +13,7 @@
 import { csvParser } from "./csv-parser.js";
 import { jsonParser } from "./json-parser.js";
 import type { ImportParser } from "./types.js";
+import { xlsParser } from "./xls-parser.js";
 import { xlsxParser } from "./xlsx-parser.js";
 
 interface RegisteredParser {
@@ -24,6 +25,7 @@ const REGISTRY: RegisteredParser[] = [
   { enabled: true, parser: jsonParser },
   { enabled: true, parser: csvParser },
   { enabled: true, parser: xlsxParser },
+  { enabled: true, parser: xlsParser },
 ];
 
 /** Enabled parsers, in registration order. */

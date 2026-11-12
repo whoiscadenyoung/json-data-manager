@@ -23,6 +23,7 @@ import { Link } from "@tanstack/react-router";
 import {
   Calendar,
   Database,
+  FileDown,
   FolderKanban,
   FolderTree,
   Layers,
@@ -41,6 +42,7 @@ import { toast } from "sonner";
 import { PgConsumersCard, PgVersionsCard } from "#/features/versions";
 import { useSession } from "@/integrations/supabase/provider";
 import { errorMessage } from "@/lib/errors";
+import { formatBytes } from "@/lib/format";
 import * as appsStore from "@/lib/store/apps";
 import * as collectionsStore from "@/lib/store/collections";
 import type { CollectionRow } from "@/lib/store/collections";
@@ -110,6 +112,43 @@ function EditingRow({ editPolicy }: { editPolicy: "open" | "locked" }) {
       <dd className="flex items-center gap-1 text-sm">
         <PencilOff className="h-3.5 w-3.5 text-muted-foreground" />
         Locked — creator only
+      </dd>
+    </div>
+  );
+}
+
+/**
+ * The retained import source file (design §10 step 4): the original file's
+ * name + size with a signed re-download link. Mounted only when a file was
+ * retained (`source_file_path` non-null). The URL comes from
+ * `getSourceFileUrlQueryOptions` with the `download` disposition carrying the
+ * real name — spaces and all (the fix for the percent-encoded storage paths).
+ */
+function SourceFileRow({ dataset }: { dataset: DatasetRow }) {
+  const query = useQuery(datasetsStore.getSourceFileUrlQueryOptions({ datasetId: dataset.id })),
+    url = query.data;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Source file
+      </dt>
+      <dd className="flex min-w-0 flex-wrap items-center gap-1 text-sm">
+        <FileDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <span className="truncate" title={dataset.sourceFileName ?? undefined}>
+          {dataset.sourceFileName ?? "Retained file"}
+        </span>
+        {dataset.sourceFileSize !== null && (
+          <span className="text-muted-foreground">({formatBytes(dataset.sourceFileSize)})</span>
+        )}
+        {url ? (
+          <a
+            href={url}
+            download
+            className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline"
+          >
+            Download
+          </a>
+        ) : null}
       </dd>
     </div>
   );
@@ -275,6 +314,7 @@ function PgDetailsCard({ dataset }: { dataset: DatasetRow }) {
           </div>
           <CreatedByRow authId={dataset.createdBy} />
           <EditingRow editPolicy={dataset.editPolicy} />
+          {dataset.sourceFilePath !== null && <SourceFileRow dataset={dataset} />}
         </dl>
         {editing && (
           <MetadataEditForm
