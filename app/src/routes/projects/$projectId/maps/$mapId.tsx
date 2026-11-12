@@ -113,6 +113,8 @@ function ProjectMapRoutePage() {
 }
 
 /** The editor's draw-order color palette (the assigned-color round-robin; a styled layer's swatch color overrides it via the styling hook). */
+const NO_LIVE_IDS: ReadonlySet<string> = new globalThis.Set();
+
 const PALETTE = [
   "#3b82f6",
   "#10b981",
@@ -438,6 +440,7 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
     ),
     pgRowIds = split.rowSchemaIds.filter((schemaId) => isPostgresDatasetId(schemaId)),
     pgFan = useGeometriesByPgDatasets(pgRowIds),
+    liveViewIds = pgFan.liveIds ?? NO_LIVE_IDS,
     geometries = pgFan.geometries,
     servedGeometries = pgFan.servedGeometries,
     [arrivedTileSchemaIds, setArrivedTileSchemaIds] = useState<Set<string>>(() => new Set()),
@@ -673,6 +676,7 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
             {(servedGeometries !== undefined || split.tileSources.length > 0) && (
               <LayersMap
                 chainLayers={[]}
+                liveViewIds={liveViewIds}
                 popupFieldsFor={popupFieldsFor}
                 colorBySchema={styledColorBySchema}
                 datasets={mapDatasets}

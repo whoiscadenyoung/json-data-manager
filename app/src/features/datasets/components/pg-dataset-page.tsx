@@ -675,10 +675,17 @@ function PostgresDatasetBody({
             <CardHeader>
               <CardTitle>Data ({displayCount})</CardTitle>
               <CardDescription>
-                Data entries created from this schema. Search, sorting, and filters run on the
-                database, so the filter menu offers the operators it serves — "contains", "is", and
-                "is not" on text, typed comparisons on number and boolean columns.
+                {isLive
+                  ? "Computed on read from this view's inputs. Search, sorting and filters run here over the computed result."
+                  : 'Data entries created from this schema. Search, sorting, and filters run on the database, so the filter menu offers the operators it serves — "contains", "is", and "is not" on text, typed comparisons on number and boolean columns.'}
               </CardDescription>
+              {pages.liveTruncation !== undefined && pages.liveTruncation.truncated && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Showing the first {pages.liveTruncation.rowCount.toLocaleString()} rows this read
+                  returned — live reads are capped at {pages.liveTruncation.rowCap.toLocaleString()}
+                  . Narrow with search, or press Refresh now on the view to save a full snapshot.
+                </p>
+              )}
             </CardHeader>
             <CardContent>
               {isEmpty ? (
@@ -726,6 +733,7 @@ function PostgresDatasetBody({
                   editDisabledHint={
                     isView ? viewReason : lockedForViewer ? LOCKED_DATASET_HINT : undefined
                   }
+                  liveRows={isLive}
                   onLoadMore={pages.loadMore}
                   onEdit={openEditPanel}
                   onDelete={

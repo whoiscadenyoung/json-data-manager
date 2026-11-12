@@ -32,6 +32,8 @@ import { pgSummaryToDatasetSummary } from "./pg-layer-rows";
  */
 
 /** The editor's draw-order color palette (the assigned-color round-robin; a styled layer's swatch color overrides it via the styling hook). */
+const NO_LIVE_IDS: ReadonlySet<string> = new globalThis.Set();
+
 const PALETTE = [
   "#3b82f6",
   "#10b981",
@@ -311,6 +313,7 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
     ),
     pgRowIds = split.rowSchemaIds.filter((schemaId) => isPostgresDatasetId(schemaId)),
     pgFan = useGeometriesByPgDatasets(pgRowIds),
+    liveViewIds = pgFan.liveIds ?? NO_LIVE_IDS,
     [arrivedTileSchemaIds, setArrivedTileSchemaIds] = useState<Set<string>>(() => new Set()),
     geometriesComplete =
       pgFan.geometries !== undefined &&
@@ -362,6 +365,7 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
       {shouldMount ? (
         <LayersMap
           chainLayers={[]}
+          liveViewIds={liveViewIds}
           popupFieldsFor={popupFieldsFor}
           colorBySchema={styledColorBySchema}
           datasets={mapDatasets}

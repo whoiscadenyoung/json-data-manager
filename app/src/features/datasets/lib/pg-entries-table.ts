@@ -5,9 +5,9 @@ import {
   type FilterOperator,
   type FilterVariant,
 } from "@caden/ui/niko-table/types";
-import { useQueries, type UseQueryResult } from "@tanstack/react-query";
+import { useQueries, useQuery, type UseQueryResult } from "@tanstack/react-query";
 import type { SortingState, Updater } from "@tanstack/react-table";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { applyEntryRowSpecs } from "#/lib/dataset-rows-pg";
 import {
@@ -19,7 +19,8 @@ import {
   type SearchFilter,
   type SearchSort,
 } from "#/lib/store/entries";
-import { liveSearchPageQueryOptions } from "#/lib/store/views";
+import { liveViewRowsQueryOptions } from "#/lib/store/views";
+import { liveRowsToEntries, searchLiveEntries } from "#/lib/views/live-rows";
 
 /**
  * The Postgres entries table's state layer (design doc §8.4): the
@@ -346,6 +347,18 @@ function pageCursorOf(result: UseQueryResult<SearchEntriesPage> | undefined): st
  * (the declared property types) drives the filter-value coercion — see
  * `filtersToSearchFilters`.
  */
+/** The {@link useSearchEntriesPages} result: the visible rows plus the streaming/completeness flags the ui-polish rules gate on. */
+export interface SearchPagesResult {
+  rows: EntryRow[];
+  isLoading: boolean;
+  isLoadingMore: boolean;
+  canLoadMore: boolean;
+  isComplete: boolean;
+  /** A live view's cap facts (#331); undefined elsewhere. */
+  liveTruncation?: { rowCount: number; rowCap: number; truncated: boolean };
+  loadMore: () => void;
+}
+
 export function useSearchEntriesPages(
   datasetId: string,
   state: PgTableState,
@@ -353,6 +366,24 @@ export function useSearchEntriesPages(
   /** A live view: no saved rows to page, so one capped server read is searched/sorted client-side. */
   live = false,
 ) {
+  // The live branch (#331): ONE capped server read on a stable key — the
+  // search/sort/filter arguments apply client-side over the cached rows, so
+  // typing or sorting never re-fetches the read.
+  const liveRead = useQuery({
+    ...liveViewRowsQueryOptions(datasetId),
+    enabled: live,
+  });
+  const livePage = useMemo(() => {
+    if (!live || liveRead.data === undefined) {
+      return undefined;
+    }
+    const base = liveRowsToEntries(datasetId, liveRead.data.rows);
+    return searchLiveEntries(base, searchArgsOf(datasetId, state, null, columnTypes));
+    // The args ride `state` as one reference; oxlint forbids the spread-list
+    // deps this would otherwise need.
+    // oxlint-disable-next-line react/exhaustive-deps -- `state` is the single source of the search args.
+  }, [live, liveRead.data, datasetId, state]);
+
   const stateKey = stateKeyOf(state),
     // Keyed on the state so navigating between datasets (or a changed
     // filter/sort/search) restarts the chain instead of replaying old cursors.
@@ -367,7 +398,7 @@ export function useSearchEntriesPages(
     results = useQueries({
       queries: cursors.map((cursor) => {
         const args = searchArgsOf(datasetId, state, cursor, columnTypes);
-        return live ? liveSearchPageQueryOptions(args) : searchEntriesQueryOptions(args);
+        return searchEntriesQueryOptions(args);
       }),
     }),
     firstResult = results[0],
@@ -388,6 +419,27 @@ export function useSearchEntriesPages(
     });
   };
 
+  if (live) {
+    // The live result (#331): the whole capped read searched client-side —
+    // one page, no cursor chain, and the truncation facts the UI surfaces.
+    const truncated = liveRead.data !== undefined && liveRead.data.truncated;
+    return {
+      rows: applyEntryRowSpecs(livePage === undefined ? [] : livePage.rows),
+      isLoading: liveRead.isPending,
+      isLoadingMore: false,
+      canLoadMore: false,
+      isComplete: liveRead.isSuccess,
+      loadMore: () => undefined,
+      liveTruncation:
+        liveRead.data === undefined
+          ? undefined
+          : {
+              rowCount: liveRead.data.rows.length,
+              rowCap: liveRead.data.rowCap,
+              truncated,
+            },
+    };
+  }
   return {
     rows: applyEntryRowSpecs(results.flatMap(pageRowsOf)),
     // The first page's pending state only — later pages stream in below the
@@ -398,6 +450,7 @@ export function useSearchEntriesPages(
     // Completeness rides the RPC's null cursor on a RESOLVED last page —
     // never `isLoading`, which drops after the first page lands.
     isComplete: lastResult !== undefined && lastResult.isSuccess && lastCursor === null,
+    liveTruncation: undefined,
     loadMore,
   };
 }

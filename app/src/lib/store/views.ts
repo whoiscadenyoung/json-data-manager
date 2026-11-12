@@ -1,6 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
 
-import { liveRowsToEntries, searchLiveEntries } from "#/lib/views/live-rows";
 import { defaultViewCompiler } from "#/lib/views/view-compiler-wiring";
 import type { ViewDeps, ViewsRpc } from "#/lib/views/view-save";
 import {
@@ -12,7 +11,6 @@ import {
 } from "#/server/views/functions";
 
 import { clientOf, queryRows, throwPostgrestError, type StoreOptions } from "./client";
-import type { SearchEntriesArgs, SearchEntriesPage } from "./entries";
 
 /**
  * The views store (issue #300). Two transports, deliberately different:
@@ -180,17 +178,6 @@ export function liveDatasetIdsQueryOptions(datasetIds: string[], options?: Store
           .eq("refresh_mode", "live"),
       );
       return rows.map((row) => row.id);
-    },
-  });
-}
-
-/** The table page of a live view: the single capped read, searched/sorted here (there is no `search_entries` over rows that are not saved). */
-export function liveSearchPageQueryOptions(args: SearchEntriesArgs, options?: StoreOptions) {
-  return queryOptions({
-    queryKey: ["pg:live", args.datasetId, "search", args.query, args.filters, args.sort],
-    queryFn: async (): Promise<SearchEntriesPage> => {
-      const live = await readLiveView(args.datasetId, options);
-      return searchLiveEntries(liveRowsToEntries(args.datasetId, live.rows), args);
     },
   });
 }

@@ -236,6 +236,7 @@ function buildColumns(
   onEdit: (entry: Entry) => void,
   onDelete: ((entry: Entry) => void) | undefined,
   editDisabledHint: string | undefined,
+  liveRows: boolean,
   referenceFieldsByName: Map<string, ReferenceField>,
   labelsByField: Map<string, Map<string, string>>,
   surfaces: ColumnSurfaces,
@@ -304,7 +305,11 @@ function buildColumns(
     ...propertyColumns,
     {
       accessorFn: (entry) => entry._creationTime,
-      cell: (info) => new Date(info.row.original._creationTime).toLocaleString(),
+      // Live rows carry no creation timestamp (the sentinel reads as 1969 — #331): say nothing instead.
+      cell: (info) =>
+        liveRows && info.row.original._creationTime === 0
+          ? "—"
+          : new Date(info.row.original._creationTime).toLocaleString(),
       enableColumnFilter: dataFilterable,
       // The RPC's only non-key order is its `created_at desc` default — there
       // is no ascending variant to serve, so the column opts out server-side.
@@ -352,6 +357,7 @@ export function EntriesTable({
   onEdit,
   onDelete,
   editDisabledHint,
+  liveRows = false,
   labelsByField,
   server,
   columnTypes,
@@ -372,6 +378,8 @@ export function EntriesTable({
   onDelete?: (entry: Entry) => void;
   /** Set where editing is read-only (views, locked datasets) — Edit Entry renders disabled with this reason (#338). */
   editDisabledHint?: string | undefined;
+  /** Live-view rows (#331): Created renders "—" (no saved timestamp exists). */
+  liveRows?: boolean;
   /**
    * Pre-resolved reference labels, grouped by field name. When given, the
    * table skips its internal Convex label query — the Postgres host resolves
@@ -416,6 +424,7 @@ export function EntriesTable({
       onEdit,
       onDelete,
       editDisabledHint,
+      liveRows,
       referenceFieldsByName,
       resolvedLabelsByField,
       server === undefined ? "client" : "server",

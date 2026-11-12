@@ -20,7 +20,11 @@ import {
   splitPointLikeGeometries,
 } from "../lib/point-geometry";
 import type { PopupField } from "../lib/popup-fields";
-import { useFrozenVersionEntryRow, usePgEnrichedDatasetEntryRow } from "./pg-entry-popup";
+import {
+  useFrozenVersionEntryRow,
+  useLiveViewEntryRow,
+  usePgEnrichedDatasetEntryRow,
+} from "./pg-entry-popup";
 import {
   PgRelatedRecordsPanel,
   PgRelationHighlight,
@@ -160,14 +164,17 @@ function FeatureDetailsPanel({
         )}
         {related}
       </dl>
-      <Link
-        to="/datasets/$schemaId/$entryId"
-        params={{ schemaId, entryId }}
-        className="flex items-center justify-center gap-1.5 border-t border-border px-3 py-2 text-xs font-medium text-primary hover:bg-muted/50"
-      >
-        View details
-        <ChevronRight className="size-3" />
-      </Link>
+      {/* A live row's derived id names no entry page (#331) — the link would dead-end. */}
+      {!entryId.startsWith("live:") && (
+        <Link
+          to="/datasets/$schemaId/$entryId"
+          params={{ schemaId, entryId }}
+          className="flex items-center justify-center gap-1.5 border-t border-border px-3 py-2 text-xs font-medium text-primary hover:bg-muted/50"
+        >
+          View details
+          <ChevronRight className="size-3" />
+        </Link>
+      )}
     </div>
   );
 }
@@ -380,10 +387,12 @@ function geometryRowsBySchema(
 // oxlint-disable-next-line eslint/complexity -- the render paths (row/tile/extension/popup split) are the component's real shape; the deferred #82 phase-2 cleanup owns the decomposition, as in the route workspaces.
 /** The stable empty map behind LayersMap's `frozenEntryVersions` default (the default-prop rule). */
 const NO_FROZEN_ENTRY_VERSIONS: ReadonlyMap<string, string> = new globalThis.Map();
+const NO_LIVE_VIEW_IDS: ReadonlySet<string> = new globalThis.Set();
 
 export function LayersMap({
   datasets,
   chainLayers = NO_CHAIN_LAYERS,
+  liveViewIds = NO_LIVE_VIEW_IDS,
   /** Published canvases: render id → the frozen version its rows come from (#330). Present, the popup reads the FROZEN row (anon can't read live entries); absent, the live point read runs as before. */
   frozenEntryVersions = NO_FROZEN_ENTRY_VERSIONS,
   geometries,
@@ -409,6 +418,8 @@ export function LayersMap({
   chainLayers?: Array<{ renderId: string; sourceSchemaId: string }>;
   /** Published canvases only (#330): render id → the frozen `version_entries` source its rows page. */
   frozenEntryVersions?: ReadonlyMap<string, string>;
+  /** The mapped datasets that are LIVE views (#331): their popups resolve rows from the shared live read, not the entries point read. */
+  liveViewIds?: ReadonlySet<string>;
   geometries: GeometryEntry[];
   /** Titles for ids that aren't component datasets (derived registry rows), for legends and popup headers. */
   titlesById?: globalThis.Map<string, string>;
@@ -469,6 +480,20 @@ export function LayersMap({
       for (const dataset of datasets) {
         bbox = unionBbox(bbox, asBoundingBox(dataset.boundingBox));
       }
+      if (bbox === undefined) {
+        // No stored extent anywhere (a LIVE view mirrors no bbox — #331):
+        // fit the rows the mount gate delivered. For a live layer the gate
+        // IS the complete capped read, so row-derived bounds are the whole
+        // truth; the mid-stream understate risk the stored extents exist
+        // for does not apply.
+        for (const row of geometries) {
+          const flat = row.bbox;
+          if (flat === undefined || flat === null || flat.length < 4) {
+            continue;
+          }
+          bbox = unionBbox(bbox, [flat[0], flat[1], flat[2], flat[3]]);
+        }
+      }
       return bbox;
     }),
     [selected, setSelected] = useState<FeatureProperties | null>(null),
@@ -496,7 +521,20 @@ export function LayersMap({
       selected: selected === null ? undefined : selected,
       versionByRenderId: frozenEntryVersions,
     }),
-    popup = selected !== null && frozenEntryVersions.has(selected.schemaId) ? frozenPopup : pgPopup,
+    // Three executors stay mounted; exactly one is live per selection
+    // (#330 frozen, #331 live, else the plain entries point read).
+    livePopup = useLiveViewEntryRow({
+      liveViewIds,
+      selected: selected === null ? undefined : selected,
+    }),
+    popup =
+      selected === null
+        ? pgPopup
+        : frozenEntryVersions.has(selected.schemaId)
+          ? frozenPopup
+          : liveViewIds.has(selected.schemaId)
+            ? livePopup
+            : pgPopup,
     selectedDatasetTitle = selected
       ? getDatasetTitle(datasetById, titlesById, selected.schemaId, "")
       : "";
