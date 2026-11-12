@@ -73,3 +73,65 @@ export function relationPhrase(end: RelationEnd, titleOf: (id: string) => string
   const how = end.how === "" ? "" : ` ${end.how}`;
   return `Related to ${titleOf(end.otherId)}${how}`;
 }
+
+/**
+ * The largest set of two or more ids that `relations` connect (issue #342) —
+ * the "group related layers" proposal on a map. Only relations between two
+ * DIFFERENT ids inside `ids` count; an id with no relation to another id in
+ * the set is never proposed. Empty when no two ids relate. Ties keep the
+ * first component in `ids` order; the result is sorted for a stable name.
+ */
+export function largestRelatedSet(
+  relations: readonly DatasetRelationRow[],
+  ids: readonly string[],
+): string[] {
+  const within = new Set(ids),
+    neighbors = new Map<string, string[]>();
+  for (const relation of relations) {
+    if (
+      relation.fromDataset === relation.toDataset ||
+      !within.has(relation.fromDataset) ||
+      !within.has(relation.toDataset)
+    ) {
+      continue;
+    }
+    for (const [a, b] of [
+      [relation.fromDataset, relation.toDataset],
+      [relation.toDataset, relation.fromDataset],
+    ] as const) {
+      const list = neighbors.get(a);
+      if (list === undefined) {
+        neighbors.set(a, [b]);
+      } else if (!list.includes(b)) {
+        list.push(b);
+      }
+    }
+  }
+  const visited = new Set<string>();
+  let best: string[] = [];
+  for (const id of ids) {
+    if (visited.has(id) || !neighbors.has(id)) {
+      continue;
+    }
+    const component: string[] = [],
+      queue: string[] = [id];
+    visited.add(id);
+    for (let cursor = 0; cursor < queue.length; cursor += 1) {
+      const current = queue[cursor];
+      if (current === undefined) {
+        break;
+      }
+      component.push(current);
+      for (const next of neighbors.get(current) ?? []) {
+        if (!visited.has(next)) {
+          visited.add(next);
+          queue.push(next);
+        }
+      }
+    }
+    if (component.length > best.length) {
+      best = component;
+    }
+  }
+  return best.length >= 2 ? best.toSorted() : [];
+}
