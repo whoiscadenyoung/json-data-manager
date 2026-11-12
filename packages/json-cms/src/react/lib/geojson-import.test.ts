@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { looksLikeGeoJson, parseGeoJsonFeatures } from "./geojson-import.js";
+import {
+  collidingFeatureFields,
+  looksLikeGeoJson,
+  mergeFeatureFields,
+  parseGeoJsonFeatures,
+} from "./geojson-import.js";
 
 function polygonFeature(properties: Record<string, unknown> = {}) {
   return {
@@ -160,5 +165,108 @@ describe("parseGeoJsonFeatures", () => {
     expect(result.errors).toStrictEqual([]);
     expect(result.coalesceError).toBeUndefined();
     expect(result.typeCounts).toStrictEqual({});
+  });
+});
+
+describe("parent-level feature fields", () => {
+  it("captures id and other parent-level members, excluding type/geometry/properties", () => {
+    const feature = {
+        ...pointFeature({ name: "Route 9" }),
+        id: "corridor-001",
+        verified: "2026-10-01",
+      },
+      result = parseGeoJsonFeatures({ features: [feature], type: "FeatureCollection" });
+    expect(result.featureFields).toStrictEqual([
+      { count: 1, key: "id" },
+      { count: 1, key: "verified" },
+    ]);
+    expect(result.rows[0].featureFields).toStrictEqual({
+      id: "corridor-001",
+      verified: "2026-10-01",
+    });
+    // The row data stays byte-faithful to the properties until a field is
+    // explicitly preserved.
+    expect(result.rows[0].data).toStrictEqual({ name: "Route 9" });
+  });
+
+  it("counts per-field presence across features, most-present first", () => {
+    const features = [
+        { ...pointFeature({ name: "A" }), id: "a" },
+        { ...pointFeature({ name: "B" }), id: "b", note: "extra" },
+      ],
+      result = parseGeoJsonFeatures({ features, type: "FeatureCollection" });
+    expect(result.featureFields).toStrictEqual([
+      { count: 2, key: "id" },
+      { count: 1, key: "note" },
+    ]);
+  });
+
+  it("reports no candidates for bare standard features", () => {
+    const result = parseGeoJsonFeatures({ features: [pointFeature()], type: "FeatureCollection" });
+    expect(result.featureFields).toStrictEqual([]);
+  });
+});
+
+describe("mergeFeatureFields", () => {
+  it("folds selected parent-level fields into a copy of the properties", () => {
+    const row = parseGeoJsonFeatures({
+        features: [{ ...pointFeature({ name: "A" }), id: "a", note: "n" }],
+        type: "FeatureCollection",
+      }).rows[0],
+      merged = mergeFeatureFields(row, ["id"]);
+    expect(merged).toStrictEqual({ id: "a", name: "A" });
+    // The source row's data is untouched (the merge returns a new record).
+    expect(row.data).toStrictEqual({ name: "A" });
+  });
+
+  it("lets a preserved field win over a same-named property", () => {
+    const row = parseGeoJsonFeatures({
+        features: [{ ...pointFeature({ id: "property-id" }), id: "feature-id" }],
+        type: "FeatureCollection",
+      }).rows[0],
+      merged = mergeFeatureFields(row, ["id"]);
+    expect(merged).toStrictEqual({ id: "feature-id" });
+  });
+
+  it("returns the exact properties shape when the selection is empty", () => {
+    const row = parseGeoJsonFeatures({
+        features: [{ ...pointFeature({ name: "A", size: 2 }), id: "a" }],
+        type: "FeatureCollection",
+      }).rows[0],
+      merged = mergeFeatureFields(row, []);
+    expect(merged).toStrictEqual({ name: "A", size: 2 });
+    expect(merged).not.toBe(row.data);
+  });
+
+  it("skips a selected field the row doesn't carry", () => {
+    const rows = parseGeoJsonFeatures({
+        features: [{ ...pointFeature({ name: "A" }), id: "a" }, pointFeature({ name: "B" })],
+        type: "FeatureCollection",
+      }).rows,
+      merged = mergeFeatureFields(rows[1], ["id"]);
+    expect(merged).toStrictEqual({ name: "B" });
+  });
+});
+
+describe("collidingFeatureFields", () => {
+  it("flags selected fields that share a name with a property on a carrying row", () => {
+    const rows = parseGeoJsonFeatures({
+        features: [
+          { ...pointFeature({ id: "property-id", name: "A" }), id: "feature-id" },
+          { ...pointFeature({ name: "B" }), verified: "y" },
+        ],
+        type: "FeatureCollection",
+      }).rows,
+      collisions = collidingFeatureFields(rows, ["id", "verified"]);
+    expect(collisions).toStrictEqual(["id"]);
+  });
+
+  it("returns nothing for an empty selection or clean fields", () => {
+    const rows = parseGeoJsonFeatures({
+      features: [{ ...pointFeature({ name: "A" }), id: "a" }],
+      type: "FeatureCollection",
+    }).rows;
+    expect(collidingFeatureFields(rows, [])).toStrictEqual([]);
+    expect(collidingFeatureFields(rows, ["id"])).toStrictEqual([]);
   });
 });

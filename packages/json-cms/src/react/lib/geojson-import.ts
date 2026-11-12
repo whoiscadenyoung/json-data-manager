@@ -22,6 +22,21 @@ export interface GeoJsonRow {
   data: Record<string, unknown>;
   /** `undefined` for a Feature whose `geometry` is `null` (a valid, geometry-less GeoJSON row). */
   geometry: Geometry | undefined;
+  /**
+   * The Feature's parent-level fields — everything outside
+   * `type`/`geometry`/`properties` (the spec's `id`, plus whatever else the
+   * file carries there, which RFC 7946 permits). Nothing here enters `data`
+   * unless the caller explicitly preserves it (see `mergeFeatureFields`), so
+   * imports stay byte-faithful to the properties by default.
+   */
+  featureFields: Record<string, unknown>;
+}
+
+/** One parent-level field candidate across the parsed features. */
+export interface GeoJsonFeatureField {
+  key: string;
+  /** How many parsed features carry it (a field absent from every feature can't exist here). */
+  count: number;
 }
 
 export interface GeoJsonFeatureError {
@@ -36,6 +51,13 @@ export interface GeoJsonParseResult {
   /** Set only when geometry types conflict in a way that can't coalesce (see coalesceGeometryTypes) — a dataset-level error, distinct from per-row `errors`. */
   coalesceError: string | undefined;
   errors: GeoJsonFeatureError[];
+  /**
+   * The parent-level fields (outside `type`/`geometry`/`properties`) found
+   * across the parsed features, with per-field presence counts — the
+   * preservation picker's candidates. Sorted by presence then key. Empty for
+   * bare arrays or files whose features carry only the standard members.
+   */
+  featureFields: GeoJsonFeatureField[];
   /**
    * Count of successfully-parsed rows per pre-coalesce geometry type
    * (geometry-less rows aren't counted here). Lets a caller show e.g.
@@ -79,6 +101,75 @@ function extractProperties(feature: Record<string, unknown>): Record<string, unk
   return isRecord(properties) ? properties : {};
 }
 
+/** The Feature's non-standard parent-level members: everything except `type`, `geometry`, and `properties`. */
+function extractFeatureFields(feature: Record<string, unknown>): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(feature)) {
+    if (key !== "type" && key !== "geometry" && key !== "properties") {
+      fields[key] = value;
+    }
+  }
+  return fields;
+}
+
+/** Tallies the parent-level fields across rows into presence-counted candidates, most-present first. */
+function summarizeFeatureFields(rows: GeoJsonRow[]): GeoJsonFeatureField[] {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    for (const [key, value] of Object.entries(row.featureFields)) {
+      if (value !== undefined) {
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+  }
+  return [...counts.entries()]
+    .map(([key, count]) => ({ count, key }))
+    .toSorted((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+}
+
+/**
+ * Folds the selected parent-level fields into a row's `data` (the merge is
+ * applied over the ORIGINAL properties each time, so toggling a field on and
+ * off returns to the exact pre-merge shape). A preserved field wins over a
+ * same-named property — the caller opted in deliberately, and the picker
+ * flags collisions so overwrites are never silent.
+ */
+export function mergeFeatureFields(
+  row: GeoJsonRow,
+  selected: readonly string[],
+): Record<string, unknown> {
+  if (selected.length === 0) {
+    return { ...row.data };
+  }
+  const picked: Record<string, unknown> = {};
+  for (const key of selected) {
+    if (row.featureFields[key] !== undefined) {
+      picked[key] = row.featureFields[key];
+    }
+  }
+  return { ...row.data, ...picked };
+}
+
+/** Keys in `selected` that collide with a property name across these rows — the overwrite warning's data. */
+export function collidingFeatureFields(
+  rows: readonly GeoJsonRow[],
+  selected: readonly string[],
+): string[] {
+  if (selected.length === 0) {
+    return [];
+  }
+  const collisions = new Set<string>();
+  for (const key of selected) {
+    for (const row of rows) {
+      if (row.featureFields[key] !== undefined && key in row.data) {
+        collisions.add(key);
+        break;
+      }
+    }
+  }
+  return [...collisions];
+}
+
 /** Parses one raw feature into a row, or an error keyed by its index. Never throws. */
 function parseOneFeature(
   feature: unknown,
@@ -88,12 +179,13 @@ function parseOneFeature(
     return { error: { index, message: `Feature ${index}: expected a GeoJSON Feature object.` } };
   }
   const data = extractProperties(feature),
+    featureFields = extractFeatureFields(feature),
     rawGeometry = feature.geometry;
   if (rawGeometry === null || rawGeometry === undefined) {
-    return { row: { data, geometry: undefined } };
+    return { row: { data, featureFields, geometry: undefined } };
   }
   try {
-    return { row: { data, geometry: assertGeometry(rawGeometry) } };
+    return { row: { data, featureFields, geometry: assertGeometry(rawGeometry) } };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Invalid geometry.";
     return { error: { index, message: `Feature ${index}: ${message}` } };
@@ -150,7 +242,14 @@ export function parseGeoJsonFeatures(value: unknown): GeoJsonParseResult {
     { types, typeCounts } = tallyGeometryTypes(rows);
 
   if (types.length === 0) {
-    return { coalesceError: undefined, errors, geometryType: null, rows, typeCounts };
+    return {
+      coalesceError: undefined,
+      errors,
+      featureFields: summarizeFeatureFields(rows),
+      geometryType: null,
+      rows,
+      typeCounts,
+    };
   }
 
   const outcome = coalesceGeometryTypes(types);
@@ -158,10 +257,18 @@ export function parseGeoJsonFeatures(value: unknown): GeoJsonParseResult {
     return {
       coalesceError: undefined,
       errors,
+      featureFields: summarizeFeatureFields(rows),
       geometryType: outcome.geometryType,
       rows,
       typeCounts,
     };
   }
-  return { coalesceError: outcome.error, errors, geometryType: null, rows, typeCounts };
+  return {
+    coalesceError: outcome.error,
+    errors,
+    featureFields: summarizeFeatureFields(rows),
+    geometryType: null,
+    rows,
+    typeCounts,
+  };
 }

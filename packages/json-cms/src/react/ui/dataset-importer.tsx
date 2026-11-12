@@ -17,9 +17,16 @@ import {
 import { useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
-import { looksLikeGeoJson, parseGeoJsonFeatures } from "../lib/geojson-import.js";
+import {
+  looksLikeGeoJson,
+  mergeFeatureFields,
+  parseGeoJsonFeatures,
+  collidingFeatureFields,
+} from "../lib/geojson-import.js";
+import type { GeoJsonFeatureField, GeoJsonRow } from "../lib/geojson-import.js";
 import { applyCurrencySuggestion } from "../lib/import-suggestions.js";
 import { inferSchemaFromData } from "../lib/infer-schema.js";
+import { GeoPreview } from "./geo-preview.js";
 import { ImportSuggestions, type SuggestionId } from "./import-suggestions.js";
 import { errorMessage } from "./lib/errors.js";
 import { cn } from "./lib/utils.js";
@@ -480,6 +487,59 @@ function CoordinateColumnsPicker({
   );
 }
 
+/**
+ * Lets the user pick which of the GeoJSON features' PARENT-level fields (the
+ * spec's `id`, plus anything else a file carries outside
+ * `type`/`geometry`/`properties`) to preserve into the row data. `id` is
+ * pre-checked — feature ids usually don't repeat inside `properties`, and
+ * losing them breaks joins back to the source file. A field whose name
+ * collides with a property is marked as replacing it (feature-level wins).
+ */
+function FeatureFieldsPicker({
+  fields,
+  selected,
+  collisions,
+  onChange,
+}: {
+  fields: readonly GeoJsonFeatureField[];
+  selected: readonly string[];
+  collisions: readonly string[];
+  onChange: (selected: string[]) => void;
+}) {
+  const toggle = (key: string) => {
+    onChange(selected.includes(key) ? selected.filter((k) => k !== key) : [...selected, key]);
+  };
+  return (
+    <div className="border-b border-border bg-muted/30 px-3 py-2 text-xs shrink-0">
+      <span className="font-medium text-muted-foreground">Feature fields to keep</span>
+      <span className="ml-2 text-muted-foreground/80">
+        parent-level values (e.g. the feature id) folded into each row&apos;s data
+      </span>
+      <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1.5">
+        {fields.map((field) => (
+          <label key={field.key} className="flex items-center gap-1.5 text-muted-foreground">
+            <input
+              checked={selected.includes(field.key)}
+              onChange={() => {
+                toggle(field.key);
+              }}
+              type="checkbox"
+              className="h-3.5 w-3.5 accent-[hsl(var(--primary))]"
+            />
+            <span className="font-medium text-foreground">{field.key}</span>
+            <span className="text-muted-foreground/70">
+              on {field.count.toLocaleString()} feature{field.count === 1 ? "" : "s"}
+            </span>
+            {selected.includes(field.key) && collisions.includes(field.key) && (
+              <span className="text-amber-700 dark:text-amber-400">(replaces a property)</span>
+            )}
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** Review + edit the inferred schema against the imported rows. */
 function DatasetReview({
   rows,
@@ -501,6 +561,8 @@ function DatasetReview({
   coordinateFields,
   onCoordinateFieldsChange,
   suggestions,
+  geometryPreview,
+  featureFieldsChrome,
   schemaRevision,
 }: {
   rows: DatasetImportRow[];
@@ -524,6 +586,10 @@ function DatasetReview({
   onCoordinateFieldsChange: (fields: { latField: string; lonField: string }) => void;
   /** The Suggestions card (#291), rendered above the schema editor. */
   suggestions: ReactNode;
+  /** The geospatial preview card (sketch + flagged rows), shown for geospatial imports. */
+  geometryPreview?: ReactNode;
+  /** The feature-fields preservation picker, shown for GeoJSON imports carrying parent-level fields. */
+  featureFieldsChrome?: ReactNode;
   /** Bumped when a suggestion rewrote the inferred schema: the editor remounts from it. */
   schemaRevision: number;
 }) {
@@ -572,6 +638,7 @@ function DatasetReview({
         The schema below was inferred from your data. Refine it as needed — every imported row must
         stay valid, or re-upload data that matches. Saving creates the dataset and imports the rows.
       </div>
+      {geometryPreview}
       {suggestions}
       <SchemaEditor
         key={schemaRevision}
@@ -589,13 +656,18 @@ function DatasetReview({
         simplifyGeometry={simplifyGeometry}
         onSimplifyGeometryChange={onSimplifyGeometryChange}
         editorChrome={
-          showCoordinatePicker ? (
-            <CoordinateColumnsPicker
-              columns={columnsFromRows(rows)}
-              latField={coordinateFields === undefined ? undefined : coordinateFields.latField}
-              lonField={coordinateFields === undefined ? undefined : coordinateFields.lonField}
-              onChange={onCoordinateFieldsChange}
-            />
+          showCoordinatePicker || featureFieldsChrome !== undefined ? (
+            <>
+              {showCoordinatePicker ? (
+                <CoordinateColumnsPicker
+                  columns={columnsFromRows(rows)}
+                  latField={coordinateFields === undefined ? undefined : coordinateFields.latField}
+                  lonField={coordinateFields === undefined ? undefined : coordinateFields.lonField}
+                  onChange={onCoordinateFieldsChange}
+                />
+              ) : undefined}
+              {featureFieldsChrome}
+            </>
           ) : undefined
         }
       />
@@ -673,6 +745,43 @@ function coordinateAwareGeometryProps(
     : { geometryType, geometryTypeReadOnly, geometryTypeSummary };
 }
 
+/** The geospatial preview card, or undefined outside a geospatial import. `previewRows` is what a save would import (coordinate-mapped rows for a tabular-geospatial flow, the merged review rows otherwise). */
+function geometryPreviewFor(
+  datasetKind: "standard" | "geospatial",
+  previewRows: DatasetImportRow[],
+  invalidFeatures: readonly string[],
+): ReactNode {
+  if (datasetKind !== "geospatial") {
+    return undefined;
+  }
+  return <GeoPreview invalidFeatures={invalidFeatures} rows={previewRows} />;
+}
+
+/** The feature-fields preservation picker, or undefined for imports without GeoJSON parent-level candidates. */
+function featureFieldsChromeFor(
+  geoSourceRows: GeoJsonRow[] | null,
+  options: readonly GeoJsonFeatureField[],
+  selected: readonly string[],
+  onChange: (selection: string[]) => void,
+): ReactNode {
+  if (geoSourceRows === null || options.length === 0) {
+    return undefined;
+  }
+  return (
+    <FeatureFieldsPicker
+      collisions={collidingFeatureFields(geoSourceRows, selected)}
+      fields={options}
+      onChange={onChange}
+      selected={selected}
+    />
+  );
+}
+
+/** `["id"]` when the parse found a feature-level id, else nothing — the picker's default selection. */
+function defaultFeatureSelection(options: readonly GeoJsonFeatureField[]): string[] {
+  return options.some((field) => field.key === "id") ? ["id"] : [];
+}
+
 /** The success toast after a currency column was typed (#291). */
 function typedAsNumberMessage(field: string, converted: number, blanks: number): string {
   const blankNote = blanks > 0 ? `, ${blanks.toLocaleString()} blank cells left empty` : "";
@@ -700,6 +809,10 @@ type FinalRows =
       warning?: string;
     };
 
+// The ingest paths' per-parser branches sit one over the limit; the parse/
+// merge work itself lives in module-level helpers, and further splitting of
+// the orchestration is the deferred #82 phase-2 cleanup.
+// oxlint-disable-next-line eslint/complexity
 export function DatasetImporter({
   onImport,
   recovery,
@@ -725,6 +838,20 @@ export function DatasetImporter({
     // picker below — GeoJSON rows already have geometry, and forcing a
     // coordinate mapping onto them wouldn't make sense.
     [rowsAreTabular, setRowsAreTabular] = useState(true),
+    // The GeoJSON parse output, kept as-parsed (data = the original
+    // properties) with each row's parent-level feature fields attached.
+    // Feature-field preservation re-merges from here, so toggling a field
+    // on and off returns rows to the exact pre-merge shape.
+    [geoSourceRows, setGeoSourceRows] = useState<GeoJsonRow[] | null>(null),
+    // The parent-level field candidates the parse found (the picker's list).
+    [featureFieldOptions, setFeatureFieldOptions] = useState<GeoJsonFeatureField[]>([]),
+    // Which candidates are folded into the row data right now. `id` starts
+    // checked — feature ids rarely repeat inside `properties` and losing
+    // them breaks joins back to the source.
+    [selectedFeatureFields, setSelectedFeatureFields] = useState<string[]>([]),
+    // Messages for the features the GeoJSON parse rejected — the preview's
+    // skipped list (counted-only before this).
+    [geoFeatureErrors, setGeoFeatureErrors] = useState<string[]>([]),
     // The lat/lon columns to build a Point geometry from when the user opts a
     // tabular import into "Geospatial" — pre-filled by `detectCoordinateColumns`,
     // editable via `CoordinateColumnsPicker`.
@@ -763,7 +890,9 @@ export function DatasetImporter({
       setSuggestionErrors({});
     },
     // A FeatureCollection / bare Feature array: geometry is split out into its
-    // own rows shape and never enters the inferred JSON Schema.
+    // own rows shape and never enters the inferred JSON Schema. Parent-level
+    // feature fields (the spec's `id` et al.) are kept on the source rows and
+    // folded into the data per the preservation selection (`id` by default).
     ingestGeoJson = (parsedJson: unknown, file: File, keepSchema: boolean) => {
       const result = parseGeoJsonFeatures(parsedJson);
       if (result.coalesceError !== undefined) {
@@ -783,9 +912,19 @@ export function DatasetImporter({
           `Skipped ${result.errors.length} malformed feature(s); imported ${result.rows.length} features.`,
         );
       }
-      const geometrylessCount = result.rows.filter((row) => row.geometry === undefined).length,
-        properties = result.rows.map((row) => row.data);
-      setRows(result.rows.map((row) => ({ data: row.data, geometry: row.geometry })));
+      const initialSelection = defaultFeatureSelection(result.featureFields),
+        properties = result.rows.map((row) => mergeFeatureFields(row, initialSelection)),
+        geometrylessCount = result.rows.filter((row) => row.geometry === undefined).length;
+      setGeoSourceRows(result.rows);
+      setFeatureFieldOptions(result.featureFields);
+      setSelectedFeatureFields(initialSelection);
+      setGeoFeatureErrors(result.errors.map((error) => error.message));
+      setRows(
+        result.rows.map((row) => ({
+          data: mergeFeatureFields(row, initialSelection),
+          geometry: row.geometry,
+        })),
+      );
       setFileName(file.name);
       setDataText(JSON.stringify(properties, null, 2));
       setDatasetKind("geospatial");
@@ -838,6 +977,11 @@ export function DatasetImporter({
           : undefined,
       );
       setWorkbookSheets(null);
+      // Tabular rows have no GeoJSON parent-level fields to preserve.
+      setGeoSourceRows(null);
+      setFeatureFieldOptions([]);
+      setSelectedFeatureFields([]);
+      setGeoFeatureErrors([]);
       resetSuggestions(recordRows, detectedCoordinates);
       if (keepSchema) {
         toast.success(`Reloaded ${parsedRows.length} rows from ${sourceName}.`);
@@ -964,6 +1108,26 @@ export function DatasetImporter({
       setDatasetKind("geospatial");
       setCoordinateFields({ latField: guess.latField, lonField: guess.lonField });
       dismiss("coordinates");
+    },
+    // Folds a new feature-field selection into the rows: re-merged from the
+    // as-parsed source rows (so toggling off restores the exact pre-merge
+    // data), and the schema is re-inferred from the merged shape — the same
+    // remount behavior a currency suggestion uses.
+    applyFeatureFieldSelection = (selection: string[]) => {
+      if (geoSourceRows === null) {
+        return;
+      }
+      const merged = geoSourceRows.map((row) => mergeFeatureFields(row, selection));
+      setSelectedFeatureFields(selection);
+      setRows(
+        geoSourceRows.map((row) => ({
+          data: mergeFeatureFields(row, selection),
+          geometry: row.geometry,
+        })),
+      );
+      setDataText(JSON.stringify(merged, null, 2));
+      setInferredJson(JSON.stringify(inferSchemaFromData(merged), null, 2));
+      setSchemaRevision((revision) => revision + 1);
     },
     suggestions = (
       <ImportSuggestions
@@ -1126,6 +1290,17 @@ export function DatasetImporter({
         coordinateFields={coordinateFields}
         onCoordinateFieldsChange={setCoordinateFields}
         suggestions={suggestions}
+        geometryPreview={geometryPreviewFor(
+          datasetKind,
+          buildFinalRows().rows ?? rows,
+          geoFeatureErrors,
+        )}
+        featureFieldsChrome={featureFieldsChromeFor(
+          geoSourceRows,
+          featureFieldOptions,
+          selectedFeatureFields,
+          applyFeatureFieldSelection,
+        )}
         schemaRevision={schemaRevision}
       />
     );
