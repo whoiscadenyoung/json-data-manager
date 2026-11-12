@@ -723,6 +723,9 @@ function PostgresDatasetBody({
                   isLoadingMore={pages.isLoadingMore}
                   isGeospatial={dataset.isGeospatial}
                   labelsByField={labelsByField}
+                  editDisabledHint={
+                    isView ? viewReason : lockedForViewer ? LOCKED_DATASET_HINT : undefined
+                  }
                   onLoadMore={pages.loadMore}
                   onEdit={openEditPanel}
                   onDelete={

@@ -19,13 +19,33 @@ returning id as project_id \gset
 
 create temp table seed_ids (name text primary key, id uuid);
 
+-- json_schema declares the field types (#338): without it a seeded dataset's
+-- table shows no field columns and its entry forms have nothing to render.
 with ins as (
-  insert into public.datasets (title, properties, created_by, lifecycle, visibility, is_geospatial, geometry_type)
+  insert into public.datasets (title, properties, json_schema, created_by, lifecycle, visibility, is_geospatial, geometry_type)
   values
-    ('States', '["id","name"]', :'owner_id', 'published', 'members', true, 'Polygon'),
-    ('Deployments', '["id","name","stateId"]', :'owner_id', 'published', 'members', true, 'Point'),
-    ('Deployment agencies', '["deploymentId","agencyId"]', :'owner_id', 'published', 'members', false, null),
-    ('Links', '["stateName","type","url"]', :'owner_id', 'published', 'members', false, null)
+    ('States', '["id","name"]',
+     jsonb_build_object('type','object','title','States','properties',
+       jsonb_build_object('id', jsonb_build_object('type','string'),
+                          'name', jsonb_build_object('type','string'))),
+     :'owner_id', 'published', 'members', true, 'Polygon'),
+    ('Deployments', '["id","name","stateId"]',
+     jsonb_build_object('type','object','title','Deployments','properties',
+       jsonb_build_object('id', jsonb_build_object('type','string'),
+                          'name', jsonb_build_object('type','string'),
+                          'stateId', jsonb_build_object('type','string'))),
+     :'owner_id', 'published', 'members', true, 'Point'),
+    ('Deployment agencies', '["deploymentId","agencyId"]',
+     jsonb_build_object('type','object','title','Deployment agencies','properties',
+       jsonb_build_object('deploymentId', jsonb_build_object('type','string'),
+                          'agencyId', jsonb_build_object('type','string'))),
+     :'owner_id', 'published', 'members', false, null),
+    ('Links', '["stateName","type","url"]',
+     jsonb_build_object('type','object','title','Links','properties',
+       jsonb_build_object('stateName', jsonb_build_object('type','string'),
+                          'type', jsonb_build_object('type','string'),
+                          'url', jsonb_build_object('type','string'))),
+     :'owner_id', 'published', 'members', false, null)
   returning id, title
 )
 insert into seed_ids select lower(replace(title, ' ', '_')), id from ins;

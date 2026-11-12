@@ -190,7 +190,7 @@ describe("DuplicateViewDialog", () => {
     expect(problems.textContent).toMatch(/Step 1/);
     expect(problems.textContent).toMatch(/id/);
     expect(screen.getByRole("button", { name: "Create copy" })).toHaveProperty("disabled", true);
-    expect(screen.getByText(/Fix the missing fields below/)).toBeTruthy();
+    expect(screen.getByText(/Fix the problems above/)).toBeTruthy();
   });
 
   it("accepts a compatible input and creates the copy over it", async () => {

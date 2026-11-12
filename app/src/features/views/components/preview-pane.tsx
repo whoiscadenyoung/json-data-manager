@@ -28,8 +28,8 @@ export interface PreviewRow {
   geom?: { type?: string } | null;
 }
 
-/** The columns a preview table renders: first-seen across the (at most 50) rows. */
-export function previewColumns(rows: PreviewRow[]): string[] {
+/** The columns a preview table renders: the Output card's order when one exists (#338 — exports and popups already respect it), then any extra keys in first-seen order across the (at most 50) rows. */
+export function previewColumns(rows: PreviewRow[], order?: readonly string[]): string[] {
   const columns: string[] = [];
   for (const row of rows) {
     for (const key of Object.keys(row.d)) {
@@ -38,7 +38,16 @@ export function previewColumns(rows: PreviewRow[]): string[] {
       }
     }
   }
-  return columns;
+  if (order === undefined) {
+    return columns;
+  }
+  const ordered = order.filter((key) => columns.includes(key));
+  for (const key of columns) {
+    if (!ordered.includes(key)) {
+      ordered.push(key);
+    }
+  }
+  return ordered;
 }
 
 function cellText(value: unknown): string {
@@ -270,9 +279,9 @@ export function DiagnosticsCard({
   );
 }
 
-/** The preview rows (at most 50) as a table. */
-export function PreviewTable({ rows }: { rows: PreviewRow[] }) {
-  const columns = previewColumns(rows);
+/** The preview rows (at most 50) as a table. `order` is the Output card's field order (`from ?? key`); extra keys append in first-seen order. */
+export function PreviewTable({ order, rows }: { order?: readonly string[]; rows: PreviewRow[] }) {
+  const columns = previewColumns(rows, order);
   if (rows.length === 0) {
     return <p className="text-sm text-muted-foreground">This step produces no rows.</p>;
   }
@@ -318,6 +327,7 @@ export function PreviewPane({
   isLoading,
   mapDisabledReason,
   onAddToKeyMap,
+  order,
   rows,
   title,
 }: {
@@ -329,6 +339,8 @@ export function PreviewPane({
   isLoading: boolean;
   mapDisabledReason: string | undefined;
   onAddToKeyMap: (from: string, to: string) => void;
+  /** The saved Output card's field order (`from ?? key`); absent, columns follow first-seen order. */
+  order?: readonly string[];
   rows: PreviewRow[] | undefined;
   title: string;
 }) {
@@ -353,7 +365,7 @@ export function PreviewPane({
       ) : rows === undefined ? (
         <p className="text-sm text-muted-foreground">Loading the preview…</p>
       ) : (
-        <PreviewTable rows={rows} />
+        <PreviewTable order={order} rows={rows} />
       )}
       {diagnostics !== undefined && blockedReason === undefined && (
         <DiagnosticsCard

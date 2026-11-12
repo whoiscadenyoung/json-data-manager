@@ -25,6 +25,8 @@ export interface PickerDataset {
   id: string;
   title: string;
   kind?: "source" | "view";
+  /** The holding project's title, when known (#338): titles collide across projects ("States" twice), so the pickers suffix the project. */
+  projectTitle?: string;
 }
 
 /** Picker options for datasets and views, grouped under "Datasets" and "Views" (a view is a valid input anywhere a dataset is). */
@@ -33,7 +35,10 @@ export function inputPickerOptions(
 ): { value: string; label: string; group: string }[] {
   return datasets.map((dataset) => ({
     value: dataset.id,
-    label: dataset.title,
+    label:
+      dataset.projectTitle === undefined
+        ? dataset.title
+        : `${dataset.title} · ${dataset.projectTitle}`,
     group: dataset.kind === "view" ? "Views" : "Datasets",
   }));
 }
