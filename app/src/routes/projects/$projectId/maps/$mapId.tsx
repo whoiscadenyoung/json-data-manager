@@ -36,6 +36,7 @@ import {
   EyeOff,
   FolderOpen,
   FolderPlus,
+  GitMerge,
   Layers as LayersIcon,
   Link2,
   List,
@@ -47,6 +48,7 @@ import {
   Plus,
   Rocket,
   Trash2,
+  Ungroup,
   X,
 } from "lucide-react";
 import { useState } from "react";
@@ -66,7 +68,7 @@ import {
 } from "#/features/maps";
 import { isPostgresDatasetId } from "#/lib/dataset-source";
 import { errorMessage } from "#/lib/errors";
-import { relationEndsOf, relationPhrase } from "#/lib/relation-phrases";
+import { largestRelatedSet, relationEndsOf, relationPhrase } from "#/lib/relation-phrases";
 import type { DatasetSummaryRow } from "#/lib/store/datasets";
 import { listDraftSummariesQueryOptions, listSummariesQueryOptions } from "#/lib/store/datasets";
 import * as layersStore from "#/lib/store/layers";
@@ -230,6 +232,27 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
     mapRelationsQuery = useQuery(
       relationsStore.listForDatasetsQueryOptions({ datasetIds: mapDatasetIds }),
     ),
+    // #342: the largest relation-connected set of placed data layers — the
+    // "group related layers" proposal. Undefined until the relations read
+    // lands; empty set = nothing to propose.
+    relatedDatasetSet = largestRelatedSet(mapRelationsQuery.data ?? [], mapDatasetIds),
+    // #342: the placed owned-data layers for exactly the proposed datasets,
+    // plus the group's display name — undefined until the relations read
+    // lands or fewer than two datasets relate.
+    relatedLayerNodes = relatedLayerNodesOf(placements, memberships, layersById, relatedDatasetSet),
+    relatedGroupProposal =
+      relatedLayerNodes === undefined
+        ? undefined
+        : {
+            name:
+              RELATED_SET_PREFIX +
+              relatedLayerNodes
+                .map((node) => node.name)
+                .slice(0, 3)
+                .join(" + ") +
+              (relatedLayerNodes.length > 3 ? " + …" : ""),
+            nodes: relatedLayerNodes,
+          },
     // Linked placements name layer_versions rows — resolve the ones the map shows.
     linkedVersionIds = [
       ...new Set(
@@ -635,8 +658,28 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
               collapsedGroups={collapsedGroups}
               invalidate={invalidate}
               layersById={layersById}
+              mapId={mapId}
               memberships={memberships}
               onAddChild={setChildAddGroupId}
+              onGroupRelated={
+                relatedGroupProposal === undefined
+                  ? undefined
+                  : () => {
+                      const proposal = relatedGroupProposal;
+                      void run(async () => {
+                        await groupRelatedLayers({
+                          layers: proposal.nodes.map((node) => ({
+                            layerId: node.layerId,
+                            placementId: node.placementId,
+                          })),
+                          mapId,
+                          name: proposal.name,
+                          projectId,
+                        });
+                      }, "Failed to group the related layers.");
+                      invalidate();
+                    }
+              }
               onRemove={setPendingRemove}
               placements={placements}
               projectId={projectId}
@@ -827,6 +870,115 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
 // The row renders every placement kind's honest state as one flat ladder —
 // the same disposition as the pre-layers route editor's row.
 // oxlint-disable-next-line eslint/complexity -- the per-kind ladder is the row's whole contract.
+/** The name prefix marking a group the related-set feature minted (#342) — "Ungroup" offers only on these. */
+const RELATED_SET_PREFIX = "Related set: ";
+
+/**
+ * #342: places a new group holding exactly these layers and REMOVES their
+ * top-level placements, so each layer draws once (inside the group).
+ * Reversible — "Ungroup" re-places the owned children and deletes the group
+ * (its child links cascade with it).
+ */
+async function groupRelatedLayers(args: {
+  layers: ReadonlyArray<{ layerId: string; placementId: string }>;
+  mapId: string;
+  name: string;
+  projectId: string;
+}): Promise<void> {
+  const groupId = await layersStore.create({
+    kind: "group",
+    name: args.name,
+    projectId: args.projectId,
+  });
+  if (groupId === null) {
+    throw new Error("The group didn't mint — you may not have access.");
+  }
+  const membershipRow = await layersStore.membershipIdForLayer({ layerId: groupId });
+  if (membershipRow === null) {
+    throw new Error("The group's membership didn't mint.");
+  }
+  const placement = await mapsStore.addPlacement({
+    layerMemberId: membershipRow,
+    mapId: args.mapId,
+  });
+  if (placement === null) {
+    throw new Error("The group's placement was denied.");
+  }
+  for (const node of args.layers) {
+    // oxlint-disable-next-line eslint/no-await-in-loop -- each child links in order; a denial must stop before placements move.
+    const child = await layersStore.addChild({
+      childKind: "owned",
+      childLayerId: node.layerId,
+      groupId,
+    });
+    if (child === null) {
+      throw new Error("A layer was denied into the group — nothing moved.");
+    }
+  }
+  // Children linked: the old placements go, so nothing draws twice.
+  for (const node of args.layers) {
+    // oxlint-disable-next-line eslint/no-await-in-loop -- one delete per former placement, in order.
+    await mapsStore.removePlacement({ placementId: node.placementId });
+  }
+}
+
+/** #342's undo: re-place the group's owned children, drop the group's placement, delete the (now link-less) group. */
+async function ungroupRelatedLayers(args: {
+  groupId: string;
+  mapId: string;
+  placementId: string;
+}): Promise<void> {
+  const children = await layersStore.listChildren({ groupId: args.groupId });
+  for (const child of children) {
+    if (child.childKind !== "owned") {
+      continue;
+    }
+    // oxlint-disable-next-line eslint/no-await-in-loop -- one placement per restored child, in child order.
+    const membershipRow = await layersStore.membershipIdForLayer({ layerId: child.childLayerId });
+    if (membershipRow !== null) {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- see above.
+      await mapsStore.addPlacement({ layerMemberId: membershipRow, mapId: args.mapId });
+    }
+  }
+  await mapsStore.removePlacement({ placementId: args.placementId });
+  await layersStore.remove({ layerId: args.groupId });
+}
+
+/** The placed owned-data layers for exactly `wanted` datasets (#342): the grouping proposal's participants, or undefined when fewer than two qualify. */
+function relatedLayerNodesOf(
+  placements: readonly MapPlacementRow[],
+  memberships: globalThis.Map<string, layersStore.ArtifactRefRow>,
+  layersById: globalThis.Map<string, LayerRow>,
+  wantedIds: readonly string[],
+): Array<{ layerId: string; name: string; placementId: string }> | undefined {
+  if (wantedIds.length < 2) {
+    return undefined;
+  }
+  const wanted = new Set(wantedIds),
+    nodes: Array<{ layerId: string; name: string; placementId: string }> = [];
+  for (const placement of placements) {
+    const membership = memberships.get(placement.layerMemberId),
+      layer =
+        membership !== undefined && membership.role === "owned"
+          ? layersById.get(membership.artifactId)
+          : undefined,
+      datasetMember =
+        layer === undefined || layer.datasetMemberId === null
+          ? undefined
+          : memberships.get(layer.datasetMemberId);
+    if (
+      layer === undefined ||
+      datasetMember === undefined ||
+      datasetMember.artifactKind !== "dataset" ||
+      !wanted.has(datasetMember.artifactId)
+    ) {
+      continue;
+    }
+    nodes.push({ layerId: layer.id, name: layer.name, placementId: placement.id });
+  }
+  return nodes.length >= 2 ? nodes : undefined;
+}
+
 /** The datasets the map's placed owned data layers draw (groups' children and linked layers aside). */
 function mapDatasetIdsOf(
   placements: readonly MapPlacementRow[],
@@ -873,8 +1025,11 @@ interface PanelProps {
   collapsedGroups: ReadonlySet<string>;
   invalidate: () => void;
   layersById: globalThis.Map<string, LayerRow>;
+  mapId: string;
   memberships: globalThis.Map<string, layersStore.ArtifactRefRow>;
   onAddChild: (groupLayerId: string) => void;
+  /** #342: present, the sidebar offers "Group N related layers" (the proposal is non-empty). */
+  onGroupRelated: (() => void) | undefined;
   onRemove: (pending: { label: string; run: () => Promise<unknown> }) => void;
   placements: MapPlacementRow[];
   projectId: string;
@@ -1097,6 +1252,28 @@ function PlacementRowBody(
                 >
                   <List className="mr-2 h-4 w-4" />
                   Popup fields…
+                </DropdownMenuItem>
+              )}
+            {layer !== undefined &&
+              layer.kind === "group" &&
+              !linked &&
+              layer.name.startsWith(RELATED_SET_PREFIX) && (
+                <DropdownMenuItem
+                  onClick={() => {
+                    props.onRemove({
+                      label: name,
+                      run: async () => {
+                        await ungroupRelatedLayers({
+                          groupId: layer.id,
+                          mapId: placement.mapId,
+                          placementId: placement.id,
+                        });
+                      },
+                    });
+                  }}
+                >
+                  <Ungroup className="mr-2 h-4 w-4" />
+                  Ungroup (restore the layers)
                 </DropdownMenuItem>
               )}
             {!linked && layer !== undefined && (
@@ -1439,6 +1616,12 @@ function PgPlacementsPanel(props: PanelProps) {
           </li>
         ))}
       </ul>
+      {props.onGroupRelated !== undefined && (
+        <Button className="w-full" onClick={props.onGroupRelated} variant="outline">
+          <GitMerge className="mr-1 h-3.5 w-3.5" />
+          Group related layers
+        </Button>
+      )}
     </section>
   );
 }

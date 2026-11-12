@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { relationEndsOf, relationPhrase } from "./relation-phrases";
+import { largestRelatedSet, relationEndsOf, relationPhrase } from "./relation-phrases";
 import type { DatasetRelationRow } from "./store/relations";
 
 function relation(
@@ -75,5 +75,40 @@ describe("relationPhrase", () => {
     expect(relationPhrase({ how: "", otherId: "parks", relationId: "x" }, titleOf)).toBe(
       "Related to Parks",
     );
+  });
+});
+
+describe("largestRelatedSet (#342)", () => {
+  const rel = (id: string, from: string, to: string): DatasetRelationRow =>
+    ({
+      cardinality: "1-N",
+      config: {},
+      fromDataset: from,
+      id,
+      kind: "key",
+      toDataset: to,
+    }) as DatasetRelationRow;
+
+  it("proposes the connected set when two or more ids relate", () => {
+    expect(
+      largestRelatedSet([rel("r1", "a", "b"), rel("r2", "b", "c")], ["c", "a", "b"]),
+    ).toStrictEqual(["a", "b", "c"]);
+  });
+
+  it("keeps two disjoint pairs apart and proposes the larger one", () => {
+    const relations = [rel("r1", "a", "b"), rel("r2", "c", "d"), rel("r3", "c", "e")];
+    expect(largestRelatedSet(relations, ["a", "b", "c", "d", "e"])).toStrictEqual(["c", "d", "e"]);
+  });
+
+  it("proposes nothing when no id relates to another", () => {
+    expect(largestRelatedSet([rel("r1", "a", "gone")], ["a", "b"])).toStrictEqual([]);
+    expect(largestRelatedSet([], ["a", "b"])).toStrictEqual([]);
+  });
+
+  it("ignores self-relations and out-of-set ends", () => {
+    expect(largestRelatedSet([rel("r1", "a", "a")], ["a", "b"])).toStrictEqual([]);
+    expect(
+      largestRelatedSet([rel("r1", "a", "b"), rel("r2", "b", "gone")], ["a", "b"]),
+    ).toStrictEqual(["a", "b"]);
   });
 });
