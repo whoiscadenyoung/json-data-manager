@@ -167,6 +167,33 @@ export function PgGeometriesLoader({
  * row cap is the "cap rule"; the viewport is applied by the map downstream
  * exactly as for any row-path layer.
  */
+/** A GeoJSON geometry's flat envelope [minLon,minLat,maxLon,maxLat] (null = no positions). */
+function geojsonBbox(geom: unknown): number[] | null {
+  if (typeof geom !== "object" || geom === null) {
+    return null;
+  }
+  let minLon = Number.POSITIVE_INFINITY,
+    minLat = Number.POSITIVE_INFINITY,
+    maxLon = Number.NEGATIVE_INFINITY,
+    maxLat = Number.NEGATIVE_INFINITY,
+    any = false;
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node) && typeof node[0] === "number" && typeof node[1] === "number") {
+      minLon = Math.min(minLon, node[0]);
+      minLat = Math.min(minLat, node[1]);
+      maxLon = Math.max(maxLon, node[0]);
+      maxLat = Math.max(maxLat, node[1]);
+      any = true;
+      return;
+    }
+    if (Array.isArray(node)) {
+      for (const child of node) walk(child);
+    }
+  };
+  walk(Reflect.get(geom, "coordinates"));
+  return any ? [minLon, minLat, maxLon, maxLat] : null;
+}
+
 export function PgLiveGeometriesLoader({
   datasetId,
   onLoaded,
@@ -192,13 +219,18 @@ export function PgLiveGeometriesLoader({
         "type" in geom &&
         typeof geom.type === "string"
       ) {
-        rows.push(
-          pgWorkerRowToLayerRow(
-            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- GeoJSON type names are the PostGIS union.
-            { entryId: entry.id, geometry: geom, type: geom.type as DatasetGeometryType },
-            datasetId,
-          ),
+        const mapped = pgWorkerRowToLayerRow(
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- GeoJSON type names are the PostGIS union.
+          { entryId: entry.id, geometry: geom, type: geom.type as DatasetGeometryType },
+          datasetId,
         );
+        // A live row's flat envelope (#331): the stored-extent mirror carries
+        // no bbox for a live view, so the map's fit falls back to these.
+        const rowBbox = geojsonBbox(geom);
+        if (rowBbox !== null) {
+          mapped.bbox = rowBbox;
+        }
+        rows.push(mapped);
       }
     }
     onLoaded(datasetId, { complete: true, rows });
@@ -222,6 +254,8 @@ export function PgLiveGeometriesLoader({
  */
 export function useGeometriesByPgDatasets(datasetIds: string[]): {
   geometries: DatasetGeometryRow[] | undefined;
+  /** The mapped datasets that are live views (#331); undefined until the answer lands. */
+  liveIds: ReadonlySet<string> | undefined;
   loaders: ReactNode[];
   servedGeometries: DatasetGeometryRow[] | undefined;
   /** How many datasets finished a full paging pass (the "N of M layers" progress, #284). */
@@ -279,6 +313,8 @@ export function useGeometriesByPgDatasets(datasetIds: string[]): {
 
   return {
     geometries,
+    /** The mapped datasets that are live views (#331) — the canvases hand the set to LayersMap so popups resolve live rows. */
+    liveIds: liveIds === undefined ? undefined : new globalThis.Set(liveIds),
     loaders: liveKnown
       ? datasetIds.map((datasetId) =>
           liveIds !== undefined && liveIds.includes(datasetId) ? (

@@ -1,7 +1,7 @@
 import type { Step } from "@caden/data-core/views";
 import { describe, expect, it } from "vitest";
 
-import { liveRowsToEntries, searchLiveEntries } from "./live-rows";
+import { liveRowByEntryId, liveRowsToEntries, searchLiveEntries } from "./live-rows";
 import { assertLiveAllowed, isSpatialStep, LiveRefusedError, spatialSteps } from "./spatial";
 
 const filterStep: Step = { kind: "filter", where: { op: "isNotEmpty", field: "name" } as never };
@@ -59,5 +59,18 @@ describe("live rows on the client", () => {
       ),
     ).toStrictEqual([10, 3, 1]);
     expect(searchLiveEntries(entries, {}).nextCursor).toBeNull();
+  });
+
+  it("resolves a derived live id back to its row (#331)", () => {
+    const wire = [
+      { row_id: "r1", d: { n: 1 } },
+      { row_id: "r2", d: { n: 2 } },
+      { row_id: "r1", d: { n: 3 } },
+    ];
+    expect(liveRowByEntryId(wire, "live:r1")).toStrictEqual({ data: { n: 1 } });
+    expect(liveRowByEntryId(wire, "live:r1:2")).toStrictEqual({ data: { n: 3 } });
+    expect(liveRowByEntryId(wire, "live:r2")).toStrictEqual({ data: { n: 2 } });
+    expect(liveRowByEntryId(wire, "live:gone")).toBeUndefined();
+    expect(liveRowByEntryId(wire, "entry-3")).toBeUndefined();
   });
 });

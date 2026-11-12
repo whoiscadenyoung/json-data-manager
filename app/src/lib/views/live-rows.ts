@@ -43,6 +43,39 @@ export function liveRowsToEntries(viewId: string, rows: readonly LiveWireRow[]):
   });
 }
 
+/**
+ * The row a derived live id names (#331): `live:<row_id>` (or
+ * `live:<row_id>:<occurrence>` for a repeated source row) — the map popups
+ * hold nothing else, so the live executor resolves the row by walking the
+ * same derivation `liveRowsToEntries` built. `undefined` = the id names a
+ * row the current (capped) read no longer carries.
+ */
+export function liveRowByEntryId(
+  rows: readonly LiveWireRow[],
+  entryId: string,
+): { data: Record<string, unknown> } | undefined {
+  if (!entryId.startsWith("live:")) {
+    return undefined;
+  }
+  const rest = entryId.slice("live:".length);
+  const parts = rest.split(":");
+  const last = parts[parts.length - 1];
+  const occurrence = parts.length > 1 && /^\d+$/.test(last) ? Number(last) : 1;
+  const base = occurrence === 1 ? rest : rest.slice(0, rest.length - String(occurrence).length - 1);
+  let seen = 0;
+  for (const row of rows) {
+    const rowBase = typeof row.row_id === "string" ? row.row_id : undefined;
+    if (rowBase !== base) {
+      continue;
+    }
+    seen += 1;
+    if (seen === occurrence) {
+      return { data: isRecord(row.d) ? row.d : {} };
+    }
+  }
+  return undefined;
+}
+
 function cellOf(row: EntryRow, key: string): unknown {
   return isRecord(row.data) ? row.data[key] : undefined;
 }

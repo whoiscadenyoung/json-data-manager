@@ -4,6 +4,8 @@ import type { DatasetEntryRow } from "#/lib/dataset-rows";
 import type { FeatureSelection } from "#/lib/dataset-rows-react";
 import { getQueryOptions } from "#/lib/store/entries";
 import { versionEntryQueryOptions } from "#/lib/store/versions";
+import { liveViewRowsQueryOptions } from "#/lib/store/views";
+import { liveRowByEntryId } from "#/lib/views/live-rows";
 
 import { pgEntryToEntryRow } from "./pg-layer-rows";
 
@@ -80,6 +82,45 @@ export function useFrozenVersionEntryRow(args: {
               data: base.data,
               schemaId: selected === undefined ? "" : selected.schemaId,
             },
+    joinedPending: false,
+    loaders: [],
+  };
+}
+
+/**
+ * The popup executor for a LIVE view's rows (#331): a live row has no saved
+ * entry, so the point reads above find nothing and the popup never resolves.
+ * Reads the SAME capped server read the loader and table use (one shared
+ * query cache entry — no extra fetch) and resolves the row by its derived
+ * live id.
+ */
+export function useLiveViewEntryRow(args: {
+  selected: FeatureSelection | undefined;
+  liveViewIds: ReadonlySet<string>;
+}): {
+  entry: DatasetEntryRow | null | undefined;
+  joinedPending: boolean;
+  loaders: React.ReactNode[];
+} {
+  const selected = args.selected,
+    isLive = selected !== undefined && args.liveViewIds.has(selected.schemaId),
+    read = useQuery({
+      ...liveViewRowsQueryOptions(selected === undefined ? "" : selected.schemaId),
+      enabled: isLive,
+    });
+  if (selected === undefined || !isLive) {
+    return { entry: undefined, joinedPending: false, loaders: [] };
+  }
+  const live = read.data;
+  if (live === undefined) {
+    return { entry: read.isError ? null : undefined, joinedPending: false, loaders: [] };
+  }
+  const row = liveRowByEntryId(live.rows, selected.entryId);
+  return {
+    entry:
+      row === undefined
+        ? null
+        : { _creationTime: 0, _id: selected.entryId, data: row.data, schemaId: selected.schemaId },
     joinedPending: false,
     loaders: [],
   };
