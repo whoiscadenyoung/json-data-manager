@@ -271,6 +271,69 @@ function MultiMatchEditor({
   undeclared: string[];
 }) {
   const { multiMatch } = step;
+  if (multiMatch.mode === "first" || multiMatch.mode === "last") {
+    // #332: first/last without an order falls back to the rows' internal ids
+    // — which change when a step is extracted to a view (the saved rows are
+    // new) or the input re-runs — so the picked row can silently change. The
+    // editor offers the order inline and warns while it is unset.
+    const orderBy = multiMatch.orderBy ?? [];
+    const head = orderBy[0];
+    return (
+      <div className="flex flex-col gap-1.5">
+        <Label>Pick order</Label>
+        <div className="flex flex-wrap items-center gap-2">
+          <LabeledSelect
+            ariaLabel="Order field"
+            className="w-56"
+            onChange={(field) => {
+              onChange({ ...multiMatch, orderBy: [{ field, direction: "asc" }] });
+            }}
+            options={fieldOptions(rightFields)}
+            placeholder="None"
+            value={head === undefined ? "" : head.field}
+          />
+          {head !== undefined && (
+            <LabeledSelect
+              ariaLabel="Order direction"
+              className="w-36"
+              onChange={(direction) => {
+                onChange({
+                  ...multiMatch,
+                  orderBy: [
+                    { field: head.field, direction: direction === "desc" ? "desc" : "asc" },
+                  ],
+                });
+              }}
+              options={[
+                { value: "asc", label: "Ascending" },
+                { value: "desc", label: "Descending" },
+              ]}
+              placeholder="Direction"
+              value={head.direction === "desc" ? "desc" : "asc"}
+            />
+          )}
+          {head !== undefined && (
+            <Button
+              onClick={() => {
+                onChange({ mode: multiMatch.mode });
+              }}
+              size="sm"
+              variant="outline"
+            >
+              Clear
+            </Button>
+          )}
+        </div>
+        {head === undefined && (
+          <p className="text-xs text-amber-600 dark:text-amber-500" role="note">
+            No order set: the {multiMatch.mode} match falls back to the rows&apos; internal ids,
+            which change when a step is extracted to a view or the input re-runs. Pick a field to
+            keep the choice stable.
+          </p>
+        )}
+      </div>
+    );
+  }
   if (multiMatch.mode === "summarize") {
     return (
       <div className="flex flex-col gap-2">
