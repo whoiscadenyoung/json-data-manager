@@ -89,4 +89,18 @@ describe("datasets.uploadSourceFile — the §10 source-file retention", () => {
       source_file_size: file.size,
     });
   });
+
+  it("keeps spaces in the stored path verbatim — no %20 encoding (the storage key is decoded)", async () => {
+    const { client, queries, uploads } = stubSupabase(() => ({
+      data: [{ id: "d1" }],
+      error: null,
+    }));
+    const file = new File(["x"], "grant awards 2026 sample.xlsx");
+    const result = await uploadSourceFile({ datasetId: "d1", file }, { supabase: client });
+    expect(result.path).toBe("d1/grant awards 2026 sample.xlsx");
+    expect(onlyUpload(uploads).path).toBe("d1/grant awards 2026 sample.xlsx");
+    expect(firstArg(queryAt(queries, 0), "update")).toMatchObject({
+      source_file_path: "d1/grant awards 2026 sample.xlsx",
+    });
+  });
 });
