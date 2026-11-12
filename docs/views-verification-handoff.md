@@ -5,6 +5,29 @@ Date: 2026-11-11 · Umbrella: #298 · Previous handoff:
 [`views-design.md`](views-design.md) · Decision:
 [ADR 0028](decisions/0028-views.md)
 
+## Progress (2026-11-12, fix train complete) — read this first
+
+**Every follow-up this handoff filed is now fixed and merged** (PRs
+#345–#355, one per issue, fast checks required on `main` since #337):
+
+- #328 publish refuses the empty layer freeze; the app walk self-heals a
+  stale-empty layer head (#348).
+- #329 Delete dataset action in More actions, guard surfaced (#346).
+- #330 published popups read the frozen row with the view's labels —
+  the app publish stamps `output` into the snapshot (#347).
+- #331 live views: popups resolve live rows, layers fit bounds, the cap
+  surfaces, search/sort stop re-fetching, Created reads "—" (#354).
+- #332 first/last joins get a pick order + warning (#351). #333 derived
+  cleanup + kind narrowing, migration 0033 (#345). #334 nested steps
+  preview rows (#352). #335 Calculate names declared result types (#353).
+  #336 the tile worker reaps OOM-killed builds after 10 idle minutes
+  (#349). #337 fast checks are required (#337, settings). #338 the whole
+  polish batch; the walkthrough seed declares `json_schema` (#350).
+- #342 "Group related layers" shipped (#355): proposal-only, moves
+  placements, "Ungroup (restore the layers)" on the feature's groups.
+- Known roughness: Ungroup reuses the shared "Remove …?" confirm copy;
+  the walkthrough map's test polygons are tiny — zoom in to click them.
+
 ## Progress (2026-11-11, second session) — read this first
 
 This handoff has been worked through. Status:
