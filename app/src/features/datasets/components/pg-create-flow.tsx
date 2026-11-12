@@ -7,15 +7,18 @@ import type {
 } from "@caden/json-cms/react/ui";
 import { DatasetImporter } from "@caden/json-cms/react/ui";
 import type { DatasetImporterPhase } from "@caden/json-cms/react/ui";
+import { Badge } from "@caden/ui/components/badge";
+import { Button } from "@caden/ui/components/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@caden/ui/components/card";
 import { cn } from "@caden/ui/lib/utils";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, CheckCircle, FilePlus2, Upload } from "lucide-react";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { ArrowLeft, CheckCircle, Database, FilePlus2, ListPlus, Upload } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { RouterButton } from "#/components/router-button";
+import { useProjectShell, VIEWER_REASON } from "#/features/publishing";
 import { errorMessage } from "@/lib/errors";
 import * as datasetsStore from "@/lib/store/datasets";
 import * as entriesStore from "@/lib/store/entries";
@@ -153,66 +156,140 @@ export function PostgresCreateDatasetPage({ projectId }: { projectId: string }) 
             className="mb-4 -ml-2 inline-flex items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground hover:text-foreground"
           >
             <ArrowLeft className="h-4 w-4" />
-            Choose a different start
+            Back to add options
           </button>
         )}
-        <h1 className="text-3xl font-bold text-primary mb-1">Create dataset</h1>
+        <h1 className="text-3xl font-bold text-primary mb-1">Add dataset</h1>
         <p className="text-muted-foreground">
-          The dataset lands in this project as an owned draft — visible to the project's members
-          until it publishes.
+          Add data to this project — create a new dataset (it lands as an owned draft visible to the
+          project's members until it publishes) or bind an existing one by reference.
         </p>
       </div>
 
       <ImportFlowSteps current={currentStep(mode, importerPhase)} />
-      {mode === "choose" && <PathChooser onChoose={setMode} />}
+      {mode === "choose" && <AddOptions projectId={projectId} onChoose={setMode} />}
       {mode === "schema" && <SchemaFirst projectId={projectId} />}
       {mode === "import" && <ImportFirst onPhaseChange={setImporterPhase} projectId={projectId} />}
     </main>
   );
 }
 
-function PathChooser({ onChoose }: { onChoose: (mode: Mode) => void }) {
+/** The add-dataset chooser: create new (scratch / import) or bind an existing dataset of the project. */
+function AddOptions({
+  onChoose,
+  projectId,
+}: {
+  onChoose: (mode: Mode) => void;
+  projectId: string;
+}) {
   return (
-    <div className="grid gap-4 sm:grid-cols-2 max-w-3xl">
-      <button
-        type="button"
-        aria-label="Start from schema"
-        onClick={() => {
-          onChoose("schema");
-        }}
-        className="text-left"
-      >
-        <Card className="h-full transition-shadow hover:shadow-md">
-          <CardHeader>
-            <FilePlus2 className="h-6 w-6 text-primary mb-2" />
-            <CardTitle>Start from schema</CardTitle>
-            <CardDescription>
-              Define the shape of an empty dataset with the visual or code editor. Optionally upload
-              a JSON Schema to start from.
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      </button>
-      <button
-        type="button"
-        aria-label="Import data"
-        onClick={() => {
-          onChoose("import");
-        }}
-        className="text-left"
-      >
-        <Card className="h-full transition-shadow hover:shadow-md">
-          <CardHeader>
-            <Upload className="h-6 w-6 text-primary mb-2" />
-            <CardTitle>Import data</CardTitle>
-            <CardDescription>
-              Upload a JSON, CSV, or Excel file. We read every row to infer a matching schema and
-              pre-populate the dataset. Several files at once import as a batch.
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      </button>
+    <div className="flex max-w-3xl flex-col gap-8">
+      <section aria-label="Create new">
+        <h2 className="mb-3 text-sm font-semibold tracking-wide text-muted-foreground uppercase">
+          Create new
+        </h2>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <button
+            type="button"
+            aria-label="Start from scratch"
+            onClick={() => {
+              onChoose("schema");
+            }}
+            className="text-left"
+          >
+            <Card className="h-full transition-shadow hover:shadow-md">
+              <CardHeader>
+                <FilePlus2 className="h-6 w-6 text-primary mb-2" />
+                <CardTitle>Start from scratch</CardTitle>
+                <CardDescription>
+                  Define the shape of an empty dataset with the visual or code editor. Optionally
+                  upload a JSON Schema to start from.
+                </CardDescription>
+              </CardHeader>
+            </Card>
+          </button>
+          <button
+            type="button"
+            aria-label="Import data"
+            onClick={() => {
+              onChoose("import");
+            }}
+            className="text-left"
+          >
+            <Card className="h-full transition-shadow hover:shadow-md">
+              <CardHeader>
+                <Upload className="h-6 w-6 text-primary mb-2" />
+                <CardTitle>Import data</CardTitle>
+                <CardDescription>
+                  Upload a JSON, CSV, or Excel file. Every row is read to infer a matching schema;
+                  several files at once import as a batch, one review each.
+                </CardDescription>
+              </CardHeader>
+            </Card>
+          </button>
+        </div>
+      </section>
+      <ExistingDatasetsSection projectId={projectId} />
     </div>
+  );
+}
+
+/** The project's dataset memberships, with "Add existing" binding a dataset from elsewhere by reference (nothing is copied). */
+function ExistingDatasetsSection({ projectId }: { projectId: string }) {
+  const shell = useProjectShell(),
+    datasets = useQuery(datasetsStore.listQueryOptions()).data,
+    titleById = new globalThis.Map((datasets ?? []).map((dataset) => [dataset.id, dataset])),
+    rows = shell.catalog
+      .filter((row) => row.artifact.artifactKind === "dataset")
+      .flatMap((row) => {
+        const dataset = titleById.get(row.artifact.artifactId);
+        return dataset === undefined ? [] : [{ dataset, view: dataset.kind === "view" }];
+      }),
+    datasetRows = rows.filter(({ view }) => !view);
+  return (
+    <section aria-label="Existing datasets">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">
+          Existing datasets{" "}
+          <span className="font-normal normal-case">({datasetRows.length} in this project)</span>
+        </h2>
+        <Button
+          disabled={!shell.canEdit}
+          onClick={shell.openAdd}
+          size="sm"
+          title={shell.canEdit ? undefined : VIEWER_REASON}
+          type="button"
+          variant="outline"
+        >
+          <ListPlus className="mr-1 h-3.5 w-3.5" />
+          Add existing
+        </Button>
+      </div>
+      {datasetRows.length === 0 ? (
+        <p className="rounded-lg border border-border px-4 py-3 text-sm text-muted-foreground">
+          This project has no datasets yet — create one above, or add an existing one by reference.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {datasetRows.map(({ dataset }) => (
+            <Link
+              className="flex items-center justify-between gap-3 rounded-md border border-border px-4 py-2.5 text-sm hover:bg-muted/50"
+              key={dataset.id}
+              params={{ projectId, schemaId: dataset.id }}
+              to="/projects/$projectId/datasets/$schemaId"
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <Database className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="truncate font-medium">{dataset.title}</span>
+                <Badge variant="outline">{dataset.kind}</Badge>
+                {dataset.lifecycle === "draft" && <Badge variant="secondary">draft</Badge>}
+              </span>
+              <span className="shrink-0 text-xs text-muted-foreground">Open</span>
+            </Link>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

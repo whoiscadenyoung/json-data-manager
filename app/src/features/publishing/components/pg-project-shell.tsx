@@ -1,5 +1,14 @@
 import { Badge } from "@caden/ui/components/badge";
 import { Button } from "@caden/ui/components/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@caden/ui/components/dropdown-menu";
 import { Input } from "@caden/ui/components/input";
 import {
   Sheet,
@@ -11,27 +20,27 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useRouterState, type LinkProps } from "@tanstack/react-router";
 import {
+  ChevronDown,
   Database,
   FlaskConical,
   Globe,
-  Import,
   LayoutDashboard,
   LayoutGrid,
-  ListPlus,
   Map as MapIcon,
   MapPlus,
   Menu,
   Network,
   PanelLeftClose,
   Plus,
-  Rocket,
   Settings,
-  Upload,
   Users,
+  Workflow,
 } from "lucide-react";
 import { useState, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
 import { toast } from "sonner";
 
+import { CreateViewSheet } from "#/features/views";
+import type { PickerDataset } from "#/features/views";
 import type { VisibilityLevel } from "#/lib/store/visibility";
 import { useSession } from "@/integrations/supabase/provider";
 import { errorMessage } from "@/lib/errors";
@@ -184,7 +193,7 @@ function sectionLabel(rest: string, name: string | undefined): string {
     "": "Overview",
     "/scratch": "Scratch query",
     "/catalog": "Catalog",
-    "/create": "Import",
+    "/create": "Add dataset",
     "/lineage": "Lineage",
     "/members": "Members",
     "/publish": "Publish",
@@ -219,6 +228,15 @@ function PgProjectShellBody({
     myMembershipQuery = useQuery(listMineQueryOptions({ userId })),
     mapsQuery = useQuery({ ...mapsStore.listForProjectQueryOptions({ projectId }) }),
     appsQuery = useQuery({ ...appsStore.listForProjectQueryOptions({ projectId }) }),
+    // Titles/kinds for the shell's dataset memberships (the view sheet's
+    // picker) — one shared list read, cached across the app's browsers.
+    allDatasetsQuery = useQuery(datasetsStore.listQueryOptions()),
+    datasetsById = new globalThis.Map(
+      (allDatasetsQuery.data ?? []).map((dataset) => [
+        dataset.id,
+        { id: dataset.id, kind: dataset.kind, title: dataset.title },
+      ]),
+    ),
     datasetId =
       rest.startsWith("/datasets/") || rest.startsWith("/views/") ? (rest.split("/")[2] ?? "") : "",
     datasetQuery = useQuery({
@@ -230,6 +248,7 @@ function PgProjectShellBody({
     [pressing, setPressing] = useState(false),
     [mapOpen, setMapOpen] = useState(false),
     [appOpen, setAppOpen] = useState(false),
+    [viewOpen, setViewOpen] = useState(false),
     [mapName, setMapName] = useState(""),
     [creatingMap, setCreatingMap] = useState(false),
     invalidateAll = (): void => {
@@ -307,6 +326,17 @@ function PgProjectShellBody({
         .filter((row) => row.artifact.artifactKind === "dataset")
         .map((r) => r.artifact.artifactId),
     ),
+    // The view sheet's base-dataset picker: the project's dataset memberships
+    // by title (views can start from views too).
+    viewPickerDatasets: PickerDataset[] = catalog.flatMap((row) => {
+      if (row.artifact.artifactKind !== "dataset") {
+        return [];
+      }
+      const dataset = datasetsById.get(row.artifact.artifactId);
+      return dataset === undefined
+        ? []
+        : [{ id: dataset.id, kind: dataset.kind, title: dataset.title }];
+    }),
     currentMap = maps.find((map) => rest === `/maps/${map.id}`),
     currentApp = apps.find((app) => rest.startsWith(`/apps/${app.id}`)),
     currentDataset = datasetQuery.data === null ? undefined : datasetQuery.data,
@@ -320,13 +350,7 @@ function PgProjectShellBody({
         : currentMap.name,
     onDataset = datasetId !== "",
     section = sectionLabel(rest, currentName),
-    onCatalog = rest === "/catalog" || rest === "/create" || rest.startsWith("/views/"),
-    CreateAppDialog = createAppDialog,
-    pressTitle = !canEdit
-      ? VIEWER_REASON
-      : catalog.length === 0
-        ? "Nothing to publish yet — add a dataset first."
-        : undefined;
+    CreateAppDialog = createAppDialog;
 
   return (
     <ProjectShellContext.Provider
@@ -389,30 +413,6 @@ function PgProjectShellBody({
             {ROLE_LABELS[myRole]}
           </Badge>
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            {onCatalog ? (
-              <>
-                <Button
-                  disabled={!canEdit}
-                  onClick={() => {
-                    setAddOpen(true);
-                  }}
-                  size="sm"
-                  title={canEdit ? undefined : VIEWER_REASON}
-                  variant="outline"
-                >
-                  <ListPlus className="mr-1 h-3.5 w-3.5" />
-                  Add existing
-                </Button>
-                <Link
-                  className="inline-flex h-8 items-center rounded-md border px-3 text-sm hover:bg-muted"
-                  params={{ projectId }}
-                  to="/projects/$projectId/create"
-                >
-                  <Upload className="mr-1 h-3.5 w-3.5" />
-                  Import
-                </Link>
-              </>
-            ) : null}
             {currentDataset !== undefined && currentDataset.lifecycle === "published" ? (
               <Link
                 className="inline-flex h-8 items-center rounded-md border px-3 text-sm hover:bg-muted"
@@ -424,55 +424,74 @@ function PgProjectShellBody({
                 Public version
               </Link>
             ) : null}
-            <Link
-              aria-label="New dataset"
-              className="inline-flex h-8 items-center rounded-md border px-2 text-sm hover:bg-muted"
-              params={{ projectId }}
-              title="Create or import a dataset inside this project"
-              to="/projects/$projectId/create"
-            >
-              <Database className="h-3.5 w-3.5" />
-              <Plus className="h-3 w-3" />
-            </Link>
-            <Button
-              aria-label="New map"
-              disabled={!canEdit}
-              onClick={() => {
-                setMapName("");
-                setMapOpen(true);
-              }}
-              size="sm"
-              title={canEdit ? "New map" : VIEWER_REASON}
-              variant="outline"
-            >
-              <MapIcon className="h-3.5 w-3.5" />
-              <Plus className="h-3 w-3" />
-            </Button>
-            <Button
-              aria-label="New app"
-              disabled={!canEdit || CreateAppDialog === undefined}
-              onClick={() => {
-                setAppOpen(true);
-              }}
-              size="sm"
-              title={canEdit ? "New app" : VIEWER_REASON}
-              variant="outline"
-            >
-              <LayoutDashboard className="h-3.5 w-3.5" />
-              <Plus className="h-3 w-3" />
-            </Button>
-            <Button
-              disabled={pressing || catalog.length === 0 || !canEdit}
-              onClick={() => {
-                setPressOpen(true);
-              }}
-              size="sm"
-              title={pressTitle}
-              type="button"
-            >
-              <Rocket className="mr-1 h-3.5 w-3.5" />
-              {pressing ? "Publishing…" : "Publish bundle"}
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    disabled={!canEdit}
+                    size="sm"
+                    title={
+                      canEdit ? "Add a dataset, view, map, or app to this project" : VIEWER_REASON
+                    }
+                    type="button"
+                  >
+                    <Plus className="mr-1 h-3.5 w-3.5" />
+                    Add new
+                    <ChevronDown className="ml-1 h-3.5 w-3.5 text-muted-foreground" />
+                  </Button>
+                }
+              />
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>Data</DropdownMenuLabel>
+                  <DropdownMenuItem
+                    onClick={() => {
+                      void navigate({ params: { projectId }, to: "/projects/$projectId/create" });
+                    }}
+                  >
+                    <Database className="mr-2 h-4 w-4" />
+                    Dataset
+                    <span className="ml-auto text-xs text-muted-foreground">add or create</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={!canEdit}
+                    onClick={() => {
+                      setViewOpen(true);
+                    }}
+                    title={canEdit ? undefined : VIEWER_REASON}
+                  >
+                    <Workflow className="mr-2 h-4 w-4" />
+                    View
+                    <span className="ml-auto text-xs text-muted-foreground">from steps</span>
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>Compose</DropdownMenuLabel>
+                  <DropdownMenuItem
+                    disabled={!canEdit}
+                    onClick={() => {
+                      setMapName("");
+                      setMapOpen(true);
+                    }}
+                    title={canEdit ? undefined : VIEWER_REASON}
+                  >
+                    <MapIcon className="mr-2 h-4 w-4" />
+                    Map
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={!canEdit || CreateAppDialog === undefined}
+                    onClick={() => {
+                      setAppOpen(true);
+                    }}
+                    title={canEdit ? "New app" : VIEWER_REASON}
+                  >
+                    <LayoutDashboard className="mr-2 h-4 w-4" />
+                    App
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
         <div className="flex min-h-0 flex-1 flex-wrap md:flex-nowrap">
@@ -521,13 +540,6 @@ function PgProjectShellBody({
                   label="Scratch query"
                   linkProps={{ params: { projectId }, to: "/projects/$projectId/scratch" }}
                   rail={rail}
-                />
-                <NavItem
-                  active={rest === "/create"}
-                  icon={Import}
-                  label="Import"
-                  rail={rail}
-                  linkProps={{ params: { projectId }, to: "/projects/$projectId/create" }}
                 />
               </NavGroup>
               <NavGroup label="Maps" rail={rail}>
@@ -596,13 +608,6 @@ function PgProjectShellBody({
                   linkProps={{ params: { projectId }, to: "/projects/$projectId/lineage" }}
                 />
                 <NavItem
-                  active={rest === "/publish"}
-                  icon={Rocket}
-                  label="Publish"
-                  rail={rail}
-                  linkProps={{ params: { projectId }, to: "/projects/$projectId/publish" }}
-                />
-                <NavItem
                   active={rest === "/settings"}
                   icon={Settings}
                   label="Settings"
@@ -613,8 +618,8 @@ function PgProjectShellBody({
                   active={rest === "/members"}
                   icon={Users}
                   label="Members"
-                  rail={rail}
                   linkProps={{ params: { projectId }, to: "/projects/$projectId/members" }}
+                  rail={rail}
                 />
               </NavGroup>
             </nav>
@@ -636,6 +641,12 @@ function PgProjectShellBody({
         onAdded={invalidateAll}
         onOpenChange={setAddOpen}
         open={addOpen}
+        projectId={projectId}
+      />
+      <CreateViewSheet
+        datasets={viewPickerDatasets}
+        onOpenChange={setViewOpen}
+        open={viewOpen}
         projectId={projectId}
       />
       <Sheet onOpenChange={setMapOpen} open={mapOpen}>
