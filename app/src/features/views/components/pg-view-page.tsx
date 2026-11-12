@@ -74,7 +74,8 @@ import { StepList, type StepEditorContext } from "./step-list";
  */
 
 const OUTPUT = "output" as const;
-type Selection = number | typeof OUTPUT;
+/** A top-level step by index, a nested step by its join + sub-step indices (#334), or the result. */
+type Selection = { join: number; step: number } | number | typeof OUTPUT;
 
 function useDebounced<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -241,9 +242,47 @@ function ViewEditor({
           ? undefined
           : validationSummary(validation.errors),
     dirty = stableJson(draft) !== baseline,
-    selectedStep = selected === OUTPUT ? undefined : draft.steps[selected],
-    uptoStep = selected === OUTPUT ? undefined : selected,
-    previewKey = useDebounced(stableJson({ draft: prunedInputs(draft), uptoStep }), 450),
+    nestedSelection = typeof selected === "object" ? selected : undefined,
+    // A nested selection previews its SUB-PIPELINE: the right input alone,
+    // with the steps through the selected one (#334) — the same shape the
+    // extract-to-view plan runs, so no compiler option is needed.
+    nestedRight =
+      nestedSelection === undefined
+        ? undefined
+        : (() => {
+            const join = draft.steps[nestedSelection.join];
+            return join !== undefined && join.kind === "join" ? join.right : undefined;
+          })(),
+    nestedDraft =
+      nestedSelection === undefined || nestedRight === undefined || nestedRight.steps === undefined
+        ? undefined
+        : {
+            base: nestedRight.input,
+            inputs: draft.inputs.filter((input) => input.alias === nestedRight.input),
+            // The view's output block only names fields the FULL pipeline
+            // produces; the sub-preview projects nothing.
+            output: { fields: [], emptyFields: "keep" as const },
+            steps: nestedRight.steps.slice(0, nestedSelection.step + 1),
+          },
+    nestedStep =
+      nestedSelection === undefined || nestedRight === undefined || nestedRight.steps === undefined
+        ? undefined
+        : nestedRight.steps[nestedSelection.step],
+    nestedTitle =
+      nestedSelection === undefined || nestedStep === undefined
+        ? undefined
+        : `Step ${nestedSelection.join + 1}.${nestedSelection.step + 1}: ${STEP_TITLES[nestedStep.kind]}`,
+    selectedStep =
+      selected === OUTPUT
+        ? undefined
+        : typeof selected === "number"
+          ? draft.steps[selected]
+          : draft.steps[selected.join],
+    uptoStep = selected === OUTPUT || typeof selected !== "number" ? undefined : selected,
+    previewKey = useDebounced(
+      stableJson({ draft: nestedDraft ?? prunedInputs(draft), uptoStep }),
+      450,
+    ),
     previewQuery = useQuery({
       queryKey: ["pg:view-preview", viewId, previewKey],
       enabled: metaReady && blockedReason === undefined,
@@ -251,11 +290,19 @@ function ViewEditor({
       retry: false,
       staleTime: 30_000,
       queryFn: async () => {
+        if (nestedDraft !== undefined && nestedSelection !== undefined) {
+          return await previewDraftView(
+            nestedDraft,
+            inputRefsOf(nestedDraft),
+            nestedSelection.step,
+          );
+        }
         const pruned = prunedInputs(draft);
         return await previewDraftView(pruned, inputRefsOf(pruned), uptoStep);
       },
     }),
-    diagnosticsIndex = selected === OUTPUT ? draft.steps.length - 1 : selected,
+    diagnosticsIndex =
+      selected === OUTPUT || typeof selected !== "number" ? draft.steps.length - 1 : selected,
     diagnostics =
       previewQuery.data === undefined || diagnosticsIndex < 0
         ? undefined
@@ -307,6 +354,9 @@ function ViewEditor({
       },
     },
     infos,
+    onSelectNestedStep: (joinIndex, stepIndex) => {
+      setSelected({ join: joinIndex, step: stepIndex });
+    },
   };
 
   const baseInfo = infos.find((info) => info.alias === draft.base);
@@ -487,7 +537,7 @@ function ViewEditor({
           </Card>
           <StepList
             ctx={stepContext}
-            expanded={selected === OUTPUT ? undefined : selected}
+            expanded={typeof selected === "number" ? selected : undefined}
             nested={false}
             onChange={(steps) => {
               setDraft((current) => ({ ...current, steps }));
@@ -526,7 +576,7 @@ function ViewEditor({
                 : "Select a join step to add to its key map."
             }
             onAddToKeyMap={(from, to) => {
-              if (keyMapStep !== undefined && selected !== OUTPUT) {
+              if (keyMapStep !== undefined && typeof selected === "number") {
                 const index = selected;
                 const next = withManualMapEntry(keyMapStep, from, to);
                 setDraft((current) => ({
@@ -545,9 +595,11 @@ function ViewEditor({
               previewQuery.data === undefined ? undefined : previewRowsOf(previewQuery.data.rows)
             }
             title={
-              selectedStep === undefined
-                ? "Result"
-                : `Step ${Number(selected) + 1}: ${STEP_TITLES[selectedStep.kind]}`
+              nestedTitle !== undefined
+                ? nestedTitle
+                : selectedStep === undefined
+                  ? "Result"
+                  : `Step ${Number(selected) + 1}: ${STEP_TITLES[selectedStep.kind]}`
             }
           />
           <ExportProfilesCard

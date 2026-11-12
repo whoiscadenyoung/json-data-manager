@@ -48,6 +48,8 @@ export interface StepEditorContext {
     disabledReason: string | undefined;
     onExtract: (path: string, rightTitle: string) => void;
   };
+  /** Selecting a nested step for preview (#334): (join index, sub-step index). Absent = expansion only. */
+  onSelectNestedStep?: (joinIndex: number, stepIndex: number) => void;
 }
 
 export type AddableKind = "join" | "filter" | "groupBy" | "calculate" | "sql";
@@ -352,8 +354,8 @@ function SubPipeline({
         </div>
       </div>
       <p className="text-xs text-muted-foreground">
-        Counts and previews here describe this input only. The join above is previewed in the panel
-        on the right.
+        Counts and rows here describe this input only. The join above is previewed in the panel on
+        the right.
       </p>
       <StepList
         addLabel="Add step to this input"
@@ -364,6 +366,11 @@ function SubPipeline({
           onChange({ ...step, right: { ...step.right, steps } });
         }}
         onExpand={setExpanded}
+        onSelectStep={(stepIndex) => {
+          if (ctx.onSelectNestedStep !== undefined) {
+            ctx.onSelectNestedStep(index, stepIndex);
+          }
+        }}
         pathPrefix={`${path}.right.steps`}
         startFields={rightStart}
         steps={step.right.steps}
@@ -448,6 +455,7 @@ export function StepList({
   nested,
   onChange,
   onExpand,
+  onSelectStep,
   pathPrefix,
   startFields,
   steps,
@@ -458,6 +466,8 @@ export function StepList({
   nested: boolean;
   onChange: (steps: Step[]) => void;
   onExpand: (index: number | undefined) => void;
+  /** Selecting a card for preview (#334); absent, cards only expand. */
+  onSelectStep?: (index: number) => void;
   /** `steps` at the top level, `steps[0].right.steps` for a sub-pipeline. */
   pathPrefix: string;
   /** The fields of the rows that enter the first step. */
@@ -506,6 +516,9 @@ export function StepList({
             }}
             onSelect={() => {
               onExpand(index);
+              if (onSelectStep !== undefined) {
+                onSelectStep(index);
+              }
             }}
             problem={stepProblem(step)}
             step={step}
