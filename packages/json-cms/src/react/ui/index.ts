@@ -24,6 +24,8 @@ export type { ReferenceCandidate } from "./reference-widget.js";
 export { DatasetImporter } from "./dataset-importer.js";
 export type {
   DatasetImporterProps,
+  DatasetImporterPhase,
+  DatasetImportContext,
   DatasetImportProgress,
   DatasetImportOptions,
   DatasetImportRow,
