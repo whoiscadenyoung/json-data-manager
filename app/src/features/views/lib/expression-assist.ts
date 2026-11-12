@@ -53,14 +53,22 @@ export interface ExpressionCheck {
 export function checkExpression(
   src: string,
   fields: readonly string[] | undefined,
+  /** Declared field types (the inputs' json_schema, #335) — a field found here gets its real type instead of "depends on the data". */
+  types?: ReadonlyMap<string, FieldType>,
 ): ExpressionCheck {
   if (src.trim() === "") {
     return { problems: [], type: undefined };
   }
   const known = fields === undefined ? undefined : new Set(fields);
-  const result = analyzeExpression(src, (name) =>
-    known === undefined || known.has(name) ? "unknown" : undefined,
-  );
+  const result = analyzeExpression(src, (name) => {
+    if (types !== undefined) {
+      const declared = types.get(name);
+      if (declared !== undefined) {
+        return declared;
+      }
+    }
+    return known === undefined || known.has(name) ? "unknown" : undefined;
+  });
   if (result.ok) {
     return { problems: [], type: result.type };
   }
