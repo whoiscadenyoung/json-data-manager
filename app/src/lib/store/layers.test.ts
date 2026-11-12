@@ -313,7 +313,9 @@ describe("publishLayer — the append-only freeze (ADR 0019)", () => {
         return { data: { artifactId: "dataset-2" } };
       }
       if (query.table === "dataset_versions") {
-        return { data: [] };
+        // The child's dataset HAS a version (#328): an empty head now
+        // refuses the freeze instead of stamping an empty pin.
+        return { data: [{ id: "dataset-version-1", ref: "v1" }] };
       }
       return { data: null };
     });

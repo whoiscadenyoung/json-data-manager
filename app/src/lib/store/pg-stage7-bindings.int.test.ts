@@ -798,9 +798,10 @@ describe("stage 7 — the keyed/resumable engine (the RPC surface)", () => {
       `update public.dataset_bindings set keep_versions = 2 where id = ${sqlLit(bindingId)}`,
     );
     // Pin the OLDEST version through a consumer reference (the exemption).
+    // 0033 narrowed consumer_kind to (map, fork): the pin rides 'map'.
     await s().expectOk(
       `insert into public.consumer_references (consumer_id, consumer_kind, mode, pinned_version_id, pinned_ref, source_dataset_id)
-       values ('int-consumer', 'derived', 'pin', ${sqlLit(versionIds[0] ?? "")}, 'v1', ${sqlLit(datasetId)})`,
+       values ('int-consumer', 'map', 'pin', ${sqlLit(versionIds[0] ?? "")}, 'v1', ${sqlLit(datasetId)})`,
     );
     await s().begin();
     await s().asUser(ALICE);
