@@ -1,5 +1,5 @@
 import { EXPRESSION_FUNCTIONS } from "@caden/data-core/views";
-import type { Step } from "@caden/data-core/views";
+import type { FieldType, Step } from "@caden/data-core/views";
 import { CodeEditor } from "@caden/ui/components/code-editor";
 import { Input } from "@caden/ui/components/input";
 import { Label } from "@caden/ui/components/label";
@@ -18,16 +18,19 @@ function excerpt(src: string, from: number, to: number): string {
  * underlines the problem and offers the row's fields and the allowed functions.
  */
 export function CalculateForm({
+  fieldTypes,
   fields,
   onChange,
   step,
 }: {
   /** The fields of the rows reaching this step (undefined = shape unknown, any name accepted). */
   fields: string[] | undefined;
+  /** Declared types for those fields, from the inputs' json_schema (#335) — present, the form can name the result type instead of "depends on the data". */
+  fieldTypes?: ReadonlyMap<string, FieldType> | undefined;
   onChange: (step: Step) => void;
   step: Extract<Step, { kind: "calculate" }>;
 }) {
-  const check = checkExpression(step.expr, fields);
+  const check = checkExpression(step.expr, fields, fieldTypes);
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-2">

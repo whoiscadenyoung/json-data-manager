@@ -229,8 +229,12 @@ describe("CalculateForm", () => {
   };
   const fields = ["cost", "state name", "sites"];
 
-  function renderWith(expr: string, onChange = vi.fn<(s: Step) => void>()) {
-    render(createElement(CalculateForm, { fields, onChange, step: { ...base, expr } }));
+  function renderWith(
+    expr: string,
+    onChange = vi.fn<(s: Step) => void>(),
+    fieldTypes?: Map<string, "number" | "string">,
+  ) {
+    render(createElement(CalculateForm, { fieldTypes, fields, onChange, step: { ...base, expr } }));
     return onChange;
   }
 
@@ -245,6 +249,30 @@ describe("CalculateForm", () => {
     // The error is at the end of the text, where "cost *" is missing its right side.
     expect(diagnostics).toMatchObject([{ from: 6 }]);
     expect(screen.queryByText(/Result type/)).toBeNull();
+  });
+
+  it("names the result type for a declared field instead of 'depends on the data' (#335)", () => {
+    const types = new Map<string, "number" | "string">([["cost", "number"]]);
+    const first = render(
+      createElement(CalculateForm, {
+        fieldTypes: types,
+        fields,
+        onChange: vi.fn<(s: Step) => void>(),
+        step: { ...base, expr: "cost" },
+      }),
+    );
+    expect(first.getByText(/Result type/).textContent).toContain("number");
+    first.unmount();
+    // An undeclared field still reads as unknown.
+    const second = render(
+      createElement(CalculateForm, {
+        fieldTypes: types,
+        fields,
+        onChange: vi.fn<(s: Step) => void>(),
+        step: { ...base, expr: "sites" },
+      }),
+    );
+    expect(second.getByText(/Result type/).textContent).toContain("depends on the data");
   });
 
   it("reports a field that does not exist, at its position", () => {

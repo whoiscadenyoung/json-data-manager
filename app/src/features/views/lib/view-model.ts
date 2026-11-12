@@ -4,6 +4,7 @@ import type {
   Condition,
   ConditionLeaf,
   ConditionOp,
+  FieldType,
   JoinStep,
   KeyMatching,
   Measure,
@@ -730,4 +731,32 @@ export function proposeSpreadColumns(
     added.push({ category, as: name });
   }
   return added;
+}
+
+/**
+ * Declared field types of one input dataset's stored JSON Schema (#335) — the
+ * calculate form names a result type instead of "depends on the data" when a
+ * field's type is declared. A local minimal reader: the datasets feature's
+ * richer one is off-limits across the feature boundary (no-restricted-imports),
+ * and views only needs this name→base-type shape.
+ */
+export function declaredViewFieldTypes(schema: unknown): Map<string, FieldType> {
+  const types = new Map<string, FieldType>();
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+  if (!isRecord(schema) || !isRecord(schema.properties)) {
+    return types;
+  }
+  for (const [name, raw] of Object.entries(schema.properties)) {
+    const node = isRecord(raw) ? raw : {},
+      base = Array.isArray(node.type) ? node.type.find((t) => t !== "null") : node.type;
+    if (base === "number" || base === "integer") {
+      types.set(name, "number");
+    } else if (base === "boolean") {
+      types.set(name, "boolean");
+    } else if (base === "string") {
+      types.set(name, "string");
+    }
+  }
+  return types;
 }

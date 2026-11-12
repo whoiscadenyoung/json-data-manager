@@ -1,5 +1,5 @@
 import { validateViewDefinition } from "@caden/data-core/views";
-import type { ViewDefinition } from "@caden/data-core/views";
+import type { FieldType, ViewDefinition } from "@caden/data-core/views";
 import { Badge } from "@caden/ui/components/badge";
 import { Button } from "@caden/ui/components/button";
 import {
@@ -46,6 +46,7 @@ import { relativeTime, stableJson } from "../lib/format";
 import { explainCycle, extractJoinToView, joinPathOf } from "../lib/reuse-actions";
 import {
   fieldsAfter,
+  declaredViewFieldTypes,
   inputRefsOf,
   prunedInputs,
   stepProblem,
@@ -338,8 +339,19 @@ function ViewEditor({
     );
     return alias;
   };
+  // Declared field types across the readable datasets (#335): the calculate
+  // form names the result type instead of "depends on the data" whenever the
+  // field is declared anywhere. Last writer wins on cross-dataset collisions.
+  const fieldTypes = new globalThis.Map<string, FieldType>();
+  for (const dataset of datasetsQuery.data ?? []) {
+    for (const [name, declared] of declaredViewFieldTypes(dataset.jsonSchema)) {
+      fieldTypes.set(name, declared);
+    }
+  }
+
   const stepContext: StepEditorContext = {
     datasets,
+    fieldTypes,
     diagnostics: previewQuery.data === undefined ? undefined : previewQuery.data.diagnostics,
     ensureInput,
     errors: validation.ok ? [] : validation.errors,

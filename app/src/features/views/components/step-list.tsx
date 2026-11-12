@@ -50,6 +50,8 @@ export interface StepEditorContext {
   };
   /** Selecting a nested step for preview (#334): (join index, sub-step index). Absent = expansion only. */
   onSelectNestedStep?: (joinIndex: number, stepIndex: number) => void;
+  /** Declared field types across the inputs' json_schema (#335); absent, every expression field checks as "depends on the data". */
+  fieldTypes?: ReadonlyMap<string, import("@caden/data-core/views").FieldType>;
 }
 
 export type AddableKind = "join" | "filter" | "groupBy" | "calculate" | "sql";
@@ -404,7 +406,14 @@ function StepForm({
     case "groupBy":
       return <GroupByForm fields={fields ?? []} onChange={onChange} step={step} />;
     case "calculate":
-      return <CalculateForm fields={fields} onChange={onChange} step={step} />;
+      return (
+        <CalculateForm
+          fieldTypes={ctx.fieldTypes}
+          fields={fields}
+          onChange={onChange}
+          step={step}
+        />
+      );
     case "sql":
       return (
         <SqlForm aliases={ctx.infos.map((info) => info.alias)} onChange={onChange} step={step} />
