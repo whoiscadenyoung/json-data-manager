@@ -1,14 +1,15 @@
 ---
 name: import-flow-pr-stack-2026-11-12
-description: 2026-11-12 import-process fix stack — PRs #357/#358/#359 (.xls + %20 + code-view parity / GeoJSON feature-field preservation + preview / multistep + queue + error panel), key recipes and gotchas
+description: 2026-11-12 import-process + project-shell stack — PRs #357/#358/#359/#360 ALL MERGED to main same day (.xls + %20 + code-view parity / GeoJSON feature-field preservation + preview / multistep + queue + error panel / Add-new toolbar + Add-dataset page + publish → Settings), key recipes and gotchas
 metadata:
   type: project
 ---
 
-# Import-flow PR stack (2026-11-12)
+# Import-flow PR stack (2026-11-12) — 🏁 ALL MERGED (#357→#358→#359→#360, main @ 09bca6d, post-merge full gate green)
 
-Three stacked PRs reconciling the import-process review, all browser-verified on
-the compose dev stack (demo@jdm.test / "Views walkthrough" project):
+Four stacked PRs reconciling the import-process review + project-shell
+rework, all browser-verified on the compose dev stack (demo@jdm.test /
+"Views walkthrough" project):
 
 - **#357** `fix/import-spreadsheet-basics` — `.xls` via SheetJS (`xlsx` installed
   from `https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz` — the npm copy is
@@ -57,3 +58,14 @@ the `[aria-label="Drop a data file here"]` element; cross-realm
 round-trips drop blank cells (test header synthesis with `" "` not `null`) and
 an empty sheet still carries a dimension row (`[[]]` → skip on empty first
 row). CI full dispatched on the stack tip per the minutes policy.
+- **#360** `feat/project-add-new-flow` — project toolbar collapsed to ONE
+  "Add new" dropdown (Data group: Dataset/View; Compose group: Map/App);
+  sidebar "Import" + "Publish" entries removed; `/create` is now the
+  "Add dataset" page (Create-new cards — "Start from schema" renamed
+  "Start from scratch" — above an Existing-datasets list with the
+  Add-existing binding sheet); "Publish bundle" demoted to Settings →
+  Publishing (press + bundle status; /publish route stays for deep links).
+  TWO base-ui menu traps: `DropdownMenuLabel` (GroupLabel) must nest
+  INSIDE its `DropdownMenuGroup` (outside = whole-menu crash), and
+  `Menu.Item` fires `onClick` NOT Radix's `onSelect` (onSelect items
+  render but silently do nothing).
