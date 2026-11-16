@@ -8,7 +8,7 @@ import {
   DropdownMenuTrigger,
 } from "@caden/ui/components/dropdown-menu";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { Copy, MoreHorizontal, Plus, Workflow } from "lucide-react";
 import { useState } from "react";
 
@@ -16,7 +16,6 @@ import { latestRunsQueryOptions, listViewSummariesQueryOptions } from "@/lib/sto
 import type { ViewLatestRun, ViewSummary } from "@/lib/store/view-reads";
 
 import { relativeTime } from "../lib/format";
-import { CreateViewSheet } from "./create-view-sheet";
 import { DuplicateViewDialog } from "./duplicate-view-dialog";
 
 const VIEWER_REASON = "You have read-only access to this project.";
@@ -121,7 +120,7 @@ export function ProjectViewsSection({
   datasets: { id: string; kind: "source" | "view"; title: string }[];
   projectId: string;
 }) {
-  const [createOpen, setCreateOpen] = useState(false),
+  const navigate = useNavigate(),
     [duplicating, setDuplicating] = useState<ViewSummary | undefined>(undefined),
     summaries = useQuery(listViewSummariesQueryOptions()),
     memberIds = new Set(datasets.map((dataset) => dataset.id)),
@@ -140,7 +139,7 @@ export function ProjectViewsSection({
         <Button
           disabled={!canEdit}
           onClick={() => {
-            setCreateOpen(true);
+            void navigate({ params: { projectId }, to: "/projects/$projectId/views/new" });
           }}
           size="sm"
           title={canEdit ? "Build a dataset from steps (join, filter, group)" : VIEWER_REASON}
@@ -190,12 +189,6 @@ export function ProjectViewsSection({
           viewId={duplicating.id}
         />
       )}
-      <CreateViewSheet
-        datasets={datasets}
-        onOpenChange={setCreateOpen}
-        open={createOpen}
-        projectId={projectId}
-      />
     </section>
   );
 }

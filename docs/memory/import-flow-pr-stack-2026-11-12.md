@@ -58,6 +58,7 @@ the `[aria-label="Drop a data file here"]` element; cross-realm
 round-trips drop blank cells (test header synthesis with `" "` not `null`) and
 an empty sheet still carries a dimension row (`[[]]` → skip on empty first
 row). CI full dispatched on the stack tip per the minutes policy.
+
 - **#360** `feat/project-add-new-flow` — project toolbar collapsed to ONE
   "Add new" dropdown (Data group: Dataset/View; Compose group: Map/App);
   sidebar "Import" + "Publish" entries removed; `/create` is now the

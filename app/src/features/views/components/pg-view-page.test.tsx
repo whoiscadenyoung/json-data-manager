@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ViewDefinition } from "@caden/data-core/views";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createElement } from "react";
 import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -69,6 +69,9 @@ const mocks = vi.hoisted(() => ({
     title: "Deployments per state",
   } as Record<string, unknown>,
 }));
+
+// The canvas is React Flow (needs a measured DOM): draw the same graph as plain buttons.
+vi.mock("@/features/view-graphs", async () => await import("./test-step-graph"));
 
 vi.mock("../lib/create-view", () => ({ createProjectView: vi.fn<() => Promise<string>>() }));
 
@@ -181,8 +184,13 @@ describe("PgViewPage (view editor)", () => {
     mount();
     expect(await screen.findByText("Deployments per state")).toBeTruthy();
     expect(screen.getByText("Stale")).toBeTruthy();
-    expect(await screen.findByText("States")).toBeTruthy();
-    expect(screen.getByText("1. Join")).toBeTruthy();
+    // The canvas draws the base by title and the step; the settings panel opens the selected step.
+    const canvas = screen.getByTestId("step-canvas");
+    expect(await within(canvas).findByText("States")).toBeTruthy();
+    expect(within(canvas).getByText("1. Join")).toBeTruthy();
+    expect(
+      within(screen.getByRole("complementary", { name: "Step settings" })).getByText("1. Join"),
+    ).toBeTruthy();
     await waitFor(() => {
       expect(mocks.previewDraftView).toHaveBeenCalled();
     });
@@ -323,6 +331,100 @@ describe("PgViewPage (view editor)", () => {
       );
     });
     mocks.summaries = [];
+  });
+
+  it("flags a join that left rows unmatched on its canvas node", async () => {
+    mount();
+    const canvas = await screen.findByTestId("step-canvas");
+    await waitFor(() => {
+      expect(within(canvas).getByText("1. Join").getAttribute("data-badge")).toBe("1 unmatched");
+    });
+  });
+
+  it("appends a step from the canvas toolbar and opens its settings", async () => {
+    mount();
+    const canvas = await screen.findByTestId("step-canvas");
+    await within(canvas).findByText("States");
+    fireEvent.click(screen.getByRole("button", { name: "Add step: Filter rows" }));
+    expect(await within(canvas).findByText("2. Filter rows")).toBeTruthy();
+    const settings = screen.getByRole("complementary", { name: "Step settings" });
+    expect(within(settings).getByText("2. Filter rows")).toBeTruthy();
+    expect(within(settings).queryByText("1. Join")).toBeNull();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+  });
+
+  it("inserts a step on a connection, ahead of the steps after it", async () => {
+    mount();
+    const canvas = await screen.findByTestId("step-canvas");
+    await within(canvas).findByText("States");
+    fireEvent.click(within(canvas).getByRole("button", { name: "Insert a step at position 1" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Calculate a field" }));
+    expect(await within(canvas).findByText("1. Calculate")).toBeTruthy();
+    expect(within(canvas).getByText("2. Join")).toBeTruthy();
+  });
+
+  it("selects the output from the canvas and shows its fields in the settings panel", async () => {
+    mount();
+    const canvas = await screen.findByTestId("step-canvas");
+    fireEvent.click(within(canvas).getByText("Output"));
+    const settings = screen.getByRole("complementary", { name: "Step settings" });
+    expect(await within(settings).findByText("Output fields")).toBeTruthy();
+  });
+
+  it("keeps run history and exports behind tabs in the docked panel, which collapses", async () => {
+    mount();
+    await screen.findByTestId("step-canvas");
+    expect(screen.queryByText(/The last 50 runs/)).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "Run history" }));
+    expect(await screen.findByText(/The last 50 runs/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Collapse the details panel" }));
+    expect(screen.queryByText(/The last 50 runs/)).toBeNull();
+    // Picking a tab opens the panel again.
+    fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
+    expect(await screen.findByText("Kansas")).toBeTruthy();
+  });
+
+  it("outlines the whole view in run order and selects from the outline", async () => {
+    mount();
+    const outline = await screen.findByRole("navigation", { name: "Step outline" });
+    await within(outline).findByText("States");
+    const rows = within(outline)
+      .getAllByRole("button")
+      .map((row) => row.textContent);
+    expect(rows[0]).toMatch(/States.*Starts from/);
+    expect(rows[1]).toMatch(/1\. Join/);
+    expect(rows[2]).toMatch(/Deployments 2024.*Joined in/);
+    expect(rows[3]).toMatch(/Output/);
+    // The selected step is marked; selecting the output moves the mark and the settings.
+    expect(within(outline).getByText("1. Join").closest("button")).toHaveProperty(
+      "ariaCurrent",
+      "true",
+    );
+    fireEvent.click(within(outline).getByText("Output"));
+    const settings = screen.getByRole("complementary", { name: "Step settings" });
+    expect(await within(settings).findByText("Output fields")).toBeTruthy();
+  });
+
+  it("previews an input's own rows when its node is clicked, and describes it in the settings panel", async () => {
+    mount();
+    const canvas = await screen.findByTestId("step-canvas");
+    fireEvent.click(await within(canvas).findByText("Deployments 2024"));
+    // The preview is requested for that input alone: one input, no steps.
+    await waitFor(() => {
+      const sent = mocks.previewDraftView.mock.calls.map((call) => JSON.stringify(call[0]));
+      expect(sent).toContain(
+        JSON.stringify({
+          base: "deployments",
+          inputs: [{ alias: "deployments", ref: { kind: "dataset", id: DEPLOYMENTS } }],
+          output: { fields: [], emptyFields: "keep" },
+          steps: [],
+        }),
+      );
+    });
+    expect(await screen.findByText("Input: Deployments 2024")).toBeTruthy();
+    const settings = screen.getByRole("complementary", { name: "Step settings" });
+    expect(within(settings).getByText("Joined in step 1")).toBeTruthy();
+    expect(within(settings).getByText("Open this dataset")).toBeTruthy();
   });
 
   it("offers Duplicate in the header", async () => {

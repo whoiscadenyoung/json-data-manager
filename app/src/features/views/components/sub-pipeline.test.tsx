@@ -64,6 +64,9 @@ const mocks = vi.hoisted(() => ({
   saveView: vi.fn<(...args: unknown[]) => Promise<void>>(),
 }));
 
+// The canvas is React Flow (needs a measured DOM): draw the same graph as plain buttons.
+vi.mock("@/features/view-graphs", async () => await import("./test-step-graph"));
+
 vi.mock("../lib/create-view", () => ({ createProjectView: vi.fn<() => Promise<string>>() }));
 
 vi.mock("@/lib/store/view-reads", () => ({

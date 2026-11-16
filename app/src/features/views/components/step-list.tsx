@@ -8,8 +8,23 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@caden/ui/components/dropdown-menu";
-import { ArrowDown, ArrowUp, Plus, Trash2, Workflow } from "lucide-react";
+import { cn } from "@caden/ui/lib/utils";
+import {
+  ArrowDown,
+  ArrowUp,
+  Calculator,
+  Code,
+  Funnel,
+  Merge,
+  Plus,
+  Sigma,
+  Trash2,
+  Workflow,
+  type LucideIcon,
+} from "lucide-react";
 import { useState } from "react";
+
+import { STEP_KIND_VISUALS } from "@/features/view-graphs";
 
 import { stepDiagnosticsOf, type StepDiagnostics } from "../lib/diagnostics";
 import {
@@ -50,6 +65,8 @@ export interface StepEditorContext {
   };
   /** Selecting a nested step for preview (#334): (join index, sub-step index). Absent = expansion only. */
   onSelectNestedStep?: (joinIndex: number, stepIndex: number) => void;
+  /** The nested step selected elsewhere (the canvas): its card opens inside the join's form. */
+  selectedNested?: { join: number; step: number };
   /** Declared field types across the inputs' json_schema (#335); absent, every expression field checks as "depends on the data". */
   fieldTypes?: ReadonlyMap<string, import("@caden/data-core/views").FieldType>;
 }
@@ -69,7 +86,7 @@ function titleOf(infos: readonly InputInfo[], alias: string): string {
   return found === undefined ? "" : found.title;
 }
 
-function newStepOf(kind: AddableKind, firstField: string): Step {
+export function newStepOf(kind: AddableKind, firstField: string): Step {
   switch (kind) {
     case "filter":
       return newFilterStep(firstField);
@@ -84,13 +101,93 @@ function newStepOf(kind: AddableKind, firstField: string): Step {
   }
 }
 
-const ADD_ITEMS: { kind: AddableKind; label: string }[] = [
-  { kind: "join", label: "Join another dataset" },
-  { kind: "filter", label: "Filter rows" },
-  { kind: "groupBy", label: "Group and summarize" },
-  { kind: "calculate", label: "Calculate a field" },
-  { kind: "sql", label: "Custom SQL" },
+export const ADD_ITEMS: { icon: LucideIcon; kind: AddableKind; label: string; short: string }[] = [
+  { icon: Merge, kind: "join", label: "Join another dataset", short: "Join" },
+  { icon: Funnel, kind: "filter", label: "Filter rows", short: "Filter" },
+  { icon: Sigma, kind: "groupBy", label: "Group and summarize", short: "Group" },
+  { icon: Calculator, kind: "calculate", label: "Calculate a field", short: "Calculate" },
+  { icon: Code, kind: "sql", label: "Custom SQL", short: "SQL" },
 ];
+
+/** The canvas toolbar: one button per step kind; a click adds that step at the end of the flow. */
+export function AddStepToolbar({
+  className,
+  disabledReason,
+  onAdd,
+}: {
+  className?: string;
+  /** Why steps can't be added yet (shown as the buttons' title). */
+  disabledReason: string | undefined;
+  onAdd: (kind: AddableKind) => void;
+}) {
+  return (
+    <div
+      aria-label="Add a step"
+      className={cn(
+        "flex flex-wrap items-center gap-0.5 rounded-lg border bg-card p-1 shadow-xs",
+        className,
+      )}
+      role="toolbar"
+    >
+      <span className="px-2 text-xs font-medium text-muted-foreground">Add step</span>
+      {ADD_ITEMS.map((item) => (
+        <Button
+          aria-label={`Add step: ${item.label}`}
+          disabled={disabledReason !== undefined}
+          key={item.kind}
+          onClick={() => {
+            onAdd(item.kind);
+          }}
+          size="sm"
+          title={disabledReason ?? item.label}
+          type="button"
+          variant="ghost"
+        >
+          <item.icon className="h-3.5 w-3.5" />
+          {item.short}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+/** The "+" on a canvas connection: picks a step kind to insert at `index`. */
+export function InsertStepButton({
+  index,
+  onAdd,
+}: {
+  index: number;
+  onAdd: (kind: AddableKind) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <button
+            aria-label={`Insert a step at position ${index + 1}`}
+            className="flex size-5 items-center justify-center rounded-full border border-primary bg-background text-primary shadow-xs hover:bg-primary hover:text-primary-foreground"
+            type="button"
+          >
+            <Plus className="size-3" />
+          </button>
+        }
+      />
+      <DropdownMenuContent align="center" className="w-56">
+        {ADD_ITEMS.map((item) => (
+          <DropdownMenuItem
+            key={item.kind}
+            onClick={() => {
+              onAdd(item.kind);
+            }}
+          >
+            <item.icon className="h-3.5 w-3.5" />
+            {item.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 export function AddStepMenu({
   disabled,
@@ -170,6 +267,7 @@ function StepCard({
   stepCount: number;
 }) {
   const hasErrors = messages.length > 0;
+  const KindIcon = STEP_KIND_VISUALS[step.kind].icon;
   return (
     <Card
       className={
@@ -183,6 +281,14 @@ function StepCard({
       }
     >
       <div className="flex items-center gap-2 px-4 pt-3">
+        <span
+          className={cn(
+            "flex size-7 shrink-0 items-center justify-center rounded-md",
+            STEP_KIND_VISUALS[step.kind].tone,
+          )}
+        >
+          <KindIcon className="size-4" />
+        </span>
         <button
           aria-expanded={expanded}
           className="flex min-w-0 flex-1 flex-col items-start text-left"
@@ -285,7 +391,13 @@ function SubPipeline({
   path: string;
   step: JoinStep;
 }) {
-  const [expanded, setExpanded] = useState<number | undefined>(undefined);
+  const [localExpanded, setExpanded] = useState<number | undefined>(undefined);
+  const { selectedNested } = ctx;
+  // A sub-step picked on the canvas opens here; only the top-level join it belongs to follows it.
+  const expanded =
+    selectedNested !== undefined && path === `steps[${selectedNested.join}]`
+      ? selectedNested.step
+      : localExpanded;
   const rightTitle = titleOf(ctx.infos, step.right.input);
   const { extract } = ctx;
   const rightInfo = ctx.infos.find((info) => info.alias === step.right.input);
@@ -367,7 +479,14 @@ function SubPipeline({
         onChange={(steps) => {
           onChange({ ...step, right: { ...step.right, steps } });
         }}
-        onExpand={setExpanded}
+        onExpand={(next) => {
+          setExpanded(next);
+          // Reordering or adding a sub-step moves the shared selection with it;
+          // otherwise the canvas's selection would keep the old position open.
+          if (next !== undefined && ctx.onSelectNestedStep !== undefined) {
+            ctx.onSelectNestedStep(index, next);
+          }
+        }}
         onSelectStep={(stepIndex) => {
           if (ctx.onSelectNestedStep !== undefined) {
             ctx.onSelectNestedStep(index, stepIndex);
@@ -464,12 +583,15 @@ export function StepList({
   nested,
   onChange,
   onExpand,
+  only,
   onSelectStep,
   pathPrefix,
   startFields,
   steps,
 }: {
   addLabel?: string;
+  /** Renders just this step's card, without the add-step menu (the canvas editor's settings panel). */
+  only?: number;
   ctx: StepEditorContext;
   expanded: number | undefined;
   nested: boolean;
@@ -502,6 +624,9 @@ export function StepList({
   return (
     <div className="flex flex-col gap-3">
       {steps.map((step, index) => {
+        if (only !== undefined && only !== index) {
+          return null;
+        }
         const path = `${pathPrefix}[${index}]`;
         const diagnostics = nested
           ? stepDiagnosticsOf(ctx.diagnostics, index, path)
@@ -547,15 +672,17 @@ export function StepList({
           </StepCard>
         );
       })}
-      <AddStepMenu
-        disabled={startFields === undefined && ctx.infos.length === 0}
-        label={addLabel}
-        onAdd={(kind) => {
-          const fields = fieldsThrough(startFields, steps, ctx.infos) ?? [];
-          onChange([...steps, newStepOf(kind, fields[0] ?? "")]);
-          onExpand(steps.length);
-        }}
-      />
+      {only === undefined && (
+        <AddStepMenu
+          disabled={startFields === undefined && ctx.infos.length === 0}
+          label={addLabel}
+          onAdd={(kind) => {
+            const fields = fieldsThrough(startFields, steps, ctx.infos) ?? [];
+            onChange([...steps, newStepOf(kind, fields[0] ?? "")]);
+            onExpand(steps.length);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -39,8 +39,6 @@ import {
 import { useState, useSyncExternalStore, type ComponentType, type ReactNode } from "react";
 import { toast } from "sonner";
 
-import { CreateViewSheet } from "#/features/views";
-import type { PickerDataset } from "#/features/views";
 import type { VisibilityLevel } from "#/lib/store/visibility";
 import { useSession } from "@/integrations/supabase/provider";
 import { errorMessage } from "@/lib/errors";
@@ -72,9 +70,9 @@ import { PgPublishBundleDialog } from "./pg-publish-bundle-dialog";
 
 const RAIL_EVENT = "jdm:project-sidebar";
 
-/** Full-bleed editors (map editor) default the sidebar to the icon rail. */
+/** Full-bleed editors (map editor, view editor) default the sidebar to the icon rail. */
 function isEditorPath(pathname: string): boolean {
-  return pathname.includes("/maps/") || pathname.includes("/apps/");
+  return pathname.includes("/maps/") || pathname.includes("/apps/") || pathname.includes("/views/");
 }
 
 function railKey(editor: boolean): string {
@@ -228,15 +226,6 @@ function PgProjectShellBody({
     myMembershipQuery = useQuery(listMineQueryOptions({ userId })),
     mapsQuery = useQuery({ ...mapsStore.listForProjectQueryOptions({ projectId }) }),
     appsQuery = useQuery({ ...appsStore.listForProjectQueryOptions({ projectId }) }),
-    // Titles/kinds for the shell's dataset memberships (the view sheet's
-    // picker) — one shared list read, cached across the app's browsers.
-    allDatasetsQuery = useQuery(datasetsStore.listQueryOptions()),
-    datasetsById = new globalThis.Map(
-      (allDatasetsQuery.data ?? []).map((dataset) => [
-        dataset.id,
-        { id: dataset.id, kind: dataset.kind, title: dataset.title },
-      ]),
-    ),
     datasetId =
       rest.startsWith("/datasets/") || rest.startsWith("/views/") ? (rest.split("/")[2] ?? "") : "",
     datasetQuery = useQuery({
@@ -248,7 +237,6 @@ function PgProjectShellBody({
     [pressing, setPressing] = useState(false),
     [mapOpen, setMapOpen] = useState(false),
     [appOpen, setAppOpen] = useState(false),
-    [viewOpen, setViewOpen] = useState(false),
     [mapName, setMapName] = useState(""),
     [creatingMap, setCreatingMap] = useState(false),
     invalidateAll = (): void => {
@@ -326,17 +314,6 @@ function PgProjectShellBody({
         .filter((row) => row.artifact.artifactKind === "dataset")
         .map((r) => r.artifact.artifactId),
     ),
-    // The view sheet's base-dataset picker: the project's dataset memberships
-    // by title (views can start from views too).
-    viewPickerDatasets: PickerDataset[] = catalog.flatMap((row) => {
-      if (row.artifact.artifactKind !== "dataset") {
-        return [];
-      }
-      const dataset = datasetsById.get(row.artifact.artifactId);
-      return dataset === undefined
-        ? []
-        : [{ id: dataset.id, kind: dataset.kind, title: dataset.title }];
-    }),
     currentMap = maps.find((map) => rest === `/maps/${map.id}`),
     currentApp = apps.find((app) => rest.startsWith(`/apps/${app.id}`)),
     currentDataset = datasetQuery.data === null ? undefined : datasetQuery.data,
@@ -456,7 +433,10 @@ function PgProjectShellBody({
                   <DropdownMenuItem
                     disabled={!canEdit}
                     onClick={() => {
-                      setViewOpen(true);
+                      void navigate({
+                        params: { projectId },
+                        to: "/projects/$projectId/views/new",
+                      });
                     }}
                     title={canEdit ? undefined : VIEWER_REASON}
                   >
@@ -641,12 +621,6 @@ function PgProjectShellBody({
         onAdded={invalidateAll}
         onOpenChange={setAddOpen}
         open={addOpen}
-        projectId={projectId}
-      />
-      <CreateViewSheet
-        datasets={viewPickerDatasets}
-        onOpenChange={setViewOpen}
-        open={viewOpen}
         projectId={projectId}
       />
       <Sheet onOpenChange={setMapOpen} open={mapOpen}>

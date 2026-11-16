@@ -35,10 +35,19 @@ export interface GraphNode {
   unavailable?: boolean;
   /** Lineage nodes: the entity the node opens. */
   entityId?: string;
+  /** Input nodes (step graph): the input's alias in the definition. */
+  inputAlias?: string;
   /** Step nodes: the step it selects. */
   step?: StepSelection;
   /** Step nodes: the raw `kind` string, kept for unknown/future kinds. */
   stepKind?: string;
+  /** A short pill on the node (step graph: "Needs input", "Problem", "3 unmatched"). */
+  badge?: GraphNodeBadge;
+}
+
+export interface GraphNodeBadge {
+  label: string;
+  tone: "neutral" | "warning" | "error";
 }
 
 /** `input` solid (a view reads it), `relation` dashed, `consumer` (a layer/map/app uses it), `flow` step to step, `branch` a sub-pipeline or a join's right input. */
@@ -50,6 +59,8 @@ export interface GraphEdge {
   target: string;
   kind: GraphEdgeKind;
   label?: string;
+  /** Step graph `flow` edges: the index in `steps` a step inserted on this edge would take. */
+  insertIndex?: number;
 }
 
 export interface Graph {
