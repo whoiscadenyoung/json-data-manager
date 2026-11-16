@@ -27,3 +27,6 @@ Third-party extensions install into the `extensions` schema.
   `view_refresh_queue` job table + `data_version` trigger, runner-only `set_view_refresh_mode`,
   the drain helpers (`view_refresh_claim` / `_finish` / `_record_failure`), `view_sync_live_meta`;
   `create_view` / `save_view` refuse auto/live; `view_stale` is false for live (#305).
+- `0034_project_folders.sql` — catalog folders: `project_folders` (nested, per project, unique
+  sibling names, cycle guard), `project_artifacts.folder_id`, member-read / editor-write RLS, and
+  `delete_project_folder` (deletes one folder and moves what it holds up a level).

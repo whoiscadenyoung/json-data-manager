@@ -2,7 +2,8 @@
 // imports from here, never from its subfolders.
 export { PgViewPage } from "./components/pg-view-page";
 export { NewViewPage } from "./components/new-view-page";
-export { ProjectViewsSection, ViewCard } from "./components/project-views-section";
+export { DuplicateViewDialog } from "./components/duplicate-view-dialog";
+export { relativeTime } from "./lib/format";
 export { createProjectView } from "./lib/create-view";
 export {
   definitionFromRelation,

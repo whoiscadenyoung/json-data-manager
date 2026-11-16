@@ -2,8 +2,8 @@
 // imports from here, never from its subfolders.
 export { PgProjectSettings } from "./components/pg-project-sections";
 export { PgProjectShell } from "./components/pg-project-shell";
+export { PgProjectCatalog } from "./components/pg-project-catalog";
 export {
-  PgProjectCatalog,
   PgProjectMembers,
   PgProjectOverview,
   PgProjectPublish,

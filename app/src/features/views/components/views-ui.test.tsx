@@ -19,12 +19,9 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
   };
 });
 
-import type { ViewLatestRun, ViewSummary } from "@/lib/store/view-reads";
-
 import { stepDiagnosticsOf } from "../lib/diagnostics";
 import { newJoinStep, type InputInfo } from "../lib/view-model";
 import { PreviewPane } from "./preview-pane";
-import { ViewCard } from "./project-views-section";
 import { JoinForm } from "./step-forms";
 
 afterEach(() => {
@@ -40,88 +37,6 @@ const infos: InputInfo[] = [
     fields: ["id", "stateId", "cost"],
   },
 ];
-
-function summary(overrides: Partial<ViewSummary> = {}): ViewSummary {
-  return {
-    bbox: null,
-    createdAt: "2026-11-10T00:00:00Z",
-    createdBy: "u1",
-    description: null,
-    editPolicy: "open",
-    entryCount: 0,
-    fieldCount: 0,
-    featureCount: 0,
-    geometryType: null,
-    groupId: null,
-    id: "v1",
-    inputs: [
-      { alias: "states", inputDatasetId: "d-states" },
-      { alias: "deployments", inputDatasetId: "d-deployments" },
-    ],
-    isGeospatial: false,
-    kind: "view",
-    lifecycle: "draft",
-    lineage: null,
-    mapTileArchiveBuiltVersion: null,
-    mapTileArchiveBytes: null,
-    mapTileArchiveFormat: null,
-    mapTileArchiveMaxZoom: null,
-    mapTileCacheVersion: 0,
-    refreshMode: "manual",
-    source: null,
-    stale: false,
-    title: "Deployments per state",
-    visibility: "members",
-    ...overrides,
-  };
-}
-
-describe("ViewCard (catalog Views section)", () => {
-  it("shows refresh mode, input count, input titles and 'Never run'", () => {
-    render(
-      createElement(ViewCard, {
-        inputTitles: ["States", "Deployments 2024"],
-        lastRun: undefined,
-        projectId: "p1",
-        view: summary({ stale: true }),
-      }),
-    );
-    expect(screen.getByText("Deployments per state")).toBeTruthy();
-    expect(screen.getByText("manual")).toBeTruthy();
-    expect(screen.getByText("Stale")).toBeTruthy();
-    expect(screen.getByText(/Never run/)).toBeTruthy();
-    expect(screen.getByText(/2 inputs \(States, Deployments 2024\)/)).toBeTruthy();
-  });
-
-  it("shows an Error badge (not Stale) when the last run failed, and the last-run age otherwise", () => {
-    const failed: ViewLatestRun = {
-      error: "boom",
-      finishedAt: new Date().toISOString(),
-      rowCount: null,
-      status: "error",
-      viewId: "v1",
-    };
-    const { rerender } = render(
-      createElement(ViewCard, {
-        inputTitles: [],
-        lastRun: failed,
-        projectId: "p1",
-        view: summary({ stale: true }),
-      }),
-    );
-    expect(screen.getByText("Error")).toBeTruthy();
-    expect(screen.queryByText("Stale")).toBeNull();
-    rerender(
-      createElement(ViewCard, {
-        inputTitles: [],
-        lastRun: { ...failed, status: "ok", error: null },
-        projectId: "p1",
-        view: summary(),
-      }),
-    );
-    expect(screen.getByText(/Last run just now/)).toBeTruthy();
-  });
-});
 
 function join(overrides: Partial<JoinStep> = {}): JoinStep {
   return {

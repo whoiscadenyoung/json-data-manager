@@ -70,13 +70,15 @@ export interface ProjectArtifactRow {
   role: "owned" | "linked";
   /** The linked reference's follow intent — manual pins at the add-time head, auto floats. Store-kept in lockstep with the edge's mode. */
   syncMode: ArtifactSyncMode;
+  /** The catalog folder this membership sits in (migration 0034); null = the catalog root. */
+  folderId: string | null;
   addedBy: string;
 }
 
 const PROJECT_SELECT =
   "id,title,description,artifactCount:artifact_count,visibility,createdBy:created_by,createdAt:created_at,updatedAt:updated_at";
 const ARTIFACT_SELECT =
-  "id,projectId:project_id,artifactId:artifact_id,artifactKind:artifact_kind,role,syncMode:sync_mode,addedBy:added_by";
+  "id,projectId:project_id,artifactId:artifact_id,artifactKind:artifact_kind,role,syncMode:sync_mode,folderId:folder_id,addedBy:added_by";
 
 // ---------------------------------------------------------------------------
 // Reads (TanStack Query `queryOptions` per function, design §8.1)
@@ -294,6 +296,8 @@ export interface AddArtifactArgs {
   role: "owned" | "linked";
   /** Linked datasets only — manual (the default) pins at the current chain head, auto floats. */
   syncMode?: ArtifactSyncMode;
+  /** The catalog folder the membership lands in (absent = the root). */
+  folderId?: string | null;
 }
 
 export interface AddArtifactResult {
@@ -336,6 +340,9 @@ export async function addArtifact(
       .insert({
         artifact_id: args.artifactId,
         artifact_kind: args.artifactKind,
+        ...(args.folderId === undefined || args.folderId === null
+          ? {}
+          : { folder_id: args.folderId }),
         project_id: args.projectId,
         role: args.role,
         sync_mode: syncMode,
