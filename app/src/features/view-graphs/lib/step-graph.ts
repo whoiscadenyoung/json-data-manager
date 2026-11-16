@@ -1,6 +1,22 @@
 import type { ViewDefinition } from "@caden/data-core/views";
 
-import type { Graph, GraphEdge, GraphNode, StepSelection } from "./graph-types";
+import type { Graph, GraphEdge, GraphNode, GraphNodeBadge, StepSelection } from "./graph-types";
+
+/** What an editor knows about a step that the stored JSON alone doesn't say. */
+export interface StepNodeOverride {
+  label?: string;
+  detail?: string;
+  badge?: GraphNodeBadge;
+}
+
+export interface StepGraphOptions {
+  /** Input titles by alias; an alias without one is drawn by its alias. */
+  inputTitles?: Readonly<Record<string, string>>;
+  /** Replaces a step node's label, detail and badge (e.g. "1. Join", the step summary, "Needs input"). */
+  describeStep?: (selection: StepSelection) => StepNodeOverride | undefined;
+  /** The output node's second line. */
+  outputDetail?: string;
+}
 
 /**
  * Steps are read loosely on purpose. The real `Step` union is closed, but
@@ -68,14 +84,20 @@ const DETAIL: Record<string, (step: Loose) => string | undefined> = {
   },
 };
 
-function stepNode(step: Loose, selection: StepSelection, id: string): GraphNode {
+function stepNode(
+  step: Loose,
+  selection: StepSelection,
+  id: string,
+  override: StepNodeOverride = {},
+): GraphNode {
   const kind = kindOf(step);
   const detail = DETAIL[kind];
   return {
-    detail: detail === undefined ? undefined : detail(step),
+    badge: override.badge,
+    detail: override.detail ?? (detail === undefined ? undefined : detail(step)),
     id,
     kind: "step",
-    label: STEP_TITLES[kind] ?? kind,
+    label: override.label ?? STEP_TITLES[kind] ?? kind,
     step: selection,
     stepKind: kind,
   };
@@ -90,6 +112,15 @@ class StepGraphBuilder {
   readonly nodes = new Map<string, GraphNode>();
   readonly edges = new Map<string, GraphEdge>();
 
+  constructor(private readonly options: StepGraphOptions) {}
+
+  step(step: Loose, selection: StepSelection, id: string): void {
+    const { describeStep } = this.options;
+    this.addNode(
+      stepNode(step, selection, id, describeStep === undefined ? {} : describeStep(selection)),
+    );
+  }
+
   addNode(node: GraphNode): void {
     if (!this.nodes.has(node.id)) {
       this.nodes.set(node.id, node);
@@ -99,14 +130,16 @@ class StepGraphBuilder {
   /** An input referenced by a step but missing from `inputs` still gets a node. */
   ensureInput(alias: string): string {
     const id = `input:${alias}`;
-    this.addNode({ id, kind: "input", label: alias });
+    const titles = this.options.inputTitles;
+    const title = titles === undefined ? undefined : titles[alias];
+    this.addNode({ id, inputAlias: alias, kind: "input", label: title ?? alias });
     return id;
   }
 
-  addEdge(source: string, target: string, kind: GraphEdge["kind"]): void {
+  addEdge(source: string, target: string, kind: GraphEdge["kind"], insertIndex?: number): void {
     const id = `${kind}:${source}>${target}`;
     if (!this.edges.has(id)) {
-      this.edges.set(id, { id, kind, source, target });
+      this.edges.set(id, { id, insertIndex, kind, source, target });
     }
   }
 }
@@ -118,7 +151,7 @@ function addBranch(builder: StepGraphBuilder, step: Loose, index: number, joinId
   for (const [subIndex, sub] of right.steps.entries()) {
     const selection = { index, sub: subIndex };
     const id = stepNodeId(selection);
-    builder.addNode(stepNode(sub, selection, id));
+    builder.step(sub, selection, id);
     const nested = rightOf(sub).input;
     if (kindOf(sub) === "join" && nested !== undefined) {
       // A join inside a sub-pipeline reads its own right input.
@@ -138,11 +171,15 @@ function addBranch(builder: StepGraphBuilder, step: Loose, index: number, joinId
  * The view step graph (design §9): inputs, then the steps in order, then the
  * output. The base input feeds the first step; a join's right input feeds the
  * join step directly, or through the nodes of its inline sub-pipeline
- * (`right.steps`). Unknown step kinds draw as generic nodes. Pure and total:
+ * (`right.steps`). `flow` edges carry the index a step inserted on them would
+ * take. Unknown step kinds draw as generic nodes. Pure and total:
  * malformed or partial definitions produce a smaller graph, never an error.
  */
-export function buildViewStepGraph(definition: ViewDefinition): Graph {
-  const builder = new StepGraphBuilder();
+export function buildViewStepGraph(
+  definition: ViewDefinition,
+  options: StepGraphOptions = {},
+): Graph {
+  const builder = new StepGraphBuilder(options);
   const loose = looseOf(definition);
   for (const input of looseList(loose["inputs"])) {
     const alias = input["alias"];
@@ -153,12 +190,13 @@ export function buildViewStepGraph(definition: ViewDefinition): Graph {
   const base = loose["base"];
   let previous = typeof base === "string" && base !== "" ? builder.ensureInput(base) : undefined;
 
-  for (const [index, step] of looseList(loose["steps"]).entries()) {
+  const steps = looseList(loose["steps"]);
+  for (const [index, step] of steps.entries()) {
     const selection = { index };
     const id = stepNodeId(selection);
-    builder.addNode(stepNode(step, selection, id));
+    builder.step(step, selection, id);
     if (previous !== undefined) {
-      builder.addEdge(previous, id, "flow");
+      builder.addEdge(previous, id, "flow", index);
     }
     if (kindOf(step) === "join") {
       addBranch(builder, step, index, id);
@@ -166,9 +204,9 @@ export function buildViewStepGraph(definition: ViewDefinition): Graph {
     previous = id;
   }
 
-  builder.addNode({ id: "output", kind: "output", label: "Output" });
+  builder.addNode({ detail: options.outputDetail, id: "output", kind: "output", label: "Output" });
   if (previous !== undefined) {
-    builder.addEdge(previous, "output", "flow");
+    builder.addEdge(previous, "output", "flow", steps.length);
   }
   return { edges: [...builder.edges.values()], nodes: [...builder.nodes.values()] };
 }

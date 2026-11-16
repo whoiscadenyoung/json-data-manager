@@ -16,11 +16,12 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Copy, Database, Loader2, Play, Save, Table2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Copy, Loader2, Play, Save, Table2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { RouterButton } from "@/components/router-button";
+import { ViewStepGraph } from "@/features/view-graphs";
 import { errorMessage } from "@/lib/errors";
 import * as datasetsStore from "@/lib/store/datasets";
 import * as projectsStore from "@/lib/store/projects";
@@ -41,9 +42,11 @@ import {
 } from "@/lib/store/views";
 import { saveView } from "@/lib/views/view-save";
 
+import { canvasInputTitles, canvasOutputDetail, describeCanvasStep } from "../lib/canvas-nodes";
 import { stepDiagnosticsOf } from "../lib/diagnostics";
 import { relativeTime, stableJson } from "../lib/format";
 import { explainCycle, extractJoinToView, joinPathOf } from "../lib/reuse-actions";
+import { inputOf, nestedOf, openStepOf, OUTPUT, type Selection } from "../lib/selection";
 import {
   fieldsAfter,
   declaredViewFieldTypes,
@@ -60,23 +63,40 @@ import {
 import { DuplicateViewDialog } from "./duplicate-view-dialog";
 import { ExportProfilesCard } from "./export-profiles-card";
 import { ExtractViewDialog } from "./extract-view-dialog";
+import { InputDetail } from "./input-detail";
 import { OutputCard } from "./output-card";
 import { PreviewPane, type PreviewRow } from "./preview-pane";
 import { RefreshModeControl, type RefreshMode } from "./refresh-mode-control";
-import { StepList, type StepEditorContext } from "./step-list";
+import {
+  AddStepToolbar,
+  InsertStepButton,
+  newStepOf,
+  StepList,
+  type AddableKind,
+  type StepEditorContext,
+} from "./step-list";
+import { StepOutline } from "./step-outline";
 
 /**
- * The view editor (issue #301; docs/views-design.md §9): a linear step list
- * on the left, the selected step's preview and diagnostics on the right, and
- * a header with Save, Run, the run status and the stale badge.
+ * The view editor (issue #301; docs/views-design.md §9): one full-height
+ * workspace. A header with Save, Run, the run status and the stale badge;
+ * under it, the step outline on the left, the flow canvas in the middle
+ * (click a node to select it, "+" on a connection to insert a step), the
+ * selected item's settings on the right, and the preview, run history and
+ * exports docked under the canvas. Outline, canvas, settings and preview all
+ * follow ONE selection: a step, a nested step, an input or the output.
  *
  * Preview and run go through the server functions (`@/lib/store/views`): the
  * browser sends the DRAFT DEFINITION as JSON, never SQL and never rows.
  */
 
-const OUTPUT = "output" as const;
-/** A top-level step by index, a nested step by its join + sub-step indices (#334), or the result. */
-type Selection = { join: number; step: number } | number | typeof OUTPUT;
+type DetailTab = "preview" | "runs" | "exports";
+
+const DETAIL_TABS: { id: DetailTab; label: string }[] = [
+  { id: "preview", label: "Preview" },
+  { id: "runs", label: "Run history" },
+  { id: "exports", label: "Exports" },
+];
 
 function useDebounced<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -206,6 +226,8 @@ function ViewEditor({
       undefined,
     ),
     [extractBusy, setExtractBusy] = useState(false),
+    [panelOpen, setPanelOpen] = useState(true),
+    [detailTab, setDetailTab] = useState<DetailTab>("preview"),
     navigate = useNavigate(),
     viewSummaries = useQuery(listViewSummariesQueryOptions()),
     datasetsQuery = useQuery(datasetsStore.listQueryOptions()),
@@ -243,7 +265,20 @@ function ViewEditor({
           ? undefined
           : validationSummary(validation.errors),
     dirty = stableJson(draft) !== baseline,
-    nestedSelection = typeof selected === "object" ? selected : undefined,
+    nestedSelection = nestedOf(selected),
+    selectedInput = inputOf(selected),
+    selectedInputRef = draft.inputs.find((input) => input.alias === selectedInput),
+    // An input selection previews the INPUT alone, as the view reads it: the
+    // same one-input, no-steps shape a nested preview starts from.
+    inputDraft =
+      selectedInputRef === undefined
+        ? undefined
+        : {
+            base: selectedInputRef.alias,
+            inputs: [selectedInputRef],
+            output: { fields: [], emptyFields: "keep" as const },
+            steps: [],
+          },
     // A nested selection previews its SUB-PIPELINE: the right input alone,
     // with the steps through the selected one (#334) — the same shape the
     // extract-to-view plan runs, so no compiler option is needed.
@@ -273,20 +308,17 @@ function ViewEditor({
       nestedSelection === undefined || nestedStep === undefined
         ? undefined
         : `Step ${nestedSelection.join + 1}.${nestedSelection.step + 1}: ${STEP_TITLES[nestedStep.kind]}`,
-    selectedStep =
-      selected === OUTPUT
-        ? undefined
-        : typeof selected === "number"
-          ? draft.steps[selected]
-          : draft.steps[selected.join],
-    uptoStep = selected === OUTPUT || typeof selected !== "number" ? undefined : selected,
+    openStep = openStepOf(selected),
+    selectedStep = openStep === undefined ? undefined : draft.steps[openStep],
+    uptoStep = typeof selected === "number" ? selected : undefined,
     previewKey = useDebounced(
-      stableJson({ draft: nestedDraft ?? prunedInputs(draft), uptoStep }),
+      stableJson({ draft: nestedDraft ?? inputDraft ?? prunedInputs(draft), uptoStep }),
       450,
     ),
     previewQuery = useQuery({
       queryKey: ["pg:view-preview", viewId, previewKey],
-      enabled: metaReady && blockedReason === undefined,
+      // An input's own rows don't depend on the steps being complete.
+      enabled: metaReady && (inputDraft !== undefined || blockedReason === undefined),
       placeholderData: keepPreviousData,
       retry: false,
       staleTime: 30_000,
@@ -298,14 +330,16 @@ function ViewEditor({
             nestedSelection.step,
           );
         }
+        if (inputDraft !== undefined) {
+          return await previewDraftView(inputDraft, inputRefsOf(inputDraft));
+        }
         const pruned = prunedInputs(draft);
         return await previewDraftView(pruned, inputRefsOf(pruned), uptoStep);
       },
     }),
-    diagnosticsIndex =
-      selected === OUTPUT || typeof selected !== "number" ? draft.steps.length - 1 : selected,
+    diagnosticsIndex = typeof selected === "number" ? selected : draft.steps.length - 1,
     diagnostics =
-      previewQuery.data === undefined || diagnosticsIndex < 0
+      previewQuery.data === undefined || diagnosticsIndex < 0 || inputDraft !== undefined
         ? undefined
         : stepDiagnosticsOf(previewQuery.data.diagnostics, diagnosticsIndex),
     runsQuery = useQuery(listRunsQueryOptions(viewId)),
@@ -369,9 +403,20 @@ function ViewEditor({
     onSelectNestedStep: (joinIndex, stepIndex) => {
       setSelected({ join: joinIndex, step: stepIndex });
     },
+    selectedNested: nestedSelection,
   };
 
-  const baseInfo = infos.find((info) => info.alias === draft.base);
+  /** Adds a step at `index` of the main flow (the canvas toolbar appends; a connection's "+" inserts). */
+  const insertStep = (index: number, kind: AddableKind): void => {
+    const fields = fieldsAfter(draft, infos, index - 1) ?? [];
+    const step = newStepOf(kind, fields[0] ?? "");
+    setDraft((current) => ({
+      ...current,
+      steps: [...current.steps.slice(0, index), step, ...current.steps.slice(index)],
+    }));
+    setSelected(index);
+  };
+
   const saveBlocked = !dirty
     ? "No changes to save."
     : !metaReady
@@ -511,117 +556,260 @@ function ViewEditor({
   const keyMapStep =
     selectedStep !== undefined && selectedStep.kind === "join" ? selectedStep : undefined;
 
+  const finalFields = fieldsAfter(draft, infos, draft.steps.length - 1);
+  const selectedInputInfo = infos.find((info) => info.alias === selectedInput);
+  const joinedAt = draft.steps.findIndex(
+    (step) => step.kind === "join" && step.right.input === selectedInput,
+  );
+  const select = (next: Selection): void => {
+    setSelected(next);
+    setDetailTab("preview");
+    setPanelOpen(true);
+  };
+  const stepList = (only: number | undefined) => (
+    <StepList
+      ctx={stepContext}
+      expanded={openStep}
+      nested={false}
+      onChange={(steps) => {
+        setDraft((current) => ({ ...current, steps }));
+      }}
+      onExpand={(index) => {
+        setSelected(index ?? OUTPUT);
+      }}
+      only={only}
+      pathPrefix="steps"
+      startFields={fieldsAfter(draft, infos, -1)}
+      steps={draft.steps}
+    />
+  );
+  const outputCard = (expanded: boolean) => (
+    <OutputCard
+      draft={draft}
+      expanded={expanded}
+      fields={finalFields}
+      onChange={patchDraft}
+      onSelect={() => {
+        setSelected(OUTPUT);
+      }}
+    />
+  );
+  const previewPane = (
+    <PreviewPane
+      blockedReason={inputDraft === undefined ? blockedReason : undefined}
+      canMap={keyMapStep !== undefined && keyMapStep.on.length === 1}
+      diagnostics={diagnostics}
+      error={
+        previewQuery.error === null
+          ? undefined
+          : errorMessage(previewQuery.error, "The preview failed.")
+      }
+      isLoading={previewQuery.isFetching}
+      mapDisabledReason={
+        keyMapStep !== undefined && keyMapStep.on.length > 1
+          ? "The key map works on joins with a single key pair."
+          : "Select a join step to add to its key map."
+      }
+      onAddToKeyMap={(from, to) => {
+        if (keyMapStep !== undefined && typeof selected === "number") {
+          const index = selected;
+          const next = withManualMapEntry(keyMapStep, from, to);
+          setDraft((current) => ({
+            ...current,
+            steps: current.steps.map((s, i) => (i === index ? next : s)),
+          }));
+          toast.success("Added to the key map. The preview refreshes with it.");
+        }
+      }}
+      order={
+        savedOutput === undefined || inputDraft !== undefined
+          ? undefined
+          : savedOutput.fields.map((field) => field.from ?? field.key)
+      }
+      rows={previewQuery.data === undefined ? undefined : previewRowsOf(previewQuery.data.rows)}
+      title={
+        selectedInputInfo !== undefined
+          ? `Input: ${selectedInputInfo.title}`
+          : nestedTitle !== undefined
+            ? nestedTitle
+            : selectedStep === undefined
+              ? "Result"
+              : `Step ${Number(selected) + 1}: ${STEP_TITLES[selectedStep.kind]}`
+      }
+    />
+  );
+  const exportsCard = (
+    <ExportProfilesCard datasetId={viewId} live={live} output={savedOutput} title={header.title} />
+  );
+  const canvasContext = {
+    definition: draft,
+    diagnostics: previewQuery.data === undefined ? undefined : previewQuery.data.diagnostics,
+    errors: validation.ok ? [] : validation.errors,
+    infos,
+  };
+
+  const outputDetail = canvasOutputDetail(draft, finalFields);
+
   return (
-    <main className="mx-auto max-w-7xl px-6 py-6">
-      <ViewHeader
-        dirty={dirty}
-        header={header}
-        lastRun={lastRun}
-        onDuplicate={() => {
-          setDuplicateOpen(true);
-        }}
-        onChangeMode={(mode) => {
-          void changeMode(mode);
-        }}
-        modeBusy={modeBusy}
-        onRun={() => {
-          void run();
-        }}
-        queue={queueQuery.data}
-        onSave={() => {
-          void save();
-        }}
-        projectId={projectId}
-        runBlocked={runBlocked}
-        running={running}
-        saveBlocked={saveBlocked}
-        saving={saving}
-        viewId={viewId}
-      />
-      <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,28rem)_minmax(0,1fr)]">
-        <section aria-label="Steps" className="flex flex-col gap-3">
-          <Card className="px-4 py-3">
-            <p className="text-xs font-medium text-muted-foreground">Starts from</p>
-            <p className="flex items-center gap-2 text-sm font-medium">
-              <Database className="h-4 w-4 text-muted-foreground" />
-              {baseInfo === undefined ? "Loading…" : baseInfo.title}
-            </p>
-          </Card>
-          <StepList
-            ctx={stepContext}
-            expanded={typeof selected === "number" ? selected : undefined}
-            nested={false}
-            onChange={(steps) => {
-              setDraft((current) => ({ ...current, steps }));
-            }}
-            onExpand={(index) => {
-              setSelected(index ?? OUTPUT);
-            }}
-            pathPrefix="steps"
-            startFields={fieldsAfter(draft, infos, -1)}
-            steps={draft.steps}
+    <main className="flex min-h-[40rem] flex-col lg:h-[calc(100vh-7rem)]">
+      <div className="border-b px-4 py-3">
+        <ViewHeader
+          dirty={dirty}
+          header={header}
+          lastRun={lastRun}
+          onDuplicate={() => {
+            setDuplicateOpen(true);
+          }}
+          onChangeMode={(mode) => {
+            void changeMode(mode);
+          }}
+          modeBusy={modeBusy}
+          onRun={() => {
+            void run();
+          }}
+          queue={queueQuery.data}
+          onSave={() => {
+            void save();
+          }}
+          projectId={projectId}
+          runBlocked={runBlocked}
+          running={running}
+          saveBlocked={saveBlocked}
+          saving={saving}
+          viewId={viewId}
+        />
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+        <nav
+          aria-label="Step outline"
+          className="shrink-0 overflow-y-auto border-b p-2 lg:w-64 lg:border-r lg:border-b-0"
+        >
+          <p className="px-2 pt-1 pb-2 text-xs font-medium text-muted-foreground">
+            {draft.steps.length === 1 ? "1 step" : `${draft.steps.length} steps`}
+          </p>
+          <StepOutline
+            context={canvasContext}
+            onSelect={select}
+            outputDetail={outputDetail}
+            selected={selected}
           />
-          <OutputCard
-            draft={draft}
-            expanded={selected === OUTPUT}
-            fields={fieldsAfter(draft, infos, draft.steps.length - 1)}
-            onChange={patchDraft}
-            onSelect={() => {
-              setSelected(OUTPUT);
-            }}
-          />
-        </section>
-        <section aria-label="Preview" className="flex min-w-0 flex-col gap-6">
-          <PreviewPane
-            blockedReason={blockedReason}
-            canMap={keyMapStep !== undefined && keyMapStep.on.length === 1}
-            diagnostics={diagnostics}
-            error={
-              previewQuery.error === null
-                ? undefined
-                : errorMessage(previewQuery.error, "The preview failed.")
-            }
-            isLoading={previewQuery.isFetching}
-            mapDisabledReason={
-              keyMapStep !== undefined && keyMapStep.on.length > 1
-                ? "The key map works on joins with a single key pair."
-                : "Select a join step to add to its key map."
-            }
-            onAddToKeyMap={(from, to) => {
-              if (keyMapStep !== undefined && typeof selected === "number") {
-                const index = selected;
-                const next = withManualMapEntry(keyMapStep, from, to);
-                setDraft((current) => ({
-                  ...current,
-                  steps: current.steps.map((s, i) => (i === index ? next : s)),
-                }));
-                toast.success("Added to the key map. The preview refreshes with it.");
+        </nav>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <section aria-label="Steps" className="relative min-h-72 flex-1">
+            <ViewStepGraph
+              className="h-full rounded-none border-0"
+              definition={draft}
+              onSelectInput={(alias) => {
+                select({ input: alias });
+              }}
+              onSelectOutput={() => {
+                select(OUTPUT);
+              }}
+              onSelectStep={(selection) => {
+                select(
+                  selection.sub === undefined
+                    ? selection.index
+                    : { join: selection.index, step: selection.sub },
+                );
+              }}
+              options={{
+                describeStep: (selection) => describeCanvasStep(canvasContext, selection),
+                inputTitles: canvasInputTitles(infos),
+                outputDetail,
+              }}
+              outputSelected={selected === OUTPUT}
+              renderInsert={(index) => (
+                <InsertStepButton
+                  index={index}
+                  onAdd={(kind) => {
+                    insertStep(index, kind);
+                  }}
+                />
+              )}
+              selectedInput={selectedInput}
+              selectedStep={
+                typeof selected === "number"
+                  ? { index: selected }
+                  : nestedSelection === undefined
+                    ? null
+                    : { index: nestedSelection.join, sub: nestedSelection.step }
               }
-            }}
-            order={
-              savedOutput === undefined
-                ? undefined
-                : savedOutput.fields.map((field) => field.from ?? field.key)
-            }
-            rows={
-              previewQuery.data === undefined ? undefined : previewRowsOf(previewQuery.data.rows)
-            }
-            title={
-              nestedTitle !== undefined
-                ? nestedTitle
-                : selectedStep === undefined
-                  ? "Result"
-                  : `Step ${Number(selected) + 1}: ${STEP_TITLES[selectedStep.kind]}`
-            }
-          />
-          <ExportProfilesCard
-            datasetId={viewId}
-            live={live}
-            output={savedOutput}
-            title={header.title}
-          />
-          <RunHistory viewId={viewId} />
-        </section>
+            />
+            <AddStepToolbar
+              className="absolute top-3 left-3"
+              disabledReason={metaReady ? undefined : "Loading the inputs…"}
+              onAdd={(kind) => {
+                insertStep(draft.steps.length, kind);
+              }}
+            />
+          </section>
+          <section aria-label="Preview" className="flex shrink-0 flex-col border-t">
+            <div className="flex items-center justify-between gap-2 px-2">
+              <div aria-label="Details" className="flex gap-1" role="tablist">
+                {DETAIL_TABS.map((tab) => (
+                  <button
+                    aria-selected={panelOpen && detailTab === tab.id}
+                    className={
+                      panelOpen && detailTab === tab.id
+                        ? "border-b-2 border-primary px-3 py-2 text-sm font-medium"
+                        : "border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground hover:text-foreground"
+                    }
+                    key={tab.id}
+                    onClick={() => {
+                      setDetailTab(tab.id);
+                      setPanelOpen(true);
+                    }}
+                    role="tab"
+                    type="button"
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+              <Button
+                aria-expanded={panelOpen}
+                aria-label={panelOpen ? "Collapse the details panel" : "Expand the details panel"}
+                onClick={() => {
+                  setPanelOpen(!panelOpen);
+                }}
+                size="icon-sm"
+                type="button"
+                variant="ghost"
+              >
+                {panelOpen ? <ChevronDown /> : <ChevronUp />}
+              </Button>
+            </div>
+            {panelOpen && (
+              <div className="h-64 overflow-y-auto border-t p-4">
+                {detailTab === "preview" && previewPane}
+                {detailTab === "runs" && <RunHistory viewId={viewId} />}
+                {detailTab === "exports" && exportsCard}
+              </div>
+            )}
+          </section>
+        </div>
+        <aside
+          aria-label="Step settings"
+          className="flex shrink-0 flex-col gap-3 overflow-y-auto border-t p-3 lg:w-[26rem] lg:border-t-0 lg:border-l"
+        >
+          {openStep !== undefined ? (
+            stepList(openStep)
+          ) : selectedInput === undefined ? (
+            outputCard(true)
+          ) : (
+            <InputDetail
+              info={selectedInputInfo}
+              projectId={projectId}
+              role={
+                selectedInput === draft.base
+                  ? "Starts from"
+                  : joinedAt >= 0
+                    ? `Joined in step ${joinedAt + 1}`
+                    : "Input"
+              }
+            />
+          )}
+        </aside>
       </div>
       <DuplicateViewDialog
         datasets={datasets}
@@ -697,7 +885,7 @@ function ViewHeader({
             </Link>{" "}
             / View
           </p>
-          <h1 className="truncate text-2xl font-bold text-primary">{header.title}</h1>
+          <h1 className="truncate text-lg font-semibold text-primary">{header.title}</h1>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {header.stale ? (
               <Badge

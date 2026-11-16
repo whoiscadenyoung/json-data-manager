@@ -73,6 +73,35 @@ describe("buildViewStepGraph", () => {
     expect(nodeById(graph, "step:1")).toMatchObject({ detail: "Left join links" });
   });
 
+  it("marks each main-flow connection with the index a new step would take there", () => {
+    const inserts = graph.edges
+      .filter((edge) => edge.insertIndex !== undefined)
+      .map((edge) => `${edge.source}>${edge.target}@${edge.insertIndex}`);
+    expect(inserts).toEqual(["input:states>step:0@0", "step:0>step:1@1", "step:1>output@2"]);
+  });
+
+  it("takes input titles, step text and badges from the editor", () => {
+    const described = buildViewStepGraph(STATES_ENRICHED, {
+      describeStep: (selection) =>
+        selection.sub === undefined && selection.index === 1
+          ? { badge: { label: "Needs input", tone: "neutral" }, detail: "Links", label: "2. Join" }
+          : undefined,
+      inputTitles: { states: "US States" },
+      outputDetail: "All fields (4)",
+    });
+    expect(nodeById(described, "input:states")).toMatchObject({ label: "US States" });
+    // An alias without a title keeps its alias.
+    expect(nodeById(described, "input:links")).toMatchObject({ label: "links" });
+    expect(nodeById(described, "step:1")).toMatchObject({
+      badge: { label: "Needs input", tone: "neutral" },
+      detail: "Links",
+      label: "2. Join",
+    });
+    // A step the editor says nothing about keeps the stored-JSON text.
+    expect(nodeById(described, "step:0")).toMatchObject({ label: "Join" });
+    expect(nodeById(described, "output")).toMatchObject({ detail: "All fields (4)" });
+  });
+
   it("renders unknown step kinds and malformed definitions without throwing", () => {
     const future = buildViewStepGraph({
       base: "states",

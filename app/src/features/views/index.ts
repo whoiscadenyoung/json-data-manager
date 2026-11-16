@@ -1,7 +1,7 @@
 // Public API of the views feature (ADR 0014). Code outside `features/views/`
 // imports from here, never from its subfolders.
 export { PgViewPage } from "./components/pg-view-page";
-export { CreateViewSheet } from "./components/create-view-sheet";
+export { NewViewPage } from "./components/new-view-page";
 export { ProjectViewsSection, ViewCard } from "./components/project-views-section";
 export { createProjectView } from "./lib/create-view";
 export {
