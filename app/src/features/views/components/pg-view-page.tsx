@@ -46,7 +46,14 @@ import { canvasInputTitles, canvasOutputDetail, describeCanvasStep } from "../li
 import { stepDiagnosticsOf } from "../lib/diagnostics";
 import { relativeTime, stableJson } from "../lib/format";
 import { explainCycle, extractJoinToView, joinPathOf } from "../lib/reuse-actions";
-import { inputOf, nestedOf, openStepOf, OUTPUT, type Selection } from "../lib/selection";
+import {
+  inputOf,
+  nestedOf,
+  openStepOf,
+  OUTPUT,
+  settleSelection,
+  type Selection,
+} from "../lib/selection";
 import {
   fieldsAfter,
   declaredViewFieldTypes,
@@ -217,7 +224,9 @@ function ViewEditor({
   const queryClient = useQueryClient(),
     [draft, setDraft] = useState<ViewDefinition>(initial),
     [baseline, setBaseline] = useState(() => stableJson(initial)),
-    [selected, setSelected] = useState<Selection>(initial.steps.length > 0 ? 0 : OUTPUT),
+    [pickedSelection, setSelected] = useState<Selection>(initial.steps.length > 0 ? 0 : OUTPUT),
+    // Edits can pull the picked item out from under the selection (a removed sub-step).
+    selected = settleSelection(pickedSelection, draft),
     [savedOutput, setSavedOutput] = useState(initial.output),
     [saving, setSaving] = useState(false),
     [running, setRunning] = useState(false),
