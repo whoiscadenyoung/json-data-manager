@@ -1,3 +1,5 @@
+import type { ViewDefinition } from "@caden/data-core/views";
+
 /**
  * What the view editor has selected: a top-level step by index, a step inside
  * a join's sub-pipeline (#334), one of the inputs by alias, or the result.
@@ -33,4 +35,28 @@ export function openStepOf(selection: Selection): number | undefined {
   }
   const nested = nestedOf(selection);
   return nested === undefined ? undefined : nested.join;
+}
+
+/**
+ * The selection the editor acts on after an edit: the picked one while it
+ * still names something in the definition, otherwise the nearest thing that
+ * does. A sub-step that is gone falls back to its join, and a step or input
+ * that is gone falls back to the result.
+ */
+export function settleSelection(selection: Selection, definition: ViewDefinition): Selection {
+  if (selection === OUTPUT) {
+    return OUTPUT;
+  }
+  if (typeof selection === "number") {
+    return selection < definition.steps.length ? selection : OUTPUT;
+  }
+  if ("input" in selection) {
+    return definition.inputs.some((input) => input.alias === selection.input) ? selection : OUTPUT;
+  }
+  const join = definition.steps[selection.join];
+  if (join === undefined) {
+    return OUTPUT;
+  }
+  const subSteps = join.kind === "join" ? (join.right.steps ?? []) : [];
+  return selection.step < subSteps.length ? selection : selection.join;
 }

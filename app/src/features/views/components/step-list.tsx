@@ -479,7 +479,14 @@ function SubPipeline({
         onChange={(steps) => {
           onChange({ ...step, right: { ...step.right, steps } });
         }}
-        onExpand={setExpanded}
+        onExpand={(next) => {
+          setExpanded(next);
+          // Reordering or adding a sub-step moves the shared selection with it;
+          // otherwise the canvas's selection would keep the old position open.
+          if (next !== undefined && ctx.onSelectNestedStep !== undefined) {
+            ctx.onSelectNestedStep(index, next);
+          }
+        }}
         onSelectStep={(stepIndex) => {
           if (ctx.onSelectNestedStep !== undefined) {
             ctx.onSelectNestedStep(index, stepIndex);
