@@ -91,4 +91,14 @@ describe("project-folders writes (migration 0034)", () => {
     expect(firstArg(update, "update")).toStrictEqual({ folder_id: "f1" });
     expect(argsOf(update, "in")).toStrictEqual(["id", ["m1", "m2"]]);
   });
+
+  it("moveArtifacts batches a large selection so no request carries more than 100 ids", async () => {
+    const { client, queries } = stubSupabase((query) => {
+      const ids = argsOf(query, "in")[1];
+      return { data: Array.isArray(ids) ? ids.map((id: unknown) => ({ id })) : [] };
+    });
+    const membershipIds = Array.from({ length: 250 }, (_, index) => `m${index}`);
+    expect(await moveArtifacts({ folderId: "f1", membershipIds }, { supabase: client })).toBe(250);
+    expect(queries.length).toBe(3);
+  });
 });

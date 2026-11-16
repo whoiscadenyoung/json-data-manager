@@ -148,22 +148,31 @@ export async function removeFolder(
   );
 }
 
+/** Ids per move request: every id rides the request URL, so a large selection goes in batches. */
+const MOVE_BATCH = 100;
+
 /** Moves catalog items (membership row ids) into `folderId` (null = the root). Returns the affected row count. */
 export async function moveArtifacts(
   args: { membershipIds: string[]; folderId: string | null },
   options?: StoreOptions,
 ): Promise<number> {
-  if (args.membershipIds.length === 0) {
-    return 0;
+  const batches: string[][] = [];
+  for (let start = 0; start < args.membershipIds.length; start += MOVE_BATCH) {
+    batches.push(args.membershipIds.slice(start, start + MOVE_BATCH));
   }
   return await refusalsReadable(undefined, async () => {
-    const rows = await queryRows<{ id: string }>(
-      clientOf(options)
-        .from("project_artifacts")
-        .update({ folder_id: args.folderId })
-        .in("id", args.membershipIds)
-        .select("id"),
+    const counts = await Promise.all(
+      batches.map(async (ids) => {
+        const rows = await queryRows<{ id: string }>(
+          clientOf(options)
+            .from("project_artifacts")
+            .update({ folder_id: args.folderId })
+            .in("id", ids)
+            .select("id"),
+        );
+        return rows.length;
+      }),
     );
-    return rows.length;
+    return counts.reduce((sum, count) => sum + count, 0);
   });
 }
