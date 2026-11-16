@@ -36,24 +36,19 @@ import {
   History,
   LayoutDashboard,
   Link2,
-  ListPlus,
   Map as MapIcon,
   MapPlus,
   Loader2,
   Plus,
   Rocket,
   Search,
-  Trash2,
 } from "lucide-react";
 import { useState, type ComponentType } from "react";
 import { toast } from "sonner";
 
 import { PgDatasetTagsWithCount } from "#/features/catalog";
-import { ProjectViewsSection } from "#/features/views";
 import { RouterButton } from "@/components/router-button";
 import { errorMessage } from "@/lib/errors";
-import { relationEndsOf } from "@/lib/relation-phrases";
-import type { RelationEnd } from "@/lib/relation-phrases";
 import * as appVersionsStore from "@/lib/store/app-versions";
 import * as appsStore from "@/lib/store/apps";
 import * as datasetsStore from "@/lib/store/datasets";
@@ -62,14 +57,11 @@ import { ROLE_LABELS } from "@/lib/store/project-members";
 import * as projectsStore from "@/lib/store/projects";
 import type { CatalogRow } from "@/lib/store/projects";
 import { latestBundleQueryOptions, listMembersQueryOptions } from "@/lib/store/publishing";
-import * as relationsStore from "@/lib/store/relations";
 import * as versionsStore from "@/lib/store/versions";
 
 import { VIEWER_REASON } from "../lib/pg-viewer-posture";
 import { useProjectShell } from "./pg-project-context";
 import { PgProjectMembersPanel } from "./pg-project-members-dialog";
-import { PgProjectRelationsSection } from "./pg-project-relations";
-import { RelationBadge } from "./relation-badge";
 
 /**
  * The Postgres project workspace — the project CATALOG (issue #256, the
@@ -142,7 +134,7 @@ export function PgProjectSignInPrompt() {
 }
 
 /** The provenance chip row: owned/linked first, then the linked pin state, then the draft badge for owned drafts (an owned draft is project-visible, not creator-visible only — ADR 0018). */
-function PgProvenanceChips({ draft, row }: { draft: boolean; row: CatalogRow }) {
+export function PgProvenanceChips({ draft, row }: { draft: boolean; row: CatalogRow }) {
   const { artifact, edge } = row;
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -195,7 +187,7 @@ function PgProvenanceChips({ draft, row }: { draft: boolean; row: CatalogRow }) 
 // row's whole control set, read top to bottom; splitting it would scatter
 // one control set across components with no reuse.
 // oxlint-disable-next-line eslint/complexity -- the action ladder is the control set, stated once.
-function PgLinkedVersionActions({
+export function PgLinkedVersionActions({
   onDone,
   projectId,
   row,
@@ -380,106 +372,6 @@ function PgLinkedVersionActions({
         </Button>
       )}
     </div>
-  );
-}
-
-/** One catalog row: the artifact's link + provenance chips + its version actions; remove never deletes the artifact itself. */
-// The row renders the artifact kinds' honest states — owned/linked, draft,
-// floating, gone, derived — as one flat conditional ladder; extracting
-// branches would split a single row's states across components with no
-// reuse (each branch renders once, here).
-// oxlint-disable-next-line eslint/complexity -- the state ladder is the row's whole contract, read top to bottom.
-function PgCatalogRow({
-  canEdit,
-  datasetsById,
-  onRemoved,
-  projectId,
-  relationEnds,
-  row,
-}: {
-  canEdit: boolean;
-  datasetsById: globalThis.Map<string, { lifecycle: string; title: string }>;
-  onRemoved: () => void;
-  projectId: string;
-  /** #294: this dataset's declared relations, from its side. */
-  relationEnds: readonly RelationEnd[];
-  row: CatalogRow;
-}) {
-  const artifact = row.artifact,
-    [removing, setRemoving] = useState(false),
-    remove = async (): Promise<void> => {
-      setRemoving(true);
-      try {
-        const outcome = await projectsStore.removeArtifact({
-          artifactId: artifact.artifactId,
-          projectId,
-        });
-        if (outcome.affected === 0) {
-          toast.error("The reference didn't remove — you may not have access.");
-          return;
-        }
-        toast.success("Removed from project — the artifact itself is untouched.");
-        onRemoved();
-      } catch (error) {
-        toast.error(errorMessage(error, "Something went wrong."));
-      } finally {
-        setRemoving(false);
-      }
-    };
-  const dataset =
-      artifact.artifactKind === "dataset" ? datasetsById.get(artifact.artifactId) : undefined,
-    exists = dataset !== undefined,
-    draft = dataset !== undefined && dataset.lifecycle === "draft",
-    label = dataset !== undefined ? dataset.title : "Deleted dataset";
-  return (
-    <Card className="flex-row items-center gap-4 px-4 py-3 transition-shadow hover:shadow-md">
-      {dataset !== undefined ? (
-        <Link
-          className="flex min-w-0 flex-1 flex-col gap-1.5 py-0"
-          params={{ projectId, schemaId: artifact.artifactId }}
-          to="/projects/$projectId/datasets/$schemaId"
-        >
-          <PgProvenanceChips draft={draft} row={row} />
-          <p className="truncate text-sm font-medium">{label}</p>
-        </Link>
-      ) : (
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5 py-0">
-          <PgProvenanceChips draft={draft} row={row} />
-          <p className={`truncate text-sm font-medium ${exists ? "" : "text-muted-foreground"}`}>
-            {label}
-          </p>
-          {!exists && (
-            <p className="text-xs text-muted-foreground">
-              The referenced artifact no longer exists — remove the reference to clean up.
-            </p>
-          )}
-        </div>
-      )}
-      <RelationBadge
-        ends={relationEnds}
-        projectId={projectId}
-        titleOf={(id) => {
-          const other = datasetsById.get(id);
-          return other === undefined ? "a dataset you can't see" : other.title;
-        }}
-      />
-      {artifact.artifactKind === "dataset" && artifact.role === "linked" && (
-        <PgLinkedVersionActions onDone={onRemoved} projectId={projectId} row={row} />
-      )}
-      <Button
-        aria-label="Remove from project"
-        className="shrink-0 text-muted-foreground hover:text-destructive"
-        disabled={removing || !canEdit}
-        onClick={() => {
-          void remove();
-        }}
-        size="icon"
-        title={canEdit ? "Remove from project (the artifact itself is not deleted)" : VIEWER_REASON}
-        variant="ghost"
-      >
-        {removing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-      </Button>
-    </Card>
   );
 }
 
@@ -920,104 +812,6 @@ export function PgProjectOverview() {
         <PgProjectMapsSection />
         <PgProjectAppsSection />
       </div>
-    </main>
-  );
-}
-
-/** The Data → Catalog section: the project's datasets + derived sections, relations, empty state. */
-export function PgProjectCatalog() {
-  const { canEdit, catalog, invalidateAll, openAdd, projectId } = useProjectShell(),
-    datasetsQuery = useQuery(datasetsStore.listQueryOptions()),
-    datasetsById = new globalThis.Map(
-      (datasetsQuery.data ?? []).map((dataset) => [
-        dataset.id,
-        { kind: dataset.kind, lifecycle: dataset.lifecycle, title: dataset.title },
-      ]),
-    ),
-    datasetRows = catalog.filter((row) => row.artifact.artifactKind === "dataset"),
-    // Views are datasets too; they get their own section, with their own cards.
-    isView = (row: CatalogRow): boolean => {
-      const dataset = datasetsById.get(row.artifact.artifactId);
-      return dataset !== undefined && dataset.kind === "view";
-    },
-    datasetSection = datasetRows.filter((row) => !isView(row)),
-    // #294: one bounded read of the relations touching this catalog's datasets.
-    relationsQuery = useQuery(
-      relationsStore.listForDatasetsQueryOptions({
-        datasetIds: datasetSection.map((row) => row.artifact.artifactId),
-      }),
-    ),
-    relations = relationsQuery.data ?? [],
-    viewMemberships = datasetRows.flatMap((row) => {
-      const dataset = datasetsById.get(row.artifact.artifactId);
-      return dataset === undefined
-        ? []
-        : [{ id: row.artifact.artifactId, kind: dataset.kind, title: dataset.title }];
-    });
-  return (
-    <main className="mx-auto max-w-5xl px-6 py-6">
-      {catalog.length === 0 ? (
-        <Empty className="min-h-80 border">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <Database />
-            </EmptyMedia>
-            <EmptyTitle>This project's catalog is empty</EmptyTitle>
-            <EmptyDescription>
-              Create or import a dataset here (it lands as an owned draft visible to the project),
-              or add an existing one by reference — nothing is copied.
-            </EmptyDescription>
-          </EmptyHeader>
-          <EmptyContent>
-            <div className="flex flex-wrap justify-center gap-2">
-              <RouterButton params={{ projectId }} to="/projects/$projectId/create">
-                <Plus className="mr-2 h-4 w-4" />
-                Add dataset
-              </RouterButton>
-              <Button
-                disabled={!canEdit}
-                onClick={openAdd}
-                title={canEdit ? undefined : VIEWER_REASON}
-                type="button"
-                variant="outline"
-              >
-                <ListPlus className="mr-2 h-4 w-4" />
-                Add existing
-              </Button>
-            </div>
-          </EmptyContent>
-        </Empty>
-      ) : (
-        <div className="flex flex-col gap-6">
-          {datasetSection.length > 0 && (
-            <section>
-              <h2 className="mb-2 text-sm font-semibold text-muted-foreground">
-                Datasets{" "}
-                <span className="font-normal">
-                  ({datasetSection.length} {datasetSection.length === 1 ? "artifact" : "artifacts"})
-                </span>
-              </h2>
-              <div className="flex flex-col gap-3">
-                {datasetSection.map((row) => (
-                  <PgCatalogRow
-                    canEdit={canEdit}
-                    datasetsById={datasetsById}
-                    key={row.artifact.id}
-                    onRemoved={invalidateAll}
-                    projectId={projectId}
-                    relationEnds={relationEndsOf(relations, row.artifact.artifactId)}
-                    row={row}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-          <ProjectViewsSection canEdit={canEdit} datasets={viewMemberships} projectId={projectId} />
-        </div>
-      )}
-      {datasetSection.length > 0 && (
-        <PgProjectRelationsSection canEdit={canEdit} projectId={projectId} />
-      )}
     </main>
   );
 }
