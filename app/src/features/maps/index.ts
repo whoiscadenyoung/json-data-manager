@@ -4,6 +4,7 @@ export { CollectionExtentMap } from "./components/datasets-map";
 export { EntriesMap } from "./components/entries-map";
 export { GroupMap } from "./components/group-map";
 export { LayersMap } from "./components/layers-map";
+export { ProjectMapEditor } from "./components/map-editor/map-editor";
 export { StoredMapCanvas } from "./components/stored-map-canvas";
 export { pgGeometryToLayerRow, pgSummaryToDatasetSummary } from "./components/pg-layer-rows";
 export { useGeometriesByPgDatasets } from "./components/pg-geometries-loader";

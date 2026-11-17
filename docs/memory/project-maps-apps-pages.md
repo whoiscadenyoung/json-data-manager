@@ -41,5 +41,5 @@ Gotchas:
   were checked in the browser instead.
 - The browser pane's simulated `cmd+a` does not select an input's text.
 
-Related: [[catalog-file-browser]], [[views-canvas-editor]],
+Related: [[map-editor-workspace]], [[catalog-file-browser]], [[views-canvas-editor]],
 [[ui-polish-expectations]].
