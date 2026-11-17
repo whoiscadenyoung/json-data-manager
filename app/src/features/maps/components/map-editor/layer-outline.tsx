@@ -349,8 +349,9 @@ function RemoveItems({
           onClick={() => {
             props.onRemove({
               confirmLabel: "Delete layer",
-              description:
-                "The layer and its style are deleted from the project and from every map that shows it. Its dataset stays.",
+              description: facts.isGroup
+                ? "The group is deleted from the project and from every map that shows it. The layers inside it stay in the project."
+                : "The layer and its style are deleted from the project and from every map that shows it. Its dataset stays.",
               run: async () => {
                 await layersStore.remove({ layerId: layer.id });
               },
@@ -509,6 +510,26 @@ interface DragState {
   overIndex: number | undefined;
 }
 
+/** One row's writes: whether one is running, and a runner that reports the outcome. */
+function useRowAct(
+  run: RunWrite,
+): [boolean, (job: () => Promise<unknown>, success: string) => void] {
+  const [busy, setBusy] = useState(false);
+  return [
+    busy,
+    (job, success) => {
+      setBusy(true);
+      void run(job, "That didn't go through. You may not have access.").then((landed) => {
+        if (landed && success !== "") {
+          toast.success(success);
+        }
+        setBusy(false);
+        return undefined;
+      });
+    },
+  ];
+}
+
 /** The selection a placement row stands for. */
 function selectionOf(facts: PlacementFacts, rowId: string): LayerSelection {
   return {
@@ -535,6 +556,7 @@ function dragHandlers({
   setDrag: (next: DragState | undefined) => void;
 }) {
   return {
+    "data-drop": drag !== undefined && drag.overIndex === index && drag.fromIndex !== index,
     onDragEnd: () => {
       setDrag(undefined);
     },
@@ -629,17 +651,7 @@ function PlacementRow({
   const facts = factsOf(props, placement),
     { layer, name } = facts,
     expanded = facts.isGroup && !props.collapsedGroups.has(placement.id),
-    [busy, setBusy] = useState(false),
-    act = (job: () => Promise<unknown>, success: string): void => {
-      setBusy(true);
-      void props.run(job, "That didn't go through. You may not have access.").then((landed) => {
-        if (landed && success !== "") {
-          toast.success(success);
-        }
-        setBusy(false);
-        return undefined;
-      });
-    },
+    [busy, act] = useRowAct(props.run),
     last = props.placements.length - 1;
   return (
     <li>
@@ -647,7 +659,6 @@ function PlacementRow({
       {/* oxlint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
       <div
         className={`${ROW_CLASS} ${placement.visible ? "" : "text-muted-foreground"}`}
-        data-drop={drag !== undefined && drag.overIndex === index && drag.fromIndex !== index}
         data-selected={props.selectedRowId === placement.id}
         draggable
         onClick={() => {
