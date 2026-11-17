@@ -78,6 +78,14 @@ export interface UseLayerStylesResult {
   loaders: ReactNode;
   /** The Style panel while a dataset is being styled, else `null` — render it in the map's sidebar. */
   panel: ReactNode;
+  /** The render id whose Style panel is open, if any. */
+  editingId: string | undefined;
+  /** Opens the Style panel for one layer, or closes it (`undefined`); pending edits are saved first. */
+  edit: (target: { renderId: string; title: string } | undefined) => void;
+  /** Whether a layer has a saved (or previewed) style of its own. */
+  isStyled: (renderId: string) => boolean;
+  /** Puts a layer back on its assigned color. */
+  reset: (renderId: string) => void;
 }
 
 /** A style's previewed (unsaved) version wins over the saved one. */
@@ -440,8 +448,17 @@ export function useLayerStyles({
   return {
     colorBySchema: effectiveColors,
     datasetActions,
+    edit: (target) => {
+      void flush();
+      setEditing(target);
+    },
+    editingId: editing === undefined ? undefined : editing.renderId,
+    extension,
+    isStyled: (renderId) => styles.has(renderId),
     loaders,
     panel,
-    extension,
+    reset: (renderId) => {
+      void handleReset(renderId);
+    },
   };
 }
