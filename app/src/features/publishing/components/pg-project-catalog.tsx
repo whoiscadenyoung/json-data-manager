@@ -34,8 +34,6 @@ import { ToggleGroup, ToggleGroupItem } from "@caden/ui/components/toggle-group"
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import {
-  ArrowDown,
-  ArrowUp,
   ChevronRight,
   Database,
   FolderInput,
@@ -80,6 +78,7 @@ import { DeleteFolderDialog, FolderNameDialog, MoveDialog } from "./pg-catalog-d
 import {
   CatalogFolderRow,
   CatalogItemRow,
+  SortHead,
   type ItemDetail,
   type RowDropProps,
 } from "./pg-catalog-rows";
@@ -228,48 +227,6 @@ function useCatalogWrite(invalidateAll: () => void) {
       }
     };
   return { busy, write };
-}
-
-/** A sortable column header. */
-function SortHead({
-  align,
-  className,
-  label,
-  onSort,
-  sort,
-  sortKey,
-}: {
-  align?: "right";
-  className?: string;
-  label: string;
-  onSort: (key: SortKey) => void;
-  sort: SortState;
-  sortKey: SortKey;
-}) {
-  const active = sort.key === sortKey;
-  return (
-    <TableHead
-      aria-sort={active ? (sort.descending ? "descending" : "ascending") : "none"}
-      className={className}
-    >
-      <button
-        className={`inline-flex items-center gap-1 hover:text-foreground ${align === "right" ? "w-full justify-end" : ""}`}
-        onClick={() => {
-          onSort(sortKey);
-        }}
-        type="button"
-      >
-        {label}
-        {active ? (
-          sort.descending ? (
-            <ArrowDown className="h-3 w-3" />
-          ) : (
-            <ArrowUp className="h-3 w-3" />
-          )
-        ) : null}
-      </button>
-    </TableHead>
-  );
 }
 
 /** Catalog > Folder > Subfolder. Every crumb but the last is a link, and a drop target. */

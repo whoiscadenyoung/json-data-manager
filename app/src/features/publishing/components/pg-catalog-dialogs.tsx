@@ -18,15 +18,17 @@ import {
   DialogTitle,
 } from "@caden/ui/components/dialog";
 import { Input } from "@caden/ui/components/input";
+import { Label } from "@caden/ui/components/label";
 import { Folder, FolderOpen, Home } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { flattenTree, type TreeFolder } from "../lib/catalog-tree";
 
-/** Name a folder: the same dialog creates one and renames one. */
+/** Name one thing: the same dialog creates and renames folders, and renames maps and apps. */
 export function FolderNameDialog({
   busy,
   description,
+  fieldLabel = "Folder name",
   initialName,
   onOpenChange,
   onSubmit,
@@ -35,6 +37,8 @@ export function FolderNameDialog({
 }: {
   busy: boolean;
   description: string;
+  /** The visible label of the one field. */
+  fieldLabel?: string;
   initialName: string;
   onOpenChange: (open: boolean) => void;
   onSubmit: (name: string) => void;
@@ -60,16 +64,18 @@ export function FolderNameDialog({
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription>{description}</DialogDescription>
           </DialogHeader>
-          <Input
-            aria-label="Folder name"
-            maxLength={120}
-            ref={inputRef}
-            onChange={(event) => {
-              setName(event.target.value);
-            }}
-            placeholder="Folder name"
-            value={name}
-          />
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="catalog-name-field">{fieldLabel}</Label>
+            <Input
+              id="catalog-name-field"
+              maxLength={120}
+              ref={inputRef}
+              onChange={(event) => {
+                setName(event.target.value);
+              }}
+              value={name}
+            />
+          </div>
           <DialogFooter>
             <Button
               onClick={() => {

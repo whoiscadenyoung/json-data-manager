@@ -9,14 +9,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@caden/ui/components/dropdown-menu";
-import { Input } from "@caden/ui/components/input";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@caden/ui/components/sheet";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useRouterState, type LinkProps } from "@tanstack/react-router";
 import {
@@ -27,7 +19,6 @@ import {
   LayoutDashboard,
   LayoutGrid,
   Map as MapIcon,
-  MapPlus,
   Menu,
   Network,
   PanelLeftClose,
@@ -50,6 +41,7 @@ import * as projectsStore from "@/lib/store/projects";
 
 import { pgPublishProjectBundle } from "../lib/pg-bundle-publish";
 import { VIEWER_REASON } from "../lib/pg-viewer-posture";
+import { NewMapDialog } from "./new-map-dialog";
 import { ProjectShellContext } from "./pg-project-context";
 import {
   PgAddReferenceSheet,
@@ -173,6 +165,28 @@ function NavGroup({
   );
 }
 
+/** The list a page belongs to (the crumb before its own name): a dataset or view sits under Catalog, a map under Maps, an app under Apps. */
+function parentCrumb(rest: string):
+  | {
+      label: string;
+      to:
+        | "/projects/$projectId/catalog"
+        | "/projects/$projectId/maps"
+        | "/projects/$projectId/apps";
+    }
+  | undefined {
+  if (rest.startsWith("/datasets/") || rest.startsWith("/views/")) {
+    return { label: "Catalog", to: "/projects/$projectId/catalog" };
+  }
+  if (rest.startsWith("/maps/")) {
+    return { label: "Maps", to: "/projects/$projectId/maps" };
+  }
+  if (rest.startsWith("/apps/")) {
+    return { label: "Apps", to: "/projects/$projectId/apps" };
+  }
+  return undefined;
+}
+
 /** Section label for the breadcrumb, from the pathname below the project. */
 function sectionLabel(rest: string, name: string | undefined): string {
   if (rest.startsWith("/maps/")) {
@@ -190,9 +204,11 @@ function sectionLabel(rest: string, name: string | undefined): string {
   const labels: Record<string, string> = {
     "": "Overview",
     "/scratch": "Scratch query",
+    "/apps": "Apps",
     "/catalog": "Catalog",
     "/create": "Add dataset",
     "/lineage": "Lineage",
+    "/maps": "Maps",
     "/members": "Members",
     "/publish": "Publish",
     "/settings": "Settings",
@@ -237,7 +253,6 @@ function PgProjectShellBody({
     [pressing, setPressing] = useState(false),
     [mapOpen, setMapOpen] = useState(false),
     [appOpen, setAppOpen] = useState(false),
-    [mapName, setMapName] = useState(""),
     [creatingMap, setCreatingMap] = useState(false),
     invalidateAll = (): void => {
       void queryClient.invalidateQueries({ queryKey: ["pg:projects"] });
@@ -271,20 +286,20 @@ function PgProjectShellBody({
         setPressing(false);
       }
     },
-    createMap = async (): Promise<void> => {
+    createMap = async (values: { description: string; name: string }): Promise<void> => {
       setCreatingMap(true);
       try {
         const mapId = await mapsStore.create({
-          name: mapName.trim() === "" ? "New map" : mapName.trim(),
+          ...(values.description === "" ? {} : { description: values.description }),
+          name: values.name,
           projectId,
         });
         if (mapId === null) {
-          toast.error("The map didn't create — you may not have access.");
+          toast.error("The map wasn't created. You may not have access.");
           return;
         }
         void queryClient.invalidateQueries({ queryKey: ["pg:maps"] });
         setMapOpen(false);
-        toast.success("Map created — opening the editor.");
         await navigate({ params: { mapId, projectId }, to: "/projects/$projectId/maps/$mapId" });
       } catch (error) {
         toast.error(errorMessage(error, "Failed to create the map."));
@@ -326,6 +341,7 @@ function PgProjectShellBody({
           : currentApp.title
         : currentMap.name,
     onDataset = datasetId !== "",
+    parent = parentCrumb(rest),
     section = sectionLabel(rest, currentName),
     CreateAppDialog = createAppDialog;
 
@@ -343,7 +359,6 @@ function PgProjectShellBody({
           setAppOpen(true);
         },
         openNewMap: () => {
-          setMapName("");
           setMapOpen(true);
         },
         openPress: () => {
@@ -372,18 +387,18 @@ function PgProjectShellBody({
               {project.title}
             </Link>
             <span className="text-muted-foreground">/</span>
-            {onDataset ? (
+            {parent === undefined ? null : (
               <>
                 <Link
                   className="text-muted-foreground hover:text-foreground"
                   params={{ projectId }}
-                  to="/projects/$projectId/catalog"
+                  to={parent.to}
                 >
-                  Catalog
+                  {parent.label}
                 </Link>
                 <span className="text-muted-foreground">/</span>
               </>
-            ) : null}
+            )}
             <span className="max-w-48 truncate font-medium">{section}</span>
           </nav>
           <Badge title={`Your access to this project (${ROLE_LABELS[myRole]}).`} variant="outline">
@@ -451,7 +466,6 @@ function PgProjectShellBody({
                   <DropdownMenuItem
                     disabled={!canEdit}
                     onClick={() => {
-                      setMapName("");
                       setMapOpen(true);
                     }}
                     title={canEdit ? undefined : VIEWER_REASON}
@@ -522,62 +536,23 @@ function PgProjectShellBody({
                   rail={rail}
                 />
               </NavGroup>
-              <NavGroup label="Maps" rail={rail}>
-                {maps.map((map) => (
-                  <NavItem
-                    active={rest === `/maps/${map.id}`}
-                    icon={MapIcon}
-                    key={map.id}
-                    label={map.name}
-                    rail={rail}
-                    linkProps={{
-                      params: { mapId: map.id, projectId },
-                      to: "/projects/$projectId/maps/$mapId",
-                    }}
-                  />
-                ))}
-                {canEdit ? (
-                  <button
-                    className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted ${rail ? "justify-center" : ""}`}
-                    onClick={() => {
-                      setMapName("");
-                      setMapOpen(true);
-                    }}
-                    title="New map"
-                    type="button"
-                  >
-                    <MapPlus className="h-4 w-4 shrink-0" />
-                    {rail ? null : "New map"}
-                  </button>
-                ) : null}
-              </NavGroup>
-              <NavGroup label="Apps" rail={rail}>
-                {apps.map((app) => (
-                  <NavItem
-                    active={rest.startsWith(`/apps/${app.id}`)}
-                    icon={LayoutDashboard}
-                    key={app.id}
-                    label={app.title}
-                    rail={rail}
-                    linkProps={{
-                      params: { appId: app.id, projectId },
-                      to: "/projects/$projectId/apps/$appId/edit",
-                    }}
-                  />
-                ))}
-                {canEdit && CreateAppDialog !== undefined ? (
-                  <button
-                    className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted ${rail ? "justify-center" : ""}`}
-                    onClick={() => {
-                      setAppOpen(true);
-                    }}
-                    title="New app"
-                    type="button"
-                  >
-                    <Plus className="h-4 w-4 shrink-0" />
-                    {rail ? null : "New app"}
-                  </button>
-                ) : null}
+              <NavGroup label="Build" rail={rail}>
+                <NavItem
+                  active={rest.startsWith("/maps")}
+                  count={maps.length}
+                  icon={MapIcon}
+                  label="Maps"
+                  linkProps={{ params: { projectId }, to: "/projects/$projectId/maps" }}
+                  rail={rail}
+                />
+                <NavItem
+                  active={rest.startsWith("/apps")}
+                  count={apps.length}
+                  icon={LayoutDashboard}
+                  label="Apps"
+                  linkProps={{ params: { projectId }, to: "/projects/$projectId/apps" }}
+                  rail={rail}
+                />
               </NavGroup>
               <NavGroup label="Project" rail={rail}>
                 <NavItem
@@ -623,33 +598,15 @@ function PgProjectShellBody({
         open={addOpen}
         projectId={projectId}
       />
-      <Sheet onOpenChange={setMapOpen} open={mapOpen}>
-        <SheetContent className="w-full sm:max-w-md">
-          <SheetHeader className="border-b">
-            <SheetTitle>New map</SheetTitle>
-            <SheetDescription>
-              Name is the only required field — the editor opens right after.
-            </SheetDescription>
-          </SheetHeader>
-          <div className="flex flex-1 flex-col gap-4 p-6">
-            <Input
-              onChange={(event) => {
-                setMapName(event.target.value);
-              }}
-              placeholder="Parks overview"
-              value={mapName}
-            />
-            <Button
-              disabled={creatingMap}
-              onClick={() => {
-                void createMap();
-              }}
-            >
-              {creatingMap ? "Creating…" : "Create and open"}
-            </Button>
-          </div>
-        </SheetContent>
-      </Sheet>
+      {mapOpen ? (
+        <NewMapDialog
+          busy={creatingMap}
+          onOpenChange={setMapOpen}
+          onSubmit={(values) => {
+            void createMap(values);
+          }}
+        />
+      ) : null}
       {CreateAppDialog === undefined ? null : (
         <CreateAppDialog
           onOpenChange={setAppOpen}

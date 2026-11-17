@@ -842,7 +842,7 @@ function PgProjectMapEditor({ mapId, projectId }: { mapId: string; projectId: st
               }, "Failed to delete map.")
             ) {
               toast.success("Map deleted.");
-              await navigate({ params: { projectId }, to: "/projects/$projectId" });
+              await navigate({ params: { projectId }, to: "/projects/$projectId/maps" });
             }
           })();
         }}

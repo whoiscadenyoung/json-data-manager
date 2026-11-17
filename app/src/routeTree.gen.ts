@@ -37,6 +37,8 @@ import { Route as ProjectsProjectIdMembersRouteImport } from './routes/projects/
 import { Route as ProjectsProjectIdPublishRouteImport } from './routes/projects/$projectId/publish'
 import { Route as ProjectsProjectIdScratchRouteImport } from './routes/projects/$projectId/scratch'
 import { Route as ProjectsProjectIdSettingsRouteImport } from './routes/projects/$projectId/settings'
+import { Route as ProjectsProjectIdAppsIndexRouteImport } from './routes/projects/$projectId/apps/index'
+import { Route as ProjectsProjectIdMapsIndexRouteImport } from './routes/projects/$projectId/maps/index'
 import { Route as ProjectsProjectIdMapsMapIdRouteImport } from './routes/projects/$projectId/maps/$mapId'
 import { Route as ProjectsProjectIdViewsViewIdRouteImport } from './routes/projects/$projectId/views/$viewId'
 import { Route as ProjectsProjectIdViewsNewRouteImport } from './routes/projects/$projectId/views/new'
@@ -192,6 +194,18 @@ const ProjectsProjectIdSettingsRoute =
     path: '/settings',
     getParentRoute: () => ProjectsProjectIdRouteRoute,
   } as any)
+const ProjectsProjectIdAppsIndexRoute =
+  ProjectsProjectIdAppsIndexRouteImport.update({
+    id: '/apps/',
+    path: '/apps/',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
+const ProjectsProjectIdMapsIndexRoute =
+  ProjectsProjectIdMapsIndexRouteImport.update({
+    id: '/maps/',
+    path: '/maps/',
+    getParentRoute: () => ProjectsProjectIdRouteRoute,
+  } as any)
 const ProjectsProjectIdMapsMapIdRoute =
   ProjectsProjectIdMapsMapIdRouteImport.update({
     id: '/maps/$mapId',
@@ -261,6 +275,8 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/maps/$mapId': typeof ProjectsProjectIdMapsMapIdRoute
   '/projects/$projectId/views/$viewId': typeof ProjectsProjectIdViewsViewIdRoute
   '/projects/$projectId/views/new': typeof ProjectsProjectIdViewsNewRoute
+  '/projects/$projectId/apps/': typeof ProjectsProjectIdAppsIndexRoute
+  '/projects/$projectId/maps/': typeof ProjectsProjectIdMapsIndexRoute
   '/projects/$projectId/apps/$appId/edit': typeof ProjectsProjectIdAppsAppIdEditRoute
   '/projects/$projectId/datasets/$schemaId/$entryId': typeof ProjectsProjectIdDatasetsSchemaIdEntryIdRoute
   '/projects/$projectId/datasets/$schemaId/': typeof ProjectsProjectIdDatasetsSchemaIdIndexRoute
@@ -296,6 +312,8 @@ export interface FileRoutesByTo {
   '/projects/$projectId/maps/$mapId': typeof ProjectsProjectIdMapsMapIdRoute
   '/projects/$projectId/views/$viewId': typeof ProjectsProjectIdViewsViewIdRoute
   '/projects/$projectId/views/new': typeof ProjectsProjectIdViewsNewRoute
+  '/projects/$projectId/apps': typeof ProjectsProjectIdAppsIndexRoute
+  '/projects/$projectId/maps': typeof ProjectsProjectIdMapsIndexRoute
   '/projects/$projectId/apps/$appId/edit': typeof ProjectsProjectIdAppsAppIdEditRoute
   '/projects/$projectId/datasets/$schemaId/$entryId': typeof ProjectsProjectIdDatasetsSchemaIdEntryIdRoute
   '/projects/$projectId/datasets/$schemaId': typeof ProjectsProjectIdDatasetsSchemaIdIndexRoute
@@ -333,6 +351,8 @@ export interface FileRoutesById {
   '/projects/$projectId/maps/$mapId': typeof ProjectsProjectIdMapsMapIdRoute
   '/projects/$projectId/views/$viewId': typeof ProjectsProjectIdViewsViewIdRoute
   '/projects/$projectId/views/new': typeof ProjectsProjectIdViewsNewRoute
+  '/projects/$projectId/apps/': typeof ProjectsProjectIdAppsIndexRoute
+  '/projects/$projectId/maps/': typeof ProjectsProjectIdMapsIndexRoute
   '/projects/$projectId/apps/$appId/edit': typeof ProjectsProjectIdAppsAppIdEditRoute
   '/projects/$projectId/datasets/$schemaId/$entryId': typeof ProjectsProjectIdDatasetsSchemaIdEntryIdRoute
   '/projects/$projectId/datasets/$schemaId/': typeof ProjectsProjectIdDatasetsSchemaIdIndexRoute
@@ -371,6 +391,8 @@ export interface FileRouteTypes {
     | '/projects/$projectId/maps/$mapId'
     | '/projects/$projectId/views/$viewId'
     | '/projects/$projectId/views/new'
+    | '/projects/$projectId/apps/'
+    | '/projects/$projectId/maps/'
     | '/projects/$projectId/apps/$appId/edit'
     | '/projects/$projectId/datasets/$schemaId/$entryId'
     | '/projects/$projectId/datasets/$schemaId/'
@@ -406,6 +428,8 @@ export interface FileRouteTypes {
     | '/projects/$projectId/maps/$mapId'
     | '/projects/$projectId/views/$viewId'
     | '/projects/$projectId/views/new'
+    | '/projects/$projectId/apps'
+    | '/projects/$projectId/maps'
     | '/projects/$projectId/apps/$appId/edit'
     | '/projects/$projectId/datasets/$schemaId/$entryId'
     | '/projects/$projectId/datasets/$schemaId'
@@ -442,6 +466,8 @@ export interface FileRouteTypes {
     | '/projects/$projectId/maps/$mapId'
     | '/projects/$projectId/views/$viewId'
     | '/projects/$projectId/views/new'
+    | '/projects/$projectId/apps/'
+    | '/projects/$projectId/maps/'
     | '/projects/$projectId/apps/$appId/edit'
     | '/projects/$projectId/datasets/$schemaId/$entryId'
     | '/projects/$projectId/datasets/$schemaId/'
@@ -668,6 +694,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdSettingsRouteImport
       parentRoute: typeof ProjectsProjectIdRouteRoute
     }
+    '/projects/$projectId/apps/': {
+      id: '/projects/$projectId/apps/'
+      path: '/apps'
+      fullPath: '/projects/$projectId/apps/'
+      preLoaderRoute: typeof ProjectsProjectIdAppsIndexRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
+    '/projects/$projectId/maps/': {
+      id: '/projects/$projectId/maps/'
+      path: '/maps'
+      fullPath: '/projects/$projectId/maps/'
+      preLoaderRoute: typeof ProjectsProjectIdMapsIndexRouteImport
+      parentRoute: typeof ProjectsProjectIdRouteRoute
+    }
     '/projects/$projectId/maps/$mapId': {
       id: '/projects/$projectId/maps/$mapId'
       path: '/maps/$mapId'
@@ -725,6 +765,8 @@ interface ProjectsProjectIdRouteRouteChildren {
   ProjectsProjectIdMapsMapIdRoute: typeof ProjectsProjectIdMapsMapIdRoute
   ProjectsProjectIdViewsViewIdRoute: typeof ProjectsProjectIdViewsViewIdRoute
   ProjectsProjectIdViewsNewRoute: typeof ProjectsProjectIdViewsNewRoute
+  ProjectsProjectIdAppsIndexRoute: typeof ProjectsProjectIdAppsIndexRoute
+  ProjectsProjectIdMapsIndexRoute: typeof ProjectsProjectIdMapsIndexRoute
   ProjectsProjectIdAppsAppIdEditRoute: typeof ProjectsProjectIdAppsAppIdEditRoute
   ProjectsProjectIdDatasetsSchemaIdEntryIdRoute: typeof ProjectsProjectIdDatasetsSchemaIdEntryIdRoute
   ProjectsProjectIdDatasetsSchemaIdIndexRoute: typeof ProjectsProjectIdDatasetsSchemaIdIndexRoute
@@ -743,6 +785,8 @@ const ProjectsProjectIdRouteRouteChildren: ProjectsProjectIdRouteRouteChildren =
     ProjectsProjectIdMapsMapIdRoute: ProjectsProjectIdMapsMapIdRoute,
     ProjectsProjectIdViewsViewIdRoute: ProjectsProjectIdViewsViewIdRoute,
     ProjectsProjectIdViewsNewRoute: ProjectsProjectIdViewsNewRoute,
+    ProjectsProjectIdAppsIndexRoute: ProjectsProjectIdAppsIndexRoute,
+    ProjectsProjectIdMapsIndexRoute: ProjectsProjectIdMapsIndexRoute,
     ProjectsProjectIdAppsAppIdEditRoute: ProjectsProjectIdAppsAppIdEditRoute,
     ProjectsProjectIdDatasetsSchemaIdEntryIdRoute:
       ProjectsProjectIdDatasetsSchemaIdEntryIdRoute,
