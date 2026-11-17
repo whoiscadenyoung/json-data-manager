@@ -1,7 +1,14 @@
-import { Button } from "@caden/ui/components/button";
+import { Button, buttonVariants } from "@caden/ui/components/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@caden/ui/components/dropdown-menu";
 import type { Session } from "@supabase/supabase-js";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useMatches } from "@tanstack/react-router";
+import { Menu } from "lucide-react";
 
 import { UserAvatar } from "#/components/user-avatar";
 import { supabase } from "#/integrations/supabase/client";
@@ -42,7 +49,7 @@ function UserChip(props: {
   const visuals = (
     <>
       <UserAvatar className="h-6 w-6 text-[10px]" image={props.image} name={props.name} />
-      <span className="max-w-48 truncate">{props.label}</span>
+      <span className="hidden max-w-48 truncate sm:inline">{props.label}</span>
     </>
   );
   if (!props.linked) {
@@ -149,6 +156,41 @@ function UserMenu() {
   return <LinkedUserChip profile={profileRow} session={session} />;
 }
 
+/** The global nav targets, shared by the inline (md+) nav and the phone menu. */
+const NAV_LINKS = [
+  { label: "Projects", to: "/projects" },
+  { label: "Datasets", to: "/datasets" },
+  { label: "Collections", to: "/collections" },
+  { label: "Apps", to: "/apps" },
+  { label: "Maps", to: "/maps" },
+] as const;
+
+/** Below `md` the inline nav does not fit, so it collapses into this menu. */
+function MobileNav() {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label="Open navigation"
+        className={buttonVariants({ className: "-ml-2 md:hidden", size: "icon", variant: "ghost" })}
+      >
+        <Menu className="size-4" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-40">
+        {NAV_LINKS.map((link) => (
+          <DropdownMenuItem
+            key={link.to}
+            render={
+              <Link to={link.to} activeProps={{ className: "font-medium text-foreground" }} />
+            }
+          >
+            {link.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function Header() {
   // A route opts out with `staticData: { hideHeader: true }` (router.tsx).
   const hidden = useMatches({
@@ -158,51 +200,27 @@ export function Header() {
     return null;
   }
   return (
-    <header className="sticky top-0 z-50 border-b bg-background/80 px-6 backdrop-blur-lg">
-      <div className="flex h-14 items-center justify-between">
-        <div className="flex items-center gap-6">
-          <Link to="/" className="text-sm font-semibold">
+    <header className="sticky top-0 z-50 border-b bg-background/80 px-4 backdrop-blur-lg md:px-6">
+      <div className="flex h-14 items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2 md:gap-6">
+          <MobileNav />
+          <Link to="/" className="truncate text-sm font-semibold">
             JSON Data Manager
           </Link>
-          <nav className="flex items-center gap-4 text-sm text-muted-foreground">
-            <Link
-              to="/projects"
-              className="hover:text-foreground"
-              activeProps={{ className: "text-foreground" }}
-            >
-              Projects
-            </Link>
-            <Link
-              to="/datasets"
-              className="hover:text-foreground"
-              activeProps={{ className: "text-foreground" }}
-            >
-              Datasets
-            </Link>
-            <Link
-              to="/collections"
-              className="hover:text-foreground"
-              activeProps={{ className: "text-foreground" }}
-            >
-              Collections
-            </Link>
-            <Link
-              to="/apps"
-              className="hover:text-foreground"
-              activeProps={{ className: "text-foreground" }}
-            >
-              Apps
-            </Link>
-            <Link
-              to="/maps"
-              className="hover:text-foreground"
-              activeProps={{ className: "text-foreground" }}
-            >
-              Maps
-            </Link>
+          <nav className="hidden items-center gap-4 text-sm text-muted-foreground md:flex">
+            {NAV_LINKS.map((link) => (
+              <Link
+                key={link.to}
+                to={link.to}
+                className="hover:text-foreground"
+                activeProps={{ className: "text-foreground" }}
+              >
+                {link.label}
+              </Link>
+            ))}
           </nav>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex shrink-0 items-center gap-2 md:gap-4">
           <UserMenu />
           <ThemeToggle />
         </div>
