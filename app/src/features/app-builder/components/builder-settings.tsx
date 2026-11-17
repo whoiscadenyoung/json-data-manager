@@ -38,7 +38,6 @@ import {
   ItemTitle,
 } from "@caden/ui/components/item";
 import { Separator } from "@caden/ui/components/separator";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@caden/ui/components/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@caden/ui/components/toggle-group";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -50,14 +49,15 @@ import {
   Info,
   Maximize2,
   Minus,
-  MousePointerClick,
   PanelTop,
   Plus,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
 import { useState } from "react";
 
+import { RouterButton } from "#/components/router-button";
 import { errorMessage } from "#/lib/errors";
 import { listSummariesQueryOptions } from "#/lib/store/datasets";
 
@@ -73,20 +73,25 @@ import {
 } from "../lib/content";
 import { MAX_HEIGHT, WIDTH_PRESETS } from "../lib/layout";
 import { allWidgets, pagesWithoutDataset, removePage, shiftPage, updatePage } from "../lib/pages";
-import { createWidget, WIDGET_KINDS, widgetKindInfo, WidgetSettings } from "../widgets/registry";
+import { WIDGET_KINDS, widgetKindInfo, WidgetSettings } from "../widgets/registry";
 import { PgDatasetPickerSheet } from "./pg-dataset-picker-sheet";
 
 /**
- * The builder's side panel: Add (widget palette), Data (the app's sources),
- * and Widget (the selected widget's inspector) — composed from the shadcn
- * base-ui kit (Item, Field, ToggleGroup, ButtonGroup, Empty, AlertDialog).
- * Every disabled control says why (the "no silent disabled buttons" rule,
- * docs/memory).
+ * The builder's settings, docked right of the canvas: the selected page, the
+ * selected widget, or the app's datasets — plus the widget palette the empty
+ * canvas shows. Composed from the shadcn base-ui kit (Item, Field,
+ * ToggleGroup, ButtonGroup, Empty, AlertDialog). Every disabled control says
+ * why (the "no silent disabled buttons" rule, docs/memory).
  */
 
-export type PanelTab = "add" | "data" | "widget" | "page";
+/** What the settings panel shows; nothing selected closes it. */
+export type BuilderSelection =
+  | { kind: "page" }
+  | { kind: "data" }
+  | { kind: "widget"; widgetId: string };
 
-function AddPanel({
+/** The widget kinds as cards, each adding one to the page. */
+export function WidgetPalette({
   hasData,
   full,
   onAdd,
@@ -142,8 +147,8 @@ function AddPanel({
         <Alert>
           <Info />
           <AlertDescription>
-            Charts, tables and numbers read from the app's datasets — add one on the Data tab first.
-            Maps show a stored project map.
+            Charts, tables and numbers read from the app's datasets — add one under Data first. Maps
+            show a stored project map.
           </AlertDescription>
         </Alert>
       )}
@@ -363,14 +368,15 @@ function DataPanel({
         </p>
       )}
       {projectId !== undefined ? (
-        <Button
-          variant="link"
+        <RouterButton
+          params={{ projectId }}
           size="sm"
-          render={<Link params={{ projectId }} to="/projects/$projectId/create" />}
+          to="/projects/$projectId/create"
+          variant="link"
         >
           <Upload data-icon="inline-start" />
           Import new data into this project
-        </Button>
+        </RouterButton>
       ) : null}
       <PgDatasetPickerSheet
         title="Add a dataset"
@@ -461,32 +467,13 @@ function WidgetPanel({
   projectId,
   onChange,
 }: {
-  widget: Widget | undefined;
+  widget: Widget;
   datasetIds: readonly string[];
   projectId?: string;
   onChange: (next: Widget) => void;
 }) {
-  if (widget === undefined) {
-    return (
-      <Empty className="border">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <MousePointerClick />
-          </EmptyMedia>
-          <EmptyTitle>No widget selected</EmptyTitle>
-          <EmptyDescription>Select a widget on the canvas to edit it.</EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    );
-  }
-  const info = widgetKindInfo(widget.kind),
-    Icon = info.icon;
   return (
     <FieldGroup>
-      <div className="flex items-center gap-2 text-sm font-semibold">
-        <Icon className="text-primary" />
-        {info.label}
-      </div>
       <Field>
         <FieldLabel htmlFor={`widget-title-${widget.id}`}>Title</FieldLabel>
         <Input
@@ -666,115 +653,166 @@ function PagePanel({
   );
 }
 
-const PANEL_TABS: readonly PanelTab[] = ["add", "data", "widget", "page"];
+type UpdateContent = (change: (prev: AppContent) => AppContent) => void;
 
-export function BuilderPanel({
-  tab,
-  onTabChange,
+/** The page's settings, writing through to the app's content. */
+function PageSettings({
   content,
   page,
-  selected,
+  onSelectPage,
+  onUpdate,
+}: {
+  content: AppContent;
+  page: AppPage;
+  onSelectPage: (pageId: string) => void;
+  onUpdate: UpdateContent;
+}) {
+  return (
+    <PagePanel
+      key={page.id}
+      page={page}
+      pages={content.pages}
+      onChange={(next) => {
+        onUpdate((prev) => ({ ...prev, pages: updatePage(prev.pages, page.id, () => next) }));
+      }}
+      onShift={(delta) => {
+        onUpdate((prev) => ({ ...prev, pages: shiftPage(prev.pages, page.id, delta) }));
+      }}
+      onRemove={() => {
+        const remaining = removePage(content.pages, page.id);
+        onUpdate((prev) => ({ ...prev, pages: removePage(prev.pages, page.id) }));
+        onSelectPage(remaining[0].id);
+      }}
+    />
+  );
+}
+
+/** The app's datasets, writing through to the app's content. */
+function DataSettings({
+  content,
   projectId,
   onUpdate,
-  onSelect,
+}: {
+  content: AppContent;
+  projectId?: string;
+  onUpdate: UpdateContent;
+}) {
+  return (
+    <DataPanel
+      content={content}
+      projectId={projectId}
+      onAddDataset={(datasetId) => {
+        onUpdate((prev) => ({ ...prev, datasetIds: [...prev.datasetIds, datasetId] }));
+      }}
+      onRemoveDataset={(datasetId) => {
+        onUpdate((prev) => ({
+          datasetIds: prev.datasetIds.filter((id) => id !== datasetId),
+          pages: pagesWithoutDataset(prev.pages, datasetId),
+        }));
+      }}
+    />
+  );
+}
+
+/** The heading and icon for what is selected. */
+function headingOf(
+  selection: BuilderSelection,
+  page: AppPage,
+  widget: Widget | undefined,
+): { icon: typeof PanelTop; title: string } {
+  if (widget !== undefined) {
+    const info = widgetKindInfo(widget.kind);
+    return { icon: info.icon, title: widget.title ?? info.label };
+  }
+  if (selection.kind === "data") {
+    return { icon: Database, title: "Data" };
+  }
+  return {
+    icon: page.layout === "fullscreen" ? Maximize2 : PanelTop,
+    title: page.title.trim() === "" ? "Untitled page" : page.title,
+  };
+}
+
+/**
+ * The settings of what is selected in the outline or on the canvas. A widget
+ * that no longer exists on the page shows nothing; the builder clears it.
+ */
+export function BuilderSettings({
+  selection,
+  content,
+  page,
+  projectId,
+  onClose,
+  onUpdate,
   onSelectPage,
 }: {
-  tab: PanelTab;
-  onTabChange: (tab: PanelTab) => void;
+  selection: BuilderSelection;
   content: AppContent;
-  /** The page the canvas is showing — widgets are added to and edited on it. */
+  /** The page the canvas is showing — widgets are edited on it. */
   page: AppPage;
-  selected: Widget | undefined;
   /** The app's owning project (the map widget's picker reads the project's maps). */
   projectId?: string;
-  onUpdate: (change: (prev: AppContent) => AppContent) => void;
-  onSelect: (id: string | undefined) => void;
+  onClose: () => void;
+  onUpdate: UpdateContent;
   onSelectPage: (pageId: string) => void;
 }) {
-  const states = useAppDatasets(),
-    updateThisPage = (change: (current: AppPage) => AppPage) => {
-      onUpdate((prev) => ({ ...prev, pages: updatePage(prev.pages, page.id, change) }));
-    },
-    full =
-      page.widgets.length >= APP_LIMITS.widgets ||
-      allWidgets(content.pages).length >= APP_LIMITS.totalWidgets;
+  const widget =
+      selection.kind === "widget"
+        ? page.widgets.find((candidate) => candidate.id === selection.widgetId)
+        : undefined,
+    { icon: Icon, title } = headingOf(selection, page, widget);
+  if (selection.kind === "widget" && widget === undefined) {
+    return null;
+  }
   return (
-    <Tabs
-      value={tab}
-      onValueChange={(value) => {
-        const next = PANEL_TABS.find((candidate) => candidate === value);
-        if (next !== undefined) {
-          onTabChange(next);
-        }
-      }}
-      className="flex h-full flex-col"
+    <aside
+      aria-label={`Settings for ${title}`}
+      className="flex w-full shrink-0 flex-col overflow-y-auto border-t border-border bg-background md:w-[340px] md:border-t-0 md:border-l"
     >
-      <TabsList className="w-full">
-        <TabsTrigger value="add">Add</TabsTrigger>
-        <TabsTrigger value="data">Data ({content.datasetIds.length})</TabsTrigger>
-        <TabsTrigger value="widget">Widget</TabsTrigger>
-        <TabsTrigger value="page">Page</TabsTrigger>
-      </TabsList>
-      <div className="min-h-0 flex-1 overflow-y-auto pt-4">
-        <TabsContent value="add">
-          <AddPanel
-            hasData={content.datasetIds.length > 0}
-            full={full}
-            onAdd={(kind) => {
-              const widget = createWidget(kind, content.datasetIds, states);
-              updateThisPage((current) => ({ ...current, widgets: [...current.widgets, widget] }));
-              onSelect(widget.id);
-              onTabChange("widget");
-            }}
-          />
-        </TabsContent>
-        <TabsContent value="data">
-          <DataPanel
-            content={content}
-            projectId={projectId}
-            onAddDataset={(datasetId) => {
-              onUpdate((prev) => ({ ...prev, datasetIds: [...prev.datasetIds, datasetId] }));
-            }}
-            onRemoveDataset={(datasetId) => {
-              onUpdate((prev) => ({
-                datasetIds: prev.datasetIds.filter((id) => id !== datasetId),
-                pages: pagesWithoutDataset(prev.pages, datasetId),
-              }));
-            }}
-          />
-        </TabsContent>
-        <TabsContent value="widget">
+      <div className="flex items-center gap-2 border-b px-4 py-3">
+        <Icon className="size-4 shrink-0 text-muted-foreground" />
+        <h2 className="min-w-0 flex-1 truncate text-sm font-semibold" title={title}>
+          {title}
+        </h2>
+        <Button
+          aria-label="Close settings"
+          className="size-7"
+          onClick={onClose}
+          size="icon"
+          variant="ghost"
+        >
+          <X className="size-3.5" />
+        </Button>
+      </div>
+      <div className="p-4">
+        {widget !== undefined && (
           <WidgetPanel
-            widget={selected}
+            widget={widget}
             datasetIds={content.datasetIds}
             projectId={projectId}
             onChange={(next) => {
-              updateThisPage((current) => ({
-                ...current,
-                widgets: current.widgets.map((widget) => (widget.id === next.id ? next : widget)),
+              onUpdate((prev) => ({
+                ...prev,
+                pages: updatePage(prev.pages, page.id, (current) => ({
+                  ...current,
+                  widgets: current.widgets.map((item) => (item.id === next.id ? next : item)),
+                })),
               }));
             }}
           />
-        </TabsContent>
-        <TabsContent value="page">
-          <PagePanel
-            key={page.id}
+        )}
+        {selection.kind === "page" && (
+          <PageSettings
+            content={content}
             page={page}
-            pages={content.pages}
-            onChange={(next) => {
-              updateThisPage(() => next);
-            }}
-            onShift={(delta) => {
-              onUpdate((prev) => ({ ...prev, pages: shiftPage(prev.pages, page.id, delta) }));
-            }}
-            onRemove={() => {
-              const remaining = removePage(content.pages, page.id);
-              onUpdate((prev) => ({ ...prev, pages: removePage(prev.pages, page.id) }));
-              onSelectPage(remaining[0].id);
-            }}
+            onSelectPage={onSelectPage}
+            onUpdate={onUpdate}
           />
-        </TabsContent>
+        )}
+        {selection.kind === "data" && (
+          <DataSettings content={content} projectId={projectId} onUpdate={onUpdate} />
+        )}
       </div>
-    </Tabs>
+    </aside>
   );
 }
