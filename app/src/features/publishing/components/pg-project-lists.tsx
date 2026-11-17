@@ -35,6 +35,7 @@ import {
 import { useState, type ComponentType, type ReactNode } from "react";
 import { toast } from "sonner";
 
+import { VisibilityBadge } from "#/components/visibility-badge";
 import { relativeTime } from "#/features/views";
 import { errorMessage } from "@/lib/errors";
 import * as appVersionsStore from "@/lib/store/app-versions";
@@ -45,7 +46,6 @@ import { VIEWER_REASON } from "../lib/pg-viewer-posture";
 import { FolderNameDialog } from "./pg-catalog-dialogs";
 import { RowMenu, SortHead } from "./pg-catalog-rows";
 import { useProjectShell } from "./pg-project-context";
-import { VisibilityBadge } from "./visibility-badge";
 
 /**
  * The project's Maps and Apps pages: one table each, in the catalog's style.

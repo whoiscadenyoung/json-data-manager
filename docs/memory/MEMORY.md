@@ -75,3 +75,4 @@
 - [Project Maps and Apps pages](project-maps-apps-pages.md) — 2026-11-17: maps and apps are list pages in the catalog table style, sidebar links with counts, Overview tiles, labeled new-map dialog; step 1 of 4 of the approved maps/apps redesign
 - [Map editor workspace](map-editor-workspace.md) — 2026-11-17: editor moved to features/maps/components/map-editor; one Add layer menu, selectable draggable layer list, selection-driven settings panel; restores unreachable layer styling; step 2 of 4
 - [App builder workspace](app-builder-workspace.md) — 2026-11-17: builder laid out like the map editor; pages/widgets/data outline left, selection settings right, one Add menu; tabs panel retired; step 3 of 4
+- [Global explorers](global-explorers.md) — 2026-11-17: /maps and /apps share src/components/explorer.tsx rows and visibility-badge; New map / New app; step 4 of 4
