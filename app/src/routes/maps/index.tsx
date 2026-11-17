@@ -1,80 +1,72 @@
 import { Badge } from "@caden/ui/components/badge";
-import { Button } from "@caden/ui/components/button";
-import { Card } from "@caden/ui/components/card";
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@caden/ui/components/empty";
 import { useQuery } from "@tanstack/react-query";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import {
-  Calendar,
-  Globe,
-  LayoutDashboard,
-  Link2,
-  Lock,
-  Map as MapIcon,
-  MapPinned,
-  Plus,
-  Users,
-} from "lucide-react";
+import { LayoutDashboard, Map as MapIcon } from "lucide-react";
 import { useState } from "react";
 
-import { RouterButton } from "#/components/router-button";
+import {
+  ExplorerEmpty,
+  ExplorerList,
+  ExplorerPage,
+  ExplorerRow,
+  matchesSearch,
+  ProjectChip,
+  updatedOn,
+} from "#/components/explorer";
+import { VisibilityBadge } from "#/components/visibility-badge";
 import { PgProjectTargetSheet } from "#/features/publishing";
 import * as appsStore from "#/lib/store/apps";
 import * as mapsStore from "#/lib/store/maps";
-import type { VisibilityLevel } from "#/lib/store/visibility";
 
 export const Route = createFileRoute("/maps/")({
   component: MapsPage,
 });
 
-/** The rung badge — the same ladder the apps explorer shows (#262's explorer polish). */
-function VisibilityBadge({ visibility }: { visibility: VisibilityLevel }) {
-  return visibility === "public" ? (
-    <Badge variant="secondary">
-      <Globe data-icon="inline-start" />
-      Public
+type AppRef = { id: string; title: string };
+
+/** mapId → the visible apps whose widgets show it (one pass over the apps). */
+function appsByMapOf(apps: readonly appsStore.AppRow[] | undefined): Map<string, AppRef[]> {
+  const byMap = new globalThis.Map<string, AppRef[]>();
+  for (const app of apps ?? []) {
+    for (const mapId of appsStore.appMapIds(app)) {
+      byMap.set(mapId, [...(byMap.get(mapId) ?? []), { id: app.id, title: app.title }]);
+    }
+  }
+  return byMap;
+}
+
+function UsedInChips({ apps }: { apps: readonly AppRef[] }) {
+  return apps.map((app) => (
+    <Badge
+      className="relative z-10"
+      key={app.id}
+      title={`Shown in the app “${app.title}”`}
+      variant="outline"
+    >
+      <LayoutDashboard data-icon="inline-start" />
+      <Link className="hover:underline" params={{ appId: app.id }} to="/apps/$appId">
+        {app.title}
+      </Link>
     </Badge>
-  ) : visibility === "link" ? (
-    <Badge variant="secondary">
-      <Link2 data-icon="inline-start" />
-      By link
-    </Badge>
-  ) : visibility === "signed-in" ? (
-    <Badge variant="secondary">
-      <Users data-icon="inline-start" />
-      Signed-in
-    </Badge>
-  ) : (
-    <Badge variant="outline">
-      <Lock data-icon="inline-start" />
-      Members only
-    </Badge>
-  );
+  ));
 }
 
 /**
  * The maps EXPLORER (issue #257; D2 — creation lives in projects, the
- * explorer browses). Every map the viewer can see (RLS: the projects they
- * belong to), newest first, each card naming its owning project — the chip
- * links there — plus the visibility rung and the live apps whose widgets
- * reference the map (issue #262's "used in" back-reference; the scan rides
- * the visible-apps read). The old standalone create/edit entry points are
- * retired: the header affordance targets a project (chosen or freshly named)
- * and opening a map routes into its project's editor.
+ * explorer browses). Every map the viewer can see, newest first, on the
+ * shared explorer row: who can open it, its project, and the apps that show
+ * it. "New map" asks which project, then opens that project's Maps page.
  */
 function MapsPage() {
   const maps = useQuery(mapsStore.listQueryOptions()),
     apps = useQuery(appsStore.listVisibleQueryOptions()),
     navigate = useNavigate(),
     [targeting, setTargeting] = useState(false),
-    rows = maps.data;
+    [search, setSearch] = useState(""),
+    rows = maps.data,
+    create = () => {
+      setTargeting(true);
+    };
   if (maps.isPending || rows === undefined) {
     return (
       <div className="flex min-h-100 items-center justify-center">
@@ -82,142 +74,69 @@ function MapsPage() {
       </div>
     );
   }
-  // One pass over the visible apps: mapId → live apps referencing it
-  // (the widget payload's `mapId` key is the builder's stored-map write).
-  const appsByMap = new globalThis.Map<string, { id: string; title: string }[]>();
-  for (const app of apps.data ?? []) {
-    for (const mapId of appsStore.appMapIds(app)) {
-      const used = appsByMap.get(mapId) ?? [];
-      used.push({ id: app.id, title: app.title });
-      appsByMap.set(mapId, used);
-    }
-  }
+  const appsByMap = appsByMapOf(apps.data),
+    shown = rows.filter((map) =>
+      matchesSearch(search, [
+        map.name,
+        map.description,
+        map.project === null ? null : map.project.title,
+      ]),
+    );
   return (
-    <main className="mx-auto max-w-6xl px-4 py-8">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="mb-1 text-3xl font-bold text-primary">Maps</h1>
-          <p className="text-muted-foreground">
-            Every map in your projects — create and edit them inside a project's Maps view.
-          </p>
-        </div>
-        <Button
-          onClick={() => {
-            setTargeting(true);
-          }}
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          Start from here
-        </Button>
-      </div>
-
+    <ExplorerPage
+      createLabel="New map"
+      description="Every map in your projects. Maps are made and edited inside a project."
+      search={search}
+      searchLabel="Search maps"
+      title="Maps"
+      onCreate={create}
+      onSearch={setSearch}
+    >
       {rows.length === 0 ? (
-        <Empty className="min-h-80 border">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <MapPinned />
-            </EmptyMedia>
-            <EmptyTitle>No maps yet</EmptyTitle>
-            <EmptyDescription>
-              Maps live in projects now — start here and pick (or name) the project, then create the
-              map in its Maps view.
-            </EmptyDescription>
-          </EmptyHeader>
-          <EmptyContent>
-            <Button
-              onClick={() => {
-                setTargeting(true);
-              }}
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              Create your first map
-            </Button>
-            <RouterButton to="/projects">Go to your projects</RouterButton>
-          </EmptyContent>
-        </Empty>
+        <ExplorerEmpty
+          createLabel="New map"
+          description="A map lives in a project. Pick or name the project, then add the map on its Maps page."
+          icon={MapIcon}
+          title="No maps yet"
+          onCreate={create}
+        />
       ) : (
-        <div className="flex flex-col gap-3">
-          {rows.map((map) => {
-            const usedIn = appsByMap.get(map.id) ?? [];
-            return (
-              <Card
-                className="flex-row items-center gap-4 px-4 transition-shadow hover:shadow-md"
-                key={map.id}
-              >
-                <div className="flex min-w-0 flex-1 flex-col gap-2 py-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <VisibilityBadge visibility={map.visibility} />
-                    {map.project !== null && (
-                      <Badge
-                        title="The project that owns this map — maps are project rows."
-                        variant="outline"
-                      >
-                        <MapIcon className="h-3 w-3" />
-                        <Link
-                          className="hover:underline"
-                          params={{ projectId: map.project.id }}
-                          to="/projects/$projectId"
-                        >
-                          {map.project.title}
-                        </Link>
-                      </Badge>
-                    )}
-                    {usedIn.map((app) => (
-                      <Badge
-                        key={app.id}
-                        title={`Live in the app “${app.title}”`}
-                        variant="outline"
-                      >
-                        <LayoutDashboard className="h-3 w-3" />
-                        <Link
-                          className="hover:underline"
-                          params={{ appId: app.id }}
-                          to="/apps/$appId"
-                        >
-                          {app.title}
-                        </Link>
-                      </Badge>
-                    ))}
-                  </div>
-                  <Link
-                    className="flex flex-col gap-2"
-                    params={{ mapId: map.id, projectId: map.projectId }}
-                    to="/projects/$projectId/maps/$mapId"
-                  >
-                    <h3 className="text-base font-semibold">{map.name}</h3>
-                    {map.description !== null && (
-                      <p className="line-clamp-2 text-sm text-muted-foreground">
-                        {map.description}
-                      </p>
-                    )}
-                    <div className="flex items-center text-xs text-muted-foreground">
-                      <Calendar className="mr-1.5 h-3.5 w-3.5" />
-                      Updated {new Date(map.updatedAt).toLocaleDateString()}
-                    </div>
-                  </Link>
-                </div>
-                <RouterButton
+        <ExplorerList empty={`No maps match “${search}”.`}>
+          {shown.map((map) => (
+            <ExplorerRow
+              chips={
+                <>
+                  <VisibilityBadge visibility={map.visibility} />
+                  {map.project !== null && <ProjectChip project={map.project} />}
+                  <UsedInChips apps={appsByMap.get(map.id) ?? []} />
+                </>
+              }
+              description={map.description}
+              icon={MapIcon}
+              key={map.id}
+              meta={updatedOn(map.updatedAt)}
+              title={
+                <Link
+                  className="after:absolute after:inset-0 hover:underline"
                   params={{ mapId: map.id, projectId: map.projectId }}
                   to="/projects/$projectId/maps/$mapId"
-                  variant="outline"
                 >
-                  Open
-                </RouterButton>
-              </Card>
-            );
-          })}
-        </div>
+                  {map.name}
+                </Link>
+              }
+            />
+          ))}
+        </ExplorerList>
       )}
-
       <PgProjectTargetSheet
-        description="Maps live in projects — pick (or name) one, then create the map in its Maps view."
+        description="Maps live in projects. Pick one, or name a new one, and add the map on its Maps page."
         onOpenChange={setTargeting}
         onTarget={async (projectId) => {
-          await navigate({ params: { projectId }, to: "/projects/$projectId" });
+          await navigate({ params: { projectId }, to: "/projects/$projectId/maps" });
         }}
         open={targeting}
-        title="Create a map"
+        title="Which project is the map for?"
       />
-    </main>
+    </ExplorerPage>
   );
 }
