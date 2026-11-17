@@ -3,6 +3,7 @@
 export { PgProjectSettings } from "./components/pg-project-sections";
 export { PgProjectShell } from "./components/pg-project-shell";
 export { PgProjectCatalog } from "./components/pg-project-catalog";
+export { PgProjectApps, PgProjectMaps } from "./components/pg-project-lists";
 export {
   PgProjectMembers,
   PgProjectOverview,

@@ -37,19 +37,17 @@ import {
   LayoutDashboard,
   Link2,
   Map as MapIcon,
-  MapPlus,
   Loader2,
   Plus,
   Rocket,
   Search,
 } from "lucide-react";
-import { useState, type ComponentType } from "react";
+import { useState, type ComponentType, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { PgDatasetTagsWithCount } from "#/features/catalog";
 import { RouterButton } from "@/components/router-button";
 import { errorMessage } from "@/lib/errors";
-import * as appVersionsStore from "@/lib/store/app-versions";
 import * as appsStore from "@/lib/store/apps";
 import * as datasetsStore from "@/lib/store/datasets";
 import * as mapsStore from "@/lib/store/maps";
@@ -604,171 +602,67 @@ export function PgBundleStatusLine({ projectId }: { projectId: string }) {
   );
 }
 
-/** The project's Maps view (issue #257; D2 — map creation lives in projects): the project-owned maps with their placement counts. The create-map sheet is owned by the shell (issue #271). */
-export function PgProjectMapsSection() {
-  const { canEdit, openNewMap, projectId } = useProjectShell(),
-    mapsQuery = useQuery({ ...mapsStore.listForProjectQueryOptions({ projectId }) }),
-    placementsQuery = useQuery({ ...mapsStore.listAllPlacementsQueryOptions() }),
-    placementsByMap = new globalThis.Map<string, number>();
-  for (const placement of placementsQuery.data ?? []) {
-    placementsByMap.set(placement.mapId, (placementsByMap.get(placement.mapId) ?? 0) + 1);
-  }
-  const maps = mapsQuery.data ?? [];
+/** One Overview tile: what the section holds, how many, and the newest few by name. */
+function OverviewTile({
+  children,
+  count,
+  icon: Icon,
+  label,
+  note,
+  recent,
+}: {
+  /** The link that opens the section. */
+  children: ReactNode;
+  count: number | undefined;
+  icon: ComponentType<{ className?: string }>;
+  label: string;
+  /** What to say when there are no recent rows to name. */
+  note: string;
+  recent: readonly { id: string; link: ReactNode }[];
+}) {
   return (
-    <section className="mt-2">
-      <div className="mb-2 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-muted-foreground">
-          Maps{" "}
-          <span className="font-normal">
-            ({maps.length} {maps.length === 1 ? "map" : "maps"})
+    <Card className="gap-3 px-5 py-4">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="flex items-center gap-2 text-sm font-semibold">
+          <Icon className="h-4 w-4 text-muted-foreground" />
+          {label}
+          <span className="font-normal text-muted-foreground tabular-nums">
+            {count === undefined ? "" : count.toLocaleString()}
           </span>
         </h2>
-        <Button
-          disabled={!canEdit}
-          onClick={openNewMap}
-          size="sm"
-          title={canEdit ? "Create a map in this project" : VIEWER_REASON}
-          variant="outline"
-        >
-          <MapPlus className="mr-1 h-3.5 w-3.5" />
-          Create map
-        </Button>
+        {children}
       </div>
-      {maps.length === 0 ? (
-        <p className="rounded-lg border px-4 py-3 text-sm text-muted-foreground">
-          No maps yet — create one and compose the project's layers on it.
-        </p>
+      {recent.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{count === undefined ? "Loading…" : note}</p>
       ) : (
-        <div className="flex flex-col gap-3">
-          {maps.map((map) => (
-            <Card
-              className="flex-row items-center gap-4 px-4 py-3 transition-shadow hover:shadow-md"
-              key={map.id}
-            >
-              <Link
-                className="flex min-w-0 flex-1 flex-col gap-1 py-0"
-                params={{ mapId: map.id, projectId }}
-                to="/projects/$projectId/maps/$mapId"
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline">
-                    <MapIcon className="h-3 w-3" />
-                    Map
-                  </Badge>
-                  <span className="text-xs text-muted-foreground">
-                    {placementsByMap.get(map.id) ?? 0}{" "}
-                    {(placementsByMap.get(map.id) ?? 0) === 1 ? "layer" : "layers"}
-                  </span>
-                </div>
-                <p className="truncate text-sm font-medium">{map.name}</p>
-              </Link>
-              <RouterButton
-                params={{ mapId: map.id, projectId }}
-                size="sm"
-                to="/projects/$projectId/maps/$mapId"
-                variant="outline"
-              >
-                Open editor
-              </RouterButton>
-            </Card>
+        <ul className="flex flex-col gap-1 text-sm">
+          {recent.map((entry) => (
+            <li className="truncate" key={entry.id}>
+              {entry.link}
+            </li>
           ))}
-        </div>
+        </ul>
       )}
-    </section>
+    </Card>
   );
 }
 
-/** One app card's publish chip: the head version's label, or Draft (never published). */
-function PgAppPublishChip({ appId }: { appId: string }) {
-  const head = useQuery(appVersionsStore.headQueryOptions({ appId }));
-  if (head.isPending) {
-    return null;
-  }
-  return head.data !== null && head.data !== undefined ? (
-    <Badge
-      title="The published snapshot — /apps opens it; edits don't change it until republish."
-      variant="secondary"
-    >
-      <Rocket className="h-3 w-3" />
-      {head.data.versionLabel}
-    </Badge>
-  ) : (
-    <Badge variant="outline">Draft</Badge>
-  );
+const TILE_LINK = "text-sm text-primary underline-offset-2 hover:underline",
+  RECENT_LINK = "hover:underline",
+  RECENT_COUNT = 3;
+
+/** The newest few rows, most recently changed first. */
+function newest<Row extends { updatedAt: string }>(rows: readonly Row[] | undefined): Row[] {
+  return (rows ?? [])
+    .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, RECENT_COUNT);
 }
 
-/** The project's Apps view (issue #259; D7): the project's apps with their publish state. The create-app dialog is owned by the shell (issue #271). */
-export function PgProjectAppsSection() {
-  const { canEdit, openNewApp, projectId } = useProjectShell(),
-    appsQuery = useQuery({ ...appsStore.listForProjectQueryOptions({ projectId }) }),
-    apps = appsQuery.data ?? [];
-  return (
-    <section className="mt-2">
-      <div className="mb-2 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-muted-foreground">
-          Apps{" "}
-          <span className="font-normal">
-            ({apps.length} {apps.length === 1 ? "app" : "apps"})
-          </span>
-        </h2>
-        <Button
-          disabled={!canEdit}
-          onClick={openNewApp}
-          size="sm"
-          title={canEdit ? "Create an app in this project" : VIEWER_REASON}
-          variant="outline"
-        >
-          <LayoutDashboard className="mr-1 h-3.5 w-3.5" />
-          Create app
-        </Button>
-      </div>
-      {apps.length === 0 ? (
-        <p className="rounded-lg border px-4 py-3 text-sm text-muted-foreground">
-          No apps yet — create one and compose this project&apos;s maps and datasets into pages.
-        </p>
-      ) : (
-        <div className="flex flex-col gap-3">
-          {apps.map((app) => (
-            <Card
-              className="flex-row items-center gap-4 px-4 py-3 transition-shadow hover:shadow-md"
-              key={app.id}
-            >
-              <Link
-                className="flex min-w-0 flex-1 flex-col gap-1 py-0"
-                params={{ appId: app.id }}
-                to="/apps/$appId"
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline">
-                    <LayoutDashboard className="h-3 w-3" />
-                    App
-                  </Badge>
-                  <PgAppPublishChip appId={app.id} />
-                  <span className="text-xs text-muted-foreground">
-                    {app.pages.reduce((sum, page) => sum + page.widgets.length, 0)} widgets
-                  </span>
-                </div>
-                <p className="truncate text-sm font-medium">{app.title}</p>
-              </Link>
-              <RouterButton
-                params={{ appId: app.id, projectId }}
-                size="sm"
-                to="/projects/$projectId/apps/$appId/edit"
-                variant="outline"
-              >
-                Open builder
-              </RouterButton>
-            </Card>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-/** The Overview section: the project's facts, "start here" when the catalog is empty, then the maps and apps lists. */
+/** The Overview section: the project's facts, "start here" when the catalog is empty, then one tile per section. */
 export function PgProjectOverview() {
-  const { canEdit, catalog, myRole, project, projectId } = useProjectShell();
+  const { canEdit, catalog, myRole, project, projectId } = useProjectShell(),
+    mapsQuery = useQuery(mapsStore.listForProjectQueryOptions({ projectId })),
+    appsQuery = useQuery(appsStore.listForProjectQueryOptions({ projectId }));
   return (
     <main className="mx-auto max-w-5xl px-6 py-6">
       <h1 className="mb-1 text-2xl font-bold text-primary">{project.title}</h1>
@@ -776,9 +670,6 @@ export function PgProjectOverview() {
         <Badge title={`Your access to this project (${ROLE_LABELS[myRole]}).`} variant="outline">
           {ROLE_LABELS[myRole]}
         </Badge>
-        <span>
-          {catalog.length} {catalog.length === 1 ? "artifact" : "artifacts"}
-        </span>
       </div>
       {project.description !== null && (
         <p className="mt-1 text-muted-foreground">{project.description}</p>
@@ -808,9 +699,66 @@ export function PgProjectOverview() {
           {canEdit ? null : <p className="text-xs text-muted-foreground">{VIEWER_REASON}</p>}
         </Card>
       )}
-      <div className="mt-6 flex flex-col gap-4">
-        <PgProjectMapsSection />
-        <PgProjectAppsSection />
+      <div className="mt-6 grid gap-4 md:grid-cols-3">
+        <OverviewTile
+          count={catalog.length}
+          icon={Database}
+          label="Catalog"
+          note={
+            catalog.length === 0
+              ? "No datasets or views yet."
+              : "This project's datasets and views, in folders."
+          }
+          recent={[]}
+        >
+          <Link className={TILE_LINK} params={{ projectId }} to="/projects/$projectId/catalog">
+            Open catalog
+          </Link>
+        </OverviewTile>
+        <OverviewTile
+          count={mapsQuery.data === undefined ? undefined : mapsQuery.data.length}
+          icon={MapIcon}
+          label="Maps"
+          note="No maps yet."
+          recent={newest(mapsQuery.data).map((map) => ({
+            id: map.id,
+            link: (
+              <Link
+                className={RECENT_LINK}
+                params={{ mapId: map.id, projectId }}
+                to="/projects/$projectId/maps/$mapId"
+              >
+                {map.name}
+              </Link>
+            ),
+          }))}
+        >
+          <Link className={TILE_LINK} params={{ projectId }} to="/projects/$projectId/maps">
+            All maps
+          </Link>
+        </OverviewTile>
+        <OverviewTile
+          count={appsQuery.data === undefined ? undefined : appsQuery.data.length}
+          icon={LayoutDashboard}
+          label="Apps"
+          note="No apps yet."
+          recent={newest(appsQuery.data).map((app) => ({
+            id: app.id,
+            link: (
+              <Link
+                className={RECENT_LINK}
+                params={{ appId: app.id, projectId }}
+                to="/projects/$projectId/apps/$appId/edit"
+              >
+                {app.title}
+              </Link>
+            ),
+          }))}
+        >
+          <Link className={TILE_LINK} params={{ projectId }} to="/projects/$projectId/apps">
+            All apps
+          </Link>
+        </OverviewTile>
       </div>
     </main>
   );

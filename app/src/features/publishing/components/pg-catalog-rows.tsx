@@ -8,9 +8,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@caden/ui/components/dropdown-menu";
-import { TableCell, TableRow } from "@caden/ui/components/table";
+import { TableCell, TableHead, TableRow } from "@caden/ui/components/table";
 import { Link } from "@tanstack/react-router";
 import {
+  ArrowDown,
+  ArrowUp,
   ArrowUpCircle,
   Copy,
   FileQuestion,
@@ -78,7 +80,7 @@ function SelectCell({
   );
 }
 
-function RowMenu({ children, label }: { children: ReactNode; label: string }) {
+export function RowMenu({ children, label }: { children: ReactNode; label: string }) {
   return (
     <TableCell className="w-10 text-right">
       <DropdownMenu>
@@ -90,6 +92,48 @@ function RowMenu({ children, label }: { children: ReactNode; label: string }) {
         <DropdownMenuContent align="end">{children}</DropdownMenuContent>
       </DropdownMenu>
     </TableCell>
+  );
+}
+
+/** A sortable column header: the catalog and the project's map and app lists share it. */
+export function SortHead<Key extends string>({
+  align,
+  className,
+  label,
+  onSort,
+  sort,
+  sortKey,
+}: {
+  align?: "right";
+  className?: string;
+  label: string;
+  onSort: (key: Key) => void;
+  sort: { descending: boolean; key: Key };
+  sortKey: Key;
+}) {
+  const active = sort.key === sortKey;
+  return (
+    <TableHead
+      aria-sort={active ? (sort.descending ? "descending" : "ascending") : "none"}
+      className={className}
+    >
+      <button
+        className={`inline-flex items-center gap-1 hover:text-foreground ${align === "right" ? "w-full justify-end" : ""}`}
+        onClick={() => {
+          onSort(sortKey);
+        }}
+        type="button"
+      >
+        {label}
+        {active ? (
+          sort.descending ? (
+            <ArrowDown className="h-3 w-3" />
+          ) : (
+            <ArrowUp className="h-3 w-3" />
+          )
+        ) : null}
+      </button>
+    </TableHead>
   );
 }
 
