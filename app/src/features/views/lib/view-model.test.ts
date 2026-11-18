@@ -136,6 +136,28 @@ describe("fieldsAfter", () => {
     expect(fieldsAfter(def, infos, 0)).toStrictEqual(["id", "name", "n"]);
   });
 
+  it("applies a stack's column edits", () => {
+    const def: ViewDefinition = {
+      ...definitionWith(joinStep()),
+      steps: [
+        {
+          kind: "append",
+          sources: [
+            {
+              input: "deployments",
+              columns: [
+                { from: "cost", as: "amount" },
+                { from: "stateId", exclude: true },
+              ],
+            },
+          ],
+          baseColumns: [{ from: "name", exclude: true }],
+        },
+      ],
+    };
+    expect(fieldsAfter(def, infos, 0)).toStrictEqual(["id", "amount"]);
+  });
+
   it("replaces the shape after a group-by", () => {
     const def: ViewDefinition = {
       ...definitionWith(joinStep()),

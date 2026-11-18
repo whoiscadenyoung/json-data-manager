@@ -303,7 +303,13 @@ function isTag(value: unknown): boolean {
   );
 }
 
-function validateOneEdit(edit: unknown, at: string, seen: Set<string>, issues: Issues): void {
+function validateOneEdit(
+  edit: unknown,
+  at: string,
+  seen: Set<string>,
+  outputs: Set<string>,
+  issues: Issues,
+): void {
   if (!isRecord(edit) || !isNonEmptyString(edit.from)) {
     issues.add(at, "Each column edit needs a `from` field name.");
     return;
@@ -318,6 +324,10 @@ function validateOneEdit(edit: unknown, at: string, seen: Set<string>, issues: I
     }
   } else if (!isNonEmptyString(edit.as)) {
     issues.add(at, `Column "${edit.from}" needs an output name (\`as\`) or exclude.`);
+  } else if (outputs.has(edit.as)) {
+    issues.add(at, `Two fields are renamed to "${edit.as}"; pick one.`);
+  } else {
+    outputs.add(edit.as);
   }
 }
 
@@ -330,8 +340,9 @@ function validateColumnEdits(edits: unknown, path: string, issues: Issues): void
     return;
   }
   const seen = new Set<string>();
+  const outputs = new Set<string>();
   for (const [i, edit] of edits.entries()) {
-    validateOneEdit(edit, `${path}[${i}]`, seen, issues);
+    validateOneEdit(edit, `${path}[${i}]`, seen, outputs, issues);
   }
 }
 

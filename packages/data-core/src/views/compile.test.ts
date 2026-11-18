@@ -110,6 +110,28 @@ describe("filter", () => {
   });
 });
 
+describe("append: column edits", () => {
+  test("rename and exclude on the base and a source", () => {
+    const step: Step = {
+      kind: "append",
+      sources: [
+        {
+          input: "deployments",
+          tag: 2023,
+          columns: [
+            { from: "cost", as: "amount" },
+            { from: "stateId", exclude: true },
+          ],
+        },
+      ],
+      tagField: "fiscal_year",
+      baseTag: 2022,
+      baseColumns: [{ from: "stateName", as: "amount" }],
+    };
+    expect(golden(compileView(definition([step]), metas))).toMatchSnapshot();
+  });
+});
+
 describe("join: first / last", () => {
   test("first with orderBy and a field list", () => {
     const step = join({

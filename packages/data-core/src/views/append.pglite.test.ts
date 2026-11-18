@@ -105,6 +105,24 @@ describe("append step", () => {
         metas,
       );
       expect(badShape.ok).toBe(false);
+      const twice = validateViewDefinition(
+        definition([
+          {
+            kind: "append",
+            sources: [
+              {
+                input: "deployments",
+                columns: [
+                  { from: "cost", as: "x" },
+                  { from: "name", as: "x" },
+                ],
+              },
+            ],
+          },
+        ]),
+        metas,
+      );
+      expect(twice.ok).toBe(false);
     });
 
     test("renames, excludes, merges into one column and keeps geometry", async () => {

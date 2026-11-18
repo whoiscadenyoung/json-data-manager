@@ -94,6 +94,32 @@ describe("remap", () => {
     expect(first.messages.join(" ")).toMatch(/id/);
   });
 
+  test("a remapped stack input lacking an edited field is reported", () => {
+    const stack: ViewDefinition = {
+      ...workedExample,
+      output: { fields: [], emptyFields: "keep" },
+      steps: [
+        {
+          kind: "append",
+          sources: [{ input: "links", columns: [{ from: "url", as: "link" }] }],
+        },
+      ],
+    };
+    const next = remapInputs(stack, [{ alias: "links", datasetId: NEW_STATES, oldTitle: "Links" }]);
+    const links = (fields: string[]): CompileInputMeta => ({
+      alias: "links",
+      datasetId: NEW_STATES,
+      title: "Other",
+      fields: fields.map((name) => ({ name })),
+    });
+    const others = workedMetas.filter((meta) => meta.alias !== "links");
+    expect(remapReport(next, [...others, links(["url"])]).ok).toBe(true);
+    const bad = remapReport(next, [...others, links(["href"])]);
+    expect(bad.ok).toBe(false);
+    const steps = bad.ok ? [] : bad.byStep.map((entry) => entry.step);
+    expect(steps).toContain("Step 1");
+  });
+
   test("path labels", () => {
     expect(stepLabelOfPath("steps[1].on[0].left")).toBe("Step 2");
     expect(stepLabelOfPath("steps[0].right.steps[2].expr")).toBe("Step 1, sub-step 3");

@@ -43,6 +43,16 @@ describe("AppendForm columns", () => {
     expect(next.sources[0].columns).toEqual([{ from: "Amount", as: "amount" }]);
   });
 
+  it("renames a column in every member that feeds it", () => {
+    const onChange = renderForm();
+    const input = screen.getByLabelText("Rename column name");
+    fireEvent.change(input, { target: { value: "title" } });
+    fireEvent.blur(input);
+    const next = onChange.mock.calls[0][0] as AppendStep;
+    expect(next.baseColumns).toEqual([{ from: "name", as: "title" }]);
+    expect(next.sources[0].columns).toEqual([{ from: "name", as: "title" }]);
+  });
+
   it("excludes a field", () => {
     const onChange = renderForm();
     fireEvent.click(screen.getByLabelText("Exclude extra from FY23"));
