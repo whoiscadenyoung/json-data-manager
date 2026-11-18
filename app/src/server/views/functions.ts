@@ -3,7 +3,7 @@ import { z } from "zod";
 
 /**
  * The view runner's server functions (issue #300). The browser sends a view
- * id (plus a step index, or a draft DEFINITION as JSON) and its Supabase
+ * id (plus a node id to preview up to, or a draft DEFINITION as JSON) and its Supabase
  * access token — never SQL, never rows. The token is verified on the server
  * (`claims.ts`); the handler bodies import the server-only wiring lazily so
  * nothing server-side reaches the client bundle.
@@ -19,7 +19,7 @@ const runInput = z.object({ accessToken: z.string().min(1), viewId: z.string().m
 
 const previewInput = z.object({
   accessToken: z.string().min(1),
-  uptoStep: z.number().int().min(0).optional(),
+  uptoNode: z.string().min(1).optional(),
   viewId: z.string().min(1).optional(),
   definition: z.unknown().optional(),
   inputs: z.array(inputRef).optional(),
@@ -50,7 +50,7 @@ export const previewViewFn = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => previewInput.parse(input))
   .handler(async ({ data }) => {
     const { previewForToken } = await import("./entry.server");
-    const step = data.uptoStep === undefined ? {} : { uptoStep: data.uptoStep };
+    const step = data.uptoNode === undefined ? {} : { uptoNode: data.uptoNode };
     if (data.viewId !== undefined) {
       return await previewForToken(data.accessToken, { viewId: data.viewId, ...step });
     }

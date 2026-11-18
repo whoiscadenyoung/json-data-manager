@@ -60,22 +60,23 @@ const BAD = "44444444-4444-4444-8444-444444444444";
 const A_VIEW = "55555555-5555-4555-8555-555555555555";
 
 const definition: ViewDefinition = {
-  inputs: [
-    { alias: "states", ref: { kind: "dataset", id: STATES } },
-    { alias: "deployments", ref: { kind: "dataset", id: DEPLOYMENTS } },
-  ],
-  base: "states",
-  steps: [
-    {
+  nodes: {
+    states: { kind: "source", ref: { kind: "dataset", id: STATES } },
+    deployments: { kind: "source", ref: { kind: "dataset", id: DEPLOYMENTS } },
+    joined: {
       kind: "join",
-      right: { input: "deployments" },
+      left: "states",
+      right: "deployments",
       on: [{ left: "id", right: "stateId" }],
       matching: { trim: true, caseFold: false, collapseSpace: false, stripDiacritics: false },
       type: "left",
       multiMatch: { mode: "summarize", measures: [{ as: "deployments", fn: "count" }] },
     },
-  ],
-  output: { fields: [{ key: "name", label: "State" }], emptyFields: "keep" },
+  },
+  result: {
+    node: "joined",
+    output: { fields: [{ key: "name", label: "State" }], emptyFields: "keep" },
+  },
 };
 
 const catalog: Record<string, { title: string; fields: string[] }> = {
@@ -122,8 +123,8 @@ vi.mock("@/lib/store/view-reads", () => ({
 }));
 
 import { DuplicateViewDialog } from "./duplicate-view-dialog";
-import { StepList } from "./step-list";
-import type { StepEditorContext } from "./step-list";
+import type { NodeEditorContext } from "./node-context";
+import { NodeForm } from "./node-form";
 
 afterEach(() => {
   cleanup();
@@ -187,7 +188,7 @@ describe("DuplicateViewDialog", () => {
     const picker = await screen.findByLabelText("Input States");
     fireEvent.change(picker, { target: { value: BAD } });
     const problems = await screen.findByTestId("remap-problems");
-    expect(problems.textContent).toMatch(/Step 1/);
+    expect(problems.textContent).toMatch(/joined/);
     expect(problems.textContent).toMatch(/id/);
     expect(screen.getByRole("button", { name: "Create copy" })).toHaveProperty("disabled", true);
     expect(screen.getByText(/Fix the problems above/)).toBeTruthy();
@@ -213,84 +214,68 @@ describe("DuplicateViewDialog", () => {
 });
 
 describe("Extract to view button", () => {
-  const withSteps: ViewDefinition["steps"] = [
+  const filtered: ViewDefinition = {
+    ...definition,
+    nodes: {
+      ...definition.nodes,
+      named: { kind: "filter", from: "deployments", where: { field: "name", op: "notNull" } },
+    },
+  };
+  const infos = [
+    { alias: "states", datasetId: STATES, title: "States", fields: ["id", "name"] },
     {
-      kind: "join",
-      right: {
-        input: "deployments",
-        steps: [{ kind: "filter", where: { field: "name", op: "notNull" } }],
-      },
-      on: [{ left: "id", right: "stateId" }],
-      matching: { trim: true, caseFold: false, collapseSpace: false, stripDiacritics: false },
-      type: "left",
-      multiMatch: { mode: "summarize", measures: [{ as: "n", fn: "count" }] },
+      alias: "deployments",
+      datasetId: DEPLOYMENTS,
+      title: "Deployments",
+      fields: ["id", "stateId", "name"],
     },
   ];
-  const without: ViewDefinition["steps"] = [
-    { ...(withSteps[0] as object), right: { input: "deployments" } } as ViewDefinition["steps"][0],
-  ];
+  const ctx: NodeEditorContext = {
+    definition: filtered,
+    diagnostics: undefined,
+    errors: [],
+    fields: new Map([
+      ["states", ["id", "name"]],
+      ["deployments", ["id", "stateId", "name"]],
+      ["named", ["id", "stateId", "name"]],
+    ]),
+    infos,
+  };
 
-  function ctx(extra: Partial<StepEditorContext>): StepEditorContext {
-    return {
-      baseAlias: "states",
-      diagnostics: undefined,
-      errors: [],
-      infos: [
-        { alias: "states", datasetId: STATES, title: "States", fields: ["id", "name"] },
-        {
-          alias: "deployments",
-          datasetId: DEPLOYMENTS,
-          title: "Deployments",
-          fields: ["id", "stateId", "name"],
-        },
-      ],
-      ...extra,
-    };
-  }
-
-  function mountList(steps: ViewDefinition["steps"], context: StepEditorContext) {
-    return render(
-      createElement(StepList, {
-        ctx: context,
-        expanded: 0,
-        nested: false,
-        onChange: vi.fn<(steps: ViewDefinition["steps"]) => void>(),
-        onExpand: vi.fn<(index: number | undefined) => void>(),
-        pathPrefix: "steps",
-        startFields: ["id", "name"],
-        steps,
+  function mountForm(extractBlocked: string | undefined, onExtract = vi.fn<() => void>()) {
+    render(
+      createElement(NodeForm, {
+        ctx,
+        extractBlocked,
+        id: "named",
+        isResult: false,
+        onBranch: vi.fn<(kind: string) => void>(),
+        onChange: vi.fn<(node: unknown) => void>(),
+        onExtract,
+        onMakeResult: vi.fn<() => void>(),
+        onRemove: vi.fn<() => void>(),
       }),
     );
+    return onExtract;
   }
 
-  it("shows on a join with an inline sub-pipeline and reports its path and right title", () => {
-    const onExtract = vi.fn<(path: string, rightTitle: string) => void>();
-    mountList(withSteps, ctx({ extract: { disabledReason: undefined, onExtract } }));
+  it("reports the extract request for the node", () => {
+    const onExtract = mountForm(undefined);
     fireEvent.click(screen.getByRole("button", { name: /Extract to view/ }));
-    expect(onExtract).toHaveBeenCalledWith("steps[0]", "Deployments");
+    expect(onExtract).toHaveBeenCalledTimes(1);
   });
 
-  it("is absent when the join has no sub-pipeline, and when extraction is not offered", () => {
-    const onExtract = vi.fn<(path: string, rightTitle: string) => void>();
-    mountList(without, ctx({ extract: { disabledReason: undefined, onExtract } }));
-    expect(screen.queryByRole("button", { name: /Extract to view/ })).toBeNull();
-    cleanup();
-    mountList(withSteps, ctx({}));
-    expect(screen.queryByRole("button", { name: /Extract to view/ })).toBeNull();
-  });
-
-  it("is disabled with its reason while the steps have problems", () => {
-    mountList(
-      withSteps,
-      ctx({
-        extract: {
-          disabledReason: "Fix the steps first: nope",
-          onExtract: vi.fn<(path: string, rightTitle: string) => void>(),
-        },
-      }),
-    );
+  it("is disabled with its reason while the nodes have problems", () => {
+    mountForm("Fix the nodes first: nope");
     const button = screen.getByRole("button", { name: /Extract to view/ });
     expect(button).toHaveProperty("disabled", true);
-    expect(button.getAttribute("title")).toBe("Fix the steps first: nope");
+    expect(button.getAttribute("title")).toBe("Fix the nodes first: nope");
+  });
+
+  it("offers the graph actions: branch, use as result, remove with a reconnect", () => {
+    mountForm(undefined);
+    expect(screen.getByRole("button", { name: /Branch from here/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Use as the result/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Remove named" })).toHaveProperty("disabled", false);
   });
 });

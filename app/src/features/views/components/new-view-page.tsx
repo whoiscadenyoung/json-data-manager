@@ -9,21 +9,21 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { RouterButton } from "@/components/router-button";
-import { ViewStepGraph } from "@/features/view-graphs";
+import { ViewNodeGraph } from "@/features/view-graphs";
 import { errorMessage } from "@/lib/errors";
 import * as datasetsStore from "@/lib/store/datasets";
 import * as projectsStore from "@/lib/store/projects";
 
 import { createProjectView } from "../lib/create-view";
-import { blankDefinition, blankDefinitionOf } from "../lib/view-model";
-import { ADD_ITEMS, AddStepToolbar } from "./step-list";
+import { blankDefinitionOf } from "../lib/view-model";
+import { ADD_ITEMS, AddNodeToolbar } from "./node-list";
 
 /**
  * "New view" on the canvas (replaces the old sheet): a title, and the dataset
  * the view starts from, picked BY TITLE from the project's datasets and views.
  * The canvas shows the flow the view will open with (start, then output).
  * Both fields are required and the page says which is missing; Create never
- * sits silently disabled. Steps are added in the editor, which opens right
+ * sits silently disabled. Nodes are added in the editor, which opens right
  * after Create: a view only exists (and can only preview) once it has a base.
  */
 
@@ -34,23 +34,17 @@ interface BaseOption {
   entryCount: number;
 }
 
-const START_ALIAS = "start";
-
-function titleOfPicked(picked: readonly BaseOption[], id: string, fallback: string): string {
-  const found = picked.find((option) => option.id === id);
-  return found === undefined ? fallback : found.title;
-}
-
-/** What the canvas draws before a base is picked: a placeholder start flowing into the output. */
-const PLACEHOLDER = blankDefinition({ datasetId: "", title: START_ALIAS });
+/** What the canvas draws before a dataset is picked: a placeholder source flowing into the output. */
+const PLACEHOLDER = blankDefinitionOf([{ datasetId: "", title: "start" }]);
 
 const KIND_NOTES: Record<(typeof ADD_ITEMS)[number]["kind"], string> = {
-  append: "Stack more datasets under these rows (for example another year).",
-  calculate: "Add a field from an expression over the others.",
+  calculate: "Add fields from expressions over the others, such as cleaning text into numbers.",
+  columns: "Rename many columns and drop the ones you don't need.",
+  stack: "Stack nodes under each other (for example one per year).",
   filter: "Keep only the rows that meet your conditions.",
   groupBy: "One row per group, with counts, sums and averages.",
   join: "Match rows on a code or a name, with a key map for the ones that differ.",
-  sql: "Write the step yourself when the others don't fit.",
+  sql: "Write the query yourself when the others don't fit.",
 };
 
 function missingOf(title: string, picked: readonly BaseOption[]): string[] {
@@ -113,12 +107,13 @@ export function NewViewPage({ projectId }: { projectId: string }) {
         );
   const previewTitles: Record<string, string> =
     picked.length === 0
-      ? { [START_ALIAS]: "Pick a dataset" }
+      ? { start: "Pick a dataset" }
       : Object.fromEntries(
-          previewDefinition.inputs.map((input) => [
-            input.alias,
-            titleOfPicked(picked, input.ref.id, input.alias),
-          ]),
+          Object.entries(previewDefinition.nodes).flatMap(([id, node]) => {
+            const found =
+              node.kind === "source" ? picked.find((o) => o.id === node.ref.id) : undefined;
+            return found === undefined ? [] : [[id, found.title]];
+          }),
         );
 
   const create = async (): Promise<void> => {
@@ -194,29 +189,29 @@ export function NewViewPage({ projectId }: { projectId: string }) {
         </ul>
       )}
 
-      <section aria-label="Steps" className="relative mt-6">
-        <ViewStepGraph
+      <section aria-label="Nodes" className="relative mt-6">
+        <ViewNodeGraph
           className="h-64"
           definition={previewDefinition}
           options={{
-            inputTitles: previewTitles,
+            describeNode: (id) => ({ label: previewTitles[id] ?? id }),
             outputDetail: "Every field, as named",
           }}
         />
-        <AddStepToolbar
+        <AddNodeToolbar
           className="absolute top-3 left-3"
-          disabledReason="Create the view first: steps are added in the editor that opens next."
+          disabledReason="Create the view first: nodes are added in the editor that opens next."
           onAdd={() => {}}
         />
       </section>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)]">
-        <section aria-label="Step kinds" className="flex min-w-0 flex-col gap-3">
+        <section aria-label="Node kinds" className="flex min-w-0 flex-col gap-3">
           <div>
             <h2 className="text-sm font-medium">What a view can do</h2>
             <p className="text-sm text-muted-foreground">
-              A view is a dataset built from steps. Each step becomes a node on the canvas, and you
-              add them in the editor that opens after Create.
+              A view is a graph of nodes: datasets flow through filters, joins, stacks and more into
+              one result. Build the graph in the editor that opens after Create.
             </p>
           </div>
           <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">

@@ -1,33 +1,37 @@
-import type { Step } from "@caden/data-core/views";
+import type { ViewNode } from "@caden/data-core/views";
 import { describe, expect, it } from "vitest";
 
 import { liveRowByEntryId, liveRowsToEntries, searchLiveEntries } from "./live-rows";
 import { assertLiveAllowed, isSpatialStep, LiveRefusedError, spatialSteps } from "./spatial";
 
-const filterStep: Step = { kind: "filter", where: { op: "isNotEmpty", field: "name" } as never };
+const filterNode: ViewNode = {
+  kind: "filter",
+  from: "a",
+  where: { op: "isNotEmpty", field: "name" } as never,
+};
 
 describe("isSpatialStep", () => {
-  it("is false for every current step kind", () => {
-    const kinds: Step[] = [
-      filterStep,
-      { kind: "groupBy", by: [], measures: [] },
-      { kind: "select", fields: [] },
-      { kind: "sql", query: "select 1" },
+  it("is false for every current node kind", () => {
+    const kinds: ViewNode[] = [
+      filterNode,
+      { kind: "groupBy", from: "a", by: [], measures: [] },
+      { kind: "columns", from: "a", edits: [] },
+      { kind: "sql", from: "a", query: "select 1" },
     ];
-    for (const step of kinds) {
-      expect(isSpatialStep(step)).toBe(false);
+    for (const node of kinds) {
+      expect(isSpatialStep(node)).toBe(false);
     }
   });
 
   it("refuses live when a (stub) spatial kind is present", () => {
-    const stub = (step: Step): boolean => (step.kind as string) === "stub-spatial";
-    const spatial = { kind: "stub-spatial" } as unknown as Step;
-    expect(spatialSteps({ steps: [filterStep, spatial] }, stub)).toStrictEqual([spatial]);
+    const stub = (node: ViewNode): boolean => (node.kind as string) === "stub-spatial";
+    const spatial = { kind: "stub-spatial" } as unknown as ViewNode;
+    expect(spatialSteps({ nodes: { a: filterNode, b: spatial } }, stub)).toStrictEqual([spatial]);
     expect(() => {
-      assertLiveAllowed({ steps: [filterStep, spatial] }, stub);
+      assertLiveAllowed({ nodes: { a: filterNode, b: spatial } }, stub);
     }).toThrow(LiveRefusedError);
     expect(() => {
-      assertLiveAllowed({ steps: [filterStep] }, stub);
+      assertLiveAllowed({ nodes: { a: filterNode } }, stub);
     }).not.toThrow();
   });
 });

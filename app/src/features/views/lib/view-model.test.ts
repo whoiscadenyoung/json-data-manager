@@ -1,23 +1,32 @@
 import { validateViewDefinition } from "@caden/data-core/views";
-import type { JoinStep, ViewDefinition } from "@caden/data-core/views";
+import type { JoinNode, ViewDefinition } from "@caden/data-core/views";
 import { describe, expect, it } from "vitest";
 
-import { stepDiagnosticsOf } from "./diagnostics";
+import { nodeDiagnosticsOf } from "./diagnostics";
 import {
-  blankDefinition,
+  appendNode,
+  blankDefinitionOf,
   definitionFromRelation,
-  fieldsAfter,
+  fieldNamesByNode,
   filterLeaves,
   filterValue,
   filterValueText,
+  firstProblem,
   inputRefsOf,
+  insertOnEdge,
   leavesToWhere,
-  newJoinStep,
-  prunedInputs,
-  stepProblem,
+  newNode,
+  nodeLabel,
+  nodeProblem,
+  nodeSummary,
+  outlineOrder,
+  removeBlocker,
+  removeNode,
+  subgraphOf,
   toCompileMeta,
-  uniqueAlias,
+  uniqueNodeId,
   validationSummary,
+  withAddedSource,
   withManualMapEntry,
   withoutManualMapEntry,
   type InputInfo,
@@ -29,35 +38,39 @@ const DEPLOYMENTS = "22222222-2222-4222-8222-222222222222";
 const infos: InputInfo[] = [
   { alias: "states", datasetId: STATES, title: "States", fields: ["id", "name"] },
   {
-    alias: "deployments",
+    alias: "deployments_2024",
     datasetId: DEPLOYMENTS,
     title: "Deployments 2024",
     fields: ["id", "stateId", "cost"],
   },
 ];
 
-function joinStep(overrides: Partial<JoinStep> = {}): JoinStep {
+function joinNode(overrides: Partial<JoinNode> = {}): JoinNode {
   return {
-    ...newJoinStep({
-      rightAlias: "deployments",
-      rightTitle: "Deployments 2024",
-      left: "id",
-      right: "stateId",
-    }),
+    ...(newNode("join", "states", "id") as JoinNode),
+    right: "deployments_2024",
+    on: [{ left: "id", right: "stateId" }],
+    prefix: "deployments_2024",
     ...overrides,
   };
 }
 
-function definitionWith(step: JoinStep): ViewDefinition {
-  return {
-    inputs: [
-      { alias: "states", ref: { kind: "dataset", id: STATES } },
-      { alias: "deployments", ref: { kind: "dataset", id: DEPLOYMENTS } },
+/** states + deployments sources, a join, then a filter as the result. */
+function graph(): ViewDefinition {
+  const base = blankDefinitionOf(
+    [
+      { datasetId: STATES, title: "States" },
+      { datasetId: DEPLOYMENTS, title: "Deployments 2024" },
     ],
-    base: "states",
-    steps: [step],
-    output: { fields: [], emptyFields: "keep" },
-  };
+    STATES,
+  );
+  const joined = { ...base, nodes: { ...base.nodes, joined: joinNode() } };
+  return appendNode(
+    { ...joined, result: { ...joined.result, node: "joined" } },
+    "joined",
+    "filter",
+    "id",
+  ).definition;
 }
 
 describe("definitionFromRelation (create view from relation)", () => {
@@ -71,109 +84,194 @@ describe("definitionFromRelation (create view from relation)", () => {
     toTitle: "Deployments 2024",
   };
 
-  it("pre-fills the base, one Join step and the relation's keys, titled after both datasets", () => {
+  it("pre-fills two sources, one join node and the relation's keys, titled after both datasets", () => {
     const { definition, title } = definitionFromRelation(seed);
     expect(title).toBe("States + Deployments 2024");
-    expect(definition.base).toBe("states");
-    expect(definition.inputs.map((input) => input.ref.id)).toStrictEqual([STATES, DEPLOYMENTS]);
-    const [step] = definition.steps;
-    expect(step).toMatchObject({
+    expect(Object.keys(definition.nodes)).toStrictEqual(["states", "deployments_2024", "joined"]);
+    expect(definition.result.node).toBe("joined");
+    expect(definition.nodes.joined).toMatchObject({
       kind: "join",
+      left: "states",
       on: [{ left: "id", right: "stateId" }],
-      right: { input: "deployments_2024" },
+      right: "deployments_2024",
       type: "left",
     });
   });
 
   it("summarizes with a count for a one-to-many relation (no row is dropped or multiplied)", () => {
     const { definition } = definitionFromRelation(seed);
-    const [step] = definition.steps;
-    expect(step).toMatchObject({
+    expect(definition.nodes.joined).toMatchObject({
       multiMatch: { mode: "summarize", measures: [{ as: "deployments_2024_count", fn: "count" }] },
     });
   });
 
   it("takes the first match, with a title prefix, for a one-to-one relation", () => {
     const { definition } = definitionFromRelation({ ...seed, cardinality: "1-1" });
-    expect(definition.steps[0]).toMatchObject({
+    expect(definition.nodes.joined).toMatchObject({
       multiMatch: { mode: "first" },
       prefix: "deployments_2024",
     });
   });
 
-  it("validates against the inputs' declared fields", () => {
+  it("validates against the sources' declared fields", () => {
     const { definition } = definitionFromRelation(seed);
     expect(validateViewDefinition(definition, toCompileMeta(infos)).ok).toBe(true);
   });
 
-  it("keeps aliases unique when both sides share a title", () => {
+  it("keeps node ids unique when both sides share a title", () => {
     const { definition } = definitionFromRelation({ ...seed, toTitle: "States" });
-    expect(new Set(definition.inputs.map((input) => input.alias)).size).toBe(2);
+    expect(new Set(Object.keys(definition.nodes)).size).toBe(3);
   });
 });
 
-describe("fieldsAfter", () => {
-  it("starts from the base input's declared fields", () => {
-    const def = definitionWith(joinStep());
-    expect(fieldsAfter(def, infos, -1)).toStrictEqual(["id", "name"]);
-  });
-
-  it("adds a first-match join's fields under the title-slug prefix", () => {
-    const def = definitionWith(joinStep());
-    expect(fieldsAfter(def, infos, 0)).toStrictEqual([
+describe("field scope", () => {
+  it("starts from a source's declared fields and flows through nodes", () => {
+    const fields = fieldNamesByNode(graph(), infos);
+    expect(fields.get("states")).toStrictEqual(["id", "name"]);
+    expect(fields.get("joined")).toStrictEqual([
       "id",
       "name",
       "deployments_2024.id",
       "deployments_2024.stateId",
       "deployments_2024.cost",
     ]);
+    expect(fields.get("filter_rows")).toStrictEqual(fields.get("joined"));
   });
 
   it("adds only the measures' names for a summarize join", () => {
-    const def = definitionWith(
-      joinStep({ multiMatch: { mode: "summarize", measures: [{ as: "n", fn: "count" }] } }),
-    );
-    expect(fieldsAfter(def, infos, 0)).toStrictEqual(["id", "name", "n"]);
+    const def = graph();
+    const summarized: ViewDefinition = {
+      ...def,
+      nodes: {
+        ...def.nodes,
+        joined: joinNode({
+          multiMatch: { mode: "summarize", measures: [{ as: "n", fn: "count" }] },
+        }),
+      },
+    };
+    expect(fieldNamesByNode(summarized, infos).get("joined")).toStrictEqual(["id", "name", "n"]);
   });
 
-  it("applies a stack's column edits", () => {
+  it("applies a stack input's column edits and a group-by's new shape", () => {
+    const base = blankDefinitionOf([
+      { datasetId: STATES, title: "States" },
+      { datasetId: DEPLOYMENTS, title: "Deployments 2024" },
+    ]);
     const def: ViewDefinition = {
-      ...definitionWith(joinStep()),
-      steps: [
-        {
-          kind: "append",
-          sources: [
+      ...base,
+      nodes: {
+        ...base.nodes,
+        stacked: {
+          kind: "stack",
+          inputs: [
+            { node: "states", columns: [{ from: "name", exclude: true }] },
             {
-              input: "deployments",
+              node: "deployments_2024",
               columns: [
                 { from: "cost", as: "amount" },
                 { from: "stateId", exclude: true },
               ],
             },
           ],
-          baseColumns: [{ from: "name", exclude: true }],
         },
-      ],
+        grouped: {
+          kind: "groupBy",
+          from: "stacked",
+          by: ["id"],
+          measures: [{ as: "n", fn: "count" }],
+        },
+      },
     };
-    expect(fieldsAfter(def, infos, 0)).toStrictEqual(["id", "amount"]);
+    const fields = fieldNamesByNode(def, infos);
+    expect(fields.get("stacked")).toStrictEqual(["id", "amount"]);
+    expect(fields.get("grouped")).toStrictEqual(["id", "n"]);
+  });
+});
+
+describe("graph editing", () => {
+  it("appending after the result moves the result; a branch leaves it", () => {
+    const base = blankDefinitionOf([{ datasetId: STATES, title: "States" }]);
+    const appended = appendNode(base, "states", "calculate", "id");
+    expect(appended.definition.result.node).toBe(appended.node);
+    expect(appended.definition.nodes[appended.node]).toMatchObject({
+      kind: "calculate",
+      from: "states",
+    });
+    const branched = appendNode(appended.definition, "states", "filter", "id");
+    expect(branched.definition.result.node).toBe(appended.node);
+    expect(Object.keys(branched.definition.nodes)).toHaveLength(3);
   });
 
-  it("replaces the shape after a group-by", () => {
-    const def: ViewDefinition = {
-      ...definitionWith(joinStep()),
-      steps: [{ kind: "groupBy", by: ["name"], measures: [{ as: "n", fn: "count" }] }],
-    };
-    expect(fieldsAfter(def, infos, 0)).toStrictEqual(["name", "n"]);
+  it("inserting on a connection splits it", () => {
+    const def = graph();
+    const inserted = insertOnEdge(def, "states", "joined", "columns", "id");
+    expect(inserted.definition.nodes[inserted.node]).toMatchObject({
+      kind: "columns",
+      from: "states",
+    });
+    expect(inserted.definition.nodes.joined).toMatchObject({ left: inserted.node });
+    const intoOutput = insertOnEdge(def, "filter_rows", "result", "calculate", "id");
+    expect(intoOutput.definition.result.node).toBe(intoOutput.node);
+  });
+
+  it("removing a node reconnects its readers and the result", () => {
+    const def = graph();
+    const without = removeNode(def, "filter_rows");
+    expect(without.result.node).toBe("joined");
+    const mid = removeNode(def, "joined");
+    // The join has two inputs, so it can't be removed while read.
+    expect(removeBlocker(def, "joined")).toMatch(/Used by filter_rows/);
+    expect(mid.nodes.filter_rows).toBeDefined();
+    const single = insertOnEdge(def, "states", "joined", "columns", "id");
+    expect(removeBlocker(single.definition, single.node)).toBeUndefined();
+    expect(removeNode(single.definition, single.node).nodes.joined).toMatchObject({
+      left: "states",
+    });
+    expect(removeBlocker(def, "filter_rows")).toBeUndefined();
+  });
+
+  it("subgraphOf keeps only what a node reads, and the outline lists dependencies first", () => {
+    const def = graph();
+    const sub = subgraphOf(def, "joined");
+    expect(Object.keys(sub.nodes).toSorted()).toStrictEqual([
+      "deployments_2024",
+      "joined",
+      "states",
+    ]);
+    expect(sub.result.node).toBe("joined");
+    expect(outlineOrder(def)).toStrictEqual([
+      "states",
+      "deployments_2024",
+      "joined",
+      "filter_rows",
+    ]);
+    const stray = appendNode(def, "states", "sql", "id");
+    expect(outlineOrder(stray.definition).at(-1)).toBe(stray.node);
+  });
+
+  it("adds a source with a fresh id", () => {
+    const base = blankDefinitionOf([{ datasetId: STATES, title: "States" }]);
+    const added = withAddedSource(base, { id: STATES, title: "States" });
+    expect(added.node).toBe("states_2");
+    expect(inputRefsOf(added.definition)).toStrictEqual([
+      { alias: "states", datasetId: STATES },
+      { alias: "states_2", datasetId: STATES },
+    ]);
+  });
+
+  it("labels and summarizes nodes", () => {
+    const def = graph();
+    expect(nodeLabel(def, infos, "states")).toBe("States");
+    expect(nodeLabel(def, infos, "filter_rows")).toBe("Filter rows");
+    expect(nodeSummary(def, infos, "joined")).toMatch(
+      /States \+ Deployments 2024 \(left, first match\)/,
+    );
   });
 });
 
 describe("join editing helpers", () => {
-  it("defaults the prefix to the slugified title", () => {
-    expect(joinStep().prefix).toBe("deployments_2024");
-  });
-
   it("adds, replaces and removes manual key-map entries", () => {
-    const first = withManualMapEntry(joinStep(), "Alabama ", "Alabama");
+    const first = withManualMapEntry(joinNode(), "Alabama ", "Alabama");
     expect(first.matching.manualMap).toStrictEqual([{ from: "Alabama ", to: "Alabama" }]);
     const replaced = withManualMapEntry(first, "Alabama ", "AL");
     expect(replaced.matching.manualMap).toStrictEqual([{ from: "Alabama ", to: "AL" }]);
@@ -181,10 +279,13 @@ describe("join editing helpers", () => {
     expect(cleared.matching.manualMap).toBeUndefined();
   });
 
-  it("flags incomplete steps with a reason", () => {
-    expect(stepProblem(newJoinStep({ rightAlias: "", rightTitle: "" }))).toMatch(/dataset to join/);
-    expect(stepProblem(joinStep({ on: [{ left: "id", right: "" }] }))).toMatch(/key fields/);
-    expect(stepProblem(joinStep())).toBeUndefined();
+  it("flags incomplete nodes with a reason", () => {
+    expect(nodeProblem(newNode("join", "states", "id"))).toMatch(/two nodes/);
+    expect(nodeProblem(joinNode({ on: [{ left: "id", right: "" }] }))).toMatch(/key fields/);
+    expect(nodeProblem(joinNode())).toBeUndefined();
+    expect(nodeProblem(newNode("calculate", "states", "id"))).toMatch(/Name every new field/);
+    expect(nodeProblem(newNode("stack", "states", "id"))).toMatch(/every node to stack/);
+    expect(firstProblem(graph(), ["states", "joined"])).toBeUndefined();
   });
 });
 
@@ -207,24 +308,27 @@ describe("filter helpers", () => {
 });
 
 describe("inputs", () => {
-  it("builds a blank definition over a base dataset", () => {
-    const def = blankDefinition({ datasetId: STATES, title: "States" });
-    expect(def.inputs).toStrictEqual([{ alias: "states", ref: { kind: "dataset", id: STATES } }]);
-    expect(def.base).toBe("states");
+  it("builds a blank definition over datasets, the chosen base as the result", () => {
+    const def = blankDefinitionOf(
+      [
+        { datasetId: STATES, title: "States" },
+        { datasetId: DEPLOYMENTS, title: "Deployments" },
+      ],
+      DEPLOYMENTS,
+    );
+    expect(Object.keys(def.nodes)).toStrictEqual(["states", "deployments"]);
+    expect(def.result.node).toBe("deployments");
   });
 
-  it("keeps aliases unique and readable", () => {
-    expect(uniqueAlias("States", ["states"])).toBe("states_2");
-    expect(uniqueAlias("", [])).toBe("input");
+  it("keeps ids unique and readable", () => {
+    expect(uniqueNodeId("States", ["states"])).toBe("states_2");
+    expect(uniqueNodeId("", [])).toBe("input");
   });
 
-  it("drops inputs no step reads on save, never the base", () => {
-    const def = definitionWith(joinStep());
-    const unused: ViewDefinition = { ...def, steps: [] };
-    expect(prunedInputs(unused).inputs.map((input) => input.alias)).toStrictEqual(["states"]);
-    expect(inputRefsOf(def)).toStrictEqual([
+  it("derives the saved sources from the source nodes", () => {
+    expect(inputRefsOf(graph())).toStrictEqual([
       { alias: "states", datasetId: STATES },
-      { alias: "deployments", datasetId: DEPLOYMENTS },
+      { alias: "deployments_2024", datasetId: DEPLOYMENTS },
     ]);
   });
 
@@ -236,11 +340,11 @@ describe("inputs", () => {
   });
 });
 
-describe("stepDiagnosticsOf", () => {
+describe("nodeDiagnosticsOf", () => {
   const payload = {
-    steps: [
+    nodes: [
       {
-        index: 0,
+        id: "j",
         kind: "join",
         rowsIn: 50,
         rowsOut: "50",
@@ -261,16 +365,16 @@ describe("stepDiagnosticsOf", () => {
   };
 
   it("reads the diagnostics contract, coercing counts", () => {
-    const step = stepDiagnosticsOf(payload, 0);
-    expect(step).toMatchObject({ rowsIn: 50, rowsOut: 50 });
+    const node = nodeDiagnosticsOf(payload, "j");
+    expect(node).toMatchObject({ rowsIn: 50, rowsOut: 50 });
     expect(
-      step === undefined || step.join === undefined ? [] : step.join.leftUnmatchedSamples,
+      node === undefined || node.join === undefined ? [] : node.join.leftUnmatchedSamples,
     ).toStrictEqual(["Alabama "]);
   });
 
   it("reads a missing or malformed payload as no diagnostics", () => {
-    expect(stepDiagnosticsOf(payload, 3)).toBeUndefined();
-    expect(stepDiagnosticsOf({ nope: true }, 0)).toBeUndefined();
-    expect(stepDiagnosticsOf(null, 0)).toBeUndefined();
+    expect(nodeDiagnosticsOf(payload, "gone")).toBeUndefined();
+    expect(nodeDiagnosticsOf({ nope: true }, "j")).toBeUndefined();
+    expect(nodeDiagnosticsOf(null, "j")).toBeUndefined();
   });
 });

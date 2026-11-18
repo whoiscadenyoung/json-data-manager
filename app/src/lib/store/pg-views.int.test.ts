@@ -76,10 +76,12 @@ afterAll(async () => {
 // The fake compiler
 // ---------------------------------------------------------------------------
 
-/** Definition shape of the fake: design §4's `inputs`, plus `fail` / `sleep` switches. */
+/** Definition shape of the fake: one `source` node per dataset, plus `fail` / `sleep` switches. */
 function definitionOver(datasetIds: string[], extra: Record<string, unknown> = {}) {
   return {
-    inputs: datasetIds.map((id, i) => ({ alias: `in${i}`, ref: { kind: "dataset", id } })),
+    nodes: Object.fromEntries(
+      datasetIds.map((id, i) => [`in${i}`, { kind: "source", ref: { kind: "dataset", id } }]),
+    ),
     ...extra,
   };
 }
@@ -606,15 +608,13 @@ describe.skipIf(!dbUp())("views (#300)", () => {
        from public.entries where dataset_id = ${sqlLit(states)}`,
     );
     const definition = {
-      inputs: [
-        { alias: "states", ref: { kind: "dataset", id: states } },
-        { alias: "deployments", ref: { kind: "dataset", id: deployments } },
-      ],
-      base: "states",
-      steps: [
-        {
+      nodes: {
+        states: { kind: "source", ref: { kind: "dataset", id: states } },
+        deployments: { kind: "source", ref: { kind: "dataset", id: deployments } },
+        joined: {
           kind: "join",
-          right: { input: "deployments" },
+          left: "states",
+          right: "deployments",
           on: [{ left: "id", right: "stateId" }],
           matching: { trim: false, caseFold: false, collapseSpace: false, stripDiacritics: false },
           type: "left",
@@ -626,8 +626,8 @@ describe.skipIf(!dbUp())("views (#300)", () => {
             ],
           },
         },
-      ],
-      output: { fields: [], emptyFields: "keep" },
+      },
+      result: { node: "joined", output: { fields: [], emptyFields: "keep" } },
     };
     const real = runnerDeps({ compiler: defaultViewCompiler });
     const preview = await previewAs(real, who(ALICE), {
@@ -635,7 +635,7 @@ describe.skipIf(!dbUp())("views (#300)", () => {
       inputs: inputsOfDefinition(definition),
     });
     expect(preview.rows).toHaveLength(2);
-    expect(JSON.stringify(preview.diagnostics)).toContain("steps");
+    expect(JSON.stringify(preview.diagnostics)).toContain("nodes");
 
     const view = await createView(savePath(ALICE, defaultViewCompiler), {
       title: "real compiler view",
@@ -681,20 +681,18 @@ describe.skipIf(!dbUp())("views (#300)", () => {
     );
     // The definition "Create view from relation" pre-fills (features/views
     // `definitionFromRelation`; core code cannot import features, so it is
-    // spelled out): base = FROM side, one left Join on the relation's keys,
+    // spelled out): two sources, one left join node on the relation's keys,
     // summarize with a count for a 1-N relation.
     const seeded = {
       title: "States + Deployments",
       definition: {
-        inputs: [
-          { alias: "states", ref: { kind: "dataset", id: states } },
-          { alias: "deployments", ref: { kind: "dataset", id: deployments } },
-        ],
-        base: "states",
-        steps: [
-          {
+        nodes: {
+          states: { kind: "source", ref: { kind: "dataset", id: states } },
+          deployments: { kind: "source", ref: { kind: "dataset", id: deployments } },
+          joined: {
             kind: "join",
-            right: { input: "deployments" },
+            left: "states",
+            right: "deployments",
             on: [{ left: "id", right: "stateId" }],
             matching: { trim: true, caseFold: false, collapseSpace: false, stripDiacritics: false },
             type: "left",
@@ -703,8 +701,8 @@ describe.skipIf(!dbUp())("views (#300)", () => {
               measures: [{ as: "deployments_count", fn: "count" }],
             },
           },
-        ],
-        output: { fields: [], emptyFields: "keep" },
+        },
+        result: { node: "joined", output: { fields: [], emptyFields: "keep" } },
       },
     };
     const view = await createView(savePath(ALICE, defaultViewCompiler), {

@@ -12,6 +12,7 @@ export { EXPRESSION_FUNCTIONS } from "./calc-sql.js";
 export type { FunctionInfo } from "./calc-sql.js";
 export { compileDiagnostics, compileView, viewInputDatasetIds } from "./compile.js";
 export { ViewCompileError, ViewNodeNotSupportedError } from "./errors.js";
+export { nodeFields } from "./node-fields.js";
 export { analyzeSqlStep, DENIED_FUNCTIONS } from "./sql-step.js";
 export type { SqlStepAnalysis, SqlStepResult } from "./sql-step.js";
 export { slugify as slugifyViewName } from "./sql-util.js";

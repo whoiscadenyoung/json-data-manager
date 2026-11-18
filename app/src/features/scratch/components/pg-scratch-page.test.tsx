@@ -146,7 +146,7 @@ describe("PgScratchPage", () => {
     );
   });
 
-  it("saves as a view: one sql step, the query unchanged, input aliased from the table name", async () => {
+  it("saves as a view: one sql node, the query unchanged, a source node per table", async () => {
     renderPage();
     await screen.findByText("in_states");
     const sql = "select count(*) as n from in_states;";
@@ -161,10 +161,16 @@ describe("PgScratchPage", () => {
     });
     expect(createProjectView).toHaveBeenCalledWith({
       definition: {
-        base: "states",
-        inputs: [{ alias: "states", ref: { kind: "dataset", id: STATES } }],
-        output: { fields: [], emptyFields: "keep" },
-        steps: [{ kind: "sql", query: "select count(*) as n from in_states" }],
+        nodes: {
+          query: {
+            kind: "sql",
+            from: "states",
+            query: "select count(*) as n from in_states",
+            reads: [],
+          },
+          states: { kind: "source", ref: { kind: "dataset", id: STATES } },
+        },
+        result: { node: "query", output: { fields: [], emptyFields: "keep" } },
       },
       projectId: "p1",
       title: "State count",

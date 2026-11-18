@@ -45,12 +45,18 @@ export function OutputCard({
   onChange: (next: ViewDefinition) => void;
   onSelect: () => void;
 }) {
-  const rows = outputRowsOf(draft.output, fields),
+  const rows = outputRowsOf(draft.result.output, fields),
     problems = rowProblems(rows),
     keptCount = rows.filter((row) => row.kept).length,
-    keepsAll = draft.output.fields.length === 0,
+    keepsAll = draft.result.output.fields.length === 0,
     commit = (next: OutputRow[]): void => {
-      onChange({ ...draft, output: { ...draft.output, fields: outputFieldsOf(next, fields) } });
+      onChange({
+        ...draft,
+        result: {
+          ...draft.result,
+          output: { ...draft.result.output, fields: outputFieldsOf(next, fields) },
+        },
+      });
     };
   return (
     <Card className={expanded ? "border-primary/40" : undefined}>
@@ -71,7 +77,7 @@ export function OutputCard({
         <CardContent className="flex flex-col gap-3">
           {fields === undefined ? (
             <p className="text-sm text-muted-foreground">
-              The final fields aren&apos;t known until the steps are complete.
+              The final fields aren&apos;t known until the nodes are complete.
             </p>
           ) : (
             <>
@@ -109,15 +115,18 @@ export function OutputCard({
                   onChange={(value) => {
                     onChange({
                       ...draft,
-                      output: {
-                        ...draft.output,
-                        emptyFields: value === "omit" ? "omit" : "keep",
+                      result: {
+                        ...draft.result,
+                        output: {
+                          ...draft.result.output,
+                          emptyFields: value === "omit" ? "omit" : "keep",
+                        },
                       },
                     });
                   }}
                   options={EMPTY_OPTIONS}
                   placeholder="Empty fields"
-                  value={draft.output.emptyFields}
+                  value={draft.result.output.emptyFields}
                 />
                 <span className="text-xs text-muted-foreground">
                   The default for new export profiles. Each profile can override it.

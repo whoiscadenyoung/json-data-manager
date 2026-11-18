@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { JoinStep, Measure, Step } from "@caden/data-core/views";
+import type { JoinNode, Measure, ViewDefinition, ViewNode } from "@caden/data-core/views";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
@@ -42,11 +42,12 @@ vi.mock("@/lib/store/view-reads", () => ({
   }),
 }));
 
-import { newJoinStep, type InputInfo } from "../lib/view-model";
+import { newNode, type InputInfo } from "../lib/view-model";
 import { CalculateForm } from "./calculate-form";
 import { MeasuresEditor } from "./measures-editor";
+import type { NodeEditorContext } from "./node-context";
+import { JoinForm } from "./node-forms";
 import { SqlForm } from "./sql-form";
-import { JoinForm } from "./step-forms";
 
 afterEach(() => {
   cleanup();
@@ -62,6 +63,25 @@ const infos: InputInfo[] = [
     fields: ["stateName", "type", "url"],
   },
 ];
+
+const definition: ViewDefinition = {
+  nodes: {
+    states: { kind: "source", ref: { kind: "dataset", id: "d-states" } },
+    links: { kind: "source", ref: { kind: "dataset", id: "d-links" } },
+  },
+  result: { node: "states", output: { fields: [], emptyFields: "keep" } },
+};
+
+const ctx: NodeEditorContext = {
+  definition,
+  diagnostics: undefined,
+  errors: [],
+  fields: new Map([
+    ["states", ["id", "name"]],
+    ["links", ["stateName", "type", "url"]],
+  ]),
+  infos,
+};
 
 function lastCall<T>(spy: { mock: { calls: T[][] } }): T {
   const call = spy.mock.calls[spy.mock.calls.length - 1];
@@ -80,8 +100,11 @@ function withClient(child: React.ReactElement) {
 }
 
 describe("spread (join form)", () => {
-  const spreadStep: JoinStep = {
-    ...newJoinStep({ left: "name", right: "stateName", rightAlias: "links", rightTitle: "Links" }),
+  const spreadStep: JoinNode = {
+    ...(newNode("join", "states", "name") as JoinNode),
+    on: [{ left: "name", right: "stateName" }],
+    prefix: "links",
+    right: "links",
     multiMatch: {
       mode: "spread",
       by: "type",
@@ -90,11 +113,11 @@ describe("spread (join form)", () => {
     },
   };
 
-  function form(onChange: (s: JoinStep) => void, undeclared: string[] = []) {
+  function form(onChange: (s: JoinNode) => void, undeclared: string[] = []) {
     return withClient(
       createElement(JoinForm, {
-        infos,
-        leftFields: ["id", "name"],
+        ctx,
+        id: "joined",
         onChange,
         onPickRight: vi.fn<(alias: string) => void>(),
         step: spreadStep,
@@ -105,7 +128,7 @@ describe("spread (join form)", () => {
 
   it("proposes the not-yet-declared values found in the data, with editable names", async () => {
     mocks.distinct.mockResolvedValue(["benefits", "docs", "Press Kit"]);
-    const onChange = vi.fn<(s: JoinStep) => void>();
+    const onChange = vi.fn<(s: JoinNode) => void>();
     render(form(onChange));
     // docs is declared already, so two columns are proposed.
     const add = await screen.findByRole("button", { name: /Add proposed columns \(2\)/ });
@@ -134,7 +157,7 @@ describe("spread (join form)", () => {
 
   it("warns about categories the diagnostics found with no column, and offers to add them", async () => {
     mocks.distinct.mockResolvedValue([]);
-    const onChange = vi.fn<(s: JoinStep) => void>();
+    const onChange = vi.fn<(s: JoinNode) => void>();
     render(form(onChange, ["benefits", "faq"]));
     expect(await screen.findByText(/2 categories have no column/)).toBeTruthy();
     expect(screen.getByText("benefits, faq")).toBeTruthy();
@@ -149,16 +172,16 @@ describe("spread (join form)", () => {
   });
 
   it("offers the text, list and error modes with their settings", () => {
-    const textStep: JoinStep = {
+    const textStep: JoinNode = {
       ...spreadStep,
       multiMatch: { mode: "text", field: "url", separator: "; " },
     };
-    const onChange = vi.fn<(s: JoinStep) => void>();
+    const onChange = vi.fn<(s: JoinNode) => void>();
     const { rerender } = render(
       withClient(
         createElement(JoinForm, {
-          infos,
-          leftFields: ["name"],
+          ctx,
+          id: "joined",
           onChange,
           onPickRight: vi.fn<(alias: string) => void>(),
           step: textStep,
@@ -170,8 +193,8 @@ describe("spread (join form)", () => {
     rerender(
       withClient(
         createElement(JoinForm, {
-          infos,
-          leftFields: ["name"],
+          ctx,
+          id: "joined",
           onChange,
           onPickRight: vi.fn<(alias: string) => void>(),
           step: { ...spreadStep, multiMatch: { mode: "list" } },
@@ -219,19 +242,23 @@ describe("measures: topBy and text", () => {
 });
 
 describe("CalculateForm", () => {
-  const base: Extract<Step, { kind: "calculate" }> = {
+  const base: Extract<ViewNode, { kind: "calculate" }> = {
     kind: "calculate",
-    field: "double",
-    expr: "",
+    from: "a",
+    fields: [{ field: "double", expr: "" }],
   };
   const fields = ["cost", "state name", "sites"];
+  const withExpr = (expr: string): typeof base => ({
+    ...base,
+    fields: [{ field: "double", expr }],
+  });
 
   function renderWith(
     expr: string,
-    onChange = vi.fn<(s: Step) => void>(),
+    onChange = vi.fn<(s: ViewNode) => void>(),
     fieldTypes?: Map<string, "number" | "string">,
   ) {
-    render(createElement(CalculateForm, { fieldTypes, fields, onChange, step: { ...base, expr } }));
+    render(createElement(CalculateForm, { fieldTypes, fields, onChange, node: withExpr(expr) }));
     return onChange;
   }
 
@@ -254,8 +281,8 @@ describe("CalculateForm", () => {
       createElement(CalculateForm, {
         fieldTypes: types,
         fields,
-        onChange: vi.fn<(s: Step) => void>(),
-        step: { ...base, expr: "cost" },
+        onChange: vi.fn<(s: ViewNode) => void>(),
+        node: withExpr("cost"),
       }),
     );
     expect(first.getByText(/Result type/).textContent).toContain("number");
@@ -265,8 +292,8 @@ describe("CalculateForm", () => {
       createElement(CalculateForm, {
         fieldTypes: types,
         fields,
-        onChange: vi.fn<(s: Step) => void>(),
-        step: { ...base, expr: "sites" },
+        onChange: vi.fn<(s: ViewNode) => void>(),
+        node: withExpr("sites"),
       }),
     );
     expect(second.getByText(/Result type/).textContent).toContain("depends on the data");
@@ -299,24 +326,63 @@ describe("CalculateForm", () => {
     expect(completions).toContainEqual(
       expect.objectContaining({ label: "round", apply: "round(" }),
     );
+    expect(completions).toContainEqual(
+      expect.objectContaining({ label: "replace", apply: "replace(" }),
+    );
   });
 
-  it("stores the typed text and the field name in the step", () => {
+  it("stores the typed text and the field name in the node", () => {
     const onChange = renderWith("");
     fireEvent.change(screen.getByLabelText("Expression"), { target: { value: "cost * 2" } });
-    expect(lastCall(onChange)).toEqual({ kind: "calculate", field: "double", expr: "cost * 2" });
+    expect(lastCall(onChange)).toEqual({
+      kind: "calculate",
+      from: "a",
+      fields: [{ field: "double", expr: "cost * 2" }],
+    });
     fireEvent.change(screen.getByLabelText("New field name"), { target: { value: "twice" } });
-    expect(lastCall(onChange)).toMatchObject({ field: "twice" });
+    expect(lastCall(onChange)).toMatchObject({ fields: [{ field: "twice" }] });
+  });
+
+  it("holds several fields; a later one can read an earlier one", () => {
+    const onChange = vi.fn<(s: ViewNode) => void>();
+    render(
+      createElement(CalculateForm, {
+        fields,
+        onChange,
+        node: {
+          ...base,
+          fields: [
+            { field: "a", expr: "cost * 2" },
+            { field: "b", expr: "a + 1" },
+          ],
+        },
+      }),
+    );
+    // "a" is not an input field, but the second expression type-checks against it.
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Add field" }));
+    expect(lastCall(onChange)).toMatchObject({ fields: [{}, {}, { field: "", expr: "" }] });
+    fireEvent.click(screen.getByLabelText("Remove field 1"));
+    expect(lastCall(onChange)).toMatchObject({ fields: [{ field: "b" }] });
   });
 });
 
 describe("SqlForm", () => {
+  const sqlCtx = (): NodeEditorContext => ctx;
+  const node = (query: string, reads: string[] = []): Extract<ViewNode, { kind: "sql" }> => ({
+    kind: "sql",
+    from: "states",
+    reads,
+    query,
+  });
+
   it("explains the available names and the output rule", () => {
     render(
       createElement(SqlForm, {
-        aliases: ["states", "links"],
-        onChange: vi.fn<(s: Step) => void>(),
-        step: { kind: "sql", query: "select * from prev" },
+        ctx: sqlCtx(),
+        id: "q",
+        onChange: vi.fn<(s: ViewNode) => void>(),
+        step: node("select * from prev", ["links"]),
       }),
     );
     expect(screen.getByText("in_links")).toBeTruthy();
@@ -325,20 +391,36 @@ describe("SqlForm", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("adds and removes the nodes a query reads", () => {
+    const onChange = vi.fn<(s: ViewNode) => void>();
+    render(
+      createElement(SqlForm, {
+        ctx: sqlCtx(),
+        id: "q",
+        onChange,
+        step: node("select * from prev", ["links"]),
+      }),
+    );
+    fireEvent.click(screen.getByLabelText("Stop reading links"));
+    expect(lastCall(onChange)).toMatchObject({ reads: [] });
+  });
+
   it("shows positioned errors for a syntax error and an unknown table", () => {
     const { rerender } = render(
       createElement(SqlForm, {
-        aliases: ["states"],
-        onChange: vi.fn<(s: Step) => void>(),
-        step: { kind: "sql", query: "select from from" },
+        ctx: sqlCtx(),
+        id: "q",
+        onChange: vi.fn<(s: ViewNode) => void>(),
+        step: node("select from from"),
       }),
     );
     expect(screen.getByRole("alert")).toBeTruthy();
     rerender(
       createElement(SqlForm, {
-        aliases: ["states"],
-        onChange: vi.fn<(s: Step) => void>(),
-        step: { kind: "sql", query: "select * from secrets" },
+        ctx: sqlCtx(),
+        id: "q",
+        onChange: vi.fn<(s: ViewNode) => void>(),
+        step: node("select * from secrets"),
       }),
     );
     const diagnostics: { from: number; to: number; message: string }[] = JSON.parse(
@@ -352,9 +434,10 @@ describe("SqlForm", () => {
   it("lists the output columns of a valid query", () => {
     render(
       createElement(SqlForm, {
-        aliases: ["states"],
-        onChange: vi.fn<(s: Step) => void>(),
-        step: { kind: "sql", query: "select d, 1 as one from prev" },
+        ctx: sqlCtx(),
+        id: "q",
+        onChange: vi.fn<(s: ViewNode) => void>(),
+        step: node("select d, 1 as one from prev"),
       }),
     );
     expect(screen.getByText("d, one")).toBeTruthy();

@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   definitionFromScratch,
-  prunedInputs,
   referencedScratchTables,
   sqlReadsTable,
   type ScratchTableInfo,
@@ -56,19 +55,19 @@ describe("definitionFromScratch", () => {
       "states",
     ]);
     const definition = definitionFromScratch(SQL, tables, "states");
-    expect(definition.inputs.map((input) => input.alias)).toStrictEqual(["deployments", "states"]);
-    expect(definition.base).toBe("states");
-    expect(definition.steps).toStrictEqual([{ kind: "sql", query: SQL.replace(/;$/, "") }]);
+    expect(Object.keys(definition.nodes)).toStrictEqual(["deployments", "states", "query"]);
+    expect(definition.result.node).toBe("query");
+    expect(definition.nodes.query).toStrictEqual({
+      kind: "sql",
+      from: "states",
+      reads: ["deployments"],
+      query: SQL.replace(/;$/, ""),
+    });
     expect(validateViewDefinition(definition).ok).toBe(true);
   });
 
   it("refuses a query that reads no table, or a base it does not read", () => {
     expect(() => definitionFromScratch("select 1", tables, "states")).toThrow(/any table/);
     expect(() => definitionFromScratch(SQL, tables, "unused")).toThrow(/base/);
-  });
-
-  it("survives the editor's input pruning", () => {
-    const definition = definitionFromScratch(SQL, tables, "states");
-    expect(prunedInputs(definition).inputs).toHaveLength(2);
   });
 });

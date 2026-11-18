@@ -24,18 +24,18 @@ export interface ViewCompiler {
   compileView(
     definition: ViewDefinition,
     inputs: CompileInputMeta[],
-    options?: { uptoStep?: number; limit?: number; unaccent?: boolean },
+    options?: { uptoNode?: string; limit?: number; unaccent?: boolean },
   ): CompiledQuery;
   /** SELECT returning one row, one column `diagnostics jsonb`. */
   compileDiagnostics(
     definition: ViewDefinition,
     inputs: CompileInputMeta[],
-    options?: { uptoStep?: number; unaccent?: boolean },
+    options?: { uptoNode?: string; unaccent?: boolean },
   ): CompiledQuery;
   viewInputDatasetIds(definition: ViewDefinition, inputs: CompileInputMeta[]): string[];
 }
 
-/** One declared input of a view, as stored in `view_inputs`. */
+/** One declared input of a view, as stored in `view_inputs`: `alias` is the id of its `source` node. */
 export interface ViewInputRef {
   alias: string;
   datasetId: string;

@@ -1,16 +1,15 @@
 import type {
   ConditionLeaf,
   ConditionOp,
-  JoinStep,
+  JoinNode,
   MultiMatch,
-  Step,
+  ViewNode,
 } from "@caden/data-core/views";
 import { Button } from "@caden/ui/components/button";
 import { Checkbox } from "@caden/ui/components/checkbox";
 import { Input } from "@caden/ui/components/input";
 import { Label } from "@caden/ui/components/label";
 import { Plus, Trash2 } from "lucide-react";
-import type { ReactNode } from "react";
 
 import {
   defaultMeasure,
@@ -18,14 +17,13 @@ import {
   filterLeaves,
   filterValue,
   filterValueText,
-  inputAliasOptions,
   leavesToWhere,
-  rightFieldsOf,
+  nodeOptions,
   withoutManualMapEntry,
-  type InputInfo,
 } from "../lib/view-model";
 import { LabeledSelect } from "./labeled-select";
 import { MeasuresEditor } from "./measures-editor";
+import type { NodeEditorContext } from "./node-context";
 import { SpreadEditor } from "./spread-editor";
 
 const fieldOptions = (fields: string[]) => fields.map((field) => ({ value: field, label: field }));
@@ -41,8 +39,8 @@ export function FilterForm({
   step,
 }: {
   fields: string[];
-  onChange: (step: Step) => void;
-  step: Extract<Step, { kind: "filter" }>;
+  onChange: (node: ViewNode) => void;
+  step: Extract<ViewNode, { kind: "filter" }>;
 }) {
   const leaves = filterLeaves(step.where);
   if (leaves === undefined) {
@@ -53,7 +51,7 @@ export function FilterForm({
     );
   }
   const commit = (next: ConditionLeaf[]): void => {
-    onChange({ kind: "filter", where: leavesToWhere(next) });
+    onChange({ ...step, where: leavesToWhere(next) });
   };
   const update = (index: number, patch: Partial<ConditionLeaf>): void => {
     commit(leaves.map((leaf, i) => (i === index ? { ...leaf, ...patch } : leaf)));
@@ -146,8 +144,8 @@ export function GroupByForm({
   step,
 }: {
   fields: string[];
-  onChange: (step: Step) => void;
-  step: Extract<Step, { kind: "groupBy" }>;
+  onChange: (node: ViewNode) => void;
+  step: Extract<ViewNode, { kind: "groupBy" }>;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -208,7 +206,7 @@ export function GroupByForm({
 }
 
 const MATCH_FLAGS: {
-  key: keyof Omit<JoinStep["matching"], "manualMap">;
+  key: keyof Omit<JoinNode["matching"], "manualMap">;
   label: string;
   hint: string;
 }[] = [
@@ -266,7 +264,7 @@ function MultiMatchEditor({
   onChange: (multiMatch: MultiMatch) => void;
   rightDatasetId: string;
   rightFields: string[];
-  step: JoinStep;
+  step: JoinNode;
   undeclared: string[];
 }) {
   const { multiMatch } = step;
@@ -392,51 +390,60 @@ function MultiMatchEditor({
   return null;
 }
 
-/** Join: the right dataset, key pairs, key matching, join type and the multi-match policy. */
+/** Join: the two nodes, key pairs, key matching, join type and the multi-match policy. */
 export function JoinForm({
-  infos,
-  leftFields,
+  ctx,
+  id,
   onChange,
   onPickRight,
   step,
-  subSteps,
   undeclaredCategories = [],
 }: {
-  /** The view's declared inputs: the only things the right side can be. */
-  infos: InputInfo[];
-  /** Fields in the rows reaching this step. */
-  leftFields: string[];
-  onChange: (step: JoinStep) => void;
-  /** Re-points the step at another declared input (by alias). */
-  onPickRight: (alias: string) => void;
-  step: JoinStep;
-  /** The "steps on the right input" section (the step list wires it in; absent = not offered). */
-  subSteps?: ReactNode;
+  ctx: NodeEditorContext;
+  /** This node's id (it cannot read itself). */
+  id: string;
+  onChange: (node: JoinNode) => void;
+  /** Re-points the join's right side at another node. */
+  onPickRight: (node: string) => void;
+  step: JoinNode;
   /** Spread categories the diagnostics found with no declared column. */
   undeclaredCategories?: string[];
 }) {
-  const right = infos.find((info) => info.alias === step.right.input),
-    rightFields = rightFieldsOf(step, infos) ?? [],
+  const leftFields = ctx.fields.get(step.left) ?? [],
+    rightFields = ctx.fields.get(step.right) ?? [],
+    rightNode = step.right === "" ? undefined : ctx.definition.nodes[step.right],
+    rightSource = rightNode !== undefined && rightNode.kind === "source" ? rightNode : undefined,
+    right = ctx.infos.find((info) => info.alias === step.right),
+    rightTitle = nodeOptions(ctx.definition, ctx.infos).find((o) => o.value === step.right),
     { multiMatch } = step,
     copiesRows = multiMatch.mode !== "summarize" && multiMatch.mode !== "spread";
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex flex-col gap-2">
-        <Label>Join with</Label>
-        <LabeledSelect
-          ariaLabel="Right dataset"
-          className="w-72"
-          onChange={onPickRight}
-          options={inputAliasOptions(infos)}
-          placeholder="Pick one of this view's inputs"
-          value={right === undefined ? "" : right.alias}
-        />
-        {infos.length < 2 && (
-          <p className="text-xs text-muted-foreground">
-            Add the dataset to this view's Inputs first.
-          </p>
-        )}
-        {subSteps}
+      <div className="flex flex-wrap gap-4">
+        <div className="flex flex-col gap-2">
+          <Label>Keep the rows of</Label>
+          <LabeledSelect
+            ariaLabel="Left node"
+            className="w-64"
+            onChange={(left) => {
+              onChange({ ...step, left, on: step.on.map((pair) => ({ ...pair, left: "" })) });
+            }}
+            options={nodeOptions(ctx.definition, ctx.infos, [id])}
+            placeholder="Pick a node"
+            value={step.left}
+          />
+        </div>
+        <div className="flex flex-col gap-2">
+          <Label>Join with</Label>
+          <LabeledSelect
+            ariaLabel="Right node"
+            className="w-64"
+            onChange={onPickRight}
+            options={nodeOptions(ctx.definition, ctx.infos, [id])}
+            placeholder="Pick a node"
+            value={step.right}
+          />
+        </div>
       </div>
 
       <div className="flex flex-col gap-2">
@@ -468,7 +475,9 @@ export function JoinForm({
                 });
               }}
               options={fieldOptions(rightFields)}
-              placeholder={right === undefined ? "Pick a dataset first" : `${right.title}'s field`}
+              placeholder={
+                rightTitle === undefined ? "Pick a node first" : `${rightTitle.label}'s field`
+              }
               value={pair.right}
             />
             <Button
@@ -589,7 +598,7 @@ export function JoinForm({
         onChange={(next) => {
           onChange({ ...step, multiMatch: next });
         }}
-        rightDatasetId={right === undefined ? "" : right.datasetId}
+        rightDatasetId={rightSource === undefined || right === undefined ? "" : right.datasetId}
         rightFields={rightFields}
         step={step}
         undeclared={undeclaredCategories}
@@ -607,7 +616,7 @@ export function JoinForm({
             value={step.prefix ?? ""}
           />
           <p className="text-xs text-muted-foreground">
-            Joined fields are named prefix.field. It defaults to the dataset&apos;s title.
+            Joined fields are named prefix.field. It defaults to the right node&apos;s title.
           </p>
         </div>
       )}

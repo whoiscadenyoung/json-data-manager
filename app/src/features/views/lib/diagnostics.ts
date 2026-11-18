@@ -1,9 +1,9 @@
 import { z } from "zod";
 
 /**
- * The diagnostics contract (docs/views-design.md §8) as the preview server
- * function returns it: `{ steps: [...] }`, one entry per compiled step. Read
- * defensively: a malformed payload reads as "no diagnostics", never a crash.
+ * The diagnostics contract as the preview server function returns it:
+ * `{ nodes: [...] }`, one entry per compiled node. Read defensively: a
+ * malformed payload reads as "no diagnostics", never a crash.
  */
 
 const count = z.coerce.number();
@@ -26,10 +26,8 @@ const joinSchema = z.object({
     .optional(),
 });
 
-const stepSchema = z.object({
-  index: count,
-  /** Set for steps inside a join's sub-pipeline, e.g. `steps[0].right.steps[1]`. */
-  path: z.string().optional(),
+const nodeSchema = z.object({
+  id: z.string(),
   kind: z.string(),
   rowsIn: count,
   rowsOut: count,
@@ -38,26 +36,16 @@ const stepSchema = z.object({
   join: joinSchema.optional(),
 });
 
-const diagnosticsSchema = z.object({ steps: z.array(stepSchema) });
+const diagnosticsSchema = z.object({ nodes: z.array(nodeSchema) });
 
 export type JoinDiagnostics = z.infer<typeof joinSchema>;
-export type StepDiagnostics = z.infer<typeof stepSchema>;
+export type NodeDiagnostics = z.infer<typeof nodeSchema>;
 
-/**
- * The diagnostics of a step, if the payload carries it. A top-level step is
- * found by `index`; a step inside a sub-pipeline by its `path`
- * (`steps[0].right.steps[1]`), because its `index` is local to the list.
- */
-export function stepDiagnosticsOf(
-  diagnostics: unknown,
-  index: number,
-  path?: string,
-): StepDiagnostics | undefined {
+/** The diagnostics of a node, if the payload carries it. */
+export function nodeDiagnosticsOf(diagnostics: unknown, id: string): NodeDiagnostics | undefined {
   const parsed = diagnosticsSchema.safeParse(diagnostics);
   if (!parsed.success) {
     return undefined;
   }
-  return parsed.data.steps.find((step) =>
-    path === undefined ? step.path === undefined && step.index === index : step.path === path,
-  );
+  return parsed.data.nodes.find((node) => node.id === id);
 }

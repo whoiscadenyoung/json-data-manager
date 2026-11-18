@@ -1,5 +1,5 @@
-import { validateViewDefinition } from "@caden/data-core/views";
-import type { FieldType, ViewDefinition } from "@caden/data-core/views";
+import { pruneNodes, unusedNodeIds, validateViewDefinition } from "@caden/data-core/views";
+import type { FieldType, ViewDefinition, ViewNode } from "@caden/data-core/views";
 import { Badge } from "@caden/ui/components/badge";
 import { Button } from "@caden/ui/components/button";
 import {
@@ -21,7 +21,7 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { RouterButton } from "@/components/router-button";
-import { ViewStepGraph } from "@/features/view-graphs";
+import { ViewNodeGraph } from "@/features/view-graphs";
 import { errorMessage } from "@/lib/errors";
 import * as datasetsStore from "@/lib/store/datasets";
 import * as projectsStore from "@/lib/store/projects";
@@ -42,56 +42,48 @@ import {
 } from "@/lib/store/views";
 import { saveView } from "@/lib/views/view-save";
 
-import { canvasInputTitles, canvasOutputDetail, describeCanvasStep } from "../lib/canvas-nodes";
-import { stepDiagnosticsOf } from "../lib/diagnostics";
+import { canvasOutputDetail, describeCanvasNode } from "../lib/canvas-nodes";
+import { nodeDiagnosticsOf } from "../lib/diagnostics";
 import { relativeTime, stableJson } from "../lib/format";
-import { explainCycle, extractJoinToView, joinPathOf } from "../lib/reuse-actions";
+import { explainCycle, extractNodeToView } from "../lib/reuse-actions";
+import { nodeOf, OUTPUT, settleSelection, type Selection } from "../lib/selection";
 import {
-  inputOf,
-  nestedOf,
-  openStepOf,
-  OUTPUT,
-  settleSelection,
-  type Selection,
-} from "../lib/selection";
-import {
-  fieldsAfter,
+  appendNode,
   declaredViewFieldTypes,
+  fieldNamesByNode,
+  firstProblem,
+  insertOnEdge,
   inputRefsOf,
-  prunedInputs,
-  stepProblem,
-  STEP_TITLES,
+  nodeLabel,
+  removeNode,
+  subgraphOf,
   toCompileMeta,
   validationSummary,
   withManualMapEntry,
+  type AddableKind,
   type InputInfo,
 } from "../lib/view-model";
 import { DuplicateViewDialog } from "./duplicate-view-dialog";
 import { ExportProfilesCard } from "./export-profiles-card";
 import { ExtractViewDialog } from "./extract-view-dialog";
 import { InputDetail } from "./input-detail";
-import { InputsPanel } from "./inputs-panel";
+import type { NodeEditorContext } from "./node-context";
+import { NodeForm } from "./node-form";
+import { AddNodeToolbar, InsertNodeButton } from "./node-list";
+import { NodeOutline } from "./node-outline";
 import { OutputCard } from "./output-card";
 import { PreviewPane, type PreviewRow } from "./preview-pane";
 import { RefreshModeControl, type RefreshMode } from "./refresh-mode-control";
-import {
-  AddStepToolbar,
-  InsertStepButton,
-  newStepOf,
-  StepList,
-  type AddableKind,
-  type StepEditorContext,
-} from "./step-list";
-import { StepOutline } from "./step-outline";
+import { SourcesPanel } from "./sources-panel";
 
 /**
- * The view editor (issue #301; docs/views-design.md §9): one full-height
+ * The view editor (docs/views-node-graph-design.md): one full-height
  * workspace. A header with Save, Run, the run status and the stale badge;
- * under it, the step outline on the left, the flow canvas in the middle
- * (click a node to select it, "+" on a connection to insert a step), the
- * selected item's settings on the right, and the preview, run history and
+ * under it, the node outline on the left, the graph canvas in the middle
+ * (click a node to select it, "+" on a connection to insert a node), the
+ * selected node's settings on the right, and the preview, run history and
  * exports docked under the canvas. Outline, canvas, settings and preview all
- * follow ONE selection: a step, a nested step, an input or the output.
+ * follow ONE selection: a node or the output.
  *
  * Preview and run go through the server functions (`@/lib/store/views`): the
  * browser sends the DRAFT DEFINITION as JSON, never SQL and never rows.
@@ -202,6 +194,26 @@ export function PgViewPage({ projectId, viewId }: { projectId: string; viewId: s
   return <ViewEditor header={row} initial={parsed.value} projectId={projectId} viewId={viewId} />;
 }
 
+/** The draft as the preview compiles it: the output selection previews the whole view, a node previews itself and what it reads. */
+function previewDefinitionOf(draft: ViewDefinition, selected: Selection): ViewDefinition {
+  const id = nodeOf(selected);
+  return id === undefined ? pruneNodes(draft) : subgraphOf(draft, id);
+}
+
+function datasetTitleMap(
+  memberships: readonly {
+    artifactKind: string;
+    artifactId: string;
+    project: { title: string };
+  }[],
+): ReadonlyMap<string, string> {
+  return new globalThis.Map(
+    memberships
+      .filter((membership) => membership.artifactKind === "dataset")
+      .map((membership) => [membership.artifactId, membership.project.title]),
+  );
+}
+
 // The editor owns the draft, selection, save and run state in one place; the
 // pieces it renders are split into components, but the state is not.
 // oxlint-disable-next-line eslint/complexity -- one state owner; see above.
@@ -219,16 +231,14 @@ function ViewEditor({
   const queryClient = useQueryClient(),
     [draft, setDraft] = useState<ViewDefinition>(initial),
     [baseline, setBaseline] = useState(() => stableJson(initial)),
-    [pickedSelection, setSelected] = useState<Selection>(initial.steps.length > 0 ? 0 : OUTPUT),
-    // Edits can pull the picked item out from under the selection (a removed sub-step).
+    [pickedSelection, setSelected] = useState<Selection>({ node: initial.result.node }),
+    // Edits can pull the picked node out from under the selection (a removed node).
     selected = settleSelection(pickedSelection, draft),
-    [savedOutput, setSavedOutput] = useState(initial.output),
+    [savedOutput, setSavedOutput] = useState(initial.result.output),
     [saving, setSaving] = useState(false),
     [running, setRunning] = useState(false),
     [duplicateOpen, setDuplicateOpen] = useState(false),
-    [extracting, setExtracting] = useState<{ path: string; rightTitle: string } | undefined>(
-      undefined,
-    ),
+    [extracting, setExtracting] = useState<string | undefined>(undefined),
     [extractBusy, setExtractBusy] = useState(false),
     [panelOpen, setPanelOpen] = useState(true),
     [detailTab, setDetailTab] = useState<DetailTab>("preview"),
@@ -238,11 +248,7 @@ function ViewEditor({
     // The holding-project titles (#338): pickers suffix them so same-named
     // datasets from different projects don't look identical.
     membershipsQuery = useQuery(projectsStore.listVisibleArtifactMembershipsQueryOptions()),
-    projectTitleByDatasetId = new globalThis.Map(
-      (membershipsQuery.data ?? [])
-        .filter((membership) => membership.artifactKind === "dataset")
-        .map((membership) => [membership.artifactId, membership.project.title]),
-    ),
+    projectTitleByDatasetId = datasetTitleMap(membershipsQuery.data ?? []),
     datasets = (datasetsQuery.data ?? [])
       .filter((dataset) => dataset.id !== viewId)
       .map((dataset) => ({
@@ -259,93 +265,46 @@ function ViewEditor({
     })),
     metaReady = metaQuery.data !== undefined && metaQuery.data.length === refs.length,
     validation = validateViewDefinition(draft, toCompileMeta(infos)),
-    stepProblems = draft.steps.map((step) => stepProblem(step)),
-    firstStepProblem = stepProblems.findIndex((problem) => problem !== undefined),
+    fields = fieldNamesByNode(draft, infos),
+    unused = new Set(unusedNodeIds(draft)),
+    problem = firstProblem(draft, Object.keys(draft.nodes)),
     blockedReason = !metaReady
       ? undefined
-      : firstStepProblem >= 0
-        ? `Step ${firstStepProblem + 1}: ${stepProblems[firstStepProblem]}`
-        : validation.ok
+      : problem === undefined
+        ? validation.ok
           ? undefined
-          : validationSummary(validation.errors),
+          : validationSummary(validation.errors)
+        : problem,
     dirty = stableJson(draft) !== baseline,
-    nestedSelection = nestedOf(selected),
-    selectedInput = inputOf(selected),
-    selectedInputRef = draft.inputs.find((input) => input.alias === selectedInput),
-    // An input selection previews the INPUT alone, as the view reads it: the
-    // same one-input, no-steps shape a nested preview starts from.
-    inputDraft =
-      selectedInputRef === undefined
-        ? undefined
-        : {
-            base: selectedInputRef.alias,
-            inputs: [selectedInputRef],
-            output: { fields: [], emptyFields: "keep" as const },
-            steps: [],
-          },
-    // A nested selection previews its SUB-PIPELINE: the right input alone,
-    // with the steps through the selected one (#334) — the same shape the
-    // extract-to-view plan runs, so no compiler option is needed.
-    nestedRight =
-      nestedSelection === undefined
-        ? undefined
-        : (() => {
-            const join = draft.steps[nestedSelection.join];
-            return join !== undefined && join.kind === "join" ? join.right : undefined;
-          })(),
-    nestedDraft =
-      nestedSelection === undefined || nestedRight === undefined || nestedRight.steps === undefined
-        ? undefined
-        : {
-            base: nestedRight.input,
-            inputs: draft.inputs.filter((input) => input.alias === nestedRight.input),
-            // The view's output block only names fields the FULL pipeline
-            // produces; the sub-preview projects nothing.
-            output: { fields: [], emptyFields: "keep" as const },
-            steps: nestedRight.steps.slice(0, nestedSelection.step + 1),
-          },
-    nestedStep =
-      nestedSelection === undefined || nestedRight === undefined || nestedRight.steps === undefined
-        ? undefined
-        : nestedRight.steps[nestedSelection.step],
-    nestedTitle =
-      nestedSelection === undefined || nestedStep === undefined
-        ? undefined
-        : `Step ${nestedSelection.join + 1}.${nestedSelection.step + 1}: ${STEP_TITLES[nestedStep.kind]}`,
-    openStep = openStepOf(selected),
-    selectedStep = openStep === undefined ? undefined : draft.steps[openStep],
-    uptoStep = typeof selected === "number" ? selected : undefined,
-    previewKey = useDebounced(
-      stableJson({ draft: nestedDraft ?? inputDraft ?? prunedInputs(draft), uptoStep }),
-      450,
-    ),
+    selectedId = nodeOf(selected),
+    selectedNode = selectedId === undefined ? undefined : draft.nodes[selectedId],
+    previewId = selectedId ?? draft.result.node,
+    previewDefinition = previewDefinitionOf(draft, selected),
+    previewMeta = toCompileMeta(infos),
+    previewValidation = validateViewDefinition(previewDefinition, previewMeta),
+    previewProblem = firstProblem(previewDefinition, Object.keys(previewDefinition.nodes)),
+    previewBlocked = !metaReady
+      ? undefined
+      : previewProblem === undefined
+        ? previewValidation.ok
+          ? undefined
+          : validationSummary(previewValidation.errors)
+        : previewProblem,
+    previewKey = useDebounced(stableJson({ draft: previewDefinition }), 450),
     previewQuery = useQuery({
       queryKey: ["pg:view-preview", viewId, previewKey],
-      // An input's own rows don't depend on the steps being complete.
-      enabled: metaReady && (inputDraft !== undefined || blockedReason === undefined),
+      enabled: metaReady && previewBlocked === undefined,
       placeholderData: keepPreviousData,
       retry: false,
       staleTime: 30_000,
       queryFn: async () => {
-        if (nestedDraft !== undefined && nestedSelection !== undefined) {
-          return await previewDraftView(
-            nestedDraft,
-            inputRefsOf(nestedDraft),
-            nestedSelection.step,
-          );
-        }
-        if (inputDraft !== undefined) {
-          return await previewDraftView(inputDraft, inputRefsOf(inputDraft));
-        }
-        const pruned = prunedInputs(draft);
-        return await previewDraftView(pruned, inputRefsOf(pruned), uptoStep);
+        return await previewDraftView(previewDefinition, inputRefsOf(previewDefinition));
       },
     }),
-    diagnosticsIndex = typeof selected === "number" ? selected : draft.steps.length - 1,
     diagnostics =
-      previewQuery.data === undefined || diagnosticsIndex < 0 || inputDraft !== undefined
+      previewQuery.data === undefined
         ? undefined
-        : stepDiagnosticsOf(previewQuery.data.diagnostics, diagnosticsIndex),
+        : nodeDiagnosticsOf(previewQuery.data.diagnostics, previewId),
     runsQuery = useQuery(listRunsQueryOptions(viewId)),
     lastRun = (runsQuery.data ?? [])[0],
     queueQuery = useQuery({
@@ -367,53 +326,76 @@ function ViewEditor({
     }
   }
 
-  const stepContext: StepEditorContext = {
-    baseAlias: draft.base,
-    fieldTypes,
+  const context: NodeEditorContext = {
+    definition: draft,
     diagnostics: previewQuery.data === undefined ? undefined : previewQuery.data.diagnostics,
     errors: validation.ok ? [] : validation.errors,
-    extract: {
-      disabledReason: !metaReady
-        ? "Loading the inputs…"
-        : blockedReason === undefined
-          ? undefined
-          : `Fix the steps first: ${blockedReason}`,
-      onExtract: (path, rightTitle) => {
-        setExtracting({ path, rightTitle });
-      },
-    },
+    fieldTypes,
+    fields,
     infos,
-    onSelectNestedStep: (joinIndex, stepIndex) => {
-      setSelected({ join: joinIndex, step: stepIndex });
-    },
-    selectedNested: nestedSelection,
+  };
+  const canvasContext = {
+    definition: draft,
+    diagnostics: context.diagnostics,
+    errors: context.errors,
+    infos,
+    unused,
   };
 
-  /** Adds a step at `index` of the main flow (the canvas toolbar appends; a connection's "+" inserts). */
-  const insertStep = (index: number, kind: AddableKind): void => {
-    const fields = fieldsAfter(draft, infos, index - 1) ?? [];
-    const step = newStepOf(kind, fields[0] ?? "");
-    setDraft((current) => ({
-      ...current,
-      steps: [...current.steps.slice(0, index), step, ...current.steps.slice(index)],
-    }));
-    setSelected(index);
+  const select = (next: Selection): void => {
+    setSelected(next);
+    setDetailTab("preview");
+    setPanelOpen(true);
+  };
+  const firstFieldOf = (id: string): string => (fields.get(id) ?? [])[0] ?? "";
+
+  /** The toolbar: a new node after the selected one (or the result), which then becomes the selection. */
+  const addNode = (kind: AddableKind): void => {
+    const from = selectedId ?? draft.result.node;
+    const added = appendNode(draft, from, kind, firstFieldOf(from));
+    setDraft(added.definition);
+    select({ node: added.node });
+  };
+  /** A connection's "+": a new node splitting `source -> target`. */
+  const insertNode = (connection: { source: string; target: string }, kind: AddableKind): void => {
+    const added = insertOnEdge(
+      draft,
+      connection.source,
+      connection.target,
+      kind,
+      firstFieldOf(connection.source),
+    );
+    setDraft(added.definition);
+    select({ node: added.node });
+  };
+  const updateNode = (id: string, node: ViewNode): void => {
+    setDraft((current) => ({ ...current, nodes: { ...current.nodes, [id]: node } }));
+  };
+  const branchFrom = (id: string, kind: AddableKind): void => {
+    const added = appendNode(
+      { ...draft, result: { ...draft.result, node: "" } },
+      id,
+      kind,
+      firstFieldOf(id),
+    );
+    setDraft({ ...added.definition, result: draft.result });
+    select({ node: added.node });
   };
 
   const saveBlocked = !dirty
     ? "No changes to save."
     : !metaReady
-      ? "Loading the inputs…"
+      ? "Loading the sources…"
       : blockedReason === undefined
         ? undefined
         : `Can't save yet: ${blockedReason}`;
   const live = header.refreshMode === "live";
-  // A live view computes from its saved steps on every read, so "Refresh now"
+  // A live view computes from its saved nodes on every read, so "Refresh now"
   // only re-reads; the others run and save.
   const runBlocked = live
     ? undefined
     : dirty
-      ? "Save your changes first: a run uses the saved steps."
+      ? "Save your changes first: a run uses the saved nodes."
       : header.kind !== "view"
         ? "Only views can be run."
         : undefined;
@@ -428,16 +410,16 @@ function ViewEditor({
   const save = async (): Promise<void> => {
     setSaving(true);
     try {
-      // Inputs are explicit: save exactly what the Inputs panel lists, unused ones included.
+      // Sources are explicit: save exactly what the Sources panel lists, unused ones included.
       await saveView(viewDeps(), viewId, { definition: draft, inputs: inputRefsOf(draft) });
       setBaseline(stableJson(draft));
-      setSavedOutput(draft.output);
+      setSavedOutput(draft.result.output);
       refreshAll();
       toast.success("View saved. Run it to refresh its rows.");
     } catch (error) {
       toast.error(
         explainCycle(error, {
-          inputIds: draft.inputs.map((input) => input.ref.id),
+          inputIds: refs.map((ref) => ref.datasetId),
           viewId,
           views: (viewSummaries.data ?? []).map((view) => ({
             id: view.id,
@@ -457,17 +439,16 @@ function ViewEditor({
     }
     setExtractBusy(true);
     try {
-      const outcome = await extractJoinToView({
+      const outcome = await extractNodeToView({
         definition: draft,
         newTitle,
-        path: joinPathOf(extracting.path),
+        node: extracting,
         projectId,
-        rightTitle: extracting.rightTitle,
         viewId,
       });
       setDraft(outcome.definition);
       setBaseline(stableJson(outcome.definition));
-      setSavedOutput(outcome.definition.output);
+      setSavedOutput(outcome.definition.result.output);
       setExtracting(undefined);
       refreshAll();
       void queryClient.invalidateQueries({ queryKey: ["pg:projects"] });
@@ -486,7 +467,7 @@ function ViewEditor({
       void queryClient.invalidateQueries({ queryKey: ["pg:views"] });
       void queryClient.invalidateQueries({ queryKey: ["pg:datasets"] });
       setExtracting(undefined);
-      toast.error(errorMessage(error, "Couldn't extract the steps."));
+      toast.error(errorMessage(error, "Couldn't extract the node."));
     } finally {
       setExtractBusy(false);
     }
@@ -535,51 +516,33 @@ function ViewEditor({
     }
   };
 
-  const keyMapStep =
-    selectedStep !== undefined && selectedStep.kind === "join" ? selectedStep : undefined;
-
-  const finalFields = fieldsAfter(draft, infos, draft.steps.length - 1);
-  const selectedInputInfo = infos.find((info) => info.alias === selectedInput);
-  const joinedAt = draft.steps.findIndex(
-    (step) => step.kind === "join" && step.right.input === selectedInput,
-  );
-  const select = (next: Selection): void => {
-    setSelected(next);
-    setDetailTab("preview");
-    setPanelOpen(true);
-  };
-  const stepList = (only: number | undefined) => (
-    <StepList
-      ctx={stepContext}
-      expanded={openStep}
-      nested={false}
-      onChange={(steps) => {
-        setDraft((current) => ({ ...current, steps }));
-      }}
-      onExpand={(index) => {
-        setSelected(index ?? OUTPUT);
-      }}
-      only={only}
-      pathPrefix="steps"
-      startFields={fieldsAfter(draft, infos, -1)}
-      steps={draft.steps}
-    />
-  );
-  const outputCard = (expanded: boolean) => (
-    <OutputCard
-      draft={draft}
-      expanded={expanded}
-      fields={finalFields}
-      onChange={patchDraft}
-      onSelect={() => {
-        setSelected(OUTPUT);
-      }}
-    />
-  );
+  const keyMapNode =
+    selectedNode !== undefined && selectedNode.kind === "join" ? selectedNode : undefined;
+  const finalFields = fields.get(draft.result.node);
+  const selectedInfo = infos.find((info) => info.alias === selectedId);
+  const outputDetail = canvasOutputDetail(draft, finalFields);
+  const readers =
+    selectedId === undefined
+      ? []
+      : Object.entries(draft.nodes).filter(([, node]) => {
+          return (
+            (node.kind === "join" && (node.left === selectedId || node.right === selectedId)) ||
+            (node.kind === "stack" && node.inputs.some((input) => input.node === selectedId)) ||
+            (node.kind === "sql" &&
+              (node.from === selectedId || (node.reads ?? []).includes(selectedId))) ||
+            ("from" in node && node.from === selectedId)
+          );
+        });
+  const previewTitle =
+    selectedId === undefined
+      ? "Result"
+      : selectedInfo === undefined
+        ? nodeLabel(draft, infos, selectedId)
+        : selectedInfo.title;
   const previewPane = (
     <PreviewPane
-      blockedReason={inputDraft === undefined ? blockedReason : undefined}
-      canMap={keyMapStep !== undefined && keyMapStep.on.length === 1}
+      blockedReason={previewBlocked}
+      canMap={keyMapNode !== undefined && keyMapNode.on.length === 1}
       diagnostics={diagnostics}
       error={
         previewQuery.error === null
@@ -588,49 +551,28 @@ function ViewEditor({
       }
       isLoading={previewQuery.isFetching}
       mapDisabledReason={
-        keyMapStep !== undefined && keyMapStep.on.length > 1
+        keyMapNode !== undefined && keyMapNode.on.length > 1
           ? "The key map works on joins with a single key pair."
-          : "Select a join step to add to its key map."
+          : "Select a join node to add to its key map."
       }
       onAddToKeyMap={(from, to) => {
-        if (keyMapStep !== undefined && typeof selected === "number") {
-          const index = selected;
-          const next = withManualMapEntry(keyMapStep, from, to);
-          setDraft((current) => ({
-            ...current,
-            steps: current.steps.map((s, i) => (i === index ? next : s)),
-          }));
+        if (keyMapNode !== undefined && selectedId !== undefined) {
+          updateNode(selectedId, withManualMapEntry(keyMapNode, from, to));
           toast.success("Added to the key map. The preview refreshes with it.");
         }
       }}
       order={
-        savedOutput === undefined || inputDraft !== undefined
+        selectedId !== undefined
           ? undefined
           : savedOutput.fields.map((field) => field.from ?? field.key)
       }
       rows={previewQuery.data === undefined ? undefined : previewRowsOf(previewQuery.data.rows)}
-      title={
-        selectedInputInfo !== undefined
-          ? `Input: ${selectedInputInfo.title}`
-          : nestedTitle !== undefined
-            ? nestedTitle
-            : selectedStep === undefined
-              ? "Result"
-              : `Step ${Number(selected) + 1}: ${STEP_TITLES[selectedStep.kind]}`
-      }
+      title={previewTitle}
     />
   );
   const exportsCard = (
     <ExportProfilesCard datasetId={viewId} live={live} output={savedOutput} title={header.title} />
   );
-  const canvasContext = {
-    definition: draft,
-    diagnostics: previewQuery.data === undefined ? undefined : previewQuery.data.diagnostics,
-    errors: validation.ok ? [] : validation.errors,
-    infos,
-  };
-
-  const outputDetail = canvasOutputDetail(draft, finalFields);
 
   return (
     <main className="flex min-h-[40rem] flex-col lg:h-[calc(100vh-7rem)]">
@@ -663,13 +605,15 @@ function ViewEditor({
       </div>
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <nav
-          aria-label="Step outline"
+          aria-label="Node outline"
           className="shrink-0 overflow-y-auto border-b p-2 lg:w-64 lg:border-r lg:border-b-0"
         >
           <p className="px-2 pt-1 pb-2 text-xs font-medium text-muted-foreground">
-            {draft.steps.length === 1 ? "1 step" : `${draft.steps.length} steps`}
+            {Object.keys(draft.nodes).length === 1
+              ? "1 node"
+              : `${Object.keys(draft.nodes).length} nodes`}
           </p>
-          <StepOutline
+          <NodeOutline
             context={canvasContext}
             onSelect={select}
             outputDetail={outputDetail}
@@ -677,52 +621,39 @@ function ViewEditor({
           />
         </nav>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <section aria-label="Steps" className="relative min-h-72 flex-1">
-            <ViewStepGraph
+          <section aria-label="Nodes" className="relative min-h-72 flex-1">
+            <ViewNodeGraph
               className="h-full rounded-none border-0"
               definition={draft}
-              onSelectInput={(alias) => {
-                select({ input: alias });
+              onSelectNode={(id) => {
+                select({ node: id });
               }}
               onSelectOutput={() => {
                 select(OUTPUT);
               }}
-              onSelectStep={(selection) => {
-                select(
-                  selection.sub === undefined
-                    ? selection.index
-                    : { join: selection.index, step: selection.sub },
-                );
-              }}
               options={{
-                describeStep: (selection) => describeCanvasStep(canvasContext, selection),
-                inputTitles: canvasInputTitles(infos),
+                describeNode: (id) => describeCanvasNode(canvasContext, id),
                 outputDetail,
               }}
               outputSelected={selected === OUTPUT}
-              renderInsert={(index) => (
-                <InsertStepButton
-                  index={index}
+              renderInsert={(connection) => (
+                <InsertNodeButton
+                  label={`${nodeLabel(draft, infos, connection.source)} to ${
+                    connection.target === "result"
+                      ? "output"
+                      : nodeLabel(draft, infos, connection.target)
+                  }`}
                   onAdd={(kind) => {
-                    insertStep(index, kind);
+                    insertNode(connection, kind);
                   }}
                 />
               )}
-              selectedInput={selectedInput}
-              selectedStep={
-                typeof selected === "number"
-                  ? { index: selected }
-                  : nestedSelection === undefined
-                    ? null
-                    : { index: nestedSelection.join, sub: nestedSelection.step }
-              }
+              selectedNode={selectedId}
             />
-            <AddStepToolbar
+            <AddNodeToolbar
               className="absolute top-3 left-3"
-              disabledReason={metaReady ? undefined : "Loading the inputs…"}
-              onAdd={(kind) => {
-                insertStep(draft.steps.length, kind);
-              }}
+              disabledReason={metaReady ? undefined : "Loading the sources…"}
+              onAdd={addNode}
             />
           </section>
           <section aria-label="Preview" className="flex shrink-0 flex-col border-t">
@@ -771,25 +702,68 @@ function ViewEditor({
           </section>
         </div>
         <aside
-          aria-label="Step settings"
+          aria-label="Node settings"
           className="flex shrink-0 flex-col gap-3 overflow-y-auto border-t p-3 lg:w-[26rem] lg:border-t-0 lg:border-l"
         >
-          <InputsPanel datasets={datasets} definition={draft} infos={infos} onChange={patchDraft} />
-          {openStep !== undefined ? (
-            stepList(openStep)
-          ) : selectedInput === undefined ? (
-            outputCard(true)
-          ) : (
-            <InputDetail
-              info={selectedInputInfo}
-              projectId={projectId}
-              role={
-                selectedInput === draft.base
-                  ? "Starts from"
-                  : joinedAt >= 0
-                    ? `Joined in step ${joinedAt + 1}`
-                    : "Input"
+          <SourcesPanel
+            datasets={datasets}
+            definition={draft}
+            infos={infos}
+            onChange={(next, added) => {
+              patchDraft(next);
+              if (added !== undefined) {
+                select({ node: added });
               }
+            }}
+            onSelect={(id) => {
+              select({ node: id });
+            }}
+          />
+          {selectedId === undefined || selectedNode === undefined ? (
+            <OutputCard
+              draft={draft}
+              expanded
+              fields={finalFields}
+              onChange={patchDraft}
+              onSelect={() => {
+                setSelected(OUTPUT);
+              }}
+            />
+          ) : selectedNode.kind === "source" ? (
+            <SourceDetailPanel
+              extractNote={undefined}
+              info={selectedInfo}
+              projectId={projectId}
+              readers={readers.map(([id]) => nodeLabel(draft, infos, id))}
+            />
+          ) : (
+            <NodeForm
+              ctx={context}
+              id={selectedId}
+              isResult={draft.result.node === selectedId}
+              onBranch={(kind) => {
+                branchFrom(selectedId, kind);
+              }}
+              onChange={(node) => {
+                updateNode(selectedId, node);
+              }}
+              extractBlocked={
+                !metaReady
+                  ? "Loading the sources…"
+                  : blockedReason === undefined
+                    ? undefined
+                    : `Fix the nodes first: ${blockedReason}`
+              }
+              onExtract={() => {
+                setExtracting(selectedId);
+              }}
+              onMakeResult={() => {
+                setDraft({ ...draft, result: { ...draft.result, node: selectedId } });
+              }}
+              onRemove={() => {
+                setDraft(removeNode(draft, selectedId));
+                setSelected(OUTPUT);
+              }}
             />
           )}
         </aside>
@@ -805,8 +779,9 @@ function ViewEditor({
       {extracting !== undefined && (
         <ExtractViewDialog
           busy={extractBusy}
-          defaultTitle={`${extracting.rightTitle} (extracted)`}
+          defaultTitle={`${nodeLabel(draft, infos, extracting)} (extracted)`}
           dirty={dirty}
+          nodeTitle={nodeLabel(draft, infos, extracting)}
           onConfirm={(newTitle) => {
             void extract(newTitle);
           }}
@@ -816,10 +791,29 @@ function ViewEditor({
             }
           }}
           open
-          rightTitle={extracting.rightTitle}
         />
       )}
     </main>
+  );
+}
+
+/** The settings panel of a selected source: what it is, who reads it and the fields it brings. */
+function SourceDetailPanel({
+  info,
+  projectId,
+  readers,
+}: {
+  extractNote: undefined;
+  info: InputInfo | undefined;
+  projectId: string;
+  readers: string[];
+}) {
+  return (
+    <InputDetail
+      info={info}
+      projectId={projectId}
+      role={readers.length === 0 ? "Not read by any node yet" : `Read by ${readers.join(", ")}`}
+    />
   );
 }
 

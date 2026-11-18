@@ -12,20 +12,27 @@ const matching = {
 };
 
 export const STATES_ENRICHED: ViewDefinition = {
-  base: "states",
-  inputs: [
-    { alias: "states", ref: { id: "ds-states", kind: "dataset" } },
-    { alias: "deployments", ref: { id: "ds-deployments", kind: "dataset" } },
-    { alias: "deploymentAgencies", ref: { id: "ds-agencies", kind: "dataset" } },
-    { alias: "links", ref: { id: "ds-links", kind: "dataset" } },
-  ],
-  output: {
-    emptyFields: "omit",
-    fields: [{ key: "name" }, { key: "deployments", label: "Deployments" }],
-  },
-  steps: [
-    {
+  nodes: {
+    states: { kind: "source", ref: { id: "ds-states", kind: "dataset" } },
+    deployments: { kind: "source", ref: { id: "ds-deployments", kind: "dataset" } },
+    deployment_agencies: { kind: "source", ref: { id: "ds-agencies", kind: "dataset" } },
+    links: { kind: "source", ref: { id: "ds-links", kind: "dataset" } },
+    agency_counts: {
       kind: "join",
+      label: "Agencies per deployment",
+      left: "deployments",
+      matching,
+      multiMatch: {
+        measures: [{ as: "agencyCount", fn: "count" }],
+        mode: "summarize",
+      },
+      on: [{ left: "id", right: "deploymentId" }],
+      right: "deployment_agencies",
+      type: "left",
+    },
+    with_deployments: {
+      kind: "join",
+      left: "states",
       matching,
       multiMatch: {
         measures: [
@@ -41,26 +48,12 @@ export const STATES_ENRICHED: ViewDefinition = {
         mode: "summarize",
       },
       on: [{ left: "id", right: "stateId" }],
-      right: {
-        input: "deployments",
-        steps: [
-          {
-            kind: "join",
-            matching,
-            multiMatch: {
-              measures: [{ as: "agencyCount", fn: "count" }],
-              mode: "summarize",
-            },
-            on: [{ left: "id", right: "deploymentId" }],
-            right: { input: "deploymentAgencies" },
-            type: "left",
-          },
-        ],
-      },
+      right: "agency_counts",
       type: "left",
     },
-    {
+    enriched: {
       kind: "join",
+      left: "with_deployments",
       matching: { ...matching, caseFold: true, trim: true },
       multiMatch: {
         columns: [
@@ -72,10 +65,17 @@ export const STATES_ENRICHED: ViewDefinition = {
         value: "url",
       },
       on: [{ left: "stateName", right: "name" }],
-      right: { input: "links" },
+      right: "links",
       type: "left",
     },
-  ],
+  },
+  result: {
+    node: "enriched",
+    output: {
+      emptyFields: "omit",
+      fields: [{ key: "name" }, { key: "deployments", label: "Deployments" }],
+    },
+  },
 };
 
 /** A project: four source datasets, the view over them, a layer, a map, an app, and one relation. */
@@ -144,7 +144,7 @@ export const LINEAGE_FIXTURE: LineageData = {
   viewInputs: [
     { alias: "states", inputDatasetId: "ds-states", viewId: "view-enriched" },
     { alias: "deployments", inputDatasetId: "ds-deployments", viewId: "view-enriched" },
-    { alias: "deploymentAgencies", inputDatasetId: "ds-agencies", viewId: "view-enriched" },
+    { alias: "deployment_agencies", inputDatasetId: "ds-agencies", viewId: "view-enriched" },
     { alias: "links", inputDatasetId: "ds-links", viewId: "view-enriched" },
     { alias: "states", inputDatasetId: "ds-states", viewId: "view-broken" },
   ],

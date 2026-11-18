@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { JoinStep } from "@caden/data-core/views";
+import type { JoinNode, ViewDefinition } from "@caden/data-core/views";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,10 +19,11 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
   };
 });
 
-import { stepDiagnosticsOf } from "../lib/diagnostics";
-import { newJoinStep, type InputInfo } from "../lib/view-model";
+import { nodeDiagnosticsOf } from "../lib/diagnostics";
+import { newNode, type InputInfo } from "../lib/view-model";
+import type { NodeEditorContext } from "./node-context";
+import { JoinForm } from "./node-forms";
 import { PreviewPane } from "./preview-pane";
-import { JoinForm } from "./step-forms";
 
 afterEach(() => {
   cleanup();
@@ -38,19 +39,36 @@ const infos: InputInfo[] = [
   },
 ];
 
-function join(overrides: Partial<JoinStep> = {}): JoinStep {
+const definition: ViewDefinition = {
+  nodes: {
+    states: { kind: "source", ref: { kind: "dataset", id: "d-states" } },
+    deployments: { kind: "source", ref: { kind: "dataset", id: "d-deployments" } },
+  },
+  result: { node: "states", output: { fields: [], emptyFields: "keep" } },
+};
+
+const ctx: NodeEditorContext = {
+  definition,
+  diagnostics: undefined,
+  errors: [],
+  fields: new Map([
+    ["states", ["id", "name"]],
+    ["deployments", ["id", "stateId", "cost"]],
+  ]),
+  infos,
+};
+
+function join(overrides: Partial<JoinNode> = {}): JoinNode {
   return {
-    ...newJoinStep({
-      left: "id",
-      right: "stateId",
-      rightAlias: "deployments",
-      rightTitle: "Deployments 2024",
-    }),
+    ...(newNode("join", "states", "id") as JoinNode),
+    on: [{ left: "id", right: "stateId" }],
+    prefix: "deployments_2024",
+    right: "deployments",
     ...overrides,
   };
 }
 
-function firstCall(spy: { mock: { calls: JoinStep[][] } }): JoinStep {
+function firstCall(spy: { mock: { calls: JoinNode[][] } }): JoinNode {
   const call = spy.mock.calls[0];
   if (call === undefined || call[0] === undefined) {
     throw new Error("onChange was not called");
@@ -60,20 +78,16 @@ function firstCall(spy: { mock: { calls: JoinStep[][] } }): JoinStep {
 
 describe("JoinForm", () => {
   const baseProps = {
-    datasets: [
-      { id: "d-states", title: "States" },
-      { id: "d-deployments", title: "Deployments 2024" },
-    ],
-    infos,
-    leftFields: ["id", "name"],
+    ctx,
+    id: "joined",
     onPickRight: vi.fn<(id: string) => void>(),
   };
 
-  it("shows the right dataset by title (never its id) and the default prefix", () => {
+  it("shows the right node by title (never its id) and the default prefix", () => {
     render(
       createElement(JoinForm, {
         ...baseProps,
-        onChange: vi.fn<(s: JoinStep) => void>(),
+        onChange: vi.fn<(s: JoinNode) => void>(),
         step: join(),
       }),
     );
@@ -84,7 +98,7 @@ describe("JoinForm", () => {
   });
 
   it("toggles key matching options into the step", () => {
-    const onChange = vi.fn<(s: JoinStep) => void>();
+    const onChange = vi.fn<(s: JoinNode) => void>();
     render(createElement(JoinForm, { ...baseProps, onChange, step: join() }));
     fireEvent.click(screen.getByText("Ignore case"));
     expect(onChange).toHaveBeenCalledTimes(1);
@@ -98,7 +112,7 @@ describe("JoinForm", () => {
       multiMatch: { mode: "summarize", measures: [{ as: "deployments", fn: "count" }] },
     });
     render(
-      createElement(JoinForm, { ...baseProps, onChange: vi.fn<(s: JoinStep) => void>(), step }),
+      createElement(JoinForm, { ...baseProps, onChange: vi.fn<(s: JoinNode) => void>(), step }),
     );
     expect(screen.getByLabelText("Measure 1 name")).toHaveProperty("value", "deployments");
     expect(screen.queryByLabelText("Name prefix for joined fields")).toBeNull();
@@ -106,7 +120,7 @@ describe("JoinForm", () => {
   });
 
   it("lists manual key-map entries and removes one", () => {
-    const onChange = vi.fn<(s: JoinStep) => void>();
+    const onChange = vi.fn<(s: JoinNode) => void>();
     const step = join();
     render(
       createElement(JoinForm, {
@@ -124,11 +138,11 @@ describe("JoinForm", () => {
 });
 
 describe("PreviewPane diagnostics", () => {
-  const diagnostics = stepDiagnosticsOf(
+  const diagnostics = nodeDiagnosticsOf(
     {
-      steps: [
+      nodes: [
         {
-          index: 0,
+          id: "joined",
           kind: "join",
           rowsIn: 50,
           rowsOut: 50,
@@ -147,7 +161,7 @@ describe("PreviewPane diagnostics", () => {
         },
       ],
     },
-    0,
+    "joined",
   );
 
   function pane(onAddToKeyMap: (from: string, to: string) => void, canMap = true) {
@@ -157,10 +171,10 @@ describe("PreviewPane diagnostics", () => {
       diagnostics,
       error: undefined,
       isLoading: false,
-      mapDisabledReason: "Select a join step.",
+      mapDisabledReason: "Select a join node.",
       onAddToKeyMap,
       rows: [{ d: { name: "Kansas", deployments: 14 } }],
-      title: "Step 1: Join",
+      title: "Joined",
     });
   }
 
@@ -189,13 +203,13 @@ describe("PreviewPane diagnostics", () => {
     render(pane(vi.fn<(from: string, to: string) => void>(), false));
     const button = screen.getByText("Add to key map");
     expect(button).toHaveProperty("disabled", true);
-    expect(button.getAttribute("title")).toBe("Select a join step.");
+    expect(button.getAttribute("title")).toBe("Select a join node.");
   });
 
   it("explains why there is no preview instead of staying blank", () => {
     render(
       createElement(PreviewPane, {
-        blockedReason: "Step 1: Pick the key fields on both sides.",
+        blockedReason: "joined: Pick the key fields on both sides.",
         canMap: false,
         diagnostics: undefined,
         error: undefined,

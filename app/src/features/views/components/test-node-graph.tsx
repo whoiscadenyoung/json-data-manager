@@ -1,5 +1,5 @@
-import type { ViewStepGraphProps } from "@/features/view-graphs";
-import { buildViewStepGraph } from "@/features/view-graphs/lib/step-graph";
+import type { ViewNodeGraphProps } from "@/features/view-graphs";
+import { buildViewNodeGraph } from "@/features/view-graphs/lib/node-graph";
 
 // Page tests mock the whole `@/features/view-graphs` module with this file, so
 // the non-graph exports the editor uses pass straight through.
@@ -11,29 +11,26 @@ export { STEP_KIND_VISUALS, stepKindVisual } from "@/features/view-graphs/lib/st
  * with this module, so the editor's wiring to the canvas (labels, badges,
  * selection, insert points) is still exercised.
  */
-export function ViewStepGraph({
+export function ViewNodeGraph({
   definition,
-  onSelectInput,
+  onSelectNode,
   onSelectOutput,
-  onSelectStep,
   options,
   renderInsert,
-}: ViewStepGraphProps) {
-  const graph = buildViewStepGraph(definition, options);
+}: ViewNodeGraphProps) {
+  const graph = buildViewNodeGraph(definition, options);
   return (
-    <div data-testid="step-canvas">
+    <div data-testid="node-canvas">
       {graph.nodes.map((node) => (
         <button
           data-badge={node.badge === undefined ? undefined : node.badge.label}
           data-node={node.id}
           key={node.id}
           onClick={() => {
-            if (node.step !== undefined && onSelectStep !== undefined) {
-              onSelectStep(node.step);
-            } else if (node.kind === "output" && onSelectOutput !== undefined) {
+            if (node.kind === "output" && onSelectOutput !== undefined) {
               onSelectOutput();
-            } else if (node.inputAlias !== undefined && onSelectInput !== undefined) {
-              onSelectInput(node.inputAlias);
+            } else if (node.nodeId !== undefined && onSelectNode !== undefined) {
+              onSelectNode(node.nodeId);
             }
           }}
           type="button"
@@ -42,8 +39,8 @@ export function ViewStepGraph({
         </button>
       ))}
       {graph.edges.map((edge) =>
-        edge.insertIndex === undefined || renderInsert === undefined ? null : (
-          <span key={edge.id}>{renderInsert(edge.insertIndex)}</span>
+        edge.insert === undefined || renderInsert === undefined ? null : (
+          <span key={edge.id}>{renderInsert(edge.insert)}</span>
         ),
       )}
     </div>

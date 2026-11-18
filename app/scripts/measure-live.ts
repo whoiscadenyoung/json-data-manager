@@ -48,10 +48,8 @@ await sql.unsafe(
 );
 
 const definition = {
-  inputs: [{ alias: "sites", ref: { kind: "dataset", id: input } }],
-  base: "sites",
-  steps: [],
-  output: { fields: [], emptyFields: "keep" },
+  nodes: { sites: { kind: "source", ref: { kind: "dataset", id: input } } },
+  result: { node: "sites", output: { fields: [], emptyFields: "keep" } },
 };
 const viewId = firstId(
   await sql.begin(async (tx) => {

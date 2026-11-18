@@ -206,7 +206,7 @@ export class GraphScope {
   }
 
   private computeSql(node: NodeOf<"sql">, path: string, issues: Issues): FieldMap | undefined {
-    const result = analyzeSqlStep(node.query, node.reads ?? []);
+    const result = analyzeSqlStep(node.query, [node.from, ...(node.reads ?? [])]);
     if (!result.ok) {
       for (const error of result.errors) {
         issues.add(`${path}.query`, error.message, error);

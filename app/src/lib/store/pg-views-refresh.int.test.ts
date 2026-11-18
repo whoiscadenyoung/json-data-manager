@@ -3,11 +3,11 @@
 //
 // Same harness as pg-views.int.test.ts: the runner under test is the real one
 // and opens its own connections, so fixtures are COMMITTED and removed in
-// afterEach. The compiler is a tiny fake; a definition carries `steps` so the
+// afterEach. The compiler is a tiny fake; a definition carries extra `nodes` so the
 // live gate (spatial refusal) has something to look at. Needs a DEDICATED
 // CI-parity db (docs/memory/int-test-db-split-ri-teardown.md).
 
-import type { Step } from "@caden/data-core/views";
+import type { ViewNode } from "@caden/data-core/views";
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import type { CompileInputMeta, ViewCompiler, ViewDefinition } from "#/lib/views/view-compiler";
@@ -71,7 +71,7 @@ afterAll(async () => {
 // Fixtures
 // ---------------------------------------------------------------------------
 
-const STUB_SPATIAL = { kind: "stub-spatial" };
+const STUB_SPATIAL = { kind: "stub-spatial", from: "in0" };
 
 function firstId(inputs: CompileInputMeta[]): string {
   const first = inputs[0];
@@ -163,12 +163,14 @@ async function newView(
   extra: {
     editPolicy?: "open" | "locked";
     visibility?: "members" | "signed-in";
-    steps?: unknown[];
+    nodes?: Record<string, unknown>;
   } = {},
 ): Promise<string> {
   const definition = {
-    inputs: [{ alias: "in0", ref: { kind: "dataset", id: inputId } }],
-    steps: extra.steps ?? [],
+    nodes: {
+      in0: { kind: "source", ref: { kind: "dataset", id: inputId } },
+      ...extra.nodes,
+    },
   };
   const id = await createView(savePath(ALICE), {
     title: "refresh fixture",
@@ -349,7 +351,7 @@ describe.skipIf(!dbUp())("auto refresh (#305)", () => {
     expect(direct).toMatch(/permission denied/);
     const viaSave = await raisesAs(
       ALICE,
-      `select public.save_view(${sqlLit(view)}::uuid, '{"inputs":[],"steps":[]}'::jsonb,
+      `select public.save_view(${sqlLit(view)}::uuid, '{"nodes":{}}'::jsonb,
          ${sqlLit([{ alias: "in0", datasetId: input }])}::jsonb, 'live')`,
     );
     expect(viaSave).toMatch(/set_view_refresh_mode/);
@@ -409,8 +411,8 @@ describe.skipIf(!dbUp())("live views (#305)", () => {
 
   test("live is refused when the view has a spatial step (stub)", async () => {
     const input = await source({ rows: 1 });
-    const stub = { isSpatialStep: (step: Step) => (step.kind as string) === STUB_SPATIAL.kind };
-    const view = await newView(input, { steps: [STUB_SPATIAL] });
+    const stub = { isSpatialStep: (node: ViewNode) => (node.kind as string) === STUB_SPATIAL.kind };
+    const view = await newView(input, { nodes: { spatial: STUB_SPATIAL } });
 
     await expect(setRefreshModeAs(deps(stub), who(ALICE), view, "live")).rejects.toThrow(/spatial/);
     expect(

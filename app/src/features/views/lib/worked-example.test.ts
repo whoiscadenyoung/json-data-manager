@@ -1,21 +1,17 @@
 import { compileView, validateViewDefinition } from "@caden/data-core/views";
-import type { JoinStep, Step, ViewDefinition } from "@caden/data-core/views";
+import type { JoinNode, ViewDefinition } from "@caden/data-core/views";
 import { describe, expect, it } from "vitest";
 
-import { stepDiagnosticsOf } from "./diagnostics";
+import { nodeDiagnosticsOf } from "./diagnostics";
 import {
-  blankDefinition,
-  fieldsAfter,
-  newCalculateStep,
-  newJoinStep,
-  newSqlStep,
-  prunedInputs,
+  appendNode,
+  blankDefinitionOf,
+  fieldNamesByNode,
+  firstProblem,
+  newNode,
   proposeSpreadColumns,
   repointRight,
-  rightFieldsOf,
-  stepProblem,
   toCompileMeta,
-  uniqueAlias,
   type InputInfo,
 } from "./view-model";
 
@@ -31,93 +27,69 @@ const datasets = [
   { id: LINKS, title: "Links", fields: ["stateName", "type", "url"] },
 ];
 
-function titleOfDataset(datasetId: string): string {
-  const found = datasets.find((d) => d.id === datasetId);
-  return found === undefined ? "" : found.title;
-}
-
-function asJoin(step: Step | undefined): JoinStep {
-  if (step === undefined || step.kind !== "join") {
-    throw new Error("expected a join step");
-  }
-  return step;
-}
-
-/** The editor's input-metadata step: a dataset becomes a declared input with a readable alias. */
-function declare(
-  definition: ViewDefinition,
-  datasetId: string,
-): { def: ViewDefinition; alias: string } {
-  const existing = definition.inputs.find((input) => input.ref.id === datasetId);
-  if (existing !== undefined) {
-    return { def: definition, alias: existing.alias };
-  }
-  const title = titleOfDataset(datasetId);
-  const alias = uniqueAlias(
-    title,
-    definition.inputs.map((input) => input.alias),
-  );
-  return {
-    alias,
-    def: {
-      ...definition,
-      inputs: [...definition.inputs, { alias, ref: { kind: "dataset", id: datasetId } }],
-    },
-  };
-}
-
 function infosOf(definition: ViewDefinition): InputInfo[] {
-  return definition.inputs.map((input) => {
-    const found = datasets.find((d) => d.id === input.ref.id);
-    return {
-      alias: input.alias,
-      datasetId: input.ref.id,
-      title: found === undefined ? "" : found.title,
-      fields: found === undefined ? [] : found.fields,
-    };
+  return Object.entries(definition.nodes).flatMap(([id, node]) => {
+    if (node.kind !== "source") {
+      return [];
+    }
+    const found = datasets.find((d) => d.id === node.ref.id);
+    return [
+      {
+        alias: id,
+        datasetId: node.ref.id,
+        title: found === undefined ? "" : found.title,
+        fields: found === undefined ? [] : found.fields,
+      },
+    ];
   });
 }
 
-function addJoin(
-  definition: ViewDefinition,
-  datasetId: string,
-  build: (step: JoinStep) => JoinStep,
-): ViewDefinition {
-  const declared = declare(definition, datasetId);
-  const title = titleOfDataset(datasetId);
-  const step = build(
-    repointRight(newJoinStep({ rightAlias: "", rightTitle: "" }), declared.alias, {
-      old: "",
-      next: title,
-    }),
-  );
-  return { ...declared.def, steps: [...declared.def.steps, step] };
+function asJoin(node: ViewDefinition["nodes"][string] | undefined): JoinNode {
+  if (node === undefined || node.kind !== "join") {
+    throw new Error("expected a join node");
+  }
+  return node;
 }
 
-/** Design §5 ("States enriched"), assembled only from the editor's step model. */
+/** Add a join node reading `left` and `right`, built the way the editor builds one (repointRight fills the prefix). */
+function addJoin(
+  definition: ViewDefinition,
+  id: string,
+  left: string,
+  right: string,
+  rightTitle: string,
+  build: (node: JoinNode) => JoinNode,
+): ViewDefinition {
+  const blank = asJoin(newNode("join", left, "id"));
+  const node = build(repointRight(blank, right, { old: "", next: rightTitle }));
+  return { ...definition, nodes: { ...definition.nodes, [id]: node } };
+}
+
+/** Design §5 ("States enriched"), assembled only from the editor's node model. */
 function buildWalkthrough(): ViewDefinition {
-  let def = blankDefinition({ datasetId: STATES, title: "States" });
-  // Step 1: join deployments, whose right side first counts agencies per deployment.
-  const withAgencies = declare(def, DEPLOYMENTS);
-  def = withAgencies.def;
-  const agencies = declare(def, AGENCIES);
-  def = agencies.def;
-  def = addJoin(def, DEPLOYMENTS, (step) => ({
-    ...step,
+  let def = blankDefinitionOf([
+    { datasetId: STATES, title: "States" },
+    { datasetId: DEPLOYMENTS, title: "Deployments" },
+    { datasetId: AGENCIES, title: "Deployment agencies" },
+    { datasetId: LINKS, title: "Links" },
+  ]);
+  // Count agencies per deployment first, as its own node.
+  def = addJoin(
+    def,
+    "agency_counts",
+    "deployments",
+    "deployment_agencies",
+    "Deployment agencies",
+    (node) => ({
+      ...node,
+      on: [{ left: "id", right: "deploymentId" }],
+      multiMatch: { mode: "summarize", measures: [{ as: "agencyCount", fn: "count" }] },
+    }),
+  );
+  // Join that onto the states.
+  def = addJoin(def, "with_deployments", "states", "agency_counts", "Deployments", (node) => ({
+    ...node,
     on: [{ left: "id", right: "stateId" }],
-    right: {
-      input: withAgencies.alias,
-      steps: [
-        {
-          ...repointRight(newJoinStep({ rightAlias: "", rightTitle: "" }), agencies.alias, {
-            old: "",
-            next: "Deployment agencies",
-          }),
-          on: [{ left: "id", right: "deploymentId" }],
-          multiMatch: { mode: "summarize", measures: [{ as: "agencyCount", fn: "count" }] },
-        },
-      ],
-    },
     multiMatch: {
       mode: "summarize",
       measures: [
@@ -132,11 +104,11 @@ function buildWalkthrough(): ViewDefinition {
       ],
     },
   }));
-  // Step 2: join links, one column per link type.
-  def = addJoin(def, LINKS, (step) => ({
-    ...step,
+  // Join links, one column per link type.
+  def = addJoin(def, "enriched", "with_deployments", "links", "Links", (node) => ({
+    ...node,
     on: [{ left: "name", right: "stateName" }],
-    matching: { ...step.matching, caseFold: true },
+    matching: { ...node.matching, caseFold: true },
     multiMatch: {
       mode: "spread",
       by: "type",
@@ -147,35 +119,41 @@ function buildWalkthrough(): ViewDefinition {
       })),
     },
   }));
-  // Output fields.
-  const final = fieldsAfter(def, infosOf(def), def.steps.length - 1) ?? [];
+  const final = fieldNamesByNode(def, infosOf(def)).get("enriched") ?? [];
   return {
     ...def,
-    output: {
-      fields: ["name", "deployments", "mostCollaboration", "docsLink", "benefitsLink"]
-        .filter((key) => final.includes(key))
-        .map((key) => ({ key })),
-      emptyFields: "omit",
+    result: {
+      node: "enriched",
+      output: {
+        fields: ["name", "deployments", "mostCollaboration", "docsLink", "benefitsLink"]
+          .filter((key) => final.includes(key))
+          .map((key) => ({ key })),
+        emptyFields: "omit",
+      },
     },
   };
 }
 
-describe("design §5 walkthrough through the step model", () => {
+describe("design §5 walkthrough through the node model", () => {
   const def = buildWalkthrough();
   const infos = infosOf(def);
 
   it("builds a definition the real validator accepts", () => {
     const result = validateViewDefinition(def, toCompileMeta(infos));
     expect(result).toMatchObject({ ok: true });
-    expect(def.steps.map(stepProblem)).toEqual([undefined, undefined]);
+    expect(firstProblem(def, Object.keys(def.nodes))).toBeUndefined();
   });
 
-  it("tracks the fields after each step, through the sub-pipeline and the new modes", () => {
-    const [join] = def.steps;
-    expect(join).toMatchObject({ kind: "join" });
-    expect(rightFieldsOf(asJoin(join), infos)).toEqual(["id", "name", "stateId", "agencyCount"]);
-    expect(fieldsAfter(def, infos, 0)).toEqual(["id", "name", "deployments", "mostCollaboration"]);
-    expect(fieldsAfter(def, infos, 1)).toEqual([
+  it("tracks the fields of every node, through the counted node and the new modes", () => {
+    const fields = fieldNamesByNode(def, infos);
+    expect(fields.get("agency_counts")).toEqual(["id", "name", "stateId", "agencyCount"]);
+    expect(fields.get("with_deployments")).toEqual([
+      "id",
+      "name",
+      "deployments",
+      "mostCollaboration",
+    ]);
+    expect(fields.get("enriched")).toEqual([
       "id",
       "name",
       "deployments",
@@ -183,7 +161,7 @@ describe("design §5 walkthrough through the step model", () => {
       "docsLink",
       "benefitsLink",
     ]);
-    expect(def.output.fields.map((f) => f.key)).toEqual([
+    expect(def.result.output.fields.map((f) => f.key)).toEqual([
       "name",
       "deployments",
       "mostCollaboration",
@@ -192,55 +170,30 @@ describe("design §5 walkthrough through the step model", () => {
     ]);
   });
 
-  it("compiles, and keeps the nested join's input declared when saving", () => {
-    const compiled = compileView(def, toCompileMeta(infos));
-    expect(compiled.sql.length).toBeGreaterThan(100);
-    const pruned = prunedInputs(def);
-    expect(pruned.inputs.map((input) => input.alias)).toEqual([
-      "states",
-      "deployments",
-      "deployment_agencies",
-      "links",
-    ]);
+  it("compiles", () => {
+    expect(compileView(def, toCompileMeta(infos)).sql.length).toBeGreaterThan(100);
   });
 
-  it("rejects a definition whose nested step removed the join key", () => {
-    const [join] = def.steps;
-    const joinStep = asJoin(join);
-    const grouped: Step = { kind: "groupBy", by: ["id"], measures: [{ as: "n", fn: "count" }] };
+  it("rejects a definition whose upstream node removed the join key", () => {
+    const grouped = appendNode(def, "agency_counts", "groupBy", "id");
     const broken: ViewDefinition = {
-      ...def,
-      steps: [
-        { ...joinStep, right: { ...joinStep.right, steps: [grouped] } },
-        ...def.steps.slice(1),
-      ],
+      ...grouped.definition,
+      nodes: {
+        ...grouped.definition.nodes,
+        with_deployments: { ...asJoin(def.nodes.with_deployments), right: grouped.node },
+      },
     };
     const result = validateViewDefinition(broken, toCompileMeta(infos));
     expect(result).toMatchObject({
       ok: false,
-      errors: expect.arrayContaining([expect.objectContaining({ path: "steps[0].on[0].right" })]),
+      errors: expect.arrayContaining([
+        expect.objectContaining({ path: "nodes.with_deployments.on[0].right" }),
+      ]),
     });
   });
 });
 
-describe("advanced step helpers", () => {
-  it("reports an incomplete calculate, sql, spread and topBy as needing input", () => {
-    expect(stepProblem(newCalculateStep())).toMatch(/Name the new field/);
-    expect(stepProblem({ kind: "calculate", field: "x", expr: " " })).toMatch(/expression/);
-    expect(stepProblem({ kind: "sql", query: "" })).toMatch(/SQL/);
-    expect(stepProblem(newSqlStep())).toBeUndefined();
-    const join = newJoinStep({ rightAlias: "links", rightTitle: "Links", left: "a", right: "b" });
-    expect(
-      stepProblem({ ...join, multiMatch: { mode: "spread", by: "", value: "", columns: [] } }),
-    ).toMatch(/category field/);
-    expect(
-      stepProblem({
-        ...join,
-        multiMatch: { mode: "summarize", measures: [{ as: "top", fn: "topBy", field: "name" }] },
-      }),
-    ).toMatch(/ranks the rows/);
-  });
-
+describe("advanced node helpers", () => {
   it("proposes spread columns from values, skipping declared ones and keeping names unique", () => {
     expect(
       proposeSpreadColumns(
@@ -254,22 +207,14 @@ describe("advanced step helpers", () => {
     ]);
   });
 
-  it("finds sub-pipeline diagnostics by path, not by their local index", () => {
+  it("finds node diagnostics by id", () => {
     const payload = {
-      steps: [
-        {
-          index: 0,
-          path: "steps[0].right.steps[0]",
-          kind: "groupBy",
-          rowsIn: 9,
-          rowsOut: 3,
-          fieldsAdded: [],
-          fieldsRemoved: [],
-        },
-        { index: 0, kind: "join", rowsIn: 1, rowsOut: 1, fieldsAdded: [], fieldsRemoved: [] },
+      nodes: [
+        { id: "g", kind: "groupBy", rowsIn: 9, rowsOut: 3, fieldsAdded: [], fieldsRemoved: [] },
+        { id: "j", kind: "join", rowsIn: 1, rowsOut: 1, fieldsAdded: [], fieldsRemoved: [] },
       ],
     };
-    expect(stepDiagnosticsOf(payload, 0)).toMatchObject({ kind: "join" });
-    expect(stepDiagnosticsOf(payload, 0, "steps[0].right.steps[0]")).toMatchObject({ rowsIn: 9 });
+    expect(nodeDiagnosticsOf(payload, "j")).toMatchObject({ kind: "join" });
+    expect(nodeDiagnosticsOf(payload, "g")).toMatchObject({ rowsIn: 9 });
   });
 });

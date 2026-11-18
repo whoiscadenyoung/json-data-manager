@@ -1,7 +1,7 @@
 // Integration test — the Views advanced steps (#302 compiler half) against the
 // local Supabase Postgres: the design §5 worked example ("States enriched":
-// a join whose right side is an inline sub-pipeline, summarize count + topBy,
-// links spread by type) plus the calculate and sql steps, each compiled by
+// a join whose right side is another join node, summarize count + topBy,
+// links spread by type) plus the calculate and sql nodes, each compiled by
 // @caden/data-core/views and EXECUTED. Same wire-client pattern as
 // pg-views-compiler.int.test.ts (the simple protocol has no bind params, so
 // the compiler's positional $n::type placeholders are substituted with
@@ -95,7 +95,7 @@ describe.skipIf(!dbUp())("views advanced steps against Postgres", () => {
 
       const metas: CompileInputMeta[] = [
         {
-          alias: "states",
+          node: "states",
           datasetId: states,
           title: "States",
           fields: [
@@ -104,7 +104,7 @@ describe.skipIf(!dbUp())("views advanced steps against Postgres", () => {
           ],
         },
         {
-          alias: "deployments",
+          node: "deployments",
           datasetId: deployments,
           title: "Deployments",
           fields: [
@@ -114,7 +114,7 @@ describe.skipIf(!dbUp())("views advanced steps against Postgres", () => {
           ],
         },
         {
-          alias: "deploymentAgencies",
+          node: "deployment_agencies",
           datasetId: agencies,
           title: "Deployment agencies",
           fields: [
@@ -123,7 +123,7 @@ describe.skipIf(!dbUp())("views advanced steps against Postgres", () => {
           ],
         },
         {
-          alias: "links",
+          node: "links",
           datasetId: links,
           title: "Links",
           fields: [
@@ -135,30 +135,24 @@ describe.skipIf(!dbUp())("views advanced steps against Postgres", () => {
       ];
       const none = { trim: false, caseFold: false, collapseSpace: false, stripDiacritics: false };
       const def: ViewDefinition = {
-        inputs: metas.map((meta) => ({
-          alias: meta.alias,
-          ref: { kind: "dataset" as const, id: meta.datasetId },
-        })),
-        base: "states",
-        steps: [
-          {
+        nodes: {
+          states: { kind: "source", ref: { kind: "dataset", id: states } },
+          deployments: { kind: "source", ref: { kind: "dataset", id: deployments } },
+          deployment_agencies: { kind: "source", ref: { kind: "dataset", id: agencies } },
+          links: { kind: "source", ref: { kind: "dataset", id: links } },
+          agency_counts: {
             kind: "join",
-            right: {
-              input: "deployments",
-              steps: [
-                {
-                  kind: "join",
-                  right: { input: "deploymentAgencies" },
-                  on: [{ left: "id", right: "deploymentId" }],
-                  matching: none,
-                  type: "left",
-                  multiMatch: {
-                    mode: "summarize",
-                    measures: [{ as: "agencyCount", fn: "count" }],
-                  },
-                },
-              ],
-            },
+            left: "deployments",
+            right: "deployment_agencies",
+            on: [{ left: "id", right: "deploymentId" }],
+            matching: none,
+            type: "left",
+            multiMatch: { mode: "summarize", measures: [{ as: "agencyCount", fn: "count" }] },
+          },
+          with_deployments: {
+            kind: "join",
+            left: "states",
+            right: "agency_counts",
             on: [{ left: "id", right: "stateId" }],
             matching: none,
             type: "left",
@@ -176,9 +170,10 @@ describe.skipIf(!dbUp())("views advanced steps against Postgres", () => {
               ],
             },
           },
-          {
+          enriched: {
             kind: "join",
-            right: { input: "links" },
+            left: "with_deployments",
+            right: "links",
             on: [{ left: "name", right: "stateName" }],
             matching: { ...none, trim: true, caseFold: true },
             type: "left",
@@ -192,16 +187,19 @@ describe.skipIf(!dbUp())("views advanced steps against Postgres", () => {
               ],
             },
           },
-        ],
-        output: {
-          fields: [
-            { key: "name" },
-            { key: "deployments", label: "Deployments" },
-            { key: "mostCollaboration", label: "Most collaboration" },
-            { key: "docsLink" },
-            { key: "benefitsLink" },
-          ],
-          emptyFields: "omit",
+        },
+        result: {
+          node: "enriched",
+          output: {
+            fields: [
+              { key: "name" },
+              { key: "deployments", label: "Deployments" },
+              { key: "mostCollaboration", label: "Most collaboration" },
+              { key: "docsLink" },
+              { key: "benefitsLink" },
+            ],
+            emptyFields: "omit",
+          },
         },
       };
       expect(validateViewDefinition(def, metas).ok).toBe(true);
@@ -236,20 +234,22 @@ describe.skipIf(!dbUp())("views advanced steps against Postgres", () => {
           benefitsLink: null,
         },
       ]);
-      // agencyCount is a sub-pipeline field only; it never reaches the view.
+      // agencyCount is an intermediate node field only; it never reaches the view.
       for (const r of parsed) expect(Object.keys(r.d)).not.toContain("agencyCount");
       expect(parsed.map((r) => r.wkt)).toEqual([null, "POINT(1 2)", null]);
 
       const diag = compileDiagnostics(def, metas);
       const diagRows = await s().expectOk(bind(diag.sql, diag.params));
-      const steps = JSON.parse(diagRows[0].diagnostics ?? "null").steps;
-      // Execution order: the sub-pipeline join, the outer deployments join, the links join.
-      expect(steps.map((step: { path?: string }) => step.path ?? null)).toEqual([
-        "steps[0].right.steps[0]",
-        null,
-        null,
+      const nodes = JSON.parse(diagRows[0].diagnostics ?? "null").nodes.filter(
+        (node: { kind: string }) => node.kind !== "source",
+      );
+      // Dependencies first: the counted node, the outer deployments join, the links join.
+      expect(nodes.map((node: { id: string }) => node.id)).toEqual([
+        "agency_counts",
+        "with_deployments",
+        "enriched",
       ]);
-      expect(steps[2]).toMatchObject({
+      expect(nodes[2]).toMatchObject({
         join: {
           leftUnmatched: 1,
           leftUnmatchedSamples: ["Nowhere"],
@@ -263,7 +263,7 @@ describe.skipIf(!dbUp())("views advanced steps against Postgres", () => {
     }
   });
 
-  test("calculate and sql steps, and the error multi-match guard", async () => {
+  test("calculate and sql nodes, and the error multi-match guard", async () => {
     const states = await createDataset(s(), { createdBy: ALICE, properties: ["id", "cost"] });
     const items = await createDataset(s(), { createdBy: ALICE, properties: ["k", "label"] });
     try {
@@ -275,7 +275,7 @@ describe.skipIf(!dbUp())("views advanced steps against Postgres", () => {
 
       const metas: CompileInputMeta[] = [
         {
-          alias: "states",
+          node: "states",
           datasetId: states,
           title: "States",
           fields: [
@@ -284,30 +284,39 @@ describe.skipIf(!dbUp())("views advanced steps against Postgres", () => {
             { name: "cost", type: "number" },
           ],
         },
-        { alias: "items", datasetId: items, title: "Items" },
+        { node: "items", datasetId: items, title: "Items" },
       ];
-      const inputs = metas.map((meta) => ({
-        alias: meta.alias,
-        ref: { kind: "dataset" as const, id: meta.datasetId },
-      }));
       const none = { trim: false, caseFold: false, collapseSpace: false, stripDiacritics: false };
-      const view = (steps: ViewDefinition["steps"]): ViewDefinition => ({
-        inputs,
-        base: "states",
-        steps,
-        output: { fields: [], emptyFields: "keep" },
+      const sources: ViewDefinition["nodes"] = {
+        states: { kind: "source", ref: { kind: "dataset", id: states } },
+        items: { kind: "source", ref: { kind: "dataset", id: items } },
+      };
+      const view = (nodes: ViewDefinition["nodes"], result: string): ViewDefinition => ({
+        nodes: { ...sources, ...nodes },
+        result: { node: result, output: { fields: [], emptyFields: "keep" } },
       });
 
       const calc = compileView(
-        view([
-          { kind: "calculate", field: "band", expr: "if(cost > 5, upper(name), lower(name))" },
-          { kind: "calculate", field: "double", expr: "round(cost * 2.5, 1)" },
+        view(
           {
-            kind: "sql",
-            query:
-              "select p.row_id, p.d || jsonb_build_object('items', (select count(*) from in_items)) as d from prev p",
+            calculated: {
+              kind: "calculate",
+              from: "states",
+              fields: [
+                { field: "band", expr: "if(cost > 5, upper(name), lower(name))" },
+                { field: "double", expr: "round(cost * 2.5, 1)" },
+              ],
+            },
+            counted: {
+              kind: "sql",
+              from: "calculated",
+              reads: ["items"],
+              query:
+                "select p.row_id, p.d || jsonb_build_object('items', (select count(*) from in_items)) as d from prev p",
+            },
           },
-        ]),
+          "counted",
+        ),
         metas,
       );
       const calcRows = await s().expectOk(
@@ -319,16 +328,20 @@ describe.skipIf(!dbUp())("views advanced steps against Postgres", () => {
       ]);
 
       const guarded = compileView(
-        view([
+        view(
           {
-            kind: "join",
-            right: { input: "items" },
-            on: [{ left: "id", right: "k" }],
-            matching: none,
-            type: "left",
-            multiMatch: { mode: "error" },
+            joined: {
+              kind: "join",
+              left: "states",
+              right: "items",
+              on: [{ left: "id", right: "k" }],
+              matching: none,
+              type: "left",
+              multiMatch: { mode: "error" },
+            },
           },
-        ]),
+          "joined",
+        ),
         metas,
       );
       const failure = await s().query(`select * from (${bind(guarded.sql, guarded.params)}) q`);

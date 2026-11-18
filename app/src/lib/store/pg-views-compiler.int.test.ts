@@ -71,19 +71,17 @@ describe.skipIf(!dbUp())("views compiler — join + summarize against Postgres",
       );
 
       const metas: CompileInputMeta[] = [
-        { alias: "states", datasetId: states, title: "States" },
-        { alias: "deployments", datasetId: deployments, title: "Deployments" },
+        { node: "states", datasetId: states, title: "States" },
+        { node: "deployments", datasetId: deployments, title: "Deployments" },
       ];
       const def: ViewDefinition = {
-        inputs: [
-          { alias: "states", ref: { kind: "dataset", id: states } },
-          { alias: "deployments", ref: { kind: "dataset", id: deployments } },
-        ],
-        base: "states",
-        steps: [
-          {
+        nodes: {
+          states: { kind: "source", ref: { kind: "dataset", id: states } },
+          deployments: { kind: "source", ref: { kind: "dataset", id: deployments } },
+          joined: {
             kind: "join",
-            right: { input: "deployments" },
+            left: "states",
+            right: "deployments",
             on: [{ left: "id", right: "stateId" }],
             matching: { trim: true, caseFold: true, collapseSpace: true, stripDiacritics: true },
             type: "left",
@@ -95,8 +93,8 @@ describe.skipIf(!dbUp())("views compiler — join + summarize against Postgres",
               ],
             },
           },
-        ],
-        output: { fields: [], emptyFields: "keep" },
+        },
+        result: { node: "joined", output: { fields: [], emptyFields: "keep" } },
       };
 
       const rows = compileView(def, metas);
@@ -115,9 +113,9 @@ describe.skipIf(!dbUp())("views compiler — join + summarize against Postgres",
       const diag = compileDiagnostics(def, metas);
       const diagRows = await s().expectOk(bind(diag.sql, diag.params));
       const diagnostics = JSON.parse(diagRows[0].diagnostics ?? "null");
-      const [step] = diagnostics.steps;
+      const step = diagnostics.nodes.find((node: { id: string }) => node.id === "joined");
       expect(step).toMatchObject({
-        index: 0,
+        id: "joined",
         kind: "join",
         rowsIn: 3,
         rowsOut: 3,

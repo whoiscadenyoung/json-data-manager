@@ -1,5 +1,5 @@
-import { applyExtract, planExtract, pruneInputs } from "@caden/data-core/views";
-import type { JoinPath, ViewDefinition } from "@caden/data-core/views";
+import { applyExtract, planExtract } from "@caden/data-core/views";
+import type { ViewDefinition } from "@caden/data-core/views";
 
 import { runView, viewDeps } from "@/lib/store/views";
 import { saveView } from "@/lib/views/view-save";
@@ -10,13 +10,8 @@ import { inputRefsOf } from "./view-model";
 /**
  * The write side of Extract to view (#307): create the new view, run it once
  * so its rows (and so its field list) exist, then save the edited view that
- * now reads it. The pure rewriting is `@caden/data-core/views` (`reuse.ts`).
+ * now reads it. The pure rewriting is `@caden/data-core/views` (`reuse.ts`): the node becomes a source reading the new view.
  */
-
-/** Where in the nesting a step lives, from the step list's path text (`steps[1].right.steps[0]` -> `[1, 0]`). */
-export function joinPathOf(path: string): JoinPath {
-  return [...path.matchAll(/\[(\d+)\]/g)].map((match) => Number(match[1]));
-}
 
 /** The new view was created, but the edit did not land; the original view is unchanged. */
 export class ExtractIncompleteError extends Error {
@@ -35,16 +30,15 @@ export interface ExtractOutcome {
   rowCount: number;
 }
 
-export async function extractJoinToView(args: {
+export async function extractNodeToView(args: {
   definition: ViewDefinition;
-  path: JoinPath;
-  /** The title of the join's current right input (it keeps the join's default prefix). */
-  rightTitle: string;
+  /** The node to move into its own view (with everything it reads). */
+  node: string;
   newTitle: string;
   projectId: string;
   viewId: string;
 }): Promise<ExtractOutcome> {
-  const planned = planExtract(args.definition, args.path, args.rightTitle);
+  const planned = planExtract(args.definition, args.node);
   if (!planned.ok) {
     throw new Error(planned.reason);
   }
@@ -60,12 +54,7 @@ export async function extractJoinToView(args: {
       newViewId,
     );
   }
-  const edited = pruneInputs(
-    applyExtract(args.definition, args.path, planned.plan, {
-      id: newViewId,
-      title: args.newTitle,
-    }),
-  );
+  const edited = applyExtract(args.definition, args.node, planned.plan, { id: newViewId });
   try {
     await saveView(viewDeps(), args.viewId, { definition: edited, inputs: inputRefsOf(edited) });
   } catch (error) {
@@ -77,14 +66,14 @@ export async function extractJoinToView(args: {
   return { newViewId, definition: edited, rowCount: outcome.rowCount };
 }
 
-interface ViewNode {
+interface ViewSummary {
   id: string;
   title: string;
   inputs: { inputDatasetId: string }[];
 }
 
 function readsView(
-  views: readonly ViewNode[],
+  views: readonly ViewSummary[],
   from: string,
   target: string,
   seen: Set<string>,
@@ -114,7 +103,7 @@ export function explainCycle(
     viewId: string;
     /** Dataset ids of the draft's inputs. */
     inputIds: readonly string[];
-    views: readonly ViewNode[];
+    views: readonly ViewSummary[];
   },
 ): string | undefined {
   const message = error instanceof Error ? error.message : "";

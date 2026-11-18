@@ -220,15 +220,23 @@ describe.skipIf(!dbUp())("scratch query (#306)", () => {
     const scratch = await scratchAs(deps(), who(ALICE), project, JOIN_SQL);
     const tables: ScratchTable[] = scratch.tables;
     // What the UI's "Save as view" builds (definitionFromScratch, unit-tested in
-    // features/views): one sql step, the query unchanged, inputs aliased by table.
+    // features/views): one sql node, the query unchanged, a source per table.
     const definition: ViewDefinition = {
-      inputs: tables.map((table) => ({
-        alias: table.alias,
-        ref: { kind: "dataset", id: table.datasetId },
-      })),
-      base: "states",
-      steps: [{ kind: "sql", query: JOIN_SQL }],
-      output: { fields: [], emptyFields: "keep" },
+      nodes: {
+        ...Object.fromEntries(
+          tables.map((table) => [
+            table.alias,
+            { kind: "source" as const, ref: { kind: "dataset" as const, id: table.datasetId } },
+          ]),
+        ),
+        query: {
+          kind: "sql",
+          from: "states",
+          reads: tables.map((table) => table.alias).filter((alias) => alias !== "states"),
+          query: JOIN_SQL,
+        },
+      },
+      result: { node: "query", output: { fields: [], emptyFields: "keep" } },
     };
 
     const rpc: ViewsRpc = {

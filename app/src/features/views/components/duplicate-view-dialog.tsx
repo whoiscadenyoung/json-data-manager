@@ -1,10 +1,11 @@
 import {
   copyTitle,
-  remapInputs,
   remapReport,
+  remapSources,
+  sourceIds,
   validateViewDefinition,
 } from "@caden/data-core/views";
-import type { InputRemap, ViewDefinition } from "@caden/data-core/views";
+import type { SourceRemap, ViewDefinition } from "@caden/data-core/views";
 import { Button } from "@caden/ui/components/button";
 import {
   Dialog,
@@ -60,7 +61,7 @@ export function DuplicateViewDialog({
         <DialogHeader>
           <DialogTitle>Duplicate view</DialogTitle>
           <DialogDescription>
-            Copies the steps and the output (labels included) into a new view in this project. The
+            Copies the nodes and the output (labels included) into a new view in this project. The
             copy starts with manual refresh and no export profiles.
           </DialogDescription>
         </DialogHeader>
@@ -76,6 +77,14 @@ export function DuplicateViewDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+/** The source nodes of a definition with the dataset each reads. */
+function sourcesOf(definition: ViewDefinition): { id: string; datasetId: string }[] {
+  return sourceIds(definition).flatMap((id) => {
+    const node = definition.nodes[id];
+    return node.kind === "source" ? [{ id, datasetId: node.ref.id }] : [];
+  });
 }
 
 function infosOf(
@@ -121,27 +130,21 @@ function DuplicateForm({
       placeholderData: keepPreviousData,
     }),
     oldInfos = infosOf(originalMeta.data);
-  const remaps: InputRemap[] =
-      original === undefined
-        ? []
-        : original.inputs.map((input) => {
-            const old = oldInfos.find((info) => info.alias === input.alias);
-            return {
-              alias: input.alias,
-              datasetId: picks[input.alias] ?? input.ref.id,
-              oldTitle: old === undefined ? "" : old.title,
-            };
-          }),
-    remapped = original === undefined ? undefined : remapInputs(original, remaps),
+  const sources = original === undefined ? [] : sourcesOf(original),
+    remaps: SourceRemap[] = sources.map((source) => {
+      const old = oldInfos.find((info) => info.alias === source.id);
+      return {
+        node: source.id,
+        datasetId: picks[source.id] ?? source.datasetId,
+        oldTitle: old === undefined ? "" : old.title,
+      };
+    }),
+    remapped = original === undefined ? undefined : remapSources(original, remaps),
     changedAliases = remaps
-      .filter(
-        (remap) =>
-          original !== undefined &&
-          original.inputs.some(
-            (input) => input.alias === remap.alias && input.ref.id !== remap.datasetId,
-          ),
+      .filter((remap) =>
+        sources.some((source) => source.id === remap.node && source.datasetId !== remap.datasetId),
       )
-      .map((remap) => remap.alias),
+      .map((remap) => remap.node),
     newMeta = useQuery({
       ...inputMetaQueryOptions(remapped === undefined ? [] : inputRefsOf(remapped)),
       placeholderData: keepPreviousData,
@@ -150,7 +153,7 @@ function DuplicateForm({
     metaReady =
       remapped !== undefined &&
       newMeta.data !== undefined &&
-      newMeta.data.length === remapped.inputs.length &&
+      newMeta.data.length === sourceIds(remapped).length &&
       originalMeta.data !== undefined,
     report =
       remapped === undefined || !metaReady
@@ -162,7 +165,7 @@ function DuplicateForm({
   }
   if (original === undefined) {
     return (
-      <p className="text-sm text-destructive">The saved steps of this view could not be read.</p>
+      <p className="text-sm text-destructive">The saved nodes of this view could not be read.</p>
     );
   }
 
@@ -170,10 +173,10 @@ function DuplicateForm({
     newTitle.trim() === ""
       ? "Give the copy a title."
       : report === undefined
-        ? "Checking the inputs…"
+        ? "Checking the sources…"
         : report.ok
           ? undefined
-          : "Fix the problems above, or pick different inputs.";
+          : "Fix the problems above, or pick different sources.";
 
   const create = async (): Promise<void> => {
     if (report === undefined || !report.ok) {
@@ -217,31 +220,29 @@ function DuplicateForm({
         />
       </div>
       <fieldset className="flex flex-col gap-3 border-0 p-0">
-        <legend className="mb-1 text-sm font-medium">Inputs</legend>
+        <legend className="mb-1 text-sm font-medium">Sources</legend>
         <p className="text-xs text-muted-foreground">
-          Keep each input, or read another dataset or view instead. The steps are checked against
-          the new input&apos;s fields.
+          Keep each source, or read another dataset or view instead. The nodes are checked against
+          the new source&apos;s fields.
         </p>
-        {original.inputs.map((input) => {
-          const old = oldInfos.find((info) => info.alias === input.alias);
-          const label = old === undefined ? input.alias : old.title;
-          const value = picks[input.alias] ?? input.ref.id;
+        {sources.map((source) => {
+          const old = oldInfos.find((info) => info.alias === source.id);
+          const label = old === undefined ? source.id : old.title;
+          const value = picks[source.id] ?? source.datasetId;
           return (
-            <div className="flex flex-col gap-1" key={input.alias}>
-              <Label>
-                {input.alias === original.base ? "Starts from" : "Reads"} {label}
-              </Label>
+            <div className="flex flex-col gap-1" key={source.id}>
+              <Label>Reads {label}</Label>
               <LabeledSelect
                 ariaLabel={`Input ${label}`}
                 className="w-full"
                 onChange={(next) => {
-                  setPicks((current) => ({ ...current, [input.alias]: next }));
+                  setPicks((current) => ({ ...current, [source.id]: next }));
                 }}
-                options={withCurrent(inputPickerOptions(datasets), input.ref.id, label)}
+                options={withCurrent(inputPickerOptions(datasets), source.datasetId, label)}
                 placeholder="Pick a dataset or view"
                 value={value}
               />
-              {changedAliases.includes(input.alias) && (
+              {changedAliases.includes(source.id) && (
                 <p className="text-xs text-muted-foreground">Changed from {label}.</p>
               )}
             </div>
@@ -256,9 +257,9 @@ function DuplicateForm({
         >
           <p className="font-medium text-destructive">The copy would not work with these inputs:</p>
           <ul className="mt-1 flex flex-col gap-1 text-xs text-destructive">
-            {report.byStep.map((group) => (
-              <li key={group.step}>
-                <span className="font-medium">{group.step}:</span> {group.messages.join(" ")}
+            {report.byNode.map((group) => (
+              <li key={group.node}>
+                <span className="font-medium">{group.node}:</span> {group.messages.join(" ")}
               </li>
             ))}
           </ul>
@@ -266,7 +267,7 @@ function DuplicateForm({
       )}
       {report !== undefined && report.ok && changedAliases.length > 0 && (
         <p className="text-xs text-muted-foreground" data-testid="remap-ok">
-          Every step checks out against the new inputs.
+          Every node checks out against the new sources.
         </p>
       )}
       {missing !== undefined && <p className="text-xs text-muted-foreground">{missing}</p>}

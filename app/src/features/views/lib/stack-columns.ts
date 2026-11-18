@@ -1,11 +1,11 @@
-import type { ColumnEdit, Step } from "@caden/data-core/views";
+import type { ColumnEdit, ViewNode } from "@caden/data-core/views";
 
 import { canon } from "../../datasets/lib/link-suggestions";
 
-type AppendStep = Extract<Step, { kind: "append" }>;
+type StackNode = Extract<ViewNode, { kind: "stack" }>;
 
-/** One stacked member: the incoming rows (index 0) or a stacked dataset. */
-export interface AppendMember {
+/** One stacked input: a node, with its column edits. */
+export interface StackMember {
   label: string;
   /** Declared fields; undefined when unknown. */
   fields: string[] | undefined;
@@ -37,22 +37,17 @@ export interface MergeSuggestion {
   from: string;
 }
 
-/** Members of a stack, incoming rows first. */
-export function appendMembers(
-  step: AppendStep,
-  baseLabel: string,
-  baseFields: string[] | undefined,
-  fieldsOf: (alias: string) => string[] | undefined,
-  labelOf: (alias: string) => string,
-): AppendMember[] {
-  return [
-    { label: baseLabel, fields: baseFields, edits: step.baseColumns ?? [] },
-    ...step.sources.map((source) => ({
-      label: labelOf(source.input),
-      fields: source.input === "" ? undefined : fieldsOf(source.input),
-      edits: source.columns ?? [],
-    })),
-  ];
+/** Members of a stack, one per input. */
+export function stackMembers(
+  node: StackNode,
+  fieldsOf: (id: string) => string[] | undefined,
+  labelOf: (id: string) => string,
+): StackMember[] {
+  return node.inputs.map((input) => ({
+    label: labelOf(input.node),
+    fields: input.node === "" ? undefined : fieldsOf(input.node),
+    edits: input.columns ?? [],
+  }));
 }
 
 function cellFor(member: number, from: string, edits: ColumnEdit[]): ColumnCell & { out: string } {
@@ -75,7 +70,7 @@ function rowStatus(cells: ColumnCell[], total: number): ColumnRow["status"] {
 }
 
 /** The output column table: one row per output column, one cell per member that feeds it. */
-export function deriveColumns(members: AppendMember[]): ColumnRow[] {
+export function deriveColumns(members: StackMember[]): ColumnRow[] {
   const rows = new Map<string, ColumnCell[]>();
   for (const [index, member] of members.entries()) {
     for (const field of member.fields ?? []) {
@@ -99,7 +94,7 @@ export function deriveColumns(members: AppendMember[]): ColumnRow[] {
 }
 
 /** Output field names after the edits, in first-seen order. */
-export function outputFields(members: AppendMember[]): string[] {
+export function outputFields(members: StackMember[]): string[] {
   return deriveColumns(members)
     .filter((row) => row.status !== "excluded")
     .map((row) => row.name);
@@ -110,20 +105,16 @@ function withEdit(edits: ColumnEdit[], from: string, edit: ColumnEdit | undefine
   return edit === undefined ? rest : [...rest, edit];
 }
 
-/** Replace one member's edits (index 0 = incoming rows). Empty lists are dropped. */
-export function setMemberEdits(step: AppendStep, member: number, edits: ColumnEdit[]): AppendStep {
+/** Replace one member's edits. Empty lists are dropped. */
+export function setMemberEdits(node: StackNode, member: number, edits: ColumnEdit[]): StackNode {
   const value = edits.length === 0 ? undefined : edits;
-  if (member === 0) {
-    const { baseColumns: _old, ...rest } = step;
-    return value === undefined ? rest : { ...rest, baseColumns: value };
-  }
   return {
-    ...step,
-    sources: step.sources.map((source, i) => {
-      if (i !== member - 1) {
-        return source;
+    ...node,
+    inputs: node.inputs.map((input, i) => {
+      if (i !== member) {
+        return input;
       }
-      const { columns: _old, ...rest } = source;
+      const { columns: _old, ...rest } = input;
       return value === undefined ? rest : { ...rest, columns: value };
     }),
   };
@@ -131,11 +122,11 @@ export function setMemberEdits(step: AppendStep, member: number, edits: ColumnEd
 
 /** Toggle whether a member drops one of its fields. */
 export function toggleExclude(
-  step: AppendStep,
+  step: StackNode,
   member: number,
   edits: ColumnEdit[],
   from: string,
-): AppendStep {
+): StackNode {
   const current = edits.find((edit) => edit.from === from);
   const next =
     current !== undefined && "exclude" in current
@@ -146,11 +137,11 @@ export function toggleExclude(
 
 /** Rename an output column in every member that feeds it. */
 export function renameColumn(
-  step: AppendStep,
-  members: AppendMember[],
+  step: StackNode,
+  members: StackMember[],
   row: ColumnRow,
   to: string,
-): AppendStep {
+): StackNode {
   let next = step;
   for (const cell of row.cells) {
     if (cell.state === "excluded") {
@@ -169,12 +160,12 @@ export function renameColumn(
  * output column can only come from one place per member.
  */
 export function mapCell(
-  step: AppendStep,
-  member: AppendMember,
+  step: StackNode,
+  member: StackMember,
   index: number,
   column: string,
   source: string | undefined,
-): AppendStep {
+): StackNode {
   let edits = member.edits.filter((edit) => !("as" in edit && edit.as === column));
   const natural = (member.fields ?? []).includes(column);
   if (natural && source !== column) {

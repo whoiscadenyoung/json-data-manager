@@ -9,16 +9,14 @@ afterEach(cleanup);
 
 const FIELDS = ["name", "deployments", "docsLink"];
 
-function definition(output: ViewDefinition["output"]): ViewDefinition {
+function definition(output: ViewDefinition["result"]["output"]): ViewDefinition {
   return {
-    inputs: [{ alias: "states", ref: { kind: "dataset", id: "d1" } }],
-    base: "states",
-    steps: [],
-    output,
+    nodes: { states: { kind: "source", ref: { kind: "dataset", id: "d1" } } },
+    result: { node: "states", output },
   };
 }
 
-function mount(output: ViewDefinition["output"]) {
+function mount(output: ViewDefinition["result"]["output"]) {
   const onChange = vi.fn<(next: ViewDefinition) => void>();
   render(
     <OutputCard
@@ -32,10 +30,10 @@ function mount(output: ViewDefinition["output"]) {
   return onChange;
 }
 
-function lastOutput(onChange: ReturnType<typeof mount>): ViewDefinition["output"] {
+function lastOutput(onChange: ReturnType<typeof mount>): ViewDefinition["result"]["output"] {
   const call = onChange.mock.calls.at(-1);
   if (call === undefined) throw new Error("onChange was not called");
-  return call[0].output;
+  return call[0].result.output;
 }
 
 describe("OutputCard", () => {

@@ -14,35 +14,31 @@ vi.mock("@/lib/store/views", () => ({ runView: mocks.runView, viewDeps: () => ({
 vi.mock("@/lib/views/view-save", () => ({ saveView: mocks.saveView }));
 vi.mock("./create-view", () => ({ createProjectView: mocks.createProjectView }));
 
-import {
-  explainCycle,
-  ExtractIncompleteError,
-  extractJoinToView,
-  joinPathOf,
-} from "./reuse-actions";
+import { explainCycle, ExtractIncompleteError, extractNodeToView } from "./reuse-actions";
 
 const NO_MATCHING = { trim: false, caseFold: false, collapseSpace: false, stripDiacritics: false };
 
 const definition: ViewDefinition = {
-  inputs: [
-    { alias: "states", ref: { kind: "dataset", id: "d-states" } },
-    { alias: "deployments", ref: { kind: "dataset", id: "d-deployments" } },
-  ],
-  base: "states",
-  steps: [
-    {
+  nodes: {
+    states: { kind: "source", ref: { kind: "dataset", id: "d-states" } },
+    deployments: { kind: "source", ref: { kind: "dataset", id: "d-deployments" } },
+    named: {
+      kind: "filter",
+      from: "deployments",
+      where: { field: "name", op: "notNull" },
+      label: "Deployments",
+    },
+    joined: {
       kind: "join",
-      right: {
-        input: "deployments",
-        steps: [{ kind: "filter", where: { field: "name", op: "notNull" } }],
-      },
+      left: "states",
+      right: "named",
       on: [{ left: "id", right: "stateId" }],
       matching: NO_MATCHING,
       type: "left",
       multiMatch: { mode: "summarize", measures: [{ as: "n", fn: "count" }] },
     },
-  ],
-  output: { fields: [], emptyFields: "keep" },
+  },
+  result: { node: "joined", output: { fields: [], emptyFields: "keep" } },
 };
 
 beforeEach(() => {
@@ -62,41 +58,38 @@ beforeEach(() => {
   });
 });
 
-describe("joinPathOf", () => {
-  it("reads the nesting from the step list's path text", () => {
-    expect(joinPathOf("steps[2]")).toEqual([2]);
-    expect(joinPathOf("steps[0].right.steps[1]")).toEqual([0, 1]);
-  });
-});
-
-describe("extractJoinToView", () => {
+describe("extractNodeToView", () => {
   const args = {
     definition,
-    newTitle: "Deployments (extracted)",
-    path: [0],
+    newTitle: "Named deployments",
+    node: "named",
     projectId: "p1",
-    rightTitle: "Deployments",
     viewId: "v1",
   };
 
   it("creates the new view, runs it once, then saves the edited view", async () => {
-    const outcome = await extractJoinToView(args);
+    const outcome = await extractNodeToView(args);
     expect(mocks.calls).toEqual(["create", "run", "save"]);
     expect(outcome.newViewId).toBe("v-new");
     const created = mocks.createProjectView.mock.calls[0];
-    expect(created === undefined ? undefined : created[0].definition.base).toBe("deployments");
+    expect(created === undefined ? undefined : created[0].definition.result.node).toBe("named");
     const saved = mocks.saveView.mock.calls[0];
     const edited = saved === undefined ? undefined : saved[2].definition;
-    expect(JSON.stringify(edited)).toContain("deployments_extracted");
-    expect(edited === undefined ? undefined : edited.inputs.map((input) => input.ref.id)).toEqual([
-      "d-states",
-      "v-new",
+    // The node is now a source reading the new view; deployments is pruned.
+    expect(edited === undefined ? undefined : edited.nodes.named).toMatchObject({
+      kind: "source",
+      ref: { id: "v-new" },
+    });
+    expect(edited === undefined ? undefined : Object.keys(edited.nodes).toSorted()).toEqual([
+      "joined",
+      "named",
+      "states",
     ]);
   });
 
   it("leaves the edited view alone when the first run fails", async () => {
     mocks.runView.mockResolvedValueOnce({ status: "error", error: "boom" });
-    await expect(extractJoinToView(args)).rejects.toBeInstanceOf(ExtractIncompleteError);
+    await expect(extractNodeToView(args)).rejects.toBeInstanceOf(ExtractIncompleteError);
     expect(mocks.saveView).not.toHaveBeenCalled();
   });
 });

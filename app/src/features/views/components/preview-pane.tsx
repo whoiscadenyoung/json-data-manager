@@ -19,7 +19,7 @@ import {
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
 
-import type { JoinDiagnostics, StepDiagnostics } from "../lib/diagnostics";
+import type { JoinDiagnostics, NodeDiagnostics } from "../lib/diagnostics";
 import { LabeledSelect } from "./labeled-select";
 
 export interface PreviewRow {
@@ -242,7 +242,7 @@ function JoinStats({
   );
 }
 
-/** The diagnostics card of the selected step: rows in and out, fields changed, and join match statistics. */
+/** The diagnostics card of the selected node: rows in and out, fields changed, and join match statistics. */
 export function DiagnosticsCard({
   canMap,
   diagnostics,
@@ -250,7 +250,7 @@ export function DiagnosticsCard({
   onAddToKeyMap,
 }: {
   canMap: boolean;
-  diagnostics: StepDiagnostics;
+  diagnostics: NodeDiagnostics;
   mapDisabledReason: string | undefined;
   onAddToKeyMap: (from: string, to: string) => void;
 }) {
@@ -283,7 +283,7 @@ export function DiagnosticsCard({
 export function PreviewTable({ order, rows }: { order?: readonly string[]; rows: PreviewRow[] }) {
   const columns = previewColumns(rows, order);
   if (rows.length === 0) {
-    return <p className="text-sm text-muted-foreground">This step produces no rows.</p>;
+    return <p className="text-sm text-muted-foreground">This node produces no rows.</p>;
   }
   return (
     <div className="max-h-96 overflow-auto rounded-md border">
@@ -334,7 +334,7 @@ export function PreviewPane({
   /** Why no preview can run yet (validation problems), shown instead of a blank pane. */
   blockedReason: string | undefined;
   canMap: boolean;
-  diagnostics: StepDiagnostics | undefined;
+  diagnostics: NodeDiagnostics | undefined;
   error: string | undefined;
   isLoading: boolean;
   mapDisabledReason: string | undefined;
@@ -353,7 +353,7 @@ export function PreviewPane({
       </div>
       {blockedReason !== undefined ? (
         <p className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
-          Preview waits on the steps above: {blockedReason}
+          Preview waits on the nodes above: {blockedReason}
         </p>
       ) : error !== undefined ? (
         <p

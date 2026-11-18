@@ -155,7 +155,7 @@ export async function metaOf(tx: Tx, inputs: ViewInputRef[]): Promise<CompileInp
       throw new Error(`input dataset ${entry.datasetId} is not visible to the caller`);
     }
     const meta: CompileInputMeta = {
-      alias: entry.alias,
+      node: entry.alias,
       datasetId: entry.datasetId,
       title: entry.title,
     };
@@ -264,11 +264,11 @@ export async function loadSaved(tx: Tx, viewId: string) {
 // ---------------------------------------------------------------------------
 
 export type PreviewTarget =
-  | { viewId: string; uptoStep?: number }
+  | { viewId: string; uptoNode?: string }
   /** A draft (unsaved) definition: JSON, validated here, never SQL. */
-  | { definition: unknown; inputs: ViewInputRef[]; uptoStep?: number };
+  | { definition: unknown; inputs: ViewInputRef[]; uptoNode?: string };
 
-/** Compiled up to `uptoStep` with LIMIT 50, plus the full-input diagnostics. */
+/** Compiled up to node `uptoNode` with LIMIT 50, plus the full-input diagnostics. */
 export async function previewAs(
   deps: RunnerDeps,
   who: VerifiedClaims,
@@ -287,7 +287,7 @@ export async function previewAs(
     }
     const meta = await metaOf(tx, refs);
     const def = validated(deps, definition, meta);
-    const step = target.uptoStep === undefined ? {} : { uptoStep: target.uptoStep };
+    const step = target.uptoNode === undefined ? {} : { uptoNode: target.uptoNode };
     const rows = await execute(
       tx,
       deps.compiler.compileView(def, meta, { ...step, limit: PREVIEW_ROW_LIMIT }),

@@ -2,6 +2,7 @@ import type { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import { compileDiagnostics, compileView } from "./compile.js";
+import { nodeFields } from "./node-fields.js";
 import { addRows, createDb, must, runQuery } from "./test-fixtures-pglite.js";
 import { noNormalization } from "./test-fixtures.js";
 import type { CompileInputMeta, ViewDefinition, ViewNode } from "./types.js";
@@ -342,5 +343,35 @@ describe("replace and number at run time", () => {
     const rows = await runQuery<Row>(db, compileView(def, metas));
     const ks = must(rows.find((r) => r.d.state_id === "KS"));
     expect(ks.d).toMatchObject({ amount: 1200, bad: null });
+  });
+});
+
+describe("sql nodes and node fields", () => {
+  test("a sql node may read `in_<from>` as well as prev and its reads", async () => {
+    const def: ViewDefinition = {
+      nodes: {
+        ...sources,
+        q: {
+          kind: "sql",
+          from: "d1",
+          reads: ["d4"],
+          query:
+            "select (select count(*) from in_d1) as a, (select count(*) from in_d4) as b, (select count(*) from prev) as c limit 1",
+        },
+      },
+      result: { node: "q", output: { fields: [], emptyFields: "keep" } },
+    };
+    expect(validateViewDefinition(def, metas).ok).toBe(true);
+    const rows = await runQuery<Row>(db, compileView(def, metas));
+    expect(rows[0].d).toMatchObject({ a: 2, b: 2, c: 2 });
+    const undeclared = { ...def, nodes: { ...def.nodes, q: { ...def.nodes.q, reads: [] } } };
+    expect(validateViewDefinition(undeclared, metas).ok).toBe(false);
+  });
+
+  test("nodeFields reports each node's fields, unknown where the shape is", () => {
+    const fields = nodeFields(owner, metas);
+    expect([...must(fields.get("d2c")).keys()]).toEqual(["state_id", "Amount", "Round"]);
+    expect(must(fields.get("d1c")).get("Round")).toBe("number");
+    expect(nodeFields({ nodes: { s: sources.d1 } }, []).get("s")).toBeUndefined();
   });
 });

@@ -4,10 +4,10 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { LINEAGE_FIXTURE, STATES_ENRICHED } from "../lib/fixtures";
-import type { GraphNode, StepSelection } from "../lib/graph-types";
+import type { GraphNode } from "../lib/graph-types";
 import { buildLineageGraph } from "../lib/lineage-graph";
 import { LineageGraphView } from "./lineage-graph-view";
-import { ViewStepGraph } from "./view-step-graph";
+import { ViewNodeGraph } from "./view-node-graph";
 
 beforeAll(() => {
   // React Flow measures nodes with these; jsdom has neither.
@@ -65,26 +65,26 @@ describe("LineageGraphView", () => {
   });
 });
 
-describe("ViewStepGraph", () => {
-  it("renders inputs, steps and output, and reports step clicks", async () => {
-    const onSelectStep = vi.fn<(selection: StepSelection) => void>();
+describe("ViewNodeGraph", () => {
+  it("renders sources, nodes and output, and reports node clicks", async () => {
+    const onSelectNode = vi.fn<(id: string) => void>();
     render(
       withQueries(
-        <ViewStepGraph
+        <ViewNodeGraph
           definition={STATES_ENRICHED}
-          onSelectStep={onSelectStep}
-          selectedStep={{ index: 1 }}
+          onSelectNode={onSelectNode}
+          selectedNode="enriched"
         />,
       ),
     );
 
     expect(await screen.findByText("Output")).toBeTruthy();
     expect(screen.getByText("Left join links")).toBeTruthy();
-    expect(screen.getByText("deploymentAgencies")).toBeTruthy();
+    expect(screen.getByText("Agencies per deployment")).toBeTruthy();
 
-    fireEvent.click(screen.getByText("Left join deployments"));
-    expect(onSelectStep).toHaveBeenCalledWith({ index: 0 });
-    fireEvent.click(screen.getByText("Left join deploymentAgencies"));
-    expect(onSelectStep).toHaveBeenCalledWith({ index: 0, sub: 0 });
+    fireEvent.click(screen.getByText("Left join links"));
+    expect(onSelectNode).toHaveBeenCalledWith("enriched");
+    fireEvent.click(screen.getByText("Agencies per deployment"));
+    expect(onSelectNode).toHaveBeenCalledWith("agency_counts");
   });
 });

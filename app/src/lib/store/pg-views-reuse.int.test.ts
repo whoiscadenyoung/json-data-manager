@@ -1,6 +1,6 @@
 // Integration test — Views reuse (#307) against the local Supabase Postgres:
 // Duplicate + remap of a view onto a different states-like dataset runs (the
-// definition is rewritten by `remapInputs`, checked by the real validator
+// definition is rewritten by `remapSources`, checked by the real validator
 // against the new dataset's declared fields, compiled and EXECUTED), and an
 // Extract to view rewrite returns the same rows once the extracted view's
 // rows are saved. Same wire-client pattern as pg-views-advanced.int.test.ts.
@@ -10,8 +10,8 @@ import {
   applyExtract,
   compileView,
   planExtract,
-  remapInputs,
   remapReport,
+  remapSources,
 } from "@caden/data-core/views";
 import type { CompileInputMeta, ViewDefinition } from "@caden/data-core/views";
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -83,35 +83,36 @@ describe.skipIf(!dbUp())("views reuse against Postgres", () => {
     await addEntry(s(), deployments, { id: "d3", stateId: "2" });
 
     const original: ViewDefinition = {
-      inputs: [
-        { alias: "states", ref: { kind: "dataset", id: states } },
-        { alias: "deployments", ref: { kind: "dataset", id: deployments } },
-      ],
-      base: "states",
-      steps: [
-        {
+      nodes: {
+        states: { kind: "source", ref: { kind: "dataset", id: states } },
+        deployments: { kind: "source", ref: { kind: "dataset", id: deployments } },
+        joined: {
           kind: "join",
-          right: { input: "deployments" },
+          left: "states",
+          right: "deployments",
           on: [{ left: "id", right: "stateId" }],
           matching: none,
           type: "left",
           multiMatch: { mode: "summarize", measures: [{ as: "n", fn: "count", emptyValue: 0 }] },
         },
-      ],
-      output: { fields: [{ key: "name", label: "Name" }, { key: "n" }], emptyFields: "keep" },
+      },
+      result: {
+        node: "joined",
+        output: { fields: [{ key: "name", label: "Name" }, { key: "n" }], emptyFields: "keep" },
+      },
     };
-    const copy = remapInputs(original, [
-      { alias: "states", datasetId: provinces, oldTitle: "States" },
+    const copy = remapSources(original, [
+      { node: "states", datasetId: provinces, oldTitle: "States" },
     ]);
     const metas: CompileInputMeta[] = [
       {
-        alias: "states",
+        node: "states",
         datasetId: provinces,
         title: "Provinces",
         fields: [{ name: "id" }, { name: "name" }, { name: "region" }],
       },
       {
-        alias: "deployments",
+        node: "deployments",
         datasetId: deployments,
         title: "Deployments",
         fields: [{ name: "id" }, { name: "stateId" }],
@@ -124,7 +125,7 @@ describe.skipIf(!dbUp())("views reuse against Postgres", () => {
       { name: "Ontario", n: 2 },
     ]);
     // The labels were copied with the definition.
-    expect(copy.output.fields[0]).toEqual({ key: "name", label: "Name" });
+    expect(copy.result.output.fields[0]).toEqual({ key: "name", label: "Name" });
   });
 
   test("extract to view: the rewritten definition returns the same rows", async () => {
@@ -141,35 +142,36 @@ describe.skipIf(!dbUp())("views reuse against Postgres", () => {
     await addEntry(s(), deployments, { id: "d3", stateId: "2", cost: 70 });
 
     const def: ViewDefinition = {
-      inputs: [
-        { alias: "states", ref: { kind: "dataset", id: states } },
-        { alias: "deployments", ref: { kind: "dataset", id: deployments } },
-      ],
-      base: "states",
-      steps: [
-        {
+      nodes: {
+        states: { kind: "source", ref: { kind: "dataset", id: states } },
+        deployments: { kind: "source", ref: { kind: "dataset", id: deployments } },
+        big_deployments: {
+          kind: "filter",
+          label: "Big deployments",
+          from: "deployments",
+          where: { field: "cost", op: "gt", value: 10 },
+        },
+        joined: {
           kind: "join",
-          right: {
-            input: "deployments",
-            steps: [{ kind: "filter", where: { field: "cost", op: "gt", value: 10 } }],
-          },
+          left: "states",
+          right: "big_deployments",
           on: [{ left: "id", right: "stateId" }],
           matching: none,
           type: "left",
           multiMatch: { mode: "summarize", measures: [{ as: "n", fn: "count", emptyValue: 0 }] },
         },
-      ],
-      output: { fields: [], emptyFields: "keep" },
+      },
+      result: { node: "joined", output: { fields: [], emptyFields: "keep" } },
     };
     const metas: CompileInputMeta[] = [
       {
-        alias: "states",
+        node: "states",
         datasetId: states,
         title: "States",
         fields: [{ name: "id" }, { name: "name" }],
       },
       {
-        alias: "deployments",
+        node: "deployments",
         datasetId: deployments,
         title: "Deployments",
         fields: [{ name: "id" }, { name: "stateId" }, { name: "cost" }],
@@ -177,7 +179,7 @@ describe.skipIf(!dbUp())("views reuse against Postgres", () => {
     ];
     const inline = await names(metas, def);
 
-    const planned = planExtract(def, [0], "Deployments");
+    const planned = planExtract(def, "big_deployments");
     if (!planned.ok) throw new Error(planned.reason);
     // "Run" the extracted view: save its rows as the new dataset's entries.
     const compiled = compileView(planned.plan.view, metas);
@@ -187,14 +189,11 @@ describe.skipIf(!dbUp())("views reuse against Postgres", () => {
     for (const row of rows) {
       await addEntry(s(), extracted, JSON.parse(row.d ?? "{}") as Record<string, unknown>);
     }
-    const edited = applyExtract(def, [0], planned.plan, {
-      id: extracted,
-      title: "Big deployments",
-    });
+    const edited = applyExtract(def, "big_deployments", planned.plan, { id: extracted });
     const editedMetas: CompileInputMeta[] = [
-      ...metas.filter((meta) => meta.alias === "states"),
+      ...metas.filter((meta) => meta.node === "states"),
       {
-        alias: "big_deployments",
+        node: "big_deployments",
         datasetId: extracted,
         title: "Big deployments",
         fields: [{ name: "id" }, { name: "stateId" }, { name: "cost" }],

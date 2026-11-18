@@ -1,4 +1,4 @@
-import type { Step } from "@caden/data-core/views";
+import type { ViewNode } from "@caden/data-core/views";
 import { Button } from "@caden/ui/components/button";
 import { Input } from "@caden/ui/components/input";
 import { Label } from "@caden/ui/components/label";
@@ -11,13 +11,13 @@ import {
   renameColumn,
   suggestMerges,
   toggleExclude,
-  type AppendMember,
+  type StackMember,
   type ColumnCell,
   type ColumnRow,
-} from "../lib/append-columns";
+} from "../lib/stack-columns";
 import { LabeledSelect } from "./labeled-select";
 
-type AppendStep = Extract<Step, { kind: "append" }>;
+type StackNode = Extract<ViewNode, { kind: "stack" }>;
 
 const NONE = "__none__";
 
@@ -69,9 +69,9 @@ function Cell({
   cell: ColumnCell | undefined;
   column: string;
   index: number;
-  member: AppendMember;
-  onChange: (step: AppendStep) => void;
-  step: AppendStep;
+  member: StackMember;
+  onChange: (step: StackNode) => void;
+  step: StackNode;
 }) {
   if (cell !== undefined && cell.state === "excluded") {
     return (
@@ -130,10 +130,10 @@ function ColumnLine({
   row,
   step,
 }: {
-  members: AppendMember[];
-  onChange: (step: AppendStep) => void;
+  members: StackMember[];
+  onChange: (step: StackNode) => void;
   row: ColumnRow;
-  step: AppendStep;
+  step: StackNode;
 }) {
   return (
     <>
@@ -164,22 +164,22 @@ function ColumnLine({
 }
 
 /**
- * Columns of a Stack: which fields line up across the stacked datasets, with
+ * Columns of a Stack: which fields line up across the stacked nodes, with
  * rename / re-map / exclude. Untouched fields pass through unchanged.
  */
-export function AppendColumns({
+export function StackColumns({
   members,
   onChange,
-  step,
+  node: step,
 }: {
-  members: AppendMember[];
-  onChange: (step: AppendStep) => void;
-  step: AppendStep;
+  members: StackMember[];
+  onChange: (node: StackNode) => void;
+  node: StackNode;
 }) {
   if (members.some((member) => member.fields === undefined)) {
     return (
       <p className="text-xs text-muted-foreground">
-        Pick every dataset to see how their columns line up.
+        Pick every node to see how their columns line up.
       </p>
     );
   }

@@ -12,7 +12,7 @@ import { Loader2 } from "lucide-react";
 import { useState } from "react";
 
 /**
- * Extract to view (#307): a join's inline sub-pipeline becomes its own view,
+ * Extract to view (#307): a node and everything it reads becomes its own view,
  * and the join reads that view instead. The dialog names the new view and
  * says what will happen (it also saves this view's other unsaved edits and
  * runs the new view once).
@@ -24,7 +24,7 @@ export function ExtractViewDialog({
   onConfirm,
   onOpenChange,
   open,
-  rightTitle,
+  nodeTitle,
 }: {
   busy: boolean;
   defaultTitle: string;
@@ -32,7 +32,7 @@ export function ExtractViewDialog({
   onConfirm: (title: string) => void;
   onOpenChange: (open: boolean) => void;
   open: boolean;
-  rightTitle: string;
+  nodeTitle: string;
 }) {
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
@@ -40,8 +40,8 @@ export function ExtractViewDialog({
         <DialogHeader>
           <DialogTitle>Extract to view</DialogTitle>
           <DialogDescription>
-            Moves the steps on {rightTitle} into a new view and makes this join read that view. The
-            result stays the same.
+            Moves {nodeTitle} and everything it reads into a new view, and makes this view read that
+            view instead. The result stays the same.
           </DialogDescription>
         </DialogHeader>
         <ExtractForm
@@ -92,7 +92,7 @@ function ExtractForm({
         <li>This view is saved{dirty ? " (including your other unsaved changes)" : ""}.</li>
         <li>
           Refresh the new view when its inputs change: this view reads its saved rows, not the
-          original steps.
+          original nodes.
         </li>
       </ul>
       {missing !== undefined && <p className="text-xs text-muted-foreground">{missing}</p>}

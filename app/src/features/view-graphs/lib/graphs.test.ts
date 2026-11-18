@@ -5,8 +5,8 @@ import { LINEAGE_FIXTURE, STATES_ENRICHED } from "./fixtures";
 import type { Graph, PositionedGraph } from "./graph-types";
 import { NODE_HEIGHT, NODE_WIDTH, layoutGraph } from "./layout";
 import { buildLineageGraph } from "./lineage-graph";
+import { buildViewNodeGraph } from "./node-graph";
 import { lineageNodeHref } from "./node-href";
-import { buildViewStepGraph } from "./step-graph";
 
 function edgePairs(graph: Graph): string[] {
   return graph.edges.map((edge) => `${edge.kind}:${edge.source}>${edge.target}`).toSorted();
@@ -42,83 +42,92 @@ function nodeById(graph: Graph, id: string) {
   return graph.nodes.find((node) => node.id === id);
 }
 
-describe("buildViewStepGraph", () => {
-  const graph = buildViewStepGraph(STATES_ENRICHED);
+describe("buildViewNodeGraph", () => {
+  const graph = buildViewNodeGraph(STATES_ENRICHED);
 
-  it("draws inputs, steps, the sub-pipeline branch and the output for the design fixture", () => {
+  it("draws sources, nodes and the output for the design fixture", () => {
     expect(graph.nodes.map((node) => node.id).toSorted()).toEqual([
-      "input:deploymentAgencies",
-      "input:deployments",
-      "input:links",
-      "input:states",
+      "node:agency_counts",
+      "node:deployment_agencies",
+      "node:deployments",
+      "node:enriched",
+      "node:links",
+      "node:states",
+      "node:with_deployments",
       "output",
-      "step:0",
-      "step:0.0",
-      "step:1",
     ]);
     expect(edgePairs(graph)).toEqual([
-      "branch:step:0.0>step:0",
-      "flow:step:0>step:1",
-      "flow:step:1>output",
-      "input:input:deploymentAgencies>step:0.0",
-      "input:input:deployments>step:0.0",
-      "input:input:links>step:1",
-      "input:input:states>step:0",
+      "flow:node:agency_counts>node:with_deployments",
+      "flow:node:enriched>output",
+      "flow:node:with_deployments>node:enriched",
+      "input:node:deployment_agencies>node:agency_counts",
+      "input:node:deployments>node:agency_counts",
+      "input:node:links>node:enriched",
+      "input:node:states>node:with_deployments",
     ]);
   });
 
-  it("selects steps by index and sub index", () => {
-    expect(nodeById(graph, "step:0")).toMatchObject({ step: { index: 0 } });
-    expect(nodeById(graph, "step:0.0")).toMatchObject({ step: { index: 0, sub: 0 } });
-    expect(nodeById(graph, "step:1")).toMatchObject({ detail: "Left join links" });
+  it("draws sources as dataset nodes and carries node ids", () => {
+    expect(nodeById(graph, "node:states")).toMatchObject({ kind: "input", nodeId: "states" });
+    expect(nodeById(graph, "node:enriched")).toMatchObject({
+      detail: "Left join links",
+      kind: "step",
+      nodeId: "enriched",
+    });
   });
 
-  it("marks each main-flow connection with the index a new step would take there", () => {
+  it("carries the connection every edge stands for, so a node can be inserted on it", () => {
     const inserts = graph.edges
-      .filter((edge) => edge.insertIndex !== undefined)
-      .map((edge) => `${edge.source}>${edge.target}@${edge.insertIndex}`);
-    expect(inserts).toEqual(["input:states>step:0@0", "step:0>step:1@1", "step:1>output@2"]);
+      .flatMap((edge) =>
+        edge.insert === undefined ? [] : [`${edge.insert.source}>${edge.insert.target}`],
+      )
+      .toSorted();
+    expect(inserts).toContain("states>with_deployments");
+    expect(inserts).toContain("enriched>result");
   });
 
-  it("takes input titles, step text and badges from the editor", () => {
-    const described = buildViewStepGraph(STATES_ENRICHED, {
-      describeStep: (selection) =>
-        selection.sub === undefined && selection.index === 1
-          ? { badge: { label: "Needs input", tone: "neutral" }, detail: "Links", label: "2. Join" }
-          : undefined,
-      inputTitles: { states: "US States" },
+  it("takes node text and badges from the editor", () => {
+    const described = buildViewNodeGraph(STATES_ENRICHED, {
+      describeNode: (id) =>
+        id === "enriched"
+          ? { badge: { label: "Needs input", tone: "neutral" }, detail: "Links", label: "Enriched" }
+          : id === "states"
+            ? { label: "US States" }
+            : undefined,
       outputDetail: "All fields (4)",
     });
-    expect(nodeById(described, "input:states")).toMatchObject({ label: "US States" });
-    // An alias without a title keeps its alias.
-    expect(nodeById(described, "input:links")).toMatchObject({ label: "links" });
-    expect(nodeById(described, "step:1")).toMatchObject({
+    expect(nodeById(described, "node:states")).toMatchObject({ label: "US States" });
+    expect(nodeById(described, "node:enriched")).toMatchObject({
       badge: { label: "Needs input", tone: "neutral" },
       detail: "Links",
-      label: "2. Join",
+      label: "Enriched",
     });
-    // A step the editor says nothing about keeps the stored-JSON text.
-    expect(nodeById(described, "step:0")).toMatchObject({ label: "Join" });
+    // A node the editor says nothing about keeps its stored label or kind title.
+    expect(nodeById(described, "node:agency_counts")).toMatchObject({
+      label: "Agencies per deployment",
+    });
+    expect(nodeById(described, "node:with_deployments")).toMatchObject({ label: "Join" });
     expect(nodeById(described, "output")).toMatchObject({ detail: "All fields (4)" });
   });
 
-  it("renders unknown step kinds and malformed definitions without throwing", () => {
-    const future = buildViewStepGraph({
-      base: "states",
-      inputs: [{ alias: "states", ref: { id: "x", kind: "dataset" } }],
-      output: { emptyFields: "keep", fields: [] },
-      steps: [{ kind: "spatialJoin" }, { nope: true }],
+  it("renders unknown node kinds and malformed definitions without throwing", () => {
+    const future = buildViewNodeGraph({
+      nodes: {
+        a: { kind: "source", ref: { id: "x", kind: "dataset" } },
+        b: { kind: "spatialJoin", from: "a" },
+        c: { nope: true },
+      },
+      result: { node: "b", output: { emptyFields: "keep", fields: [] } },
     } as unknown as ViewDefinition);
     const labels = future.nodes.filter((node) => node.kind === "step").map((node) => node.label);
     expect(labels).toEqual(["spatialJoin", "unknown"]);
-    expect(buildViewStepGraph({} as unknown as ViewDefinition).nodes).toHaveLength(1);
+    expect(buildViewNodeGraph({} as unknown as ViewDefinition).nodes).toHaveLength(1);
   });
 
   it("lays out without overlaps", async () => {
     expect(overlaps(graph, await layoutGraph(graph))).toEqual([]);
   });
 });
-
 describe("buildLineageGraph", () => {
   const graph = buildLineageGraph(LINEAGE_FIXTURE);
 
@@ -186,51 +195,43 @@ describe("lineageNodeHref", () => {
   });
 });
 
-describe("buildViewStepGraph: stack", () => {
-  it("draws every stacked input into the Stack step", () => {
+describe("buildViewNodeGraph: reads", () => {
+  const sources = {
+    a: { kind: "source", ref: { id: "x", kind: "dataset" } },
+    b: { kind: "source", ref: { id: "y", kind: "dataset" } },
+    c: { kind: "source", ref: { id: "z", kind: "dataset" } },
+  };
+
+  it("draws every stacked input into the Stack node", () => {
     const stacked = {
-      base: "fy22",
-      inputs: [
-        { alias: "fy22", ref: { id: "a", kind: "dataset" } },
-        { alias: "fy23", ref: { id: "b", kind: "dataset" } },
-        { alias: "fy24", ref: { id: "c", kind: "dataset" } },
-      ],
-      output: { emptyFields: "keep", fields: [] },
-      steps: [{ kind: "append", sources: [{ input: "fy23" }, { input: "fy24" }] }],
+      nodes: {
+        ...sources,
+        s: { kind: "stack", inputs: [{ node: "a" }, { node: "b" }, { node: "c" }] },
+      },
+      result: { node: "s", output: { emptyFields: "keep", fields: [] } },
     } as unknown as ViewDefinition;
-    expect(edgePairs(buildViewStepGraph(stacked))).toEqual([
-      "flow:step:0>output",
-      "input:input:fy22>step:0",
-      "input:input:fy23>step:0",
-      "input:input:fy24>step:0",
+    expect(edgePairs(buildViewNodeGraph(stacked))).toEqual([
+      "flow:node:s>output",
+      "input:node:a>node:s",
+      "input:node:b>node:s",
+      "input:node:c>node:s",
     ]);
   });
-});
 
-describe("buildViewStepGraph: input edges", () => {
-  const base = {
-    base: "a",
-    inputs: [
-      { alias: "a", ref: { id: "1", kind: "dataset" } },
-      { alias: "b", ref: { id: "2", kind: "dataset" } },
-      { alias: "spare", ref: { id: "3", kind: "dataset" } },
-    ],
-    output: { emptyFields: "keep", fields: [] },
-  };
-  it("keeps the insert index on the start edge and draws SQL reads", () => {
+  it("draws SQL reads and a shared node read twice by different readers", () => {
     const def = {
-      ...base,
-      steps: [{ kind: "sql", query: "select * from in_a join in_b on true" }],
+      nodes: {
+        ...sources,
+        f: { kind: "filter", from: "a", where: { field: "x", op: "notNull" } },
+        q: { kind: "sql", from: "f", reads: ["b"], query: "select * from prev, in_b" },
+        j: { kind: "join", left: "f", right: "q", on: [] },
+      },
+      result: { node: "j", output: { emptyFields: "keep", fields: [] } },
     } as unknown as ViewDefinition;
-    const graph = buildViewStepGraph(def);
-    expect(edgePairs(graph)).toContain("input:input:b>step:0");
-    expect(graph.edges.find((edge) => edge.source === "input:a")).toMatchObject({ insertIndex: 0 });
-  });
-  it("badges inputs nothing reads as Unused", () => {
-    const graph = buildViewStepGraph({ ...base, steps: [] } as unknown as ViewDefinition);
-    const badges = graph.nodes.flatMap((node) =>
-      node.badge === undefined ? [] : [`${node.id}:${node.badge.label}`],
-    );
-    expect(badges.toSorted()).toEqual(["input:b:Unused", "input:spare:Unused"]);
+    const pairs = edgePairs(buildViewNodeGraph(def));
+    expect(pairs).toContain("input:node:b>node:q");
+    expect(pairs).toContain("flow:node:f>node:q");
+    expect(pairs).toContain("flow:node:f>node:j");
+    expect(pairs).toContain("flow:node:q>node:j");
   });
 });

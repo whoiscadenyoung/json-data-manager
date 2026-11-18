@@ -166,7 +166,7 @@ function compileStack(id: string, node: Of<"stack">, ctx: Ctx): Compiled {
 
 function compileSql(id: string, node: Of<"sql">, ctx: Ctx): Compiled {
   const from = nodeCteName(node.from);
-  const analysis = requireSqlAnalysis(node.query, node.reads ?? []);
+  const analysis = requireSqlAnalysis(node.query, [node.from, ...(node.reads ?? [])]);
   const raw = quoteIdent(`q_${id}`);
   const ctes = compileSqlStep(analysis, from, nodeCteName(id), raw, ctx.bag);
   return simple(id, node, [from, ...(node.reads ?? []).map((read) => nodeCteName(read))], ctes);

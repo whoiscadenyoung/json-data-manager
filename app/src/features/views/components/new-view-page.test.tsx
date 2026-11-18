@@ -36,7 +36,7 @@ const LINKS = "22222222-2222-4222-8222-222222222222";
 const ELSEWHERE = "33333333-3333-4333-8333-333333333333";
 
 // The canvas is React Flow (needs a measured DOM): draw the same graph as plain buttons.
-vi.mock("@/features/view-graphs", async () => await import("./test-step-graph"));
+vi.mock("@/features/view-graphs", async () => await import("./test-node-graph"));
 vi.mock("../lib/create-view", () => ({ createProjectView: mocks.createProjectView }));
 vi.mock("@/lib/store/projects", () => ({
   listCatalogQueryOptions: () => ({
@@ -85,7 +85,7 @@ describe("NewViewPage (new view on the canvas)", () => {
     expect(reasons).toMatch(/Give the view a title/);
     expect(reasons).toMatch(/Pick at least one dataset/);
     // The canvas shows where the flow will start.
-    expect(within(screen.getByTestId("step-canvas")).getByText("Pick a dataset")).toBeTruthy();
+    expect(within(screen.getByTestId("node-canvas")).getByText("Pick a dataset")).toBeTruthy();
   });
 
   it("offers the project's datasets and views by title, and filters them by search", async () => {
@@ -106,7 +106,7 @@ describe("NewViewPage (new view on the canvas)", () => {
     mocks.createProjectView.mockResolvedValue("v-new");
     mount();
     fireEvent.click(await screen.findByLabelText(/States/));
-    expect(within(screen.getByTestId("step-canvas")).getByText("States")).toBeTruthy();
+    expect(within(screen.getByTestId("node-canvas")).getByText("States")).toBeTruthy();
     fireEvent.change(screen.getByLabelText(/Title/), { target: { value: "  States enriched " } });
     const create = screen.getByRole("button", { name: "Create view" });
     expect(create).toHaveProperty("disabled", false);
@@ -120,10 +120,8 @@ describe("NewViewPage (new view on the canvas)", () => {
     });
     expect(mocks.createProjectView).toHaveBeenCalledWith({
       definition: {
-        base: "states",
-        inputs: [{ alias: "states", ref: { id: STATES, kind: "dataset" } }],
-        output: { emptyFields: "keep", fields: [] },
-        steps: [],
+        nodes: { states: { kind: "source", ref: { id: STATES, kind: "dataset" } } },
+        result: { node: "states", output: { emptyFields: "keep", fields: [] } },
       },
       projectId: "p1",
       title: "States enriched",
@@ -132,7 +130,7 @@ describe("NewViewPage (new view on the canvas)", () => {
 });
 
 describe("NewViewPage with several inputs", () => {
-  it("creates a view that reads every picked dataset, starting from the first", async () => {
+  it("creates a view that reads every picked dataset, with the first as the result", async () => {
     mocks.createProjectView.mockResolvedValue("v-new");
     mount();
     fireEvent.click(await screen.findByLabelText(/States/));
@@ -143,7 +141,7 @@ describe("NewViewPage with several inputs", () => {
       expect(mocks.createProjectView).toHaveBeenCalled();
     });
     const call = mocks.createProjectView.mock.calls[0][0] as { definition: ViewDefinition };
-    expect(call.definition.inputs).toHaveLength(2);
-    expect(call.definition.base).toBe("states");
+    expect(Object.keys(call.definition.nodes)).toEqual(["states", "links_per_state"]);
+    expect(call.definition.result.node).toBe("states");
   });
 });

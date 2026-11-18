@@ -49,7 +49,7 @@ async function inputMetaOf(deps: ViewDeps, inputs: ViewInputRef[]): Promise<Comp
   const raw = await deps.rpc.call("view_input_meta", { p_inputs: inputs });
   return inputMetaSchema.parse(raw).map((entry) => {
     const meta: CompileInputMeta = {
-      alias: entry.alias,
+      node: entry.alias,
       datasetId: entry.datasetId,
       title: entry.title ?? entry.alias,
     };

@@ -17,12 +17,6 @@ export type GraphNodeKind =
 /** A view's health on the lineage graph. `error` (latest run failed) wins over `stale`. */
 export type GraphNodeStatus = "ok" | "stale" | "error";
 
-/** Which step a step-graph node stands for: `index` into `steps`, `sub` into a join's `right.steps`. */
-export interface StepSelection {
-  index: number;
-  sub?: number;
-}
-
 export interface GraphNode {
   /** Unique within one graph; lineage ids are `<kind>:<entity id>`. */
   id: string;
@@ -35,11 +29,9 @@ export interface GraphNode {
   unavailable?: boolean;
   /** Lineage nodes: the entity the node opens. */
   entityId?: string;
-  /** Input nodes (step graph): the input's alias in the definition. */
-  inputAlias?: string;
-  /** Step nodes: the step it selects. */
-  step?: StepSelection;
-  /** Step nodes: the raw `kind` string, kept for unknown/future kinds. */
+  /** View node graph: the id of the definition node it stands for (a source is an `input` node, anything else a `step` node). */
+  nodeId?: string;
+  /** View node graph: the raw `kind` string, kept for unknown/future kinds. */
   stepKind?: string;
   /** A short pill on the node (step graph: "Needs input", "Problem", "3 unmatched"). */
   badge?: GraphNodeBadge;
@@ -50,7 +42,7 @@ export interface GraphNodeBadge {
   tone: "neutral" | "warning" | "error";
 }
 
-/** `input` solid (something reads this input: the start, a join's right side, a stacked source, a SQL `in_<alias>`), `relation` dashed, `consumer` (a layer/map/app uses it), `flow` step to step, `branch` step to step inside a join's sub-pipeline. */
+/** `input` solid (a source node feeds a reader), `relation` dashed, `consumer` (a layer/map/app uses it), `flow` node to node. */
 export type GraphEdgeKind = "input" | "relation" | "consumer" | "flow" | "branch";
 
 export interface GraphEdge {
@@ -59,8 +51,8 @@ export interface GraphEdge {
   target: string;
   kind: GraphEdgeKind;
   label?: string;
-  /** Step graph `flow` edges: the index in `steps` a step inserted on this edge would take. */
-  insertIndex?: number;
+  /** View node graph: the connection a node inserted here would split (`target` is "result" for the connection into the output). */
+  insert?: { source: string; target: string };
 }
 
 export interface Graph {

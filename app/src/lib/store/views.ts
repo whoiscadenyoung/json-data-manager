@@ -55,10 +55,10 @@ export async function runView(viewId: string, options?: StoreOptions) {
   return await runViewFn({ data: { accessToken: await accessTokenOf(options), viewId } });
 }
 
-/** Preview of a saved view, optionally up to a step: at most 50 rows plus the full diagnostics. */
-export async function previewSavedView(viewId: string, uptoStep?: number, options?: StoreOptions) {
+/** Preview of a saved view, optionally up to a node: at most 50 rows plus the full diagnostics. */
+export async function previewSavedView(viewId: string, uptoNode?: string, options?: StoreOptions) {
   return await previewViewFn({
-    data: { accessToken: await accessTokenOf(options), viewId, uptoStep },
+    data: { accessToken: await accessTokenOf(options), viewId, uptoNode },
   });
 }
 
@@ -66,11 +66,11 @@ export async function previewSavedView(viewId: string, uptoStep?: number, option
 export async function previewDraftView(
   definition: unknown,
   inputs: { alias: string; datasetId: string; pinnedVersion?: string }[],
-  uptoStep?: number,
+  uptoNode?: string,
   options?: StoreOptions,
 ) {
   return await previewViewFn({
-    data: { accessToken: await accessTokenOf(options), definition, inputs, uptoStep },
+    data: { accessToken: await accessTokenOf(options), definition, inputs, uptoNode },
   });
 }
 

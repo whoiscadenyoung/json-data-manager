@@ -1,26 +1,26 @@
-import { analyzeSqlStep, pruneInputs, slugifyViewName } from "@caden/data-core/views";
+import { freshNodeId, nodeFields, pruneNodes, slugifyViewName } from "@caden/data-core/views";
 import type {
+  ColumnEdit,
   CompileInputMeta,
   Condition,
   ConditionLeaf,
   ConditionOp,
   FieldType,
-  JoinStep,
+  JoinNode,
   KeyMatching,
   Measure,
   MultiMatch,
-  Step,
+  NodeKind,
   ValidationError,
   ViewDefinition,
+  ViewNode,
 } from "@caden/data-core/views";
 
-import { appendMembers, outputFields } from "./append-columns";
-
 /**
- * Pure helpers behind the view editor (#301): building and editing the
- * serializable step list, tracking which fields exist after each step (so
- * pickers offer real columns), and the "create view from relation" pre-fill.
- * No React, no I/O.
+ * Pure helpers behind the view editor (docs/views-node-graph-design.md):
+ * building and editing the node graph, tracking which fields each node
+ * produces (so pickers offer real columns), and the "create view from
+ * relation" pre-fill. No React, no I/O.
  */
 
 /** A dataset or view an input may read, as the pickers list it. */
@@ -46,7 +46,11 @@ export function inputPickerOptions(
   }));
 }
 
-/** An input as the editor shows it: alias, the dataset's TITLE (never the uuid) and its declared fields. */
+/**
+ * A source node as the editor shows it: its node id (`alias`, also the
+ * `view_inputs.alias` column), the dataset's TITLE (never the uuid) and its
+ * declared fields.
+ */
 export interface InputInfo {
   alias: string;
   datasetId: string;
@@ -97,127 +101,302 @@ export const FILTER_OPS: { op: ConditionOp; label: string }[] = [
   { op: "notNull", label: "is not empty" },
 ];
 
-/** A readable, unique input alias for a dataset title (aliases are letters, digits and underscores). */
-export function uniqueAlias(title: string, taken: readonly string[]): string {
-  const base = slugifyViewName(title) || "input";
-  if (!taken.includes(base)) {
-    return base;
-  }
-  let n = 2;
-  while (taken.includes(`${base}_${n}`)) {
-    n += 1;
-  }
-  return `${base}_${n}`;
-}
-
-export function emptyOutput(): ViewDefinition["output"] {
+export function emptyOutput(): ViewDefinition["result"]["output"] {
   return { fields: [], emptyFields: "keep" };
 }
 
-/** A blank view over one base dataset. */
-export function blankDefinition(base: { datasetId: string; title: string }): ViewDefinition {
-  const alias = uniqueAlias(base.title, []);
-  return {
-    inputs: [{ alias, ref: { kind: "dataset", id: base.datasetId } }],
-    base: alias,
-    steps: [],
-    output: emptyOutput(),
-  };
+/** A readable, unique node id for a label (lowercase letters, digits, underscores). */
+export function uniqueNodeId(label: string, taken: readonly string[]): string {
+  return freshNodeId(label, taken);
 }
 
-/** A blank view over several inputs; the first is the start (base) unless `base` names another. */
+/** A blank view over several datasets: one source node each; `base` (default the first) is the result until a node is added. */
 export function blankDefinitionOf(
   inputs: readonly { datasetId: string; title: string }[],
   base?: string,
 ): ViewDefinition {
-  const taken: string[] = [];
-  const declared = inputs.map((input) => {
-    const alias = uniqueAlias(input.title, taken);
-    taken.push(alias);
-    return { alias, datasetId: input.datasetId };
-  });
-  const start = declared.find((entry) => entry.datasetId === base) ?? declared[0];
-  return {
-    inputs: declared.map((entry) => ({
-      alias: entry.alias,
-      ref: { kind: "dataset", id: entry.datasetId },
-    })),
-    base: start === undefined ? "" : start.alias,
-    steps: [],
-    output: emptyOutput(),
-  };
+  const nodes: Record<string, ViewNode> = {};
+  let result = "";
+  let matched = false;
+  for (const input of inputs) {
+    const id = uniqueNodeId(input.title, Object.keys(nodes));
+    nodes[id] = { kind: "source", ref: { kind: "dataset", id: input.datasetId } };
+    const isBase: boolean = !matched && base !== undefined && input.datasetId === base;
+    if (result === "" || isBase) {
+      result = id;
+      matched = matched || isBase;
+    }
+  }
+  return { nodes, result: { node: result, output: emptyOutput() } };
 }
 
-/** The definition with one more input (always a new alias, so a dataset can be added twice). Returns the alias too. */
-export function withAddedInput(
+/** The definition with one more source node (always a new id, so a dataset can be added twice). */
+export function withAddedSource(
   definition: ViewDefinition,
   dataset: { id: string; title: string },
-): { definition: ViewDefinition; alias: string } {
-  const alias = uniqueAlias(
-    dataset.title,
-    definition.inputs.map((input) => input.alias),
-  );
+): { definition: ViewDefinition; node: string } {
+  const node = uniqueNodeId(dataset.title, Object.keys(definition.nodes));
   return {
-    alias,
+    node,
     definition: {
       ...definition,
-      inputs: [...definition.inputs, { alias, ref: { kind: "dataset", id: dataset.id } }],
+      nodes: {
+        ...definition.nodes,
+        [node]: { kind: "source", ref: { kind: "dataset", id: dataset.id } },
+      },
     },
   };
 }
 
-/** Step-picker options: only the inputs the view declared, labelled by title (plus the alias when titles collide). */
-export function inputAliasOptions(
+export type AddableKind = Exclude<NodeKind, "source">;
+
+export const NODE_TITLES: Record<NodeKind, string> = {
+  source: "Dataset",
+  filter: "Filter rows",
+  columns: "Columns",
+  calculate: "Calculate",
+  groupBy: "Group by",
+  join: "Join",
+  stack: "Stack",
+  sql: "SQL",
+};
+
+/** A new node of `kind` reading `from`, starting valid where it can (the editor shows the rest as "needs ..."). */
+export function newNode(kind: AddableKind, from: string, firstField: string): ViewNode {
+  switch (kind) {
+    case "filter":
+      return { kind, from, where: { field: firstField, op: "eq", value: "" } };
+    case "columns":
+      return { kind, from, edits: [] };
+    case "calculate":
+      return { kind, from, fields: [{ field: "", expr: "" }] };
+    case "groupBy":
+      return { kind, from, by: [firstField], measures: [{ as: "count", fn: "count" }] };
+    case "sql":
+      return { kind, from, query: "select * from prev" };
+    case "stack":
+      return { kind, inputs: [{ node: from }, { node: "" }] };
+    default:
+      return {
+        kind,
+        left: from,
+        right: "",
+        on: [{ left: "", right: "" }],
+        matching: { ...DEFAULT_MATCHING },
+        type: "left",
+        multiMatch: { mode: "first" },
+      };
+  }
+}
+
+/** The node with every reference to `oldId` pointed at `newId` (sql reads and `in_<id>` text included). */
+export function withInputReplaced(node: ViewNode, oldId: string, newId: string): ViewNode {
+  const swap = (id: string): string => (id === oldId ? newId : id);
+  switch (node.kind) {
+    case "source":
+      return node;
+    case "join":
+      return { ...node, left: swap(node.left), right: swap(node.right) };
+    case "stack":
+      return {
+        ...node,
+        inputs: node.inputs.map((input) => ({ ...input, node: swap(input.node) })),
+      };
+    case "sql":
+      return {
+        ...node,
+        from: swap(node.from),
+        ...(node.reads === undefined ? {} : { reads: node.reads.map(swap) }),
+        query: node.query.replaceAll(new RegExp(`\\bin_${oldId}\\b`, "g"), `in_${newId}`),
+      };
+    default:
+      return { ...node, from: swap(node.from) };
+  }
+}
+
+function withNode(definition: ViewDefinition, id: string, node: ViewNode): ViewDefinition {
+  return { ...definition, nodes: { ...definition.nodes, [id]: node } };
+}
+
+/**
+ * A new node of `kind` reading `from`. When `from` is the result, the new
+ * node becomes the result (append); otherwise it is a branch and nothing else
+ * changes.
+ */
+export function appendNode(
+  definition: ViewDefinition,
+  from: string,
+  kind: AddableKind,
+  firstField: string,
+): { definition: ViewDefinition; node: string } {
+  const node = uniqueNodeId(NODE_TITLES[kind], Object.keys(definition.nodes));
+  const next = withNode(definition, node, {
+    ...newNode(kind, from, firstField),
+    label: NODE_TITLES[kind],
+  });
+  return {
+    node,
+    definition:
+      definition.result.node === from ? { ...next, result: { ...next.result, node } } : next,
+  };
+}
+
+/**
+ * A new node on the connection `source -> target` (`target` = "result" for
+ * the connection into the output): it reads `source`, and `target` reads it
+ * instead.
+ */
+export function insertOnEdge(
+  definition: ViewDefinition,
+  source: string,
+  target: string,
+  kind: AddableKind,
+  firstField: string,
+): { definition: ViewDefinition; node: string } {
+  const node = uniqueNodeId(NODE_TITLES[kind], Object.keys(definition.nodes));
+  const nodes: Record<string, ViewNode> = {};
+  for (const [id, existing] of Object.entries(definition.nodes)) {
+    nodes[id] = id === target ? withInputReplaced(existing, source, node) : existing;
+  }
+  nodes[node] = { ...newNode(kind, source, firstField), label: NODE_TITLES[kind] };
+  return {
+    node,
+    definition: {
+      nodes,
+      result: {
+        ...definition.result,
+        node: target === "result" ? node : definition.result.node,
+      },
+    },
+  };
+}
+
+function distinctInputsOf(node: ViewNode): string[] {
+  switch (node.kind) {
+    case "source":
+      return [];
+    case "join":
+      return [...new Set([node.left, node.right])];
+    case "stack":
+      return [...new Set(node.inputs.map((input) => input.node))];
+    case "sql":
+      return [...new Set([node.from, ...(node.reads ?? [])])];
+    default:
+      return [node.from];
+  }
+}
+
+/** Why a node can't be removed right now, or undefined. */
+export function removeBlocker(definition: ViewDefinition, id: string): string | undefined {
+  const node = definition.nodes[id];
+  if (node === undefined) {
+    return undefined;
+  }
+  const readers = Object.entries(definition.nodes).filter(
+    ([other, candidate]) => other !== id && distinctInputsOf(candidate).includes(id),
+  );
+  const inputs = distinctInputsOf(node);
+  if (readers.length === 0 && definition.result.node !== id) {
+    return undefined;
+  }
+  if (inputs.length === 1) {
+    return undefined;
+  }
+  return definition.result.node === id && readers.length === 0
+    ? "Pick another result node first."
+    : `Used by ${readers.map(([other]) => other).join(", ")}. Remove or rewire those first.`;
+}
+
+/** The definition without node `id`; readers (and the result) reconnect to its single input. */
+export function removeNode(definition: ViewDefinition, id: string): ViewDefinition {
+  const node = definition.nodes[id];
+  const [input] = node === undefined ? [] : distinctInputsOf(node);
+  const nodes: Record<string, ViewNode> = {};
+  for (const [other, candidate] of Object.entries(definition.nodes)) {
+    if (other === id) {
+      continue;
+    }
+    nodes[other] =
+      input === undefined || !distinctInputsOf(candidate).includes(id)
+        ? candidate
+        : withInputReplaced(candidate, id, input);
+  }
+  const result =
+    definition.result.node === id ? (input ?? Object.keys(nodes)[0] ?? "") : definition.result.node;
+  return { nodes, result: { ...definition.result, node: result } };
+}
+
+/** The ancestor subgraph of `id` as its own definition (no output projection): what a node preview compiles. */
+export function subgraphOf(definition: ViewDefinition, id: string): ViewDefinition {
+  return pruneNodes({
+    nodes: definition.nodes,
+    result: { node: id, output: emptyOutput() },
+  });
+}
+
+/** Node ids in dependency order (what feeds the result first), then nodes the result does not need. */
+export function outlineOrder(definition: ViewDefinition): string[] {
+  const order: string[] = [];
+  const visit = (id: string, stack: string[]): void => {
+    const node = definition.nodes[id];
+    if (order.includes(id) || stack.includes(id) || node === undefined) {
+      return;
+    }
+    for (const input of distinctInputsOf(node)) {
+      visit(input, [...stack, id]);
+    }
+    order.push(id);
+  };
+  visit(definition.result.node, []);
+  const used = new Set(order);
+  for (const id of Object.keys(definition.nodes)) {
+    visit(id, []);
+  }
+  return [...order.filter((id) => used.has(id)), ...order.filter((id) => !used.has(id))];
+}
+
+/** What the editor calls a node: its label, a source's dataset title, else its id. */
+export function nodeLabel(
+  definition: ViewDefinition,
+  infos: readonly InputInfo[],
+  id: string,
+): string {
+  const node = definition.nodes[id];
+  if (node === undefined) {
+    return id;
+  }
+  if (node.label !== undefined && node.label !== "") {
+    return node.label;
+  }
+  const info = node.kind === "source" ? infos.find((entry) => entry.alias === id) : undefined;
+  return info === undefined ? id : info.title;
+}
+
+/** Picker options for the nodes a node may read: every node except itself, labelled (the id when labels collide). */
+export function nodeOptions(
+  definition: ViewDefinition,
   infos: readonly InputInfo[],
   exclude: readonly string[] = [],
 ): { value: string; label: string }[] {
-  return infos
-    .filter((info) => !exclude.includes(info.alias))
-    .map((info) => ({
-      value: info.alias,
-      label: infos.some((other) => other !== info && other.title === info.title)
-        ? `${info.title} (${info.alias})`
-        : info.title,
-    }));
+  const ids = Object.keys(definition.nodes).filter((id) => !exclude.includes(id));
+  return ids.map((id) => {
+    const label = nodeLabel(definition, infos, id);
+    const clash = Object.keys(definition.nodes).some(
+      (other) => other !== id && nodeLabel(definition, infos, other) === label,
+    );
+    return { value: id, label: clash ? `${label} (${id})` : label };
+  });
 }
 
-export function newFilterStep(field: string): Step {
-  return { kind: "filter", where: { field, op: "eq", value: "" } };
-}
-
-export function newCalculateStep(): Step {
-  return { kind: "calculate", field: "", expr: "" };
-}
-
-/** A SQL step starts as a valid pass-through so the preview works while it is edited. */
-export function newAppendStep(): Step {
-  return { kind: "append", sources: [] };
-}
-
-export function newSqlStep(): Step {
-  return { kind: "sql", query: "select * from prev" };
-}
-
-export function newGroupByStep(field: string): Step {
-  return { kind: "groupBy", by: [field], measures: [{ as: "count", fn: "count" }] };
-}
-
-/** A join step with the prefix defaulting to the slugified title of the right input. */
-export function newJoinStep(args: {
-  rightAlias: string;
-  rightTitle: string;
-  left?: string;
-  right?: string;
-}): JoinStep {
-  return {
-    kind: "join",
-    right: { input: args.rightAlias },
-    on: [{ left: args.left ?? "", right: args.right ?? "" }],
-    matching: { ...DEFAULT_MATCHING },
-    type: "left",
-    multiMatch: { mode: "first" },
-    prefix: slugifyViewName(args.rightTitle),
-  };
+/** Field names per node (`undefined` = unknown), from the same scope the validator uses. */
+export function fieldNamesByNode(
+  definition: ViewDefinition,
+  infos: readonly InputInfo[],
+): Map<string, string[] | undefined> {
+  const fields = nodeFields(definition, toCompileMeta(infos));
+  return new Map(
+    [...fields].map(([id, map]) => [id, map === undefined ? undefined : [...map.keys()]]),
+  );
 }
 
 /** The measure after its function changed: only the settings the new function uses are kept. */
@@ -275,49 +454,81 @@ function isSet(value: string | undefined): value is string {
   return value !== undefined;
 }
 
-function joinProblem(step: JoinStep): string | undefined {
-  if (step.right.input === "") {
-    return "Pick the dataset to join with.";
+function joinProblem(node: JoinNode): string | undefined {
+  if (node.right === "" || node.left === "") {
+    return "Pick the two nodes to join.";
   }
-  if (step.on.length === 0 || step.on.some((pair) => pair.left === "" || pair.right === "")) {
+  if (node.on.length === 0 || node.on.some((pair) => pair.left === "" || pair.right === "")) {
     return "Pick the key fields on both sides.";
   }
-  const { multiMatch } = step;
+  const { multiMatch } = node;
   const measures = multiMatch.mode === "summarize" ? multiMatch.measures : [];
   const measure = measures.map((m) => measureProblem(m)).find(isSet);
-  return (
-    multiMatchProblem(multiMatch) ??
-    measure ??
-    (step.right.steps ?? []).map((sub) => stepProblem(sub)).find(isSet)
-  );
+  return multiMatchProblem(multiMatch) ?? measure;
 }
 
-/** Whether a step is complete enough to compile (the editor shows the rest as "needs ..."). */
-export function stepProblem(step: Step): string | undefined {
-  switch (step.kind) {
+function columnsProblem(edits: ColumnEdit[]): string | undefined {
+  return edits.some((edit) => "as" in edit && edit.as.trim() === "")
+    ? "Name every renamed column."
+    : undefined;
+}
+
+function calculateProblem(fields: { field: string; expr: string }[]): string | undefined {
+  if (fields.length === 0) {
+    return "Add a field to calculate.";
+  }
+  if (fields.some((field) => field.field.trim() === "")) {
+    return "Name every new field.";
+  }
+  return fields.some((field) => field.expr.trim() === "")
+    ? "Write the expression for every field."
+    : undefined;
+}
+
+/** Whether a node is complete enough to compile (the editor shows the rest as "needs ..."). */
+export function nodeProblem(node: ViewNode): string | undefined {
+  switch (node.kind) {
     case "join":
-      return joinProblem(step);
+      return joinProblem(node);
+    case "stack":
+      return node.inputs.length === 0 || node.inputs.some((input) => input.node === "")
+        ? "Pick every node to stack."
+        : undefined;
     case "filter": {
-      const leaves = filterLeaves(step.where);
+      const leaves = filterLeaves(node.where);
       return leaves === undefined || (leaves.length > 0 && leaves.every((l) => l.field !== ""))
         ? undefined
         : "Pick a field to filter on.";
     }
     case "groupBy":
-      if (step.by.length === 0 || step.by.some((field) => field === "")) {
+      if (node.by.length === 0 || node.by.some((field) => field === "")) {
         return "Pick at least one field to group by.";
       }
-      return step.measures.map((measure) => measureProblem(measure)).find(isSet);
+      return node.measures.map((measure) => measureProblem(measure)).find(isSet);
+    case "columns":
+      return columnsProblem(node.edits);
     case "calculate":
-      if (step.field.trim() === "") {
-        return "Name the new field.";
-      }
-      return step.expr.trim() === "" ? "Write the expression to calculate." : undefined;
+      return calculateProblem(node.fields);
     case "sql":
-      return step.query.trim() === "" ? "Write the SQL query." : undefined;
+      return node.query.trim() === "" ? "Write the SQL query." : undefined;
     default:
       return undefined;
   }
+}
+
+/** The first incomplete node among the ancestors of `id` ("Filter rows: Pick a field…"), or undefined. */
+export function firstProblem(
+  definition: ViewDefinition,
+  ids: readonly string[],
+): string | undefined {
+  for (const id of ids) {
+    const node = definition.nodes[id];
+    const problem = node === undefined ? undefined : nodeProblem(node);
+    if (problem !== undefined) {
+      return `${id}: ${problem}`;
+    }
+  }
+  return undefined;
 }
 
 /** The leaves of a simple filter (one condition, or an AND of conditions), or undefined for a nested tree this form cannot edit. */
@@ -375,35 +586,34 @@ export function filterValueText(leaf: ConditionLeaf): string {
 }
 
 /**
- * The join after its right side was re-picked (`alias` is the declared input
- * for the new dataset): the key fields of the old side and the sub-pipeline
- * built on it no longer apply, and a default prefix follows the new title.
+ * The join after its right side was re-picked: the right key fields of the
+ * old side no longer apply, and a default prefix follows the new title.
  */
 export function repointRight(
-  step: JoinStep,
-  alias: string,
+  step: JoinNode,
+  right: string,
   titles: { old: string; next: string },
-): JoinStep {
-  if (step.right.input === alias) {
+): JoinNode {
+  if (step.right === right) {
     return step;
   }
   const oldDefault = slugifyViewName(titles.old);
   const usesDefault = step.prefix === undefined || step.prefix === "" || step.prefix === oldDefault;
   return {
     ...step,
-    right: { input: alias },
+    right,
     on: step.on.map((pair) => ({ ...pair, right: "" })),
     prefix: usesDefault ? slugifyViewName(titles.next) : step.prefix,
   };
 }
 
 /** Adds one manual key-map entry (from -> to) to a join, replacing an earlier entry for the same `from`. */
-export function withManualMapEntry(step: JoinStep, from: string, to: string): JoinStep {
+export function withManualMapEntry(step: JoinNode, from: string, to: string): JoinNode {
   const existing = (step.matching.manualMap ?? []).filter((entry) => entry.from !== from);
   return { ...step, matching: { ...step.matching, manualMap: [...existing, { from, to }] } };
 }
 
-export function withoutManualMapEntry(step: JoinStep, from: string): JoinStep {
+export function withoutManualMapEntry(step: JoinNode, from: string): JoinNode {
   const remaining = (step.matching.manualMap ?? []).filter((entry) => entry.from !== from);
   const { manualMap: _dropped, ...rest } = step.matching;
   return {
@@ -412,152 +622,27 @@ export function withoutManualMapEntry(step: JoinStep, from: string): JoinStep {
   };
 }
 
-function inputFields(infos: readonly InputInfo[], alias: string): string[] | undefined {
-  const info = infos.find((entry) => entry.alias === alias);
-  return info === undefined ? undefined : info.fields;
-}
-
-/**
- * The field names present after `steps[0..upto]` (use -1 for the bare base
- * input), or undefined once the shape is unknown (after an sql step that
- * returns a bare `d`). Mirrors the validator's field scope in
- * `@caden/data-core/views`.
- */
-export function fieldsAfter(
-  definition: ViewDefinition,
-  infos: readonly InputInfo[],
-  upto: number,
-): string[] | undefined {
-  return fieldsThrough(
-    inputFields(infos, definition.base),
-    definition.steps.slice(0, upto + 1),
-    infos,
-  );
-}
-
-/** The fields after running `steps` over rows that start with `start` (a sub-pipeline's right input, or the base). */
-export function fieldsThrough(
-  start: string[] | undefined,
-  steps: readonly Step[],
-  infos: readonly InputInfo[],
-): string[] | undefined {
-  let known = start;
-  for (const step of steps) {
-    if (known === undefined) {
-      return undefined;
-    }
-    known = fieldsAfterStep(known, step, infos);
-  }
-  return known;
-}
-
-/** The fields of a join's right side: the input, then its sub-pipeline when it has one. */
-export function rightFieldsOf(step: JoinStep, infos: readonly InputInfo[]): string[] | undefined {
-  return fieldsThrough(inputFields(infos, step.right.input), step.right.steps ?? [], infos);
-}
-
-function fieldsAfterStep(
-  known: string[],
-  step: Step,
-  infos: readonly InputInfo[],
-): string[] | undefined {
-  switch (step.kind) {
-    case "filter":
-      return known;
-    case "select":
-      return step.fields.map((field) => field.as);
-    case "groupBy":
-      return [...step.by, ...step.measures.map((measure) => measure.as)];
-    case "calculate":
-      return step.field === "" || known.includes(step.field) ? known : [...known, step.field];
-    case "join":
-      return fieldsAfterJoin(known, step, infos);
-    case "append":
-      return fieldsAfterAppend(known, step, infos);
-    case "sql":
-      return fieldsAfterSql(step.query, infos);
-    default:
-      return undefined;
-  }
-}
-
-function fieldsAfterSql(query: string, infos: readonly InputInfo[]): string[] | undefined {
-  const result = analyzeSqlStep(
-    query,
-    infos.map((info) => info.alias),
-  );
-  if (!result.ok || result.analysis.columns.includes("d")) {
-    return undefined;
-  }
-  return result.analysis.columns.filter((name) => name !== "row_id" && name !== "geom");
-}
-
 /** `prefix.name`, or just the name when the prefix is empty. */
 export function prefixedName(prefix: string, name: string): string {
   return prefix === "" ? name : `${prefix}.${name}`;
 }
 
-function joinAdded(
-  step: JoinStep,
+/** A one-line description of a node for the list and the canvas. */
+export function nodeSummary(
+  definition: ViewDefinition,
   infos: readonly InputInfo[],
-  right: string[] | undefined,
-): string[] | undefined {
-  const { multiMatch } = step;
-  const info = infos.find((entry) => entry.alias === step.right.input);
-  const title = info === undefined ? "" : info.title;
-  const prefix = step.prefix ?? slugifyViewName(title);
-  switch (multiMatch.mode) {
-    case "summarize":
-      return multiMatch.measures.map((measure) => measure.as);
-    case "spread":
-      return multiMatch.columns.map((column) => column.as);
-    case "text":
-      return [prefixedName(prefix, multiMatch.field)];
-    case "list":
-      return [prefix === "" ? slugifyViewName(title) : prefix];
-    default: {
-      const names = step.fields ?? right;
-      return names === undefined ? undefined : names.map((n) => prefixedName(prefix, n));
+  id: string,
+): string {
+  const node = definition.nodes[id];
+  const label = (other: string): string =>
+    other === "" ? "…" : nodeLabel(definition, infos, other);
+  switch (node.kind) {
+    case "source": {
+      const info = infos.find((entry) => entry.alias === id);
+      return info === undefined ? "Dataset" : info.title;
     }
-  }
-}
-
-function fieldsAfterAppend(
-  known: string[],
-  step: Extract<Step, { kind: "append" }>,
-  infos: readonly InputInfo[],
-): string[] {
-  const members = appendMembers(
-    step,
-    "",
-    known,
-    (alias) => inputFields(infos, alias),
-    (alias) => alias,
-  );
-  const names = outputFields(members);
-  if (step.tagField !== undefined && step.tagField !== "" && !names.includes(step.tagField)) {
-    names.push(step.tagField);
-  }
-  return names;
-}
-
-function fieldsAfterJoin(
-  known: string[],
-  step: JoinStep,
-  infos: readonly InputInfo[],
-): string[] | undefined {
-  const added = joinAdded(step, infos, rightFieldsOf(step, infos));
-  if (added === undefined) {
-    return undefined;
-  }
-  return [...known, ...added.filter((name) => !known.includes(name))];
-}
-
-/** A one-line description of a step for the list. */
-export function stepSummary(step: Step, infos: readonly InputInfo[]): string {
-  switch (step.kind) {
     case "filter": {
-      const leaves = filterLeaves(step.where);
+      const leaves = filterLeaves(node.where);
       return leaves === undefined
         ? "Custom filter"
         : leaves.length === 0
@@ -565,44 +650,22 @@ export function stepSummary(step: Step, infos: readonly InputInfo[]): string {
           : leaves.map((leaf) => `${leaf.field || "…"} ${opLabel(leaf.op)}`).join(" and ");
     }
     case "join": {
-      const info = infos.find((entry) => entry.alias === step.right.input);
-      const title = info === undefined ? step.right.input : info.title;
-      const policy =
-        step.multiMatch.mode === "first" || step.multiMatch.mode === "last"
-          ? `${step.multiMatch.mode} match`
-          : step.multiMatch.mode;
-      const steps = step.right.steps === undefined ? "" : ", with steps";
-      return `${title} (${step.type}, ${policy}${steps})`;
+      const mode = node.multiMatch.mode;
+      const policy = mode === "first" || mode === "last" ? `${mode} match` : mode;
+      return `${label(node.left)} + ${label(node.right)} (${node.type}, ${policy})`;
     }
-    case "append":
-      return step.sources.length === 0
-        ? "Pick datasets to stack"
-        : `+ ${step.sources
-            .map((source) => {
-              const info = infos.find((entry) => entry.alias === source.input);
-              return info === undefined ? source.input : info.title;
-            })
-            .join(", ")}`;
+    case "stack":
+      return node.inputs.map((input) => label(input.node)).join(" + ");
     case "groupBy":
-      return `by ${step.by.join(", ") || "…"}`;
-    case "select":
-      return `${step.fields.length} fields`;
+      return `by ${node.by.join(", ") || "…"}`;
+    case "columns":
+      return node.edits.length === 0 ? "No changes yet" : `${node.edits.length} column edits`;
     case "calculate":
-      return step.field === "" ? "…" : step.field;
+      return node.fields.map((field) => field.field || "…").join(", ");
     default:
       return "Custom SQL";
   }
 }
-
-export const STEP_TITLES: Record<Step["kind"], string> = {
-  filter: "Filter rows",
-  join: "Join",
-  append: "Stack",
-  groupBy: "Group by",
-  select: "Select fields",
-  calculate: "Calculate",
-  sql: "SQL",
-};
 
 function opLabel(op: ConditionOp): string {
   const found = FILTER_OPS.find((entry) => entry.op === op);
@@ -616,7 +679,7 @@ export function toCompileMeta(
 ): CompileInputMeta[] {
   return infos.map((info) => {
     const meta: CompileInputMeta = {
-      alias: info.alias,
+      node: info.alias,
       datasetId: info.datasetId,
       title: info.title,
     };
@@ -632,14 +695,18 @@ export function toCompileMeta(
   });
 }
 
-/** The inputs `save_view` / the preview take, from the definition itself. */
+/** The source rows `save_view` / the preview take (`alias` = the source node id), from the definition itself. */
 export function inputRefsOf(
   definition: ViewDefinition,
 ): { alias: string; datasetId: string; pinnedVersion?: string }[] {
-  return definition.inputs.map((input) =>
-    input.ref.version === undefined
-      ? { alias: input.alias, datasetId: input.ref.id }
-      : { alias: input.alias, datasetId: input.ref.id, pinnedVersion: input.ref.version },
+  return Object.entries(definition.nodes).flatMap(([id, node]) =>
+    node.kind !== "source"
+      ? []
+      : [
+          node.ref.version === undefined
+            ? { alias: id, datasetId: node.ref.id }
+            : { alias: id, datasetId: node.ref.id, pinnedVersion: node.ref.version },
+        ],
   );
 }
 
@@ -651,11 +718,6 @@ export function inputRefsOf(
 export function sqlReadsTable(sql: string, name: string): boolean {
   const escaped = name.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
   return new RegExp(`(?<![A-Za-z0-9_$])"?${escaped}"?(?![A-Za-z0-9_$])`, "i").test(sql);
-}
-
-/** Drops inputs no step reads (never the base), so Save does not declare dead inputs. Sub-pipelines and SQL `in_<alias>` reads count. */
-export function prunedInputs(definition: ViewDefinition): ViewDefinition {
-  return pruneInputs(definition);
 }
 
 /** A Scratch-query table: SQL name `in_<alias>` plus the dataset behind it. */
@@ -677,10 +739,10 @@ export function referencedScratchTables(
 }
 
 /**
- * "Save as view" (#306): one `sql` step holding the query UNCHANGED (minus a
- * trailing `;`). The scratch names ARE the compiler's input CTE names
- * (`in_<alias>`), so each table the query reads becomes the input of that
- * alias. `baseAlias` is the input whose rows and geometry the view keeps.
+ * "Save as view" (#306): one `sql` node holding the query UNCHANGED (minus a
+ * trailing `;`). The scratch names ARE the compiler's CTE names (`in_<id>`),
+ * so each table the query reads becomes a source node of that id and a read of
+ * the sql node. `baseAlias` is the table whose rows and geometry the view keeps.
  */
 export function definitionFromScratch(
   sql: string,
@@ -694,15 +756,18 @@ export function definitionFromScratch(
   if (!referenced.some((table) => table.alias === baseAlias)) {
     throw new Error("Pick one of the tables the query reads as the base.");
   }
-  return {
-    inputs: referenced.map((table) => ({
-      alias: table.alias,
-      ref: { kind: "dataset", id: table.datasetId },
-    })),
-    base: baseAlias,
-    steps: [{ kind: "sql", query: sql.replace(/[\s;]+$/, "").trim() }],
-    output: emptyOutput(),
+  const nodes: Record<string, ViewNode> = {};
+  for (const table of referenced) {
+    nodes[table.alias] = { kind: "source", ref: { kind: "dataset", id: table.datasetId } };
+  }
+  const id = uniqueNodeId("query", Object.keys(nodes));
+  nodes[id] = {
+    kind: "sql",
+    from: baseAlias,
+    reads: referenced.map((table) => table.alias).filter((alias) => alias !== baseAlias),
+    query: sql.replace(/[\s;]+$/, "").trim(),
   };
+  return { nodes, result: { node: id, output: emptyOutput() } };
 }
 
 /** A key relation, as the relations section holds it. */
@@ -717,21 +782,22 @@ export interface RelationSeed {
 }
 
 /**
- * "Create view from relation" (replaces "Join into a table"): the base is the
- * relation's FROM side, with one Join step to the TO side on the relation's
- * keys. A 1-1 relation takes the first match; anything else summarizes with a
- * count so no row is silently dropped or multiplied.
+ * "Create view from relation" (replaces "Join into a table"): a source node for
+ * each side and one join node on the relation's keys. A 1-1 relation takes the
+ * first match; anything else summarizes with a count so no row is silently
+ * dropped or multiplied.
  */
 export function definitionFromRelation(seed: RelationSeed): {
   title: string;
   definition: ViewDefinition;
 } {
-  const baseAlias = uniqueAlias(seed.fromTitle, []);
-  const rightAlias = uniqueAlias(seed.toTitle, [baseAlias]);
+  const left = uniqueNodeId(seed.fromTitle, []);
+  const right = uniqueNodeId(seed.toTitle, [left]);
   const prefix = slugifyViewName(seed.toTitle);
-  const step: JoinStep = {
+  const join: JoinNode = {
     kind: "join",
-    right: { input: rightAlias },
+    left,
+    right,
     on: [{ left: seed.fromKey, right: seed.toKey }],
     matching: { ...DEFAULT_MATCHING },
     type: "left",
@@ -741,16 +807,16 @@ export function definitionFromRelation(seed: RelationSeed): {
         : { mode: "summarize", measures: [{ as: `${prefix}_count`, fn: "count" }] },
     ...(seed.cardinality === "1-1" ? { prefix } : {}),
   };
+  const id = uniqueNodeId("joined", [left, right]);
   return {
     title: `${seed.fromTitle} + ${seed.toTitle}`,
     definition: {
-      inputs: [
-        { alias: baseAlias, ref: { kind: "dataset", id: seed.fromDataset } },
-        { alias: rightAlias, ref: { kind: "dataset", id: seed.toDataset } },
-      ],
-      base: baseAlias,
-      steps: [step],
-      output: emptyOutput(),
+      nodes: {
+        [left]: { kind: "source", ref: { kind: "dataset", id: seed.fromDataset } },
+        [right]: { kind: "source", ref: { kind: "dataset", id: seed.toDataset } },
+        [id]: join,
+      },
+      result: { node: id, output: emptyOutput() },
     },
   };
 }
@@ -762,11 +828,13 @@ export function validationSummary(errors: readonly { message: string }[]): strin
   return errors.length > 1 ? `${head} (and ${errors.length - 1} more)` : head;
 }
 
-/** The validation errors at or under `path`, leaving out those that belong to a nested sub-pipeline's own steps. */
-export function errorsForStep(errors: readonly ValidationError[], path: string): ValidationError[] {
-  const inside = (error: ValidationError): boolean =>
-    error.path === path || error.path.startsWith(`${path}.`) || error.path.startsWith(`${path}[`);
-  return errors.filter((error) => inside(error) && !error.path.startsWith(`${path}.right.steps[`));
+/** The validation errors at or under `nodes.<id>`. */
+export function errorsForNode(errors: readonly ValidationError[], id: string): ValidationError[] {
+  const path = `nodes.${id}`;
+  return errors.filter(
+    (error) =>
+      error.path === path || error.path.startsWith(`${path}.`) || error.path.startsWith(`${path}[`),
+  );
 }
 
 const PATH_LABELS: [RegExp, (match: RegExpExecArray) => string][] = [
@@ -781,8 +849,9 @@ const PATH_LABELS: [RegExp, (match: RegExpExecArray) => string][] = [
 ];
 
 /** Where in the step a validation error points, in the form's own words (the part of `path` after the step). */
-export function errorLabel(path: string, stepPath: string): string {
-  const tail = path === stepPath ? "" : path.slice(stepPath.length).replace(/^\./, "");
+/** Where in the step a validation error points, in the form's own words (the part of `path` after the node). */
+export function errorLabel(path: string, nodePath: string): string {
+  const tail = path === nodePath ? "" : path.slice(nodePath.length).replace(/^\./, "");
   for (const [pattern, label] of PATH_LABELS) {
     const match = pattern.exec(tail);
     if (match !== null) {

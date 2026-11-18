@@ -32,3 +32,4 @@ Third-party extensions install into the `extensions` schema.
   `delete_project_folder` (deletes one folder and moves what it holds up a level).
 - `0035_links_not_live_views.sql` — a live view cannot be a dataset link end (insert trigger on
   `dataset_relations`) and a linked view cannot be switched to live (trigger on `datasets`).
+- `0036_views_graph_reset.sql` — one-shot wipe of every view (and the layers, links, runs and rows that depended on them) when views became a node graph; no conversion.
