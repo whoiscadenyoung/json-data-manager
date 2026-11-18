@@ -47,6 +47,16 @@ export const EXPRESSION_FUNCTIONS: FunctionInfo[] = [
   { name: "upper", signature: "upper(text)", description: "Uppercase text." },
   { name: "trim", signature: "trim(text)", description: "Remove leading and trailing spaces." },
   {
+    name: "replace",
+    signature: "replace(text, find, with)",
+    description: "Replace every occurrence of a piece of text (empty stays empty).",
+  },
+  {
+    name: "number",
+    signature: "number(value)",
+    description: 'Convert text such as "12.5" to a number (empty when it is not one).',
+  },
+  {
     name: "round",
     signature: "round(number, digits?)",
     description: "Round to a number of decimal places (default 0).",
@@ -233,6 +243,14 @@ function roundBuilder(call: CallArgs): Typed {
   return { type: "number", sql: `round(${value}${digits})` };
 }
 
+function replaceBuilder(call: CallArgs): Typed {
+  const text = textArg(call, 0);
+  return {
+    type: "string",
+    sql: `replace(${text}, ${textArg(call, 1)}, ${textArg(call, 2)})`,
+  };
+}
+
 interface FunctionSpec {
   min: number;
   /** Infinity for variadic functions. */
@@ -272,6 +290,8 @@ const FUNCTIONS: Record<string, FunctionSpec> = {
     max: 1,
     build: (call) => ({ type: "string", sql: `btrim(${textArg(call, 0)})` }),
   },
+  replace: { min: 3, max: 3, build: replaceBuilder },
+  number: { min: 1, max: 1, build: (call) => ({ type: "number", sql: numberArg(call, 0) }) },
   round: { min: 1, max: 2, build: roundBuilder },
   year: { min: 1, max: 1, build: datePart("year") },
   month: { min: 1, max: 1, build: datePart("month") },

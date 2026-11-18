@@ -184,6 +184,8 @@ describe("analyzeExpression: functions, arity and types", () => {
         "if",
         "lower",
         "month",
+        "number",
+        "replace",
         "round",
         "trim",
         "upper",
@@ -246,5 +248,32 @@ describe("analyzeExpression: functions, arity and types", () => {
     expect(result.ok && expressionFieldRefs(result.ast).toSorted()).toEqual(
       ["a b", "b", "n", "s", "u"].toSorted(),
     );
+  });
+});
+
+function types(name: string): FieldType | undefined {
+  const known: Record<string, FieldType> = { Round: "string", Amount: "string", cost: "number" };
+  return Object.hasOwn(known, name) ? known[name] : undefined;
+}
+
+describe("replace and number", () => {
+  test("replace takes text in and gives text out", () => {
+    const result = analyzeExpression("replace(Round, 'Round ', '')", types);
+    expect(result).toMatchObject({ ok: true, type: "string" });
+    expect(analyzeExpression("replace(Round, 'a')", types).ok).toBe(false);
+  });
+
+  test("number converts text to a number, so it can feed a numeric result", () => {
+    expect(analyzeExpression("number(replace(Amount, '$', ''))", types)).toMatchObject({
+      ok: true,
+      type: "number",
+    });
+    expect(analyzeExpression("number(replace(Amount, '$', '')) * 2", types).ok).toBe(true);
+  });
+
+  test("both are in the function list", () => {
+    const names = EXPRESSION_FUNCTIONS.map((fn) => fn.name);
+    expect(names).toContain("replace");
+    expect(names).toContain("number");
   });
 });

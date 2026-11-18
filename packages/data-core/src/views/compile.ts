@@ -2,7 +2,7 @@ import { buildChain } from "./chain.js";
 import type { Chain } from "./chain.js";
 import { diagnosticsSelect } from "./diagnostics.js";
 import { ViewCompileError } from "./errors.js";
-import { resolveInputs } from "./inputs.js";
+import { sourceIds } from "./graph.js";
 import type {
   CompileInputMeta,
   CompileOptions,
@@ -20,7 +20,7 @@ function withClause(chain: Chain): string {
  * when the whole pipeline is compiled (a step preview shows every field).
  */
 function outputRow(def: ViewDefinition, chain: Chain): string {
-  const fields = def.output.fields;
+  const fields = def.result.output.fields;
   const keys = fields.map((field) => field.key);
   if (!chain.complete || keys.length === 0) {
     return "d";
@@ -62,7 +62,7 @@ from ${chain.last}${limitClause(opts.limit)}`;
 
 /**
  * Compile the diagnostics query: one row, one `diagnostics jsonb` column of
- * the shape `{ steps: [...] }` (design §8).
+ * the shape `{ nodes: [...] }`.
  */
 export function compileDiagnostics(
   def: ViewDefinition,
@@ -71,17 +71,17 @@ export function compileDiagnostics(
 ): CompiledQuery {
   // The `error` multi-match guard would abort the query; diagnostics report the conflicts instead.
   const chain = buildChain(def, inputs, { ...opts, guards: false });
-  const sql = `${withClause(chain)}\n${diagnosticsSelect(chain.steps, chain.bag)}`;
+  const sql = `${withClause(chain)}\n${diagnosticsSelect(chain.nodes, chain.bag)}`;
   return { sql, params: chain.bag.values };
 }
 
-/** Distinct dataset ids the view reads, in input order (for visibility checks and lineage). */
+/** Distinct dataset ids the view's source nodes read, in node order (for visibility checks and lineage). */
 export function viewInputDatasetIds(def: ViewDefinition, inputs: CompileInputMeta[]): string[] {
-  const resolved = resolveInputs(def, inputs);
   const ids: string[] = [];
-  for (const input of resolved.values()) {
-    if (!ids.includes(input.datasetId)) {
-      ids.push(input.datasetId);
+  for (const id of sourceIds(def)) {
+    const meta = inputs.find((entry) => entry.node === id);
+    if (meta !== undefined && !ids.includes(meta.datasetId)) {
+      ids.push(meta.datasetId);
     }
   }
   return ids;

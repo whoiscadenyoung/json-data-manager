@@ -230,21 +230,28 @@ function validateMultiMatch(mm: unknown, path: string, issues: Issues): void {
   }
 }
 
+function validateRef(
+  value: unknown,
+  path: string,
+  ids: Set<string>,
+  issues: Issues,
+  what = "node",
+): void {
+  if (!isNonEmptyString(value)) {
+    issues.add(path, `Pick a ${what}.`);
+  } else if (!ids.has(value)) {
+    issues.add(path, `Unknown node "${value}".`);
+  }
+}
+
 function validateJoin(
   step: Record<string, unknown>,
   path: string,
-  aliases: Set<string>,
+  ids: Set<string>,
   issues: Issues,
 ): void {
-  const right = step.right;
-  if (!isRecord(right) || typeof right.input !== "string") {
-    issues.add(`${path}.right`, "A join needs a right side with an input alias.");
-  } else if (!aliases.has(right.input)) {
-    issues.add(`${path}.right.input`, `Unknown input alias "${right.input}".`);
-  }
-  if (isRecord(right) && right.steps !== undefined && !Array.isArray(right.steps)) {
-    issues.add(`${path}.right.steps`, "A sub-pipeline must be a list of steps.");
-  }
+  validateRef(step.left, `${path}.left`, ids, issues);
+  validateRef(step.right, `${path}.right`, ids, issues);
   validateOn(step.on, `${path}.on`, issues);
   validateMatching(step.matching, `${path}.matching`, issues);
   if (step.type !== "left" && step.type !== "inner") {
@@ -272,25 +279,6 @@ function validateGroupBy(step: Record<string, unknown>, path: string, issues: Is
     issues.add(`${path}.by`, "groupBy needs at least one field.");
   }
   validateMeasures(step.measures, `${path}.measures`, issues);
-}
-
-function validateSelect(step: Record<string, unknown>, path: string, issues: Issues): void {
-  const fields = step.fields;
-  if (!Array.isArray(fields) || fields.length === 0) {
-    issues.add(`${path}.fields`, "select needs at least one field.");
-    return;
-  }
-  const seen = new Set<string>();
-  for (const [i, field] of fields.entries()) {
-    const at = `${path}.fields[${i}]`;
-    if (!isRecord(field) || !isNonEmptyString(field.from) || !isNonEmptyString(field.as)) {
-      issues.add(at, "Each select field needs from and as.");
-    } else if (seen.has(field.as)) {
-      issues.add(at, `Duplicate output name "${field.as}".`);
-    } else {
-      seen.add(field.as);
-    }
-  }
 }
 
 function isTag(value: unknown): boolean {
@@ -346,82 +334,141 @@ function validateColumnEdits(edits: unknown, path: string, issues: Issues): void
   }
 }
 
-function validateAppend(
+function validateStackInput(input: unknown, at: string, ids: Set<string>, issues: Issues): void {
+  if (!isRecord(input)) {
+    issues.add(at, "Each stack input needs a node.");
+    return;
+  }
+  validateRef(input.node, `${at}.node`, ids, issues);
+  if (!isTag(input.tag)) {
+    issues.add(`${at}.tag`, "A tag must be a string, number, boolean or null.");
+  }
+  validateColumnEdits(input.columns, `${at}.columns`, issues);
+}
+
+function validateStack(
   step: Record<string, unknown>,
   path: string,
-  aliases: Set<string>,
+  ids: Set<string>,
   issues: Issues,
 ): void {
-  const sources = step.sources;
-  if (!Array.isArray(sources) || sources.length === 0) {
-    issues.add(`${path}.sources`, "append needs at least one input to stack.");
+  const inputs = step.inputs;
+  if (!Array.isArray(inputs) || inputs.length === 0) {
+    issues.add(`${path}.inputs`, "A stack needs at least one input.");
   } else {
-    for (const [i, source] of sources.entries()) {
-      const at = `${path}.sources[${i}]`;
-      if (!isRecord(source) || typeof source.input !== "string") {
-        issues.add(at, "Each source needs an input alias.");
-      } else if (source.input === "") {
-        issues.add(`${at}.input`, "Pick a dataset to stack.");
-      } else if (!aliases.has(source.input)) {
-        issues.add(`${at}.input`, `Unknown input alias "${source.input}".`);
-      } else if (!isTag(source.tag)) {
-        issues.add(`${at}.tag`, "A tag must be a string, number, boolean or null.");
-      }
-      if (isRecord(source)) {
-        validateColumnEdits(source.columns, `${at}.columns`, issues);
-      }
+    for (const [i, input] of inputs.entries()) {
+      validateStackInput(input, `${path}.inputs[${i}]`, ids, issues);
     }
   }
   if (step.tagField !== undefined && !isNonEmptyString(step.tagField)) {
     issues.add(`${path}.tagField`, "tagField must be a field name.");
   }
-  validateColumnEdits(step.baseColumns, `${path}.baseColumns`, issues);
-  if (!isTag(step.baseTag)) {
-    issues.add(`${path}.baseTag`, "A tag must be a string, number, boolean or null.");
-  }
-  const tagged = Array.isArray(sources) && sources.some((s) => isRecord(s) && s.tag !== undefined);
+  const tagged = Array.isArray(inputs) && inputs.some((s) => isRecord(s) && s.tag !== undefined);
   if (tagged && step.tagField === undefined) {
     issues.add(`${path}.tagField`, "Tags need a tagField to be written to.");
   }
 }
 
-/** Shape checks for one step (no field-scope checks; see validate-fields). */
-export function validateStepShape(
+function validateColumns(step: Record<string, unknown>, path: string, issues: Issues): void {
+  if (!Array.isArray(step.edits)) {
+    issues.add(`${path}.edits`, "columns needs a list of edits.");
+  } else {
+    validateColumnEdits(step.edits, `${path}.edits`, issues);
+  }
+  const only = step.only;
+  if (only !== undefined && !(Array.isArray(only) && only.every(isNonEmptyString))) {
+    issues.add(`${path}.only`, "only must be a list of field names.");
+  }
+}
+
+function validateCalculate(step: Record<string, unknown>, path: string, issues: Issues): void {
+  const fields = step.fields;
+  if (!Array.isArray(fields) || fields.length === 0) {
+    issues.add(`${path}.fields`, "calculate needs at least one field.");
+    return;
+  }
+  for (const [i, field] of fields.entries()) {
+    const at = `${path}.fields[${i}]`;
+    if (!isRecord(field) || !isNonEmptyString(field.field)) {
+      issues.add(`${at}.field`, "calculate needs a field name.");
+    } else if (!isNonEmptyString(field.expr)) {
+      issues.add(`${at}.expr`, "calculate needs an expression (text).");
+    }
+  }
+}
+
+function validateSql(
   step: Record<string, unknown>,
   path: string,
-  aliases: Set<string>,
+  ids: Set<string>,
   issues: Issues,
 ): void {
-  switch (step.kind) {
-    case "filter":
-      validateConditionShape(step.where, `${path}.where`, issues);
-      break;
-    case "join":
-      validateJoin(step, path, aliases, issues);
-      break;
-    case "append":
-      validateAppend(step, path, aliases, issues);
-      break;
-    case "groupBy":
-      validateGroupBy(step, path, issues);
-      break;
-    case "select":
-      validateSelect(step, path, issues);
-      break;
-    case "calculate":
-      if (!isNonEmptyString(step.field)) {
-        issues.add(`${path}.field`, "calculate needs a field name.");
-      }
-      if (!isNonEmptyString(step.expr)) {
-        issues.add(`${path}.expr`, "calculate needs an expression (text).");
-      }
-      break;
-    case "sql":
-      if (!isNonEmptyString(step.query)) {
-        issues.add(`${path}.query`, "sql needs a query.");
-      }
-      break;
-    default:
-      issues.add(`${path}.kind`, "Unknown step kind.");
+  if (!isNonEmptyString(step.query)) {
+    issues.add(`${path}.query`, "sql needs a query.");
+  }
+  const reads = step.reads;
+  if (reads === undefined) {
+    return;
+  }
+  if (!Array.isArray(reads)) {
+    issues.add(`${path}.reads`, "reads must be a list of node ids.");
+    return;
+  }
+  for (const [i, read] of reads.entries()) {
+    validateRef(read, `${path}.reads[${i}]`, ids, issues);
+  }
+}
+
+type Shape = (
+  node: Record<string, unknown>,
+  path: string,
+  ids: Set<string>,
+  issues: Issues,
+) => void;
+
+const SHAPES: Record<string, Shape> = {
+  source: (node, path, _ids, issues) => validateSourceRef(node.ref, `${path}.ref`, issues),
+  filter: (node, path, _ids, issues) => validateConditionShape(node.where, `${path}.where`, issues),
+  join: validateJoin,
+  stack: validateStack,
+  groupBy: (node, path, _ids, issues) => validateGroupBy(node, path, issues),
+  columns: (node, path, _ids, issues) => validateColumns(node, path, issues),
+  calculate: (node, path, _ids, issues) => validateCalculate(node, path, issues),
+  sql: validateSql,
+};
+
+const OWN_INPUTS = new Set(["source", "join", "stack"]);
+
+/** Shape checks for one node (no field-scope checks; see validate-fields). */
+export function validateNodeShape(
+  node: Record<string, unknown>,
+  path: string,
+  ids: Set<string>,
+  issues: Issues,
+): void {
+  if (node.label !== undefined && typeof node.label !== "string") {
+    issues.add(`${path}.label`, "A label must be text.");
+  }
+  const shape =
+    typeof node.kind === "string" && Object.hasOwn(SHAPES, node.kind)
+      ? SHAPES[node.kind]
+      : undefined;
+  if (shape === undefined) {
+    issues.add(`${path}.kind`, "Unknown node kind.");
+    return;
+  }
+  if (!OWN_INPUTS.has(String(node.kind))) {
+    validateRef(node.from, `${path}.from`, ids, issues);
+  }
+  shape(node, path, ids, issues);
+}
+
+function validateSourceRef(ref: unknown, path: string, issues: Issues): void {
+  if (!isRecord(ref) || ref.kind !== "dataset" || !isNonEmptyString(ref.id)) {
+    issues.add(path, 'A source needs a ref: { kind: "dataset", id }.');
+    return;
+  }
+  if (ref.version !== undefined && typeof ref.version !== "string") {
+    issues.add(`${path}.version`, "Version must be a string.");
   }
 }

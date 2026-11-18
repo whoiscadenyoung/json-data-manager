@@ -1,7 +1,10 @@
 import { describe, expect, test } from "vitest";
 
-import { definition, join, metas, noNormalization } from "./test-fixtures.js";
-import type { Step, ViewDefinition } from "./types.js";
+import { chain as definition, join, metas, noNormalization } from "./test-fixtures.js";
+import type { ChainStep } from "./test-fixtures.js";
+import type { ViewDefinition } from "./types.js";
+
+type Step = ChainStep;
 import { validateViewDefinition } from "./validate.js";
 
 function errorsOf(def: unknown, withMetas = false): { path: string; message: string }[] {
@@ -31,48 +34,35 @@ describe("validateViewDefinition", () => {
     expect(validateViewDefinition("x").ok).toBe(false);
   });
 
-  test("unknown input alias on a join", () => {
-    const def = definition([join({ right: { input: "nope" } })]);
-    expect(paths(def)).toContain("steps[0].right.input");
-  });
-
-  test("base not in inputs", () => {
-    expect(paths(definition([], { base: "ghost" }))).toContain("base");
-  });
-
-  test("duplicate and uuid-looking aliases", () => {
+  test("unknown node on a join, a missing result and bad ids", () => {
+    const def = definition([join({ right: "nope" })]);
+    expect(paths(def)).toContain("nodes.s0.right");
+    const base = definition([]);
+    expect(paths({ ...base, result: { ...base.result, node: "ghost" } })).toContain("result.node");
     const uuid = "11111111-1111-4111-8111-111111111111";
-    const def = definition([], {
-      inputs: [
-        { alias: "a", ref: { kind: "dataset", id: uuid } },
-        { alias: "a", ref: { kind: "dataset", id: uuid } },
-      ],
-      base: "a",
-    });
-    expect(errorsOf(def).some((e) => e.message.includes("Duplicate"))).toBe(true);
-    const bad = definition([], {
-      inputs: [{ alias: "no spaces!", ref: { kind: "dataset", id: uuid } }],
-      base: "no spaces!",
-    });
-    expect(paths(bad)).toContain("inputs[0].alias");
+    const bad = { ...base, nodes: { ...base.nodes, [`n_${uuid}`]: base.nodes.states } };
+    expect(paths(bad)).toContain(`nodes.n_${uuid}`);
+    expect(paths({ ...base, nodes: { ...base.nodes, "No Spaces!": base.nodes.states } })).toContain(
+      "nodes.No Spaces!",
+    );
   });
 
   test("empty on", () => {
-    expect(paths(definition([join({ on: [] })]))).toContain("steps[0].on");
+    expect(paths(definition([join({ on: [] })]))).toContain("nodes.s0.on");
   });
 
   test("spread without columns", () => {
     const step = join({
       multiMatch: { mode: "spread", by: "type", value: "url", columns: [] },
     });
-    expect(paths(definition([step]))).toContain("steps[0].multiMatch.columns");
+    expect(paths(definition([step]))).toContain("nodes.s0.multiMatch.columns");
   });
 
   test("missing matching flags and bad join type", () => {
     const step = { ...join(), matching: {}, type: "outer" };
     const found = paths(definition([step as unknown as Step]));
-    expect(found).toContain("steps[0].matching.trim");
-    expect(found).toContain("steps[0].type");
+    expect(found).toContain("nodes.s0.matching.trim");
+    expect(found).toContain("nodes.s0.type");
   });
 
   test("measures need fields; duplicates are reported", () => {
@@ -85,47 +75,48 @@ describe("validateViewDefinition", () => {
       ],
     };
     const found = paths(definition([step]));
-    expect(found).toContain("steps[0].measures[0].field");
-    expect(found).toContain("steps[0].measures[1].as");
+    expect(found).toContain("nodes.s0.measures[0].field");
+    expect(found).toContain("nodes.s0.measures[1].as");
   });
 
-  test("select and groupBy need fields", () => {
-    expect(paths(definition([{ kind: "select", fields: [] }]))).toContain("steps[0].fields");
-    expect(paths(definition([{ kind: "groupBy", by: [], measures: [] }]))).toContain("steps[0].by");
+  test("columns, calculate and groupBy need their lists", () => {
+    expect(paths(definition([{ kind: "columns" } as unknown as Step]))).toContain("nodes.s0.edits");
+    expect(paths(definition([{ kind: "calculate", fields: [] }]))).toContain("nodes.s0.fields");
+    expect(paths(definition([{ kind: "groupBy", by: [], measures: [] }]))).toContain("nodes.s0.by");
   });
 
   test("bad conditions", () => {
     const where = { and: [] };
-    expect(paths(definition([{ kind: "filter", where }]))).toContain("steps[0].where.and");
+    expect(paths(definition([{ kind: "filter", where }]))).toContain("nodes.s0.where.and");
     const op = { field: "a", op: "like", value: 1 };
     expect(paths(definition([{ kind: "filter", where: op } as unknown as Step]))).toContain(
-      "steps[0].where.op",
+      "nodes.s0.where.op",
     );
   });
 
   test("unknown step kind", () => {
     const step = { kind: "teleport" } as unknown as Step;
-    expect(paths(definition([step]))).toContain("steps[0].kind");
+    expect(paths(definition([step]))).toContain("nodes.s0.kind");
   });
 
   test("a prefix that is a uuid is refused", () => {
     const step = join({ prefix: "11111111-1111-4111-8111-111111111111" });
-    expect(paths(definition([step]))).toContain("steps[0].prefix");
+    expect(paths(definition([step]))).toContain("nodes.s0.prefix");
   });
 });
 
 describe("field references (with input metadata)", () => {
   test("unknown filter field", () => {
     const step: Step = { kind: "filter", where: { field: "nope", op: "notNull" } };
-    expect(paths(definition([step]), true)).toContain("steps[0].where.field");
+    expect(paths(definition([step]), true)).toContain("nodes.s0.where.field");
     expect(paths(definition([step]), false)).toEqual([]);
   });
 
   test("unknown left and right join keys", () => {
     const step = join({ on: [{ left: "ghost", right: "phantom" }] });
     const found = paths(definition([step]), true);
-    expect(found).toContain("steps[0].on[0].left");
-    expect(found).toContain("steps[0].on[0].right");
+    expect(found).toContain("nodes.s0.on[0].left");
+    expect(found).toContain("nodes.s0.on[0].right");
   });
 
   test("joined fields are known to later steps, prefixed", () => {
@@ -134,7 +125,7 @@ describe("field references (with input metadata)", () => {
       { kind: "filter", where: { field: "deployments_2024.cost", op: "gt", value: 1 } },
       { kind: "filter", where: { field: "cost", op: "gt", value: 1 } },
     ];
-    expect(paths(definition(steps), true)).toEqual(["steps[2].where.field"]);
+    expect(paths(definition(steps), true)).toEqual(["nodes.s2.where.field"]);
   });
 
   test("summarize measure names flow forward; groupBy narrows the scope", () => {
@@ -146,25 +137,28 @@ describe("field references (with input metadata)", () => {
       { kind: "groupBy", by: ["n"], measures: [{ as: "c", fn: "count" }] },
       { kind: "filter", where: { field: "name", op: "notNull" } },
     ];
-    expect(paths(definition(steps), true)).toEqual(["steps[2].where.field"]);
+    expect(paths(definition(steps), true)).toEqual(["nodes.s2.where.field"]);
   });
 
   test("unknown output key", () => {
     const def: ViewDefinition = definition([], {
-      output: { fields: [{ key: "missing" }], emptyFields: "keep" },
+      fields: [{ key: "missing" }],
+      emptyFields: "keep",
     });
-    expect(paths(def, true)).toContain("output.fields[0].key");
+    expect(paths(def, true)).toContain("result.output.fields[0].key");
   });
 
   test("an output rename checks its source field, not the new key", () => {
     const ok: ViewDefinition = definition([], {
-      output: { fields: [{ key: "town", from: "name" }], emptyFields: "keep" },
+      fields: [{ key: "town", from: "name" }],
+      emptyFields: "keep",
     });
     expect(paths(ok, true)).toEqual([]);
     const bad: ViewDefinition = definition([], {
-      output: { fields: [{ key: "town", from: "missing" }], emptyFields: "keep" },
+      fields: [{ key: "town", from: "missing" }],
+      emptyFields: "keep",
     });
-    expect(paths(bad, true)).toContain("output.fields[0].from");
+    expect(paths(bad, true)).toContain("result.output.fields[0].from");
   });
 
   test("a sql step returning d makes the row shape unknown, so later refs are not checked", () => {
@@ -181,17 +175,25 @@ function located(steps: Step[], withMetas = true) {
   return result.ok ? [] : result.errors;
 }
 
-describe("calculate, sql and sub-pipelines", () => {
+describe("calculate and sql nodes", () => {
   test("calculate: a syntax error carries its position", () => {
-    const [error] = located([{ kind: "calculate", field: "x", expr: "1 + (2" }], false);
-    expect(error).toMatchObject({ path: "steps[0].expr", position: { start: 4, end: 5 } });
+    const [error] = located(
+      [{ kind: "calculate", fields: [{ field: "x", expr: "1 + (2" }] }],
+      false,
+    );
+    expect(error).toMatchObject({
+      path: "nodes.s0.fields[0].expr",
+      position: { start: 4, end: 5 },
+    });
     expect(error.message).toContain("never closed");
   });
 
   test("calculate: unknown function and unknown field are located", () => {
-    const [fn] = located([{ kind: "calculate", field: "x", expr: "name + sleep(1)" }]);
-    expect(fn).toMatchObject({ path: "steps[0].expr", position: { start: 7, end: 15 } });
-    const [field] = located([{ kind: "calculate", field: "x", expr: "lower(nope)" }]);
+    const [fn] = located([
+      { kind: "calculate", fields: [{ field: "x", expr: "name + sleep(1)" }] },
+    ]);
+    expect(fn).toMatchObject({ path: "nodes.s0.fields[0].expr", position: { start: 7, end: 15 } });
+    const [field] = located([{ kind: "calculate", fields: [{ field: "x", expr: "lower(nope)" }] }]);
     expect(field).toMatchObject({
       message: 'Unknown field "nope".',
       position: { start: 6, end: 10 },
@@ -199,20 +201,34 @@ describe("calculate, sql and sub-pipelines", () => {
   });
 
   test("calculate: needs text, and its field joins the scope for later steps", () => {
-    const bad = { kind: "calculate", field: "x", expr: { op: "+" } } as unknown as Step;
-    expect(paths(definition([bad]))).toContain("steps[0].expr");
+    const bad = {
+      kind: "calculate",
+      fields: [{ field: "x", expr: { op: "+" } }],
+    } as unknown as Step;
+    expect(paths(definition([bad]))).toContain("nodes.s0.fields[0].expr");
     const steps: Step[] = [
-      { kind: "calculate", field: "double", expr: "stateName" },
+      { kind: "calculate", fields: [{ field: "double", expr: "stateName" }] },
       { kind: "filter", where: { field: "double", op: "notNull" } },
       { kind: "filter", where: { field: "other", op: "notNull" } },
     ];
-    expect(located(steps).map((e) => e.path)).toEqual(["steps[2].where.field"]);
+    expect(located(steps).map((e) => e.path)).toEqual(["nodes.s2.where.field"]);
+  });
+
+  test("calculate: later fields read earlier ones in the same node", () => {
+    const ok: Step = {
+      kind: "calculate",
+      fields: [
+        { field: "a", expr: "1 + 1" },
+        { field: "b", expr: "a * 2" },
+      ],
+    };
+    expect(located([ok])).toEqual([]);
   });
 
   test("calculate: types flow, so a type error is caught", () => {
     const steps: Step[] = [
-      join({ right: { input: "deployments" }, prefix: "d" }),
-      { kind: "calculate", field: "x", expr: '"d.stateId" = "d.cost"' },
+      join({ right: "deployments", prefix: "d" }),
+      { kind: "calculate", fields: [{ field: "x", expr: '"d.stateId" = "d.cost"' }] },
     ];
     expect(located(steps)[0].message).toContain("different types");
   });
@@ -228,7 +244,7 @@ describe("calculate, sql and sub-pipelines", () => {
     expect(query("select * from prev; select * from prev")[0]).toContain("Only one statement");
     expect(query("select * from prev")).toEqual([]);
     const [positioned] = located([{ kind: "sql", query: "select * from prev, secrets" }]);
-    expect(positioned).toMatchObject({ path: "steps[0].query" });
+    expect(positioned).toMatchObject({ path: "nodes.s0.query" });
     expect(positioned.position).toEqual({ start: 20, end: 27 });
   });
 
@@ -238,43 +254,7 @@ describe("calculate, sql and sub-pipelines", () => {
       { kind: "filter", where: { field: "a", op: "notNull" } },
       { kind: "filter", where: { field: "row_id", op: "notNull" } },
     ];
-    expect(located(steps).map((e) => e.path)).toEqual(["steps[2].where.field"]);
-  });
-
-  test("sub-pipeline steps are validated with their own path and scope", () => {
-    const step = join({
-      right: {
-        input: "deployments",
-        steps: [{ kind: "filter", where: { field: "nope", op: "notNull" } }],
-      },
-    });
-    expect(located([step]).map((e) => e.path)).toEqual(["steps[0].right.steps[0].where.field"]);
-    const malformed = join({
-      right: { input: "deployments", steps: [{ kind: "filter" } as unknown as Step] },
-    });
-    expect(paths(definition([malformed]))).toContain("steps[0].right.steps[0].where");
-    const notList = join({ right: { input: "deployments", steps: {} as unknown as Step[] } });
-    expect(paths(definition([notList]))).toContain("steps[0].right.steps");
-  });
-
-  test("the outer join sees the sub-pipeline's output fields, not the raw input's", () => {
-    const sub: Step = join({
-      right: { input: "links" },
-      on: [{ left: "name", right: "stateName" }],
-      multiMatch: { mode: "summarize", measures: [{ as: "linkCount", fn: "count" }] },
-    });
-    const outer = (field: string): Step =>
-      join({
-        right: { input: "deployments", steps: [sub] },
-        multiMatch: {
-          mode: "summarize",
-          measures: [{ as: "top", fn: "topBy", field: "name", by: field }],
-        },
-      });
-    expect(located([outer("linkCount")])).toEqual([]);
-    expect(located([outer("missing")]).map((e) => e.path)).toEqual([
-      "steps[0].multiMatch.measures[0]",
-    ]);
+    expect(located(steps).map((e) => e.path)).toEqual(["nodes.s2.where.field"]);
   });
 
   test("text and list multi-matches add their fields; their inputs are checked", () => {
@@ -285,13 +265,13 @@ describe("calculate, sql and sub-pipelines", () => {
     ];
     expect(located(steps)).toEqual([]);
     const badText = join({ multiMatch: { mode: "text", field: "nope", separator: "," } });
-    expect(located([badText]).map((e) => e.path)).toEqual(["steps[0].multiMatch.field"]);
+    expect(located([badText]).map((e) => e.path)).toEqual(["nodes.s0.multiMatch.field"]);
     const list: Step[] = [
       join({ multiMatch: { mode: "list" } }),
       { kind: "filter", where: { field: "deployments_2024", op: "notNull" } },
     ];
     expect(located(list)).toEqual([]);
     const shape = join({ multiMatch: { mode: "text", field: "name" } as never });
-    expect(paths(definition([shape]))).toContain("steps[0].multiMatch");
+    expect(paths(definition([shape]))).toContain("nodes.s0.multiMatch");
   });
 });

@@ -1,13 +1,10 @@
 /**
- * The Views step format (docs/views-design.md §4): a plain-JSON, serializable
- * definition that the compiler turns into one Postgres statement. The Step
- * union is complete for v1; `ViewStepNotSupportedError` is reserved for
- * later step kinds (spatial steps) the union does not name yet.
+ * The Views node-graph format (docs/views-node-graph-design.md): a plain-JSON,
+ * serializable definition (named nodes, one `result`) that the compiler turns
+ * into one Postgres statement. The node union stays open for later kinds.
  */
 
 export type ViewInputRef = { kind: "dataset"; id: string; version?: string };
-
-export type ViewInput = { alias: string; ref: ViewInputRef };
 
 export type Sort = { field: string; direction?: "asc" | "desc" };
 
@@ -87,11 +84,11 @@ export type KeyMatching = {
 
 export type KeyPair = { left: string; right: string };
 
-export type RightSide = { input: string; steps?: Step[] };
-
-export type JoinStep = {
+export type JoinNode = {
   kind: "join";
-  right: RightSide;
+  /** Node ids: the rows kept (left) and the rows looked up (right). */
+  left: string;
+  right: string;
   on: KeyPair[];
   matching: KeyMatching;
   type: "left" | "inner";
@@ -110,40 +107,26 @@ export type AppendTag = string | number | boolean | null;
  */
 export type ColumnEdit = { from: string; as: string } | { from: string; exclude: true };
 
-export type AppendSource = {
-  /** Alias of the input whose rows are stacked under the current rows. */
-  input: string;
-  /** Written to `tagField` on this source's rows. */
+/** One stacked input: a node, its tag and its column edits (both belong to the edge). */
+export type StackInput = {
+  node: string;
+  /** Written to the stack's `tagField` on this input's rows. */
   tag?: AppendTag;
-  /** Column edits for this source's rows. */
   columns?: ColumnEdit[];
 };
 
-/**
- * Stack (UNION ALL) more inputs under the current rows. Rows keep their own
- * geometry, so stacking spatial datasets yields one spatial dataset. Fields
- * are matched by name; a field a source lacks is simply absent on its rows.
- */
-export type AppendStep = {
-  kind: "append";
-  sources: AppendSource[];
-  /** Field that receives each source's tag (and `baseTag` on the current rows). */
-  tagField?: string;
-  baseTag?: AppendTag;
-  /** Column edits for the incoming (current) rows. */
-  baseColumns?: ColumnEdit[];
-};
+export type NodeKind = ViewNode["kind"];
 
-export type Step =
-  | { kind: "filter"; where: Condition }
-  | JoinStep
-  | AppendStep
-  | { kind: "groupBy"; by: string[]; measures: Measure[] }
-  | { kind: "calculate"; field: string; expr: Expr }
-  | { kind: "select"; fields: { from: string; as: string }[] }
-  | { kind: "sql"; query: string };
-
-export type StepKind = Step["kind"];
+export type ViewNode = { label?: string } & (
+  | { kind: "source"; ref: ViewInputRef }
+  | { kind: "filter"; from: string; where: Condition }
+  | { kind: "columns"; from: string; edits: ColumnEdit[]; only?: string[] }
+  | { kind: "calculate"; from: string; fields: { field: string; expr: Expr }[] }
+  | { kind: "groupBy"; from: string; by: string[]; measures: Measure[] }
+  | { kind: "sql"; from: string; reads?: string[]; query: string }
+  | JoinNode
+  | { kind: "stack"; inputs: StackInput[]; tagField?: string }
+);
 
 export type OutputField = {
   /** The output property name (a rename when it differs from `from`). */
@@ -162,18 +145,17 @@ export type OutputSchema = {
 };
 
 export type ViewDefinition = {
-  inputs: ViewInput[];
-  /** Alias of the input whose rows (and geometry) the view keeps. */
-  base: string;
-  steps: Step[];
-  output: OutputSchema;
+  /** Key = stable node id (a readable slug, never a dataset id). */
+  nodes: Record<string, ViewNode>;
+  /** The node the view saves, and how its columns are exposed. */
+  result: { node: string; output: OutputSchema };
 };
 
 export type FieldType = "string" | "number" | "integer" | "boolean" | "date" | "unknown";
 
 export interface CompileInputMeta {
-  /** Matches ViewDefinition.inputs[].alias. */
-  alias: string;
+  /** Matches the id of a `source` node. */
+  node: string;
   /** Dataset uuid. */
   datasetId: string;
   /** Dataset title, used for default join prefixes (never the uuid). */
@@ -190,8 +172,8 @@ export interface CompiledQuery {
 }
 
 export interface CompileOptions {
-  /** Compile only steps[0..uptoStep] (inclusive), for previews. */
-  uptoStep?: number;
+  /** Compile only the ancestors of this node and read its rows, for previews. */
+  uptoNode?: string;
   /** Append LIMIT (a non-negative integer). */
   limit?: number;
   /** Use the unaccent() extension for stripDiacritics (default: translate()). */
@@ -199,7 +181,7 @@ export interface CompileOptions {
 }
 
 export interface DiagnosticsOptions {
-  uptoStep?: number;
+  uptoNode?: string;
   unaccent?: boolean;
 }
 

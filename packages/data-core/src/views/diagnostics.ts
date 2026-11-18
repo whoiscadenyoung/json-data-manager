@@ -1,10 +1,10 @@
 /**
- * The diagnostics query (design §8): per-step row counts and field changes,
+ * The diagnostics query (design §8): per-node row counts and field changes,
  * plus per-join match statistics. It reuses the CTE chain of the row query,
  * so the numbers describe exactly the rows a run would save.
  */
 
-import type { StepInfo } from "./chain.js";
+import type { NodeInfo } from "./chain.js";
 import { ParamBag } from "./sql-util.js";
 
 const SAMPLE_CAP = 20;
@@ -32,8 +32,8 @@ function samples(cte: string, other: string, keyCount: number): string {
  * spread column (they never add columns; this only reports them).
  */
 function spreadDiagnostics(
-  spread: NonNullable<NonNullable<StepInfo["join"]>["spread"]>,
-  info: NonNullable<StepInfo["join"]>,
+  spread: NonNullable<NonNullable<NodeInfo["join"]>["spread"]>,
+  info: NonNullable<NodeInfo["join"]>,
   bag: ParamBag,
 ): string {
   const { left, right, keyCount } = info;
@@ -45,7 +45,7 @@ function spreadDiagnostics(
       )`;
 }
 
-function joinDiagnostics(info: NonNullable<StepInfo["join"]>, bag: ParamBag): string {
+function joinDiagnostics(info: NonNullable<NodeInfo["join"]>, bag: ParamBag): string {
   const { left, right, keyCount, policy } = info;
   const keyCols = Array.from({ length: keyCount }, (_, i) => `r.k${i}`).join(", ");
   const leftMatched = `(select count(*) from ${left} x where ${hasMatch(right, keyCount, "x")})`;
@@ -68,20 +68,31 @@ function joinDiagnostics(info: NonNullable<StepInfo["join"]>, bag: ParamBag): st
     )`;
 }
 
-function stepDiagnostics(step: StepInfo, bag: ParamBag): string {
+function nodeDiagnostics(node: NodeInfo, bag: ParamBag): string {
+  const rowsOut = `(select count(*) from ${node.output})`;
+  // A stack takes in every input's rows; any other node reports the rows of its main input.
+  const counted = node.kind === "stack" ? node.inputs : node.inputs.slice(0, 1);
+  const rowsIn =
+    counted.length === 0
+      ? rowsOut
+      : counted.map((input) => `(select count(*) from ${input})`).join(" + ");
+  const [first] = node.inputs;
+  const fields =
+    first === undefined
+      ? ["'fieldsAdded', '[]'::jsonb", "'fieldsRemoved', '[]'::jsonb"]
+      : [
+          `'fieldsAdded', ${fieldDelta(node.output, first)}`,
+          `'fieldsRemoved', ${fieldDelta(first, node.output)}`,
+        ];
   const parts = [
-    `'index', ${step.index}`,
-    `'kind', ${bag.text(step.kind)}`,
-    `'rowsIn', (select count(*) from ${step.input})`,
-    `'rowsOut', (select count(*) from ${step.output})`,
-    `'fieldsAdded', ${fieldDelta(step.output, step.input)}`,
-    `'fieldsRemoved', ${fieldDelta(step.input, step.output)}`,
+    `'id', ${bag.text(node.id)}`,
+    `'kind', ${bag.text(node.kind)}`,
+    `'rowsIn', ${rowsIn}`,
+    `'rowsOut', ${rowsOut}`,
+    ...fields,
   ];
-  if (step.path !== undefined) {
-    parts.push(`'path', ${bag.text(step.path)}`);
-  }
-  if (step.join !== undefined) {
-    parts.push(`'join', ${joinDiagnostics(step.join, bag)}`);
+  if (node.join !== undefined) {
+    parts.push(`'join', ${joinDiagnostics(node.join, bag)}`);
   }
   return `jsonb_build_object(
     ${parts.join(",\n    ")}
@@ -89,9 +100,9 @@ function stepDiagnostics(step: StepInfo, bag: ParamBag): string {
 }
 
 /** The final SELECT: one row, one `diagnostics jsonb` column. */
-export function diagnosticsSelect(steps: StepInfo[], bag: ParamBag): string {
-  const objects = steps.map((step) => stepDiagnostics(step, bag));
+export function diagnosticsSelect(nodes: NodeInfo[], bag: ParamBag): string {
+  const objects = nodes.map((node) => nodeDiagnostics(node, bag));
   const array =
     objects.length === 0 ? "'[]'::jsonb" : `jsonb_build_array(\n  ${objects.join(",\n  ")}\n)`;
-  return `select jsonb_build_object('steps', ${array}) as diagnostics`;
+  return `select jsonb_build_object('nodes', ${array}) as diagnostics`;
 }

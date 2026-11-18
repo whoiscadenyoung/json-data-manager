@@ -3,34 +3,42 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import { compileDiagnostics, compileView } from "./compile.js";
 import { addRows, createDb, must, runQuery, setGeom } from "./test-fixtures-pglite.js";
-import { join, noNormalization } from "./test-fixtures.js";
-import type { CompileInputMeta, JoinStep, Step, ViewDefinition } from "./types.js";
+import { chain, join, noNormalization } from "./test-fixtures.js";
+import type { ChainStep } from "./test-fixtures.js";
+import type { CompileInputMeta, JoinNode, ViewDefinition, ViewNode } from "./types.js";
 
 const STATES = "aaaaaaaa-0000-4000-8000-000000000001";
 const ITEMS = "aaaaaaaa-0000-4000-8000-000000000002";
 const TAGS = "aaaaaaaa-0000-4000-8000-000000000003";
 
 const metas: CompileInputMeta[] = [
-  { alias: "states", datasetId: STATES, title: "States" },
-  { alias: "items", datasetId: ITEMS, title: "Items" },
-  { alias: "tags", datasetId: TAGS, title: "Tags" },
+  { node: "states", datasetId: STATES, title: "States" },
+  { node: "items", datasetId: ITEMS, title: "Items" },
+  { node: "tags", datasetId: TAGS, title: "Tags" },
 ];
 
+type Step = ChainStep;
+
+/** states -> steps over the `items` and `tags` sources. */
 function view(steps: Step[]): ViewDefinition {
-  return {
-    inputs: metas.map((meta) => ({
-      alias: meta.alias,
-      ref: { kind: "dataset", id: meta.datasetId },
-    })),
-    base: "states",
-    steps,
-    output: { fields: [], emptyFields: "keep" },
+  const base = chain(steps);
+  const extra: Record<string, ViewNode> = {
+    states: { kind: "source", ref: { kind: "dataset", id: STATES } },
+    items: { kind: "source", ref: { kind: "dataset", id: ITEMS } },
+    tags: { kind: "source", ref: { kind: "dataset", id: TAGS } },
   };
+  const nodes: Record<string, ViewNode> = {};
+  for (const [id, node] of Object.entries(base.nodes)) {
+    if (node.kind !== "source") {
+      nodes[id] = node;
+    }
+  }
+  return { nodes: { ...extra, ...nodes }, result: base.result };
 }
 
-function joinItems(multiMatch: JoinStep["multiMatch"], overrides: Partial<JoinStep> = {}): Step {
+function joinItems(multiMatch: JoinNode["multiMatch"], overrides: Partial<JoinNode> = {}): Step {
   return join({
-    right: { input: "items" },
+    right: "items",
     on: [{ left: "id", right: "k" }],
     matching: noNormalization,
     multiMatch,
@@ -81,7 +89,7 @@ async function rows(def: ViewDefinition, inputs = metas): Promise<Map<string, Ro
 describe("output renames", () => {
   test("a renamed key reads its source field; missing sources are omitted", async () => {
     const def = view([]);
-    def.output = {
+    def.result.output = {
       fields: [{ key: "town", from: "name" }, { key: "id" }, { key: "gone", from: "nope" }],
       emptyFields: "keep",
     };
@@ -120,11 +128,10 @@ describe("multi-match modes", () => {
         columns: [{ category: "docs", as: "docsLink" }],
       }),
     ]);
-    const [row] = await runQuery<{ diagnostics: { steps: { join: Record<string, unknown> }[] } }>(
-      db,
-      compileDiagnostics(def, metas),
-    );
-    expect(row.diagnostics.steps[0].join).toMatchObject({
+    const [row] = await runQuery<{
+      diagnostics: { nodes: { id: string; join: Record<string, unknown> }[] };
+    }>(db, compileDiagnostics(def, metas));
+    expect(must(row.diagnostics.nodes.find((n) => n.id === "s0")).join).toMatchObject({
       policy: "spread",
       spread: { undeclaredCategories: ["benefits"], undeclaredRows: 1 },
     });
@@ -173,11 +180,13 @@ describe("multi-match modes", () => {
   });
 
   test("error: diagnostics report the conflicting key count instead of failing", async () => {
-    const [row] = await runQuery<{ diagnostics: { steps: { join: Record<string, unknown> }[] } }>(
-      db,
-      compileDiagnostics(view([joinItems({ mode: "error" })]), metas),
-    );
-    expect(row.diagnostics.steps[0].join).toMatchObject({ policy: "error", multiMatchKeys: 1 });
+    const [row] = await runQuery<{
+      diagnostics: { nodes: { id: string; join: Record<string, unknown> }[] };
+    }>(db, compileDiagnostics(view([joinItems({ mode: "error" })]), metas));
+    expect(must(row.diagnostics.nodes.find((n) => n.id === "s0")).join).toMatchObject({
+      policy: "error",
+      multiMatchKeys: 1,
+    });
   });
 });
 
@@ -208,18 +217,21 @@ describe("measures", () => {
   });
 
   test("groupBy supports topBy and text too", async () => {
+    const base = view([]);
     const def: ViewDefinition = {
-      ...view([
-        {
+      nodes: {
+        ...base.nodes,
+        g: {
           kind: "groupBy",
+          from: "items",
           by: ["k"],
           measures: [
             { as: "top", fn: "topBy", field: "name", by: "cost" },
             { as: "all", fn: "text", field: "name", separator: "+" },
           ],
         },
-      ]),
-      base: "items",
+      },
+      result: { node: "g", output: base.result.output },
     };
     const result = await runQuery<{ d: Record<string, unknown> }>(db, compileView(def, metas));
     const byKey = new Map(result.map((row) => [String(row.d.k), row.d]));
@@ -228,47 +240,80 @@ describe("measures", () => {
   });
 });
 
-describe("inline sub-pipelines", () => {
-  test("a sub-pipeline's join can have its own sub-pipeline", async () => {
-    const tagsJoin = join({
-      right: {
-        input: "tags",
-        steps: [{ kind: "filter", where: { field: "tag", op: "neq", value: "ignore" } }],
+describe("graph reads", () => {
+  test("a join reads a filtered, then joined node (nothing nests)", async () => {
+    const def: ViewDefinition = {
+      nodes: {
+        states: { kind: "source", ref: { kind: "dataset", id: STATES } },
+        items: { kind: "source", ref: { kind: "dataset", id: ITEMS } },
+        tags: { kind: "source", ref: { kind: "dataset", id: TAGS } },
+        real_tags: {
+          kind: "filter",
+          from: "tags",
+          where: { field: "tag", op: "neq", value: "ignore" },
+        },
+        tagged: {
+          kind: "join",
+          left: "items",
+          right: "real_tags",
+          on: [{ left: "name", right: "item" }],
+          matching: noNormalization,
+          type: "left",
+          multiMatch: { mode: "summarize", measures: [{ as: "tagCount", fn: "count" }] },
+        },
+        out: {
+          kind: "join",
+          left: "states",
+          right: "tagged",
+          on: [{ left: "id", right: "k" }],
+          matching: noNormalization,
+          type: "left",
+          multiMatch: {
+            mode: "summarize",
+            measures: [
+              { as: "n", fn: "count" },
+              { as: "mostTagged", fn: "topBy", field: "name", by: "tagCount" },
+            ],
+          },
+        },
       },
-      on: [{ left: "name", right: "item" }],
-      multiMatch: { mode: "summarize", measures: [{ as: "tagCount", fn: "count" }] },
-    });
-    const outer = joinItems(
-      {
-        mode: "summarize",
-        measures: [
-          { as: "n", fn: "count" },
-          { as: "mostTagged", fn: "topBy", field: "name", by: "tagCount" },
-        ],
-      },
-      { right: { input: "items", steps: [tagsJoin] } },
-    );
-    const result = await rows(view([outer]));
+      result: { node: "out", output: { fields: [], emptyFields: "keep" } },
+    };
+    const result = await rows(def);
     // x has 2 tags, y 1 (the "ignore" tag is filtered out), z none.
     expect(must(result.get("Alpha")).d).toEqual({ id: "1", name: "Alpha", n: 3, mostTagged: "x" });
     expect(must(result.get("Beta")).d).toEqual({ id: "2", name: "Beta", n: 1, mostTagged: "w" });
     expect(must(result.get("Gamma")).d).toEqual({ id: "3", name: "Gamma", n: 0, mostTagged: null });
   });
 
-  test("two sub-pipelines in one view keep their CTE names apart", async () => {
-    const sub: Step[] = [{ kind: "filter", where: { field: "cost", op: "gt", value: 4 } }];
-    const result = await rows(
-      view([
-        joinItems(
-          { mode: "summarize", measures: [{ as: "big", fn: "count" }] },
-          { right: { input: "items", steps: sub } },
-        ),
-        joinItems(
-          { mode: "summarize", measures: [{ as: "all", fn: "count" }] },
-          { right: { input: "items" } },
-        ),
-      ]),
-    );
+  test("two joins over different nodes derived from one source keep their CTE names apart", async () => {
+    const def: ViewDefinition = {
+      nodes: {
+        states: { kind: "source", ref: { kind: "dataset", id: STATES } },
+        items: { kind: "source", ref: { kind: "dataset", id: ITEMS } },
+        big: { kind: "filter", from: "items", where: { field: "cost", op: "gt", value: 4 } },
+        a: {
+          kind: "join",
+          left: "states",
+          right: "big",
+          on: [{ left: "id", right: "k" }],
+          matching: noNormalization,
+          type: "left",
+          multiMatch: { mode: "summarize", measures: [{ as: "big", fn: "count" }] },
+        },
+        b: {
+          kind: "join",
+          left: "a",
+          right: "items",
+          on: [{ left: "id", right: "k" }],
+          matching: noNormalization,
+          type: "left",
+          multiMatch: { mode: "summarize", measures: [{ as: "all", fn: "count" }] },
+        },
+      },
+      result: { node: "b", output: { fields: [], emptyFields: "keep" } },
+    };
+    const result = await rows(def);
     expect(must(result.get("Alpha")).d).toMatchObject({ big: 2, all: 3 });
   });
 });
@@ -276,7 +321,7 @@ describe("inline sub-pipelines", () => {
 describe("calculate", () => {
   const typed: CompileInputMeta[] = [
     {
-      alias: "states",
+      node: "states",
       datasetId: STATES,
       title: "States",
       fields: [
@@ -292,7 +337,7 @@ describe("calculate", () => {
   ];
   const untyped: CompileInputMeta[] = [
     {
-      alias: "states",
+      node: "states",
       datasetId: STATES,
       title: "States",
       fields: ["a", "b", "s", "t", "flag", "name"].map((name) => ({ name })),
@@ -328,11 +373,9 @@ describe("calculate", () => {
   ];
 
   async function evaluate(inputs: CompileInputMeta[]): Promise<Record<string, unknown>> {
-    const steps: Step[] = cases.map(([expr], i) => ({
-      kind: "calculate",
-      field: `f${i}`,
-      expr,
-    }));
+    const steps: Step[] = [
+      { kind: "calculate", fields: cases.map(([expr], i) => ({ field: `f${i}`, expr })) },
+    ];
     // The states rows carry a, b, s, t, flag through a first calculate-free seed.
     await db.query(
       "update public.entries set data = data || $1::jsonb where dataset_id = $2 and data->>'id' = '1'",
@@ -358,9 +401,14 @@ describe("calculate", () => {
 
   test("missing values propagate as null instead of failing", async () => {
     const def = view([
-      { kind: "calculate", field: "x", expr: "a * 2" },
-      { kind: "calculate", field: "y", expr: "year(t)" },
-      { kind: "calculate", field: "z", expr: "concat(name, a)" },
+      {
+        kind: "calculate",
+        fields: [
+          { field: "x", expr: "a * 2" },
+          { field: "y", expr: "year(t)" },
+          { field: "z", expr: "concat(name, a)" },
+        ],
+      },
     ]);
     const result = await rows(def, typed);
     expect(must(result.get("Beta")).d).toMatchObject({ x: null, y: null, z: "Beta" });
@@ -406,6 +454,7 @@ describe("sql step", () => {
       view([
         {
           kind: "sql",
+          reads: ["items"],
           query: `select p.row_id, p.d || jsonb_build_object('items', (select count(*) from in_items)) as d, p.geom,
             length(p.d ->> 'name') as len
           from prev p;`,
@@ -433,27 +482,35 @@ describe("sql step", () => {
           kind: "sql",
           query: "select * from prev p where (p.d ->> 'n')::int > 0 order by p.d ->> 'name'",
         },
-        { kind: "calculate", field: "double", expr: "n * 2" },
+        { kind: "calculate", fields: [{ field: "double", expr: "n * 2" }] },
       ]),
     );
     expect([...result.keys()].toSorted()).toEqual(["Alpha", "Beta"]);
     expect(must(result.get("Alpha")).d).toMatchObject({ n: 3, double: 6 });
   });
 
-  test("a sql step inside a sub-pipeline sees that chain's prev", async () => {
-    const sub: Step[] = [
-      { kind: "sql", query: "select * from prev p where (p.d ->> 'cost')::numeric >= 10" },
-    ];
-    const result = await rows(
-      view([
-        joinItems(
-          { mode: "summarize", measures: [{ as: "n", fn: "count" }] },
-          { right: { input: "items", steps: sub } },
-        ),
-      ]),
-    );
+  test("a sql node reads another node by name", async () => {
+    const def: ViewDefinition = {
+      nodes: {
+        states: { kind: "source", ref: { kind: "dataset", id: STATES } },
+        items: { kind: "source", ref: { kind: "dataset", id: ITEMS } },
+        pricey: {
+          kind: "sql",
+          from: "items",
+          query: "select * from prev p where (p.d ->> 'cost')::numeric >= 10",
+        },
+        out: {
+          kind: "sql",
+          from: "states",
+          reads: ["pricey"],
+          query:
+            "select s.d ->> 'name' as name, (select count(*) from in_pricey) as n from prev s where s.d ->> 'id' = '1'",
+        },
+      },
+      result: { node: "out", output: { fields: [], emptyFields: "keep" } },
+    };
+    const result = await rows(def);
     expect(must(result.get("Alpha")).d).toMatchObject({ n: 2 });
-    expect(must(result.get("Beta")).d).toMatchObject({ n: 0 });
   });
 
   test.each([

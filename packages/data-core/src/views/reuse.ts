@@ -1,17 +1,17 @@
 /**
- * Reuse without templates (ADR 0028 §7): pure helpers behind Duplicate,
- * input remap and Extract to view. No I/O; the app wires them to the store.
+ * Reuse without templates (ADR 0028 §7, graph addendum): pure helpers behind
+ * Duplicate, source remap, Prune and Extract to view. No I/O; the app wires
+ * them to the store.
  */
+import { reachableIds, readersOf } from "./graph.js";
 import { joinPrefix } from "./join-names.js";
 import { slugify } from "./sql-util.js";
 import type {
   CompileInputMeta,
-  JoinStep,
-  RightSide,
-  Step,
+  JoinNode,
   ValidationError,
   ViewDefinition,
-  ViewInput,
+  ViewNode,
 } from "./types.js";
 import { validateViewDefinition } from "./validate.js";
 
@@ -20,152 +20,17 @@ function clone<T>(value: T): T {
 }
 
 /** Join modes whose output names are built from the join prefix. */
-function usesPrefix(step: JoinStep): boolean {
+function usesPrefix(step: JoinNode): boolean {
   return step.multiMatch.mode !== "summarize" && step.multiMatch.mode !== "spread";
 }
 
 // ---------------------------------------------------------------------------
-// Input aliases
+// Node ids
 // ---------------------------------------------------------------------------
 
-function collectAliases(steps: readonly Step[], used: Set<string>): void {
-  for (const step of steps) {
-    if (step.kind === "join") {
-      used.add(step.right.input);
-      collectAliases(step.right.steps ?? [], used);
-    } else if (step.kind === "append") {
-      for (const source of step.sources) {
-        used.add(source.input);
-      }
-    } else if (step.kind === "sql") {
-      for (const match of step.query.matchAll(/\bin_([A-Za-z0-9_]+)/g)) {
-        used.add(match[1] ?? "");
-      }
-    }
-  }
-}
-
-export interface InputUsage {
-  /** Where the input is read, e.g. `steps[1]` or `steps[0].right`. */
-  path: string;
-  /** In the editor's words: "Step 2 (Join)". */
-  label: string;
-}
-
-const KIND_LABELS: Record<Step["kind"], string> = {
-  append: "Stack",
-  calculate: "Calculate",
-  filter: "Filter",
-  groupBy: "Group",
-  join: "Join",
-  select: "Select",
-  sql: "SQL",
-};
-
-function usageOf(
-  step: Step,
-  path: string,
-  label: string,
-  add: (alias: string, usage: InputUsage) => void,
-): void {
-  const usage = { path, label };
-  if (step.kind === "join") {
-    add(step.right.input, usage);
-    for (const [i, sub] of (step.right.steps ?? []).entries()) {
-      usageOf(sub, `${path}.right.steps[${i}]`, `${label}, sub-step ${i + 1}`, add);
-    }
-  } else if (step.kind === "append") {
-    for (const source of step.sources) {
-      add(source.input, usage);
-    }
-  } else if (step.kind === "sql") {
-    for (const match of step.query.matchAll(/\bin_([A-Za-z0-9_]+)/g)) {
-      add(match[1] ?? "", usage);
-    }
-  }
-}
-
-/**
- * Where each input alias is read: the base (as "Start") and every step that
- * reads it (join right sides and their sub-pipelines, stacked sources, SQL
- * `in_<alias>` reads). Aliases nothing reads map to an empty list.
- */
-export function inputUsages(definition: ViewDefinition): Map<string, InputUsage[]> {
-  const usages = new Map<string, InputUsage[]>(definition.inputs.map((input) => [input.alias, []]));
-  const add = (alias: string, usage: InputUsage): void => {
-    const list = usages.get(alias);
-    if (list !== undefined && !list.some((entry) => entry.path === usage.path)) {
-      list.push(usage);
-    }
-  };
-  add(definition.base, { path: "base", label: "Start" });
-  for (const [i, step] of definition.steps.entries()) {
-    usageOf(step, `steps[${i}]`, `Step ${i + 1} (${KIND_LABELS[step.kind]})`, add);
-  }
-  return usages;
-}
-
-function renameSteps(steps: Step[], from: string, to: string): Step[] {
-  return steps.map((step): Step => {
-    if (step.kind === "join") {
-      return {
-        ...step,
-        right: {
-          ...step.right,
-          input: step.right.input === from ? to : step.right.input,
-          ...(step.right.steps === undefined
-            ? {}
-            : { steps: renameSteps(step.right.steps, from, to) }),
-        },
-      };
-    }
-    if (step.kind === "append") {
-      return {
-        ...step,
-        sources: step.sources.map((source) =>
-          source.input === from ? { ...source, input: to } : source,
-        ),
-      };
-    }
-    if (step.kind === "sql") {
-      return {
-        ...step,
-        query: step.query.replaceAll(new RegExp(`\\bin_${from}\\b`, "g"), `in_${to}`),
-      };
-    }
-    return step;
-  });
-}
-
-/** The definition with input alias `from` renamed to `to` everywhere it is referenced. */
-export function renameInputAlias(
-  definition: ViewDefinition,
-  from: string,
-  to: string,
-): ViewDefinition {
-  if (from === to) {
-    return definition;
-  }
-  return {
-    ...definition,
-    base: definition.base === from ? to : definition.base,
-    inputs: definition.inputs.map((input) =>
-      input.alias === from ? { ...input, alias: to } : input,
-    ),
-    steps: renameSteps(definition.steps, from, to),
-  };
-}
-
-/** Drops inputs no step reads (never the base). Sub-pipelines and SQL `in_<alias>` reads count. */
-export function pruneInputs(definition: ViewDefinition): ViewDefinition {
-  const used = new Set<string>([definition.base]);
-  collectAliases(definition.steps, used);
-  return { ...definition, inputs: definition.inputs.filter((input) => used.has(input.alias)) };
-}
-
-/** An input alias not in `taken`, derived from a title (letters, digits, underscores). */
-export function freshAlias(title: string, taken: readonly string[]): string {
-  const base = slugify(title);
+/** A node id not in `taken`, derived from a label (lowercase letters, digits, underscores). */
+export function freshNodeId(label: string, taken: readonly string[]): string {
+  const base = slugify(label);
   if (!taken.includes(base)) {
     return base;
   }
@@ -174,6 +39,89 @@ export function freshAlias(title: string, taken: readonly string[]): string {
     n += 1;
   }
   return `${base}_${n}`;
+}
+
+const kindsWithFrom = new Set(["filter", "columns", "calculate", "groupBy", "sql"]);
+
+function renameRefs(node: ViewNode, from: string, to: string): ViewNode {
+  const swap = (id: string): string => (id === from ? to : id);
+  if (kindsWithFrom.has(node.kind) && "from" in node) {
+    const next = { ...node, from: swap(node.from) };
+    if (next.kind === "sql") {
+      return {
+        ...next,
+        ...(next.reads === undefined ? {} : { reads: next.reads.map(swap) }),
+        query: next.query.replaceAll(new RegExp(`\\bin_${from}\\b`, "g"), `in_${to}`),
+      };
+    }
+    return next;
+  }
+  if (node.kind === "join") {
+    return { ...node, left: swap(node.left), right: swap(node.right) };
+  }
+  if (node.kind === "stack") {
+    return { ...node, inputs: node.inputs.map((input) => ({ ...input, node: swap(input.node) })) };
+  }
+  return node;
+}
+
+/** The definition with node id `from` renamed to `to` everywhere it is referenced (key order kept). */
+export function renameNodeId(def: ViewDefinition, from: string, to: string): ViewDefinition {
+  if (from === to) {
+    return def;
+  }
+  const nodes: Record<string, ViewNode> = {};
+  for (const [id, node] of Object.entries(def.nodes)) {
+    nodes[id === from ? to : id] = renameRefs(node, from, to);
+  }
+  return {
+    nodes,
+    result: { ...def.result, node: def.result.node === from ? to : def.result.node },
+  };
+}
+
+/** Drops nodes that are not ancestors of the result node ("Prune unused"). */
+export function pruneNodes(def: ViewDefinition): ViewDefinition {
+  const keep = reachableIds(def);
+  const nodes: Record<string, ViewNode> = {};
+  for (const [id, node] of Object.entries(def.nodes)) {
+    if (keep.has(id)) {
+      nodes[id] = node;
+    }
+  }
+  return { ...def, nodes };
+}
+
+/** Ids of nodes the result does not need (shown as "Unused"). */
+export function unusedNodeIds(def: ViewDefinition): string[] {
+  const keep = reachableIds(def);
+  return Object.keys(def.nodes).filter((id) => !keep.has(id));
+}
+
+export interface NodeUsage {
+  /** The reading node. */
+  node: string;
+  /** In the editor's words, e.g. "Join (clean_d1)". */
+  label: string;
+}
+
+/**
+ * Who reads each node: the nodes that list it as an input, plus "Result" for
+ * the result node. Nodes nothing reads map to an empty list.
+ */
+export function nodeUsages(def: ViewDefinition): Map<string, NodeUsage[]> {
+  const usages = new Map<string, NodeUsage[]>();
+  for (const [id, readers] of readersOf(def)) {
+    usages.set(
+      id,
+      readers.map((reader) => ({ node: reader, label: def.nodes[reader].label ?? reader })),
+    );
+  }
+  const list = usages.get(def.result.node);
+  if (list !== undefined) {
+    list.push({ node: "result", label: "Result" });
+  }
+  return usages;
 }
 
 // ---------------------------------------------------------------------------
@@ -185,99 +133,82 @@ export function copyTitle(title: string): string {
   return `${title} (copy)`;
 }
 
-/** A deep copy of the definition: steps, inputs and the output schema with its labels. */
+/** A deep copy of the definition: nodes and the output schema with its labels. */
 export function duplicateDefinition(definition: ViewDefinition): ViewDefinition {
   return clone(definition);
 }
 
-export interface InputRemap {
-  /** Which declared input (by alias) is re-pointed. */
-  alias: string;
+export interface SourceRemap {
+  /** Which source node is re-pointed. */
+  node: string;
   /** The dataset or view it reads instead. */
   datasetId: string;
-  /** The title the input had before (so default join prefixes keep their names). */
+  /** The title the source had before (so default join prefixes keep their names). */
   oldTitle: string;
 }
 
-function pinPrefixes(steps: Step[], oldTitles: Map<string, string>): Step[] {
-  return steps.map((step) => {
-    if (step.kind !== "join") {
-      return step;
-    }
-    const oldTitle = oldTitles.get(step.right.input);
-    const right: RightSide =
-      step.right.steps === undefined
-        ? step.right
-        : { ...step.right, steps: pinPrefixes(step.right.steps, oldTitles) };
-    const pinned =
-      oldTitle !== undefined && step.prefix === undefined && usesPrefix(step)
-        ? { prefix: joinPrefix(step, oldTitle) }
-        : {};
-    return { ...step, ...pinned, right };
-  });
-}
-
 /**
- * The definition with some inputs re-pointed at other datasets/views. Aliases
- * stay (steps refer to them). A pinned version belongs to the old dataset and
- * is dropped. A join whose right input moves keeps its output names: the
- * default prefix (a slug of the old title) is written down explicitly.
+ * The definition with some sources re-pointed at other datasets/views. Node
+ * ids stay (other nodes refer to them). A pinned version belongs to the old
+ * dataset and is dropped. A join whose right node is a remapped source keeps
+ * its output names: the default prefix (a slug of the old title) is written
+ * down explicitly.
  */
-export function remapInputs(
+export function remapSources(
   definition: ViewDefinition,
-  remaps: readonly InputRemap[],
+  remaps: readonly SourceRemap[],
 ): ViewDefinition {
+  const out = clone(definition);
   const changed = remaps.filter((remap) => {
-    const input = definition.inputs.find((entry) => entry.alias === remap.alias);
-    return input !== undefined && input.ref.id !== remap.datasetId;
+    const node = out.nodes[remap.node];
+    return node !== undefined && node.kind === "source" && node.ref.id !== remap.datasetId;
   });
-  if (changed.length === 0) {
-    return clone(definition);
+  const oldTitles = new Map(changed.map((remap) => [remap.node, remap.oldTitle]));
+  for (const remap of changed) {
+    const node = out.nodes[remap.node];
+    if (node.kind === "source") {
+      node.ref = { kind: "dataset", id: remap.datasetId };
+    }
   }
-  const byAlias = new Map(changed.map((remap) => [remap.alias, remap]));
-  const inputs: ViewInput[] = definition.inputs.map((input) => {
-    const remap = byAlias.get(input.alias);
-    return remap === undefined
-      ? clone(input)
-      : { alias: input.alias, ref: { kind: "dataset", id: remap.datasetId } };
-  });
-  const oldTitles = new Map(changed.map((remap) => [remap.alias, remap.oldTitle]));
-  return {
-    ...clone(definition),
-    inputs,
-    steps: pinPrefixes(clone(definition.steps), oldTitles),
-  };
+  for (const node of Object.values(out.nodes)) {
+    if (node.kind !== "join" || node.prefix !== undefined || !usesPrefix(node)) {
+      continue;
+    }
+    const oldTitle = oldTitles.get(node.right);
+    if (oldTitle !== undefined) {
+      node.prefix = joinPrefix(node, oldTitle);
+    }
+  }
+  return out;
 }
 
-/** Where a validation error is, in the editor's words ("Step 2", "Step 1, sub-step 3", "Output"). */
-export function stepLabelOfPath(path: string): string {
-  const match = /^steps\[(\d+)\]/.exec(path);
-  if (match === null) {
-    return path.startsWith("output") ? "Output" : "Definition";
+/** Where a validation error is, in the editor's words (the node id, "Output", "Definition"). */
+export function nodeLabelOfPath(path: string): string {
+  const match = /^nodes\.([a-z0-9_]+)/.exec(path);
+  if (match !== null) {
+    return match[1] ?? "";
   }
-  const subs = [...path.matchAll(/\.right\.steps\[(\d+)\]/g)].map((m) => Number(m[1]) + 1);
-  const head = `Step ${Number(match[1]) + 1}`;
-  return subs.length === 0 ? head : `${head}, sub-step ${subs.join(".")}`;
+  return path.startsWith("result") ? "Output" : "Definition";
 }
 
 export interface RemapProblem {
-  /** "Step 2", "Step 1, sub-step 1", "Output". */
-  step: string;
+  /** The node id, "Output" or "Definition". */
+  node: string;
   path: string;
   message: string;
 }
 
 export type RemapReport =
   | { ok: true; definition: ViewDefinition }
-  | { ok: false; problems: RemapProblem[]; byStep: { step: string; messages: string[] }[] };
+  | { ok: false; problems: RemapProblem[]; byNode: { node: string; messages: string[] }[] };
 
 function problemOf(error: ValidationError): RemapProblem {
-  return { step: stepLabelOfPath(error.path), path: error.path, message: error.message };
+  return { node: nodeLabelOfPath(error.path), path: error.path, message: error.message };
 }
 
 /**
  * Validates a (remapped) definition with the REAL validator against the new
- * inputs' fields, and groups the problems per step ("Step 2: no field
+ * sources' fields, and groups the problems per node ("clean_d1: no field
  * `stateId`"), so the dialog can show what to fix before anything is created.
  */
 export function remapReport(
@@ -289,131 +220,75 @@ export function remapReport(
     return { ok: true, definition: result.value };
   }
   const problems = result.errors.map((error) => problemOf(error));
-  const byStep: { step: string; messages: string[] }[] = [];
+  const byNode: { node: string; messages: string[] }[] = [];
   for (const problem of problems) {
-    const group = byStep.find((entry) => entry.step === problem.step);
+    const group = byNode.find((entry) => entry.node === problem.node);
     if (group === undefined) {
-      byStep.push({ step: problem.step, messages: [problem.message] });
+      byNode.push({ node: problem.node, messages: [problem.message] });
     } else if (!group.messages.includes(problem.message)) {
       group.messages.push(problem.message);
     }
   }
-  return { ok: false, problems, byStep };
+  return { ok: false, problems, byNode };
 }
 
 // ---------------------------------------------------------------------------
 // Extract to view
 // ---------------------------------------------------------------------------
 
-/**
- * Which join: indices alternating down the nesting. `[1]` is `steps[1]`;
- * `[1, 0]` is the join at `steps[1].right.steps[0]`.
- */
-export type JoinPath = readonly number[];
-
-function stepsAt(definition: ViewDefinition, path: JoinPath): Step[] | undefined {
-  let steps: Step[] | undefined = definition.steps;
-  for (const index of path.slice(0, -1)) {
-    const step: Step | undefined = steps === undefined ? undefined : steps[index];
-    steps = step !== undefined && step.kind === "join" ? step.right.steps : undefined;
-  }
-  return steps;
-}
-
-/** The join at `path`, when there is one. */
-export function joinAt(definition: ViewDefinition, path: JoinPath): JoinStep | undefined {
-  const steps = stepsAt(definition, path);
-  const last = path.at(-1);
-  const step = steps === undefined || last === undefined ? undefined : steps[last];
-  return step !== undefined && step.kind === "join" ? step : undefined;
-}
-
-/** Whether "Extract to view" applies: a join with an inline sub-pipeline of at least one step. */
-export function canExtract(definition: ViewDefinition, path: JoinPath): boolean {
-  const join = joinAt(definition, path);
-  return join !== undefined && join.right.steps !== undefined && join.right.steps.length > 0;
-}
-
-function replaceJoin(steps: Step[], path: JoinPath, replace: (join: JoinStep) => JoinStep): Step[] {
-  const [head, ...rest] = path;
-  return steps.map((step, i) => {
-    if (i !== head || step.kind !== "join") {
-      return step;
-    }
-    if (rest.length === 0) {
-      return replace(step);
-    }
-    return {
-      ...step,
-      right: { ...step.right, steps: replaceJoin(step.right.steps ?? [], rest, replace) },
-    };
-  });
+/** Whether "Extract to view" applies: any node that is not already a plain source. */
+export function canExtract(definition: ViewDefinition, id: string): boolean {
+  return Object.hasOwn(definition.nodes, id) && definition.nodes[id].kind !== "source";
 }
 
 export interface ExtractPlan {
-  /** The definition of the new view: base = the join's right input, steps = the sub-pipeline, output = every field. */
+  /** The new view: the node's ancestor subgraph, saved with every field. */
   view: ViewDefinition;
-  /** The prefix the rewritten join keeps (so its output names do not change with the new input's title). */
-  keepPrefix: string | undefined;
+  /** The node's readable title before the extract (names the default join prefix). */
+  oldTitle: string;
 }
 
 export type ExtractResult = { ok: true; plan: ExtractPlan } | { ok: false; reason: string };
 
-/**
- * The new view for "Extract to view" on the join at `path`. `rightTitle` is
- * the title of the join's current right input (it names the default prefix).
- */
-export function planExtract(
-  definition: ViewDefinition,
-  path: JoinPath,
-  rightTitle: string,
-): ExtractResult {
-  const join = joinAt(definition, path);
-  if (join === undefined) {
-    return { ok: false, reason: "That step is not a join." };
+/** The new view for "Extract to view" on node `id`. */
+export function planExtract(definition: ViewDefinition, id: string): ExtractResult {
+  if (!canExtract(definition, id)) {
+    return { ok: false, reason: "Only a processing node can be extracted into its own view." };
   }
-  if (join.right.steps === undefined || join.right.steps.length === 0) {
-    return { ok: false, reason: "This join's input has no steps to extract." };
-  }
-  const view = pruneInputs({
-    inputs: clone(definition.inputs),
-    base: join.right.input,
-    steps: clone(join.right.steps),
-    output: { fields: [], emptyFields: "keep" },
+  const subgraph = pruneNodes({
+    nodes: clone(definition.nodes),
+    result: { node: id, output: { fields: [], emptyFields: "keep" } },
   });
-  return {
-    ok: true,
-    plan: {
-      view,
-      keepPrefix:
-        usesPrefix(join) && join.prefix === undefined ? joinPrefix(join, rightTitle) : undefined,
-    },
-  };
+  return { ok: true, plan: { view: subgraph, oldTitle: definition.nodes[id].label ?? id } };
 }
 
 /**
- * The edited definition once the new view exists: the join reads the view
- * (declared as a new input) with no steps of its own, and keeps its prefix.
- * Unused inputs are pruned.
+ * The edited definition once the new view exists: node `id` becomes a source
+ * reading it (same id, so readers are untouched), joins that read it keep
+ * their default prefix, and nodes only the extracted subgraph needed are pruned.
  */
 export function applyExtract(
   definition: ViewDefinition,
-  path: JoinPath,
+  id: string,
   plan: ExtractPlan,
-  created: { id: string; title: string },
+  created: { id: string },
 ): ViewDefinition {
-  const alias = freshAlias(
-    created.title,
-    definition.inputs.map((input) => input.alias),
-  );
-  const steps = replaceJoin(clone(definition.steps), path, (join) => ({
-    ...join,
-    right: { input: alias },
-    ...(plan.keepPrefix === undefined ? {} : { prefix: plan.keepPrefix }),
-  }));
-  return pruneInputs({
-    ...clone(definition),
-    inputs: [...clone(definition.inputs), { alias, ref: { kind: "dataset", id: created.id } }],
-    steps,
-  });
+  const out = clone(definition);
+  const node = out.nodes[id];
+  out.nodes[id] = {
+    kind: "source",
+    ref: { kind: "dataset", id: created.id },
+    ...(node.label === undefined ? {} : { label: node.label }),
+  };
+  for (const reader of Object.values(out.nodes)) {
+    if (
+      reader.kind === "join" &&
+      reader.right === id &&
+      reader.prefix === undefined &&
+      usesPrefix(reader)
+    ) {
+      reader.prefix = joinPrefix(reader, plan.oldTitle);
+    }
+  }
+  return pruneNodes(out);
 }

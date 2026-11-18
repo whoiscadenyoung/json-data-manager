@@ -1,6 +1,6 @@
-import { ViewCompileError, ViewStepNotSupportedError } from "./errors.js";
+import { ViewCompileError, ViewNodeNotSupportedError } from "./errors.js";
 import { fieldJson, fieldNumber, fieldPresent, fieldText, ParamBag } from "./sql-util.js";
-import type { StepKind, Measure } from "./types.js";
+import type { NodeKind, Measure } from "./types.js";
 
 function requireField(measure: Measure): string {
   if (measure.field === undefined || measure.field === "") {
@@ -50,7 +50,7 @@ export function measureAggregate(
   measure: Measure,
   row: string,
   bag: ParamBag,
-  step: StepKind,
+  step: NodeKind,
 ): string {
   switch (measure.fn) {
     case "count":
@@ -74,7 +74,7 @@ export function measureAggregate(
     case "text":
       return textAgg(measure, row, bag);
     default:
-      throw new ViewStepNotSupportedError(step, `measure:${JSON.stringify(measure.fn)}`);
+      throw new ViewNodeNotSupportedError(step, `measure:${JSON.stringify(measure.fn)}`);
   }
 }
 
@@ -94,6 +94,6 @@ export function withEmpty(expr: string, measure: Measure, bag: ParamBag): string
 }
 
 /** One measure as a jsonb SQL expression with its emptyValue applied. */
-export function measureExpr(measure: Measure, row: string, bag: ParamBag, step: StepKind): string {
+export function measureExpr(measure: Measure, row: string, bag: ParamBag, step: NodeKind): string {
   return withEmpty(measureAggregate(measure, row, bag, step), measure, bag);
 }

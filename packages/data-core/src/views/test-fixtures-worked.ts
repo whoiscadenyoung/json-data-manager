@@ -9,7 +9,7 @@ export const AGENCIES_ID = "44444444-4444-4444-8444-444444444444";
 
 export const workedMetas: CompileInputMeta[] = [
   {
-    alias: "states",
+    node: "states",
     datasetId: STATES_ID,
     title: "States",
     fields: [
@@ -18,7 +18,7 @@ export const workedMetas: CompileInputMeta[] = [
     ],
   },
   {
-    alias: "deployments",
+    node: "deployments",
     datasetId: DEPLOYMENTS_ID,
     title: "Deployments",
     fields: [
@@ -28,7 +28,7 @@ export const workedMetas: CompileInputMeta[] = [
     ],
   },
   {
-    alias: "deploymentAgencies",
+    node: "deployment_agencies",
     datasetId: AGENCIES_ID,
     title: "Deployment agencies",
     fields: [
@@ -37,7 +37,7 @@ export const workedMetas: CompileInputMeta[] = [
     ],
   },
   {
-    alias: "links",
+    node: "links",
     datasetId: LINKS_ID,
     title: "Links",
     fields: [
@@ -49,34 +49,29 @@ export const workedMetas: CompileInputMeta[] = [
 ];
 
 /**
- * States + deployments (a sub-pipeline counts agencies per deployment; the
- * outer summarize counts deployments and takes the name of the one with the
- * most agencies) + links spread by type.
+ * States + deployments (a node counts agencies per deployment; the outer
+ * summarize counts deployments and takes the name of the one with the most
+ * agencies) + links spread by type.
  */
 export const workedExample: ViewDefinition = {
-  inputs: [
-    { alias: "states", ref: { kind: "dataset", id: STATES_ID } },
-    { alias: "deployments", ref: { kind: "dataset", id: DEPLOYMENTS_ID } },
-    { alias: "deploymentAgencies", ref: { kind: "dataset", id: AGENCIES_ID } },
-    { alias: "links", ref: { kind: "dataset", id: LINKS_ID } },
-  ],
-  base: "states",
-  steps: [
-    {
+  nodes: {
+    states: { kind: "source", ref: { kind: "dataset", id: STATES_ID } },
+    deployments: { kind: "source", ref: { kind: "dataset", id: DEPLOYMENTS_ID } },
+    deployment_agencies: { kind: "source", ref: { kind: "dataset", id: AGENCIES_ID } },
+    links: { kind: "source", ref: { kind: "dataset", id: LINKS_ID } },
+    agency_counts: {
       kind: "join",
-      right: {
-        input: "deployments",
-        steps: [
-          {
-            kind: "join",
-            right: { input: "deploymentAgencies" },
-            on: [{ left: "id", right: "deploymentId" }],
-            matching: noNormalization,
-            type: "left",
-            multiMatch: { mode: "summarize", measures: [{ as: "agencyCount", fn: "count" }] },
-          },
-        ],
-      },
+      left: "deployments",
+      right: "deployment_agencies",
+      on: [{ left: "id", right: "deploymentId" }],
+      matching: noNormalization,
+      type: "left",
+      multiMatch: { mode: "summarize", measures: [{ as: "agencyCount", fn: "count" }] },
+    },
+    with_deployments: {
+      kind: "join",
+      left: "states",
+      right: "agency_counts",
       on: [{ left: "id", right: "stateId" }],
       matching: noNormalization,
       type: "left",
@@ -94,9 +89,10 @@ export const workedExample: ViewDefinition = {
         ],
       },
     },
-    {
+    enriched: {
       kind: "join",
-      right: { input: "links" },
+      left: "with_deployments",
+      right: "links",
       on: [{ left: "name", right: "stateName" }],
       matching: { ...noNormalization, trim: true, caseFold: true },
       type: "left",
@@ -110,15 +106,18 @@ export const workedExample: ViewDefinition = {
         ],
       },
     },
-  ],
-  output: {
-    fields: [
-      { key: "name" },
-      { key: "deployments", label: "Deployments" },
-      { key: "mostCollaboration", label: "Most collaboration" },
-      { key: "docsLink" },
-      { key: "benefitsLink" },
-    ],
-    emptyFields: "omit",
+  },
+  result: {
+    node: "enriched",
+    output: {
+      fields: [
+        { key: "name" },
+        { key: "deployments", label: "Deployments" },
+        { key: "mostCollaboration", label: "Most collaboration" },
+        { key: "docsLink" },
+        { key: "benefitsLink" },
+      ],
+      emptyFields: "omit",
+    },
   },
 };

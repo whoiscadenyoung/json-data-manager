@@ -1,43 +1,14 @@
-import { getInput } from "./inputs.js";
-import type { ResolvedInput } from "./inputs.js";
 import { joinPrefix, listKey, prefixed } from "./join-names.js";
 import { manualMapValues, normalizeKey } from "./keys.js";
 import { measureAggregate, withEmpty } from "./measures.js";
 import { buildObject, fieldJson, fieldText, ParamBag, quoteIdent } from "./sql-util.js";
-import type { JoinStep, Measure, MultiMatch, Sort, Step } from "./types.js";
-
-/** One compiled step (or sub-pipeline step), in execution order. */
-export interface StepInfo {
-  /** Index within its own step list. */
-  index: number;
-  kind: Step["kind"];
-  /** Quoted CTE name feeding the step. */
-  input: string;
-  /** Quoted CTE name the step produced. */
-  output: string;
-  join?: JoinInfo;
-  /** Present on sub-pipeline steps, e.g. `steps[1].right.steps[0]`. */
-  path?: string;
-}
-
-export interface SubChain {
-  ctes: string[];
-  steps: StepInfo[];
-  last: string;
-}
+import type { JoinNode, Measure, MultiMatch, Sort } from "./types.js";
 
 export interface JoinContext {
-  inputs: Map<string, ResolvedInput>;
   bag: ParamBag;
   unaccent: boolean;
   /** When false, the `error` mode guard is left out (diagnostics must not fail). */
   guards: boolean;
-  /** Prefix for every CTE name of this chain (sub-pipelines nest by step id). */
-  prefix: string;
-  /** Path of the join step, e.g. `steps[1]`. */
-  path: string;
-  /** Compile an inline sub-pipeline over `start`, naming its CTEs with `prefix`. */
-  compileSub: (alias: string, steps: Step[], prefix: string, path: string) => SubChain;
 }
 
 /** What the diagnostics query needs to know about a compiled join. */
@@ -53,8 +24,6 @@ export interface JoinResult {
   ctes: string[];
   out: string;
   info: JoinInfo;
-  /** Steps of the right side's sub-pipeline, compiled before the join. */
-  subSteps: StepInfo[];
 }
 
 interface Names {
@@ -79,7 +48,7 @@ function onClause(count: number, left: string, right: string): string {
 function sideCte(
   name: string,
   from: string,
-  step: JoinStep,
+  step: JoinNode,
   side: "left" | "right",
   ctx: JoinContext,
   mapCte: string | undefined,
@@ -114,7 +83,7 @@ function orderClause(orderBy: Sort[] | undefined, reverse: boolean, bag: ParamBa
 }
 
 /** The right row's fields as one jsonb object, `<prefix>.<field>` keyed. */
-function rightFields(step: JoinStep, prefix: string, ctx: JoinContext): string {
+function rightFields(step: JoinNode, prefix: string, ctx: JoinContext): string {
   const dotted = prefix === "" ? "" : `${prefix}.`;
   if (step.fields !== undefined) {
     const pairs = step.fields.map((field) => ({
@@ -130,7 +99,7 @@ function rightFields(step: JoinStep, prefix: string, ctx: JoinContext): string {
 function summarizeCte(
   name: string,
   from: string,
-  step: JoinStep,
+  step: JoinNode,
   measures: Measure[],
   ctx: JoinContext,
 ): string {
@@ -156,7 +125,7 @@ function summarizeObject(measures: Measure[], ctx: JoinContext): string {
 
 // --- one row per key (first / last / error) ---------------------------------
 
-function pickOneCte(step: JoinStep, names: Names, ctx: JoinContext): string {
+function pickOneCte(step: JoinNode, names: Names, ctx: JoinContext): string {
   const { multiMatch } = step;
   const orderBy =
     multiMatch.mode === "first" || multiMatch.mode === "last" ? multiMatch.orderBy : undefined;
@@ -175,7 +144,7 @@ function pickOneCte(step: JoinStep, names: Names, ctx: JoinContext): string {
  * cast failure aborts the statement and the message carries the offending
  * key. Pure SQL, no helper function: `'text'::int` is the error raiser.
  */
-function errorGuardCte(step: JoinStep, names: Names, ctx: JoinContext): string {
+function errorGuardCte(step: JoinNode, names: Names, ctx: JoinContext): string {
   const cols = keyColumns(step.on.length);
   const list = cols.join(", ");
   const guard = ctx.guards
@@ -192,7 +161,7 @@ function errorGuardCte(step: JoinStep, names: Names, ctx: JoinContext): string {
 // --- spread / text / list ---------------------------------------------------
 
 function spreadCte(
-  step: JoinStep,
+  step: JoinNode,
   mm: Extract<MultiMatch, { mode: "spread" }>,
   names: Names,
   ctx: JoinContext,
@@ -212,7 +181,7 @@ function spreadCte(
 }
 
 function textCte(
-  step: JoinStep,
+  step: JoinNode,
   mm: Extract<MultiMatch, { mode: "text" }>,
   names: Names,
   ctx: JoinContext,
@@ -226,7 +195,7 @@ function textCte(
 )`;
 }
 
-function listCte(step: JoinStep, names: Names, ctx: JoinContext): string {
+function listCte(step: JoinNode, names: Names, ctx: JoinContext): string {
   const cols = keyColumns(step.on.length).join(", ");
   const item =
     step.fields === undefined
@@ -243,7 +212,7 @@ function listCte(step: JoinStep, names: Names, ctx: JoinContext): string {
 }
 
 /** The jsonb object a left row gains from its (single, grouped) right row `r`. */
-function groupedObject(step: JoinStep, prefix: string, title: string, ctx: JoinContext): string {
+function groupedObject(step: JoinNode, prefix: string, title: string, ctx: JoinContext): string {
   const mm = step.multiMatch;
   switch (mm.mode) {
     case "spread":
@@ -265,7 +234,7 @@ function groupedObject(step: JoinStep, prefix: string, title: string, ctx: JoinC
   }
 }
 
-function groupedCte(step: JoinStep, names: Names, ctx: JoinContext): string {
+function groupedCte(step: JoinNode, names: Names, ctx: JoinContext): string {
   const mm = step.multiMatch;
   switch (mm.mode) {
     case "spread":
@@ -281,7 +250,7 @@ function groupedCte(step: JoinStep, names: Names, ctx: JoinContext): string {
   }
 }
 
-function infoOf(step: JoinStep, names: Names): JoinInfo {
+function infoOf(step: JoinNode, names: Names): JoinInfo {
   const { multiMatch } = step;
   const info: JoinInfo = {
     left: names.left,
@@ -298,45 +267,43 @@ function infoOf(step: JoinStep, names: Names): JoinInfo {
   return info;
 }
 
-/** Compile one join step into its CTEs; `prev` is the previous step's CTE name. */
+/**
+ * Compile one join node into its CTEs. `leftCte` / `rightCte` are the quoted
+ * CTE names of the two nodes it reads; `rightTitle` names the default prefix.
+ */
 export function compileJoin(
-  step: JoinStep,
-  index: number,
-  prev: string,
+  step: JoinNode,
+  id: string,
+  leftCte: string,
+  rightCte: string,
+  rightTitle: string,
+  out: string,
   ctx: JoinContext,
 ): JoinResult {
-  const right = getInput(ctx.inputs, step.right.input);
-  const name = (stem: string): string => quoteIdent(`${ctx.prefix}${stem}${index}`);
+  const name = (stem: string): string => quoteIdent(`${stem}_${id}`);
   const names: Names = {
     map: name("km"),
     left: name("l"),
     right: name("r"),
     pick: name("rf"),
     sum: name("rs"),
-    out: name("s"),
+    out,
   };
   const ctes: string[] = [];
-  let rightFrom = right.cte;
-  let subSteps: StepInfo[] = [];
-  const subPipeline = step.right.steps;
-  if (subPipeline !== undefined && subPipeline.length > 0) {
-    const sub = ctx.compileSub(
-      step.right.input,
-      subPipeline,
-      `${ctx.prefix}s${index}_`,
-      `${ctx.path}.right.steps`,
-    );
-    ctes.push(...sub.ctes);
-    rightFrom = sub.last;
-    subSteps = sub.steps;
-  }
   const mapValues = manualMapValues(step.matching, ctx.bag);
   if (mapValues !== undefined) {
     ctes.push(`${names.map}(k_from, k_to) as (${mapValues})`);
   }
   ctes.push(
-    sideCte(names.left, prev, step, "left", ctx, mapValues === undefined ? undefined : names.map),
-    sideCte(names.right, rightFrom, step, "right", ctx, undefined),
+    sideCte(
+      names.left,
+      leftCte,
+      step,
+      "left",
+      ctx,
+      mapValues === undefined ? undefined : names.map,
+    ),
+    sideCte(names.right, rightCte, step, "right", ctx, undefined),
   );
   const joinType = step.type === "inner" ? "join" : "left join";
   const { multiMatch } = step;
@@ -348,13 +315,13 @@ export function compileJoin(
   ${joinType} ${names.sum} rs on ${onClause(step.on.length, "l", "rs")}
 )`);
   } else {
-    const prefix = joinPrefix(step, right.title);
+    const prefix = joinPrefix(step, rightTitle);
     ctes.push(groupedCte(step, names, ctx));
     ctes.push(`${names.out} as (
-  select l.row_id, l.d || ${groupedObject(step, prefix, right.title, ctx)} as d, l.geom
+  select l.row_id, l.d || ${groupedObject(step, prefix, rightTitle, ctx)} as d, l.geom
   from ${names.left} l
   ${joinType} ${names.pick} r on ${onClause(step.on.length, "l", "r")}
 )`);
   }
-  return { ctes, out: names.out, info: infoOf(step, names), subSteps };
+  return { ctes, out: names.out, info: infoOf(step, names) };
 }

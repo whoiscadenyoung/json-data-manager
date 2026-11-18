@@ -14,9 +14,9 @@ export function quoteIdent(name: string): string {
   return `"${name.replaceAll('"', '""')}"`;
 }
 
-/** The CTE name for an input alias. */
-export function inputCteName(alias: string): string {
-  return quoteIdent(`in_${alias}`);
+/** The CTE name for a node id. */
+export function nodeCteName(id: string): string {
+  return quoteIdent(`in_${id}`);
 }
 
 /** Positional parameter registry; identical (value, cast) pairs share one slot. */

@@ -1,17 +1,17 @@
-import type { StepKind } from "./types.js";
+import type { NodeKind } from "./types.js";
 
 /** Thrown for step kinds / modes the compiler does not support yet. */
-export class ViewStepNotSupportedError extends Error {
-  readonly kind: StepKind | "measure";
+export class ViewNodeNotSupportedError extends Error {
+  readonly kind: NodeKind | "measure";
   readonly mode: string | undefined;
 
-  constructor(kind: StepKind | "measure", mode?: string) {
+  constructor(kind: NodeKind | "measure", mode?: string) {
     super(
       mode === undefined
-        ? `View step "${kind}" is not supported yet.`
-        : `View step "${kind}" mode "${mode}" is not supported yet.`,
+        ? `View node "${kind}" is not supported yet.`
+        : `View node "${kind}" mode "${mode}" is not supported yet.`,
     );
-    this.name = "ViewStepNotSupportedError";
+    this.name = "ViewNodeNotSupportedError";
     this.kind = kind;
     this.mode = mode;
   }

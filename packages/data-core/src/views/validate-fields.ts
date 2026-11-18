@@ -1,9 +1,9 @@
 /**
- * Field-reference checking: walks the step list tracking which field names
- * (and their types) exist in the current row. Skipped (never an error) once
- * the row's shape is unknown, i.e. when the base input has no `fields`
- * metadata or after a `sql` step whose output is a bare `d`. The compiler
- * reuses the same walk to learn field types for `calculate`.
+ * Field-reference checking over the node graph: `fieldsOf(node)` is the
+ * memoized set of field names (and types) a node produces, computed from the
+ * nodes it reads. Checks are skipped (never an error) once a shape is
+ * unknown: a source without `fields` metadata, a bare-`d` sql node, a cycle.
+ * The compiler reuses the same scope to learn field types for `calculate`.
  */
 
 import { analyzeExpression } from "./calculate.js";
@@ -14,13 +14,11 @@ import type {
   CompileInputMeta,
   Condition,
   FieldType,
-  JoinStep,
+  JoinNode,
   Measure,
-  Step,
+  ViewNode,
 } from "./types.js";
-import { isRecord } from "./validate-issues.js";
-import type { Issues } from "./validate-issues.js";
-import { validateStepShape } from "./validate-steps.js";
+import { Issues } from "./validate-issues.js";
 
 export type FieldMap = Map<string, FieldType>;
 
@@ -50,7 +48,7 @@ export function measureType(measure: Measure, source: FieldMap | undefined): Fie
 }
 
 /**
- * Fields one stack member produces after its column edits. Reports edits of
+ * Fields one stack input produces after its column edits. Reports edits of
  * unknown fields and renames that collide with a field that stays.
  */
 export function editFields(
@@ -84,136 +82,200 @@ export function editFields(
   return out;
 }
 
-export class FieldScope {
-  private known: FieldMap | undefined;
+type NodeOf<K extends ViewNode["kind"]> = Extract<ViewNode, { kind: K }>;
+
+export class GraphScope {
+  private readonly memo = new Map<string, FieldMap | undefined>();
+  private readonly visiting = new Set<string>();
 
   constructor(
-    base: string,
+    readonly nodes: Record<string, ViewNode>,
     private readonly metas: CompileInputMeta[],
-    private readonly aliases: Set<string>,
-  ) {
-    this.known = metaFields(metas.find((meta) => meta.alias === base));
+  ) {}
+
+  /** The readable title of a node: a source's dataset title, else its label, else its id. */
+  titleOf(id: string): string {
+    const node = Object.hasOwn(this.nodes, id) ? this.nodes[id] : undefined;
+    const meta = this.metas.find((entry) => entry.node === id);
+    if (node !== undefined && node.kind === "source" && meta !== undefined) {
+      return meta.title;
+    }
+    return node !== undefined && node.label !== undefined && node.label !== "" ? node.label : id;
   }
 
-  /** Field types for `calculate`; `undefined` = the row has no such field. */
-  resolver(): (name: string) => FieldType | undefined {
-    const known = this.known;
+  /** The fields a node produces; `undefined` = unknown (or the node is missing / in a cycle). */
+  fieldsOf(id: string): FieldMap | undefined {
+    if (this.memo.has(id)) {
+      return this.memo.get(id);
+    }
+    if (this.visiting.has(id) || !Object.hasOwn(this.nodes, id)) {
+      return undefined;
+    }
+    return this.analyze(id, new Issues());
+  }
+
+  /** Field types for `calculate` over a map; `undefined` = the row has no such field. */
+  static resolver(known: FieldMap | undefined): (name: string) => FieldType | undefined {
     return (name) => (known === undefined ? "unknown" : known.get(name));
   }
 
-  /** Report `field` when the current row is known and lacks it. */
-  check(field: string, path: string, issues: Issues): void {
-    if (this.known !== undefined && !this.known.has(field)) {
-      issues.add(path, `Unknown field "${field}".`);
-    }
+  /** Check one node's field references against the nodes it reads, reporting into `issues`. */
+  validateNode(id: string, issues: Issues): void {
+    this.analyze(id, issues);
   }
 
-  /** Shape-check and apply every step of a (sub-)pipeline. */
-  validateList(steps: unknown[], path: string, issues: Issues): void {
-    for (const [i, raw] of steps.entries()) {
-      const at = `${path}[${i}]`;
-      if (!isRecord(raw) || typeof raw.kind !== "string") {
-        issues.add(at, "Each step needs a kind.");
-        continue;
-      }
-      const before = issues.count;
-      validateStepShape(raw, at, this.aliases, issues);
-      // Only walk the field scope through well-formed steps.
-      if (issues.count === before && isStep(raw)) {
-        this.apply(raw, at, issues);
-      }
-    }
+  private analyze(id: string, issues: Issues): FieldMap | undefined {
+    this.visiting.add(id);
+    const out = this.compute(id, `nodes.${id}`, issues);
+    this.visiting.delete(id);
+    this.memo.set(id, out);
+    return out;
   }
 
-  apply(step: Step, path: string, issues: Issues): void {
-    switch (step.kind) {
-      case "filter":
-        this.checkCondition(step.where, `${path}.where`, issues);
-        break;
-      case "join":
-        this.applyJoin(step, path, issues);
-        break;
-      case "append":
-        this.applyAppend(step, path, issues);
-        break;
-      case "groupBy":
-        this.applyGroupBy(step, path, issues);
-        break;
-      case "select":
-        this.applySelect(step, path, issues);
-        break;
+  private compute(id: string, path: string, issues: Issues): FieldMap | undefined {
+    const node = this.nodes[id];
+    switch (node.kind) {
+      case "source":
+        return metaFields(this.metas.find((meta) => meta.node === id));
+      case "filter": {
+        const input = this.fieldsOf(node.from);
+        checkCondition(input, node.where, `${path}.where`, issues);
+        return input;
+      }
+      case "columns":
+        return this.computeColumns(node, path, issues);
       case "calculate":
-        this.applyCalculate(step, path, issues);
-        break;
+        return this.computeCalculate(node, path, issues);
+      case "groupBy":
+        return this.computeGroupBy(node, path, issues);
       case "sql":
-        this.applySql(step, path, issues);
-        break;
+        return this.computeSql(node, path, issues);
+      case "join":
+        return this.computeJoin(node, path, issues);
+      case "stack":
+        return this.computeStack(node, path, issues);
       default:
-        this.known = undefined;
+        return undefined;
     }
   }
 
-  private applyCalculate(
-    step: Extract<Step, { kind: "calculate" }>,
+  private computeColumns(
+    node: NodeOf<"columns">,
     path: string,
     issues: Issues,
-  ): void {
-    const result = analyzeExpression(step.expr, this.resolver());
-    if (!result.ok) {
-      for (const error of result.errors) {
-        issues.add(`${path}.expr`, error.message, error);
+  ): FieldMap | undefined {
+    const input = this.fieldsOf(node.from);
+    if (input === undefined) {
+      return undefined;
+    }
+    const edited = editFields(input, node.edits, `${path}.edits`, issues);
+    if (node.only === undefined) {
+      return edited;
+    }
+    const out: FieldMap = new Map();
+    for (const [i, name] of node.only.entries()) {
+      const type = edited.get(name);
+      if (type === undefined) {
+        issues.add(`${path}.only[${i}]`, `Unknown field "${name}".`);
+      } else {
+        out.set(name, type);
       }
     }
-    if (this.known !== undefined) {
-      this.known.set(step.field, result.ok ? result.type : "unknown");
-    }
+    return out;
   }
 
-  private applySql(step: Extract<Step, { kind: "sql" }>, path: string, issues: Issues): void {
-    const result = analyzeSqlStep(step.query, [...this.aliases]);
+  private computeCalculate(
+    node: NodeOf<"calculate">,
+    path: string,
+    issues: Issues,
+  ): FieldMap | undefined {
+    const input = this.fieldsOf(node.from);
+    const known: FieldMap | undefined = input === undefined ? undefined : new Map(input);
+    for (const [i, field] of node.fields.entries()) {
+      const result = analyzeExpression(field.expr, GraphScope.resolver(known));
+      if (!result.ok) {
+        for (const error of result.errors) {
+          issues.add(`${path}.fields[${i}].expr`, error.message, error);
+        }
+      }
+      if (known !== undefined) {
+        known.set(field.field, result.ok ? result.type : "unknown");
+      }
+    }
+    return known;
+  }
+
+  private computeSql(node: NodeOf<"sql">, path: string, issues: Issues): FieldMap | undefined {
+    const result = analyzeSqlStep(node.query, node.reads ?? []);
     if (!result.ok) {
       for (const error of result.errors) {
         issues.add(`${path}.query`, error.message, error);
       }
-      this.known = undefined;
-      return;
+      return undefined;
     }
     const columns = result.analysis.columns;
     if (columns.includes("d")) {
-      this.known = undefined;
-      return;
+      return undefined;
     }
     const props = columns.filter((name) => name !== "row_id" && name !== "geom");
-    this.known = new Map(props.map((name) => [name, "unknown"]));
+    return new Map(props.map((name) => [name, "unknown"]));
   }
 
-  private checkCondition(cond: Condition, path: string, issues: Issues): void {
-    if ("field" in cond) {
-      this.check(cond.field, `${path}.field`, issues);
-    } else if ("not" in cond) {
-      this.checkCondition(cond.not, `${path}.not`, issues);
-    } else {
-      const key = "and" in cond ? "and" : "or";
-      const children = "and" in cond ? cond.and : cond.or;
-      for (const [i, child] of children.entries()) {
-        this.checkCondition(child, `${path}.${key}[${i}]`, issues);
+  private computeGroupBy(
+    node: NodeOf<"groupBy">,
+    path: string,
+    issues: Issues,
+  ): FieldMap | undefined {
+    const known = this.fieldsOf(node.from);
+    for (const [i, field] of node.by.entries()) {
+      checkField(known, field, `${path}.by[${i}]`, issues);
+    }
+    for (const [i, measure] of node.measures.entries()) {
+      for (const ref of [measure.field, measure.by]) {
+        if (ref !== undefined) {
+          checkField(known, ref, `${path}.measures[${i}]`, issues);
+        }
       }
     }
+    if (known === undefined) {
+      return undefined;
+    }
+    const next: FieldMap = new Map();
+    for (const field of node.by) {
+      next.set(field, known.get(field) ?? "unknown");
+    }
+    for (const measure of node.measures) {
+      next.set(measure.as, measureType(measure, known));
+    }
+    return next;
   }
 
-  /** Stacked rows keep the union of every member's (edited) fields (unknown if any member is). */
-  private applyAppend(step: Extract<Step, { kind: "append" }>, path: string, issues: Issues): void {
-    const base =
-      this.known === undefined
-        ? undefined
-        : editFields(this.known, step.baseColumns, `${path}.baseColumns`, issues);
-    let next: FieldMap | undefined = base === undefined ? undefined : new Map(base);
-    for (const [i, source] of step.sources.entries()) {
-      const raw = metaFields(this.metas.find((meta) => meta.alias === source.input));
+  private computeJoin(node: JoinNode, path: string, issues: Issues): FieldMap | undefined {
+    const left = this.fieldsOf(node.left);
+    const right = this.fieldsOf(node.right);
+    for (const [i, pair] of node.on.entries()) {
+      checkField(left, pair.left, `${path}.on[${i}].left`, issues);
+      checkField(right, pair.right, `${path}.on[${i}].right`, issues);
+    }
+    for (const [i, field] of (node.fields ?? []).entries()) {
+      checkField(right, field, `${path}.fields[${i}]`, issues);
+    }
+    checkMultiMatchRefs(node, right, `${path}.multiMatch`, issues);
+    if (left === undefined) {
+      return undefined;
+    }
+    return joinedFields(left, node, right, this.titleOf(node.right));
+  }
+
+  /** Stacked rows keep the union of every input's (edited) fields (unknown if any is). */
+  private computeStack(node: NodeOf<"stack">, path: string, issues: Issues): FieldMap | undefined {
+    let next: FieldMap | undefined = new Map();
+    for (const [i, input] of node.inputs.entries()) {
+      const raw = this.fieldsOf(input.node);
       const fields =
         raw === undefined
           ? undefined
-          : editFields(raw, source.columns, `${path}.sources[${i}].columns`, issues);
+          : editFields(raw, input.columns, `${path}.inputs[${i}].columns`, issues);
       if (fields === undefined || next === undefined) {
         next = undefined;
         continue;
@@ -222,86 +284,47 @@ export class FieldScope {
         next.set(name, next.get(name) ?? type);
       }
     }
-    if (next !== undefined && step.tagField !== undefined) {
-      next.set(step.tagField, "unknown");
+    if (next !== undefined && node.tagField !== undefined) {
+      next.set(node.tagField, "unknown");
     }
-    this.known = next;
-  }
-
-  private applyGroupBy(
-    step: Extract<Step, { kind: "groupBy" }>,
-    path: string,
-    issues: Issues,
-  ): void {
-    for (const [i, field] of step.by.entries()) {
-      this.check(field, `${path}.by[${i}]`, issues);
-    }
-    for (const [i, measure] of step.measures.entries()) {
-      for (const ref of [measure.field, measure.by]) {
-        if (ref !== undefined) {
-          this.check(ref, `${path}.measures[${i}]`, issues);
-        }
-      }
-    }
-    const known = this.known;
-    if (known !== undefined) {
-      const next: FieldMap = new Map();
-      for (const field of step.by) {
-        next.set(field, known.get(field) ?? "unknown");
-      }
-      for (const measure of step.measures) {
-        next.set(measure.as, measureType(measure, known));
-      }
-      this.known = next;
-    }
-  }
-
-  private applySelect(step: Extract<Step, { kind: "select" }>, path: string, issues: Issues): void {
-    for (const [i, field] of step.fields.entries()) {
-      this.check(field.from, `${path}.fields[${i}].from`, issues);
-    }
-    const known = this.known;
-    if (known !== undefined) {
-      this.known = new Map(
-        step.fields.map((field) => [field.as, known.get(field.from) ?? "unknown"]),
-      );
-    }
-  }
-
-  /** The fields (and types) of a join's right side: the input, then its sub-pipeline. */
-  private rightScope(step: JoinStep, path: string, issues: Issues): FieldScope {
-    const scope = new FieldScope(step.right.input, this.metas, this.aliases);
-    if (Array.isArray(step.right.steps)) {
-      scope.validateList(step.right.steps, `${path}.right.steps`, issues);
-    }
-    return scope;
-  }
-
-  private applyJoin(step: JoinStep, path: string, issues: Issues): void {
-    const rightMeta = this.metas.find((meta) => meta.alias === step.right.input);
-    const right = this.rightScope(step, path, issues).known;
-    for (const [i, pair] of step.on.entries()) {
-      this.check(pair.left, `${path}.on[${i}].left`, issues);
-      checkRight(right, pair.right, `${path}.on[${i}].right`, issues);
-    }
-    for (const [i, field] of (step.fields ?? []).entries()) {
-      checkRight(right, field, `${path}.fields[${i}]`, issues);
-    }
-    checkMultiMatchRefs(step, right, `${path}.multiMatch`, issues);
-    if (this.known !== undefined) {
-      this.known = joinedFields(this.known, step, right, rightMeta);
-    }
+    return next;
   }
 }
 
-/** Narrowing after validateStepShape found no problems with the step. */
-function isStep(raw: Record<string, unknown>): raw is Record<string, unknown> & Step {
-  return typeof raw.kind === "string";
+/** Report `field` when the row is known and lacks it. */
+export function checkField(
+  known: FieldMap | undefined,
+  field: string,
+  path: string,
+  issues: Issues,
+): void {
+  if (known !== undefined && !known.has(field)) {
+    issues.add(path, `Unknown field "${field}".`);
+  }
+}
+
+function checkCondition(
+  known: FieldMap | undefined,
+  cond: Condition,
+  path: string,
+  issues: Issues,
+): void {
+  if ("field" in cond) {
+    checkField(known, cond.field, `${path}.field`, issues);
+  } else if ("not" in cond) {
+    checkCondition(known, cond.not, `${path}.not`, issues);
+  } else {
+    const key = "and" in cond ? "and" : "or";
+    const children = "and" in cond ? cond.and : cond.or;
+    for (const [i, child] of children.entries()) {
+      checkCondition(known, child, `${path}.${key}[${i}]`, issues);
+    }
+  }
 }
 
 /** Names the join adds for the row-copying modes (first / last / error). */
 function copiedFields(
-  step: JoinStep,
+  step: JoinNode,
   right: FieldMap | undefined,
   prefix: string,
 ): [string, FieldType][] | undefined {
@@ -314,7 +337,7 @@ function copiedFields(
 
 /** The fields (and types) a join adds, or undefined when they cannot be known. */
 function addedFields(
-  step: JoinStep,
+  step: JoinNode,
   right: FieldMap | undefined,
   title: string,
 ): [string, FieldType][] | undefined {
@@ -339,11 +362,11 @@ function addedFields(
 /** The row's fields after a join, or undefined when they cannot be known. */
 function joinedFields(
   before: FieldMap,
-  step: JoinStep,
+  step: JoinNode,
   right: FieldMap | undefined,
-  rightMeta: CompileInputMeta | undefined,
+  title: string,
 ): FieldMap | undefined {
-  const added = addedFields(step, right, rightMeta === undefined ? "" : rightMeta.title);
+  const added = addedFields(step, right, title);
   return added === undefined ? undefined : new Map([...before, ...added]);
 }
 
@@ -374,7 +397,7 @@ function checkMeasureRefs(
 }
 
 function checkMultiMatchRefs(
-  step: JoinStep,
+  step: JoinNode,
   right: FieldMap | undefined,
   path: string,
   issues: Issues,

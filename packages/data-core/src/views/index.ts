@@ -1,5 +1,5 @@
 /**
- * `@caden/data-core/views` — the Views step format, validator and Postgres
+ * `@caden/data-core/views` — the Views node-graph format, validator and Postgres
  * SQL compiler (docs/views-design.md §4, §6, §8). Pure: a definition plus
  * input metadata in, SQL text plus bind params out.
  */
@@ -11,7 +11,7 @@ export type { BinaryOp, ExprDiagnostic, ExprNode, ParseResult, SourceSpan } from
 export { EXPRESSION_FUNCTIONS } from "./calc-sql.js";
 export type { FunctionInfo } from "./calc-sql.js";
 export { compileDiagnostics, compileView, viewInputDatasetIds } from "./compile.js";
-export { ViewCompileError, ViewStepNotSupportedError } from "./errors.js";
+export { ViewCompileError, ViewNodeNotSupportedError } from "./errors.js";
 export { analyzeSqlStep, DENIED_FUNCTIONS } from "./sql-step.js";
 export type { SqlStepAnalysis, SqlStepResult } from "./sql-step.js";
 export { slugify as slugifyViewName } from "./sql-util.js";
@@ -20,29 +20,37 @@ export {
   canExtract,
   copyTitle,
   duplicateDefinition,
-  freshAlias,
-  inputUsages,
-  joinAt,
+  freshNodeId,
+  nodeLabelOfPath,
+  nodeUsages,
   planExtract,
-  pruneInputs,
-  remapInputs,
+  pruneNodes,
   remapReport,
-  renameInputAlias,
-  stepLabelOfPath,
+  remapSources,
+  renameNodeId,
+  unusedNodeIds,
 } from "./reuse.js";
 export type {
   ExtractPlan,
   ExtractResult,
-  InputRemap,
-  InputUsage,
-  JoinPath,
+  NodeUsage,
   RemapProblem,
   RemapReport,
+  SourceRemap,
 } from "./reuse.js";
+export {
+  dependencyOrder,
+  describeCycle,
+  distinctInputs,
+  findCycle,
+  nodeInputs,
+  reachableIds,
+  readersOf,
+  sourceIds,
+} from "./graph.js";
+export type { DependencyOrder } from "./graph.js";
 export { validateViewDefinition } from "./validate.js";
 export type {
-  AppendSource,
-  AppendStep,
   AppendTag,
   ColumnEdit,
   CompileInputMeta,
@@ -54,21 +62,20 @@ export type {
   DiagnosticsOptions,
   Expr,
   FieldType,
-  JoinStep,
+  JoinNode,
   KeyMatching,
   KeyPair,
   Measure,
   MeasureFn,
   MultiMatch,
+  NodeKind,
   OutputField,
   OutputSchema,
-  RightSide,
   Sort,
-  Step,
-  StepKind,
+  StackInput,
   ValidationError,
   ValidationResult,
   ViewDefinition,
-  ViewInput,
   ViewInputRef,
+  ViewNode,
 } from "./types.js";

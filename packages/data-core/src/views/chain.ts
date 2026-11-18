@@ -1,311 +1,256 @@
 import { compileCalculate } from "./calculate.js";
+import { analyzeExpression } from "./calculate.js";
+import { onlyRow, editedRow, tagPatch } from "./columns.js";
 import { compileCondition } from "./condition.js";
 import { ViewCompileError } from "./errors.js";
-import { getInput, inputCte, resolveInputs } from "./inputs.js";
-import type { ResolvedInput } from "./inputs.js";
+import { dependencyOrder, describeCycle } from "./graph.js";
 import { compileJoin } from "./join.js";
-import type { JoinContext, StepInfo, SubChain } from "./join.js";
+import type { JoinContext, JoinInfo } from "./join.js";
 import { measureExpr } from "./measures.js";
+import { resolveSource, sourceCte } from "./sources.js";
 import { compileSqlStep, requireSqlAnalysis } from "./sql-compile.js";
-import { buildObject, fieldJson, ParamBag, quoteIdent } from "./sql-util.js";
-import type { AppendTag, ColumnEdit, CompileInputMeta, Step, ViewDefinition } from "./types.js";
-import { FieldScope } from "./validate-fields.js";
-import { Issues } from "./validate-issues.js";
+import { buildObject, fieldJson, nodeCteName, ParamBag, quoteIdent } from "./sql-util.js";
+import type { CompileInputMeta, NodeKind, ViewDefinition, ViewNode } from "./types.js";
+import { GraphScope } from "./validate-fields.js";
+import type { FieldMap } from "./validate-fields.js";
 
-export type { StepInfo } from "./join.js";
+/** One compiled node, for diagnostics. */
+export interface NodeInfo {
+  id: string;
+  kind: NodeKind;
+  /** Quoted CTE names of the nodes it reads (empty for a source). */
+  inputs: string[];
+  /** Quoted CTE name the node produced. */
+  output: string;
+  join?: JoinInfo;
+}
+
+export type { JoinInfo } from "./join.js";
 
 export interface Chain {
   ctes: string[];
-  /** Every compiled step in execution order (sub-pipeline steps before their join). */
-  steps: StepInfo[];
-  /** Quoted name of the CTE holding the last step's rows (or the base input). */
+  /** Every compiled node, dependencies first. */
+  nodes: NodeInfo[];
+  /** Quoted name of the CTE holding the target node's rows. */
   last: string;
   bag: ParamBag;
-  /** True when every step of the definition was compiled (output schema applies). */
+  /** True when the target is the result node (the output schema applies). */
   complete: boolean;
 }
 
 export interface ChainOptions {
-  uptoStep?: number;
+  uptoNode?: string;
   unaccent?: boolean;
   /** False for diagnostics: the `error` multi-match guard must not abort the query. */
   guards?: boolean;
 }
 
-function stepCount(def: ViewDefinition, uptoStep: number | undefined): number {
-  if (uptoStep === undefined) {
-    return def.steps.length;
-  }
-  if (!Number.isInteger(uptoStep) || uptoStep < 0) {
-    throw new ViewCompileError("uptoStep must be a non-negative integer.");
-  }
-  return Math.min(def.steps.length, uptoStep + 1);
+type Of<K extends NodeKind> = Extract<ViewNode, { kind: K }>;
+
+interface Compiled {
+  ctes: string[];
+  info: NodeInfo;
 }
 
-function compileFilter(
-  step: Extract<Step, { kind: "filter" }>,
-  prev: string,
-  out: string,
-  bag: ParamBag,
-): string {
-  return `${out} as (
+interface Ctx {
+  def: ViewDefinition;
+  metas: CompileInputMeta[];
+  bag: ParamBag;
+  scope: GraphScope;
+  joins: JoinContext;
+}
+
+function simple(id: string, node: ViewNode, inputs: string[], ctes: string[]): Compiled {
+  const output = nodeCteName(id);
+  return { ctes, info: { id, kind: node.kind, inputs, output } };
+}
+
+function compileFilter(id: string, node: Of<"filter">, ctx: Ctx): Compiled {
+  const from = nodeCteName(node.from);
+  const out = nodeCteName(id);
+  return simple(
+    id,
+    node,
+    [from],
+    [
+      `${out} as (
   select row_id, d, geom
-  from ${prev}
-  where ${compileCondition(step.where, "d", bag)}
-)`;
+  from ${from}
+  where ${compileCondition(node.where, "d", ctx.bag)}
+)`,
+    ],
+  );
 }
 
-function compileSelect(
-  step: Extract<Step, { kind: "select" }>,
-  prev: string,
-  out: string,
-  bag: ParamBag,
-): string {
-  const pairs = step.fields.map((field) => ({
-    key: field.as,
-    value: fieldJson("d", bag, field.from),
-  }));
-  return `${out} as (
-  select row_id, ${buildObject(pairs, bag)} as d, geom
-  from ${prev}
-)`;
+function compileColumns(id: string, node: Of<"columns">, ctx: Ctx): Compiled {
+  const from = nodeCteName(node.from);
+  const out = nodeCteName(id);
+  const row = onlyRow(editedRow(node.edits, ctx.bag), node.only, ctx.bag);
+  return simple(
+    id,
+    node,
+    [from],
+    [
+      `${out} as (
+  select row_id, ${row} as d, geom
+  from ${from}
+)`,
+    ],
+  );
 }
 
-/** Row object after column edits (all reads use the original row, so swaps work). */
-function editedRow(edits: ColumnEdit[] | undefined, bag: ParamBag): string {
-  if (edits === undefined || edits.length === 0) {
-    return "d";
+/** One CTE per calculated field so later fields can read earlier ones; the last is the node. */
+function compileCalculateNode(id: string, node: Of<"calculate">, ctx: Ctx): Compiled {
+  const from = nodeCteName(node.from);
+  const input = ctx.scope.fieldsOf(node.from);
+  const known: FieldMap | undefined = input === undefined ? undefined : new Map(input);
+  const ctes: string[] = [];
+  let prev = from;
+  for (const [i, field] of node.fields.entries()) {
+    const last = i === node.fields.length - 1;
+    const name = last ? nodeCteName(id) : quoteIdent(`c${i}_${id}`);
+    const resolver = GraphScope.resolver(known);
+    ctes.push(compileCalculate(field, prev, name, ctx.bag, resolver));
+    const analysis = analyzeExpression(field.expr, resolver);
+    if (known !== undefined) {
+      known.set(field.field, analysis.ok ? analysis.type : "unknown");
+    }
+    prev = name;
   }
-  const dropped = edits.map((edit) => ` - ${bag.text(edit.from)}`).join("");
-  const moved = edits
-    .filter((edit): edit is { from: string; as: string } => "as" in edit)
-    .map(
-      (edit) =>
-        `case when jsonb_exists(d, ${bag.text(edit.from)}) then jsonb_build_object(${bag.text(edit.as)}, d -> ${bag.text(edit.from)}) else '{}'::jsonb end`,
-    );
-  return [`(d${dropped})`, ...moved].join(" || ");
+  return simple(id, node, [from], ctes);
 }
 
-function tagPatch(
-  field: string | undefined,
-  tag: AppendTag | undefined,
-  edits: ColumnEdit[] | undefined,
-  bag: ParamBag,
-): string {
-  const row = editedRow(edits, bag);
-  if (field === undefined || tag === undefined) {
-    return row;
-  }
-  return `${row} || jsonb_build_object(${bag.text(field)}, ${bag.jsonb(tag)})`;
-}
-
-/** UNION ALL of the current rows and each source input (geometry travels with its row). */
-function compileAppend(
-  step: Extract<Step, { kind: "append" }>,
-  prev: string,
-  out: string,
-  ctx: ChainContext,
-): string {
-  const parts = [
-    `select row_id, ${tagPatch(step.tagField, step.baseTag, step.baseColumns, ctx.bag)} as d, geom from ${prev}`,
-    ...step.sources.map((source) => {
-      const cte = getInput(ctx.inputs, source.input).cte;
-      return `select row_id, ${tagPatch(step.tagField, source.tag, source.columns, ctx.bag)} as d, geom from ${cte}`;
-    }),
-  ];
-  return `${out} as (
-  ${parts.join("\n  union all\n  ")}
-)`;
-}
-
-function compileGroupBy(
-  step: Extract<Step, { kind: "groupBy" }>,
-  prev: string,
-  out: string,
-  bag: ParamBag,
-): string {
-  if (step.by.length === 0) {
+function compileGroupBy(id: string, node: Of<"groupBy">, ctx: Ctx): Compiled {
+  if (node.by.length === 0) {
     throw new ViewCompileError("groupBy needs at least one field in `by`.");
   }
-  const keys = step.by.map((field, i) => `${fieldJson("d", bag, field)} as g${i}`);
-  const groupCols = step.by.map((_, i) => `g${i}`);
-  const keyPairs = step.by.map((field, i) => ({ key: field, value: `g${i}` }));
-  const measurePairs = step.measures.map((measure) => ({
+  const { bag } = ctx;
+  const from = nodeCteName(node.from);
+  const out = nodeCteName(id);
+  const keys = node.by.map((field, i) => `${fieldJson("d", bag, field)} as g${i}`);
+  const groupCols = node.by.map((_, i) => `g${i}`);
+  const keyPairs = node.by.map((field, i) => ({ key: field, value: `g${i}` }));
+  const measurePairs = node.measures.map((measure) => ({
     key: measure.as,
     value: measureExpr(measure, "d", bag, "groupBy"),
   }));
   const object = buildObject([...keyPairs, ...measurePairs], bag);
   const identity = `md5(jsonb_build_array(${groupCols.join(", ")})::text)::uuid`;
-  return `${out} as (
+  return simple(
+    id,
+    node,
+    [from],
+    [
+      `${out} as (
   select ${identity} as row_id, ${object} as d, null::geometry(Geometry,4326) as geom
-  from (select d, ${keys.join(", ")} from ${prev}) t
+  from (select d, ${keys.join(", ")} from ${from}) t
   group by ${groupCols.join(", ")}
-)`;
+)`,
+    ],
+  );
 }
 
-interface ChainContext {
-  inputs: Map<string, ResolvedInput>;
-  bag: ParamBag;
-  unaccent: boolean;
-  guards: boolean;
-  metas: CompileInputMeta[];
-  aliases: Set<string>;
+function compileStack(id: string, node: Of<"stack">, ctx: Ctx): Compiled {
+  const out = nodeCteName(id);
+  const inputs = node.inputs.map((input) => nodeCteName(input.node));
+  const parts = node.inputs.map(
+    (input, i) =>
+      `select row_id, ${tagPatch(node.tagField, input.tag, input.columns, ctx.bag)} as d, geom from ${inputs[i]}`,
+  );
+  return simple(id, node, inputs, [
+    `${out} as (
+  ${parts.join("\n  union all\n  ")}
+)`,
+  ]);
 }
 
-interface Naming {
-  /** CTE name prefix: empty at the top level, `s<n>_` inside step n's sub-pipeline. */
-  prefix: string;
-  /** Path of the step list, e.g. `steps` or `steps[1].right.steps`. */
-  path: string;
+function compileSql(id: string, node: Of<"sql">, ctx: Ctx): Compiled {
+  const from = nodeCteName(node.from);
+  const analysis = requireSqlAnalysis(node.query, node.reads ?? []);
+  const raw = quoteIdent(`q_${id}`);
+  const ctes = compileSqlStep(analysis, from, nodeCteName(id), raw, ctx.bag);
+  return simple(id, node, [from, ...(node.reads ?? []).map((read) => nodeCteName(read))], ctes);
 }
 
-function unknownStep(step: never): never {
-  throw new ViewCompileError(`Unknown step kind ${JSON.stringify(step)}.`);
+function compileJoinNode(id: string, node: Of<"join">, ctx: Ctx): Compiled {
+  const left = nodeCteName(node.left);
+  const right = nodeCteName(node.right);
+  const out = nodeCteName(id);
+  const joined = compileJoin(node, id, left, right, ctx.scope.titleOf(node.right), out, ctx.joins);
+  return {
+    ctes: joined.ctes,
+    info: { id, kind: "join", inputs: [left, right], output: out, join: joined.info },
+  };
 }
 
-function compileStep(
-  step: Step,
-  index: number,
-  prev: string,
-  ctx: ChainContext,
-  scope: FieldScope,
-  naming: Naming,
-): { ctes: string[]; infos: StepInfo[] } {
-  const name = quoteIdent(`${naming.prefix}s${index}`);
-  const at = `${naming.path}[${index}]`;
-  const base: StepInfo = { index, kind: step.kind, input: prev, output: name };
-  if (naming.prefix !== "") {
-    base.path = at;
-  }
-  switch (step.kind) {
+function compileNode(id: string, ctx: Ctx): Compiled {
+  const node = ctx.def.nodes[id];
+  switch (node.kind) {
+    case "source":
+      return simple(id, node, [], [sourceCte(resolveSource(ctx.def, ctx.metas, id), ctx.bag)]);
     case "filter":
-      return { ctes: [compileFilter(step, prev, name, ctx.bag)], infos: [base] };
-    case "select":
-      return { ctes: [compileSelect(step, prev, name, ctx.bag)], infos: [base] };
-    case "append":
-      return { ctes: [compileAppend(step, prev, name, ctx)], infos: [base] };
-    case "groupBy":
-      return { ctes: [compileGroupBy(step, prev, name, ctx.bag)], infos: [base] };
+      return compileFilter(id, node, ctx);
+    case "columns":
+      return compileColumns(id, node, ctx);
     case "calculate":
-      return {
-        ctes: [compileCalculate(step, prev, name, ctx.bag, scope.resolver())],
-        infos: [base],
-      };
-    case "sql": {
-      const analysis = requireSqlAnalysis(step.query, [...ctx.aliases]);
-      const raw = quoteIdent(`${naming.prefix}s${index}_q`);
-      return { ctes: compileSqlStep(analysis, prev, name, raw, ctx.bag), infos: [base] };
-    }
-    case "join": {
-      const joinCtx: JoinContext = {
-        inputs: ctx.inputs,
-        bag: ctx.bag,
-        unaccent: ctx.unaccent,
-        guards: ctx.guards,
-        prefix: naming.prefix,
-        path: at,
-        compileSub: (alias, steps, prefix, path) =>
-          compileSteps(
-            steps,
-            getInput(ctx.inputs, alias).cte,
-            ctx,
-            new FieldScope(alias, ctx.metas, ctx.aliases),
-            { prefix, path },
-          ),
-      };
-      const joined = compileJoin(step, index, prev, joinCtx);
-      return {
-        ctes: joined.ctes,
-        infos: [...joined.subSteps, { ...base, output: joined.out, join: joined.info }],
-      };
-    }
+      return compileCalculateNode(id, node, ctx);
+    case "groupBy":
+      return compileGroupBy(id, node, ctx);
+    case "sql":
+      return compileSql(id, node, ctx);
+    case "join":
+      return compileJoinNode(id, node, ctx);
+    case "stack":
+      return compileStack(id, node, ctx);
     default:
-      return unknownStep(step);
+      throw new ViewCompileError(`Unknown node kind ${JSON.stringify(node)}.`);
   }
 }
 
-/** Compile a step list into CTEs over `start`. Used for the top level and for sub-pipelines. */
-function compileSteps(
-  steps: Step[],
-  start: string,
-  ctx: ChainContext,
-  scope: FieldScope,
-  naming: Naming,
-): SubChain {
-  const ctes: string[] = [];
-  const infos: StepInfo[] = [];
-  const scratch = new Issues();
-  let last = start;
-  for (const [index, step] of steps.entries()) {
-    const compiled = compileStep(step, index, last, ctx, scope, naming);
-    ctes.push(...compiled.ctes);
-    infos.push(...compiled.infos);
-    last = compiled.infos[compiled.infos.length - 1].output;
-    scope.apply(step, `${naming.path}[${index}]`, scratch);
+function orderFor(def: ViewDefinition, target: string): string[] {
+  if (!Object.hasOwn(def.nodes, target)) {
+    throw new ViewCompileError(`Unknown node "${target}".`);
   }
-  return { ctes, steps: infos, last };
+  const order = dependencyOrder(def.nodes, target);
+  if (order.ok) {
+    return order.order;
+  }
+  if ("cycle" in order) {
+    throw new ViewCompileError(
+      `Node "${order.cycle[0]}" reads itself: ${describeCycle(order.cycle)}`,
+    );
+  }
+  throw new ViewCompileError(`Node "${order.reader}" reads unknown node "${order.missing}".`);
 }
 
-/** Aliases (base first) whose input CTEs the compiled steps read, including sub-pipelines and sql steps. */
-function collectAliases(steps: Step[], aliases: string[], found: string[]): void {
-  for (const step of steps) {
-    if (step.kind === "join") {
-      addUnique(found, step.right.input);
-      collectAliases(step.right.steps ?? [], aliases, found);
-    } else if (step.kind === "append") {
-      for (const source of step.sources) {
-        addUnique(found, source.input);
-      }
-    } else if (step.kind === "sql") {
-      const analysis = requireSqlAnalysis(step.query, aliases);
-      for (const alias of aliases) {
-        if (analysis.inputNames.includes(`in_${alias}`)) {
-          addUnique(found, alias);
-        }
-      }
-    }
-  }
-}
-
-function addUnique(list: string[], value: string): void {
-  if (!list.includes(value)) {
-    list.push(value);
-  }
-}
-
-/** Build the input CTEs and one CTE group per step. Shared by rows and diagnostics. */
+/** Build one CTE group per ancestor of the target node. Shared by rows and diagnostics. */
 export function buildChain(
   def: ViewDefinition,
   metas: CompileInputMeta[],
   options: ChainOptions,
 ): Chain {
-  const inputs = resolveInputs(def, metas);
+  const target = options.uptoNode ?? def.result.node;
+  const order = orderFor(def, target);
   const bag = new ParamBag();
-  const count = stepCount(def, options.uptoStep);
-  const steps = def.steps.slice(0, count);
-  const aliasList = def.inputs.map((input) => input.alias);
-  const used = [def.base];
-  collectAliases(steps, aliasList, used);
-  const ctes = used.map((alias) => inputCte(getInput(inputs, alias), bag));
-  const aliases = new Set(aliasList);
-  const ctx: ChainContext = {
-    inputs,
-    bag,
-    unaccent: options.unaccent ?? false,
-    guards: options.guards ?? true,
+  const ctx: Ctx = {
+    def,
     metas,
-    aliases,
-  };
-  const scope = new FieldScope(def.base, metas, aliases);
-  const compiled = compileSteps(steps, getInput(inputs, def.base).cte, ctx, scope, {
-    prefix: "",
-    path: "steps",
-  });
-  return {
-    ctes: [...ctes, ...compiled.ctes],
-    steps: compiled.steps,
-    last: compiled.last,
     bag,
-    complete: count === def.steps.length,
+    scope: new GraphScope(def.nodes, metas),
+    joins: { bag, unaccent: options.unaccent ?? false, guards: options.guards ?? true },
+  };
+  const ctes: string[] = [];
+  const nodes: NodeInfo[] = [];
+  for (const id of order) {
+    const compiled = compileNode(id, ctx);
+    ctes.push(...compiled.ctes);
+    nodes.push(compiled.info);
+  }
+  return {
+    ctes,
+    nodes,
+    last: nodeCteName(target),
+    bag,
+    complete: target === def.result.node,
   };
 }

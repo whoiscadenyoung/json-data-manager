@@ -1,94 +1,128 @@
 /**
  * Structural and semantic validation of a ViewDefinition (plain TypeScript:
  * this package carries no schema-library dependency). Returns every problem
- * with a JSON-path-style location. Field references are checked against the
- * input schemas only when `inputs[].fields` metadata is supplied.
+ * with a JSON-path-style location (`nodes.<id>.<field path>`). Field
+ * references are checked against source schemas only when the `inputs`
+ * metadata carries `fields`.
  */
 
+import { describeCycle, findCycle } from "./graph.js";
 import { containsUuid } from "./sql-util.js";
 import type { CompileInputMeta, ValidationResult, ViewDefinition } from "./types.js";
-import { FieldScope } from "./validate-fields.js";
+import { checkField, GraphScope } from "./validate-fields.js";
+import type { FieldMap } from "./validate-fields.js";
 import { Issues, isRecord } from "./validate-issues.js";
+import { validateNodeShape } from "./validate-nodes.js";
 
-const ALIAS_PATTERN = /^[A-Za-z0-9_]{1,40}$/;
+const ID_PATTERN = /^[a-z0-9_]{1,40}$/;
 
-function validateInputs(raw: Record<string, unknown>, issues: Issues): Set<string> {
-  const aliases = new Set<string>();
-  const inputs = raw.inputs;
-  if (!Array.isArray(inputs) || inputs.length === 0) {
-    issues.add("inputs", "At least one input is required.");
-    return aliases;
-  }
-  for (const [i, input] of inputs.entries()) {
-    const path = `inputs[${i}]`;
-    if (!isRecord(input) || typeof input.alias !== "string") {
-      issues.add(path, "Each input needs an alias and a dataset ref.");
-      continue;
-    }
-    validateAlias(input.alias, `${path}.alias`, aliases, issues);
-    aliases.add(input.alias);
-    validateRef(input.ref, `${path}.ref`, issues);
-  }
-  return aliases;
-}
-
-function validateAlias(alias: string, path: string, seen: Set<string>, issues: Issues): void {
-  if (!ALIAS_PATTERN.test(alias)) {
-    issues.add(path, "Aliases use 1-40 letters, digits or underscores.");
-  } else if (containsUuid(alias)) {
-    issues.add(path, "Aliases must be readable names, never dataset ids.");
-  }
-  if (seen.has(alias)) {
-    issues.add(path, `Duplicate input alias "${alias}".`);
+function validateId(id: string, issues: Issues): void {
+  const path = `nodes.${id}`;
+  if (!ID_PATTERN.test(id)) {
+    issues.add(path, "Node ids use 1-40 lowercase letters, digits or underscores.");
+  } else if (containsUuid(id)) {
+    issues.add(path, "Node ids must be readable names, never dataset ids.");
   }
 }
 
-function validateRef(ref: unknown, path: string, issues: Issues): void {
-  if (!isRecord(ref) || ref.kind !== "dataset" || typeof ref.id !== "string" || ref.id === "") {
-    issues.add(path, 'Input ref must be { kind: "dataset", id }.');
+function validateOutputField(
+  field: unknown,
+  at: string,
+  seen: Set<string>,
+  known: FieldMap | undefined,
+  issues: Issues,
+): void {
+  if (!isRecord(field) || typeof field.key !== "string" || field.key === "") {
+    issues.add(at, "Each output field needs a key.");
     return;
   }
-  if (ref.version !== undefined && typeof ref.version !== "string") {
-    issues.add(`${path}.version`, "Version must be a string.");
+  if (seen.has(field.key)) {
+    issues.add(`${at}.key`, `Duplicate output key "${field.key}".`);
   }
+  seen.add(field.key);
+  if (field.from !== undefined && (typeof field.from !== "string" || field.from === "")) {
+    issues.add(`${at}.from`, "The source field must be a name.");
+    return;
+  }
+  const renamed = field.from !== undefined;
+  checkField(known, field.from ?? field.key, `${at}.${renamed ? "from" : "key"}`, issues);
 }
 
-function validateOutput(output: unknown, scope: FieldScope, issues: Issues): void {
+function validateOutput(output: unknown, known: FieldMap | undefined, issues: Issues): void {
+  const path = "result.output";
   if (!isRecord(output) || !Array.isArray(output.fields)) {
-    issues.add("output", "Output needs a fields array and an emptyFields mode.");
+    issues.add(path, "Output needs a fields array and an emptyFields mode.");
     return;
   }
   if (output.emptyFields !== "keep" && output.emptyFields !== "omit") {
-    issues.add("output.emptyFields", 'Must be "keep" or "omit".');
+    issues.add(`${path}.emptyFields`, 'Must be "keep" or "omit".');
   }
   const seen = new Set<string>();
   for (const [i, field] of output.fields.entries()) {
-    const path = `output.fields[${i}]`;
-    if (!isRecord(field) || typeof field.key !== "string" || field.key === "") {
-      issues.add(path, "Each output field needs a key.");
-      continue;
-    }
-    if (seen.has(field.key)) {
-      issues.add(`${path}.key`, `Duplicate output key "${field.key}".`);
-    }
-    seen.add(field.key);
-    if (field.from !== undefined && (typeof field.from !== "string" || field.from === "")) {
-      issues.add(`${path}.from`, "The source field must be a name.");
-      continue;
-    }
-    scope.check(
-      field.from ?? field.key,
-      `${path}.${field.from === undefined ? "key" : "from"}`,
-      issues,
-    );
+    validateOutputField(field, `${path}.fields[${i}]`, seen, known, issues);
   }
+}
+
+function validateResultNode(
+  result: Record<string, unknown>,
+  nodes: Record<string, unknown>,
+  issues: Issues,
+): string | undefined {
+  const node = result.node;
+  if (typeof node !== "string" || node === "") {
+    issues.add("result.node", "Pick the node the view saves.");
+    return undefined;
+  }
+  if (!Object.hasOwn(nodes, node)) {
+    issues.add("result.node", `Unknown node "${node}".`);
+    return undefined;
+  }
+  return node;
+}
+
+/** Shape-check every node; returns true when all of them are well formed. */
+function validateShapes(nodes: Record<string, unknown>, issues: Issues): boolean {
+  const ids = new Set(Object.keys(nodes));
+  const before = issues.count;
+  for (const [id, node] of Object.entries(nodes)) {
+    validateId(id, issues);
+    if (!isRecord(node) || typeof node.kind !== "string") {
+      issues.add(`nodes.${id}`, "Each node needs a kind.");
+      continue;
+    }
+    validateNodeShape(node, `nodes.${id}`, ids, issues);
+  }
+  return issues.count === before;
 }
 
 /** Narrowing after every shape check passed. */
 function isDefinition(
   def: Record<string, unknown>,
 ): def is Record<string, unknown> & ViewDefinition {
-  return Array.isArray(def.inputs) && Array.isArray(def.steps) && typeof def.base === "string";
+  return isRecord(def.nodes) && isRecord(def.result);
+}
+
+/** Cycle check, then field checks per node, then the output schema. */
+function validateSemantics(
+  def: ViewDefinition,
+  resultNode: string | undefined,
+  inputs: CompileInputMeta[],
+  issues: Issues,
+): void {
+  const cycle = findCycle(def.nodes);
+  if (cycle !== undefined) {
+    issues.add(`nodes.${cycle[0]}`, `Node "${cycle[0]}" reads itself: ${describeCycle(cycle)}`);
+    return;
+  }
+  const scope = new GraphScope(def.nodes, inputs);
+  for (const id of Object.keys(def.nodes)) {
+    scope.validateNode(id, issues);
+  }
+  validateOutput(
+    def.result.output,
+    resultNode === undefined ? undefined : scope.fieldsOf(resultNode),
+    issues,
+  );
 }
 
 /** Validate an unknown value as a ViewDefinition. */
@@ -100,21 +134,23 @@ export function validateViewDefinition(
   if (!isRecord(def)) {
     return { ok: false, errors: [{ path: "", message: "A view definition must be an object." }] };
   }
-  const aliases = validateInputs(def, issues);
-  const base = def.base;
-  if (typeof base !== "string" || !aliases.has(base)) {
-    issues.add("base", "base must be the alias of one of the inputs.");
-  }
-  const metas = inputs ?? [];
-  const scope = new FieldScope(typeof base === "string" ? base : "", metas, aliases);
-  if (Array.isArray(def.steps)) {
-    scope.validateList(def.steps, "steps", issues);
-  } else {
-    issues.add("steps", "steps must be an array.");
-  }
-  validateOutput(def.output, scope, issues);
-  if (issues.count > 0) {
+  if (!isRecord(def.nodes) || Object.keys(def.nodes).length === 0) {
+    issues.add("nodes", "A view needs at least one node.");
     return { ok: false, errors: issues.list };
   }
-  return isDefinition(def) ? { ok: true, value: def } : { ok: false, errors: issues.list };
+  if (!isRecord(def.result)) {
+    issues.add("result", "A view needs a result node.");
+    return { ok: false, errors: issues.list };
+  }
+  const shapesOk = validateShapes(def.nodes, issues);
+  const resultNode = validateResultNode(def.result, def.nodes, issues);
+  if (shapesOk && isDefinition(def)) {
+    validateSemantics(def, resultNode, inputs ?? [], issues);
+  } else {
+    validateOutput(def.result.output, undefined, issues);
+  }
+  if (issues.count > 0 || !isDefinition(def)) {
+    return { ok: false, errors: issues.list };
+  }
+  return { ok: true, value: def };
 }

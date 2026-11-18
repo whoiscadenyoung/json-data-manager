@@ -6,13 +6,18 @@ import {
   DEPLOYMENTS_ID,
   LINKS_ID,
   STATES_ID,
-  definition,
+  chain as definition,
   fullNormalization,
+  graph,
   join,
   metas,
   noNormalization,
 } from "./test-fixtures.js";
-import type { Condition, ConditionLeaf, JoinStep, Step } from "./types.js";
+import type { ChainStep } from "./test-fixtures.js";
+import type { Condition, ConditionLeaf, JoinNode, ViewDefinition } from "./types.js";
+
+type Step = ChainStep;
+type JoinStep = JoinNode;
 
 /** Golden SQL: the statement text and its params, as a single snapshot. */
 function golden(query: { sql: string; params: unknown[] }): string {
@@ -21,7 +26,7 @@ function golden(query: { sql: string; params: unknown[] }): string {
 
 /** `states` with typed fields, for calculate: the compiler checks refs against known fields. */
 const calcMetas = metas.map((meta) =>
-  meta.alias === "states"
+  meta.node === "states"
     ? {
         ...meta,
         fields: [
@@ -41,7 +46,7 @@ describe("input CTEs", () => {
   });
 
   test("pinned version reads version_entries by ref", () => {
-    const def = definition([join({ right: { input: "links" } })]);
+    const def = definition([join({ right: "links" })]);
     const { sql, params } = compileView(def, metas);
     expect(sql).toContain("public.version_entries");
     expect(params).toContain("v-ref-1");
@@ -49,9 +54,9 @@ describe("input CTEs", () => {
     expect(params).toContain(STATES_ID);
   });
 
-  test("uptoStep limits the compiled steps and limit appends LIMIT", () => {
+  test("uptoNode limits the compiled nodes and limit appends LIMIT", () => {
     const steps: Step[] = [{ kind: "filter", where: { field: "name", op: "notNull" } }, join()];
-    const upto = compileView(definition(steps), metas, { uptoStep: 0, limit: 50 });
+    const upto = compileView(definition(steps), metas, { uptoNode: "s0", limit: 50 });
     expect(upto.sql).not.toContain("deployments");
     expect(upto.sql.trimEnd().endsWith("limit 50")).toBe(true);
     expect(golden(upto)).toMatchSnapshot();
@@ -100,33 +105,51 @@ describe("filter", () => {
     expect(params).toContain(JSON.stringify(evil));
   });
 
-  test("identifiers from aliases are quoted", () => {
-    const def = definition([], {
-      inputs: [{ alias: 'we"ird', ref: { kind: "dataset", id: STATES_ID } }],
-      base: 'we"ird',
-    });
-    const { sql } = compileView(def, [{ alias: 'we"ird', datasetId: STATES_ID, title: "T" }]);
+  test("identifiers from node ids are quoted", () => {
+    const def: ViewDefinition = {
+      nodes: { 'we"ird': { kind: "source", ref: { kind: "dataset", id: STATES_ID } } },
+      result: { node: 'we"ird', output: { fields: [], emptyFields: "keep" } },
+    };
+    const { sql } = compileView(def, [{ node: 'we"ird', datasetId: STATES_ID, title: "T" }]);
     expect(sql).toContain('"in_we""ird"');
   });
 });
 
-describe("append: column edits", () => {
-  test("rename and exclude on the base and a source", () => {
-    const step: Step = {
-      kind: "append",
-      sources: [
-        {
-          input: "deployments",
-          tag: 2023,
-          columns: [
-            { from: "cost", as: "amount" },
-            { from: "stateId", exclude: true },
+describe("stack", () => {
+  test("rename and exclude per input edge, tags on the edge", () => {
+    const def = graph(
+      {
+        stacked: {
+          kind: "stack",
+          tagField: "fiscal_year",
+          inputs: [
+            { node: "states", tag: 2022, columns: [{ from: "stateName", as: "amount" }] },
+            {
+              node: "deployments",
+              tag: 2023,
+              columns: [
+                { from: "cost", as: "amount" },
+                { from: "stateId", exclude: true },
+              ],
+            },
           ],
         },
+      },
+      "stacked",
+    );
+    expect(golden(compileView(def, metas))).toMatchSnapshot();
+  });
+});
+
+describe("columns", () => {
+  test("many edits plus an `only` list in one node", () => {
+    const step: Step = {
+      kind: "columns",
+      edits: [
+        { from: "name", as: "State" },
+        { from: "pop", exclude: true },
       ],
-      tagField: "fiscal_year",
-      baseTag: 2022,
-      baseColumns: [{ from: "stateName", as: "amount" }],
+      only: ["State", "id"],
     };
     expect(golden(compileView(definition([step]), metas))).toMatchSnapshot();
   });
@@ -190,7 +213,7 @@ describe("join: summarize", () => {
 describe("key matching", () => {
   test("every normalization option, translate() fallback", () => {
     const step = join({
-      right: { input: "links" },
+      right: "links",
       on: [{ left: "stateName", right: "stateName" }],
       matching: fullNormalization,
     });
@@ -199,7 +222,7 @@ describe("key matching", () => {
 
   test("unaccent option swaps in unaccent()", () => {
     const step = join({
-      right: { input: "links" },
+      right: "links",
       on: [{ left: "stateName", right: "stateName" }],
       matching: { ...noNormalization, stripDiacritics: true },
     });
@@ -211,7 +234,7 @@ describe("key matching", () => {
 
   test("manual map applies to the left key via a VALUES CTE", () => {
     const step = join({
-      right: { input: "links" },
+      right: "links",
       on: [{ left: "stateName", right: "stateName" }],
       matching: {
         ...fullNormalization,
@@ -224,7 +247,7 @@ describe("key matching", () => {
   });
 });
 
-describe("groupBy and select", () => {
+describe("groupBy and columns", () => {
   test("groupBy drops geometry and aggregates", () => {
     const step: Step = {
       kind: "groupBy",
@@ -237,23 +260,25 @@ describe("groupBy and select", () => {
     expect(golden(compileView(definition([step]), metas))).toMatchSnapshot();
   });
 
-  test("select renames and the output schema restricts keys", () => {
+  test("columns renames and the output schema restricts keys", () => {
     const step: Step = {
-      kind: "select",
-      fields: [
+      kind: "columns",
+      edits: [
         { from: "name", as: "State" },
         { from: "pop", as: "Population" },
       ],
+      only: ["State", "Population"],
     };
     const later: Step = { kind: "filter", where: { field: "State", op: "notNull" } };
     const def = definition([step, later], {
-      output: { fields: [{ key: "State", label: "State name" }], emptyFields: "omit" },
+      fields: [{ key: "State", label: "State name" }],
+      emptyFields: "omit",
     });
     const full = compileView(def, metas);
-    expect(full.sql).toContain("jsonb_array_elements_text");
+    expect(full.sql).toContain("jsonb_each(d) e");
     expect(golden(full)).toMatchSnapshot();
-    const partial = compileView(def, metas, { uptoStep: 0 });
-    expect(partial.sql).not.toContain("jsonb_array_elements_text");
+    const partial = compileView(def, metas, { uptoNode: "s0" });
+    expect(partial.sql).not.toContain("jsonb_each(d) e");
   });
 });
 
@@ -273,9 +298,9 @@ describe("diagnostics", () => {
     expect(golden(query)).toMatchSnapshot();
   });
 
-  test("uptoStep applies to diagnostics", () => {
+  test("uptoNode applies to diagnostics", () => {
     const steps: Step[] = [{ kind: "filter", where: { field: "name", op: "notNull" } }, join()];
-    const query = compileDiagnostics(definition(steps), metas, { uptoStep: 0 });
+    const query = compileDiagnostics(definition(steps), metas, { uptoNode: "s0" });
     expect(query.sql).not.toContain("leftMatched");
   });
 });
@@ -283,7 +308,7 @@ describe("diagnostics", () => {
 /** A join of the links input on the state name, trimmed and case-folded. */
 function linkJoin(multiMatch: JoinStep["multiMatch"], overrides: Partial<JoinStep> = {}): Step {
   return join({
-    right: { input: "links" },
+    right: "links",
     on: [{ left: "name", right: "stateName" }],
     matching: { ...noNormalization, trim: true, caseFold: true },
     multiMatch,
@@ -382,61 +407,41 @@ describe("measures: topBy and text", () => {
   });
 });
 
-describe("inline sub-pipelines", () => {
-  const sub: Step[] = [
-    { kind: "filter", where: { field: "cost", op: "gt", value: 0 } },
-    {
-      kind: "join",
-      right: { input: "links" },
-      on: [{ left: "name", right: "stateName" }],
-      matching: noNormalization,
-      type: "left",
-      multiMatch: { mode: "summarize", measures: [{ as: "n", fn: "count" }] },
-    },
-  ];
+describe("graph shape", () => {
+  const nodes: Record<string, ViewDefinition["nodes"][string]> = {
+    big: { kind: "filter", from: "deployments", where: { field: "cost", op: "gt", value: 0 } },
+    joined: join({ right: "big" }) as never,
+  };
 
-  test("the right side compiles as a nested CTE chain prefixed by the step id", () => {
-    const step = join({ right: { input: "deployments", steps: sub } });
-    const query = compileView(definition([step]), metas);
-    expect(query.sql).toContain('"s0_s0"');
-    expect(query.sql).toContain('"s0_l1"');
-    expect(query.sql).toContain('"in_links"');
+  test("a join reads another node; CTEs are named from node ids", () => {
+    const def = graph(
+      { big: nodes.big, joined: { ...(nodes.joined as object), left: "states" } as never },
+      "joined",
+    );
+    const query = compileView(def, metas);
+    expect(query.sql).toContain('"in_big"');
+    expect(query.sql).toContain('"l_joined"');
     expect(golden(query)).toMatchSnapshot();
   });
 
-  test("the step id keeps nested names unique across steps", () => {
-    const steps: Step[] = [
-      join({ right: { input: "deployments", steps: sub } }),
-      join({ right: { input: "deployments", steps: sub }, prefix: "again" }),
-    ];
-    const names = [
-      ...compileView(definition(steps), metas).sql.matchAll(/^("[^"]+")(?:\([^)]*\))? as \(/gm),
-    ];
-    const unique = new Set(names.map((match) => match[1]));
-    expect(unique.size).toBe(names.length);
-  });
-
-  test("recursion: a sub-pipeline join can have its own sub-pipeline", () => {
-    const inner: Step = join({
-      right: {
-        input: "links",
-        steps: [{ kind: "filter", where: { field: "url", op: "notNull" } }],
+  test("CTE names are unique across nodes", () => {
+    const def = graph(
+      {
+        a: { ...(join({ right: "deployments" }) as object), left: "states" } as never,
+        b: { ...(join({ right: "deployments", prefix: "again" }) as object), left: "a" } as never,
       },
-      on: [{ left: "name", right: "stateName" }],
-      multiMatch: { mode: "first" },
-    });
-    const outer = join({ right: { input: "deployments", steps: [inner] } });
-    const query = compileView(definition([outer]), metas);
-    expect(query.sql).toContain('"s0_s0_s0"');
-    expect(golden(query)).toMatchSnapshot();
+      "b",
+    );
+    const names = [...compileView(def, metas).sql.matchAll(/^("[^"]+")(?:\([^)]*\))? as \(/gm)];
+    expect(new Set(names.map((match) => match[1])).size).toBe(names.length);
   });
 
-  test("diagnostics include sub-pipeline steps with their path", () => {
-    const step = join({ right: { input: "deployments", steps: sub } });
-    const query = compileDiagnostics(definition([step]), metas);
-    expect(query.params).toContain("steps[0].right.steps[0]");
-    expect(query.params).toContain("steps[0].right.steps[1]");
-    expect(golden(query)).toMatchSnapshot();
+  test("diagnostics list every compiled node by id", () => {
+    const def = graph({ big: nodes.big }, "big");
+    const query = compileDiagnostics(def, metas);
+    expect(query.params).toContain("big");
+    expect(query.params).toContain("deployments");
+    expect(query.params).not.toContain("links");
   });
 });
 
@@ -444,8 +449,7 @@ describe("calculate", () => {
   test("typed refs, literals bound as params", () => {
     const step: Step = {
       kind: "calculate",
-      field: "total",
-      expr: "round(cost * 1.5 + 2, 1)",
+      fields: [{ field: "total", expr: "round(cost * 1.5 + 2, 1)" }],
     };
     const query = compileView(definition([step]), calcMetas);
     expect(query.params).toContain(1.5);
@@ -456,18 +460,25 @@ describe("calculate", () => {
   test("every function, case and if", () => {
     const expr =
       "concat(upper(trim(name)), ' / ', lower(\"state name\")) = 'x' or coalesce(cost, 0) > 1 and not (cost is null) or year(opened) = 2024 + month(opened) - day(opened)";
-    const step: Step = { kind: "calculate", field: "flag", expr };
+    const step: Step = { kind: "calculate", fields: [{ field: "flag", expr }] };
     expect(golden(compileView(definition([step]), calcMetas))).toMatchSnapshot("functions");
     const cased: Step = {
       kind: "calculate",
-      field: "band",
-      expr: "case when cost > 100 then 'high' when cost > 10 then 'mid' else if(cost is null, 'none', 'low') end",
+      fields: [
+        {
+          field: "band",
+          expr: "case when cost > 100 then 'high' when cost > 10 then 'mid' else if(cost is null, 'none', 'low') end",
+        },
+      ],
     };
     expect(golden(compileView(definition([cased]), calcMetas))).toMatchSnapshot("case");
   });
 
   test("hostile text is a bound param, never SQL", () => {
-    const step: Step = { kind: "calculate", field: "x", expr: "'a''; drop table entries; --'" };
+    const step: Step = {
+      kind: "calculate",
+      fields: [{ field: "x", expr: "'a''; drop table entries; --'" }],
+    };
     const { sql, params } = compileView(definition([step]), calcMetas);
     expect(sql).not.toContain("drop table");
     expect(params).toContain("a'; drop table entries; --");
@@ -475,14 +486,14 @@ describe("calculate", () => {
 
   test("unknown functions and bad syntax throw ViewCompileError", () => {
     for (const expr of ["sleep(1)", "(1 + 2", "cost +"]) {
-      const step: Step = { kind: "calculate", field: "x", expr };
+      const step: Step = { kind: "calculate", fields: [{ field: "x", expr }] };
       expect(() => compileView(definition([step]), calcMetas)).toThrow(ViewCompileError);
     }
   });
 });
 
 describe("sql step", () => {
-  test("plain columns are folded into d; prev points at the previous step", () => {
+  test("plain columns are folded into d; prev points at the node it reads", () => {
     const step: Step = {
       kind: "sql",
       query:
@@ -492,13 +503,14 @@ describe("sql step", () => {
       definition([{ kind: "filter", where: { field: "name", op: "notNull" } }, step]),
       metas,
     );
-    expect(query.sql).toContain('from "s0" p');
+    expect(query.sql).toContain('from "in_s0" p');
     expect(golden(query)).toMatchSnapshot();
   });
 
   test("d / row_id / geom columns pass through; input CTEs are emitted on demand", () => {
     const step: Step = {
       kind: "sql",
+      reads: ["deployments"],
       query:
         "select p.row_id, p.d || jsonb_build_object('n', (select count(*) from in_deployments)) as d, p.geom from prev p;",
     };
@@ -531,7 +543,7 @@ describe("readable names, never uuids", () => {
   test("no generated field name or identifier contains a uuid", () => {
     const steps: Step[] = [
       join(),
-      join({ right: { input: "links" }, on: [{ left: "name", right: "stateName" }] }),
+      join({ right: "links", on: [{ left: "name", right: "stateName" }] }),
     ];
     const { sql, params } = compileView(definition(steps), metas);
     const datasetIds = new Set([STATES_ID, DEPLOYMENTS_ID, LINKS_ID]);

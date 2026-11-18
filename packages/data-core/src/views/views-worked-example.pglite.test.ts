@@ -87,27 +87,33 @@ describe("design §5 worked example, run on PGlite", () => {
   test("without the output projection the sub-pipeline field is still not copied", async () => {
     const rows = await runQuery<{ d: Record<string, unknown> }>(
       db,
-      compileView({ ...workedExample, output: { fields: [], emptyFields: "keep" } }, workedMetas),
+      compileView(
+        {
+          ...workedExample,
+          result: { ...workedExample.result, output: { fields: [], emptyFields: "keep" } },
+        },
+        workedMetas,
+      ),
     );
     for (const row of rows) {
       expect(Object.keys(row.d)).not.toContain("agencyCount");
     }
   });
 
-  test("diagnostics: sub-pipeline step, unmatched links, undeclared category", async () => {
-    const [row] = await runQuery<{ diagnostics: { steps: Record<string, unknown>[] } }>(
+  test("diagnostics: per node, unmatched links, undeclared category", async () => {
+    const [row] = await runQuery<{ diagnostics: { nodes: Record<string, unknown>[] } }>(
       db,
       compileDiagnostics(workedExample, workedMetas),
     );
-    const steps = row.diagnostics.steps;
-    // Execution order: the sub-pipeline's join, then the outer joins.
-    expect(steps.map((s) => [s.kind, s.path ?? null, s.index])).toEqual([
-      ["join", "steps[0].right.steps[0]", 0],
-      ["join", null, 0],
-      ["join", null, 1],
+    const nodes = row.diagnostics.nodes.filter((n) => n.kind !== "source");
+    // Execution order: dependencies first.
+    expect(nodes.map((n) => [n.id, n.kind])).toEqual([
+      ["agency_counts", "join"],
+      ["with_deployments", "join"],
+      ["enriched", "join"],
     ]);
-    expect(steps[0]).toMatchObject({ rowsIn: 4, rowsOut: 4, fieldsAdded: ["agencyCount"] });
-    expect(steps[2]).toMatchObject({
+    expect(nodes[0]).toMatchObject({ rowsIn: 4, rowsOut: 4, fieldsAdded: ["agencyCount"] });
+    expect(nodes[2]).toMatchObject({
       rowsIn: 3,
       rowsOut: 3,
       join: {

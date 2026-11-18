@@ -3,7 +3,6 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import { compileView } from "./compile.js";
 import { applyExtract, planExtract } from "./reuse.js";
-import type { JoinPath } from "./reuse.js";
 import { addRows, createDb, must, runQuery, setGeom } from "./test-fixtures-pglite.js";
 import { AGENCIES_ID, workedExample, workedMetas } from "./test-fixtures-worked.js";
 import { DEPLOYMENTS_ID, LINKS_ID, STATES_ID, noNormalization } from "./test-fixtures.js";
@@ -11,7 +10,7 @@ import type { CompileInputMeta, ViewDefinition } from "./types.js";
 
 /**
  * Extract to view (#307): the extracted definition must produce the SAME rows
- * as the inline sub-pipeline. The new view is "run" the way the server does:
+ * as the node it replaces. The new view is "run" the way the server does:
  * its compiled rows are saved as entries of its own dataset, which the edited
  * definition then reads as an ordinary input.
  */
@@ -58,9 +57,12 @@ afterAll(async () => {
 /** Metas for every input of `def`: the §5 fixtures, plus the extracted view once it has been run. */
 function metasOf(def: ViewDefinition, extracted?: CompileInputMeta): CompileInputMeta[] {
   const known = extracted === undefined ? workedMetas : [...workedMetas, extracted];
-  return def.inputs.map((input) => {
-    const meta = known.find((entry) => entry.datasetId === input.ref.id);
-    return { ...must(meta), alias: input.alias };
+  return Object.entries(def.nodes).flatMap(([id, node]) => {
+    if (node.kind !== "source") {
+      return [];
+    }
+    const meta = known.find((entry) => entry.datasetId === node.ref.id);
+    return [{ ...must(meta), node: id }];
   });
 }
 
@@ -78,11 +80,15 @@ async function saveRun(view: ViewDefinition, title: string): Promise<CompileInpu
     rows.map((row) => row.d),
   );
   const names = [...new Set(rows.flatMap((row) => Object.keys(row.d)))];
-  return { alias: "x", datasetId: EXTRACTED_ID, title, fields: names.map((name) => ({ name })) };
+  return { node: "x", datasetId: EXTRACTED_ID, title, fields: names.map((name) => ({ name })) };
 }
 
 async function clearExtracted(): Promise<void> {
   await db.query("delete from public.entries where dataset_id = $1", [EXTRACTED_ID]);
+}
+
+function geometries(rows: Row[]): Record<string, string | null> {
+  return Object.fromEntries(rows.map((row) => [String(row.d.name), row.geom]));
 }
 
 function byName(rows: Row[]): Record<string, Record<string, unknown>> {
@@ -91,150 +97,91 @@ function byName(rows: Row[]): Record<string, Record<string, unknown>> {
 
 async function extractAndCompare(
   def: ViewDefinition,
-  path: JoinPath,
-  rightTitle: string,
+  nodeId: string,
+  title: string,
 ): Promise<{ inline: Row[]; extracted: Row[]; edited: ViewDefinition; view: ViewDefinition }> {
   const inline = await rowsOf(def);
-  const planned = planExtract(def, path, rightTitle);
+  const planned = planExtract(def, nodeId);
   if (!planned.ok) {
     throw new Error(planned.reason);
   }
   await clearExtracted();
-  const title = `${rightTitle} (extracted)`;
   const meta = await saveRun(planned.plan.view, title);
-  const edited = applyExtract(def, path, planned.plan, { id: EXTRACTED_ID, title });
-  const extracted = await rowsOf(edited, meta);
+  const edited = applyExtract(def, nodeId, planned.plan, { id: EXTRACTED_ID });
+  const extracted = await rowsOf(edited, { ...meta, node: nodeId });
   return { inline, extracted, edited, view: planned.plan.view };
 }
 
-describe("Extract to view on the design §5 deployments sub-pipeline", () => {
+describe("Extract to view on the design §5 agency_counts node", () => {
   test("identical output rows, geometry included", async () => {
     const { inline, extracted, edited, view } = await extractAndCompare(
       workedExample,
-      [0],
-      "Deployments",
+      "agency_counts",
+      "Deployments (extracted)",
     );
     expect(extracted).toHaveLength(3);
     expect(byName(extracted)).toEqual(byName(inline));
-    const geometries = (rows: Row[]) =>
-      Object.fromEntries(rows.map((row) => [String(row.d.name), row.geom]));
     expect(geometries(extracted)).toEqual(geometries(inline));
-    // The new view keeps every field of the sub-pipeline's result.
-    expect(view.output).toEqual({ fields: [], emptyFields: "keep" });
-    expect(view.base).toBe("deployments");
-    expect(view.steps).toHaveLength(1);
-    // The edited join reads the new view with no steps; agencies are no longer a direct input.
-    const join = must(edited.steps[0]);
-    expect(join.kind === "join" && join.right.steps).toBeUndefined();
-    expect(edited.inputs.map((input) => input.alias)).toEqual([
-      "states",
+    expect(view.result.output).toEqual({ fields: [], emptyFields: "keep" });
+    expect(view.result.node).toBe("agency_counts");
+    expect(Object.keys(view.nodes).toSorted()).toEqual([
+      "agency_counts",
+      "deployment_agencies",
+      "deployments",
+    ]);
+    // The node is now a source reading the new view; its sources are pruned.
+    expect(edited.nodes.agency_counts).toMatchObject({ kind: "source" });
+    expect(Object.keys(edited.nodes).toSorted()).toEqual([
+      "agency_counts",
+      "enriched",
       "links",
-      "deployments_extracted",
+      "states",
+      "with_deployments",
     ]);
   });
 });
 
 describe("a join that copies fields keeps its names", () => {
   const copying: ViewDefinition = {
-    inputs: [
-      { alias: "states", ref: { kind: "dataset", id: STATES_ID } },
-      { alias: "deployments", ref: { kind: "dataset", id: DEPLOYMENTS_ID } },
-      { alias: "deploymentAgencies", ref: { kind: "dataset", id: AGENCIES_ID } },
-    ],
-    base: "states",
-    steps: [
-      {
+    nodes: {
+      states: { kind: "source", ref: { kind: "dataset", id: STATES_ID } },
+      deployments: { kind: "source", ref: { kind: "dataset", id: DEPLOYMENTS_ID } },
+      deployment_agencies: { kind: "source", ref: { kind: "dataset", id: AGENCIES_ID } },
+      counted: {
         kind: "join",
-        right: {
-          input: "deployments",
-          steps: [
-            {
-              kind: "join",
-              right: { input: "deploymentAgencies" },
-              on: [{ left: "id", right: "deploymentId" }],
-              matching: noNormalization,
-              type: "left",
-              multiMatch: { mode: "summarize", measures: [{ as: "agencyCount", fn: "count" }] },
-            },
-          ],
-        },
+        left: "deployments",
+        right: "deployment_agencies",
+        on: [{ left: "id", right: "deploymentId" }],
+        matching: noNormalization,
+        type: "left",
+        multiMatch: { mode: "summarize", measures: [{ as: "agencyCount", fn: "count" }] },
+      },
+      out: {
+        kind: "join",
+        left: "states",
+        right: "counted",
         on: [{ left: "id", right: "stateId" }],
         matching: noNormalization,
         type: "left",
         multiMatch: { mode: "first", orderBy: [{ field: "name" }] },
         fields: ["name", "agencyCount"],
       },
-    ],
-    output: { fields: [], emptyFields: "keep" },
+    },
+    result: { node: "out", output: { fields: [], emptyFields: "keep" } },
   };
 
   test("the default prefix is written down so the new title does not rename the columns", async () => {
-    const { inline, extracted, edited } = await extractAndCompare(copying, [0], "Deployments");
-    const join = must(edited.steps[0]);
-    expect(join.kind === "join" && join.prefix).toBe("deployments");
-    expect(Object.keys(must(inline[0]).d)).toContain("deployments.agencyCount");
+    const { inline, extracted, edited } = await extractAndCompare(
+      copying,
+      "counted",
+      "Counted deployments",
+    );
+    const join = must(edited.nodes.out);
+    expect(join.kind === "join" && join.prefix).toBe("counted");
+    expect(Object.keys(must(inline[0]).d)).toContain("counted.agencyCount");
     expect(byName(extracted)).toEqual(byName(inline));
     expect(Object.keys(must(extracted[0]).d).toSorted()).toEqual(
       Object.keys(must(inline[0]).d).toSorted(),
     );
-  });
-});
-
-describe("nested sub-pipelines: only the inner one is extracted", () => {
-  const nested: ViewDefinition = {
-    inputs: [
-      { alias: "states", ref: { kind: "dataset", id: STATES_ID } },
-      { alias: "deployments", ref: { kind: "dataset", id: DEPLOYMENTS_ID } },
-      { alias: "deploymentAgencies", ref: { kind: "dataset", id: AGENCIES_ID } },
-    ],
-    base: "states",
-    steps: [
-      {
-        kind: "join",
-        right: {
-          input: "deployments",
-          steps: [
-            {
-              kind: "join",
-              right: {
-                input: "deploymentAgencies",
-                steps: [{ kind: "filter", where: { field: "agencyId", op: "neq", value: "a3" } }],
-              },
-              on: [{ left: "id", right: "deploymentId" }],
-              matching: noNormalization,
-              type: "left",
-              multiMatch: { mode: "summarize", measures: [{ as: "agencyCount", fn: "count" }] },
-            },
-          ],
-        },
-        on: [{ left: "id", right: "stateId" }],
-        matching: noNormalization,
-        type: "left",
-        multiMatch: {
-          mode: "summarize",
-          measures: [{ as: "agencies", fn: "sum", field: "agencyCount", emptyValue: 0 }],
-        },
-      },
-    ],
-    output: { fields: [], emptyFields: "keep" },
-  };
-
-  test("the inner filter becomes a view; the outer sub-pipeline stays inline", async () => {
-    const { inline, extracted, edited, view } = await extractAndCompare(
-      nested,
-      [0, 0],
-      "Deployment agencies",
-    );
-    expect(byName(extracted)).toEqual(byName(inline));
-    expect(byName(inline)["Kansas"]).toMatchObject({ agencies: 3 });
-    expect(view.base).toBe("deploymentAgencies");
-    expect(view.steps.map((step) => step.kind)).toEqual(["filter"]);
-    const outer = must(edited.steps[0]);
-    const outerSteps = outer.kind === "join" ? must(outer.right.steps) : [];
-    expect(outerSteps).toHaveLength(1);
-    const inner = must(outerSteps[0]);
-    expect(inner.kind === "join" && inner.right).toEqual({
-      input: "deployment_agencies_extracted",
-    });
   });
 });
