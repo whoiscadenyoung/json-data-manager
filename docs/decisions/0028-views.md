@@ -257,3 +257,79 @@ jsonb_exists(d,'a') then jsonb_build_object('x', d -> 'a') else '{}' end`;
   Excluded status, inline rename, per-cell re-map, exclude toggle, and
   one-click "Merge X into Y" chips for case/punctuation-insensitive matches
   (never applied silently).
+
+### Addendum 2026-11-17 (d): views are a graph of named nodes
+
+Status: accepted by the owner. Supersedes the linear step list, join
+sub-pipelines, `base`, `inputs[]` and `steps[]` of D-numbers above (D9's inline
+sub-pipeline in particular) and the Stack `baseTag` / `baseColumns` of
+addenda (a) and (c). Full design: [`views-node-graph-design.md`](../views-node-graph-design.md).
+
+**Principle.** Every processing step produces a new, independent dataset-like
+**node**. Later nodes read other nodes by name. No sub-steps, no per-input
+pipelines, no "steps before/after the base". Users arrange transformations
+however they want (`d1 → clean → d1c ┐ … ├→ stack → clean → join → out`).
+
+**Decisions.**
+
+1. **Clean break.** The graph is the only definition format: no `version`, no
+   legacy linear shape, no conversion. Migration `0036_views_graph_reset.sql`
+   deletes every existing view and what depended on it (memberships, layers
+   styling them, links, runs, queue rows, saved rows). The SS4A IG Awards view
+   was rebuilt by hand as a graph.
+2. **Stored shape.** `{ nodes: Record<id, ViewNode>, result: { node, output } }`.
+   Node kinds: `source` (dataset/view ref, optional pinned version), `filter`,
+   `columns` (`edits` + optional `only`), `calculate` (a list of
+   `{ field, expr }`, evaluated in order), `groupBy`, `sql` (`from`, `reads`),
+   `join` (`left`, `right`), `stack` (`inputs: { node, tag?, columns? }[]`,
+   `tagField`). Tags and column edits belong to the stack **edge**. The union
+   stays open (unpivot, dedupe … later).
+3. **Ids are stable slugs** (`^[a-z0-9_]{1,40}$`, never a uuid), generated from
+   the label; renaming a label never changes an id. Lowercase-only so the
+   unquoted `in_<id>` CTE name a SQL node writes always matches.
+4. **Compiler.** One CTE per node named `in_<id>`, dependencies first
+   (depth-first from `result.node`, ties by `nodes` key order). Unreachable
+   nodes do not compile and show an "Unused" hint. Calculate emits one CTE per
+   field (`c<i>_<id>`) so a later field reads an earlier one. Cycles are an
+   error everywhere: `Node "a" reads itself: a → b → a`. Previews compile the
+   ancestor subgraph of the selected node (`subgraphOf`), so problems in an
+   unrelated node never block them; `compileView({ uptoNode })` does the same
+   for one node of a saved definition.
+5. **Diagnostics** are `{ nodes: [{ id, kind, rowsIn, rowsOut, fieldsAdded,
+fieldsRemoved, join? }] }`, one entry per compiled node. `rowsIn` is the
+   main input's rows (the sum for a stack; a source reports its own rows).
+6. **Field scope** is per node and memoized (`GraphScope.fieldsOf`, exported to
+   the editor as `nodeFields`); errors are `nodes.<id>.<path>`. Join keys,
+   stack edge edits, calculate expressions, group keys and SQL reads are
+   checked against the referenced node's fields; a bare-`d` SQL node still
+   makes the shape unknown.
+7. **Calculate language.** Added `replace(text, find, with)` (literal, text in,
+   text out, null stays null) and `number(value)` (text such as `"1200"` → number,
+   anything else → empty). String literals use single quotes (`'x'`);
+   double quotes name a field. The SQL node stays; either normalizes values.
+8. **SQL node.** `from` is `prev`; `reads` lists further nodes. `in_<id>` is
+   readable for `from` and every `reads` entry and for nothing else.
+9. **Join** keeps its options; `left` and `right` are node ids. The default
+   output prefix is a slug of the right node's title: a source's dataset
+   title, otherwise its label, otherwise its id.
+10. **`view_inputs`.** The table and its `alias` column are unchanged; `alias`
+    now stores the id of the view's `source` node, and `inputsOfDefinition`
+    derives the rows from the source nodes.
+11. **Editor.** The canvas is the structure editor: toolbar add (after the
+    selected node, or appended to the result), "+" on any connection inserts a
+    node, "Branch from here", "Use as the result", Remove (reconnects the
+    readers of a single-input node). Left outline in dependency order; right
+    panel is the selected node's form; a Sources panel lists the source nodes,
+    who reads each, and the Unused badge. Any node previews.
+12. **Reuse on nodes.** Remap = change a source `ref` (`remapSources`, then the
+    real validator groups problems per node); Duplicate = clone; Prune =
+    drop unreachable nodes; Extract to view = a node and its ancestors become a
+    view, and the node becomes a `source` reading it (same id, so readers are
+    untouched; joins reading it keep their default prefix).
+
+**Small decisions recorded.** The new-view page picks datasets as source nodes
+and makes the first (or the chosen "start") the result. The spread editor can
+only propose categories from a source right-hand node (a derived node gets
+them from diagnostics). `columns.only` is stored and compiled but the form
+edits only renames and drops. Unreachable nodes may be saved; they must still
+be valid.

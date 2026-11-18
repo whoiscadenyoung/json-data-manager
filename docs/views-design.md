@@ -1,6 +1,8 @@
 # Views — design
 
-Date: 2026-11-10 · Status: accepted direction, implementation pending ·
+Date: 2026-11-10 · Status: implemented; reshaped as a node graph 2026-11-17
+([`views-node-graph-design.md`](views-node-graph-design.md), ADR 0028
+addendum d) ·
 Decision record: [ADR 0028](decisions/0028-views.md) · Handoff and issue
 train: [`views-handoff.md`](views-handoff.md)
 
@@ -55,38 +57,43 @@ Recorded in [ADR 0028](decisions/0028-views.md); summarized here:
 | #   | Decision                                                                                                                                                |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | D1  | A View is a dataset (`datasets.kind = 'view'`); the derived registry is dropped                                                                         |
-| D2  | Steps compile to one Postgres SQL statement (CTEs) and run in Postgres/PostGIS                                                                          |
+| D2  | The node graph compiles to one Postgres SQL statement (a CTE per node) and runs in Postgres/PostGIS                                                     |
 | D3  | Runs save their output into the view's rows; refresh modes are `manual` (default, with a stale badge), `auto` and `live`; exports always use a snapshot |
 | D4  | One SQL engine: a server function runs runs, previews and Scratch queries in Postgres as the user (RLS); DuckDB-WASM is retired                         |
 | D5  | The Analysis and Transform tabs fold into the View editor; a relation's "Join into a table" becomes "Create view from relation"                         |
-| D6  | Relations stay for related records without a joined field; a Join step can be seeded from one                                                           |
+| D6  | Relations stay for related records without a joined field; a join node can be seeded from one                                                           |
 | D7  | Reuse by Duplicate (with input remap), chaining, and Extract to view; no templates                                                                      |
 | D8  | Flat output is the contract; arrays are opt-in only                                                                                                     |
-| D9  | Each join chooses what happens when several rows match (incl. summarize and spread) and may carry an inline sub-pipeline                                |
+| D9  | Each join chooses what happens when several rows match (incl. summarize and spread); preparing a side first is its own node, never a sub-pipeline       |
 | D10 | Output schema has key, label, hidden and order; layer tooltips default to it; export profiles choose keys or labels                                     |
 | D11 | Keeping or omitting empty fields is the user's choice, per export profile                                                                               |
 | D12 | Join keys get normalization options and a manual key map                                                                                                |
-| D13 | React Flow draws the catalog lineage graph and a per-view step graph (read-only in v1)                                                                  |
+| D13 | React Flow draws the catalog lineage graph and the view's node graph, which is also the editor's canvas                                                 |
 
-## 4. Step format (v1)
+## 4. Definition format: a graph of named nodes
 
 The definition is plain JSON stored on the view dataset. It is validated
-(zod) and compiled in `@caden/data-core`; the compiler is pure (definition
-plus input metadata in, SQL text plus params out).
+and compiled in `@caden/data-core`; the compiler is pure (definition plus
+source metadata in, SQL text plus params out). There is one format: no
+`version`, no legacy linear shape, no conversion (ADR 0028 addendum d).
 
 ```ts
 type ViewDefinition = {
-  inputs: { alias: string; ref: { kind: "dataset"; id: string; version?: string } }[];
-  base: string; // alias of the input whose rows (and geometry) the view keeps
-  steps: Step[];
-  output: OutputSchema;
+  nodes: Record<string, ViewNode>; // key = stable node id (a lowercase slug)
+  result: { node: string; output: OutputSchema }; // the node the view saves
 };
 
-type Step =
-  | { kind: "filter"; where: Condition }
+type ViewNode = { label?: string } & (
+  | { kind: "source"; ref: { kind: "dataset"; id: string; version?: string } }
+  | { kind: "filter"; from: string; where: Condition }
+  | { kind: "columns"; from: string; edits: ColumnEdit[]; only?: string[] }
+  | { kind: "calculate"; from: string; fields: { field: string; expr: Expr }[] }
+  | { kind: "groupBy"; from: string; by: string[]; measures: Measure[] }
+  | { kind: "sql"; from: string; reads?: string[]; query: string }
   | {
       kind: "join";
-      right: RightSide;
+      left: string;
+      right: string;
       on: KeyPair[];
       matching: KeyMatching;
       type: "left" | "inner";
@@ -94,12 +101,11 @@ type Step =
       fields?: string[];
       prefix?: string;
     }
-  | { kind: "groupBy"; by: string[]; measures: Measure[] }
-  | { kind: "calculate"; field: string; expr: Expr }
-  | { kind: "select"; fields: { from: string; as: string }[] }
-  | { kind: "sql"; query: string };
+  | { kind: "stack"; inputs: StackInput[]; tagField?: string }
+);
 
-type RightSide = { input: string; steps?: Step[] }; // steps = inline sub-pipeline (D9)
+type StackInput = { node: string; tag?: AppendTag; columns?: ColumnEdit[] };
+type ColumnEdit = { from: string; as: string } | { from: string; exclude: true };
 type KeyPair = { left: string; right: string };
 
 type MultiMatch =
@@ -136,37 +142,52 @@ type OutputSchema = {
 
 Semantics worth stating:
 
-- **Field references** are names in the current row. Joined fields land
-  as `<prefix>.<field>`; the prefix defaults to the input alias. `select`
-  and the output schema rename them.
-- **Inputs are datasets.** A view used as an input is a dataset of kind
-  `view`, so chaining needs no special case. Inputs read current rows
-  unless `version` pins a published version.
-- **Cycles** are rejected at save: the input graph is checked through
-  `view_inputs`.
+- **Every processing node produces a new, independent dataset-like node.**
+  Later nodes read nodes by id; nothing nests. Any node may read any other
+  node (a node is shared by being read twice). Cycles are an error
+  (`Node "a" reads itself: a → b → a`), in the validator and the compiler.
+  Nodes that are not an ancestor of `result.node` do not compile and show an
+  "Unused" hint.
+- **Ids** are stable slugs from the label (`^[a-z0-9_]{1,40}$`, never a uuid or
+  a dataset id). Renaming a label never changes an id, so references never
+  break.
+- **Field references** are names in the row of the node being read. Joined
+  fields land as `<prefix>.<field>`; the prefix defaults to a slug of the
+  right node's title (a source's dataset title, else its label, else its id).
+  The `columns` node and the output schema rename them.
+- **Sources are datasets.** A view used as a source is a dataset of kind
+  `view`, so chaining needs no special case. A source reads current rows
+  unless `version` pins a published version. The saved `view_inputs` rows are
+  derived from the source nodes (`alias` holds the node id).
+- **Cycles across views** are rejected at save: the input graph is checked
+  through `view_inputs`.
 - **`spread` columns are declared**, not discovered at run time, so the
   output schema is stable. The editor proposes them from the distinct
   values in a preview. Categories found at run time without a column are
   reported in diagnostics and never add columns silently.
-- **`hidden` fields** can be used by later steps and by layer styling,
+- **`hidden` fields** can be used by later nodes and by layer styling,
   but are left out of tooltips and exports.
-- **`append` (Stack)** shipped (ADR 0028 addendum 2026-11-17): UNION ALL of
-  inputs, geometry kept per row, optional tag field. Optional per-member
-  column edits (`columns` on a source, `baseColumns` on the step): rename /
-  re-map (`{from, as}`) or drop (`{from, exclude: true}`) fields before the
-  union; untouched fields pass through (ADR 0028 addendum 2026-11-17 c).
-- **Spatial steps later.** `spatialJoin` (within, intersects, nearest),
-  `dissolve` and `buffer` are later step kinds. The union must
-  stay open for them.
+- **`stack`** is a `UNION ALL` of its inputs; each row keeps its own geometry,
+  and a tag (e.g. a fiscal year) and column edits belong to the **edge**
+  (`StackInput`). Untouched fields pass through.
+- **`columns`** renames or drops many columns in one node (`ColumnEdit`s are
+  shared with stack edges); `only` is an optional keep-and-order list applied
+  after the edits.
+- **`calculate`** holds several fields, evaluated in order, so a later one may
+  read an earlier one.
+- **Spatial nodes later.** `spatialJoin` (within, intersects, nearest),
+  `dissolve` and `buffer` are later node kinds. The union stays open for them.
 
 ### Calculate expressions
 
 A small expression language parsed into an AST, then compiled to SQL. It
 is never spliced in as raw text. v1 supports: field refs, literals,
 `+ - * /`, comparisons, `and/or/not`, `coalesce`, `case when`, `concat`,
-`lower/upper/trim`, `round`, `year/month/day`, and `if(cond, a, b)`.
+`lower/upper/trim`, `replace(text, find, with)`, `number(value)`, `round`,
+`year/month/day`, and `if(cond, a, b)`. String literals use single quotes;
+double quotes name a field.
 Typing follows the input `json_schema`, with casts at the reference
-site. The step stores the expression as its source text (`expr: string`);
+site. The node stores each expression as its source text (`expr: string`);
 the parser produces the AST.
 
 ## 5. Worked example (the end-to-end test fixture)
@@ -175,21 +196,21 @@ Inputs:
 
 - `states`: multipolygons with `id` and `name`.
 - `deployments`: points with `id`, `name` and `stateId`.
-- `deploymentAgencies`: `deploymentId` and `agencyId`.
+- `deployment_agencies`: `deploymentId` and `agencyId`.
 - `links`: `stateName`, `type` and `url`. There are 0–3 rows per state,
   and some names have stray whitespace or different casing.
 
-View **States enriched**, base `states`:
+View **States enriched**, a graph over four sources:
 
-1. `join` deployments on `stateId = id`. The right side carries a
-   sub-pipeline: `join deploymentAgencies` on `id = deploymentId`, with
-   multiMatch `summarize [count → agencyCount]`. The outer join's
-   multiMatch is `summarize [count → deployments (empty 0),
+1. `agency_counts` = `join` `deployments` (left) with `deployment_agencies`
+   (right) on `id = deploymentId`, multiMatch `summarize [count → agencyCount]`.
+2. `with_deployments` = `join` `states` (left) with `agency_counts` (right) on
+   `stateId = id`; multiMatch is `summarize [count → deployments (empty 0),
 topBy(name by agencyCount max) → mostCollaboration]`.
-2. `join links` on `stateName = name`, matching `trim + caseFold`, with
-   multiMatch `spread by type value url` and columns `docs → docsLink`
-   and `benefits → benefitsLink`.
-3. Output: `name`, `deployments` (label "Deployments"),
+3. `enriched` (the result) = `join` `with_deployments` with `links` on
+   `stateName = name`, matching `trim + caseFold`, with multiMatch `spread by
+type value url` and columns `docs → docsLink` and `benefits → benefitsLink`.
+4. Output: `name`, `deployments` (label "Deployments"),
    `mostCollaboration` (label "Most collaboration"), `docsLink` and
    `benefitsLink`. `agencyCount` never reaches the view.
 
@@ -208,19 +229,20 @@ GeoJSON with "omit empty" turned on:
 }
 ```
 
-Diagnostics for step 2 report the `links` rows that matched no state and
+Diagnostics for `enriched` report the `links` rows that matched no state and
 the states with no links. Neither changes the output.
 
 ## 6. Compiler (Postgres)
 
-- **Input CTEs.** Each input becomes
-  `in_<alias>(row_id, d jsonb, geom)` over `entries` left-joined to
-  `geometries`, filtered by `dataset_id`. A pinned version reads
-  `version_entries` instead. Rows stay as jsonb `d` throughout, so the
-  compiler never needs DDL. Steps build a new `d` with `d || jsonb_build_object(…)`
-  or `d - 'key'`.
-- **Step chain.** Each step is one CTE (`s1`, `s2`, …) over the previous
-  one; a sub-pipeline is a nested chain prefixed by its step id.
+- **Node CTEs.** Each node becomes `in_<id>(row_id, d jsonb, geom)`. A
+  `source` node reads `entries` left-joined to `geometries`, filtered by
+  `dataset_id`; a pinned version reads `version_entries` instead. Rows stay as
+  jsonb `d` throughout, so the compiler never needs DDL. Nodes build a new `d`
+  with `d || jsonb_build_object(…)` or `d - 'key'`.
+- **Order.** Depth-first from `result.node`, dependencies first, ties by
+  `nodes` key order; only ancestors of the target compile. A `calculate` node
+  emits one CTE per field. `uptoNode` compiles the ancestors of one node and
+  reads its CTE (previews).
 - **Key normalization.** One `norm_<n>(expr)` expression composed from
   the options: `btrim`, `lower`, `regexp_replace(…, '\s+', ' ', 'g')`,
   and `unaccent` (confirm the extension exists on the self-hosted stack;
@@ -239,17 +261,19 @@ the states with no links. Neither changes the output.
   | `list`         | `jsonb_agg`                                                                        |
   | `error`        | A guard CTE that raises when any key has more than one match                       |
 
-- **Geometry** comes from the base input and passes through unchanged.
-  `groupBy` drops geometry in v1; `dissolve` is the later spatial answer.
+- **Geometry** travels with each row through every node; a stack keeps each
+  row's own geometry. `groupBy` drops geometry in v1; `dissolve` is the later
+  spatial answer.
 - **Identifiers and values.** Every identifier is quoted by the compiler
   (`quote_ident` semantics in TS) and every value is a bind parameter.
-- **`sql` step.** The user query is parsed (a Postgres parser in TS or
+- **`sql` node.** The user query is parsed (a Postgres parser in TS or
   WASM). It must be a single `SELECT` with no data-modifying CTEs, and
-  may reference only the input CTE names and the previous step (`prev`).
+  may reference only `prev` (its `from` node) and `in_<id>` for its `from`
+  and `reads` nodes.
   Output columns are classified by name: `d` (jsonb properties), optional
   `row_id` and `geom`; any other columns become properties (merged into `d`
   when present). `select * from prev` keeps everything.
-- **Golden tests.** Each step kind × mode has a golden SQL file in
+- **Golden tests.** Each node kind × mode has a golden SQL file in
   `@caden/data-core`. A separate int test runs the §5 fixture against a
   dedicated database.
 
@@ -270,9 +294,9 @@ the states with no links. Neither changes the output.
   **Runner location (decided in [views 2], #300): a server-side runner**
   (TanStack Start server functions in `app/src/server/views`, talking to
   Postgres directly with `postgres` (porsager)). The browser sends only a
-  view id (plus a step index, or a draft DEFINITION as JSON) and its
+  view id (plus an optional node id to preview up to, or a draft DEFINITION as JSON) and its
   Supabase access token. It never sends SQL and never sees rows; user SQL
-  (the `sql` step) is compiled on the server and reaches no endpoint a
+  (the `sql` node) is compiled on the server and reaches no endpoint a
   browser can call.
   - **Acting as the user.** The server verifies the access token itself
     (HS256 with `JWT_SECRET`, algorithm pinned, expiry/audience/role checked;
@@ -357,9 +381,9 @@ statement_timeout` (default 60 s, `VIEW_RUN_TIMEOUT_MS`), then
   result is capped at 20 000 rows (`VIEW_LIVE_ROW_CAP`; longer results are
   truncated and flagged). A reader who cannot see an input is refused
   loudly, never shown zero rows.
-  - **Spatial steps.** `isSpatialStep` (`app/src/lib/views/spatial.ts`) is
+  - **Spatial nodes.** `isSpatialStep` (`app/src/lib/views/spatial.ts`) is
     the hook; it answers false for every v1 kind. `live` is refused when it
-    is true for any step, both when the mode is set and on every read (the
+    is true for any node, both when the mode is set and on every read (the
     definition can change after the mode was chosen).
   - **Table:** the table page reads the capped result once and runs
     search, filter and sort over it in the browser (`live-rows.ts`); there
@@ -385,7 +409,9 @@ statement_timeout` (default 60 s, `VIEW_RUN_TIMEOUT_MS`), then
 
 ## 8. Diagnostics contract
 
-Every step reports the row count in and out and the fields added or
+Diagnostics are `{ nodes: [{ id, kind, rowsIn, rowsOut, fieldsAdded,
+fieldsRemoved, join? }] }`, one entry per compiled node (dependencies first).
+Every node reports the row count in and out and the fields added or
 removed. Joins also report:
 
 - left matched / unmatched counts and up to 20 unmatched key samples;
@@ -401,29 +427,37 @@ run.
 
 - **Catalog**: Datasets and Views side by side. View cards show refresh
   mode, last run, a stale or error badge, and input count.
-- **View editor**:
-  - Left: the linear step list, Power Query style, with sub-pipelines
-    indented under their join.
-  - Right: a preview of the selected step and its diagnostics, with "Add
-    to key map" on unmatched samples.
-  - Output tab: keys, labels, hidden flags and order.
-  - Header: Run, refresh mode, Duplicate, Export.
-- **Create view from relation**: pre-fills the base, a Join step and the
-  keys.
+- **View editor** (one full-height workspace on one selection: a node or the output):
+  - Left: the outline, nodes in dependency order with an "Unused" hint for
+    nodes the result does not need.
+  - Middle: the **canvas is the structure editor** (add a node after the
+    selection, "+" on any connection inserts a node on it, branch from a
+    node, mark the result, remove a node and reconnect its readers), with
+    the preview, run history and exports docked under it.
+  - Right: the **Sources** panel (datasets and views as source nodes, who
+    reads each, Unused) and the selected node's form (filter, columns,
+    calculate list, group, join, stack with its Columns table, SQL). Any node
+    previews, with its diagnostics and "Add to key map" on unmatched samples.
+  - Output card: keys, labels, hidden flags and order.
+  - Header: Run, refresh mode, Duplicate, Export. Reuse: Duplicate (remap a
+    source's dataset, checked per node), Prune, Extract to view (a node and its
+    ancestors become a view).
+- **Create view from relation**: pre-fills two source nodes and a join node
+  on the keys.
 - **Graphs** (`@xyflow/react` + elkjs auto-layout):
   - _Catalog lineage_: nodes are datasets, views, maps, layers and apps.
     Edges are view inputs (solid), relations (dashed) and consumers.
     Clicking a node opens it, and stale views are marked.
-  - _View step graph_: inputs → steps → output, with sub-pipelines as
-    branches. It stays in sync with the step list (selecting a node
-    selects the step). Read-only in v1.
+  - _View node graph_: sources and nodes joined by the reads between them,
+    ending in the output; the editor's canvas. Selecting a node selects it
+    everywhere.
 - **Scratch query**: a raw SQL pad over the project's datasets and views,
   unsaved, replacing the Analysis tab. It runs on the server in Postgres
   through the preview path: read-only, as the user (RLS), with a timeout
   and a row cap. Datasets are exposed by name as CTEs (the same input CTE
   layout the compiler uses), so the SQL a user writes is the SQL a `sql`
-  step will run. "Save as view" creates a view with one `sql` step, with
-  no dialect translation.
+  node will run. "Save as view" creates a view with one `sql` node over the
+  tables it reads, with no dialect translation.
 - **Export profiles** on a view: format (GeoJSON first, then CSV and
   JSON), property names (keys or labels), empty fields (keep or omit) and
   coordinate precision. The editor warns when a key is not a valid ArcGIS
@@ -444,7 +478,7 @@ run.
   Source-only paths (import, row editing) refuse writes to view rows.
 
 - `view_inputs (view_id, input_dataset_id, alias, pinned_version)` is
-  rewritten on save. It drives lineage, cycle checks, staleness and the
+  rewritten on save, one row per `source` node (`alias` = the node id). It drives lineage, cycle checks, staleness and the
   "Used by" lists.
 - `view_runs (id, view_id, status, started_at, finished_at, row_count,
 input_versions jsonb, diagnostics jsonb, error text, created_by)`.
@@ -473,20 +507,24 @@ input_versions jsonb, diagnostics jsonb, error text, created_by)`.
 
 ## 11. Test plan
 
-- **data-core:** validator cases (cycles, unknown fields, missing spread
-  columns), golden SQL for every step kind and mode, expression parser
-  tests.
+- **data-core:** validator cases (cycles, unknown nodes, unknown fields,
+  missing spread columns), golden SQL for every node kind and mode, PGlite
+  runs (the owner's d1…d4 graph, per-source clean before a tagged stack,
+  stack → clean → join, multi-field calculate with `replace`/`number`,
+  multi-edit columns node, unused nodes, geometry through a stack), expression
+  parser tests.
 - **int (dedicated DB, never the live compose DB; see
   `docs/memory/int-test-db-split-ri-teardown.md`):**
   - run/preview RPCs;
   - RLS (a viewer cannot run; an invoker without an input cannot read a
     live view);
-  - `sql` step rejection (DML, data-modifying CTE, undeclared table);
+  - `sql` node rejection (DML, data-modifying CTE, undeclared table);
   - staleness flips when an input changes;
   - `auto` debounce;
   - the §5 fixture's expected output and diagnostics.
-- **app:** editor step list and preview, output schema editor, export
-  profile → GeoJSON, React Flow graphs render from fixture data.
+- **app:** editor outline, canvas editing and preview, node forms, output
+  schema editor, export profile → GeoJSON, React Flow graphs render from
+  fixture data.
 - **e2e:** the §5 walkthrough in the browser, ending in an exported
   GeoJSON file.
 

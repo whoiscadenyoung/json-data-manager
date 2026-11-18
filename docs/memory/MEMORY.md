@@ -76,3 +76,4 @@
 - [Map editor workspace](map-editor-workspace.md) — 2026-11-17: editor moved to features/maps/components/map-editor; one Add layer menu, selectable draggable layer list, selection-driven settings panel; restores unreachable layer styling; step 2 of 4
 - [App builder workspace](app-builder-workspace.md) — 2026-11-17: builder laid out like the map editor; pages/widgets/data outline left, selection settings right, one Add menu; tabs panel retired; step 3 of 4
 - [Global explorers](global-explorers.md) — 2026-11-17: /maps and /apps share src/components/explorer.tsx rows and visibility-badge; New map / New app; step 4 of 4
+- [Views node graph](views-node-graph.md) — 2026-11-17 views are a graph of named nodes ({nodes,result}); clean break (0036 wipes old views); `replace`/`number`, `in_<id>` CTEs, editor canvas = structure editor; browser-driving gotchas
