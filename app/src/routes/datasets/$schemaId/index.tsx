@@ -12,7 +12,7 @@ const entryPanelSearchSchema = z.object({
   entryId: z.string().optional(),
   panel: z.enum(["create", "edit"]).optional(),
   // Active tab ("overview" is the default and deliberately absent from the URL).
-  view: z.enum(["overview", "entries", "history", "structure"]).optional(),
+  view: z.enum(["overview", "entries", "history", "related", "structure"]).optional(),
   // The Postgres table's server-driven state (design doc §8.4): the search
   // box, the sort, and the filter-menu rows ride the URL and drive the
   // `search_entries` RPC.

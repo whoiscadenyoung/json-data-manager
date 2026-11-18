@@ -218,7 +218,7 @@ function PgRelatedRecordsSection(props: {
       <p className="flex flex-wrap items-center gap-1.5 text-xs">
         <span className="font-medium">{props.item.otherTitle}</span>
         <span className="text-muted-foreground">
-          {props.item.relation.kind === "key" ? "key join" : "spatial"}
+          {props.item.relation.kind === "key" ? "key link" : "spatial link"}
           {" · "}
           {props.item.relation.cardinality}
         </span>

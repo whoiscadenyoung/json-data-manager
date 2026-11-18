@@ -34,7 +34,7 @@ export function LineageLegend({ className }: { className?: string }) {
         <LegendLine /> View input or consumer
       </li>
       <li className="flex items-center gap-1.5">
-        <LegendLine dashed /> Relation
+        <LegendLine dashed /> Link
       </li>
       <li className="flex items-center gap-1.5">
         <span className="h-3 w-5 rounded-sm border border-dashed border-primary" /> Stale view

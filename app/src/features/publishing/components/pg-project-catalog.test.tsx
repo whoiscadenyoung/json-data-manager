@@ -41,7 +41,6 @@ vi.mock("#/features/views", () => ({
   DuplicateViewDialog: () => null,
   relativeTime: () => "just now",
 }));
-vi.mock("./pg-project-relations", () => ({ PgProjectRelationsSection: () => null }));
 vi.mock("./pg-project-workspace", () => ({
   PgLinkedVersionActions: () => null,
   PgProvenanceChips: () => null,

@@ -33,12 +33,127 @@ function collectAliases(steps: readonly Step[], used: Set<string>): void {
     if (step.kind === "join") {
       used.add(step.right.input);
       collectAliases(step.right.steps ?? [], used);
+    } else if (step.kind === "append") {
+      for (const source of step.sources) {
+        used.add(source.input);
+      }
     } else if (step.kind === "sql") {
       for (const match of step.query.matchAll(/\bin_([A-Za-z0-9_]+)/g)) {
         used.add(match[1] ?? "");
       }
     }
   }
+}
+
+export interface InputUsage {
+  /** Where the input is read, e.g. `steps[1]` or `steps[0].right`. */
+  path: string;
+  /** In the editor's words: "Step 2 (Join)". */
+  label: string;
+}
+
+const KIND_LABELS: Record<Step["kind"], string> = {
+  append: "Stack",
+  calculate: "Calculate",
+  filter: "Filter",
+  groupBy: "Group",
+  join: "Join",
+  select: "Select",
+  sql: "SQL",
+};
+
+function usageOf(
+  step: Step,
+  path: string,
+  label: string,
+  add: (alias: string, usage: InputUsage) => void,
+): void {
+  const usage = { path, label };
+  if (step.kind === "join") {
+    add(step.right.input, usage);
+    for (const [i, sub] of (step.right.steps ?? []).entries()) {
+      usageOf(sub, `${path}.right.steps[${i}]`, `${label}, sub-step ${i + 1}`, add);
+    }
+  } else if (step.kind === "append") {
+    for (const source of step.sources) {
+      add(source.input, usage);
+    }
+  } else if (step.kind === "sql") {
+    for (const match of step.query.matchAll(/\bin_([A-Za-z0-9_]+)/g)) {
+      add(match[1] ?? "", usage);
+    }
+  }
+}
+
+/**
+ * Where each input alias is read: the base (as "Start") and every step that
+ * reads it (join right sides and their sub-pipelines, stacked sources, SQL
+ * `in_<alias>` reads). Aliases nothing reads map to an empty list.
+ */
+export function inputUsages(definition: ViewDefinition): Map<string, InputUsage[]> {
+  const usages = new Map<string, InputUsage[]>(definition.inputs.map((input) => [input.alias, []]));
+  const add = (alias: string, usage: InputUsage): void => {
+    const list = usages.get(alias);
+    if (list !== undefined && !list.some((entry) => entry.path === usage.path)) {
+      list.push(usage);
+    }
+  };
+  add(definition.base, { path: "base", label: "Start" });
+  for (const [i, step] of definition.steps.entries()) {
+    usageOf(step, `steps[${i}]`, `Step ${i + 1} (${KIND_LABELS[step.kind]})`, add);
+  }
+  return usages;
+}
+
+function renameSteps(steps: Step[], from: string, to: string): Step[] {
+  return steps.map((step): Step => {
+    if (step.kind === "join") {
+      return {
+        ...step,
+        right: {
+          ...step.right,
+          input: step.right.input === from ? to : step.right.input,
+          ...(step.right.steps === undefined
+            ? {}
+            : { steps: renameSteps(step.right.steps, from, to) }),
+        },
+      };
+    }
+    if (step.kind === "append") {
+      return {
+        ...step,
+        sources: step.sources.map((source) =>
+          source.input === from ? { ...source, input: to } : source,
+        ),
+      };
+    }
+    if (step.kind === "sql") {
+      return {
+        ...step,
+        query: step.query.replaceAll(new RegExp(`\\bin_${from}\\b`, "g"), `in_${to}`),
+      };
+    }
+    return step;
+  });
+}
+
+/** The definition with input alias `from` renamed to `to` everywhere it is referenced. */
+export function renameInputAlias(
+  definition: ViewDefinition,
+  from: string,
+  to: string,
+): ViewDefinition {
+  if (from === to) {
+    return definition;
+  }
+  return {
+    ...definition,
+    base: definition.base === from ? to : definition.base,
+    inputs: definition.inputs.map((input) =>
+      input.alias === from ? { ...input, alias: to } : input,
+    ),
+    steps: renameSteps(definition.steps, from, to),
+  };
 }
 
 /** Drops inputs no step reads (never the base). Sub-pipelines and SQL `in_<alias>` reads count. */

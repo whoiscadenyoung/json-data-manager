@@ -83,7 +83,6 @@ import {
   type RowDropProps,
 } from "./pg-catalog-rows";
 import { useProjectShell } from "./pg-project-context";
-import { PgProjectRelationsSection } from "./pg-project-relations";
 import { PgLinkedVersionActions, PgProvenanceChips } from "./pg-project-workspace";
 
 /**
@@ -827,10 +826,6 @@ export function PgProjectCatalog() {
           </TableBody>
         </Table>
       </div>
-      {/* Relations are project-wide, so they sit under the root listing only. */}
-      {folderId === null && !searching && items.some((item) => item.kind === "dataset") && (
-        <PgProjectRelationsSection canEdit={canEdit} projectId={projectId} />
-      )}
       {dialog !== undefined && dialog.type === "new-folder" && (
         <FolderNameDialog
           busy={busy}

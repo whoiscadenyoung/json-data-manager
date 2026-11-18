@@ -14,6 +14,8 @@ import type {
   ViewDefinition,
 } from "@caden/data-core/views";
 
+import { appendMembers, outputFields } from "./append-columns";
+
 /**
  * Pure helpers behind the view editor (#301): building and editing the
  * serializable step list, tracking which fields exist after each step (so
@@ -123,6 +125,62 @@ export function blankDefinition(base: { datasetId: string; title: string }): Vie
   };
 }
 
+/** A blank view over several inputs; the first is the start (base) unless `base` names another. */
+export function blankDefinitionOf(
+  inputs: readonly { datasetId: string; title: string }[],
+  base?: string,
+): ViewDefinition {
+  const taken: string[] = [];
+  const declared = inputs.map((input) => {
+    const alias = uniqueAlias(input.title, taken);
+    taken.push(alias);
+    return { alias, datasetId: input.datasetId };
+  });
+  const start = declared.find((entry) => entry.datasetId === base) ?? declared[0];
+  return {
+    inputs: declared.map((entry) => ({
+      alias: entry.alias,
+      ref: { kind: "dataset", id: entry.datasetId },
+    })),
+    base: start === undefined ? "" : start.alias,
+    steps: [],
+    output: emptyOutput(),
+  };
+}
+
+/** The definition with one more input (always a new alias, so a dataset can be added twice). Returns the alias too. */
+export function withAddedInput(
+  definition: ViewDefinition,
+  dataset: { id: string; title: string },
+): { definition: ViewDefinition; alias: string } {
+  const alias = uniqueAlias(
+    dataset.title,
+    definition.inputs.map((input) => input.alias),
+  );
+  return {
+    alias,
+    definition: {
+      ...definition,
+      inputs: [...definition.inputs, { alias, ref: { kind: "dataset", id: dataset.id } }],
+    },
+  };
+}
+
+/** Step-picker options: only the inputs the view declared, labelled by title (plus the alias when titles collide). */
+export function inputAliasOptions(
+  infos: readonly InputInfo[],
+  exclude: readonly string[] = [],
+): { value: string; label: string }[] {
+  return infos
+    .filter((info) => !exclude.includes(info.alias))
+    .map((info) => ({
+      value: info.alias,
+      label: infos.some((other) => other !== info && other.title === info.title)
+        ? `${info.title} (${info.alias})`
+        : info.title,
+    }));
+}
+
 export function newFilterStep(field: string): Step {
   return { kind: "filter", where: { field, op: "eq", value: "" } };
 }
@@ -132,6 +190,10 @@ export function newCalculateStep(): Step {
 }
 
 /** A SQL step starts as a valid pass-through so the preview works while it is edited. */
+export function newAppendStep(): Step {
+  return { kind: "append", sources: [] };
+}
+
 export function newSqlStep(): Step {
   return { kind: "sql", query: "select * from prev" };
 }
@@ -410,6 +472,8 @@ function fieldsAfterStep(
       return step.field === "" || known.includes(step.field) ? known : [...known, step.field];
     case "join":
       return fieldsAfterJoin(known, step, infos);
+    case "append":
+      return fieldsAfterAppend(known, step, infos);
     case "sql":
       return fieldsAfterSql(step.query, infos);
     default:
@@ -458,6 +522,25 @@ function joinAdded(
   }
 }
 
+function fieldsAfterAppend(
+  known: string[],
+  step: Extract<Step, { kind: "append" }>,
+  infos: readonly InputInfo[],
+): string[] {
+  const members = appendMembers(
+    step,
+    "",
+    known,
+    (alias) => inputFields(infos, alias),
+    (alias) => alias,
+  );
+  const names = outputFields(members);
+  if (step.tagField !== undefined && step.tagField !== "" && !names.includes(step.tagField)) {
+    names.push(step.tagField);
+  }
+  return names;
+}
+
 function fieldsAfterJoin(
   known: string[],
   step: JoinStep,
@@ -491,6 +574,15 @@ export function stepSummary(step: Step, infos: readonly InputInfo[]): string {
       const steps = step.right.steps === undefined ? "" : ", with steps";
       return `${title} (${step.type}, ${policy}${steps})`;
     }
+    case "append":
+      return step.sources.length === 0
+        ? "Pick datasets to stack"
+        : `+ ${step.sources
+            .map((source) => {
+              const info = infos.find((entry) => entry.alias === source.input);
+              return info === undefined ? source.input : info.title;
+            })
+            .join(", ")}`;
     case "groupBy":
       return `by ${step.by.join(", ") || "…"}`;
     case "select":
@@ -505,6 +597,7 @@ export function stepSummary(step: Step, infos: readonly InputInfo[]): string {
 export const STEP_TITLES: Record<Step["kind"], string> = {
   filter: "Filter rows",
   join: "Join",
+  append: "Stack",
   groupBy: "Group by",
   select: "Select fields",
   calculate: "Calculate",

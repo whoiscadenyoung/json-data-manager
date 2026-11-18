@@ -57,13 +57,13 @@ describe("buildViewStepGraph", () => {
       "step:1",
     ]);
     expect(edgePairs(graph)).toEqual([
-      "branch:input:deploymentAgencies>step:0.0",
-      "branch:input:deployments>step:0.0",
-      "branch:input:links>step:1",
       "branch:step:0.0>step:0",
-      "flow:input:states>step:0",
       "flow:step:0>step:1",
       "flow:step:1>output",
+      "input:input:deploymentAgencies>step:0.0",
+      "input:input:deployments>step:0.0",
+      "input:input:links>step:1",
+      "input:input:states>step:0",
     ]);
   });
 
@@ -183,5 +183,54 @@ describe("lineageNodeHref", () => {
     expect(href("app:app-1")).toBe("/projects/p1/apps/app-1/edit");
     expect(href("layer:layer-1")).toBeNull();
     expect(href("dataset:ds-hidden")).toBeNull();
+  });
+});
+
+describe("buildViewStepGraph: stack", () => {
+  it("draws every stacked input into the Stack step", () => {
+    const stacked = {
+      base: "fy22",
+      inputs: [
+        { alias: "fy22", ref: { id: "a", kind: "dataset" } },
+        { alias: "fy23", ref: { id: "b", kind: "dataset" } },
+        { alias: "fy24", ref: { id: "c", kind: "dataset" } },
+      ],
+      output: { emptyFields: "keep", fields: [] },
+      steps: [{ kind: "append", sources: [{ input: "fy23" }, { input: "fy24" }] }],
+    } as unknown as ViewDefinition;
+    expect(edgePairs(buildViewStepGraph(stacked))).toEqual([
+      "flow:step:0>output",
+      "input:input:fy22>step:0",
+      "input:input:fy23>step:0",
+      "input:input:fy24>step:0",
+    ]);
+  });
+});
+
+describe("buildViewStepGraph: input edges", () => {
+  const base = {
+    base: "a",
+    inputs: [
+      { alias: "a", ref: { id: "1", kind: "dataset" } },
+      { alias: "b", ref: { id: "2", kind: "dataset" } },
+      { alias: "spare", ref: { id: "3", kind: "dataset" } },
+    ],
+    output: { emptyFields: "keep", fields: [] },
+  };
+  it("keeps the insert index on the start edge and draws SQL reads", () => {
+    const def = {
+      ...base,
+      steps: [{ kind: "sql", query: "select * from in_a join in_b on true" }],
+    } as unknown as ViewDefinition;
+    const graph = buildViewStepGraph(def);
+    expect(edgePairs(graph)).toContain("input:input:b>step:0");
+    expect(graph.edges.find((edge) => edge.source === "input:a")).toMatchObject({ insertIndex: 0 });
+  });
+  it("badges inputs nothing reads as Unused", () => {
+    const graph = buildViewStepGraph({ ...base, steps: [] } as unknown as ViewDefinition);
+    const badges = graph.nodes.flatMap((node) =>
+      node.badge === undefined ? [] : [`${node.id}:${node.badge.label}`],
+    );
+    expect(badges.toSorted()).toEqual(["input:b:Unused", "input:spare:Unused"]);
   });
 });

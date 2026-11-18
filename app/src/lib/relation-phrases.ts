@@ -1,7 +1,7 @@
 /**
  * Human phrasing of declared dataset relations (issue #294): the catalog
  * badges, the map layer indicators and their peek lists all say the same
- * thing — "Related to FY23 IG Project Corridors via UEI". Pure; reads the
+ * thing — "Linked to FY23 IG Project Corridors via UEI". Pure; reads the
  * same `dataset_relations` rows the lineage graph (#304) draws as dashed
  * edges, so nothing new is stored.
  */
@@ -68,10 +68,10 @@ export function relationEndsOf(
   return ends;
 }
 
-/** "Related to FY23 IG Project Corridors via UEI". */
+/** "Linked to FY23 IG Project Corridors via UEI". */
 export function relationPhrase(end: RelationEnd, titleOf: (id: string) => string): string {
   const how = end.how === "" ? "" : ` ${end.how}`;
-  return `Related to ${titleOf(end.otherId)}${how}`;
+  return `Linked to ${titleOf(end.otherId)}${how}`;
 }
 
 /**

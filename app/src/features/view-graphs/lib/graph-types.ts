@@ -50,7 +50,7 @@ export interface GraphNodeBadge {
   tone: "neutral" | "warning" | "error";
 }
 
-/** `input` solid (a view reads it), `relation` dashed, `consumer` (a layer/map/app uses it), `flow` step to step, `branch` a sub-pipeline or a join's right input. */
+/** `input` solid (something reads this input: the start, a join's right side, a stacked source, a SQL `in_<alias>`), `relation` dashed, `consumer` (a layer/map/app uses it), `flow` step to step, `branch` step to step inside a join's sub-pipeline. */
 export type GraphEdgeKind = "input" | "relation" | "consumer" | "flow" | "branch";
 
 export interface GraphEdge {

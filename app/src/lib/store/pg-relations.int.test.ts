@@ -845,6 +845,36 @@ describe.skipIf(!dbUp())("dataset relations (0021, ADR 0020)", () => {
     // bare cliff. The RPC keeps its own 10 s assertion.
   }, 240_000);
 
+  test("views can be link ends; a live view cannot (0035), in either direction", async () => {
+    await s().begin();
+    const source = await createDataset(s(), { createdBy: ALICE, properties: ["UEI"] });
+    const view = await createDataset(s(), { createdBy: ALICE, properties: ["UEI"] });
+    // Admin-side promotion (the harness session is the superuser until asUser).
+    await s().expectOk(
+      `update public.datasets set kind = 'view', definition = '{}'::jsonb, refresh_mode = 'manual' where id = ${sqlLit(view)}`,
+    );
+    const link = (from: string, to: string): string =>
+      `insert into public.dataset_relations (from_dataset, to_dataset, kind, cardinality, config)
+       values (${sqlLit(from)}, ${sqlLit(to)}, 'key', '1-N', '{"fromKey":"UEI","toKey":"UEI"}'::jsonb)`;
+    // created_by is stamped from auth.uid(), so the admin session carries ALICE's claims.
+    await s().expectOk(
+      `select set_config('request.jwt.claims', json_build_object('sub', ${sqlLit(ALICE)}::text, 'role', 'authenticated')::text, true)`,
+    );
+    // A saved (manual) view is a valid end.
+    await s().expectOk(link(source, view));
+    // Switching a linked view to live is refused.
+    await expect(
+      expectRaises(`update public.datasets set refresh_mode = 'live' where id = ${sqlLit(view)}`),
+    ).resolves.toMatch(/has links/i);
+    // And linking an already-live view is refused.
+    await s().expectOk(`delete from public.dataset_relations where to_dataset = ${sqlLit(view)}`);
+    await s().expectOk(
+      `update public.datasets set refresh_mode = 'live' where id = ${sqlLit(view)}`,
+    );
+    await expect(expectRaises(link(source, view))).resolves.toMatch(/live view/i);
+    await s().rollback();
+  });
+
   test("realtime absence: dataset_relations is deliberately NOT a publication member", async () => {
     await asAlice();
     const rows = await s().expectOk(

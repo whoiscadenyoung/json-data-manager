@@ -2,6 +2,7 @@ import {
   Calculator,
   Code,
   Funnel,
+  Layers,
   ListChecks,
   Merge,
   Sigma,
@@ -24,6 +25,7 @@ export interface StepKindVisual {
 const NEUTRAL: StepKindVisual = { icon: Workflow, tone: "bg-muted text-muted-foreground" };
 
 export const STEP_KIND_VISUALS: Record<string, StepKindVisual> = {
+  append: { icon: Layers, tone: "bg-teal-500/15 text-teal-700 dark:text-teal-300" },
   calculate: {
     icon: Calculator,
     tone: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",

@@ -21,23 +21,30 @@ export {
   copyTitle,
   duplicateDefinition,
   freshAlias,
+  inputUsages,
   joinAt,
   planExtract,
   pruneInputs,
   remapInputs,
   remapReport,
+  renameInputAlias,
   stepLabelOfPath,
 } from "./reuse.js";
 export type {
   ExtractPlan,
   ExtractResult,
   InputRemap,
+  InputUsage,
   JoinPath,
   RemapProblem,
   RemapReport,
 } from "./reuse.js";
 export { validateViewDefinition } from "./validate.js";
 export type {
+  AppendSource,
+  AppendStep,
+  AppendTag,
+  ColumnEdit,
   CompileInputMeta,
   CompileOptions,
   CompiledQuery,

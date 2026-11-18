@@ -104,6 +104,7 @@ import { EntryFormPanel } from "./entry-form-panel";
 import { PgBindingCard } from "./pg-binding-card";
 import { PgBindingHistory } from "./pg-binding-history";
 import { PgDatasetExport } from "./pg-dataset-export";
+import { PgDatasetLinks } from "./pg-dataset-links";
 import { PgDatasetMap } from "./pg-dataset-map";
 import { PgDatasetOverview } from "./pg-dataset-overview";
 import { PgDatasetVisibilityDialog } from "./pg-dataset-visibility-dialog";
@@ -134,7 +135,7 @@ export interface PgDatasetPageSearch {
   panel?: "create" | "edit";
   q?: string;
   sort?: string;
-  view?: "entries" | "history" | "overview" | "structure";
+  view?: "entries" | "history" | "overview" | "related" | "structure";
 }
 
 /**
@@ -312,6 +313,7 @@ function PostgresDatasetBody({
     view =
       search.view === "entries" ||
       search.view === "structure" ||
+      search.view === "related" ||
       (search.view === "history" && isBound)
         ? search.view
         : "overview",
@@ -657,6 +659,7 @@ function PostgresDatasetBody({
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="entries">Data ({displayCount})</TabsTrigger>
           <TabsTrigger value="structure">Structure</TabsTrigger>
+          <TabsTrigger value="related">Related</TabsTrigger>
           {isBound && <TabsTrigger value="history">History</TabsTrigger>}
         </TabsList>
 
@@ -769,6 +772,14 @@ function PostgresDatasetBody({
             <PgBindingHistory binding={binding} isGeospatial={dataset.isGeospatial} />
           </TabsContent>
         )}
+
+        <TabsContent value="related">
+          <PgDatasetLinks
+            canEdit={!lockedForViewer && session !== null}
+            dataset={dataset}
+            projectId={links.projectId}
+          />
+        </TabsContent>
 
         <TabsContent value="structure" className="space-y-6">
           <Card>

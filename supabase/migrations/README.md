@@ -30,3 +30,5 @@ Third-party extensions install into the `extensions` schema.
 - `0034_project_folders.sql` — catalog folders: `project_folders` (nested, per project, unique
   sibling names, cycle guard), `project_artifacts.folder_id`, member-read / editor-write RLS, and
   `delete_project_folder` (deletes one folder and moves what it holds up a level).
+- `0035_links_not_live_views.sql` — a live view cannot be a dataset link end (insert trigger on
+  `dataset_relations`) and a linked view cannot be switched to live (trigger on `datasets`).

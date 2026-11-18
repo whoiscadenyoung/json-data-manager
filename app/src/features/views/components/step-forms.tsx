@@ -18,12 +18,11 @@ import {
   filterLeaves,
   filterValue,
   filterValueText,
-  inputPickerOptions,
+  inputAliasOptions,
   leavesToWhere,
   rightFieldsOf,
   withoutManualMapEntry,
   type InputInfo,
-  type PickerDataset,
 } from "../lib/view-model";
 import { LabeledSelect } from "./labeled-select";
 import { MeasuresEditor } from "./measures-editor";
@@ -395,7 +394,6 @@ function MultiMatchEditor({
 
 /** Join: the right dataset, key pairs, key matching, join type and the multi-match policy. */
 export function JoinForm({
-  datasets,
   infos,
   leftFields,
   onChange,
@@ -404,14 +402,13 @@ export function JoinForm({
   subSteps,
   undeclaredCategories = [],
 }: {
-  /** Datasets and views the right side may be (titles, never ids). */
-  datasets: PickerDataset[];
+  /** The view's declared inputs: the only things the right side can be. */
   infos: InputInfo[];
   /** Fields in the rows reaching this step. */
   leftFields: string[];
   onChange: (step: JoinStep) => void;
-  /** The page adds the input (or reuses one) and re-points the step. */
-  onPickRight: (datasetId: string) => void;
+  /** Re-points the step at another declared input (by alias). */
+  onPickRight: (alias: string) => void;
   step: JoinStep;
   /** The "steps on the right input" section (the step list wires it in; absent = not offered). */
   subSteps?: ReactNode;
@@ -420,7 +417,6 @@ export function JoinForm({
 }) {
   const right = infos.find((info) => info.alias === step.right.input),
     rightFields = rightFieldsOf(step, infos) ?? [],
-    rightDatasetId = right === undefined ? "" : right.datasetId,
     { multiMatch } = step,
     copiesRows = multiMatch.mode !== "summarize" && multiMatch.mode !== "spread";
   return (
@@ -431,10 +427,15 @@ export function JoinForm({
           ariaLabel="Right dataset"
           className="w-72"
           onChange={onPickRight}
-          options={inputPickerOptions(datasets)}
-          placeholder="Pick a dataset or view"
-          value={rightDatasetId}
+          options={inputAliasOptions(infos)}
+          placeholder="Pick one of this view's inputs"
+          value={right === undefined ? "" : right.alias}
         />
+        {infos.length < 2 && (
+          <p className="text-xs text-muted-foreground">
+            Add the dataset to this view's Inputs first.
+          </p>
+        )}
         {subSteps}
       </div>
 
@@ -588,7 +589,7 @@ export function JoinForm({
         onChange={(next) => {
           onChange({ ...step, multiMatch: next });
         }}
-        rightDatasetId={rightDatasetId}
+        rightDatasetId={right === undefined ? "" : right.datasetId}
         rightFields={rightFields}
         step={step}
         undeclared={undeclaredCategories}

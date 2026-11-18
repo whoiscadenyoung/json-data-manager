@@ -1,3 +1,4 @@
+import type { ViewDefinition } from "@caden/data-core/views";
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -82,7 +83,7 @@ describe("NewViewPage (new view on the canvas)", () => {
     expect(screen.getByRole("button", { name: "Create view" })).toHaveProperty("disabled", true);
     const reasons = screen.getByTestId("create-reasons").textContent;
     expect(reasons).toMatch(/Give the view a title/);
-    expect(reasons).toMatch(/Pick the dataset the view starts from/);
+    expect(reasons).toMatch(/Pick at least one dataset/);
     // The canvas shows where the flow will start.
     expect(within(screen.getByTestId("step-canvas")).getByText("Pick a dataset")).toBeTruthy();
   });
@@ -127,5 +128,22 @@ describe("NewViewPage (new view on the canvas)", () => {
       projectId: "p1",
       title: "States enriched",
     });
+  });
+});
+
+describe("NewViewPage with several inputs", () => {
+  it("creates a view that reads every picked dataset, starting from the first", async () => {
+    mocks.createProjectView.mockResolvedValue("v-new");
+    mount();
+    fireEvent.click(await screen.findByLabelText(/States/));
+    fireEvent.click(await screen.findByLabelText(/Links per state/));
+    fireEvent.change(screen.getByLabelText(/Title/), { target: { value: "Both" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create view" }));
+    await waitFor(() => {
+      expect(mocks.createProjectView).toHaveBeenCalled();
+    });
+    const call = mocks.createProjectView.mock.calls[0][0] as { definition: ViewDefinition };
+    expect(call.definition.inputs).toHaveLength(2);
+    expect(call.definition.base).toBe("states");
   });
 });

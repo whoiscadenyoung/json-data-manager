@@ -15,7 +15,7 @@ import * as datasetsStore from "@/lib/store/datasets";
 import * as projectsStore from "@/lib/store/projects";
 
 import { createProjectView } from "../lib/create-view";
-import { blankDefinition } from "../lib/view-model";
+import { blankDefinition, blankDefinitionOf } from "../lib/view-model";
 import { ADD_ITEMS, AddStepToolbar } from "./step-list";
 
 /**
@@ -36,10 +36,16 @@ interface BaseOption {
 
 const START_ALIAS = "start";
 
+function titleOfPicked(picked: readonly BaseOption[], id: string, fallback: string): string {
+  const found = picked.find((option) => option.id === id);
+  return found === undefined ? fallback : found.title;
+}
+
 /** What the canvas draws before a base is picked: a placeholder start flowing into the output. */
 const PLACEHOLDER = blankDefinition({ datasetId: "", title: START_ALIAS });
 
 const KIND_NOTES: Record<(typeof ADD_ITEMS)[number]["kind"], string> = {
+  append: "Stack more datasets under these rows (for example another year).",
   calculate: "Add a field from an expression over the others.",
   filter: "Keep only the rows that meet your conditions.",
   groupBy: "One row per group, with counts, sums and averages.",
@@ -47,16 +53,17 @@ const KIND_NOTES: Record<(typeof ADD_ITEMS)[number]["kind"], string> = {
   sql: "Write the step yourself when the others don't fit.",
 };
 
-function missingOf(title: string, base: BaseOption | undefined): string[] {
+function missingOf(title: string, picked: readonly BaseOption[]): string[] {
   return [
     ...(title.trim() === "" ? ["Give the view a title."] : []),
-    ...(base === undefined ? ["Pick the dataset the view starts from."] : []),
+    ...(picked.length === 0 ? ["Pick at least one dataset for the view to read."] : []),
   ];
 }
 
 export function NewViewPage({ projectId }: { projectId: string }) {
   const [title, setTitle] = useState(""),
-    [baseId, setBaseId] = useState(""),
+    [pickedIds, setPickedIds] = useState<string[]>([]),
+    [startId, setStartId] = useState(""),
     [search, setSearch] = useState(""),
     [busy, setBusy] = useState(false),
     navigate = useNavigate(),
@@ -82,10 +89,37 @@ export function NewViewPage({ projectId }: { projectId: string }) {
           Number(a.kind === "view") - Number(b.kind === "view") || a.title.localeCompare(b.title),
       ),
     loading = catalogQuery.isPending || datasetsQuery.isPending,
-    base = options.find((option) => option.id === baseId),
-    missing = missingOf(title, base),
+    picked = pickedIds.flatMap((id) => options.filter((option) => option.id === id)),
+    base = picked.find((option) => option.id === startId) ?? picked[0],
+    missing = missingOf(title, picked),
+    toggle = (id: string): void => {
+      const next = pickedIds.includes(id)
+        ? pickedIds.filter((entry) => entry !== id)
+        : [...pickedIds, id];
+      setPickedIds(next);
+      if (!next.includes(startId)) {
+        setStartId(next[0] ?? "");
+      }
+    },
     needle = search.trim().toLowerCase(),
     shown = options.filter((option) => option.title.toLowerCase().includes(needle));
+
+  const previewDefinition =
+    picked.length === 0
+      ? PLACEHOLDER
+      : blankDefinitionOf(
+          picked.map((option) => ({ datasetId: option.id, title: option.title })),
+          base === undefined ? undefined : base.id,
+        );
+  const previewTitles: Record<string, string> =
+    picked.length === 0
+      ? { [START_ALIAS]: "Pick a dataset" }
+      : Object.fromEntries(
+          previewDefinition.inputs.map((input) => [
+            input.alias,
+            titleOfPicked(picked, input.ref.id, input.alias),
+          ]),
+        );
 
   const create = async (): Promise<void> => {
     if (base === undefined) {
@@ -94,7 +128,10 @@ export function NewViewPage({ projectId }: { projectId: string }) {
     setBusy(true);
     try {
       const viewId = await createProjectView({
-        definition: blankDefinition({ datasetId: base.id, title: base.title }),
+        definition: blankDefinitionOf(
+          picked.map((option) => ({ datasetId: option.id, title: option.title })),
+          base.id,
+        ),
         projectId,
         title: title.trim(),
       });
@@ -160,13 +197,9 @@ export function NewViewPage({ projectId }: { projectId: string }) {
       <section aria-label="Steps" className="relative mt-6">
         <ViewStepGraph
           className="h-64"
-          definition={
-            base === undefined
-              ? PLACEHOLDER
-              : blankDefinition({ datasetId: base.id, title: START_ALIAS })
-          }
+          definition={previewDefinition}
           options={{
-            inputTitles: { [START_ALIAS]: base === undefined ? "Pick a dataset" : base.title },
+            inputTitles: previewTitles,
             outputDetail: "Every field, as named",
           }}
         />
@@ -197,14 +230,15 @@ export function NewViewPage({ projectId }: { projectId: string }) {
           </ul>
         </section>
 
-        <aside aria-label="Starting dataset" className="min-w-0">
+        <aside aria-label="Datasets to read" className="min-w-0">
           <Card className="flex flex-col gap-3 p-4">
             <div>
               <h2 className="text-sm font-medium">
-                Starts from <span className="text-destructive">*</span>
+                Datasets this view reads <span className="text-destructive">*</span>
               </h2>
               <p className="text-xs text-muted-foreground">
-                A dataset or another view of this project. Other datasets can be joined in later.
+                Pick every dataset or view the view will use (you can add more later). The first is
+                where it starts.
               </p>
             </div>
             <div className="relative">
@@ -230,24 +264,24 @@ export function NewViewPage({ projectId }: { projectId: string }) {
               <p className="text-sm text-muted-foreground">Nothing matches “{search.trim()}”.</p>
             ) : (
               <fieldset className="flex max-h-96 min-w-0 flex-col gap-2 overflow-y-auto">
-                <legend className="sr-only">Base dataset</legend>
+                <legend className="sr-only">Datasets</legend>
                 {shown.map((option) => (
                   <label
                     className={
-                      option.id === baseId
+                      pickedIds.includes(option.id)
                         ? "flex cursor-pointer items-center gap-3 rounded-lg border border-primary bg-muted/40 px-3 py-2"
                         : "flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 hover:bg-muted/40"
                     }
                     key={option.id}
                   >
                     <input
-                      checked={option.id === baseId}
+                      checked={pickedIds.includes(option.id)}
                       className="accent-primary"
-                      name="new-view-base"
+                      name="new-view-inputs"
                       onChange={() => {
-                        setBaseId(option.id);
+                        toggle(option.id);
                       }}
-                      type="radio"
+                      type="checkbox"
                       value={option.id}
                     />
                     {option.kind === "view" ? (
@@ -262,6 +296,19 @@ export function NewViewPage({ projectId }: { projectId: string }) {
                         {option.entryCount.toLocaleString()} rows
                       </span>
                     </span>
+                    {pickedIds.length > 1 && pickedIds.includes(option.id) && (
+                      <button
+                        className="ml-auto rounded border px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          setStartId(option.id);
+                        }}
+                        title="Make this the dataset the view starts from"
+                        type="button"
+                      >
+                        {base !== undefined && base.id === option.id ? "Start" : "Make start"}
+                      </button>
+                    )}
                   </label>
                 ))}
               </fieldset>

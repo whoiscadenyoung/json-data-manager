@@ -26,6 +26,7 @@ export interface StepGraphOptions {
 type Loose = Record<string, unknown>;
 
 const STEP_TITLES: Record<string, string> = {
+  append: "Stack",
   calculate: "Calculate",
   filter: "Filter",
   groupBy: "Group by",
@@ -69,6 +70,10 @@ function joinDetail(step: Loose): string | undefined {
 }
 
 const DETAIL: Record<string, (step: Loose) => string | undefined> = {
+  append: (step) => {
+    const sources = looseList(step["sources"]);
+    return sources.length === 0 ? undefined : `+ ${sources.length} stacked`;
+  },
   calculate: (step) => {
     const field = step["field"];
     return typeof field === "string" ? field : undefined;
@@ -136,6 +141,16 @@ class StepGraphBuilder {
     return id;
   }
 
+  /** Inputs nothing reads get an "Unused" badge (a declared input still counts for staleness and deletes). */
+  markUnused(): void {
+    const used = new Set([...this.edges.values()].map((edge) => edge.source));
+    for (const [id, node] of this.nodes) {
+      if (node.kind === "input" && !used.has(id)) {
+        this.nodes.set(id, { ...node, badge: { label: "Unused", tone: "neutral" } });
+      }
+    }
+  }
+
   addEdge(source: string, target: string, kind: GraphEdge["kind"], insertIndex?: number): void {
     const id = `${kind}:${source}>${target}`;
     if (!this.edges.has(id)) {
@@ -155,15 +170,40 @@ function addBranch(builder: StepGraphBuilder, step: Loose, index: number, joinId
     const nested = rightOf(sub).input;
     if (kindOf(sub) === "join" && nested !== undefined) {
       // A join inside a sub-pipeline reads its own right input.
-      builder.addEdge(builder.ensureInput(nested), id, "branch");
+      builder.addEdge(builder.ensureInput(nested), id, "input");
     }
     if (previous !== undefined) {
-      builder.addEdge(previous, id, "branch");
+      builder.addEdge(previous, id, previous.startsWith("input:") ? "input" : "branch");
     }
     previous = id;
   }
   if (previous !== undefined) {
-    builder.addEdge(previous, joinId, "branch");
+    builder.addEdge(previous, joinId, previous.startsWith("input:") ? "input" : "branch");
+  }
+}
+
+/** A SQL step reads every input named as `in_<alias>`. */
+function addSqlReads(
+  builder: StepGraphBuilder,
+  step: Loose,
+  stepId: string,
+  aliases: string[],
+): void {
+  const query = typeof step["query"] === "string" ? step["query"] : "";
+  for (const alias of aliases) {
+    if (new RegExp(`\\bin_${alias}\\b`).test(query)) {
+      builder.addEdge(builder.ensureInput(alias), stepId, "input");
+    }
+  }
+}
+
+/** A Stack step reads every stacked input: each one feeds the step directly. */
+function addStacked(builder: StepGraphBuilder, step: Loose, stepId: string): void {
+  for (const source of looseList(step["sources"])) {
+    const input = source["input"];
+    if (typeof input === "string" && input !== "") {
+      builder.addEdge(builder.ensureInput(input), stepId, "input");
+    }
   }
 }
 
@@ -187,6 +227,9 @@ export function buildViewStepGraph(
       builder.ensureInput(alias);
     }
   }
+  const aliases = looseList(loose["inputs"]).flatMap((input) =>
+    typeof input["alias"] === "string" ? [input["alias"]] : [],
+  );
   const base = loose["base"];
   let previous = typeof base === "string" && base !== "" ? builder.ensureInput(base) : undefined;
 
@@ -196,10 +239,15 @@ export function buildViewStepGraph(
     const id = stepNodeId(selection);
     builder.step(step, selection, id);
     if (previous !== undefined) {
-      builder.addEdge(previous, id, "flow", index);
+      // The base input reads into the first step like any other input.
+      builder.addEdge(previous, id, previous.startsWith("input:") ? "input" : "flow", index);
     }
     if (kindOf(step) === "join") {
       addBranch(builder, step, index, id);
+    } else if (kindOf(step) === "append") {
+      addStacked(builder, step, id);
+    } else if (kindOf(step) === "sql") {
+      addSqlReads(builder, step, id, aliases);
     }
     previous = id;
   }
@@ -208,6 +256,7 @@ export function buildViewStepGraph(
   if (previous !== undefined) {
     builder.addEdge(previous, "output", "flow", steps.length);
   }
+  builder.markUnused();
   return { edges: [...builder.edges.values()], nodes: [...builder.nodes.values()] };
 }
 

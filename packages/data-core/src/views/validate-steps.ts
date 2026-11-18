@@ -293,6 +293,87 @@ function validateSelect(step: Record<string, unknown>, path: string, issues: Iss
   }
 }
 
+function isTag(value: unknown): boolean {
+  return (
+    value === undefined ||
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  );
+}
+
+function validateOneEdit(edit: unknown, at: string, seen: Set<string>, issues: Issues): void {
+  if (!isRecord(edit) || !isNonEmptyString(edit.from)) {
+    issues.add(at, "Each column edit needs a `from` field name.");
+    return;
+  }
+  if (seen.has(edit.from)) {
+    issues.add(at, `Field "${edit.from}" is edited more than once.`);
+  }
+  seen.add(edit.from);
+  if ("exclude" in edit) {
+    if (edit.exclude !== true || "as" in edit) {
+      issues.add(at, "An exclude edit must be `exclude: true` with no `as`.");
+    }
+  } else if (!isNonEmptyString(edit.as)) {
+    issues.add(at, `Column "${edit.from}" needs an output name (\`as\`) or exclude.`);
+  }
+}
+
+function validateColumnEdits(edits: unknown, path: string, issues: Issues): void {
+  if (edits === undefined) {
+    return;
+  }
+  if (!Array.isArray(edits)) {
+    issues.add(path, "Column edits must be a list.");
+    return;
+  }
+  const seen = new Set<string>();
+  for (const [i, edit] of edits.entries()) {
+    validateOneEdit(edit, `${path}[${i}]`, seen, issues);
+  }
+}
+
+function validateAppend(
+  step: Record<string, unknown>,
+  path: string,
+  aliases: Set<string>,
+  issues: Issues,
+): void {
+  const sources = step.sources;
+  if (!Array.isArray(sources) || sources.length === 0) {
+    issues.add(`${path}.sources`, "append needs at least one input to stack.");
+  } else {
+    for (const [i, source] of sources.entries()) {
+      const at = `${path}.sources[${i}]`;
+      if (!isRecord(source) || typeof source.input !== "string") {
+        issues.add(at, "Each source needs an input alias.");
+      } else if (source.input === "") {
+        issues.add(`${at}.input`, "Pick a dataset to stack.");
+      } else if (!aliases.has(source.input)) {
+        issues.add(`${at}.input`, `Unknown input alias "${source.input}".`);
+      } else if (!isTag(source.tag)) {
+        issues.add(`${at}.tag`, "A tag must be a string, number, boolean or null.");
+      }
+      if (isRecord(source)) {
+        validateColumnEdits(source.columns, `${at}.columns`, issues);
+      }
+    }
+  }
+  if (step.tagField !== undefined && !isNonEmptyString(step.tagField)) {
+    issues.add(`${path}.tagField`, "tagField must be a field name.");
+  }
+  validateColumnEdits(step.baseColumns, `${path}.baseColumns`, issues);
+  if (!isTag(step.baseTag)) {
+    issues.add(`${path}.baseTag`, "A tag must be a string, number, boolean or null.");
+  }
+  const tagged = Array.isArray(sources) && sources.some((s) => isRecord(s) && s.tag !== undefined);
+  if (tagged && step.tagField === undefined) {
+    issues.add(`${path}.tagField`, "Tags need a tagField to be written to.");
+  }
+}
+
 /** Shape checks for one step (no field-scope checks; see validate-fields). */
 export function validateStepShape(
   step: Record<string, unknown>,
@@ -306,6 +387,9 @@ export function validateStepShape(
       break;
     case "join":
       validateJoin(step, path, aliases, issues);
+      break;
+    case "append":
+      validateAppend(step, path, aliases, issues);
       break;
     case "groupBy":
       validateGroupBy(step, path, issues);

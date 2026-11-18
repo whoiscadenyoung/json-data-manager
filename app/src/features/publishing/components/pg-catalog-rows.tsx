@@ -392,7 +392,12 @@ export function CatalogItemRow({
             <div className="flex min-w-0 items-center gap-1.5">
               <ItemName item={item} projectId={projectId} />
               <ItemBadges detail={detail} onVersions={onVersions} />
-              <RelationBadge ends={detail.relationEnds} projectId={projectId} titleOf={titleOf} />
+              <RelationBadge
+                datasetId={item.datasetId}
+                ends={detail.relationEnds}
+                projectId={projectId}
+                titleOf={titleOf}
+              />
             </div>
             {pathLabel !== undefined && (
               <span className="truncate text-xs text-muted-foreground">in {pathLabel}</span>

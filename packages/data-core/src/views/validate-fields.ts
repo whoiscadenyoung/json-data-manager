@@ -9,7 +9,15 @@
 import { analyzeExpression } from "./calculate.js";
 import { joinPrefix, listKey, prefixed } from "./join-names.js";
 import { analyzeSqlStep } from "./sql-step.js";
-import type { CompileInputMeta, Condition, FieldType, JoinStep, Measure, Step } from "./types.js";
+import type {
+  ColumnEdit,
+  CompileInputMeta,
+  Condition,
+  FieldType,
+  JoinStep,
+  Measure,
+  Step,
+} from "./types.js";
 import { isRecord } from "./validate-issues.js";
 import type { Issues } from "./validate-issues.js";
 import { validateStepShape } from "./validate-steps.js";
@@ -39,6 +47,41 @@ export function measureType(measure: Measure, source: FieldMap | undefined): Fie
       return type ?? "unknown";
     }
   }
+}
+
+/**
+ * Fields one stack member produces after its column edits. Reports edits of
+ * unknown fields and renames that collide with a field that stays.
+ */
+export function editFields(
+  fields: FieldMap,
+  edits: ColumnEdit[] | undefined,
+  path: string,
+  issues: Issues,
+): FieldMap {
+  if (edits === undefined || edits.length === 0) {
+    return fields;
+  }
+  const out: FieldMap = new Map(fields);
+  const moved: [string, FieldType][] = [];
+  for (const [i, edit] of edits.entries()) {
+    const type = fields.get(edit.from);
+    if (type === undefined) {
+      issues.add(`${path}[${i}]`, `Unknown field "${edit.from}".`);
+      continue;
+    }
+    out.delete(edit.from);
+    if ("as" in edit) {
+      moved.push([edit.as, type]);
+    }
+  }
+  for (const [as, type] of moved) {
+    if (out.has(as) && fields.has(as)) {
+      issues.add(path, `Renaming into "${as}" collides with an existing field of that name.`);
+    }
+    out.set(as, type);
+  }
+  return out;
 }
 
 export class FieldScope {
@@ -89,6 +132,9 @@ export class FieldScope {
         break;
       case "join":
         this.applyJoin(step, path, issues);
+        break;
+      case "append":
+        this.applyAppend(step, path, issues);
         break;
       case "groupBy":
         this.applyGroupBy(step, path, issues);
@@ -153,6 +199,33 @@ export class FieldScope {
         this.checkCondition(child, `${path}.${key}[${i}]`, issues);
       }
     }
+  }
+
+  /** Stacked rows keep the union of every member's (edited) fields (unknown if any member is). */
+  private applyAppend(step: Extract<Step, { kind: "append" }>, path: string, issues: Issues): void {
+    const base =
+      this.known === undefined
+        ? undefined
+        : editFields(this.known, step.baseColumns, `${path}.baseColumns`, issues);
+    let next: FieldMap | undefined = base === undefined ? undefined : new Map(base);
+    for (const [i, source] of step.sources.entries()) {
+      const raw = metaFields(this.metas.find((meta) => meta.alias === source.input));
+      const fields =
+        raw === undefined
+          ? undefined
+          : editFields(raw, source.columns, `${path}.sources[${i}].columns`, issues);
+      if (fields === undefined || next === undefined) {
+        next = undefined;
+        continue;
+      }
+      for (const [name, type] of fields) {
+        next.set(name, next.get(name) ?? type);
+      }
+    }
+    if (next !== undefined && step.tagField !== undefined) {
+      next.set(step.tagField, "unknown");
+    }
+    this.known = next;
   }
 
   private applyGroupBy(

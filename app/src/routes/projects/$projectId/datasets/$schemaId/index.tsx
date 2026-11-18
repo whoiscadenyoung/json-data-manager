@@ -9,7 +9,7 @@ import { isPostgresDatasetId } from "@/lib/dataset-source";
 const searchSchema = z.object({
   entryId: z.string().optional(),
   panel: z.enum(["create", "edit"]).optional(),
-  view: z.enum(["overview", "entries", "history", "structure"]).optional(),
+  view: z.enum(["overview", "entries", "history", "related", "structure"]).optional(),
   q: z.string().optional(),
   sort: z.string().optional(),
   filters: z.string().optional(),

@@ -68,7 +68,7 @@ function renderSettings(overrides: Partial<Props> = {}) {
     onClose: vi.fn<() => void>(),
     onPopupFields: vi.fn<(id: string) => void>(),
     projectId: "p1",
-    relationNotes: ["Related to Deployments via id ↔ stateId"],
+    relationNotes: ["Linked to Deployments via id ↔ stateId"],
     selection: { kind: "data", layerId: "l1", name: "States", rowId: "pl-1", versionId: undefined },
     styling: styling(),
     version: undefined,
@@ -87,7 +87,7 @@ describe("LayerSettings", () => {
     renderSettings();
     expect(screen.getByRole("heading", { name: "States" })).toBeTruthy();
     expect(screen.getByText("States (2024)")).toBeTruthy();
-    expect(screen.getByText("Related to Deployments via id ↔ stateId")).toBeTruthy();
+    expect(screen.getByText("Linked to Deployments via id ↔ stateId")).toBeTruthy();
     expect(screen.getByText("The field “pop” was removed.")).toBeTruthy();
   });
 

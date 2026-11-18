@@ -170,3 +170,90 @@ compatibility and no migration of stored derived specs.
 - Spatial steps are a later step kind on the same compiler, re-scoping
   GIS 3 (#161) away from the DuckDB-WASM spatial-join plan. DuckDB-WASM
   leaves the app with the Analysis tab (#306).
+
+## Addendum 2026-11-17: views combine, links point
+
+Status: accepted. Refines D6 ("Relations stay for related records…") and the
+open question in design §12.
+
+**Model.** Datasets hold rows. Views combine datasets: a `join` adds
+columns, and the new `append` (Stack) step adds rows. Links (the stored
+`dataset_relations`, ADR 0020) only power map clicks: the linked features
+highlight and are listed in the popup. The UI says "link"; the table and
+ADR 0020 keep "relation".
+
+**Decisions.**
+
+1. **`append` step.** `{ kind: "append", sources: [{ input, tag? }], tagField?, baseTag? }`
+   compiles to `UNION ALL` over the current rows and each source input. Rows
+   keep their own geometry, so stacking spatial datasets yields one spatial
+   dataset (FY22 + FY23 + … corridors, each row with its own shape). A tag
+   stamps a scalar (a fiscal year) into one field. Row ids are global
+   primary keys, so stacked ids never collide. Fields match by name; a field
+   a source lacks is absent on its rows.
+2. **Combining across years is attribute joins, not spatial joins.** Stack
+   each dataset family (awards, areas, corridors, intersections), tag each
+   with `fiscal_year`, then join a stacked spatial view to the stacked awards
+   view on `UEI` + `fiscal_year`. Geometry comes from the base (the stacked
+   spatial view). `UEI` repeats across years, so `fiscal_year` is part of the
+   key. A true spatial step (`spatialJoin`, `dissolve`) is still later work;
+   this needs none of it.
+3. **Links are managed from each dataset's page** (Related tab), with key
+   suggestions from shared field names. The catalog's Relations section is
+   removed; the row's badge opens the Related tab.
+4. **Group-level relations are rejected.** Folders are organizational only,
+   and pairing "FY22 awards with FY22 corridors" needs a rule no table
+   expresses. Stacking covers the real need.
+5. **A saved view may be a link end; a live view may not** (migration 0035):
+   a live view saves no rows, so the bounded runtime query would see an
+   empty side.
+6. **Existing links** are replaced by hand; there is no migration.
+
+**Risks.** A stale view gives stale popups (refresh it). An input dataset
+can't be deleted while a view reads it, and stacking makes that more likely.
+`sql` steps and `live` views are unaffected.
+
+### Addendum 2026-11-17 (b): explicit inputs, uniform input edges
+
+Advice from a design consult, adopted:
+
+- **`base` stays**, meaning "the input the pipeline starts from". Stack's
+  asymmetry was presentation only, so it was fixed there: the Stack form is
+  one table (Dataset | Tag) whose first row is the rows flowing in (the Start
+  when Stack is step 1), and the canvas draws every input into the step with
+  the same solid `input` edge (start, join right side, stacked source, SQL
+  `in_<alias>`). `branch` is now only the step-to-step chain inside a join's
+  sub-pipeline. Inputs nothing reads show an "Unused" badge.
+- **Inputs are explicit.** The editor has an Inputs panel (add with search,
+  choose the Start, rename an alias, see what uses each input, remove when
+  unused). Join, Stack and SQL pickers offer only declared inputs. Save no
+  longer prunes unused inputs, so a declared input counts for staleness,
+  auto-refresh and "can't delete a dataset a view reads". `inputUsages` and
+  `renameInputAlias` live in `@caden/data-core/views` (`reuse.ts`).
+- **New view** takes several datasets (the first is the Start).
+- Not done: an inline "Add input…" item inside the step selects (inputs are
+  added in the panel), and "Stack them" seeding on the new-view page.
+
+### Addendum 2026-11-17 (c): Stack column mapping
+
+A Stack merges fields by exact name; users can now see and change that
+mapping. `AppendSource.columns` and `AppendStep.baseColumns` hold optional
+per-member `ColumnEdit`s (`{ from, as }` rename / re-map, `{ from, exclude:
+true }` drop), applied to that member's rows before the `UNION ALL`. Untouched
+fields pass through, so existing stacks are unchanged and no migration is
+needed (definitions are plain JSON).
+
+- Compiler (`chain.ts` `editedRow`): `(d - 'a' - 'b') || case when
+jsonb_exists(d,'a') then jsonb_build_object('x', d -> 'a') else '{}' end`;
+  every key is a bind parameter; all reads use the original row (swaps work);
+  a rename of an absent field adds no null key; geometry is untouched.
+- Validation: shape (`from`/`as` non-empty, no duplicate `from`, `exclude`
+  only `true`), `Unknown field` for a `from` the member lacks (when its
+  fields are known), and a collision error when a rename lands on a field
+  that stays. Field scope after the step is the union of each member's edited
+  fields (`editFields` in `validate-fields.ts`).
+- UI: a Columns table under the Stack dataset table (`append-columns.tsx`,
+  pure model in `lib/append-columns.ts`): Merged / Only in … / Renamed /
+  Excluded status, inline rename, per-cell re-map, exclude toggle, and
+  one-click "Merge X into Y" chips for case/punctuation-insensitive matches
+  (never applied silently).

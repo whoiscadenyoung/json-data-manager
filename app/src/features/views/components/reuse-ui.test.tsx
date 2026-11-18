@@ -232,9 +232,8 @@ describe("Extract to view button", () => {
 
   function ctx(extra: Partial<StepEditorContext>): StepEditorContext {
     return {
-      datasets,
+      baseAlias: "states",
       diagnostics: undefined,
-      ensureInput: () => "deployments",
       errors: [],
       infos: [
         { alias: "states", datasetId: STATES, title: "States", fields: ["id", "name"] },

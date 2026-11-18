@@ -100,9 +100,44 @@ export type JoinStep = {
   prefix?: string;
 };
 
+/** A scalar stamped onto stacked rows (e.g. a fiscal year). */
+export type AppendTag = string | number | boolean | null;
+
+/**
+ * A per-member column edit applied to that member's rows before stacking.
+ * `{ from, as }` renames / re-maps a field into another output column;
+ * `{ from, exclude: true }` drops it. Untouched fields pass through.
+ */
+export type ColumnEdit = { from: string; as: string } | { from: string; exclude: true };
+
+export type AppendSource = {
+  /** Alias of the input whose rows are stacked under the current rows. */
+  input: string;
+  /** Written to `tagField` on this source's rows. */
+  tag?: AppendTag;
+  /** Column edits for this source's rows. */
+  columns?: ColumnEdit[];
+};
+
+/**
+ * Stack (UNION ALL) more inputs under the current rows. Rows keep their own
+ * geometry, so stacking spatial datasets yields one spatial dataset. Fields
+ * are matched by name; a field a source lacks is simply absent on its rows.
+ */
+export type AppendStep = {
+  kind: "append";
+  sources: AppendSource[];
+  /** Field that receives each source's tag (and `baseTag` on the current rows). */
+  tagField?: string;
+  baseTag?: AppendTag;
+  /** Column edits for the incoming (current) rows. */
+  baseColumns?: ColumnEdit[];
+};
+
 export type Step =
   | { kind: "filter"; where: Condition }
   | JoinStep
+  | AppendStep
   | { kind: "groupBy"; by: string[]; measures: Measure[] }
   | { kind: "calculate"; field: string; expr: Expr }
   | { kind: "select"; fields: { from: string; as: string }[] }

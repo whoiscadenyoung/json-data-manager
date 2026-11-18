@@ -15,6 +15,7 @@ import {
   Calculator,
   Code,
   Funnel,
+  Layers,
   Merge,
   Plus,
   Sigma,
@@ -35,24 +36,24 @@ import {
   newFilterStep,
   newGroupByStep,
   newJoinStep,
+  newAppendStep,
   newSqlStep,
   repointRight,
   stepProblem,
   stepSummary,
   STEP_TITLES,
   type InputInfo,
-  type PickerDataset,
 } from "../lib/view-model";
+import { AppendForm } from "./append-form";
 import { CalculateForm } from "./calculate-form";
 import { SqlForm } from "./sql-form";
 import { FilterForm, GroupByForm, JoinForm } from "./step-forms";
 
 /** What every step form needs from the editor page, shared by the top-level list and nested sub-pipelines. */
 export interface StepEditorContext {
-  datasets: PickerDataset[];
   infos: InputInfo[];
-  /** Declares (or reuses) an input for a dataset and returns its alias. */
-  ensureInput: (datasetId: string) => string;
+  /** The alias of the view's Start input. */
+  baseAlias: string;
   /** Every validation error of the whole definition (paths like `steps[1].right.steps[0].expr`). */
   errors: ValidationError[];
   /** The raw diagnostics payload of the current preview. */
@@ -71,7 +72,7 @@ export interface StepEditorContext {
   fieldTypes?: ReadonlyMap<string, import("@caden/data-core/views").FieldType>;
 }
 
-export type AddableKind = "join" | "filter" | "groupBy" | "calculate" | "sql";
+export type AddableKind = "join" | "append" | "filter" | "groupBy" | "calculate" | "sql";
 
 function undeclaredOf(diagnostics: StepDiagnostics | undefined): string[] | undefined {
   if (diagnostics === undefined || diagnostics.join === undefined) {
@@ -96,6 +97,8 @@ export function newStepOf(kind: AddableKind, firstField: string): Step {
       return newCalculateStep();
     case "sql":
       return newSqlStep();
+    case "append":
+      return newAppendStep();
     default:
       return newJoinStep({ rightAlias: "", rightTitle: "" });
   }
@@ -103,6 +106,7 @@ export function newStepOf(kind: AddableKind, firstField: string): Step {
 
 export const ADD_ITEMS: { icon: LucideIcon; kind: AddableKind; label: string; short: string }[] = [
   { icon: Merge, kind: "join", label: "Join another dataset", short: "Join" },
+  { icon: Layers, kind: "append", label: "Stack more datasets (add rows)", short: "Stack" },
   { icon: Funnel, kind: "filter", label: "Filter rows", short: "Filter" },
   { icon: Sigma, kind: "groupBy", label: "Group and summarize", short: "Group" },
   { icon: Calculator, kind: "calculate", label: "Calculate a field", short: "Calculate" },
@@ -533,6 +537,17 @@ function StepForm({
           step={step}
         />
       );
+    case "append":
+      return (
+        <AppendForm
+          baseFields={fields}
+          baseTitle={titleOf(ctx.infos, ctx.baseAlias)}
+          infos={ctx.infos}
+          isFirstStep={path === "steps[0]"}
+          onChange={onChange}
+          step={step}
+        />
+      );
     case "sql":
       return (
         <SqlForm aliases={ctx.infos.map((info) => info.alias)} onChange={onChange} step={step} />
@@ -540,13 +555,11 @@ function StepForm({
     case "join":
       return (
         <JoinForm
-          datasets={ctx.datasets}
           infos={ctx.infos}
           leftFields={fields ?? []}
           onChange={onChange}
-          onPickRight={(datasetId) => {
-            const alias = ctx.ensureInput(datasetId);
-            const next = ctx.datasets.find((dataset) => dataset.id === datasetId);
+          onPickRight={(alias) => {
+            const next = ctx.infos.find((info) => info.alias === alias);
             onChange(
               repointRight(step, alias, {
                 old: titleOf(ctx.infos, step.right.input),

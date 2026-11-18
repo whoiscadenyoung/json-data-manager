@@ -68,12 +68,12 @@ describe("relationEndsOf", () => {
 describe("relationPhrase", () => {
   it("names the other end and the key", () => {
     const [end] = relationEndsOf(relations, "awards");
-    expect(relationPhrase(end, titleOf)).toBe("Related to FY23 IG Project Corridors via UEI");
+    expect(relationPhrase(end, titleOf)).toBe("Linked to FY23 IG Project Corridors via UEI");
   });
 
   it("drops the key part when unknown", () => {
     expect(relationPhrase({ how: "", otherId: "parks", relationId: "x" }, titleOf)).toBe(
-      "Related to Parks",
+      "Linked to Parks",
     );
   });
 });

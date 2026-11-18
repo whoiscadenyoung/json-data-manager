@@ -93,11 +93,10 @@ describe("spread (join form)", () => {
   function form(onChange: (s: JoinStep) => void, undeclared: string[] = []) {
     return withClient(
       createElement(JoinForm, {
-        datasets: [{ id: "d-links", title: "Links" }],
         infos,
         leftFields: ["id", "name"],
         onChange,
-        onPickRight: vi.fn<(id: string) => void>(),
+        onPickRight: vi.fn<(alias: string) => void>(),
         step: spreadStep,
         undeclaredCategories: undeclared,
       }),
@@ -158,11 +157,10 @@ describe("spread (join form)", () => {
     const { rerender } = render(
       withClient(
         createElement(JoinForm, {
-          datasets: [],
           infos,
           leftFields: ["name"],
           onChange,
-          onPickRight: vi.fn<(id: string) => void>(),
+          onPickRight: vi.fn<(alias: string) => void>(),
           step: textStep,
         }),
       ),
@@ -172,11 +170,10 @@ describe("spread (join form)", () => {
     rerender(
       withClient(
         createElement(JoinForm, {
-          datasets: [],
           infos,
           leftFields: ["name"],
           onChange,
-          onPickRight: vi.fn<(id: string) => void>(),
+          onPickRight: vi.fn<(alias: string) => void>(),
           step: { ...spreadStep, multiMatch: { mode: "list" } },
         }),
       ),

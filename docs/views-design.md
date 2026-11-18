@@ -150,8 +150,13 @@ Semantics worth stating:
   reported in diagnostics and never add columns silently.
 - **`hidden` fields** can be used by later steps and by layer styling,
   but are left out of tooltips and exports.
+- **`append` (Stack)** shipped (ADR 0028 addendum 2026-11-17): UNION ALL of
+  inputs, geometry kept per row, optional tag field. Optional per-member
+  column edits (`columns` on a source, `baseColumns` on the step): rename /
+  re-map (`{from, as}`) or drop (`{from, exclude: true}`) fields before the
+  union; untouched fields pass through (ADR 0028 addendum 2026-11-17 c).
 - **Spatial steps later.** `spatialJoin` (within, intersects, nearest),
-  `append`, `dissolve` and `buffer` are later step kinds. The union must
+  `dissolve` and `buffer` are later step kinds. The union must
   stay open for them.
 
 ### Calculate expressions

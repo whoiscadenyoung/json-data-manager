@@ -62,7 +62,6 @@ import {
   stepProblem,
   STEP_TITLES,
   toCompileMeta,
-  uniqueAlias,
   validationSummary,
   withManualMapEntry,
   type InputInfo,
@@ -71,6 +70,7 @@ import { DuplicateViewDialog } from "./duplicate-view-dialog";
 import { ExportProfilesCard } from "./export-profiles-card";
 import { ExtractViewDialog } from "./extract-view-dialog";
 import { InputDetail } from "./input-detail";
+import { InputsPanel } from "./inputs-panel";
 import { OutputCard } from "./output-card";
 import { PreviewPane, type PreviewRow } from "./preview-pane";
 import { RefreshModeControl, type RefreshMode } from "./refresh-mode-control";
@@ -200,11 +200,6 @@ export function PgViewPage({ projectId, viewId }: { projectId: string; viewId: s
     );
   }
   return <ViewEditor header={row} initial={parsed.value} projectId={projectId} viewId={viewId} />;
-}
-
-function nameOfDataset(datasets: readonly { id: string; title: string }[], id: string): string {
-  const found = datasets.find((dataset) => dataset.id === id);
-  return found === undefined ? "dataset" : found.title;
 }
 
 // The editor owns the draft, selection, save and run state in one place; the
@@ -362,26 +357,6 @@ function ViewEditor({
   const patchDraft = (next: ViewDefinition): void => {
     setDraft(next);
   };
-  /** Declares (or reuses) an input for a dataset. Functional updates, so it composes with the step edit that follows. */
-  const ensureInput = (datasetId: string): string => {
-    const existing = draft.inputs.find((input) => input.ref.id === datasetId);
-    if (existing !== undefined) {
-      return existing.alias;
-    }
-    const alias = uniqueAlias(
-      nameOfDataset(datasets, datasetId),
-      draft.inputs.map((input) => input.alias),
-    );
-    setDraft((current) =>
-      current.inputs.some((input) => input.alias === alias)
-        ? current
-        : {
-            ...current,
-            inputs: [...current.inputs, { alias, ref: { kind: "dataset", id: datasetId } }],
-          },
-    );
-    return alias;
-  };
   // Declared field types across the readable datasets (#335): the calculate
   // form names the result type instead of "depends on the data" whenever the
   // field is declared anywhere. Last writer wins on cross-dataset collisions.
@@ -393,10 +368,9 @@ function ViewEditor({
   }
 
   const stepContext: StepEditorContext = {
-    datasets,
+    baseAlias: draft.base,
     fieldTypes,
     diagnostics: previewQuery.data === undefined ? undefined : previewQuery.data.diagnostics,
-    ensureInput,
     errors: validation.ok ? [] : validation.errors,
     extract: {
       disabledReason: !metaReady
@@ -454,11 +428,10 @@ function ViewEditor({
   const save = async (): Promise<void> => {
     setSaving(true);
     try {
-      const pruned = prunedInputs(draft);
-      await saveView(viewDeps(), viewId, { definition: pruned, inputs: inputRefsOf(pruned) });
-      setDraft(pruned);
-      setBaseline(stableJson(pruned));
-      setSavedOutput(pruned.output);
+      // Inputs are explicit: save exactly what the Inputs panel lists, unused ones included.
+      await saveView(viewDeps(), viewId, { definition: draft, inputs: inputRefsOf(draft) });
+      setBaseline(stableJson(draft));
+      setSavedOutput(draft.output);
       refreshAll();
       toast.success("View saved. Run it to refresh its rows.");
     } catch (error) {
@@ -801,6 +774,7 @@ function ViewEditor({
           aria-label="Step settings"
           className="flex shrink-0 flex-col gap-3 overflow-y-auto border-t p-3 lg:w-[26rem] lg:border-t-0 lg:border-l"
         >
+          <InputsPanel datasets={datasets} definition={draft} infos={infos} onChange={patchDraft} />
           {openStep !== undefined ? (
             stepList(openStep)
           ) : selectedInput === undefined ? (

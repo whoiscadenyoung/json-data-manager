@@ -94,8 +94,8 @@ describe("relationNotesOf", () => {
     const titles: Record<string, string> = { "d-deploy": "Deployments", "d-states": "States" },
       notes = relationNotesOf([RELATION], ["d-states", "d-deploy"], (id) => titles[id] ?? id);
     expect(notes.get("d-states")).toHaveLength(1);
-    expect((notes.get("d-states") ?? [])[0]).toContain("Related to Deployments");
-    expect((notes.get("d-deploy") ?? [])[0]).toContain("Related to States");
+    expect((notes.get("d-states") ?? [])[0]).toContain("Linked to Deployments");
+    expect((notes.get("d-deploy") ?? [])[0]).toContain("Linked to States");
   });
 
   it("leaves out datasets with no relation on this map", () => {

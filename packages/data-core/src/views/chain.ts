@@ -8,7 +8,7 @@ import type { JoinContext, StepInfo, SubChain } from "./join.js";
 import { measureExpr } from "./measures.js";
 import { compileSqlStep, requireSqlAnalysis } from "./sql-compile.js";
 import { buildObject, fieldJson, ParamBag, quoteIdent } from "./sql-util.js";
-import type { CompileInputMeta, Step, ViewDefinition } from "./types.js";
+import type { AppendTag, ColumnEdit, CompileInputMeta, Step, ViewDefinition } from "./types.js";
 import { FieldScope } from "./validate-fields.js";
 import { Issues } from "./validate-issues.js";
 
@@ -68,6 +68,53 @@ function compileSelect(
   return `${out} as (
   select row_id, ${buildObject(pairs, bag)} as d, geom
   from ${prev}
+)`;
+}
+
+/** Row object after column edits (all reads use the original row, so swaps work). */
+function editedRow(edits: ColumnEdit[] | undefined, bag: ParamBag): string {
+  if (edits === undefined || edits.length === 0) {
+    return "d";
+  }
+  const dropped = edits.map((edit) => ` - ${bag.text(edit.from)}`).join("");
+  const moved = edits
+    .filter((edit): edit is { from: string; as: string } => "as" in edit)
+    .map(
+      (edit) =>
+        `case when jsonb_exists(d, ${bag.text(edit.from)}) then jsonb_build_object(${bag.text(edit.as)}, d -> ${bag.text(edit.from)}) else '{}'::jsonb end`,
+    );
+  return [`(d${dropped})`, ...moved].join(" || ");
+}
+
+function tagPatch(
+  field: string | undefined,
+  tag: AppendTag | undefined,
+  edits: ColumnEdit[] | undefined,
+  bag: ParamBag,
+): string {
+  const row = editedRow(edits, bag);
+  if (field === undefined || tag === undefined) {
+    return row;
+  }
+  return `${row} || jsonb_build_object(${bag.text(field)}, ${bag.jsonb(tag)})`;
+}
+
+/** UNION ALL of the current rows and each source input (geometry travels with its row). */
+function compileAppend(
+  step: Extract<Step, { kind: "append" }>,
+  prev: string,
+  out: string,
+  ctx: ChainContext,
+): string {
+  const parts = [
+    `select row_id, ${tagPatch(step.tagField, step.baseTag, step.baseColumns, ctx.bag)} as d, geom from ${prev}`,
+    ...step.sources.map((source) => {
+      const cte = getInput(ctx.inputs, source.input).cte;
+      return `select row_id, ${tagPatch(step.tagField, source.tag, source.columns, ctx.bag)} as d, geom from ${cte}`;
+    }),
+  ];
+  return `${out} as (
+  ${parts.join("\n  union all\n  ")}
 )`;
 }
 
@@ -135,6 +182,8 @@ function compileStep(
       return { ctes: [compileFilter(step, prev, name, ctx.bag)], infos: [base] };
     case "select":
       return { ctes: [compileSelect(step, prev, name, ctx.bag)], infos: [base] };
+    case "append":
+      return { ctes: [compileAppend(step, prev, name, ctx)], infos: [base] };
     case "groupBy":
       return { ctes: [compileGroupBy(step, prev, name, ctx.bag)], infos: [base] };
     case "calculate":
@@ -203,6 +252,10 @@ function collectAliases(steps: Step[], aliases: string[], found: string[]): void
     if (step.kind === "join") {
       addUnique(found, step.right.input);
       collectAliases(step.right.steps ?? [], aliases, found);
+    } else if (step.kind === "append") {
+      for (const source of step.sources) {
+        addUnique(found, source.input);
+      }
     } else if (step.kind === "sql") {
       const analysis = requireSqlAnalysis(step.query, aliases);
       for (const alias of aliases) {
