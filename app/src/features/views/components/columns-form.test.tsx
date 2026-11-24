@@ -33,11 +33,9 @@ describe("ColumnsForm only list", () => {
     expect("only" in last(off)).toBe(false);
   });
 
-  it("reorders, removes and re-adds kept columns", () => {
+  it("removes and re-adds kept columns", () => {
     const base: ColumnsNode = { kind: "columns", from: "s", edits: [], only: ["a", "b"] };
     const onChange = mount(base);
-    fireEvent.click(screen.getByLabelText("Move b up"));
-    expect(last(onChange).only).toEqual(["b", "a"]);
     fireEvent.click(screen.getByLabelText("Stop keeping a"));
     expect(last(onChange).only).toEqual(["b"]);
     fireEvent.click(screen.getByLabelText("Keep c"));

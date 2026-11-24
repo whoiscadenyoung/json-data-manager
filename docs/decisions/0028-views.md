@@ -389,8 +389,9 @@ request. Not verified further.
 
 - Spread category proposals for a non-source right node (they come from
   diagnostics only).
-- Whether `columns.only` should also reorder output (`jsonb` has no order; the
-  list drives keeping, and the Output card owns display order).
+- `columns.only` keeps the listed columns and does not order them: row objects
+  are `jsonb` and have no field order, so display order belongs to the Output card.
+  The form therefore has no reorder controls. Decided, not deferred.
 - Unused node count in the header; "Prune unused" is a helper (`pruneNodes`) with
   no button yet.
 - Node ids cannot be renamed in the UI (`renameNodeId` exists in data-core).

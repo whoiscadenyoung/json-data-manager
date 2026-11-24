@@ -1,6 +1,8 @@
 # Design: views as a graph of named nodes
 
-Status: **accepted by the owner, 2026-11-17. Build it.** Replaces the linear
+Status: **accepted 2026-11-17 and implemented** (commits `5b8120d`, `bb70aac`,
+`cf4f661`, follow-ups after). Decisions, deviations and what is deferred or not
+built are recorded in ADR 0028 addendum d ("Decisions and deviations"). Replaces the linear
 step-list model in [ADR 0028](decisions/0028-views.md) and
 [`views-design.md`](views-design.md) §4 (write ADR 0028 addendum "d" and update
 that section as part of the work). Builds on the shipped Stack, column mapping,
@@ -51,7 +53,7 @@ type ViewDefinition = {
 type ViewNode = { label?: string } & (
   | { kind: "source"; ref: ViewInputRef }                 // a dataset or view (ref, optional pinned version)
   | { kind: "filter"; from: string; where: Condition }
-  | { kind: "columns"; from: string; edits: ColumnEdit[]; only?: string[] } // rename / drop many; `only` = optional keep-and-order list applied after edits
+  | { kind: "columns"; from: string; edits: ColumnEdit[]; only?: string[] } // rename / drop many; `only` = optional keep list (no ordering; display order is the Output card's) applied after edits
   | { kind: "calculate"; from: string; fields: { field: string; expr: Expr }[] } // several new fields, evaluated in order (later ones may read earlier ones)
   | { kind: "groupBy"; from: string; by: string[]; measures: Measure[] }
   | { kind: "sql"; from: string; reads?: string[]; query: string }          // `d` = from rows; `in_<id>` for each of `reads`

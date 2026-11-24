@@ -171,7 +171,7 @@ Semantics worth stating:
   and a tag (e.g. a fiscal year) and column edits belong to the **edge**
   (`StackInput`). Untouched fields pass through.
 - **`columns`** renames or drops many columns in one node (`ColumnEdit`s are
-  shared with stack edges); `only` is an optional keep-and-order list applied
+  shared with stack edges); `only` is an optional keep list (no ordering; display order is the Output card's) applied
   after the edits.
 - **`calculate`** holds several fields, evaluated in order, so a later one may
   read an earlier one.

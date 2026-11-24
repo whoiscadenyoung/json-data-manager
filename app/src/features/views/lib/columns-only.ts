@@ -19,20 +19,6 @@ export function toggleOnly(
   return only === undefined ? [...names] : undefined;
 }
 
-/** Moves the entry at `index` by `delta` places (no-op at the ends). */
-export function moveOnly(only: readonly string[], index: number, delta: -1 | 1): string[] {
-  const target = index + delta;
-  if (target < 0 || target >= only.length) {
-    return [...only];
-  }
-  const next = [...only];
-  const [moved] = next.splice(index, 1);
-  if (moved !== undefined) {
-    next.splice(target, 0, moved);
-  }
-  return next;
-}
-
 /** The names the edits leave that `only` does not list yet. */
 export function missingFromOnly(only: readonly string[], names: readonly string[]): string[] {
   return names.filter((name) => !only.includes(name));

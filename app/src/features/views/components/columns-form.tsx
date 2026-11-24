@@ -3,10 +3,10 @@ import { Button } from "@caden/ui/components/button";
 import { Checkbox } from "@caden/ui/components/checkbox";
 import { Input } from "@caden/ui/components/input";
 import { Label } from "@caden/ui/components/label";
-import { ArrowDown, ArrowUp, Ban, Undo2, X } from "lucide-react";
+import { Ban, Undo2, X } from "lucide-react";
 import { useState } from "react";
 
-import { editedNames, missingFromOnly, moveOnly, toggleOnly } from "../lib/columns-only";
+import { editedNames, missingFromOnly, toggleOnly } from "../lib/columns-only";
 
 type ColumnsNode = Extract<ViewNode, { kind: "columns" }>;
 
@@ -135,7 +135,7 @@ export function ColumnsForm({
   );
 }
 
-/** "Keep only some columns": the kept names in the order they should come out. */
+/** "Keep only some columns": the kept names (row objects have no field order; the Output card sets display order). */
 function OnlyList({
   names,
   node,
@@ -165,37 +165,13 @@ function OnlyList({
             set(toggleOnly(only, names));
           }}
         />
-        <Label htmlFor="columns-only">Keep only some columns, in this order</Label>
+        <Label htmlFor="columns-only">Keep only some columns</Label>
       </div>
       {only !== undefined && (
         <ul className="flex flex-col gap-1">
-          {only.map((name, index) => (
+          {only.map((name) => (
             <li className="flex items-center gap-1 text-sm" key={name}>
               <span className="min-w-0 flex-1 truncate">{name}</span>
-              <Button
-                aria-label={`Move ${name} up`}
-                disabled={index === 0}
-                onClick={() => {
-                  set(moveOnly(only, index, -1));
-                }}
-                size="icon-sm"
-                type="button"
-                variant="ghost"
-              >
-                <ArrowUp />
-              </Button>
-              <Button
-                aria-label={`Move ${name} down`}
-                disabled={index === only.length - 1}
-                onClick={() => {
-                  set(moveOnly(only, index, 1));
-                }}
-                size="icon-sm"
-                type="button"
-                variant="ghost"
-              >
-                <ArrowDown />
-              </Button>
               <Button
                 aria-label={`Stop keeping ${name}`}
                 onClick={() => {
