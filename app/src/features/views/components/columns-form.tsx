@@ -1,9 +1,12 @@
 import type { ColumnEdit, ViewNode } from "@caden/data-core/views";
 import { Button } from "@caden/ui/components/button";
+import { Checkbox } from "@caden/ui/components/checkbox";
 import { Input } from "@caden/ui/components/input";
 import { Label } from "@caden/ui/components/label";
-import { Ban, Undo2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Ban, Undo2, X } from "lucide-react";
 import { useState } from "react";
+
+import { editedNames, missingFromOnly, moveOnly, toggleOnly } from "../lib/columns-only";
 
 type ColumnsNode = Extract<ViewNode, { kind: "columns" }>;
 
@@ -127,6 +130,105 @@ export function ColumnsForm({
           );
         })}
       </div>
+      <OnlyList names={editedNames(fields, node.edits)} node={node} onChange={onChange} />
+    </div>
+  );
+}
+
+/** "Keep only some columns": the kept names in the order they should come out. */
+function OnlyList({
+  names,
+  node,
+  onChange,
+}: {
+  names: string[];
+  node: ColumnsNode;
+  onChange: (node: ViewNode) => void;
+}) {
+  const { only } = node;
+  const set = (next: string[] | undefined): void => {
+    if (next === undefined) {
+      const { only: _dropped, ...rest } = node;
+      onChange(rest);
+    } else {
+      onChange({ ...node, only: next });
+    }
+  };
+  const missing = only === undefined ? [] : missingFromOnly(only, names);
+  return (
+    <div className="flex flex-col gap-2 border-t pt-3">
+      <div className="flex items-center gap-2 text-sm">
+        <Checkbox
+          checked={only !== undefined}
+          id="columns-only"
+          onCheckedChange={() => {
+            set(toggleOnly(only, names));
+          }}
+        />
+        <Label htmlFor="columns-only">Keep only some columns, in this order</Label>
+      </div>
+      {only !== undefined && (
+        <ul className="flex flex-col gap-1">
+          {only.map((name, index) => (
+            <li className="flex items-center gap-1 text-sm" key={name}>
+              <span className="min-w-0 flex-1 truncate">{name}</span>
+              <Button
+                aria-label={`Move ${name} up`}
+                disabled={index === 0}
+                onClick={() => {
+                  set(moveOnly(only, index, -1));
+                }}
+                size="icon-sm"
+                type="button"
+                variant="ghost"
+              >
+                <ArrowUp />
+              </Button>
+              <Button
+                aria-label={`Move ${name} down`}
+                disabled={index === only.length - 1}
+                onClick={() => {
+                  set(moveOnly(only, index, 1));
+                }}
+                size="icon-sm"
+                type="button"
+                variant="ghost"
+              >
+                <ArrowDown />
+              </Button>
+              <Button
+                aria-label={`Stop keeping ${name}`}
+                onClick={() => {
+                  set(only.filter((other) => other !== name));
+                }}
+                size="icon-sm"
+                type="button"
+                variant="ghost"
+              >
+                <X />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {missing.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {missing.map((name) => (
+            <Button
+              aria-label={`Keep ${name}`}
+              key={name}
+              onClick={() => {
+                set([...(only ?? []), name]);
+              }}
+              size="xs"
+              type="button"
+              variant="outline"
+            >
+              + {name}
+            </Button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
