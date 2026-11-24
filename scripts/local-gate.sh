@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Local equivalent of the `full` job in .github/workflows/ci.yml — the whole
-# gate with ZERO Actions minutes (minutes are budget-limited; the workflow
-# only runs `full` on dispatch / main pushes since 2026-11-09).
+# Local equivalent of the `full` job in the PARKED .github/docs/workflows/
+# ci.yml — the whole gate with ZERO Actions minutes. Since 2026-11-24 Actions
+# is disabled entirely (workflows parked under .github/docs/), so this script
+# is the ONLY gate: run it before any risky merge.
 #
 # Boots a throwaway CI-PARITY stack (bare supabase/postgres + storage-api),
 # applies the migration set, then runs every gate: dists, fmt, lint,

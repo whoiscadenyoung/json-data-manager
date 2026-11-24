@@ -1,3 +1,7 @@
+# PARKED 2026-11-24: moved under .github/docs/ to disable Actions (GitHub
+# only reads .github/workflows/). Re-enable = git mv back + push (plain
+# HTTPS works — the gh token carries the `workflow` scope).
+#
 # Self-host CI/CD — docs/self-hosting-design.md §9 (ADR 0016): build and push
 # the app image to GHCR on every main push, then run the deploy hook when the
 # deployment variables are configured.

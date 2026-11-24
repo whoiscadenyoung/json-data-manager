@@ -1,6 +1,6 @@
 ---
 name: ci-disabled-2026-11-24
-description: 2026-11-24 Actions disabled — workflows parked at .github/docs/workflows; .zcode fully untracked; PRs hang on phantom required checks → merge with --admin
+description: 2026-11-24 Actions disabled — workflows parked at .github/docs/workflows; .zcode fully untracked; branch protection removed same day — plain merges
 metadata:
   type: project
 ---

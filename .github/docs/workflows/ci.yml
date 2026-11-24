@@ -1,3 +1,8 @@
+# PARKED 2026-11-24: this file lives under .github/docs/ to disable Actions
+# (GitHub only reads .github/workflows/). Re-enable = git mv back to
+# .github/workflows/ + push (plain HTTPS works — the gh token carries the
+# `workflow` scope). Trigger notes below describe the re-enabled state.
+#
 # Root CI gate — docs/data-platform-roadmap.md §3 item 0.5 introduced this
 # file; since 2026-11-09 it is SPLIT BY COST (Actions minutes are
 # budget-limited — see docs/memory/int-test-db-split-ri-teardown.md):
