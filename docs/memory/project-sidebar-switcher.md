@@ -46,3 +46,10 @@ vertical space; the switcher replaces back-and-forth via /projects.
   projects crumb/button → /projects, collapse/persist per page/editor, editor
   paths default to icon rail, mobile sheet carries switcher + nav, breadcrumb
   Projects crumb → /projects. Test project created + deleted during verification.
+
+**Merge record 2026-11-24:** shipped as PR #368, main @ 9c3f3f2 (merge commit).
+Branch protection on `main` now REQUIRES passing checks — `gh pr merge --merge`
+alone is rejected ("base branch policy prohibits the merge"); when the owner
+says skip CI, merge with `--admin`. Local gates before merge: lint's 3 TS2868
+errors (scripts/seed/storage.ts Bun globals) + fmt:check failure
+(docs/views-node-graph-design.md) are PRE-EXISTING on main, not blockers.
