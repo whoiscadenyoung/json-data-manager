@@ -20,9 +20,11 @@ fast-checks-only policy from 2026-11-09.
 - Re-enable = `git mv .github/docs/workflows .github/workflows` + plain
   HTTPS push — the gh token carries the `workflow` scope since 2026-11-24
   (see gh-push-workflow-scope, now marked resolved).
-- Branch protection still requires 2 status checks that no longer exist: PRs
-  hang on "expected" checks forever — merge with `gh pr merge --admin`; owner
-  direct pushes bypass automatically.
+- Branch protection on `main` was REMOVED the same day (2026-11-24, owner
+  action in repo settings — verified via the protection API returning 404
+  "Branch not protected"), so the phantom-required-checks window was brief:
+  plain `gh pr merge --merge` works again, no `--admin`, and direct pushes
+  need no bypass.
 - Until re-enabled, `scripts/local-gate.sh` is the ONLY gate — run it before
   any risky merge.
 - Same branch: `.zcode/` is now ignored folder-wide and fully untracked (the
