@@ -39,3 +39,6 @@ backups/
 
 # Docker compose local overrides — per-machine port/env tweaks only.
 docker-compose.override.yml
+
+# Seed snapshots (scripts/seed) — password hashes + data files, never in git.
+seed-data/
