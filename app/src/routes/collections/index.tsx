@@ -22,11 +22,8 @@ import { FolderOpen, Layers, MoreHorizontal, Pencil, Plus, Sparkles, Trash2 } fr
 import { useState } from "react";
 import { toast } from "sonner";
 
-import {
-  PgCollectionFormPanel,
-  SourceStoreBadge,
-  collectionDatasetCount,
-} from "#/features/catalog";
+import { PageHeader } from "#/components/page-header";
+import { PgCollectionFormPanel, collectionDatasetCount } from "#/features/catalog";
 import { errorMessage } from "#/lib/errors";
 import * as collectionsStore from "#/lib/store/collections";
 import type { CollectionRow } from "#/lib/store/collections";
@@ -96,7 +93,6 @@ function CollectionCard({
         className="flex min-w-0 flex-1 flex-col gap-1"
       >
         <div className="flex flex-wrap items-center gap-2">
-          <SourceStoreBadge store="postgres" />
           <MintedByChip collectionId={collection.id} />
           <Layers className="h-4 w-4 text-muted-foreground" />
           <h3 className="text-base font-semibold">{collection.name}</h3>
@@ -139,18 +135,13 @@ function CollectionCard({
 }
 
 /**
- * The collections browser. Stage 7 (issue #206) collapsed the §14.6
- * split-brain merge: the pre-migration Convex collections (their
- * `api.cms.collections.*` reads, the Convex edit panel, and the Convex
- * delete mutation) are archived with the provider, so the browser lists the
- * Postgres store only. Newest-first order, the dataset counts (direct joins
+ * The collections browser: newest-first order, the dataset counts (direct joins
  * plus every dataset of a group living in the collection — a group joins as
- * a single unit and brings its members), and the create/edit/delete flows
- * carry over unchanged. #262 (D5): both roles live here — standalone
+ * a single unit and brings its members), and the create/edit/delete flows. #262 (D5): both roles live here — standalone
  * creation stays an exploratory grouping, and a bundle-press-minted
  * collection names its minting project on the card.
  */
-// oxlint-disable-next-line eslint/complexity -- the browser's list/edit/delete render paths are the page's real shape; the same disposition as the pre-disconnect split-brain page.
+// oxlint-disable-next-line eslint/complexity -- the browser's list/edit/delete render paths are the page's real shape.
 function CollectionsPage() {
   const queryClient = useQueryClient(),
     pgCollections = useQuery(collectionsStore.listQueryOptions()),
@@ -216,24 +207,21 @@ function CollectionsPage() {
   }
 
   return (
-    <main className="mx-auto max-w-4xl px-4 py-8">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-primary mb-1">Collections</h1>
-          <p className="text-muted-foreground">
-            Saved groupings — created here, or minted by a project's publish press
-          </p>
-        </div>
-        <Button
-          onClick={() => {
-            setFormCollection(undefined);
-            setFormOpen(true);
-          }}
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          Create collection
-        </Button>
-      </div>
+    <main className="mx-auto max-w-6xl px-4 py-8">
+      <PageHeader
+        action={
+          <Button
+            onClick={() => {
+              setFormCollection(undefined);
+              setFormOpen(true);
+            }}
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Create collection
+          </Button>
+        }
+        to="/collections"
+      />
 
       {items.length === 0 ? (
         <Empty className="min-h-80 border">

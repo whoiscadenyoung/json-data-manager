@@ -10,6 +10,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useMatches } from "@tanstack/react-router";
 import { Menu } from "lucide-react";
 
+import { NAV_LINKS } from "#/components/nav-links";
 import { UserAvatar } from "#/components/user-avatar";
 import { supabase } from "#/integrations/supabase/client";
 import { useSession } from "#/integrations/supabase/provider";
@@ -19,9 +20,7 @@ import { ThemeToggle } from "./theme-toggle";
 
 /**
  * Reload after sign-out so every cached/authenticated corner of the app
- * re-reads the world as signed-out (the auth docs' recommended path). The
- * stage-7 disconnect (issue #206) made this Supabase-only: the Better Auth
- * half the Convex provider rode is retired with the provider, so there is
+ * re-reads the world as signed-out (the auth docs' recommended path). There is
  * exactly one session to end.
  */
 const onSignOut = async () => {
@@ -101,7 +100,7 @@ function SessionUserChip(props: { session: Session }) {
   );
 }
 
-/** The linked chip from a resolved profile row — the restored pre-migration "your profile" button. */
+/** The linked chip from a resolved profile row — the "your profile" button. */
 function LinkedUserChip(props: { session: Session; profile: profilesStore.ProfileRow }) {
   return (
     <UserChip
@@ -115,14 +114,13 @@ function LinkedUserChip(props: { session: Session; profile: profilesStore.Profil
 }
 
 /**
- * The signed-in user's chip — the pre-migration "your profile" button
- * restored: avatar + name from the profiles store (the public projection —
+ * The signed-in user's chip — the "your profile" button: avatar + name from the profiles store (the public projection —
  * the profiles table's email column is not granted to clients, 0002, so the
  * email fallback comes off the session), linking to /users/$userId. The
  * profile id IS the auth uid, which is the route param the profile page keys
  * on. The session-metadata projection holds the render while the profiles
  * read is in flight (no flash), and a missing profile row (session live, row
- * gone) degrades to plain "Signed in", exactly like the pre-migration chip.
+ * gone) degrades to plain "Signed in".
  */
 function UserMenu() {
   const { session, isLoading } = useSession();
@@ -143,10 +141,9 @@ function UserMenu() {
     );
   }
   const profileRow = profile.data;
-  // The chip is LINKED only on a resolved profile row (the restored
-  // pre-migration behavior); an in-flight row degrades to the session
+  // The chip is LINKED only on a resolved profile row ; an in-flight row degrades to the session
   // projection, and a MISSING row (session live, profile trigger never ran)
-  // renders bare "Signed in" — the pre-migration chip's edge shape.
+  // renders bare "Signed in".
   if (profileRow === undefined) {
     return <SessionUserChip session={session} />;
   }
@@ -155,15 +152,6 @@ function UserMenu() {
   }
   return <LinkedUserChip profile={profileRow} session={session} />;
 }
-
-/** The global nav targets, shared by the inline (md+) nav and the phone menu. */
-const NAV_LINKS = [
-  { label: "Projects", to: "/projects" },
-  { label: "Datasets", to: "/datasets" },
-  { label: "Collections", to: "/collections" },
-  { label: "Apps", to: "/apps" },
-  { label: "Maps", to: "/maps" },
-] as const;
 
 /** Below `md` the inline nav does not fit, so it collapses into this menu. */
 function MobileNav() {
@@ -183,6 +171,7 @@ function MobileNav() {
               <Link to={link.to} activeProps={{ className: "font-medium text-foreground" }} />
             }
           >
+            <link.icon />
             {link.label}
           </DropdownMenuItem>
         ))}
@@ -212,9 +201,10 @@ export function Header() {
               <Link
                 key={link.to}
                 to={link.to}
-                className="hover:text-foreground"
+                className="flex items-center gap-1.5 hover:text-foreground"
                 activeProps={{ className: "text-foreground" }}
               >
+                <link.icon className="size-4" />
                 {link.label}
               </Link>
             ))}

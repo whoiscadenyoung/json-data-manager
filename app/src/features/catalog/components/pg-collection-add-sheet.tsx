@@ -308,7 +308,7 @@ export function PgCollectionAddSheet({
               <EmptyTitle>No matches</EmptyTitle>
               <EmptyDescription>
                 {groups.length === 0 && datasets.length === 0
-                  ? "Create Postgres datasets or groups first, then add them here."
+                  ? "Create datasets or groups first, then add them here."
                   : "No datasets or groups match your search."}
               </EmptyDescription>
             </Empty>

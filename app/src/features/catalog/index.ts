@@ -1,9 +1,6 @@
 // Public API of the catalog feature (ADR 0014). Code outside `features/catalog/`
 // imports from here, never from its subfolders.
-export { CollectionAddSheet } from "./components/collection-add-sheet";
-export { CollectionFormPanel } from "./components/collection-form-panel";
-export { GroupFormPanel } from "./components/group-form-panel";
-export { PgDatasetCard, PgGroupCard, SourceStoreBadge } from "./components/pg-browser-cards";
+export { PgDatasetCard, PgGroupCard } from "./components/pg-browser-cards";
 export { PgCollectionAddSheet } from "./components/pg-collection-add-sheet";
 export { PgCollectionFormPanel } from "./components/pg-collection-form-panel";
 export { PgCollectionPage } from "./components/pg-collection-page";
@@ -18,8 +15,6 @@ export {
   collectionDatasetCount,
   datasetCountLabel,
   filterPgBrowserItems,
-  isPostgresCatalogId,
-  mergeSortedItems,
   sortPgBrowserItems,
   withPgDrafts,
   pgBrowserItemSortTime,

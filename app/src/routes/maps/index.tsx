@@ -85,10 +85,9 @@ function MapsPage() {
   return (
     <ExplorerPage
       createLabel="New map"
-      description="Every map in your projects. Maps are made and edited inside a project."
       search={search}
       searchLabel="Search maps"
-      title="Maps"
+      to="/maps"
       onCreate={create}
       onSearch={setSearch}
     >

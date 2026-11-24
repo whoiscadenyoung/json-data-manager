@@ -13,6 +13,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { FolderOpen, Plus, Search } from "lucide-react";
 import { useState } from "react";
 
+import { PageHeader } from "#/components/page-header";
 import {
   PgDatasetCard,
   PgGroupCard,
@@ -33,9 +34,7 @@ import * as projectsStore from "#/lib/store/projects";
  * trigger-maintained entry/feature counts the PG cards' count labels read),
  * the opt-in drafts view, the groups, the collections (a group's
  * "In {collection}" line), and the visible artifact memberships (the
- * per-card "in project" chips; issue #262). This was the Postgres half of
- * the §14.6 split-brain pair; the Convex half is archived with the stage-7
- * disconnect.
+ * per-card "in project" chips; issue #262).
  */
 function usePgBrowserQueries(showDrafts: boolean) {
   return {
@@ -71,15 +70,10 @@ const TYPE_OPTIONS = [
 type TypeFilter = (typeof TYPE_OPTIONS)[number]["value"];
 
 /**
- * The datasets browser. Stage 7 (issue #206) collapsed the §14.6
- * split-brain merge: the pre-migration Convex half (its TanStack convexQuery
- * reads, derived-dataset cards, drift badges, creator profiles) is archived
- * with the provider, so the browser lists the Postgres catalog — datasets
- * and groups, drafts behind the opt-in toggle. Derived datasets render from
- * the Transform tab and the project workspaces (the pre-disconnect PG
- * browser listed them only via the Convex half's registry cards). The
- * filters sidebar (FiltersSidebar + its option sets) and the search/type
- * behavior carry over unchanged.
+ * The datasets browser: datasets and groups, drafts behind the opt-in
+ * toggle. Derived datasets render from the Transform tab and the project
+ * workspaces. The filters sidebar (FiltersSidebar + its option sets) drives
+ * the search/type behavior.
  */
 function FiltersSidebar(props: {
   onShowDraftsChange: (show: boolean) => void;
@@ -149,7 +143,7 @@ function FiltersSidebar(props: {
   );
 }
 
-// oxlint-disable-next-line eslint/complexity -- the browser's search/sort/filter render paths are the page's real shape; the same disposition as the pre-disconnect split-brain page.
+// oxlint-disable-next-line eslint/complexity -- the browser's search/sort/filter render paths are the page's real shape.
 function DatasetsPage() {
   const [search, setSearch] = useState(""),
     [sort, setSort] = useState<SortOption>("newest"),
@@ -194,22 +188,19 @@ function DatasetsPage() {
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-8">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-primary mb-1">Datasets</h1>
-          <p className="text-muted-foreground">
-            Browse datasets and groups — grouped datasets are listed under their group
-          </p>
-        </div>
-        <Button
-          onClick={() => {
-            setTargeting(true);
-          }}
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          Create dataset
-        </Button>
-      </div>
+      <PageHeader
+        action={
+          <Button
+            onClick={() => {
+              setTargeting(true);
+            }}
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Create dataset
+          </Button>
+        }
+        to="/datasets"
+      />
 
       {pgAllDatasets.length === 0 && (pg.groups ?? []).length === 0 ? (
         <Empty className="min-h-80 border">

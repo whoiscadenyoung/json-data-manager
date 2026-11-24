@@ -34,10 +34,9 @@ describe("ExplorerPage", () => {
     render(
       <ExplorerPage
         createLabel="New map"
-        description="Every map."
         search=""
         searchLabel="Search maps"
-        title="Maps"
+        to="/maps"
         onCreate={onCreate}
         onSearch={onSearch}
       >

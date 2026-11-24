@@ -13,6 +13,9 @@ import { Link } from "@tanstack/react-router";
 import { FolderOpen, Plus, Search, type LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
+import type { NavTo } from "#/components/nav-links";
+import { PageHeader } from "#/components/page-header";
+
 /**
  * The global explorers (/maps, /apps): one header, one search box and one row
  * shape, so both read alike. Rows are whole-row links; chips inside a row that
@@ -30,34 +33,31 @@ export function matchesSearch(query: string, texts: ReadonlyArray<string | null>
 export function ExplorerPage({
   children,
   createLabel,
-  description,
   search,
   searchLabel,
-  title,
+  to,
   onCreate,
   onSearch,
 }: {
   children: ReactNode;
   createLabel: string;
-  description: string;
   search: string;
   searchLabel: string;
-  title: string;
+  to: NavTo;
   onCreate: () => void;
   onSearch: (value: string) => void;
 }) {
   return (
     <main className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-8">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="mb-1 text-3xl font-bold text-primary">{title}</h1>
-          <p className="text-muted-foreground">{description}</p>
-        </div>
-        <Button type="button" onClick={onCreate}>
-          <Plus data-icon="inline-start" />
-          {createLabel}
-        </Button>
-      </div>
+      <PageHeader
+        action={
+          <Button type="button" onClick={onCreate}>
+            <Plus data-icon="inline-start" />
+            {createLabel}
+          </Button>
+        }
+        to={to}
+      />
       <div className="relative">
         <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
         <Input

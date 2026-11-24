@@ -22,10 +22,11 @@ import { Label } from "@caden/ui/components/label";
 import { Textarea } from "@caden/ui/components/textarea";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Calendar, ChevronRight, Database, FolderKanban, Plus } from "lucide-react";
+import { Calendar, ChevronRight, FolderKanban, Plus } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { PageHeader } from "@/components/page-header";
 import { useSession } from "@/integrations/supabase/provider";
 import { errorMessage } from "@/lib/errors";
 import {
@@ -38,16 +39,13 @@ import * as projectsStore from "@/lib/store/projects";
 import type { ProjectRow } from "@/lib/store/projects";
 
 /**
- * The Postgres projects browser section (stage 4, #203; lifecycle doc §3) —
- * the working layer's front door for PG-created projects, rendered by the
- * /projects route BESIDE the Convex page (the transitional split-brain:
- * each store lists its own projects, badges mark the origin — Convex
- * projects keep rendering exactly as they always have). Reads are
+ * The projects browser (stage 4, #203; lifecycle doc §3) — the working
+ * layer's front door, rendered by the /projects route. Reads are
  * creator-scoped by RLS (projects are the one private artifact), so this
  * section is signed-in-only and hides itself otherwise.
  */
 
-/** The new-project dialog for PG projects — title required (the only required field), description optional. */
+/** The new-project dialog — title required (the only required field), description optional. */
 function PgNewProjectDialog({
   onOpenChange,
   open,
@@ -93,7 +91,7 @@ function PgNewProjectDialog({
     >
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>New Postgres project</DialogTitle>
+          <DialogTitle>New project</DialogTitle>
           <DialogDescription>
             A project is your working container — imports and drafts land in it; publishing turns
             its artifacts into catalog datasets.
@@ -149,8 +147,7 @@ function PgNewProjectDialog({
   );
 }
 
-/** One project card — the Convex browser's card shape, over the PG row. */
-
+/** One project card. */
 function PgProjectCard({ project, role }: { project: ProjectRow; role: ProjectRole }) {
   return (
     <Card className="flex-row items-center gap-4 px-4 transition-shadow hover:shadow-md">
@@ -160,10 +157,6 @@ function PgProjectCard({ project, role }: { project: ProjectRow; role: ProjectRo
         to="/projects/$projectId"
       >
         <div className="flex flex-wrap items-center gap-2">
-          <Badge title="Created on the Postgres backend — the new native path." variant="outline">
-            <Database className="h-3 w-3" />
-            Postgres
-          </Badge>
           <Badge title={`Your access to this project (${ROLE_LABELS[role]}).`} variant="secondary">
             {ROLE_LABELS[role]}
           </Badge>
@@ -188,10 +181,8 @@ function PgProjectCard({ project, role }: { project: ProjectRow; role: ProjectRo
 }
 
 /**
- * The PG section of the projects page: hidden while the session resolves or
- * signed out (Convex projects keep their own gate), otherwise the caller's
- * PG projects with a create dialog — clearly labeled as the Postgres side of
- * the split.
+ * The projects page: hidden while the session resolves or signed out,
+ * otherwise the caller's projects with a create dialog.
  */
 export function PgProjectsBrowser() {
   const { isLoading, session } = useSession(),
@@ -209,28 +200,21 @@ export function PgProjectsBrowser() {
   }
   const projects = projectsQuery.data;
   return (
-    <section className="mb-10 pt-8">
-      <div className="mb-3 flex items-center justify-between">
-        <div>
-          <h2 className="flex items-center gap-2 text-lg font-semibold">
-            <Database className="h-4 w-4 text-primary" />
-            Postgres projects
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            Created on the Postgres backend — the new native path. Your Convex projects stay below,
-            rendering as they always have.
-          </p>
-        </div>
-        <Button
-          onClick={() => {
-            setFormOpen(true);
-          }}
-          type="button"
-        >
-          <Plus className="mr-2 h-4 w-4" />
-          New project
-        </Button>
-      </div>
+    <section className="mb-10">
+      <PageHeader
+        action={
+          <Button
+            onClick={() => {
+              setFormOpen(true);
+            }}
+            type="button"
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            New project
+          </Button>
+        }
+        to="/projects"
+      />
       {projects === undefined ? (
         <div className="flex min-h-20 items-center justify-center">
           <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-primary" />
@@ -241,7 +225,7 @@ export function PgProjectsBrowser() {
             <EmptyMedia variant="icon">
               <FolderKanban />
             </EmptyMedia>
-            <EmptyTitle>No Postgres projects yet</EmptyTitle>
+            <EmptyTitle>No projects yet</EmptyTitle>
             <EmptyDescription>
               Create one to import data and draft datasets without touching the catalog.
             </EmptyDescription>
@@ -255,7 +239,7 @@ export function PgProjectsBrowser() {
               variant="outline"
             >
               <Plus className="mr-2 h-4 w-4" />
-              Create your first Postgres project
+              Create your first project
             </Button>
           </EmptyContent>
         </Empty>

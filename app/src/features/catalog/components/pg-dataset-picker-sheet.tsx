@@ -16,9 +16,7 @@ import type { DatasetSummaryRow } from "#/lib/store/datasets";
 import { PgDatasetTypeTags } from "./pg-dataset-tags";
 
 /**
- * Side panel listing PG datasets so the user can pick one to add — the core
- * `DatasetPickerSheet`'s Postgres edition (that one is typed on the Convex
- * summary; the two id spaces can't share a prop). Rows carry the same type
+ * Side panel listing datasets so the user can pick one to add. Rows carry the same type
  * tags as the browser (info parity).
  */
 export function PgDatasetPickerSheet({
@@ -85,7 +83,7 @@ export function PgDatasetPickerSheet({
               <EmptyTitle>No datasets to add</EmptyTitle>
               <EmptyDescription>
                 {candidates.length === 0
-                  ? "Every Postgres dataset already lives here."
+                  ? "Every dataset already lives here."
                   : "No datasets match your search."}
               </EmptyDescription>
             </Empty>

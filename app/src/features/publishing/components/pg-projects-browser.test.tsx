@@ -75,7 +75,7 @@ function renderBrowser(): void {
 }
 
 describe("PgProjectsBrowser", () => {
-  it("hides itself while signed out — the Convex section's gate is the page's only visible surface", async () => {
+  it("hides itself while signed out — nothing renders", async () => {
     sessionState.session = null;
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const { container } = render(
@@ -86,14 +86,14 @@ describe("PgProjectsBrowser", () => {
     });
   });
 
-  it("shows the empty state before the first Postgres project", async () => {
+  it("shows the empty state before the first project", async () => {
     renderBrowser();
     await waitFor(() => {
-      expect(screen.getByText("No Postgres projects yet")).toBeTruthy();
+      expect(screen.getByText("No projects yet")).toBeTruthy();
     });
   });
 
-  it("lists the caller's Postgres projects with the store badge and artifact count", async () => {
+  it("lists the caller's projects with the artifact count", async () => {
     state.projects = [
       {
         artifactCount: 3,
@@ -110,7 +110,7 @@ describe("PgProjectsBrowser", () => {
     await waitFor(() => {
       expect(screen.getByText("SMART 2024")).toBeTruthy();
     });
-    expect(screen.getByText("Postgres")).toBeTruthy();
+    expect(screen.queryByText("Postgres")).toBeNull();
     expect(screen.getByText("3 artifacts")).toBeTruthy();
   });
 });

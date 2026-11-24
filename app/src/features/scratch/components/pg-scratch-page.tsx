@@ -67,8 +67,8 @@ export function PgScratchPage({ projectId }: { projectId: string }) {
         </Badge>
       </div>
       <p className="mb-4 text-sm text-muted-foreground">
-        Read-only SQL (Postgres) over this project&apos;s datasets and views, run as you. Nothing
-        here changes data and nothing is kept: to keep a result, save the query as a view.
+        Read-only SQL over this project&apos;s datasets and views, run as you. Nothing here changes
+        data and nothing is kept: to keep a result, save the query as a view.
       </p>
       <div className="grid gap-4 lg:grid-cols-[1fr_16rem]">
         <div className="flex min-w-0 flex-col gap-4">

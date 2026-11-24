@@ -72,9 +72,6 @@ function AppRowItem({ app }: { app: appsStore.AppSummary }) {
   );
 }
 
-const DESCRIPTION =
-  "Pages of maps, charts and tables built inside projects, shared by link when their project allows it.";
-
 /**
  * The /apps EXPLORER (issue #259; §4.3): every app the viewer can see on the
  * shared explorer row, with who can open it and its project. "New app" asks
@@ -121,10 +118,9 @@ export function AppsPage() {
   return (
     <ExplorerPage
       createLabel="New app"
-      description={DESCRIPTION}
       search={search}
       searchLabel="Search apps"
-      title="Apps"
+      to="/apps"
       onCreate={create}
       onSearch={setSearch}
     >

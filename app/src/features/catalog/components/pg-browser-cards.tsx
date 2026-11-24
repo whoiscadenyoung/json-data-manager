@@ -2,7 +2,7 @@ import { Badge } from "@caden/ui/components/badge";
 import { Card } from "@caden/ui/components/card";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Calendar, ChevronRight, Database, FolderKanban, Layers } from "lucide-react";
+import { Calendar, ChevronRight, FolderKanban, Layers } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { UserAvatar } from "#/components/user-avatar";
@@ -13,38 +13,19 @@ import type { PgBrowserItem } from "../lib/pg-dataset-view";
 import { PgDatasetTagsWithCount, PgDatasetTypeTags } from "./pg-dataset-tags";
 
 /**
- * The Postgres half of the split-brain datasets browser (design §14.6: the
- * interim catalog lists BOTH stores, badged). The cards mirror the Convex
- * browser's structure exactly — tags row above the title, creator chip as a
+ * The datasets browser's cards — tags row above the title, creator chip as a
  * SIBLING link of the card link (anchors can't nest; the chip must stay
  * clickable inside the card), group members nested beneath their group —
  * with the PG rows' trigger-maintained counts riding every list.
  */
-
-/** Which backend a row was created on — the §14.6 source badge. */
-export function SourceStoreBadge({ store }: { store: "convex" | "postgres" }) {
-  return store === "postgres" ? (
-    <Badge variant="outline" title="Created on the Postgres backend — the new native path.">
-      <Database />
-      Postgres
-    </Badge>
-  ) : (
-    <Badge
-      variant="outline"
-      title="Created on the legacy Convex backend — keeps rendering as it always has."
-    >
-      Convex
-    </Badge>
-  );
-}
 
 /**
  * The creator chip: a SIBLING of the card's link (never nested inside it),
  * linking to the PG profile page. The profile read is the store's point read
  * — TanStack dedupes identical ids across cards, so a creator with many
  * datasets is one fetch, the same shape the header chip rides. Renders only
- * once the profile resolves; a missing profile row omits the chip (the
- * Convex browser's parity: chips are absent for unresolvable creators).
+ * once the profile resolves; a missing profile row omits the chip (chips are absent for
+ * unresolvable creators).
  */
 function CreatorChip({ profileId }: { profileId: string }) {
   const query = useQuery(profilesStore.getQueryOptions({ profileId })),
@@ -122,7 +103,6 @@ export function PgDatasetCard({
     <Card className="flex-row items-center gap-4 px-4 transition-shadow hover:shadow-md">
       <div className="flex min-w-0 flex-1 flex-col gap-2 py-0">
         <div className="flex flex-wrap items-center gap-2">
-          <SourceStoreBadge store="postgres" />
           <PgDatasetTypeTags dataset={dataset} />
           <LifecycleBadge lifecycle={dataset.lifecycle} />
           {(projects ?? []).map((project) => (
@@ -168,7 +148,6 @@ export function PgGroupCard({
       >
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">
-            <SourceStoreBadge store="postgres" />
             <Badge variant="outline">
               <Layers />
               Group
