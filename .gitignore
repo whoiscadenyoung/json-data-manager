@@ -22,22 +22,14 @@ todos.json
 .input
 exports
 
-# ZCode session tooling — the whole folder is machine-generated and
-# local-only: plans, workflow drafts/runs, .zcodeignore, skills. The tracked
-# copies live elsewhere: skills in .agents/skills/, design docs in docs/.
-# (Supersedes #139 item 9, 2026-11-24: plans file + skill symlinks removed.)
 .zcode/
 .zcodeignore
 
 # Local-only test-account reference — credentials never ship in the repo.
 docs/local-test-accounts.md
 
-# Local pg_dumps of the compose db (the pre-Views backup the handoff names) —
-# never ship data snapshots in the repo.
-backups/
-
-# Docker compose local overrides — per-machine port/env tweaks only.
+# Docker compose local overrides
 docker-compose.override.yml
 
-# Seed snapshots (scripts/seed) — password hashes + data files, never in git.
+# Seed snapshots (scripts/seed) — password hashes + data files.
 seed-data/
