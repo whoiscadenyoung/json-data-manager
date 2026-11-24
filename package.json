@@ -17,9 +17,11 @@
     "lint:fix": "oxlint --type-aware --type-check --fix",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
-    "clean": "find . -name 'node_modules' -type d -prune -exec rm -rf '{}' +"
+    "clean": "find . -name 'node_modules' -type d -prune -exec rm -rf '{}' +",
+    "prepare": "lefthook install"
   },
   "devDependencies": {
+    "lefthook": "^2.2.2",
     "oxfmt": "^0.66.0",
     "oxlint": "^1.81.0",
     "oxlint-tsgolint": "^7.0.2001"
