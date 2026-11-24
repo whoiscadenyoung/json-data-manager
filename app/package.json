@@ -10,7 +10,8 @@
     "dev": "vite dev",
     "build": "vite build && bun run scripts/finalize-ssr-output.ts",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@caden/data-core": "workspace:*",

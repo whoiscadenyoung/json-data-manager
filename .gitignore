@@ -19,6 +19,9 @@ todos.json
 # tscbuildinfo
 .cache
 
+# Turborepo per-package run summaries
+.turbo
+
 .input
 exports
 
