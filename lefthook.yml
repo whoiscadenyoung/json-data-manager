@@ -1,4 +1,4 @@
-# Project-local pre-commit gate: auto-format + lint staged files.
+# Project-local pre-commit gate: lint + auto-format staged files.
 # lefthook runs from node_modules (bun devDependency); hooks are installed
 # into .git/hooks by the root "prepare" script on bun install.
 # scripts/local-gate.sh remains the full gate — this covers commits only.
@@ -6,23 +6,27 @@
 glob_matcher: doublestar
 
 pre-commit:
-  # Sequential so oxlint sees oxfmt's rewritten files.
-  parallel: false
+  # piped = fail-fast in execution order. lefthook sorts commands by
+  # `priority` (alphabetically when unset), so priorities pin lint before
+  # fmt: a lint failure blocks the commit and skips formatting entirely.
+  piped: true
   commands:
-    fmt:
-      # Formats in place; stage_fixed re-stages the result.
-      glob: "*.{js,jsx,ts,tsx,mjs,cjs,json,jsonc,md,css}"
-      exclude:
-        - "**/_generated/**"
-        - "**/routeTree.gen.ts"
-      run: bunx oxfmt {staged_files}
-      stage_fixed: true
     lint:
-      glob: "*.{js,jsx,ts,tsx,mjs,cjs}"
+      priority: 1
+      glob: "**/*.{js,jsx,ts,tsx,mjs,cjs}"
       exclude:
         - "**/_generated/**"
         - "**/routeTree.gen.ts"
         - "packages/ui/src/components/**"
         - "packages/ui/src/niko-table/**"
         - "app/src/lib/supabase/database.types.ts"
-      run: bunx oxlint --type-aware --type-check {staged_files}
+      run: bunx oxlint --no-error-on-unmatched-pattern --type-aware --type-check {staged_files}
+    fmt:
+      priority: 2
+      # Formats in place; stage_fixed re-stages the result.
+      glob: "**/*.{js,jsx,ts,tsx,mjs,cjs,json,jsonc,md,css}"
+      exclude:
+        - "**/_generated/**"
+        - "**/routeTree.gen.ts"
+      run: bunx oxfmt --no-error-on-unmatched-pattern {staged_files}
+      stage_fixed: true
