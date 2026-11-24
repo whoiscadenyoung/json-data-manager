@@ -316,9 +316,9 @@ starts it.
 docker compose up -d"` (the one-shot `migrations` service runs inside
   that `up`, so schema changes ride the same hook).
 
-Repo operating notes: pushes touching `.github/workflows/` need the SSH
-host alias `github.com-whoiscadenyoung` (the gh token lacks the `workflow`
-scope — `docs/memory/gh-push-workflow-scope.md`). Merges stay gated on the
+Repo operating notes: pushes touching `.github/workflows/` work over plain
+HTTPS origin — the gh token has carried the `workflow` scope since
+2026-11-24 (see `docs/memory/gh-push-workflow-scope.md`). Merges stay gated on the
 local gate suite, not CI waits.
 
 ## 10. Backups

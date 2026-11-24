@@ -17,8 +17,8 @@
 # deploy. If the GHCR package is private, pre-authorize the VPS with
 # `docker login ghcr.io` (or make the package public).
 #
-# Repo note: pushes touching .github/workflows/ go through the SSH host alias
-# github.com-whoiscadenyoung (the gh token lacks the `workflow` scope).
+# Repo note: pushes touching .github/workflows/ work over plain HTTPS origin
+# — the gh token has carried the `workflow` scope since 2026-11-24.
 name: Deploy
 
 on:

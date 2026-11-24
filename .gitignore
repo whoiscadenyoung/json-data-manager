@@ -22,13 +22,12 @@ todos.json
 .input
 exports
 
-# ZCode session tooling — transient workflow drafts/runs and the tool's
-# machine-generated .zcodeignore. The tracked skill symlinks under
-# .zcode/skills/ and the existing plans file stay tracked (#139 item 9).
-.zcode/workflow-drafts/
-.zcode/workflow-runs/
+# ZCode session tooling — the whole folder is machine-generated and
+# local-only: plans, workflow drafts/runs, .zcodeignore, skills. The tracked
+# copies live elsewhere: skills in .agents/skills/, design docs in docs/.
+# (Supersedes #139 item 9, 2026-11-24: plans file + skill symlinks removed.)
+.zcode/
 .zcodeignore
-.zcode/plans/
 
 # Local-only test-account reference — credentials never ship in the repo.
 docs/local-test-accounts.md
