@@ -143,6 +143,7 @@ function InviteForm({ onInvited, projectId }: { onInvited: () => void; projectId
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="pg-member-invite-role">Role</Label>
           <Select
+            items={ROLE_LABELS}
             onValueChange={(value) => {
               if (value === "editor" || value === "viewer") {
                 setRole(value);
@@ -235,6 +236,7 @@ function MemberRow({
           <>
             <Select
               disabled={busy || permanent}
+              items={ROLE_LABELS}
               onValueChange={(value) => {
                 if (value === "editor" || value === "owner" || value === "viewer") {
                   void changeRole(value);

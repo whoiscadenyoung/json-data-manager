@@ -1,4 +1,12 @@
 import { Badge } from "@caden/ui/components/badge";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@caden/ui/components/breadcrumb";
 import { Button } from "@caden/ui/components/button";
 import {
   DropdownMenu,
@@ -9,19 +17,37 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@caden/ui/components/dropdown-menu";
+import { Separator } from "@caden/ui/components/separator";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuBadge,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
+} from "@caden/ui/components/sidebar";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useRouterState, type LinkProps } from "@tanstack/react-router";
 import {
+  Check,
   ChevronDown,
+  ChevronsUpDown,
   Database,
   FlaskConical,
+  FolderKanban,
   Globe,
   LayoutDashboard,
   LayoutGrid,
   Map as MapIcon,
-  Menu,
   Network,
-  PanelLeftClose,
   Plus,
   Settings,
   Users,
@@ -36,7 +62,12 @@ import { errorMessage } from "@/lib/errors";
 import * as appsStore from "@/lib/store/apps";
 import * as datasetsStore from "@/lib/store/datasets";
 import * as mapsStore from "@/lib/store/maps";
-import { listMineQueryOptions, resolveMyRole, ROLE_LABELS } from "@/lib/store/project-members";
+import {
+  listMineQueryOptions,
+  resolveMyRole,
+  ROLE_LABELS,
+  type ProjectRole,
+} from "@/lib/store/project-members";
 import * as projectsStore from "@/lib/store/projects";
 
 import { pgPublishProjectBundle } from "../lib/pg-bundle-publish";
@@ -52,11 +83,15 @@ import {
 import { PgPublishBundleDialog } from "./pg-publish-bundle-dialog";
 
 /**
- * The project workspace SHELL (issue #271): a persistent toolbar + left sidebar
- * around every `/projects/$projectId/*` route. The shell owns the project's
- * reads (project, role, catalog, maps, apps — one realtime-fed set of queries
- * for the sidebar's counts and lists), the dialogs the quick-create buttons
- * open (new map, new app, add-existing, publish bundle) and hands sections the
+ * The project workspace SHELL (issue #271, restyled 2026-11-24 after the shadcn
+ * sidebar block): a full-height collapsible sidebar around every
+ * `/projects/$projectId/*` route. The sidebar header is the project SWITCHER
+ * (jump between projects from anywhere in one), and the toolbar — breadcrumb
+ * trail + sidebar toggle + quick-create — moved into the content area so the
+ * sidebar gets the full vertical space. The shell owns the project's reads
+ * (project, role, catalog, maps, apps — one realtime-fed set of queries for
+ * the sidebar's counts and lists), the dialogs the quick-create buttons open
+ * (new map, new app, add-existing, publish bundle) and hands sections the
  * shared state through context. Sections render in the content area.
  */
 
@@ -89,7 +124,7 @@ function subscribeRail(listener: () => void): () => void {
   };
 }
 
-/** The persisted rail preference: per user (localStorage), one value for editors and one for pages. */
+/** The persisted rail preference (per user, one value for editors and one for pages) drives the sidebar's controlled open state. */
 function useRail(editor: boolean): [boolean, (next: boolean) => void] {
   const rail = useSyncExternalStore(
     subscribeRail,
@@ -109,60 +144,42 @@ function useRail(editor: boolean): [boolean, (next: boolean) => void] {
   ];
 }
 
-interface NavItemProps {
-  count?: number;
-  icon: ComponentType<{ className?: string }>;
-  label: string;
-  rail: boolean;
-  linkProps: LinkProps;
-  active: boolean;
+/** Every project route a switcher jump can land on: the section roots (detail paths collapse to their section). */
+const PROJECT_SECTIONS = [
+  { key: "", to: "/projects/$projectId" },
+  { key: "apps", to: "/projects/$projectId/apps" },
+  { key: "catalog", to: "/projects/$projectId/catalog" },
+  { key: "create", to: "/projects/$projectId/create" },
+  { key: "lineage", to: "/projects/$projectId/lineage" },
+  { key: "maps", to: "/projects/$projectId/maps" },
+  { key: "members", to: "/projects/$projectId/members" },
+  { key: "publish", to: "/projects/$projectId/publish" },
+  { key: "scratch", to: "/projects/$projectId/scratch" },
+  { key: "settings", to: "/projects/$projectId/settings" },
+] as const;
+
+type ProjectSection = (typeof PROJECT_SECTIONS)[number]["key"];
+type ProjectSectionTo = (typeof PROJECT_SECTIONS)[number]["to"];
+
+/** The route literal for one section key. */
+function sectionTo(section: ProjectSection): ProjectSectionTo {
+  const match = PROJECT_SECTIONS.find((row) => row.key === section);
+  return match === undefined ? PROJECT_SECTIONS[0].to : match.to;
 }
 
-/** One sidebar entry: label + count when expanded, icon-only (titled) in the rail. */
-function NavItem({ active, count, icon: Icon, label, linkProps, rail }: NavItemProps) {
-  return (
-    <Link
-      {...linkProps}
-      aria-current={active ? "page" : undefined}
-      className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted ${
-        active ? "bg-primary/10 font-medium text-primary" : "text-foreground"
-      } ${rail ? "justify-center" : ""}`}
-      title={label}
-    >
-      <Icon className="h-4 w-4 shrink-0" />
-      {rail ? null : (
-        <>
-          <span className="min-w-0 flex-1 truncate">{label}</span>
-          {count === undefined ? null : (
-            <span className="text-xs text-muted-foreground">{count}</span>
-          )}
-        </>
-      )}
-    </Link>
-  );
-}
-
-function NavGroup({
-  children,
-  label,
-  rail,
-}: {
-  children: ReactNode;
-  label: string;
-  rail: boolean;
-}) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      {rail ? (
-        <div className="mx-2 my-1 border-t" />
-      ) : (
-        <p className="px-2 pt-3 pb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-          {label}
-        </p>
-      )}
-      {children}
-    </div>
-  );
+/** The section another project should open on when jumped to from the current path: detail paths collapse to their section root (a dataset/view under Catalog, a map under Maps, an app under Apps). */
+function switcherSectionOf(rest: string): ProjectSection {
+  if (rest.startsWith("/datasets/") || rest.startsWith("/views/")) {
+    return "catalog";
+  }
+  if (rest.startsWith("/maps/")) {
+    return "maps";
+  }
+  if (rest.startsWith("/apps/")) {
+    return "apps";
+  }
+  const match = PROJECT_SECTIONS.find((row) => row.key !== "" && `/${row.key}` === rest);
+  return match === undefined ? "" : match.key;
 }
 
 /** The list a page belongs to (the crumb before its own name): a dataset or view sits under Catalog, a map under Maps, an app under Apps. */
@@ -214,6 +231,130 @@ function sectionLabel(rest: string, name: string | undefined): string {
     "/settings": "Settings",
   };
   return labels[rest] ?? "Overview";
+}
+
+/**
+ * The project SWITCHER (the sidebar block's version-switcher pattern): the
+ * current project's title + access level on a large menu button, opening into
+ * "All projects" plus every project — the current one checked — jumping each
+ * to the same section of the chosen project. Renders inside SidebarHeader.
+ */
+function ProjectSwitcher({
+  accessLabel,
+  memberships,
+  projectId,
+  project,
+  rest,
+  userId,
+}: {
+  accessLabel: string;
+  memberships: ReadonlyArray<{ projectId: string; role: ProjectRole }> | undefined;
+  projectId: string;
+  project: projectsStore.ProjectRow;
+  rest: string;
+  userId: string;
+}) {
+  const navigate = useNavigate();
+  const projectsQuery = useQuery(projectsStore.listQueryOptions());
+  const projects = projectsQuery.data ?? [];
+  const jump = async (targetId: string): Promise<void> => {
+    await navigate({
+      params: { projectId: targetId },
+      to: sectionTo(switcherSectionOf(rest)),
+    });
+  };
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <SidebarMenuButton
+            className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+            size="lg"
+            title="Switch project"
+          >
+            <span className="flex aspect-square size-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+              <FolderKanban className="size-4" />
+            </span>
+            <span className="grid min-w-0 flex-1 text-left leading-tight">
+              <span className="truncate font-semibold">{project.title}</span>
+              <span className="truncate text-xs text-muted-foreground">{accessLabel}</span>
+            </span>
+            <ChevronsUpDown className="ml-auto size-4 shrink-0 text-muted-foreground" />
+          </SidebarMenuButton>
+        }
+      />
+      <DropdownMenuContent align="start" className="w-64">
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Projects</DropdownMenuLabel>
+          <DropdownMenuItem
+            onClick={() => {
+              void navigate({ to: "/projects" });
+            }}
+          >
+            <FolderKanban className="mr-2 size-4" />
+            All projects
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+        {projects.length > 0 ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              {projects.map((row) => {
+                const rowRole = resolveMyRole(memberships, row.id, row.createdBy, userId);
+                return (
+                  <DropdownMenuItem
+                    className="gap-2"
+                    key={row.id}
+                    onClick={() => {
+                      void jump(row.id);
+                    }}
+                  >
+                    <span className="flex size-6 shrink-0 items-center justify-center rounded-sm border text-xs uppercase">
+                      {row.title.slice(0, 1)}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">{row.title}</span>
+                    <Badge className="shrink-0" variant="outline">
+                      {ROLE_LABELS[rowRole]}
+                    </Badge>
+                    {row.id === projectId ? <Check className="size-4 shrink-0" /> : null}
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuGroup>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** One sidebar entry: a menu button linking somewhere (tooltip in the icon rail) + its count badge. */
+function ShellNavItem({
+  active,
+  count,
+  icon: Icon,
+  label,
+  linkProps,
+}: {
+  active: boolean;
+  count?: number;
+  icon: ComponentType<{ className?: string }>;
+  label: string;
+  linkProps: LinkProps;
+}) {
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        isActive={active}
+        render={<Link {...linkProps} aria-current={active ? "page" : undefined} />}
+        tooltip={label}
+      >
+        <Icon />
+        <span>{label}</span>
+      </SidebarMenuButton>
+      {count === undefined ? null : <SidebarMenuBadge>{count}</SidebarMenuBadge>}
+    </SidebarMenuItem>
+  );
 }
 
 // The shell composes the project's reads, sidebar, toolbar and shell-owned
@@ -369,219 +510,262 @@ function PgProjectShellBody({
         projectId,
       }}
     >
-      <div className="flex min-h-[calc(100vh-4rem)] flex-col bg-background">
-        <div
-          className="flex min-h-12 flex-wrap items-center gap-3 border-b px-4 py-2"
-          data-testid="project-toolbar"
-        >
-          <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-sm">
-            <Link className="text-muted-foreground hover:text-foreground" to="/projects">
-              Projects
-            </Link>
-            <span className="text-muted-foreground">/</span>
-            <Link
-              className="max-w-48 truncate text-muted-foreground hover:text-foreground"
-              params={{ projectId }}
-              to="/projects/$projectId"
-            >
-              {project.title}
-            </Link>
-            <span className="text-muted-foreground">/</span>
-            {parent === undefined ? null : (
-              <>
-                <Link
-                  className="text-muted-foreground hover:text-foreground"
-                  params={{ projectId }}
-                  to={parent.to}
-                >
-                  {parent.label}
-                </Link>
-                <span className="text-muted-foreground">/</span>
-              </>
-            )}
-            <span className="max-w-48 truncate font-medium">{section}</span>
-          </nav>
-          <Badge title={`Your access to this project (${ROLE_LABELS[myRole]}).`} variant="outline">
-            {ROLE_LABELS[myRole]}
-          </Badge>
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            {currentDataset !== undefined && currentDataset.lifecycle === "published" ? (
-              <Link
-                className="inline-flex h-8 items-center rounded-md border px-3 text-sm hover:bg-muted"
-                params={{ schemaId: currentDataset.id }}
-                title="Open the public catalog version of this dataset"
-                to="/datasets/$schemaId"
-              >
-                <Globe className="mr-1 h-3.5 w-3.5" />
-                Public version
-              </Link>
-            ) : null}
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    disabled={!canEdit}
-                    size="sm"
-                    title={
-                      canEdit ? "Add a dataset, view, map, or app to this project" : VIEWER_REASON
-                    }
-                    type="button"
-                  >
-                    <Plus className="mr-1 h-3.5 w-3.5" />
-                    Add new
-                    <ChevronDown className="ml-1 h-3.5 w-3.5 text-muted-foreground" />
-                  </Button>
-                }
-              />
-              <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuGroup>
-                  <DropdownMenuLabel>Data</DropdownMenuLabel>
-                  <DropdownMenuItem
-                    onClick={() => {
-                      void navigate({ params: { projectId }, to: "/projects/$projectId/create" });
+      <SidebarProvider
+        className="min-h-[calc(100svh-3.5rem)]"
+        onOpenChange={(next) => {
+          setRail(!next);
+        }}
+        open={!rail}
+      >
+        <Sidebar collapsible="icon" data-testid="project-sidebar">
+          <SidebarHeader>
+            <ProjectSwitcher
+              accessLabel={ROLE_LABELS[myRole]}
+              memberships={myMembershipQuery.data}
+              projectId={projectId}
+              project={project}
+              rest={rest}
+              userId={userId}
+            />
+          </SidebarHeader>
+          <SidebarContent>
+            <SidebarGroup>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  <ShellNavItem
+                    active={false}
+                    icon={FolderKanban}
+                    label="Projects"
+                    linkProps={{ to: "/projects" }}
+                  />
+                  <ShellNavItem
+                    active={rest === ""}
+                    icon={LayoutGrid}
+                    label="Overview"
+                    linkProps={{
+                      params: { projectId },
+                      to: sectionTo(""),
                     }}
-                  >
-                    <Database className="mr-2 h-4 w-4" />
-                    Dataset
-                    <span className="ml-auto text-xs text-muted-foreground">add or create</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    disabled={!canEdit}
-                    onClick={() => {
-                      void navigate({
-                        params: { projectId },
-                        to: "/projects/$projectId/views/new",
-                      });
+                  />
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+            <SidebarGroup>
+              <SidebarGroupLabel>Data</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  <ShellNavItem
+                    active={rest === "/catalog" || onDataset}
+                    count={catalog.length}
+                    icon={Database}
+                    label="Catalog"
+                    linkProps={{
+                      params: { projectId },
+                      to: sectionTo("catalog"),
                     }}
-                    title={canEdit ? undefined : VIEWER_REASON}
-                  >
-                    <Workflow className="mr-2 h-4 w-4" />
-                    View
-                    <span className="ml-auto text-xs text-muted-foreground">from steps</span>
-                  </DropdownMenuItem>
-                </DropdownMenuGroup>
-                <DropdownMenuSeparator />
-                <DropdownMenuGroup>
-                  <DropdownMenuLabel>Compose</DropdownMenuLabel>
-                  <DropdownMenuItem
-                    disabled={!canEdit}
-                    onClick={() => {
-                      setMapOpen(true);
+                  />
+                  <ShellNavItem
+                    active={rest === "/scratch"}
+                    icon={FlaskConical}
+                    label="Scratch query"
+                    linkProps={{
+                      params: { projectId },
+                      to: sectionTo("scratch"),
                     }}
-                    title={canEdit ? undefined : VIEWER_REASON}
-                  >
-                    <MapIcon className="mr-2 h-4 w-4" />
-                    Map
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    disabled={!canEdit || CreateAppDialog === undefined}
-                    onClick={() => {
-                      setAppOpen(true);
+                  />
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+            <SidebarGroup>
+              <SidebarGroupLabel>Build</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  <ShellNavItem
+                    active={rest.startsWith("/maps")}
+                    count={maps.length}
+                    icon={MapIcon}
+                    label="Maps"
+                    linkProps={{
+                      params: { projectId },
+                      to: sectionTo("maps"),
                     }}
-                    title={canEdit ? "New app" : VIEWER_REASON}
-                  >
-                    <LayoutDashboard className="mr-2 h-4 w-4" />
-                    App
-                  </DropdownMenuItem>
-                </DropdownMenuGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
-        <div className="flex min-h-0 flex-1 flex-wrap md:flex-nowrap">
-          <aside
-            aria-label="Project navigation"
-            className={`shrink-0 border-r bg-muted/30 p-2 ${rail ? "w-full md:w-[52px]" : "w-full md:w-[248px]"}`}
-            data-rail={rail ? "true" : "false"}
-            data-testid="project-sidebar"
+                  />
+                  <ShellNavItem
+                    active={rest.startsWith("/apps")}
+                    count={apps.length}
+                    icon={LayoutDashboard}
+                    label="Apps"
+                    linkProps={{
+                      params: { projectId },
+                      to: sectionTo("apps"),
+                    }}
+                  />
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+            <SidebarGroup>
+              <SidebarGroupLabel>Project</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  <ShellNavItem
+                    active={rest === "/lineage"}
+                    icon={Network}
+                    label="Lineage"
+                    linkProps={{
+                      params: { projectId },
+                      to: sectionTo("lineage"),
+                    }}
+                  />
+                  <ShellNavItem
+                    active={rest === "/settings"}
+                    icon={Settings}
+                    label="Settings"
+                    linkProps={{
+                      params: { projectId },
+                      to: sectionTo("settings"),
+                    }}
+                  />
+                  <ShellNavItem
+                    active={rest === "/members"}
+                    icon={Users}
+                    label="Members"
+                    linkProps={{
+                      params: { projectId },
+                      to: sectionTo("members"),
+                    }}
+                  />
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </SidebarContent>
+          <SidebarRail />
+        </Sidebar>
+        <SidebarInset>
+          <header
+            className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-4"
+            data-testid="project-toolbar"
           >
-            <Button
-              aria-label={rail ? "Expand sidebar" : "Collapse sidebar"}
-              className={rail ? "mx-auto flex" : ""}
-              onClick={() => {
-                setRail(!rail);
-              }}
-              size="icon"
-              title={rail ? "Expand sidebar" : "Collapse sidebar"}
-              variant="ghost"
-            >
-              {rail ? <Menu className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
-            </Button>
-            <nav className="flex flex-col gap-1">
-              <NavItem
-                active={rest === ""}
-                icon={LayoutGrid}
-                label="Overview"
-                rail={rail}
-                linkProps={{
-                  activeOptions: { exact: true },
-                  params: { projectId },
-                  to: "/projects/$projectId",
-                }}
-              />
-              <NavGroup label="Data" rail={rail}>
-                <NavItem
-                  active={rest === "/catalog" || onDataset}
-                  count={catalog.length}
-                  icon={Database}
-                  label="Catalog"
-                  rail={rail}
-                  linkProps={{ params: { projectId }, to: "/projects/$projectId/catalog" }}
+            <SidebarTrigger className="-ml-1" />
+            {/* data-vertical:self-center beats the kit separator's data-vertical:self-stretch (same variant specificity); a stretched fixed-height item parks at the cross-start (the top border). */}
+            <Separator className="mr-1 h-4 data-vertical:self-center" orientation="vertical" />
+            <div className="flex min-w-0 items-center gap-2">
+              <Breadcrumb>
+                <BreadcrumbList>
+                  <BreadcrumbItem>
+                    <BreadcrumbLink render={<Link to="/projects" />}>Projects</BreadcrumbLink>
+                  </BreadcrumbItem>
+                  <BreadcrumbSeparator />
+                  <BreadcrumbItem>
+                    <BreadcrumbLink
+                      render={<Link params={{ projectId }} to="/projects/$projectId" />}
+                    >
+                      <span className="max-w-48 truncate">{project.title}</span>
+                    </BreadcrumbLink>
+                  </BreadcrumbItem>
+                  {parent === undefined ? null : (
+                    <>
+                      <BreadcrumbSeparator />
+                      <BreadcrumbItem>
+                        <BreadcrumbLink render={<Link params={{ projectId }} to={parent.to} />}>
+                          {parent.label}
+                        </BreadcrumbLink>
+                      </BreadcrumbItem>
+                    </>
+                  )}
+                  <BreadcrumbSeparator />
+                  <BreadcrumbItem>
+                    <BreadcrumbPage className="max-w-48 truncate">{section}</BreadcrumbPage>
+                  </BreadcrumbItem>
+                </BreadcrumbList>
+              </Breadcrumb>
+            </div>
+            <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">
+              {currentDataset !== undefined && currentDataset.lifecycle === "published" ? (
+                <Link
+                  className="inline-flex h-8 items-center rounded-md border px-3 text-sm hover:bg-muted"
+                  params={{ schemaId: currentDataset.id }}
+                  title="Open the public catalog version of this dataset"
+                  to="/datasets/$schemaId"
+                >
+                  <Globe className="mr-1 h-3.5 w-3.5" />
+                  Public version
+                </Link>
+              ) : null}
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      disabled={!canEdit}
+                      size="sm"
+                      title={
+                        canEdit ? "Add a dataset, view, map, or app to this project" : VIEWER_REASON
+                      }
+                      type="button"
+                    >
+                      <Plus className="mr-1 h-3.5 w-3.5" />
+                      Add new
+                      <ChevronDown className="ml-1 h-3.5 w-3.5 text-muted-foreground" />
+                    </Button>
+                  }
                 />
-                <NavItem
-                  active={rest === "/scratch"}
-                  icon={FlaskConical}
-                  label="Scratch query"
-                  linkProps={{ params: { projectId }, to: "/projects/$projectId/scratch" }}
-                  rail={rail}
-                />
-              </NavGroup>
-              <NavGroup label="Build" rail={rail}>
-                <NavItem
-                  active={rest.startsWith("/maps")}
-                  count={maps.length}
-                  icon={MapIcon}
-                  label="Maps"
-                  linkProps={{ params: { projectId }, to: "/projects/$projectId/maps" }}
-                  rail={rail}
-                />
-                <NavItem
-                  active={rest.startsWith("/apps")}
-                  count={apps.length}
-                  icon={LayoutDashboard}
-                  label="Apps"
-                  linkProps={{ params: { projectId }, to: "/projects/$projectId/apps" }}
-                  rail={rail}
-                />
-              </NavGroup>
-              <NavGroup label="Project" rail={rail}>
-                <NavItem
-                  active={rest === "/lineage"}
-                  icon={Network}
-                  label="Lineage"
-                  rail={rail}
-                  linkProps={{ params: { projectId }, to: "/projects/$projectId/lineage" }}
-                />
-                <NavItem
-                  active={rest === "/settings"}
-                  icon={Settings}
-                  label="Settings"
-                  linkProps={{ params: { projectId }, to: "/projects/$projectId/settings" }}
-                  rail={rail}
-                />
-                <NavItem
-                  active={rest === "/members"}
-                  icon={Users}
-                  label="Members"
-                  linkProps={{ params: { projectId }, to: "/projects/$projectId/members" }}
-                  rail={rail}
-                />
-              </NavGroup>
-            </nav>
-          </aside>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>Data</DropdownMenuLabel>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        void navigate({ params: { projectId }, to: "/projects/$projectId/create" });
+                      }}
+                    >
+                      <Database className="mr-2 h-4 w-4" />
+                      Dataset
+                      <span className="ml-auto text-xs text-muted-foreground">add or create</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={!canEdit}
+                      onClick={() => {
+                        void navigate({
+                          params: { projectId },
+                          to: "/projects/$projectId/views/new",
+                        });
+                      }}
+                      title={canEdit ? undefined : VIEWER_REASON}
+                    >
+                      <Workflow className="mr-2 h-4 w-4" />
+                      View
+                      <span className="ml-auto text-xs text-muted-foreground">from steps</span>
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>Compose</DropdownMenuLabel>
+                    <DropdownMenuItem
+                      disabled={!canEdit}
+                      onClick={() => {
+                        setMapOpen(true);
+                      }}
+                      title={canEdit ? undefined : VIEWER_REASON}
+                    >
+                      <MapIcon className="mr-2 h-4 w-4" />
+                      Map
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={!canEdit || CreateAppDialog === undefined}
+                      onClick={() => {
+                        setAppOpen(true);
+                      }}
+                      title={canEdit ? "New app" : VIEWER_REASON}
+                    >
+                      <LayoutDashboard className="mr-2 h-4 w-4" />
+                      App
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </header>
           <div className="min-w-0 flex-1">{children}</div>
-        </div>
-      </div>
+        </SidebarInset>
+      </SidebarProvider>
 
       <PgPublishBundleDialog
         onConfirm={(visibility) => {
