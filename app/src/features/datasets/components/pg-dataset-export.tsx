@@ -21,8 +21,7 @@ import type { ExportFormat, ExportFormatOption } from "./export-dialog";
 
 /**
  * The dataset page's export control, Postgres edition (stage 5, #204): the
- * button + format dialog over the PG seam. The flow is the Convex dataset
- * page's handler, re-keyed: rows and geometries materialize through
+ * button + format dialog over the PG seam. Rows and geometries materialize through
  * `pgExportEntries`/`pgExportGeometries` (whole-dataset reads — the seam
  * pages to exhaustion, and oversized geometry payloads resolve through
  * signed URLs), the schema file is the store row's `jsonSchema`.

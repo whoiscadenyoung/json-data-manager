@@ -23,10 +23,8 @@ import {
 import { errorMessage } from "@/lib/errors";
 
 /**
- * The Postgres import pipeline (design doc §10) — the create/import flow's
- * ingest half. The Convex edition of this shipped as uploads + a
- * `@convex-dev/workflow` run; on Postgres the whole pipeline is a client-side
- * loop over one set-based RPC:
+ * The import pipeline (design doc §10) — the create/import flow's ingest
+ * half. The whole pipeline is a client-side loop over one set-based RPC:
  *
  * 1. rows arrive already parsed (`@caden/importers`, unchanged — the
  *    `DatasetImporter` review screen owns that half);
@@ -116,8 +114,7 @@ async function toRpcRow(
     return { data: row.data };
   }
   // The dataset-level simplify opt-in (the importer's checkbox): round every
-  // coordinate to the component's 6 dp (~11 cm) exactly as the Convex write
-  // path's `simplifyGeometryPayload` does — the original file stays retained
+  // coordinate to the component's 6 dp (~11 cm) — the original file stays retained
   // regardless.
   const geometry = simplify
     ? roundGeometryCoordinates(validated.geometry, GEOMETRY_SIMPLIFY_DECIMAL_PLACES)

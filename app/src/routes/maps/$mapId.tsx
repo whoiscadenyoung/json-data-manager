@@ -2,8 +2,6 @@ import { Card, CardContent, CardDescription, CardTitle } from "@caden/ui/compone
 import { useQuery } from "@tanstack/react-query";
 import { Link, createFileRoute, redirect } from "@tanstack/react-router";
 
-import { ArchivedConvexSurface } from "#/components/archived-convex-surface";
-import { isPostgresDatasetId } from "#/lib/dataset-source";
 import * as mapsStore from "#/lib/store/maps";
 
 export const Route = createFileRoute("/maps/$mapId")({
@@ -16,20 +14,10 @@ export const Route = createFileRoute("/maps/$mapId")({
  * in-project editor — which is exactly how the backfilled standalone maps
  * open (the 0020 backfill folded each creator's maps into their own
  * project). A non-member reads the not-found card (the
- * invisible-reads-as-not-found rule), and a pre-migration Convex id
- * renders the shared archived state.
+ * invisible-reads-as-not-found rule).
  */
 function MapRoutePage() {
   const { mapId } = Route.useParams();
-  if (!isPostgresDatasetId(mapId)) {
-    return (
-      <ArchivedConvexSurface
-        description="This workspace served maps created before the Postgres migration. Pre-migration maps were retired with the old backend."
-        homeTo="/maps"
-        title="Convex maps are archived in this build"
-      />
-    );
-  }
   return <MapRedirect mapId={mapId} />;
 }
 

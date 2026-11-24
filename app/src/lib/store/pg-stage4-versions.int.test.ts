@@ -830,8 +830,8 @@ describe.skipIf(!dbUp())("stage 4 — collection_datasets policies tightened (ca
         ),
       ).resolves.toMatch(/row-level|violates/i);
       // A FROZEN dataset denies EVERYONE (can_edit_dataset's lineage arm) —
-      // even the creator's membership write (recorded divergence from the
-      // Convex hook, which allowed organization ops on read-only rows).
+      // even the creator's membership write (organization ops on read-only rows are
+      // denied).
       await s().asUser(ALICE);
       await expect(
         s().denied(

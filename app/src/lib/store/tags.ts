@@ -9,7 +9,7 @@ import { VERSIONS_READ_LIMIT } from "./versions";
  * `public.tags` table (DDL §3.5, migration 0009): named pins on a dataset's
  * frozen versions, unique per (dataset_id, name).
  *
- * Parity notes (each traces to `app/convex/versions/tags.ts`):
+ * Notes:
  *   - `retired_at` null = live; a retired tag stops pinning (the retention
  *     exemption reads live tags only — the migration's keep-N pass).
  *   - Retire REFUSES, never repins, while a consumer_reference still pins
@@ -95,7 +95,7 @@ export interface CreateTagArgs {
  * Creates a tag — a named pin on one frozen version. Returns the row (the
  * SELECT policy passes RETURNING — `using (true)`, no definer helper, so
  * the 0008 trap cannot bite). A duplicate (dataset_id, name) raises the
- * 23505 constraint, exactly like the Convex unique read would have.
+ * 23505 constraint.
  */
 export async function create(args: CreateTagArgs, options?: StoreOptions): Promise<TagRow> {
   const row = await queryRow<TagRow>(

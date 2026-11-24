@@ -17,8 +17,7 @@ vi.mock("#/env", () => ({
     VITE_SUPABASE_URL: "http://127.0.0.1:54321",
   },
 }));
-// The dormant Convex token branch stays mocked (the module still imports it
-// for the archived worker path); nothing live reaches it.
+// The query-client singleton is mocked: the manager only invalidates through it.
 vi.mock("#/integrations/tanstack-query/root-provider", () => ({
   getContext: () => ({ queryClient: { invalidateQueries: mocks.invalidateQueries } }),
 }));
@@ -155,10 +154,7 @@ describe("tile-archive failure store (#184)", () => {
   });
 
   it("the manager clears a failure once the archive is current some other way", async () => {
-    // The pre-disconnect Convex watch drove this scenario off
-    // `api.cms.schemas.listSummaries`; the PG summaries feed drives the same
-    // staleness/clear cycle since stage 2 (issue #201) and is the only feed
-    // since the stage-7 disconnect (issue #206).
+    // The summaries feed drives the staleness/clear cycle.
     mocks.pgSummaries = [pgSummaryRow({ mapTileArchiveBuiltVersion: 2, mapTileCacheVersion: 3 })];
     const { rerender } = renderHook(() => {
       tiles.useMapTileArchiveManager();
@@ -214,8 +210,7 @@ describe("tile-archive failure store (#184)", () => {
 
 // ---------------------------------------------------------------------------
 // The Postgres loop (stage 2, issue #201): same scheduler, uuid ids, the
-// store summaries feed, and the post-install cache invalidation that stands
-// in for Convex's push until realtime lands (stage 6).
+// store summaries feed, and the post-install cache invalidation.
 // ---------------------------------------------------------------------------
 
 const PG_ID = "a4882d70-0000-4000-8000-000000000001";
@@ -290,7 +285,7 @@ describe("the manager's PG summaries loop", () => {
     expect(mocks.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["pg:tile-archives"] });
   });
 
-  it("a PG stale-discarded message also invalidates; a Convex one does not", async () => {
+  it("a stale-discarded message also invalidates", async () => {
     mocks.pgSummaries = [pgSummaryRow()];
     renderHook(() => {
       tiles.useMapTileArchiveManager();

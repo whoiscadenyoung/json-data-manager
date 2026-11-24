@@ -37,7 +37,6 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { useLayerStyles } from "#/features/layer-styles";
-import { isPostgresDatasetId } from "#/lib/dataset-source";
 import { errorMessage } from "#/lib/errors";
 import { largestRelatedSet } from "#/lib/relation-phrases";
 import type { DatasetSummaryRow } from "#/lib/store/datasets";
@@ -432,7 +431,7 @@ export function ProjectMapEditor({ mapId, projectId }: { mapId: string; projectI
       popupInputsOf(dataEntries, layersById),
       new Set((allSummaries ?? []).filter((row) => row.kind === "view").map((row) => row.id)),
     ),
-    pgRowIds = split.rowSchemaIds.filter((schemaId) => isPostgresDatasetId(schemaId)),
+    pgRowIds = split.rowSchemaIds,
     pgFan = useGeometriesByPgDatasets(pgRowIds),
     liveViewIds = pgFan.liveIds ?? NO_LIVE_IDS,
     geometries = pgFan.geometries,

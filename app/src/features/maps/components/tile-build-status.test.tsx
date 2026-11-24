@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TileArchiveBuildFailure } from "../lib/tile-archive";
 
-// The real manager spawns a worker and imports the Convex API; the chip only
+// The real manager spawns a worker and imports the data layer; the chip only
 // reads two hooks and calls one trigger, so those are stubbed per test.
 const store = vi.hoisted(() => ({
   ensure: vi.fn<(schemaId: string) => void>(),

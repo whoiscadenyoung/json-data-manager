@@ -8,7 +8,7 @@ import type { Geometry } from "@caden/json-cms/react";
  * dataset, so its joined fields export as ordinary columns.
  */
 
-/** Minimal entry shape the exporters need (Convex rows satisfy this). */
+/** Minimal entry shape the exporters need. */
 export interface ExportableEntry {
   _id: string;
   data: unknown;

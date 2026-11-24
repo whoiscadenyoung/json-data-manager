@@ -1,316 +1,51 @@
-// The pure engine, React-free (`./transform` subpath): this module is
-// imported by the tile-archive web worker, so it must never pull the
-// `@caden/json-cms/react` barrel (react + convex/react + the query bridge)
-// into the worker bundle.
-/**
- * The row-resolution seam (roadmap 0.2) — the one client-side interface for
- * "resolve this dataset's rows (draft or published, specs applied)".
- *
- * Every surface that materializes dataset rows resolves them here: the
- * dataset table, both export dialogs, map-layer consumption, the
- * tile-archive worker. No surface drives dataset pagination on its own —
- * the cursor chaining, the page-size constants, and the completeness
- * (`isDone`) semantics all live in this one module, which is what the
- * transform engine (ADR 0005 §10, bulk + popup executors), the surfacing
- * work, and the SQL layer (docs/analysis-layer-design.md §2) will plug into.
- *
- * Today "draft or published" is always the live dataset (the catalog
- * lifecycle, ADR 0008, adds the rest), and the spec-application step below
- * is where derived-dataset transform specs land: the bulk step is still
- * identity (stage 3a, #96), while the point-read step has been the popup
- * executor since 3b (issue #97). Both live INSIDE these functions — no
- * consumer drives a spec or paginates on its own; the popup's one extra
- * obligation is mounting the executor's loaders (see `useEnrichedDatasetEntryRow`),
- * which is what keeps the join subscriptions the seam's.
- *
- * Two row shapes exist:
- *   - entry rows, via `entries.listPage` (row-capped pages, cursor-chained);
- *   - geometry rows, via `geometries.list` (byte-budget pages).
- *
- * The byte budget itself is a SERVER-side clamp inside the component's
- * `listGeometries` (`GEOMETRY_PAGE_BYTE_BUDGET` in
- * `packages/json-cms/src/component/lib.ts`, sized — with its 500-row
- * ceiling — under Convex's ~16 MiB per-execution read cap, which components
- * cannot `.paginate()` under and so must self-clamp). It deliberately does
- * not move here; this module owns only the client-side pagination-driving.
- *
- * This module is React-free: the tile-archive worker paginates from a web
- * worker (passing its own `ConvexClient`). The reactive hooks over this
- * interface — and every `entries.listPage` / `geometries.list` subscription
- * — live in `dataset-rows-react.tsx`.
- */
-import type { Geometry } from "@caden/json-cms/react";
-import type { ConvexClient } from "convex/browser";
-import type { FunctionReturnType } from "convex/server";
-
-import { api } from "#convex/_generated/api";
-
-/** One entry row, as `entries.listPage` pages it. */
-export type DatasetEntryRow = FunctionReturnType<typeof api.cms.entries.listPage>["page"][number];
-
-/** One whole `entries.listPage` page (rows + cursor + `isDone`). */
-type EntriesPage = FunctionReturnType<typeof api.cms.entries.listPage>;
-
-/** One geometry row, as `geometries.list` paginates it (see the query's doc comment in the component). */
-export type DatasetGeometryRow = FunctionReturnType<typeof api.cms.geometries.list>["page"][number];
+import type { GeometryType } from "@caden/json-cms/react";
 
 /**
- * Rows per reactive entries page. In the persisted light-state query hash
- * (see `useDatasetEntryPages`) — never change it per call site.
+ * The row shapes the map and table surfaces share. The Postgres stores'
+ * rows (`#/lib/store/entries`, `#/lib/store/geometries`) are lifted into
+ * these by the adapters in `features/maps/components/pg-layer-rows.ts`; the
+ * reads themselves live in `dataset-rows-pg.ts`.
  */
-export const ENTRIES_PAGE_SIZE = 200;
 
 /**
- * Rows per page for the imperative all-rows reads (exports, prefill): a
- * one-shot stream never renders mid-way, so it pages more densely than the
- * table's persisted per-cursor queries. At the component's server-side
- * `MAX_ENTRY_PAGE_ROWS` clamp (packages/json-cms `lib.ts`), so it is honored
- * as asked — raising it requires raising the server clamp too.
+ * One entry row: its id, owning dataset and field data. `_creationTime` is
+ * epoch milliseconds, `0` when the source carries none (live view rows).
  */
-export const ENTRIES_FETCH_PAGE_SIZE = 500;
+export interface DatasetEntryRow {
+  _creationTime: number;
+  _id: string;
+  data: unknown;
+  geometryType?: GeometryType;
+  schemaId: string;
+}
+
+/** One geometry row: the entry it belongs to, with its geometry inline (`geometryJson`) or at a storage URL. */
+export interface DatasetGeometryRow {
+  _creationTime: number;
+  _id: string;
+  bbox?: number[] | null;
+  entryId: string;
+  geometryJson?: string;
+  geometryUrl?: string;
+  schemaId: string;
+  type: GeometryType;
+}
 
 /**
- * Rows requested per geometry page. Mirrors the component's server-side
- * `MAX_GEOMETRY_PAGE_ROWS` clamp — the page byte budget
- * (`GEOMETRY_PAGE_BYTE_BUDGET` in the component's `lib.ts`) actually bounds
- * each page long before this unless every row is tiny, so this only bounds
- * round-trip count.
+ * The map's feature-click payload as the popup's selection shape — kept
+ * structural so any surface that clicks a feature can hand the pair
+ * straight in.
  */
-export const GEOMETRY_PAGE_ROWS = 500;
+export interface FeatureSelection {
+  entryId: string;
+  schemaId: string;
+}
 
-// ---------------------------------------------------------------------------
-// The spec-application step — bulk identity until stage 3a; the point-read
-// popup executor (issue #97) since 3b
-// ---------------------------------------------------------------------------
-
-/**
- * `row.data` as a generic record — `{}` when the entry carries no object.
- */
+/** `row.data` as a generic record — `{}` when the entry carries no object. */
 export function entryDataRecord(row: DatasetEntryRow): Record<string, unknown> {
   return isRecordShaped(row.data) ? row.data : {};
 }
 
 function isRecordShaped(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/**
- * The seam's per-page row hook — identity. The derived-dataset spec pass that
- * used to land here retired with the derived registry (#301); views are real
- * datasets with saved rows, so nothing needs to enrich rows at read time.
- *
- * Seam-internal (exported only for the reactive layer).
- */
-export function applyEntryRowSpecs(rows: DatasetEntryRow[]): DatasetEntryRow[] {
-  return rows;
-}
-
-/**
- * The geometry-row counterpart of `applyEntryRowSpecs` (e.g. a future
- * `geometrySource` spec reshapes these). Identity until specs exist.
- * Seam-internal, as above.
- */
-export function applyGeometryRowSpecs(rows: DatasetGeometryRow[]): DatasetGeometryRow[] {
-  return rows;
-}
-
-/**
- * The point-read counterpart of `applyGeometryRowSpecs` — so an entry's
- * on-demand geometry row (entry details, edit-panel prefill) takes the same
- * spec pass as the map's bulk rows instead of diverging once specs land.
- * Identity until specs exist. Seam-internal, as above.
- */
-export function applyGeometryRowSpec(row: DatasetGeometryRow): DatasetGeometryRow {
-  return row;
-}
-
-// ---------------------------------------------------------------------------
-// The imperative one-shot client (main thread)
-// ---------------------------------------------------------------------------
-
-/**
- * The shared imperative Convex client — ARCHIVED at the stage-7 disconnect
- * (issue #206, design doc §11: the Convex client is "deleted from the shell
- * — not from the tree"). The construction above used to be
- * `new ConvexClient(env.VITE_CONVEX_URL)` with the re-asserting Better Auth
- * token fetcher (`setAuthReasserting(created, fetchConvexToken)`,
- * #133 item 6); the provider unmount and the `VITE_CONVEX_URL` removal
- * leave nothing for it to connect to. The Postgres edition of every read
- * lives in `dataset-rows-pg.ts`; a Convex-origin call reaching this seam
- * now fails loudly instead of dialing a deployment the shell no longer
- * wires.
- *
- * Exported still (the publish orchestrator's signature keeps compiling);
- * the read functions below all resolve through it, so every Convex-origin
- * imperative read throws this same error.
- */
-export function sharedClient(): ConvexClient {
-  throw new Error(
-    "Convex datasets are archived in this build (stage 7 disconnect): the Convex client is unmounted; Postgres datasets resolve through dataset-rows-pg.",
-  );
-}
-
-/** Options for the imperative reads: pass `convex` to run on a specific client (the tile-archive worker passes its own); defaults to the shared main-thread client. `entryOrder` picks the entries page direction — the table's newest-first default ("desc") or the ascending scan callers whose pre-seam read was `entries.listEntriesForSchemas` need for byte-identical output (the group export, 3a). */
-export interface DatasetRowsOptions {
-  convex?: ConvexClient;
-  entryOrder?: "asc" | "desc";
-}
-
-function rowsClient(options: DatasetRowsOptions | undefined): ConvexClient {
-  return options === undefined || options.convex === undefined ? sharedClient() : options.convex;
-}
-
-// ---------------------------------------------------------------------------
-// Bulk path — entries ("resolve this dataset's entry rows")
-// ---------------------------------------------------------------------------
-
-/**
- * Pages `entries.listPage` to exhaustion — the imperative all-rows read the
- * export dialog needs (it writes one file containing the whole dataset) —
- * handing each page (specs applied) to `onPage` as it lands. Sequential:
- * each page resumes from the previous page's cursor. Not a hook: a large
- * dataset's full row set should never become a standing subscription.
- */
-export async function forEachDatasetEntryPage(
-  schemaId: string,
-  onPage: (rows: DatasetEntryRow[]) => void,
-  options?: DatasetRowsOptions,
-): Promise<void> {
-  const convex = rowsClient(options),
-    entryOrder = options === undefined ? undefined : options.entryOrder;
-  let cursor: string | null = null;
-  for (;;) {
-    // oxlint-disable-next-line no-await-in-loop -- each page resumes from the previous page's cursor; inherently sequential.
-    const page: EntriesPage = await convex.query(api.cms.entries.listPage, {
-      order: entryOrder,
-      paginationOpts: { cursor, numItems: ENTRIES_FETCH_PAGE_SIZE },
-      schemaId,
-    });
-    onPage(applyEntryRowSpecs(page.page));
-    if (page.isDone) {
-      return;
-    }
-    cursor = page.continueCursor;
-  }
-}
-
-/**
- * Materializes the dataset's full entry row set (specs applied) —
- * `forEachDatasetEntryPage` accumulated. The export's whole-dataset read.
- * `options.entryOrder` preserves each dialog's pre-seam row order: the
- * dataset dialog has streamed newest-first since the seam landed (0.2);
- * the group dialog's pre-3a read was the ascending index scan, so it asks
- * for "asc" to keep its untoggled output byte-identical.
- */
-export async function fetchDatasetEntryRows(
-  schemaId: string,
-  options?: DatasetRowsOptions,
-): Promise<DatasetEntryRow[]> {
-  const rows: DatasetEntryRow[] = [];
-  await forEachDatasetEntryPage(
-    schemaId,
-    (page) => {
-      rows.push(...page);
-    },
-    options,
-  );
-  return rows;
-}
-
-// ---------------------------------------------------------------------------
-// Bulk path — geometries ("resolve this dataset's geometry rows")
-// ---------------------------------------------------------------------------
-
-/**
- * Pages `geometries.list` to exhaustion, handing each page (specs applied)
- * to `onPage` as it lands — the same completeness loop `useAllPaginated`
- * rides reactively, imperative. Sequential pages resume from the previous
- * cursor.
- */
-export async function forEachDatasetGeometryPage(
-  schemaId: string,
-  onPage: (rows: DatasetGeometryRow[]) => void,
-  options?: DatasetRowsOptions,
-): Promise<void> {
-  const convex = rowsClient(options);
-  let cursor = "";
-  for (;;) {
-    // oxlint-disable-next-line no-await-in-loop -- each page resumes from the previous page's cursor; inherently sequential.
-    const page = await convex.query(api.cms.geometries.list, {
-      paginationOpts: { cursor, numItems: GEOMETRY_PAGE_ROWS },
-      schemaId,
-    });
-    onPage(applyGeometryRowSpecs(page.page));
-    if (page.isDone) break;
-    cursor = page.continueCursor;
-  }
-}
-
-/**
- * Materializes the dataset's full geometry-row set (specs applied) —
- * `forEachDatasetGeometryPage` accumulated. Datasets rendering from tile
- * archives never fetch these reactively (that's the point) — exports and
- * prefill materialize them lazily here, only when the data is actually
- * asked for.
- */
-export async function fetchDatasetGeometryRows(
-  schemaId: string,
-  options?: DatasetRowsOptions,
-): Promise<DatasetGeometryRow[]> {
-  const rows: DatasetGeometryRow[] = [];
-  await forEachDatasetGeometryPage(
-    schemaId,
-    (page) => {
-      rows.push(...page);
-    },
-    options,
-  );
-  return rows;
-}
-
-async function fetchGeometryPayload(url: string): Promise<Geometry> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch geometry (HTTP ${response.status}).`);
-  }
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- a Convex storage URL for a geometry payload, which was validated as a real `Geometry` server-side at write time.
-  return (await response.json()) as Geometry;
-}
-
-/**
- * Resolves rows to `Geometry` values keyed by the geometry row id — the same
- * keying `useResolvedGeometries` produces and `buildGeoJsonCollection`
- * consumes. Inline rows parse synchronously; externally-stored rows fetch in
- * parallel. A malformed or failed row leaves its geometry unresolved (the
- * export shows `null` geometry) instead of failing the whole export.
- */
-export async function resolveGeometryRows(
-  rows: DatasetGeometryRow[],
-): Promise<globalThis.Map<string, Geometry>> {
-  const resolved = new globalThis.Map<string, Geometry>();
-  await Promise.all(
-    rows.map(async (row) => {
-      try {
-        if (row.geometryJson !== undefined) {
-          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- validated as a real `Geometry` server-side at write time.
-          resolved.set(row._id, JSON.parse(row.geometryJson) as Geometry);
-        } else if (row.geometryUrl !== undefined) {
-          resolved.set(row._id, await fetchGeometryPayload(row.geometryUrl));
-        }
-      } catch {
-        // Leave this row unresolved; everything else still exports.
-      }
-    }),
-  );
-  return resolved;
-}
-
-/** One dataset's resolved geometry entries, materialized on demand for an export. */
-export async function resolveDatasetGeometryRows(
-  schemaId: string,
-  options?: DatasetRowsOptions,
-): Promise<Array<[string, Geometry]>> {
-  return [
-    ...(await resolveGeometryRows(await fetchDatasetGeometryRows(schemaId, options))).entries(),
-  ];
 }

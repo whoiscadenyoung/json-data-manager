@@ -23,9 +23,8 @@ import {
  * The bound-datasets store (design doc §8.1 "bindings.ts # stage 7"; issue
  * #206) — the keyed/resumable sync engine's CLIENT half over migration 0012's
  * tables + definer RPCs. The server half of every state transition lives in
- * the migration (0012_bound_datasets_stage7.sql); this module is the Convex
- * sync engine's driver legs, ported from `app/convex/sources/sync.ts`
- * (READ-ONLY parity source) with the scheduler hops replaced by awaited RPC
+ * the migration (0012_bound_datasets_stage7.sql); this module is the sync
+ * engine's driver legs, with the scheduler hops replaced by awaited RPC
  * calls from the browser:
  *
  *   startRun      → rpc binding_start_run   (join-or-revive + the claim lease)
@@ -315,8 +314,8 @@ export function remoteSourceQueryOptions(args: { source: string }, options?: Sto
  * The projection's key → feature map for one binding (sync.ts's
  * commitFeatureMap parity): a commit's ops name entries by foreign key; this
  * resolves each key to its current data so the client can draw what the
- * commit touched (the design's "current position" rule). Bounded at the
- * Convex read's own 2000-mapping cap — this serves demo-scale datasets.
+ * commit touched (the design's "current position" rule). Bounded at a
+ * 2000-mapping cap — this serves demo-scale datasets.
  */
 export function featuresForBindingQueryOptions(
   args: { bindingId: string },
@@ -336,8 +335,8 @@ export function featuresForBindingQueryOptions(
 }
 
 // ---------------------------------------------------------------------------
-// Staleness (the dashboard card + dataset page badges; the Convex
-// sync-staleness.ts split, PG-flavored: timestamps are ISO strings)
+// Staleness (the dashboard card + dataset page badges; timestamps
+// are ISO strings)
 // ---------------------------------------------------------------------------
 
 /** True when the (client-read) source changed after the last completed sync. */
@@ -466,7 +465,7 @@ async function readSourcePage(
  * instead of being stamped as applied while missing (#127 defect 5) — and
  * drains the state until the null cursor (#127 defect 1).
  */
-// oxlint-disable-next-line eslint/complexity -- a faithful port of sync.ts's collect legs; ad hoc splitting risks the drain contract (page → chunks → cursor), the same note the sync card's Convex counterpart carries.
+// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks the collect legs' drain contract (page → chunks → cursor).
 async function collectForRun(
   client: ReturnType<typeof clientOf>,
   source: BoundSource,

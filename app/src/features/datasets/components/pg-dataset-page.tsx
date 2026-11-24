@@ -96,7 +96,7 @@ import {
   type PgColumnFilter,
   type PgTableParams,
 } from "../lib/pg-entries-table";
-import { useSplitReferenceLabels } from "../lib/pg-reference-labels";
+import { useReferenceLabels } from "../lib/pg-reference-labels";
 import { viewRowsReadOnlyReason } from "../lib/view-rows";
 import { CurrencyColumnsCard } from "./currency-columns-card";
 import { EntriesTable } from "./entries-table";
@@ -140,10 +140,8 @@ export interface PgDatasetPageSearch {
 
 /**
  * The dataset page's table rows — the store's `EntryRow` adapted to the
- * shared table's row type (the Convex seam row: `_id`/`_creationTime`/
- * `schemaId`), so one table component serves both backends. `createdAt` is
- * the ISO timestamp the Convex rows' `_creationTime` millisecond field
- * corresponds to.
+ * shared table's row type (`_id`/`_creationTime`/`schemaId`). `createdAt`
+ * is the ISO timestamp the `_creationTime` millisecond field corresponds to.
  */
 function tableRowOf(row: EntryRow): DatasetEntryRow {
   return {
@@ -205,7 +203,7 @@ function resolveEntryForPanel(
   return rows.find((row) => row._id === search.entryId);
 }
 
-/** The edit panel's prefill geometry, resolved through the seam from the entry's geometry row (inline jsonb synchronously; a storage-backed payload stays unresolved rather than fetched into the textarea — same posture as the Convex page). */
+/** The edit panel's prefill geometry, resolved through the seam from the entry's geometry row (inline jsonb synchronously; a storage-backed payload stays unresolved rather than fetched into the textarea). */
 function usePanelGeometry(entryId: string | undefined): Geometry | undefined {
   const geometryQuery = useQuery({
       ...geometriesStore.getByEntryQueryOptions({ entryId: entryId ?? "" }),
@@ -228,7 +226,7 @@ function usePanelGeometry(entryId: string | undefined): Geometry | undefined {
   return resolvedQuery.data.get(entryId);
 }
 
-/** Hosts the create/edit side panel for a Postgres dataset (panel state rides the URL, as on the Convex page). */
+/** Hosts the create/edit side panel for a dataset (panel state rides the URL). */
 function PgEntryPanelHost({
   schemaId,
   dataset,
@@ -245,7 +243,7 @@ function PgEntryPanelHost({
   const loadedEntry = resolveEntryForPanel(rows, search),
     // Deep links (`?panel=edit&entryId=…`) can target a row the table hasn't
     // streamed yet — the store's point read resolves those. `null` means the
-    // entry is gone and the panel stays closed, as on the Convex page.
+    // entry is gone and the panel stays closed.
     fetchedQuery = useQuery({
       ...entriesStore.getQueryOptions({ entryId: search.entryId ?? "" }),
       enabled: loadedEntry === undefined && search.panel === "edit" && search.entryId !== undefined,
@@ -259,7 +257,6 @@ function PgEntryPanelHost({
 
   return (
     <EntryFormPanel
-      backend="pg"
       entry={entry === undefined ? undefined : { data: entry.data, id: entry._id }}
       initialGeometry={initialGeometry}
       open={isOpen}
@@ -282,7 +279,7 @@ function PgEntryPanelHost({
 /** Shared "no declared keys yet" set — the pre-load tick's sanitize target (a stable reference, so the compiler never re-derives it). */
 const NO_DECLARED_KEYS: ReadonlySet<string> = new Set<string>();
 
-// oxlint-disable-next-line eslint/complexity -- the page reads both stores' catalog rows and composes the store seams; ad hoc splitting risks these render paths (the same #82 phase-2 note the sibling Convex pages carry).
+// oxlint-disable-next-line eslint/complexity -- the page composes the store seams; ad hoc splitting risks these render paths.
 function PostgresDatasetBody({
   schemaId,
   search,
@@ -338,10 +335,10 @@ function PostgresDatasetBody({
     rows: DatasetEntryRow[] = pages.rows.map(tableRowOf),
     referenceFields =
       dataset === undefined || dataset === null ? [] : getReferenceFields(dataset.jsonSchema),
-    labelsByField = useSplitReferenceLabels(referenceFields, rows),
+    labelsByField = useReferenceLabels(referenceFields, rows),
     // The dataset's group, for the breadcrumb — skipped unless the dataset
     // is grouped; `null` (a dangling groupId whose group was deleted) drops
-    // the crumb, exactly the Convex page's rule.
+    // the crumb.
     groupQuery = useQuery({
       ...groupsStore.getQueryOptions({
         groupId: dataset === undefined || dataset === null ? "" : (dataset.groupId ?? ""),
@@ -477,7 +474,7 @@ function PostgresDatasetBody({
                 <BreadcrumbItem>
                   <BreadcrumbLink render={<Link to="/datasets" />}>Datasets</BreadcrumbLink>
                 </BreadcrumbItem>
-                {/* The group crumb mirrors the Convex page's trail (Datasets /
+                {/* The group crumb completes the trail (Datasets /
                   {group} / {dataset}); a dangling groupId renders no crumb
                   rather than a dead link. `null` = skipped. */}
                 {groupForBreadcrumb !== null && groupForBreadcrumb !== undefined && (

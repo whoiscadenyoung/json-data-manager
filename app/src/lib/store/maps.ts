@@ -73,7 +73,7 @@ const MAP_SELECT =
     "id,projectId:project_id,name,description,order,viewport,basemap,visibility,createdBy:created_by,createdAt:created_at,updatedAt:updated_at,project:projects(id,title)",
   PLACEMENT_SELECT = "id,mapId:map_id,order,layerMemberId:layer_member_id,visible";
 
-/** The maps list width when a caller doesn't pin one (the Convex `list` call sites all passed 500). */
+/** The maps list width when a caller doesn't pin one. */
 export const DEFAULT_MAPS_LIMIT = 500;
 
 /** The placement-list width (the 0005 layers cap carried over). */
@@ -240,8 +240,7 @@ export async function update(
     clientOf(options)
       .from("maps")
       .update({
-        // A cleared description must overwrite the old one (the Convex
-        // mutation set it to null when the field emptied).
+        // A cleared description must overwrite the old one .
         description: args.description ?? null,
         name: args.name,
         updated_at: new Date().toISOString(),

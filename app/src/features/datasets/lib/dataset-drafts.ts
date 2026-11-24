@@ -6,8 +6,7 @@
  * the published list.
  *
  * Generic over any `{ _id }` row so it stays dependency-free and unit-testable
- * — the route calls it with the convex summaries type, which satisfies the
- * constraint structurally.
+ * — any summaries type satisfies the constraint structurally.
  */
 export function withDrafts<Row extends { _id: string }>(
   datasets: Row[] | undefined,

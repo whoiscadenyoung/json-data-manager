@@ -19,11 +19,10 @@ import { ExportDialog } from "./export-dialog";
 import type { ExportFormat, ExportFormatOption } from "./export-dialog";
 
 /**
- * The group page's export control, Postgres edition (stage 5, #204): the
- * Convex group export's flow, re-keyed onto the PG seam. One whole-dataset
+ * The group page's export control (stage 5, #204). One whole-dataset
  * read per member (`pgExportEntries` — the seam pages to exhaustion), full
  * dataset docs read on demand for the JSON-schema payloads (summaries
- * don't carry them — the Convex page's `fetchSchemasById` rule), each
+ * don't carry them), each
  * geospatial member's geometries resolved through the seam (signed URLs
  * for the oversized payloads), and the joined-fields toggle scoped to THIS
  * group's members — the registry reads ride one flattened query, so specs
@@ -74,7 +73,7 @@ export function PgGroupExport({
             },
           ];
 
-  // oxlint-disable-next-line eslint/complexity -- per-format download paths; ad hoc splitting risks these render paths (the same #82 phase-2 note the Convex group page carries).
+  // oxlint-disable-next-line eslint/complexity -- per-format download paths; ad hoc splitting risks these render paths.
   const handleConfirm = async (format: ExportFormat, includeSchema: boolean) => {
     // Row-streams read through the seam: each member's export rows
     // materialize per dataset through the seam's paginated reads — the
@@ -176,9 +175,8 @@ async function readStoreDataset(datasetId: string): Promise<unknown> {
 
 /**
  * The full docs' SCHEMA payloads for the given members — a dataset that
- * vanished between listing and read contributes nothing (the Convex
- * loader's rule; the JSON payload then carries `$schema: undefined`, the
- * same degradation), and a read failure degrades the same way instead of
+ * vanished between listing and read contributes nothing (the JSON
+ * payload then carries `$schema: undefined`), and a read failure degrades the same way instead of
  * aborting the export.
  */
 async function readSchemasById(

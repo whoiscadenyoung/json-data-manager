@@ -33,17 +33,14 @@ import {
 import type { VersionRow } from "@/lib/version-rows";
 
 import { headVersionOf, overlayRowsQueryOptions, priorVersionOf } from "../lib/pg-versioning";
-// The pure view, NOT the convex wrapper: the wrapper's convex `useQuery`
-// fallbacks throw on render without a ConvexProvider (gone at the stage-7
-// disconnect) and that throw surfaced through the page's QueryErrorBoundary
-// as the "Dataset Not Found" card — the #245 in-place flip on Compare
-// versions. The loader resolves delta + rows itself; nothing here reads
-// convex.
+// The pure view: the loader resolves delta + rows itself (the #245 rule —
+// a data read thrown inside the view would surface through the page's
+// QueryErrorBoundary as the "Dataset Not Found" card).
 import { VersionCompareView } from "./version-compare";
 
 /**
- * The Postgres dataset page's versioning surfaces (stage 4, #203) — the
- * Convex-era Overview cards' PG edition, over the versions/tags stores:
+ * The dataset page's versioning surfaces (stage 4, #203), over the
+ * versions/tags stores:
  *
  * - `PgVersionsCard`: the version chain (one immutable frozen row per
  *   publish), tag management (a tag names one exact version — the pin),

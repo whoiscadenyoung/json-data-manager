@@ -8,8 +8,6 @@ import {
   collectionDatasetCount,
   datasetCountLabel,
   filterPgBrowserItems,
-  isPostgresCatalogId,
-  mergeSortedItems,
   sortPgBrowserItems,
   withPgDrafts,
 } from "./pg-dataset-view";
@@ -178,47 +176,6 @@ function pgTitle(item: ReturnType<typeof buildPgBrowserItems>[number]): string {
   return item.kind === "group" ? item.group.name : item.dataset.title;
 }
 
-/** The identity key — mergeSortedItems' comparator input, already computed. */
-function identityKey(value: { time: number; title: string }): { time: number; title: string } {
-  return value;
-}
-
-describe("mergeSortedItems", () => {
-  it("interleaves two title-sorted lists into one sorted list", () => {
-    const a = [
-        { time: 0, title: "Alpha" },
-        { time: 0, title: "Gamma" },
-      ],
-      b = [
-        { time: 0, title: "Beta" },
-        { time: 0, title: "Delta" },
-      ];
-    expect(
-      mergeSortedItems(a, b, "title-asc", identityKey).map((item) => item.title),
-    ).toStrictEqual(["Alpha", "Beta", "Delta", "Gamma"]);
-  });
-
-  it("interleaves two newest-first lists across the stores' time shapes", () => {
-    const convex = [
-        { time: 300, title: "convex-new" },
-        { time: 100, title: "convex-old" },
-      ],
-      pg = [
-        { time: 200, title: "pg-mid" },
-        { time: 50, title: "pg-oldest" },
-      ];
-    expect(
-      mergeSortedItems(convex, pg, "newest", identityKey).map((item) => item.title),
-    ).toStrictEqual(["convex-new", "pg-mid", "convex-old", "pg-oldest"]);
-  });
-
-  it("keeps both stores' rows when one side is empty", () => {
-    const items = [{ time: 1, title: "solo" }];
-    expect(mergeSortedItems(items, [], "newest", identityKey)).toStrictEqual(items);
-    expect(mergeSortedItems([], items, "newest", identityKey)).toStrictEqual(items);
-  });
-});
-
 describe("datasetCountLabel", () => {
   it("reads features from the trigger-maintained column for geospatial rows", () => {
     expect(datasetCountLabel(datasetRow("d", { featureCount: 1, isGeospatial: true }))).toBe(
@@ -271,13 +228,5 @@ describe("withPgDrafts", () => {
       drafts = [datasetRow("draft1"), datasetRow("d1")];
     const merged = withPgDrafts(published, drafts, true);
     expect(merged.map((row) => row.id)).toStrictEqual(["d1", "draft1"]);
-  });
-});
-
-describe("isPostgresCatalogId", () => {
-  it("accepts uuid ids (any PG row) and rejects dash-free Convex ids", () => {
-    expect(isPostgresCatalogId("7e6c3a58-2f31-4a5b-9d29-0d59f2f1a000")).toBe(true);
-    expect(isPostgresCatalogId("jx78knwxh0aqmnj2jgfg80st318efn5j")).toBe(false);
-    expect(isPostgresCatalogId("")).toBe(false);
   });
 });

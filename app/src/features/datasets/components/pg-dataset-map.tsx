@@ -22,8 +22,7 @@ function envelopeOf(bbox: DatasetBoundingBox | null): [number, number, number, n
 }
 
 /**
- * The dataset's preview map (issue #271 follow-up; the Convex-era page had it
- * and the Postgres port dropped it): the dataset's default-styled points,
+ * The dataset's preview map (issue #271 follow-up): the dataset's default-styled points,
  * lines and polygons with a dashed box drawn on the stored extent. It rides
  * the tile archive when a fresh one exists and the paginated geometry rows
  * otherwise — the same decision the project map editor makes.

@@ -14,7 +14,7 @@ import { TextWidgetSettings, TextWidgetView } from "./text-widget";
 
 /**
  * The widget registry — the one file that knows every widget kind. Adding a
- * kind: its validator in `convex/appBuilder/validators.ts`, a module in this
+ * kind: its stored shape in `../lib/content.ts`, a module in this
  * folder exporting a View and a Settings component, then one entry in
  * `WIDGET_KINDS` and one case in each switch below (TypeScript's
  * exhaustiveness check points at every place that needs it).

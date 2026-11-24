@@ -753,7 +753,7 @@ describe.skipIf(!dbUp())("dataset relations (0021, ADR 0020)", () => {
     const points = await createDataset(s(), { createdBy: ALICE, editPolicy: "open" });
     const polygonEntry = await addGeometryEntry(parks, { name: "dome" }, POLYGON);
 
-    // 20k points: one CTE statement (the convex-test bulk-seed posture), a
+    // 20k points: one CTE statement, a
     // quarter inside the polygon, the rest far outside it.
     await s().expectOk(
       `with e as (

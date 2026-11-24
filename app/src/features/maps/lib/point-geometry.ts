@@ -60,10 +60,9 @@ export function bboxFeature(
 }
 
 /**
- * `schemas.boundingBox` is a plain `v.array(v.number())` (Convex validators
- * can't express a fixed-length tuple), but every write stores exactly 4
- * numbers — this narrows the read side back to the tuple shape `unionBbox`
- * expects, mirroring the component's own `asBoundingBox`.
+ * A stored bounding box is a plain number array, but every write stores
+ * exactly 4 numbers — this narrows the read side back to the tuple shape
+ * `unionBbox` expects.
  */
 export function asBoundingBox(value: number[] | undefined): BoundingBox | undefined {
   if (value === undefined) {
@@ -78,8 +77,8 @@ export function asBoundingBox(value: number[] | undefined): BoundingBox | undefi
  * trigger-maintained expand-only envelope, the stage-1 counterpart of
  * `schemas.boundingBox`), as PostgREST hands it back: the GeoJSON Polygon
  * the PostGIS envelope renders to. Unfolds the outer ring into the same
- * `[minLon, minLat, maxLon, maxLat]` tuple the Convex summaries carry, so a
- * map surface can instant-open either backend's dataset from its stored
+ * `[minLon, minLat, maxLon, maxLat]` tuple, so a
+ * map surface can instant-open a dataset from its stored
  * extent — zero geometry loads on collection open (the ui-polish rule:
  * stored extent + corner "Loading features…" spinner + one exact refit at
  * completion) — with ONE conversion helper instead of per-surface

@@ -3,9 +3,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { clientOf, queryRow, queryRows, type StoreOptions } from "./client";
 
 /**
- * The groups store (design doc §8.1; stage-3 catalog, issue #202) — the PG
- * counterpart of today's `api.cms.groups.*` (exposed in
- * `app/convex/cms/groups.ts`): `list` / `get` / `create` / `update` /
+ * The groups store (design doc §8.1; stage-3 catalog, issue #202): `list` / `get` / `create` / `update` /
  * `remove` / `setCollection` / `setDatasetGroup`, over the `public.groups`
  * table and the datasets-side `group_id` column (DDL §3.4 + §3.2's stage-3
  * column, migration 0007).
@@ -32,8 +30,7 @@ import { clientOf, queryRow, queryRows, type StoreOptions } from "./client";
  *     dataset write. Denial shape: the UPDATE filters to zero rows and this
  *     module returns quietly — the recorded "reads as not found" rule.
  *
- * Transactions: none needed — every mutation is one statement; the component
- * runs each of these as one Convex transaction.
+ * Transactions: none needed — every mutation is one statement.
  *
  * NOTE: narrow local interfaces typed from the design doc's DDL (§3.4), not
  * the generated `database.types.ts` (see `./client`).
@@ -54,7 +51,7 @@ export interface GroupRow {
 const GROUP_SELECT =
   "id,collectionId:collection_id,name,description,createdBy:created_by,createdAt:created_at,updatedAt:updated_at";
 
-/** The groups-list width when a caller doesn't pin one (the Convex call sites all passed 500). */
+/** The groups-list width when a caller doesn't pin one. */
 export const DEFAULT_GROUPS_LIMIT = 500;
 
 // ---------------------------------------------------------------------------
@@ -124,7 +121,7 @@ export interface GroupArgs {
   collectionId?: string;
 }
 
-/** The component's create/update validation (`ConvexError("Group must have a name")`). */
+/** Create/update validation. */
 function assertNamed(args: { name: string }): void {
   if (!args.name.trim()) {
     throw new Error("Group must have a name");
@@ -197,8 +194,7 @@ export async function setCollection(
 }
 
 /**
- * `api.cms.collections.setSchemaGroup` parity (the Convex wrapper exposed it
- * under collections; it lives HERE because it is group membership): sets (or
+ * Sets (or
  * clears, via null) a dataset's group. Never touches the collection join
  * table. Gated by the datasets UPDATE policy — a locked dataset regroups
  * creator-only; a denial filters to zero rows and returns quietly (the

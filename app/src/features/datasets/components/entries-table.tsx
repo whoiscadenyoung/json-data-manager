@@ -30,7 +30,7 @@ import type { ColumnFiltersState, SortingState, Updater } from "@tanstack/react-
 import { Copy, Eye, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
-import type { DatasetEntryRow } from "#/lib/dataset-rows";
+import { entryDataRecord, type DatasetEntryRow } from "#/lib/dataset-rows";
 
 import { useDatasetLinks } from "../lib/dataset-project-context";
 import {
@@ -145,7 +145,7 @@ function RowActions({
   schemaId: string;
   entry: Entry;
   onEdit: (entry: Entry) => void;
-  /** Present only where the backend serves a single-entry delete (the Postgres store; the Convex wrapper set never exposed one). */
+  /** Present only where the backend serves a single-entry delete (the Postgres store). */
   onDelete?: (entry: Entry) => void;
 }) {
   const links = useDatasetLinks(),
@@ -221,8 +221,7 @@ const GEOMETRY_COLUMN_SIZE = 110,
   ACTIONS_COLUMN_SIZE = 40;
 
 /**
- * How much sorting/filtering the server can serve. `"client"` (the Convex
- * path) sorts and filters every column in the browser; `"server"` (the
+ * How much sorting/filtering the server can serve. `"client"` sorts and filters every column in the browser; `"server"` (the
  * `search_entries` RPC, §5.1) sorts by a declared property key and filters
  * data keys only — the Geometry and Created columns carry no data key, so
  * they opt out of both rather than raising the RPC's `invalid key` guard.
@@ -244,8 +243,8 @@ function buildColumns(
   currencyByField: Readonly<Record<string, string>>,
 ): DataTableColumnDef<Entry>[] {
   const server = surfaces === "server",
-    // The Postgres filter menu's field selector lists data columns only (see
-    // the surfaces doc above); the Convex table keeps every column filterable.
+    // The server-mode filter menu's field selector lists data columns only
+    // (see the surfaces doc above); client mode keeps every column filterable.
     dataFilterable = !server;
 
   const propertyColumns: DataTableColumnDef<Entry>[] = properties.map((name) => {
@@ -254,12 +253,12 @@ function buildColumns(
       // type: a numeric column gets the number input (so eq arrives as a
       // number and the RPC's jsonb containment matches) and only the §5.1
       // operators the RPC serves — a control the server answers wrong would
-      // be a silently no-op control (the ui-polish rule). The client-side
-      // Convex table keeps its original text control and full operator set.
+      // be a silently no-op control (the ui-polish rule). Client
+      // mode keeps its text control and full operator set.
       propertyType = server ? columnTypes.get(name) : undefined,
       variant = propertyType === undefined ? "text" : servedVariantOf(propertyType);
     return {
-      accessorFn: (entry) => entry.data[name],
+      accessorFn: (entry) => entryDataRecord(entry)[name],
       cell: (info) =>
         referenceField ? (
           <ReferenceCell
@@ -382,15 +381,14 @@ export function EntriesTable({
   liveRows?: boolean;
   /**
    * Pre-resolved reference labels, grouped by field name. When given, the
-   * table skips its internal Convex label query — the Postgres host resolves
-   * labels through the store's batched `listForIds` (split-brain aware:
-   * referenced entries may live in either backend).
+   * table builds no labels of its own — the host resolves them through the
+   * store's batched `listForIds`.
    */
   labelsByField?: Map<string, Map<string, string>>;
   /**
    * The declared property types (`declaredPropertyTypes` of the dataset's
    * schema). Server mode reads it for the per-column filter variant and the
-   * served-operator restriction; the client-side Convex table ignores it.
+   * served-operator restriction; client mode ignores it.
    */
   columnTypes?: ReadonlyMap<string, PgPropertyType>;
   /**
@@ -411,11 +409,8 @@ export function EntriesTable({
   const referenceFields = getReferenceFields(schema),
     referenceFieldsByName = new Map(referenceFields.map((f) => [f.name, f])),
     // Labels resolve OUTSIDE in every live mode (the caller owns the store
-    // reads — see the prop doc; the PG page rides `useSplitReferenceLabels`).
-    // The internal Convex `listForIds` lookup this component used to run for
-    // its client-side mode is archived with the stage-7 disconnect (issue
-    // #206): without a passed-in map, reference links render their raw
-    // entry id rather than a live Convex read.
+    // reads — see the prop doc; the PG page rides `useReferenceLabels`).
+    // Without a passed-in map, reference links render their raw entry id.
     resolvedLabelsByField = labelsByField ?? buildLabelsByField(referenceFields, []),
     columns = buildColumns(
       schemaId,

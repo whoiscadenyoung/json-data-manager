@@ -7,8 +7,7 @@ import { supabase } from "#/integrations/supabase/client";
  * and the PG row-resolution seam (`dataset-rows-pg.ts`) resolve their
  * `SupabaseClient` through here, so a caller can run on a specific instance
  * (the tile-archive web worker passes its own) while everything else rides
- * the shared browser client — the same shape `dataset-rows.ts` had with its
- * shared `ConvexClient`.
+ * the shared browser client.
  *
  * NOTE: the store modules deliberately define their own NARROW row and
  * RPC-argument interfaces, typed from the migration design doc's DDL and RPC

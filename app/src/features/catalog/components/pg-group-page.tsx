@@ -72,7 +72,7 @@ function PgGroupNotFoundCard() {
 }
 
 /** The group page's content, once the group read has landed. */
-// oxlint-disable-next-line eslint/complexity -- the page reads both stores' catalog rows and composes the store seams; ad hoc splitting risks these render paths (the same #82 phase-2 note the sibling Convex pages carry).
+// oxlint-disable-next-line eslint/complexity -- the page composes the store seams; ad hoc splitting risks these render paths.
 function PgGroupPageBody({
   groupId,
   renderExport,

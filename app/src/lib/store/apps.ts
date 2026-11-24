@@ -38,8 +38,7 @@ import type { VisibilityLevel } from "./visibility";
  *
  * Every write helper returns the rows it affected (the stage-4
  * silent-denial rule): RLS-filtered writes answer 0 rows instead of
- * throwing — a denial reads as not-found, exactly like the Convex creator
- * check answered.
+ * throwing — a denial reads as not-found.
  *
  * NOTE: narrow local interfaces typed from migration 0022's DDL, not the
  * generated `database.types.ts` (see `./client`).
@@ -297,10 +296,9 @@ function cleanDescription(description: string | undefined): string | null {
 }
 
 /**
- * Shape rules the DB can't express — the full assertContentShape parity
- * (issue #221): bounds, unique ids, and dataset references closed over the
- * app's sources, checked in the Convex module's order so a multi-violation
- * blob draws the same refusal it always drew. Map widgets reference a
+ * Shape rules the DB can't express (issue #221): bounds, unique ids, and
+ * dataset references closed over the app's sources, checked in a fixed
+ * order so a multi-violation blob draws a stable refusal. Map widgets reference a
  * stored project map by id (issue #259) — shape-checked as a string, never
  * against the app's datasets.
  */
@@ -347,14 +345,14 @@ function assertPageShape(page: AppPageConfig): void {
   }
 }
 
-/** The Convex assertUnique: every id in the list distinct. */
+/** Every id in the list distinct. */
 function assertUnique(ids: readonly string[], message: string): void {
   if (new Set(ids).size !== ids.length) {
     throw new Error(message);
   }
 }
 
-/** The Convex assertInteger, widened to unknown — malformed jsonb refuses with the same message a bound violation draws. */
+/** Asserts an integer in range, widened to unknown — malformed jsonb refuses with the same message a bound violation draws. */
 function assertInteger(value: unknown, min: number, max: number, label: string): void {
   if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) {
     throw new Error(`${label} must be a whole number from ${min} to ${max}.`);
@@ -524,15 +522,15 @@ export async function updateDetails(
  * write, gated on the revision the editor loaded. Returns the new revision.
  * Throws the stale-save error when 0 rows matched — a stale revision
  * (another tab saved first) or a non-editor's write, which are
- * indistinguishable by design (the Convex appForWrite shape answered "App
- * not found." for both).
+ * indistinguishable by design (both answer "App
+ * not found.").
  *
- * Sources gate on visibility (issue #221, saveContent parity): only the
+ * Sources gate on visibility (issue #221): only the
  * ADDED ids answer to RLS — the datasets already in the app are kept even
  * if they have since gone away, so a deleted dataset never wedges the
- * editor (the Convex module's added-only walk; one `.in` read instead of
+ * editor (an added-only walk; one `.in` read instead of
  * one per id, the duplicate() precedent). An invisible or deleted addition
- * refuses as "Dataset not found." — the Convex error verbatim.
+ * refuses as "Dataset not found.".
  */
 export async function saveContent(
   args: { appId: string; expectedRevision: number; content: AppContent },

@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { Fragment, useState } from "react";
 
-import type { FeatureSelection } from "#/lib/dataset-rows-react";
+import type { FeatureSelection } from "#/lib/dataset-rows";
 import { formatPropertyValue } from "#/lib/format";
 import * as relationsStore from "#/lib/store/relations";
 import type { DatasetRelationRow } from "#/lib/store/relations";

@@ -205,8 +205,7 @@ export function servedVariantOf(type: PgPropertyType): FilterVariant {
  * One filter value coerced to the declared column type, or undefined when it
  * can't be — a non-numeric value on a number column (or anything on a boolean
  * one) would produce a §5.1 predicate that matches nothing, so the row drops
- * instead of silently filtering everything out (the Convex client's NaN-guard
- * semantics). Without schema info the value passes through as the string the
+ * instead of silently filtering everything out. Without schema info the value passes through as the string the
  * menu produced.
  */
 function coerceToColumnValue(value: string, type: PgPropertyType | undefined): unknown {

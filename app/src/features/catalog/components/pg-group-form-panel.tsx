@@ -29,12 +29,10 @@ import type { GroupRow } from "#/lib/store/groups";
 const NO_PARENT = "none";
 
 /**
- * Side panel for creating or editing a Postgres group — the Convex
- * `GroupFormPanel`'s PG edition. Create mode offers the parent-collection
- * select (a group may float standalone, component parity); edit mode manages
+ * Side panel for creating or editing a group. Create mode offers the
+ * parent-collection select (a group may float standalone); edit mode manages
  * name/description only — moving between collections is the collection
- * add-sheet's "add as one unit" action (`groups.setCollection`), exactly as
- * on Convex.
+ * add-sheet's "add as one unit" action.
  */
 export function PgGroupFormPanel({
   collectionId,

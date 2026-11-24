@@ -2,9 +2,7 @@ import { z } from "zod";
 
 /**
  * The bound-datasets source layer, client half (docs/bound-datasets-design.md
- * §4/§8, issue #206; design doc §8.1 "sources.ts" alongside bindings.ts) —
- * the PG counterpart of `app/convex/sources/registry.ts` +
- * `app/convex/sources/remoteClient.ts` (READ-ONLY parity sources).
+ * §4/§8, issue #206; design doc §8.1 "sources.ts" alongside bindings.ts).
  *
  * A `BoundSource` is everything the sync machinery knows about a connected
  * external source: the descriptor its bound dataset is created from, the
@@ -17,20 +15,18 @@ import { z } from "zod";
  * Transports:
  *   - "http"   — a remote source (docs/remote-source-adapter-design.md): the
  *     foreign app's `/manifest` + `/layers/{layer}/rows` contract, read with
- *     the validated/retrying client below (remoteClient.ts parity). No commit
+ *     the validated/retrying client below. No commit
  *     feed in v1 — every sync is a full-state pass.
  *   - "client" — a registered reader function pair (the co-deployed form's
- *     analogue: the Convex demo read host tables in-process, and the PG side
- *     keeps that seam open for a stand-in/demo source built over ordinary PG
- *     tables — the migration deliberately carries NO foreign-domain tables).
+ *     analogue: the seam stays open for a stand-in/demo source built over
+ *     ordinary tables — the migration deliberately carries NO foreign-domain
+ *     tables).
  *
- * The registry ships the two deployment-data layers (the Convex registry's
- * non-demo entries, parity verbatim); the demo foreign app's sources are NOT
+ * The registry ships the two deployment-data layers; the demo foreign app's sources are NOT
  * carried (issue #206: "demoSources … NOT carried"). Tests and a rebuilt demo
  * inject sources with `registerSource`.
  *
- * All the engine invariants this module feeds are #127's (READ-ONLY parity:
- * app/convex/sources/sync.ts header): a state reader serves ONE PAGE per call
+ * All the engine invariants this module feeds are #127's : a state reader serves ONE PAGE per call
  * and reports its continuation (cursor null = exhausted) — the sync's collect
  * drains pages until the null cursor, because a truncated read would reach
  * finalize's sweep and delete rows past the cap. The commit tail drains page
@@ -121,7 +117,7 @@ interface SourceBase {
 
 /** A remote source: one layer of another app's HTTP contract. */
 export interface HttpSource extends SourceBase {
-  /** Env var NAMES (resolved at call time from import.meta.env — the bundle exposes VITE_-prefixed vars; the Convex descriptors' names gain the prefix). */
+  /** Env var NAMES (resolved at call time from import.meta.env — the bundle exposes VITE_-prefixed vars). */
   env: { secret: string; url: string };
   /** The layer key in the remote manifest. */
   layer: string;
@@ -154,8 +150,7 @@ export type BoundSource = HttpSource | ClientSource;
 /** The registry every bound source must be declared in. */
 const SOURCES = new Map<string, BoundSource>();
 
-// The deployment-data app's two geometry layers (the Convex registry's
-// non-demo entries, verbatim — json-cms holds one geometry per entry, so the
+// The deployment-data app's two geometry layers (json-cms holds one geometry per entry, so the
 // centroid and the optional secondary route bind as two datasets keyed by the
 // same deployment id).
 const DEPLOYMENTS_ENV = {

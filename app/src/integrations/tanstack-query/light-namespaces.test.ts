@@ -8,7 +8,7 @@ describe("isPersistableQueryName", () => {
     expect(isPersistableQueryName("pg:entries")).toBe(true);
     expect(isPersistableQueryName("pg:geometries")).toBe(false);
     expect(isPersistableQueryName("pg:profiles")).toBe(false);
-    // The convex namespaces left with the stage-7 disconnect (issue #206).
+    // Only the pg: namespaces persist.
     expect(isPersistableQueryName("cms/schemas")).toBe(false);
     expect(isPersistableQueryName("cms/entries")).toBe(false);
   });
@@ -36,10 +36,8 @@ describe("isPersistableQueryHash", () => {
     expect(isPersistableQueryHash("[]")).toBe(false);
   });
 
-  it("never restores the convex-era hashes (v2 cache is discarded by the v3 key bump)", () => {
-    expect(isPersistableQueryHash("convexQuery|cms/schemas:list|{}")).toBe(false);
-    expect(isPersistableQueryHash('convexQuery|cms/entries:listPage|{"schemaId":"abc"}')).toBe(
-      false,
-    );
+  it("never restores hashes outside the pg: namespaces", () => {
+    expect(isPersistableQueryHash("legacy|cms/schemas:list|{}")).toBe(false);
+    expect(isPersistableQueryHash('legacy|cms/entries:listPage|{"schemaId":"abc"}')).toBe(false);
   });
 });

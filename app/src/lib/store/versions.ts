@@ -7,12 +7,11 @@ import { CATALOG_READ_LIMIT } from "./datasets";
 
 /**
  * The versions store (design doc §8.1 "versions.ts # datasetVersions/tags/
- * policies/consumerReferences"; stage 4, issue #203) — the PG counterpart of
- * the Convex `api.versions.*` domain over the `public.dataset_versions`,
+ * policies/consumerReferences"; stage 4, issue #203) over the `public.dataset_versions`,
  * `public.version_entries`, `public.consumer_references`, and
  * `public.version_policies` tables (DDL §3.5, migration 0009).
  *
- * Parity notes (each traces to `app/convex/versions/`):
+ * Notes:
  *   - A chain is one dataset's `dataset_versions` rows, newest-first; the
  *     head is the newest row (the PG form of chain.ts's head selection —
  *     publish_version stamps `ref` with the publish key, so the
@@ -24,14 +23,12 @@ import { CATALOG_READ_LIMIT } from "./datasets";
  *     (DEFAULT_KEEP_VERSIONS, nothing pinned) exactly like the component
  *     store did; a foreign anchor's row is RLS-invisible, which answers the
  *     same defaults (the tags.ts:636-641 rule).
- *   - The delta is computed on demand (the `getVersionDelta` shape,
- *     tags.ts:677-709), bounded at VERSION_DIFF_LIMIT rows per side with an
- *     exact `truncated` flag (#126). The Convex tagDeltas table (stored
- *     sequential deltas) has no §3.5 counterpart and is not carried — the
- *     always-correct arbitrary-pair path is the PG read.
+ *   - The delta is computed on demand (the `getVersionDelta` shape), bounded at VERSION_DIFF_LIMIT rows per side with an
+ *     exact `truncated` flag (#126). Stored sequential
+ *     deltas are not carried — the always-correct arbitrary-pair path is the
+ *     read.
  *   - Pin/float consumer references carry `pinned_version_id` +
- *     `pinned_ref` when pinned, both absent on float (the DB check
- *     enforces what the Convex validators did).
+ *     `pinned_ref` when pinned, both absent on float (enforced by a DB check).
  *
  * Every write helper returns the rows it affected (or the row it wrote): a
  * 0-row UPDATE reads as "not found / denied" and the UI can say so honestly
@@ -279,9 +276,8 @@ export interface CommitOp {
 
 /**
  * Diffs two frozen versions into the commits' ops shape — the compare
- * view's add/remove/modify overlay (the `getVersionDelta` parity;
- * versioning.ts:197-249's algorithm, re-stated here so the client computes
- * it over materialized PG rows without the Convex host). Either side at the
+ * view's add/remove/modify overlay (computed on the client over
+ * materialized rows). Either side at the
  * read budget answers `truncated: true` (#126).
  */
 export async function getVersionDelta(
@@ -345,9 +341,8 @@ function frozenAtOf(row: DatasetVersionRow): number {
 
 /**
  * The newest head per dataset from one ordered read (created_at desc — the
- * versions_by_dataset index order): the first row per dataset wins. The PG
- * form of `resolveSourceHead` for PUBLISH chains — one table serves what
- * the Convex walk asked two stores.
+ * versions_by_dataset index order): the first row per dataset wins. The
+ * head resolution for PUBLISH chains.
  */
 export function headsOf(rows: ReadonlyArray<DatasetVersionRow>): Map<string, ChainHead> {
   const heads = new Map<string, ChainHead>();
@@ -384,9 +379,8 @@ export function headOfChainQueryOptions(args: { datasetId: string }, options?: S
 
 /**
  * The retention policy of one chain anchor: the stored row, or the defaults
- * when absent — including when RLS hides a foreign anchor's row, which is
- * exactly the Convex "invisible anchor answers the defaults" read
- * (tags.ts:636-641).
+ * when absent — including when RLS hides a foreign anchor's row (an invisible
+ * anchor answers the defaults).
  */
 export function retentionPolicyQueryOptions(args: { datasetKey: string }, options?: StoreOptions) {
   return queryOptions({
@@ -546,9 +540,8 @@ export function badgesOf(
 // ---------------------------------------------------------------------------
 
 /**
- * Sets the keep-N retention count and enforces it immediately (the
- * `setKeepVersions` parity — tags.ts:598-629, minus the Convex binding
- * lookup: the PG policy row IS the store). Returns the retention pass's
+ * Sets the keep-N retention count and enforces it immediately (the policy
+ * row IS the store). Returns the retention pass's
  * retired count. `keep < 1` throws ("Keep at least one version").
  */
 export async function setKeepVersions(
@@ -757,9 +750,7 @@ export async function revertReference(
 }
 
 // ---------------------------------------------------------------------------
-// The diff core — versioning.ts:197-249's `diffVersionRows`, re-stated for
-// the client (the Convex host computed it server-side; the pinned semantics
-// carry: deletes keep their before-state's fields, updates list only the
+// The diff core, computed on the client (the pinned semantics: deletes keep their before-state's fields, updates list only the
 // changed fields, geometryChanged tracks lat/lng renames, adds carry every
 // defined after-field).
 // ---------------------------------------------------------------------------

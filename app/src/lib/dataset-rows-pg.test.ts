@@ -77,10 +77,9 @@ describe("page sizes", () => {
     expect(ENTRIES_PAGE_SIZE).toBe(200);
   });
 
-  it("rise where the Convex byte budgets bounded them before (design §8.3)", () => {
+  it("are generous, as Postgres has no per-execution cap (design §8.3)", () => {
     // The fetch width stays 500 (HTTP-shaped, entries are thin); the geometry
-    // width rises to the design's example — the component's byte-budget clamp
-    // is what bounded it before, and Postgres has no per-execution cap.
+    // width follows the design's example.
     expect(ENTRIES_FETCH_PAGE_SIZE).toBe(500);
     expect(GEOMETRY_PAGE_ROWS).toBe(2000);
   });

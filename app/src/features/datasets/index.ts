@@ -1,7 +1,5 @@
 // Public API of the datasets feature (ADR 0014). Code outside `features/datasets/`
 // imports from here, never from its subfolders.
-export { DatasetList } from "./components/dataset-list";
-export type { Dataset, GroupDoc } from "./components/dataset-list";
 export { EntriesTable } from "./components/entries-table";
 export { EntryFormPanel } from "./components/entry-form-panel";
 export type { PanelEntry, PanelSchema } from "./components/entry-form-panel";
@@ -16,7 +14,6 @@ export { PgDatasetExport } from "./components/pg-dataset-export";
 export { PgGroupExport } from "./components/pg-group-export";
 export { PostgresEntryDetailsPage } from "./components/pg-entry-details";
 export { SchemaVisualizer } from "./components/schema-visualizer";
-export { SimplifyGeometryPanel } from "./components/simplify-geometry-panel";
 export { withDrafts } from "./lib/dataset-drafts";
 export { LOCKED_DATASET_HINT, isLockedForViewer } from "./lib/edit-policy";
 export {

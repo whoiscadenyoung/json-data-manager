@@ -79,7 +79,7 @@ describe("datasets.listSummaries", () => {
     expect(select).toContain("properties");
     // The published-only gate (the stage-4 drafts-leak fix): can_view_dataset
     // ADMITS a creator's own draft, so the filter — not RLS — is what keeps
-    // the summary projection matching the Convex listSummaries.
+    // the summary projection published-only.
     expect(argsOf(queryAt(queries, 0), "eq")).toStrictEqual(["lifecycle", "published"]);
   });
 

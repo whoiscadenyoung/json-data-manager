@@ -14,13 +14,12 @@
  * OWN plain `createClient` — the cookie-bound browser client is a
  * main-thread object; importing the seam's chain here is safe because every
  * store call takes the override client and the browser client's cookie reads
- * are lazy closures that never fire on this path), while Convex ids keep the
- * byte-for-byte original path below.
+ * are lazy closures that never fire on this path).
  *
- * Runs inside a web worker: the standalone `ConvexClient` / supabase client
- * keep every page fetch and its `JSON.parse` off the main thread, and builds
- * serialize (promise-chained) so the CPU-bound tile math never interleaves.
- * Both clients authenticate by requesting the session's token from the main
+ * Runs inside a web worker: the supabase client keeps every page fetch and
+ * its `JSON.parse` off the main thread, and builds serialize
+ * (promise-chained) so the CPU-bound tile math never interleaves. The
+ * client authenticates by requesting the session's token from the main
  * thread over the message channel — see `fetchTokenFromMain` below.
  */
 import {
@@ -44,7 +43,6 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { env } from "#/env";
 import type { DatasetGeometryRow } from "#/lib/dataset-rows-pg";
 import { forEachDatasetGeometryPage as forEachPgGeometryPage } from "#/lib/dataset-rows-pg";
-import { isPostgresDatasetId } from "#/lib/dataset-source";
 import { geometryTakeRowsFor } from "#/lib/pg-geometry-fetch";
 import {
   createGeometrySourceUrl,
@@ -148,22 +146,8 @@ self.addEventListener("message", (event: MessageEvent<TileArchiveWorkerInbound>)
     return;
   }
   const { schemaId } = message;
-  if (isPostgresDatasetId(schemaId)) {
-    // The PG path never touches the Convex client (constructing one opens a
-    // WebSocket this build has no use for); its supabase client is built
-    // per build from a fresh token.
-    buildQueue = buildQueue.then(async () => runPgBuild(schemaId)).catch(() => undefined);
-    return;
-  }
-  // Non-PG ids cannot occur in a Postgres-only deployment — the Convex
-  // build path was archived at the stage-7 disconnect and removed in
-  // #226. The arm reports loudly instead of silently dropping the build.
-  post({
-    message:
-      "Only Postgres datasets build tile archives (the Convex path was removed in the stage-7 disconnect).",
-    schemaId,
-    type: "error",
-  });
+  // The supabase client is built per build from a fresh token.
+  buildQueue = buildQueue.then(async () => runPgBuild(schemaId)).catch(() => undefined);
 });
 
 // ---------------------------------------------------------------------------
@@ -373,7 +357,7 @@ async function runPgBuild(datasetId: string): Promise<void> {
       );
     if (payloadBytes < MAP_TILE_ARCHIVE_MIN_BYTES) {
       // The version rides along so the manager can memoize the skip (the
-      // #134 rule, shared memo with the Convex path — id spaces are disjoint).
+      // #134 rule).
       post({
         reason: "below-threshold",
         schemaId: datasetId,

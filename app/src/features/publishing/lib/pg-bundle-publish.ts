@@ -23,8 +23,7 @@ import { publishPgDatasetVersion } from "./pg-publish";
 /**
  * The bundle press — the client orchestrator of the Postgres bundle
  * (stage 4, #203; lifecycle doc §5–§6, ADR 0008), driving the publishing
- * store's press legs exactly the way `./bundle-publish.ts` drove the Convex
- * host mutations: `startBundle` (join-or-create + member plan, datasets only) → per-dataset `publishDataset` with
+ * store's press legs: `startBundle` (join-or-create + member plan, datasets only) → per-dataset `publishDataset` with
  * `recordMember` checkpoints → the promoted collection (create-once,
  * file-every-published-or-referenced-member) → `completeBundle`.
  *

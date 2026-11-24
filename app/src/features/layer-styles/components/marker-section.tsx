@@ -32,11 +32,11 @@ export interface UploadIconMeta {
   width: number;
 }
 
-/** The backend-injected marker-icon writes (Convex storage or Supabase Storage — the transitional split; `useLayerStyles` builds them). */
+/** The backend-injected marker-icon writes (Supabase Storage; `useLayerStyles` builds them). */
 export interface MarkerIconActions {
   /** Deletes one uploaded icon for every map (the icon id from `UploadedIcon`). */
   removeUpload: (iconId: string) => Promise<void>;
-  /** Stores one rasterized PNG; the result contract mirrors the Convex `icons.create` shape. */
+  /** Stores one rasterized PNG. */
   uploadIcon: (
     png: Blob,
     meta: UploadIconMeta,

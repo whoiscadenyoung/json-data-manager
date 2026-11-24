@@ -20,12 +20,7 @@ export function isPublicServingPathname(pathname: string): boolean {
  * would run unauthenticated — the endless skeletons, TanStack error
  * screens, and false "Dataset Not Found" screens the review documented.
  *
- * The stage-7 disconnect (issue #206, design doc §9) collapsed stage 0's
- * two-session world into a single Supabase session: sign-in writes only the
- * GoTrue session, the Better Auth bridge is retired, and the gate opens on
- * the Supabase session alone — `useConvexAuth` is gone along with the
- * provider it answered for. The shape is exactly the pre-disconnect one:
- * while the session is resolving (and during SSR, which knows nothing of
+ * The gate opens on the Supabase session alone: while the session is resolving (and during SSR, which knows nothing of
  * it) the gate holds the same centered spinner the route pages render — no
  * child mounts, so no child query fires anonymously. `/signin` passes
  * through untouched, and so does the public serving route (#261): an
@@ -59,9 +54,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
 /**
  * Renders its children only once the Supabase session resolves as signed in
- * — nothing while resolving, nothing signed out, no redirect. The stage-7
- * disconnect made this Supabase-only (it gated on `useConvexAuth` while the
- * Convex provider was mounted): this wraps the root-level tile-archive
+ * — nothing while resolving, nothing signed out, no redirect. This wraps the root-level tile-archive
  * watchers outside the routed tree (#135 follow-up), and their queries must
  * never fire anonymously for a signed-out visitor.
  */

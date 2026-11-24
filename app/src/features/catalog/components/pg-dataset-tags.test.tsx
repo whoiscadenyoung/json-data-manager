@@ -55,7 +55,7 @@ describe("PgDatasetTypeTags", () => {
     expect(screen.queryByText("Geospatial")).toBeNull();
   });
 
-  it("marks author-visibility, drafts, and locks (the Convex tag set's info parity)", () => {
+  it("marks author-visibility, drafts, and locks", () => {
     render(
       <PgDatasetTypeTags
         dataset={datasetRow({

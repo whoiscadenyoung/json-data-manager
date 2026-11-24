@@ -43,7 +43,7 @@ import { pgWorkerRowToLayerRow, type PgResolvedGeometryRow } from "./pg-layer-ro
 /** Minimum gap between partial-pass reports from one loader (the #186 rule — one source rebuild per report). */
 const GEOMETRY_REPORT_INTERVAL_MS = 250;
 
-/** One dataset's live geometry-loading state, as the Convex loader reports it. */
+/** One dataset's live geometry-loading state. */
 export interface PgGeometriesReport {
   complete: boolean;
   rows: DatasetGeometryRow[];

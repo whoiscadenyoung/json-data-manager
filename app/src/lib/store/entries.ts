@@ -14,14 +14,13 @@ import * as geometries from "./geometries";
 
 /**
  * The entries store (design doc §8.1) — the PG counterpart of today's
- * `api.cms.entries.*`: `listPage` / `listForIds` / `get` / `create` /
+ * `listPage` / `listForIds` / `get` / `create` /
  * `update` / `remove` / `clearDatasetRows`, plus `searchEntries` over the
- * `search_entries` RPC (§5.1 — the server-side table sort/filter/search the
- * Convex backend never had).
+ * `search_entries` RPC (§5.1 — the server-side table sort/filter/search).
  *
  * Transactions: PostgREST statements are single-statement, so a row write
- * with a geometry (`create`/`update`) is two calls where the Convex mutation
- * was one transaction — a crash between them leaves the entry present with
+ * with a geometry (`create`/`update`) is two calls rather than one
+ * transaction — a crash between them leaves the entry present with
  * no geometry row (the properties table still renders it; a re-edit repairs
  * it). The bulk path doesn't have this shape: `import_entries` is one SQL
  * statement per chunk (§5.3) and is atomic by itself.
@@ -334,7 +333,7 @@ export interface CreateEntryArgs {
   geometry?: string;
 }
 
-/** Parses the geometry JSON-text arg into the inline source value (the entry-form passes strings, as the Convex `geometry: v.string()` arg did). */
+/** Parses the geometry JSON-text arg into the inline source value (the entry-form passes strings). */
 function geometrySourceOf(geometry: string): unknown {
   try {
     return JSON.parse(geometry);
@@ -397,7 +396,7 @@ export async function update(args: UpdateEntryArgs, options?: StoreOptions): Pro
   );
 }
 
-/** Deletes one entry; its geometry row and references go with it by cascade (design §3.2). New surface — the Convex wrapper set never exposed a single-entry delete. */
+/** Deletes one entry; its geometry row and references go with it by cascade (design §3.2). */
 export async function remove(args: { entryId: string }, options?: StoreOptions): Promise<void> {
   await queryRows<unknown>(
     clientOf(options).from("entries").delete().eq("id", args.entryId).select("id"),
@@ -407,7 +406,7 @@ export async function remove(args: { entryId: string }, options?: StoreOptions):
 /**
  * Deletes EVERY entry of a dataset (the failed-import Retry path, issue
  * #129 parity) — the clear that resets the summaries via the triggers.
- * Returns the deleted count (the Convex mutation's return shape).
+ * Returns the deleted count.
  */
 export async function clearDatasetRows(
   args: { datasetId: string },

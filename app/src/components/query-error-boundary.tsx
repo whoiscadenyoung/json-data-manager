@@ -2,12 +2,10 @@ import { Component, type ReactNode } from "react";
 
 /**
  * Catches render-thrown query errors and renders `fallback` instead of
- * crashing the route. Raw convex/react subscriptions rethrow any errored
- * query during render (the installed client: `if (result instanceof Error)
- * { throw result; }`), so a stage-8 by-id denial (app/convex/auth.ts's
- * `assertDatasetsVisible` — designed to be indistinguishable from a missing
- * dataset) would otherwise hit TanStack Router's default error screen,
- * unreachable past the route's own not-found card.
+ * crashing the route. A by-id read that errors (a denial is designed to be
+ * indistinguishable from a missing dataset) would otherwise hit TanStack
+ * Router's default error screen, unreachable past the route's own not-found
+ * card.
  *
  * Every by-id route wraps its content with this boundary and hands it the
  * same not-found card a null read gets, so a foreign/author-restricted id

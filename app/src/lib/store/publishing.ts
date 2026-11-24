@@ -7,20 +7,19 @@ import type { VisibilityLevel } from "./visibility";
 
 /**
  * The publishing store (design doc §8.1 "publishing.ts # publish_version
- * orchestration + bundles"; stage 4, issue #203) — the PG counterpart of the
- * Convex `api.publishing.*` domain: the §5.4 publish RPC and the bundle
+ * orchestration + bundles"; stage 4, issue #203): the §5.4 publish RPC and the bundle
  * press over `public.publish_bundles` + `public.publish_bundle_members`
  * (DDL §3.5, migration 0009).
  *
- * Parity notes (each traces to `app/convex/publishing/`):
+ * Notes:
  *   - `publishDataset` is one `publish_version` call: the RPC is the freeze
  *     (idempotent on publish_key; set-based materialization; retention in
- *     the same transaction). The Convex 5b chunk pipeline collapses — PG
+ *     the same transaction). PG
  *     materializes from the LIVE rows (§3.5), not client-uploaded chunks,
  *     so the attempt machinery shrinks to the member rows' `attempt_id` +
  *     the RPC's atomicity (the issue's recorded collapse).
- *   - The press is CLIENT-orchestrated exactly like the Convex one
- *     (bundles.ts): `startBundle` mints the bundle + member rows in the
+ *   - The press is CLIENT-orchestrated
+ *     `startBundle` mints the bundle + member rows in the
  *     canonical order (datasets, then maps — the order the publish legs
  *     must run in); a running bundle is
  *     JOINED, never forked (start's join-or-revive); `recordMember`
@@ -360,8 +359,7 @@ async function mintBundleMembers(
 ): Promise<void> {
   const ordered = members.toSorted((a, b) => memberOrder(a.kind) - memberOrder(b.kind));
   for (const member of ordered) {
-    // One member row per plan entry, in the canonical write order (the
-    // ordered no-await-in-loop of the Convex start).
+    // One member row per plan entry, in the canonical write order .
     // oxlint-disable-next-line eslint/no-await-in-loop -- the mint order IS the semantic (see above).
     await queryRows<{ id: string }>(
       client
@@ -511,7 +509,7 @@ export async function linkMapLayers(
     for (const edge of existing) {
       const source = edge.sourceDatasetId;
       if (source !== null && !currentTargets.has(source)) {
-        // oxlint-disable-next-line eslint/no-await-in-loop -- one stale-edge delete per edge, ordered and bounded (the Convex walk).
+        // oxlint-disable-next-line eslint/no-await-in-loop -- one stale-edge delete per edge, ordered and bounded.
         await queryRows<{ id: string }>(
           client.from("consumer_references").delete().eq("id", edge.id).select("id"),
         );
@@ -524,7 +522,7 @@ export async function linkMapLayers(
       if (knownSources.has(target)) {
         continue;
       }
-      // oxlint-disable-next-line eslint/no-await-in-loop -- one edge per target, in layer order (the Convex walk).
+      // oxlint-disable-next-line eslint/no-await-in-loop -- one edge per target, in layer order.
       await queryRows<{ id: string }>(
         client
           .from("consumer_references")
@@ -537,7 +535,7 @@ export async function linkMapLayers(
           .select("id"),
       );
     }
-    // oxlint-disable-next-line eslint/no-await-in-loop -- one status patch per map member, in press order (the Convex walk).
+    // oxlint-disable-next-line eslint/no-await-in-loop -- one status patch per map member, in press order.
     const stamped = await queryRows<{ id: string }>(
       client
         .from("publish_bundle_members")

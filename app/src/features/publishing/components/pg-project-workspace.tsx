@@ -532,7 +532,7 @@ export function PgAddReferenceSheet({
   );
 }
 
-/** The workspace's bundle status line (the Convex page's shape): the live press, an interrupted one, the named failures, or the promoted collection link. Staleness reads the mount-time clock (react/purity) — the page remounts on return, which is exactly when an abandoned press should announce itself. */
+/** The workspace's bundle status line: the live press, an interrupted one, the named failures, or the promoted collection link. Staleness reads the mount-time clock (react/purity) — the page remounts on return, which is exactly when an abandoned press should announce itself. */
 // One status line announcing exactly one of the four press states — the
 // branch per state IS the line's copy contract; extracting them would hide
 // the mutually-exclusive states behind a table no other surface shares.

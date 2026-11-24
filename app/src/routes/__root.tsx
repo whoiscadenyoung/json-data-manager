@@ -51,11 +51,8 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <HeadContent />
       </head>
       <body className="font-sans antialiased wrap-anywhere selection:bg-[rgba(79,184,178,0.24)]">
-        {/* The stage-7 disconnect (issue #206): the Convex provider that
-            wrapped this tree until now is unmounted — the Supabase session
-            provider is the only auth context, and the shell makes zero
-            Convex network calls. `SignedInOnly` gates the root watchers on
-            that session. */}
+        {/* The Supabase session provider is the only auth context.
+            `SignedInOnly` gates the root watchers on that session. */}
         <TanStackQueryProvider>
           <SupabaseAuthProvider>
             {/* The tile-archive watchers query the moment they mount — they ride

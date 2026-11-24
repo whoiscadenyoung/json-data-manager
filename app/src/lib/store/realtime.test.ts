@@ -583,7 +583,7 @@ describe("channel lifecycle (one per active dataset, open on observe, closed on 
     const queryClient = newClient();
     const stub = stubRealtimeClient();
     const detach = attachDatasetRealtime(queryClient, stub.client);
-    const { unsubscribe } = observe(queryClient, ["convexQuery", "cms/entries:list", "{}"]);
+    const { unsubscribe } = observe(queryClient, ["other", "entries:list", "{}"]);
     expect(stub.channels.length).toBe(0);
     unsubscribe();
     detach();

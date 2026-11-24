@@ -6,8 +6,7 @@ import { publishDataset } from "@/lib/store/publishing";
  * §5.4) — the dialog-side orchestration over the publishing store.
  *
  * The freeze itself is the store's `publishDataset` (one `publish_version`
- * call: idempotent on publish_key, set-based, single-transaction — the
- * Convex-era 5b chunk pipeline has NO Postgres counterpart). What this
+ * call: idempotent on publish_key, set-based, single-transaction — what this
  * module adds:
  *
  * - the DRAFT FLIP: an import-created draft is catalog-invisible until its

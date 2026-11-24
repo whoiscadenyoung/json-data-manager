@@ -1,8 +1,8 @@
 import type { Geometry } from "@caden/data-core/geojson";
-// The PG edition of the row-resolution seam (design doc §8.3) — React-free
+// The row-resolution seam (design doc §8.3) — React-free
 // (`./transform` subpath of data-core only): the tile-archive web worker
-// imports this module, so it must never pull a React or convex/react barrel.
-// Unlike its Convex sibling (`dataset-rows.ts`), no client is constructed at
+// imports this module, so it must never pull a React barrel.
+// No client is constructed at
 // import time either: `sharedClient` resolves lazily, and the worker builds
 // its own plain `createClient` instance and passes it via `options.supabase`
 // (the cookie-bound browser client is a main-thread object).
@@ -12,30 +12,21 @@ import { listPage, type EntryRow } from "#/lib/store/entries";
 import { createGeometrySourceUrl, rowsForTiles, type GeometryRow } from "#/lib/store/geometries";
 
 /**
- * The row-resolution seam, Postgres edition — the one client-side interface
- * for "resolve this dataset's rows (specs applied)" over the Supabase
- * backend. It mirrors the exported API of `dataset-rows.ts` (the Convex
- * edition, which stays in-tree and keeps serving the frozen Convex datasets
- * until their surface migrates — design doc §11/§14): the same function
- * names, the same completeness semantics, the spec-application step copied
- * UNCHANGED so the popup executor's pinned semantics cannot drift.
+ * The row-resolution seam — the one client-side interface for "resolve
+ * this dataset's rows (specs applied)" over the Supabase backend.
  *
- * What changed with the backend:
- *   - ids are uuids and rows come from the store modules (`#/lib/store/*`);
- *     the Convex `_id`/`_creationTime` fields do not exist. Entry rows are
- *     keyed by `id`, geometry rows by `entryId` (1:1 — the key
- *     `dataset_rows_for_tiles` hands back).
- *   - pages chain on `nextCursor`, and `nextCursor === null` is `isDone`
- *     (design §5 intro: "every RPC that pages returns next_cursor, null =
- *     exhausted"). The Convex byte budgets that shaped the old page sizes
- *     (`GEOMETRY_PAGE_BYTE_BUDGET`, the 16 MiB execution cap, the
- *     8192-element array cap) do not exist in Postgres, so the one-shot
- *     page sizes rise.
+ * - ids are uuids and rows come from the store modules (`#/lib/store/*`).
+ *   Entry rows are keyed by `id`, geometry rows by `entryId` (1:1 — the key
+ *   `dataset_rows_for_tiles` hands back).
+ * - pages chain on `nextCursor`, and `nextCursor === null` is `isDone`
+ *   (design §5 intro: "every RPC that pages returns next_cursor, null =
+ *   exhausted"). Postgres has no per-execution read cap, so the one-shot
+ *   page sizes are generous.
  *   - `entryOrder` keeps its role (the group export's ascending
  *     byte-identity contract) and maps onto the same keyset read.
  *
  * The spec-application step stays INSIDE these functions — no consumer
- * paginates on its own, exactly as before.
+ * paginates on its own.
  */
 
 /** One entry row, as `entries.listPage` pages it (see `#/lib/store/entries`). */
@@ -46,26 +37,21 @@ export type DatasetGeometryRow = GeometryRow;
 
 /**
  * Rows per reactive entries page. In the persisted light-state query hash
- * (see `useDatasetEntryPages`) — never change it per call site. Unchanged
- * from the Convex edition: the reactive layer's page width, not a budget.
+ * (see `useDatasetEntryPages`) — never change it per call site.
  */
 export const ENTRIES_PAGE_SIZE = 200;
 
 /**
  * Rows per page for the imperative all-rows reads (exports, prefill): a
  * one-shot stream never renders mid-way, so it pages more densely than the
- * table's persisted per-cursor queries. The Convex server-side clamp that
- * capped this at 500 (`MAX_ENTRY_PAGE_ROWS`) does not exist here; 500 stays
- * because entries pages are cheap round-trips and the burst size is
- * HTTP-shaped, not budget-shaped.
+ * table's persisted per-cursor queries. 500 because entries pages are cheap round-trips
+ * and the burst size is HTTP-shaped, not budget-shaped.
  */
 export const ENTRIES_FETCH_PAGE_SIZE = 500;
 
 /**
- * Rows requested per geometry page. Raised from the Convex edition's 500:
- * the component's byte-budget clamp (`GEOMETRY_PAGE_BYTE_BUDGET`) was the
- * real bound — Postgres has no per-execution read cap, and
- * `dataset_rows_for_tiles`' own default is 5000 (design §5.5). This bounds
+ * Rows requested per geometry page. Postgres has no per-execution read cap,
+ * and `dataset_rows_for_tiles`' own default is 5000 (design §5.5). This bounds
  * round-trip count, nothing else.
  */
 export const GEOMETRY_PAGE_ROWS = 2000;
@@ -123,8 +109,7 @@ export function applyGeometryRowSpec(row: DatasetGeometryRow): DatasetGeometryRo
 
 /**
  * The shared imperative client — the browser supabase instance. Exported for
- * parity with the Convex seam (and for the eventual publish orchestrator);
- * every other consumer goes through the read functions. Auth rides the
+ * the publish orchestrator; every other consumer goes through the read functions. Auth rides the
  * session cookies the provider keeps fresh — there is no token-fetch pause
  * dance to re-create (design §8.3).
  */
@@ -265,14 +250,13 @@ async function fetchGeometryPayload(url: string): Promise<Geometry> {
   if (!response.ok) {
     throw new Error(`Failed to fetch geometry (HTTP ${response.status}).`);
   }
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- a Storage signed URL for a geometry payload, which was validated as a real `Geometry` at write time (import-time validation; the same posture the Convex seam takes).
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- a Storage signed URL for a geometry payload, which was validated as a real `Geometry` at write time (import-time validation).
   return (await response.json()) as Geometry;
 }
 
 /**
  * Resolves rows to `Geometry` values keyed by the geometry row's identity —
- * its `entryId` (1:1; the Convex edition keyed by the geometry row's own id,
- * which the PG table shape doesn't surface). Inline rows resolve
+ * its `entryId` (1:1). Inline rows resolve
  * synchronously from the verbatim `geometry` jsonb; storage-backed rows
  * fetch through a short-lived signed URL (`geometries` bucket, §6) in
  * parallel. A malformed or failed row leaves its geometry unresolved (the
@@ -288,7 +272,7 @@ export async function resolveGeometryRows(
     rows.map(async (row) => {
       try {
         if (row.geometry !== null && row.geometry !== undefined) {
-          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- verbatim GeoJSON stored as jsonb, validated at import time (the Convex seam's posture toward its payloads, unchanged).
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- verbatim GeoJSON stored as jsonb, validated at import time.
           resolved.set(row.entryId, row.geometry as Geometry);
         } else if (row.sourcePath !== null && row.sourcePath !== undefined) {
           resolved.set(

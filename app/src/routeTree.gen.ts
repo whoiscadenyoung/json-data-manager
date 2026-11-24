@@ -20,15 +20,12 @@ import { Route as MapsMapIdRouteImport } from './routes/maps/$mapId'
 import { Route as ProjectsIndexRouteImport } from './routes/projects/index'
 import { Route as ProjectsProjectIdRouteRouteImport } from './routes/projects/$projectId/route'
 import { Route as UsersUserIdRouteImport } from './routes/users/$userId'
-import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as AppsAppIdIndexRouteImport } from './routes/apps/$appId/index'
 import { Route as AppsAppIdEditRouteImport } from './routes/apps/$appId/edit'
 import { Route as AppsAppIdPreviewRouteImport } from './routes/apps/$appId/preview'
 import { Route as CollectionsCollectionIdIndexRouteImport } from './routes/collections/$collectionId/index'
 import { Route as DatasetsSchemaIdIndexRouteImport } from './routes/datasets/$schemaId/index'
 import { Route as DatasetsSchemaIdEntryIdRouteImport } from './routes/datasets/$schemaId/$entryId'
-import { Route as DatasetsSchemaIdBulkUploadRouteImport } from './routes/datasets/$schemaId/bulk-upload'
-import { Route as DatasetsSchemaIdEditRouteImport } from './routes/datasets/$schemaId/edit'
 import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects/$projectId/index'
 import { Route as ProjectsProjectIdCatalogRouteImport } from './routes/projects/$projectId/catalog'
 import { Route as ProjectsProjectIdCreateRouteImport } from './routes/projects/$projectId/create'
@@ -101,11 +98,6 @@ const UsersUserIdRoute = UsersUserIdRouteImport.update({
   path: '/users/$userId',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
-  id: '/api/auth/$',
-  path: '/api/auth/$',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AppsAppIdIndexRoute = AppsAppIdIndexRouteImport.update({
   id: '/apps/$appId/',
   path: '/apps/$appId/',
@@ -135,17 +127,6 @@ const DatasetsSchemaIdIndexRoute = DatasetsSchemaIdIndexRouteImport.update({
 const DatasetsSchemaIdEntryIdRoute = DatasetsSchemaIdEntryIdRouteImport.update({
   id: '/datasets/$schemaId/$entryId',
   path: '/datasets/$schemaId/$entryId',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DatasetsSchemaIdBulkUploadRoute =
-  DatasetsSchemaIdBulkUploadRouteImport.update({
-    id: '/datasets/$schemaId/bulk-upload',
-    path: '/datasets/$schemaId/bulk-upload',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const DatasetsSchemaIdEditRoute = DatasetsSchemaIdEditRouteImport.update({
-  id: '/datasets/$schemaId/edit',
-  path: '/datasets/$schemaId/edit',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProjectsProjectIdIndexRoute = ProjectsProjectIdIndexRouteImport.update({
@@ -255,12 +236,9 @@ export interface FileRoutesByFullPath {
   '/datasets/': typeof DatasetsIndexRoute
   '/maps/': typeof MapsIndexRoute
   '/projects/': typeof ProjectsIndexRoute
-  '/api/auth/$': typeof ApiAuthSplatRoute
   '/apps/$appId/edit': typeof AppsAppIdEditRoute
   '/apps/$appId/preview': typeof AppsAppIdPreviewRoute
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
-  '/datasets/$schemaId/bulk-upload': typeof DatasetsSchemaIdBulkUploadRoute
-  '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
   '/projects/$projectId/catalog': typeof ProjectsProjectIdCatalogRoute
   '/projects/$projectId/create': typeof ProjectsProjectIdCreateRoute
   '/projects/$projectId/lineage': typeof ProjectsProjectIdLineageRoute
@@ -292,12 +270,9 @@ export interface FileRoutesByTo {
   '/datasets': typeof DatasetsIndexRoute
   '/maps': typeof MapsIndexRoute
   '/projects': typeof ProjectsIndexRoute
-  '/api/auth/$': typeof ApiAuthSplatRoute
   '/apps/$appId/edit': typeof AppsAppIdEditRoute
   '/apps/$appId/preview': typeof AppsAppIdPreviewRoute
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
-  '/datasets/$schemaId/bulk-upload': typeof DatasetsSchemaIdBulkUploadRoute
-  '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
   '/projects/$projectId/catalog': typeof ProjectsProjectIdCatalogRoute
   '/projects/$projectId/create': typeof ProjectsProjectIdCreateRoute
   '/projects/$projectId/lineage': typeof ProjectsProjectIdLineageRoute
@@ -331,12 +306,9 @@ export interface FileRoutesById {
   '/datasets/': typeof DatasetsIndexRoute
   '/maps/': typeof MapsIndexRoute
   '/projects/': typeof ProjectsIndexRoute
-  '/api/auth/$': typeof ApiAuthSplatRoute
   '/apps/$appId/edit': typeof AppsAppIdEditRoute
   '/apps/$appId/preview': typeof AppsAppIdPreviewRoute
   '/datasets/$schemaId/$entryId': typeof DatasetsSchemaIdEntryIdRoute
-  '/datasets/$schemaId/bulk-upload': typeof DatasetsSchemaIdBulkUploadRoute
-  '/datasets/$schemaId/edit': typeof DatasetsSchemaIdEditRoute
   '/projects/$projectId/catalog': typeof ProjectsProjectIdCatalogRoute
   '/projects/$projectId/create': typeof ProjectsProjectIdCreateRoute
   '/projects/$projectId/lineage': typeof ProjectsProjectIdLineageRoute
@@ -371,12 +343,9 @@ export interface FileRouteTypes {
     | '/datasets/'
     | '/maps/'
     | '/projects/'
-    | '/api/auth/$'
     | '/apps/$appId/edit'
     | '/apps/$appId/preview'
     | '/datasets/$schemaId/$entryId'
-    | '/datasets/$schemaId/bulk-upload'
-    | '/datasets/$schemaId/edit'
     | '/projects/$projectId/catalog'
     | '/projects/$projectId/create'
     | '/projects/$projectId/lineage'
@@ -408,12 +377,9 @@ export interface FileRouteTypes {
     | '/datasets'
     | '/maps'
     | '/projects'
-    | '/api/auth/$'
     | '/apps/$appId/edit'
     | '/apps/$appId/preview'
     | '/datasets/$schemaId/$entryId'
-    | '/datasets/$schemaId/bulk-upload'
-    | '/datasets/$schemaId/edit'
     | '/projects/$projectId/catalog'
     | '/projects/$projectId/create'
     | '/projects/$projectId/lineage'
@@ -446,12 +412,9 @@ export interface FileRouteTypes {
     | '/datasets/'
     | '/maps/'
     | '/projects/'
-    | '/api/auth/$'
     | '/apps/$appId/edit'
     | '/apps/$appId/preview'
     | '/datasets/$schemaId/$entryId'
-    | '/datasets/$schemaId/bulk-upload'
-    | '/datasets/$schemaId/edit'
     | '/projects/$projectId/catalog'
     | '/projects/$projectId/create'
     | '/projects/$projectId/lineage'
@@ -485,12 +448,9 @@ export interface RootRouteChildren {
   DatasetsIndexRoute: typeof DatasetsIndexRoute
   MapsIndexRoute: typeof MapsIndexRoute
   ProjectsIndexRoute: typeof ProjectsIndexRoute
-  ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   AppsAppIdEditRoute: typeof AppsAppIdEditRoute
   AppsAppIdPreviewRoute: typeof AppsAppIdPreviewRoute
   DatasetsSchemaIdEntryIdRoute: typeof DatasetsSchemaIdEntryIdRoute
-  DatasetsSchemaIdBulkUploadRoute: typeof DatasetsSchemaIdBulkUploadRoute
-  DatasetsSchemaIdEditRoute: typeof DatasetsSchemaIdEditRoute
   AppsAppIdIndexRoute: typeof AppsAppIdIndexRoute
   CollectionsCollectionIdIndexRoute: typeof CollectionsCollectionIdIndexRoute
   DatasetsSchemaIdIndexRoute: typeof DatasetsSchemaIdIndexRoute
@@ -575,13 +535,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UsersUserIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/auth/$': {
-      id: '/api/auth/$'
-      path: '/api/auth/$'
-      fullPath: '/api/auth/$'
-      preLoaderRoute: typeof ApiAuthSplatRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/apps/$appId/': {
       id: '/apps/$appId/'
       path: '/apps/$appId'
@@ -622,20 +575,6 @@ declare module '@tanstack/react-router' {
       path: '/datasets/$schemaId/$entryId'
       fullPath: '/datasets/$schemaId/$entryId'
       preLoaderRoute: typeof DatasetsSchemaIdEntryIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/datasets/$schemaId/bulk-upload': {
-      id: '/datasets/$schemaId/bulk-upload'
-      path: '/datasets/$schemaId/bulk-upload'
-      fullPath: '/datasets/$schemaId/bulk-upload'
-      preLoaderRoute: typeof DatasetsSchemaIdBulkUploadRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/datasets/$schemaId/edit': {
-      id: '/datasets/$schemaId/edit'
-      path: '/datasets/$schemaId/edit'
-      fullPath: '/datasets/$schemaId/edit'
-      preLoaderRoute: typeof DatasetsSchemaIdEditRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/projects/$projectId/': {
@@ -811,12 +750,9 @@ const rootRouteChildren: RootRouteChildren = {
   DatasetsIndexRoute: DatasetsIndexRoute,
   MapsIndexRoute: MapsIndexRoute,
   ProjectsIndexRoute: ProjectsIndexRoute,
-  ApiAuthSplatRoute: ApiAuthSplatRoute,
   AppsAppIdEditRoute: AppsAppIdEditRoute,
   AppsAppIdPreviewRoute: AppsAppIdPreviewRoute,
   DatasetsSchemaIdEntryIdRoute: DatasetsSchemaIdEntryIdRoute,
-  DatasetsSchemaIdBulkUploadRoute: DatasetsSchemaIdBulkUploadRoute,
-  DatasetsSchemaIdEditRoute: DatasetsSchemaIdEditRoute,
   AppsAppIdIndexRoute: AppsAppIdIndexRoute,
   CollectionsCollectionIdIndexRoute: CollectionsCollectionIdIndexRoute,
   DatasetsSchemaIdIndexRoute: DatasetsSchemaIdIndexRoute,

@@ -1,9 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 
-import { ArchivedConvexSurface } from "#/components/archived-convex-surface";
 import { DatasetProjectContext, PostgresDatasetPage } from "#/features/datasets";
-import { isPostgresDatasetId } from "@/lib/dataset-source";
 
 // Same search contract as the standalone /datasets/$schemaId page.
 const searchSchema = z.object({
@@ -29,9 +27,6 @@ function ProjectDatasetPage() {
   const { projectId, schemaId } = Route.useParams(),
     search = Route.useSearch(),
     navigate = Route.useNavigate();
-  if (!isPostgresDatasetId(schemaId)) {
-    return <ArchivedConvexSurface />;
-  }
   return (
     <DatasetProjectContext.Provider value={projectId}>
       <PostgresDatasetPage

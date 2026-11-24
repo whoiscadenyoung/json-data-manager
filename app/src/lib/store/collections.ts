@@ -4,9 +4,7 @@ import { clientOf, queryRow, queryRows, type StoreOptions } from "./client";
 import { CATALOG_READ_LIMIT, DATASET_FULL_SELECT, type DatasetRow } from "./datasets";
 
 /**
- * The collections store (design doc §8.1; stage-3 catalog, issue #202) — the
- * PG counterpart of today's `api.cms.collections.*` (exposed in
- * `app/convex/cms/collections.ts`): `list` / `get` / `create` / `update` /
+ * The collections store (design doc §8.1; stage-3 catalog, issue #202): `list` / `get` / `create` / `update` /
  * `remove` / `listDatasets` / `listMemberships` / `listCollectionsByDataset`
  * / `addToCollection` / `removeFromCollection`, over the `public.collections`
  * and `public.collection_datasets` tables (DDL §3.4, migration 0007).
@@ -41,13 +39,11 @@ import { CATALOG_READ_LIMIT, DATASET_FULL_SELECT, type DatasetRow } from "./data
  *     null-filter + viewer scoping, but enforced by RLS instead of a
  *     `viewerId` argument (identity rides the session; design §4).
  *
- * `setSchemaGroup` (the group-assignment mutation the Convex wrapper exposed
- * under collections) lives in `./groups` — it writes `datasets.group_id` and
+ * `setSchemaGroup` (the group-assignment mutation) lives in `./groups` — it writes `datasets.group_id` and
  * is group membership, not collection membership.
  *
  * Transactions: none needed — every mutation here is one statement, and the
- * two-statement flows the component ran as one Convex transaction (delete +
- * membership walk) are single FK cascades here.
+ * delete + membership walk is a single FK cascade.
  *
  * NOTE: narrow local interfaces typed from the design doc's DDL (§3.4), not
  * the generated `database.types.ts` (see `./client`).
@@ -207,7 +203,7 @@ export interface CollectionArgs {
   description?: string;
 }
 
-/** The component's create/update validation (`ConvexError("Collection must have a name")`). */
+/** Create/update validation. */
 function assertNamed(args: { name: string }): void {
   if (!args.name.trim()) {
     throw new Error("Collection must have a name");
@@ -264,7 +260,7 @@ export async function remove(
 /**
  * Adds a dataset to a collection — `addSchemaToCollection` parity: a no-op
  * when the pair exists (`ignoreDuplicates` on the PK), an FK error when
- * either side is gone (the component's "not found" ConvexErrors). The
+ * either side is gone. The
  * denormalized `kind` is left to the 0007 stamp trigger.
  */
 export async function addToCollection(

@@ -80,7 +80,7 @@ function ProfileNotFound() {
   );
 }
 
-// oxlint-disable-next-line eslint/complexity -- the page reads both stores' catalog rows and composes the store seams; ad hoc splitting risks these render paths (the same #82 phase-2 note the sibling Convex pages carry).
+// oxlint-disable-next-line eslint/complexity -- the page composes the store seams; ad hoc splitting risks these render paths.
 export function PgProfilePage({ profileId }: { profileId: string }) {
   const { session } = useSession(),
     // The viewer's OWN profile id is the session's user id (the profiles
@@ -124,7 +124,7 @@ export function PgProfilePage({ profileId }: { profileId: string }) {
   const displayName =
       profile.name ?? (isMe && sessionEmail !== undefined ? sessionEmail : profile.id),
     // The email subtitle: only ever the user themself, and only when it
-    // differs from their name (the pre-migration profile page's rule).
+    // differs from their name .
     subtitleEmail =
       isMe && sessionEmail !== undefined && sessionEmail !== profile.name
         ? sessionEmail

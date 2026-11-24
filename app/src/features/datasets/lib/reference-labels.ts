@@ -56,9 +56,7 @@ export const LABEL_IDS_CAP = 200;
  * reference fields — exactly the entries whose labels are worth fetching.
  * Used to be "every row of every referenced dataset" via
  * `listEntriesForSchemas`, which quietly loaded whole other datasets just to
- * label a handful of links (issue #54). Shared by the entries table (Convex
- * mode) and the Postgres table host, which splits the result per backend
- * before looking the labels up.
+ * label a handful of links (issue #54). Used by the table host to look the labels up.
  */
 export function collectReferencedIds(
   entries: ReadonlyArray<{ data: unknown }>,

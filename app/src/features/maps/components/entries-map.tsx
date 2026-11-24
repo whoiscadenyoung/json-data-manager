@@ -16,7 +16,7 @@ import type * as GeoJSON from "geojson";
 import { ChevronRight, Loader2, Map as MapIcon, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import type { DatasetEntryRow, DatasetGeometryRow } from "#/lib/dataset-rows";
+import { entryDataRecord, type DatasetEntryRow, type DatasetGeometryRow } from "#/lib/dataset-rows";
 import { formatPropertyValue } from "#/lib/format";
 
 import { layerSourceKind, layerSourceUrl } from "../lib/layer-source";
@@ -50,8 +50,7 @@ const FEATURE_FILL_PAINT = { "fill-color": "#3b82f6", "fill-opacity": 0.2 },
   PENDING_GRACE_MS = 20_000;
 
 function FeatureDetailsPanel({ entry, onClose }: { entry: EntryDoc; onClose: () => void }) {
-  const data: Record<string, unknown> = entry.data,
-    fields = Object.entries(data);
+  const fields = Object.entries(entryDataRecord(entry));
 
   return (
     <div className="absolute top-3 right-3 bottom-3 z-10 flex w-64 flex-col overflow-hidden rounded-lg border border-border bg-card/95 shadow-lg backdrop-blur-sm">

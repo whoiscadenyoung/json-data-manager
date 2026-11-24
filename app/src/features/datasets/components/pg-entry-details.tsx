@@ -28,17 +28,15 @@ import * as geometriesStore from "@/lib/store/geometries";
 import * as referencesStore from "@/lib/store/references";
 
 import { useDatasetLinks } from "../lib/dataset-project-context";
-import { useSplitReferenceLabels } from "../lib/pg-reference-labels";
+import { useReferenceLabels } from "../lib/pg-reference-labels";
 import { isRecord, referencedEntryIds } from "../lib/reference-labels";
 import { GeometryCard } from "./geometry-card";
 
 /**
- * The Postgres edition of the entry-details page (design §14: surfaces split
- * on where the dataset was created). Reads ride the `#/lib/store/*` modules —
+ * The entry-details page. Reads ride the `#/lib/store/*` modules —
  * the entry row, its geometry, the reference labels (batched `listForIds`),
- * and the trigger-maintained `entry_references` reverse lookup. Same layout
- * as the archived Convex page: properties, links, referenced-by, geometry
- * rail.
+ * and the trigger-maintained `entry_references` reverse lookup. Layout: properties, links,
+ * referenced-by, geometry rail.
  */
 
 /** The same card a null read gets — the denial fallback too (RLS: an invisible row reads as missing). */
@@ -59,7 +57,7 @@ function PgEntryNotFoundCard() {
   );
 }
 
-/** The entry's properties as a key-value table — the same face the Convex page renders. */
+/** The entry's properties as a key-value table. */
 function PropertiesTable({
   data,
   currencyByField,
@@ -212,8 +210,7 @@ function ReferencedByCard({
 
 /**
  * The reference labels for the entry's fields — the shared hook
- * (`useSplitReferenceLabels`) over the store's batched lookup; Convex
- * targets are archived with the stage-7 disconnect and render raw ids.
+ * (`useReferenceLabels`) over the store's batched lookup.
  */
 // oxlint-disable-next-line eslint/complexity -- the page's loading/not-found/geometry-rail render paths are its real shape; the decomposition is the deferred #82 phase-2 cleanup.
 export function PostgresEntryDetailsPage({
@@ -255,16 +252,14 @@ export function PostgresEntryDetailsPage({
         : resolvedQuery.data.get(entryId),
     referenceFields =
       dataset === undefined || dataset === null ? [] : getReferenceFields(dataset.jsonSchema),
-    labelsByField = useSplitReferenceLabels(
+    labelsByField = useReferenceLabels(
       referenceFields,
       entry === undefined || entry === null ? [] : [entry],
     ),
     referencingQuery = useQuery(referencesStore.listReferencingEntriesQueryOptions({ entryId })),
     pgTitlesQuery = useQuery(datasetsStore.listSummariesQueryOptions()),
-    // The Convex-half titles of the old split-brain merge are archived with
-    // the stage-7 disconnect (issue #206): a reverse reference from a
-    // pre-migration Convex dataset renders "Entry" + its raw id, never a
-    // live Convex read.
+    // A reverse reference from a dataset missing from the summaries renders
+    // "Entry" + its raw id.
     titlesByDatasetId = new globalThis.Map<string, string>(
       (pgTitlesQuery.data ?? []).map((row) => [row.id, row.title] as const),
     );

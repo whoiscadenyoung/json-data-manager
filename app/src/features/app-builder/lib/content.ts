@@ -1,9 +1,8 @@
 import type { VisibilityLevel } from "#/lib/store/visibility";
 
 /**
- * The app builder's stored shapes — the Postgres port of the Convex-era
- * `convex/appBuilder/validators.ts` (READ-ONLY reference). The feature owns
- * its content types now, declared once and shared by the editor, the viewer,
+ * The app builder's stored shapes. The feature owns its content types,
+ * declared once and shared by the editor, the viewer,
  * and the widgets, so adding a widget kind is: one interface below, one
  * entry in the client widget registry.
  *
@@ -13,8 +12,7 @@ import type { VisibilityLevel } from "#/lib/store/visibility";
  * feature's `saveContent` payload) and every reader (`appPagesOf`) agrees
  * on; the store hands the column back untouched.
  *
- * Datasets are referenced by PG dataset ids (uuid, `apps.dataset_ids`) — the
- * Convex-era dataset-ref behavior carries over: an app stores REFERENCES,
+ * Datasets are referenced by dataset ids (uuid, `apps.dataset_ids`): an app stores REFERENCES,
  * never data or grants. Every widget read goes through the viewer's own
  * dataset access, so sharing an app never widens who can see a dataset.
  */
@@ -153,7 +151,7 @@ export function firstPage(): AppPage {
  * The `apps.pages` jsonb column as the app's pages. An app always HAS a page
  * (the save gate refuses zero), so a null column — a hand-written row, or a
  * create-path row saved before pages existed — reads as one empty first
- * page, exactly as the Convex-era `appPages` shim read legacy documents.
+ * page.
  */
 export function appPagesOf(pages: AppPage[] | null | undefined): AppPage[] {
   if (pages !== null && pages !== undefined && pages.length > 0) {

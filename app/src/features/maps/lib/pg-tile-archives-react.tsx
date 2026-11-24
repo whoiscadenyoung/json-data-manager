@@ -10,8 +10,7 @@
  * Loading states are two-valued ON PURPOSE: `undefined` means "still
  * loading" (a fresh archive candidate holds `pending` rather than flashing
  * the row path), while a LOADED map that lacks a dataset means "no servable
- * archive" (rows). The Convex decision distinguishes exactly the same two
- * states (`meta === undefined` vs `meta === null`).
+ * archive" (rows).
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -39,8 +38,7 @@ const EMPTY_PG_METAS: globalThis.Map<string, PgTileArchiveMeta> = new globalThis
  * Signed archive URLs for the given PG geospatial datasets, keyed by dataset
  * id; `undefined` while the query is in flight. Only current-format,
  * version-matched archives appear (the feed's filter — see
- * `pgTileArchiveMetasOf`), so a missing key after load = rows, mirroring the
- * Convex metas query's null. Errors read as loaded-and-empty (rows; the next
+ * `pgTileArchiveMetasOf`), so a missing key after load = rows. Errors read as loaded-and-empty (rows; the next
  * summaries change refires the query).
  */
 export function usePgTileArchiveMetas(

@@ -18,7 +18,7 @@ import { clientOf, queryRow, type StoreOptions } from "./client";
  * `id` IS the auth uid (0002: `id uuid primary key references auth.users`),
  * which is also what `datasets.created_by` / `collections.created_by` stamp —
  * so a profile id doubles as the "by X" attribution key and the
- * `/users/$userId` route param (the pre-migration chip's `me.authId`).
+ * `/users/$userId` route param.
  *
  * NOTE: narrow local interface typed from 0002's DDL + grants, not the
  * generated `database.types.ts` (see `./client`).

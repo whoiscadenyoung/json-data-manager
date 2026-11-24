@@ -13,13 +13,10 @@ import type { DatasetSummary } from "../lib/map-layers";
 
 /**
  * The workspace's PG → pipeline adapters (the transitional split, design
- * §14): a saved map's rows live in Postgres, but its LAYERS may target
- * datasets from either backend, and the whole layer pipeline
- * (`features/maps/lib` — expansion, children, colors, visibility, the tile
- * decision) is typed on the Convex-era row shapes. Rather than re-deriving
- * those behaviors per backend, these adapters lift the PG store rows into
- * exactly the shapes the pipeline already consumes — one mapping per row
- * kind, in one place.
+ * §14): the layer pipeline (`features/maps/lib` — colors, keyed geometry,
+ * the tile decision) is typed on the row shapes in `#/lib/dataset-rows` and
+ * `./lib/map-layers`. These adapters lift the PG store rows into exactly
+ * those shapes — one mapping per row kind, in one place.
  *
  * The adapters are honest lifts, not fakes: every field maps from a real PG
  * column (§3.2/§3.4), and the fields that have no PG counterpart yet (the
@@ -38,26 +35,17 @@ import type { DatasetSummary } from "../lib/map-layers";
  *   - `isGeospatial` → `kind` (the union the component stores denormalized).
  *   - `bbox` (the PostGIS envelope as GeoJSON) → `boundingBox`
  *     (`[minLon, minLat, maxLon, maxLat]`, via `pgBboxBounds`' unfold —
- *     kept here as the raw number array the Convex summaries carry).
+ *     kept here as the raw number array).
  *   - archive columns pass 1:1 under the same names (`store/datasets`
  *     exposes them RAW — the staleness/format comparison is the tile
  *     workstream's job, stage 2).
  */
 export function pgSummaryToDatasetSummary(row: DatasetSummaryRow): DatasetSummary {
   return {
-    _creationTime: 0,
     _id: row.id,
-    // The Convex projection pre-computes the format gate; the store exposes
-    // the RAW format (the tile workstream owns the comparison — see
-    // store/datasets' note), so the PG adapter carries the computed flag as
-    // false-with-archive-absent by honest default: the tile decision's PG
-    // half reads the raw columns off the store summary, not off this
-    // adapter's Convex projection.
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the flag is only meaningful on the Convex path; the PG decision inputs are the RAW summaries (see the workspace's decision inputs).
-    mapTileArchiveFormatCurrent: false,
     boundingBox: pgBboxTuple(row.bbox),
     createdBy: row.createdBy,
-    // The Convex projection reads absent as no description; PG stores null.
+    // PG stores a missing description as null; the pipeline reads it as absent.
     description: row.description ?? undefined,
     editPolicy: row.editPolicy,
     entryCount: row.entryCount,
@@ -75,8 +63,7 @@ export function pgSummaryToDatasetSummary(row: DatasetSummaryRow): DatasetSummar
     mapTileArchiveBuiltVersion: row.mapTileArchiveBuiltVersion ?? undefined,
     mapTileArchiveBytes: row.mapTileArchiveBytes ?? undefined,
     mapTileCacheVersion: row.mapTileCacheVersion,
-    // The pipeline type is the Convex-era projection (its field names are
-    // frozen in-tree); the ladder rung bridges to its two-literal union.
+    // The ladder rung bridges to the pipeline's two-literal union.
     publishedVisibility: row.visibility === "members" ? "author" : "everyone",
     title: row.title,
   };
@@ -112,13 +99,6 @@ export function pgBboxTuple(bbox: DatasetBoundingBox | null): number[] | undefin
 }
 
 /**
- * One PG layer row as the pipeline's `MapLayerDoc` (§3.4 columns → the
- * component doc): `id` → `_id`, the rest pass 1:1. `_creationTime` is a
- * Convex bookkeeping field the PG row has no counterpart for — 0 is the
- * honest placeholder (nothing in the pipeline reads it).
- */
-/** One PG override row as the pipeline's `MapLayerOverride` (`child_key` → `childKey`; the doc bookkeeping fields are 0-filled placeholders, nothing reads them). */
-/**
  * One PG geometry row as the seam's `DatasetGeometryRow` — the row shape
  * LayersMap's whole rendering path (keying, point split, feature building,
  * `useResolvedGeometries`) consumes. The mapping:
@@ -127,10 +107,9 @@ export function pgBboxTuple(bbox: DatasetBoundingBox | null): number[] | undefin
  *     click payloads keyed by entry id agree;
  *   - `datasetId` → `schemaId` (the render id);
  *   - the RESOLVED GeoJSON (inline jsonb or a fetched storage payload —
- *     `resolveGeometryRows`) is embedded as `geometryJson`, the same inline
- *     form the Convex rows carry, so one resolver serves both backends;
+ *     `resolveGeometryRows`) is embedded as `geometryJson`;
  *   - `type` carries the PG union (`DatasetGeometryType`), which allows
- *     `GeometryCollection` where the Convex validator doesn't — the app
+ *     `GeometryCollection` where the pipeline's `GeometryType` doesn't — the app
  *     never writes one (store/datasets' note), so the narrowing mirrors
  *     `asBoundingBox`'s "always written server-side" posture.
  */
@@ -194,22 +173,3 @@ export function pgEntryToEntryRow(row: EntryRow): DatasetEntryRow {
     schemaId: row.datasetId,
   };
 }
-
-/**
- * True when a layer target renders through the PG surface (a uuid — the
- * split predicate). Layers targeting Convex datasets keep their Convex
- * reads; layers targeting PG datasets take the store-backed loader.
- */
-
-/**
- * One PG collection as the pipeline's `CollectionDoc` (the component's
- * collections doc): `id` → `_id`, null → absent for the optional columns;
- * the `_creationTime` placeholder follows the adapters' house rule.
- */
-/** One PG group as the pipeline's `GroupSummary` (the component's groups doc). */
-/**
- * One PG membership row as the pipeline's `MembershipRow` (the component's
- * schemaCollections doc): `datasetId` → `schemaId`; the synthetic `_id` is
- * the pair (the pipeline reads memberships by collection/schemaId only —
- * nothing consumes the row id).
- */

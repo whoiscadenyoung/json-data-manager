@@ -51,7 +51,7 @@ describe("imports.chunkRowsForRpc — the §10 chunker", () => {
     }
   });
 
-  it("packs small rows up to the row-count cap (500, the Convex chunker's HTTP-shape guard)", () => {
+  it("packs small rows up to the row-count cap (500, the HTTP-shape guard)", () => {
     const rows = Array.from({ length: IMPORT_CHUNK_MAX_ROWS + 120 }, (_, index) => ({
       data: { n: index },
     }));

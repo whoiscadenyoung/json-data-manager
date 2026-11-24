@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { ConvexProvider, ConvexReactClient } from "convex/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -200,17 +199,10 @@ const RETIRED_TAG = {
 };
 const toastMock = vi.mocked(toast);
 
-/** Renders under the query client + a lazily-constructed Convex client (the compare's skipped queries still read the context; nothing subscribes). */
+/** Renders under a query client. */
 function renderWithProviders(ui: React.ReactElement): void {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const convex = new ConvexReactClient("http://127.0.0.1:3212");
-  render(
-    createElement(
-      QueryClientProvider,
-      { client },
-      createElement(ConvexProvider, { client: convex }, ui),
-    ),
-  );
+  render(createElement(QueryClientProvider, { client }, ui));
 }
 
 afterEach(() => {

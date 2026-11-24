@@ -2,9 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Navigate, createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 
-import { ArchivedConvexSurface } from "#/components/archived-convex-surface";
 import { PostgresDatasetPage } from "#/features/datasets";
-import { isPostgresDatasetId } from "@/lib/dataset-source";
 import * as datasetsStore from "@/lib/store/datasets";
 import * as projectsStore from "@/lib/store/projects";
 
@@ -26,26 +24,12 @@ export const Route = createFileRoute("/datasets/$schemaId/")({
   validateSearch: entryPanelSearchSchema,
 });
 
-/**
- * The dataset detail page. Transitional split (design doc §14), collapsed by
- * the stage-7 disconnect (issue #206): the id says where the dataset was
- * created — Postgres-native datasets (uuid ids, minted by the stage-1
- * create flow) mount the store-backed page; every pre-migration Convex
- * dataset renders the shared ARCHIVED state instead of its old Convex
- * surface, whose `convex/react` hooks would throw against the unmounted
- * provider. The pre-disconnect Convex body (`SchemaDetailBody` and its
- * helpers — the seam subscriptions, the convex mutations, the TanStack
- * convexQuery bridge reads) was removed from the shell with it; the
- * untouched `app/convex/` + `packages/json-cms/` trees remain the reference.
- */
+/** The dataset detail page. */
 function SchemaDetailPage() {
   const { schemaId } = Route.useParams(),
     search = Route.useSearch(),
     navigate = Route.useNavigate();
-  if (isPostgresDatasetId(schemaId)) {
-    return <StandaloneDataset schemaId={schemaId} search={search} navigate={navigate} />;
-  }
-  return <ArchivedConvexSurface />;
+  return <StandaloneDataset schemaId={schemaId} search={search} navigate={navigate} />;
 }
 
 type DatasetSearch = z.infer<typeof entryPanelSearchSchema>;

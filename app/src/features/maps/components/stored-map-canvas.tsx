@@ -5,7 +5,6 @@ import { useQuery, useQuery as useStoreQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { useLayerStyles } from "#/features/layer-styles";
-import { isPostgresDatasetId } from "#/lib/dataset-source";
 import { listSummariesQueryOptions } from "#/lib/store/datasets";
 import * as layersStore from "#/lib/store/layers";
 import * as mapsStore from "#/lib/store/maps";
@@ -311,7 +310,7 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
       popupInputsOf(dataEntries, layersById),
       new Set((pgSummaries.data ?? []).filter((row) => row.kind === "view").map((row) => row.id)),
     ),
-    pgRowIds = split.rowSchemaIds.filter((schemaId) => isPostgresDatasetId(schemaId)),
+    pgRowIds = split.rowSchemaIds,
     pgFan = useGeometriesByPgDatasets(pgRowIds),
     liveViewIds = pgFan.liveIds ?? NO_LIVE_IDS,
     [arrivedTileSchemaIds, setArrivedTileSchemaIds] = useState<Set<string>>(() => new Set()),

@@ -34,15 +34,11 @@ export const Route = createFileRoute("/signin")({
 });
 
 /**
- * Supabase email + password sign-in — the app's only sign-in since the
- * stage-7 disconnect (issue #206, design doc §9): the GoTrue session via
- * `@supabase/ssr` cookies is the one session the whole shell reads. The
- * stage-0 bridge that also signed the same credentials into the Better Auth
- * store (feeding the then-mounted Convex provider) is retired with the
- * provider — sign-in is single-store again, and an account minted by the
- * operator on the Supabase side is all the app needs.
+ * Supabase email + password sign-in (design doc §9): the GoTrue session via
+ * `@supabase/ssr` cookies is the one session the whole shell reads, and an
+ * account minted by the operator on the Supabase side is all the app needs.
  *
- * There is deliberately no sign-up path, exactly as before: the public auth
+ * There is deliberately no sign-up path: the public auth
  * surface has new-user signups disabled (the ADR 0009 addendum — the
  * trusted-collaborator model), so accounts are minted by the operator; see
  * the design doc's signup-gating note.

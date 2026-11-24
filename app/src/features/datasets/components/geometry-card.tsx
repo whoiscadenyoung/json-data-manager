@@ -33,7 +33,7 @@ const FEATURE_FILL_PAINT = { "fill-color": "#3b82f6", "fill-opacity": 0.2 },
     "line-dasharray": [2, 1.5] as number[],
   };
 
-/** The geometry-row fields the card reads — both backends' rows carry them (Convex via the seam's row shape). */
+/** The geometry-row fields the card reads. */
 export interface GeometryCardRow {
   entryId: string;
   type: string;
@@ -44,7 +44,6 @@ export interface GeometryCardRow {
  * its bounding box, over a collapsible raw-GeoJSON view. `geometry` arrives
  * async (inline rows resolve instantly; storage-backed ones after a fetch) —
  * the frame renders immediately with the row's type badge and fills in.
- * Shared by the entry-details route's Convex and Postgres editions.
  */
 export function GeometryCard({
   row,

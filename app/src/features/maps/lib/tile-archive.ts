@@ -23,7 +23,6 @@ import { useEffect, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
 import { getContext } from "#/integrations/tanstack-query/root-provider";
-import { isPostgresDatasetId } from "#/lib/dataset-source";
 import { sharedClient } from "#/lib/store/client";
 
 import { isPgTileArchiveStale } from "./pg-tile-archives";
@@ -32,8 +31,7 @@ import { usePgTileDatasetSummaries } from "./pg-tile-archives-react";
 /**
  * Which auth surface a worker token request is for: the Supabase access
  * token the worker's own `createClient` rides (RLS applies to every PG
- * read/write the build path makes). Single-member since #226 — the Convex
- * arm of the handshake was archived at the stage-7 disconnect and removed.
+ * read/write the build path makes).
  */
 export type TileTokenSource = "supabase";
 
@@ -486,22 +484,17 @@ function settleTerminalBuild(
   schemaId: string,
   pending: { reject: (error: Error) => void; resolve: (outcome: TileArchiveBuildOutcome) => void },
 ): void {
-  const pgDataset = isPostgresDatasetId(schemaId);
   if (data.type === "done") {
     setBuildState(schemaId, "done");
     clearBuildFailure(schemaId);
     noteInstalledVersion(data, schemaId);
-    if (pgDataset) {
-      invalidatePgQueries();
-    }
+    invalidatePgQueries();
     pending.resolve("installed");
     return;
   }
   if (data.type === "stale-discarded") {
     setBuildState(schemaId, "stale-discarded");
-    if (pgDataset) {
-      invalidatePgQueries();
-    }
+    invalidatePgQueries();
     pending.resolve("discarded");
     return;
   }
@@ -602,9 +595,7 @@ function getScheduler(): TileArchiveScheduler {
 /**
  * Mounted once at the app root: watches every geospatial dataset and
  * schedules a debounced rebuild whenever one is observably stale. The
- * stage-7 disconnect (issue #206) removed the watch
- * (`api.cms.schemas.listSummaries` reactive push) alongside the provider;
- * Postgres datasets are the only watch: the store summaries, refetched by
+ * watch rides the store summaries, refetched by
  * `invalidatePgQueries` when a build settles (realtime cross-tab push is
  * stage 6). Correctness rides on the expectedVersion guard (the SQL edition:
  * `install_tile_archive`) — this only decides when to attempt.

@@ -508,11 +508,7 @@ export function LayersMap({
     // lives only while the popup is open; closing drops every subscription.
     //
     // The clicked feature's entry rides the PG point-read with the seam's
-    // spec pass (pg-entry-popup). The transitional Convex half
-    // (`useEnrichedDatasetEntryRow` over the Convex seam, for a pre-migration
-    // selection) is archived with the stage-7 disconnect (issue #206) —
-    // selections on archived datasets can't be produced anymore, so the
-    // split collapses to the Postgres executor.
+    // spec pass (pg-entry-popup).
     pgPopup = usePgEnrichedDatasetEntryRow(selected === null ? undefined : selected),
     // Both executors stay mounted; exactly one is live per selection (#330):
     // a render id with a frozen version reads the snapshot (signed-out

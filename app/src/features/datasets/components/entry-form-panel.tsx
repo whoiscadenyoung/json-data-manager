@@ -25,15 +25,13 @@ import { Maximize2, Minimize2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { isPostgresDatasetId } from "@/lib/dataset-source";
 import { searchEntriesQueryOptions } from "@/lib/store/entries";
 import * as entriesStore from "@/lib/store/entries";
 
 /**
- * The dataset doc the form reads — structural on purpose: the Convex surface
- * passes the component's `schemas.get` doc, the Postgres surface passes a
- * `#/lib/store/datasets` row adapter carrying the same fields (the PG store
- * has no `ui_schema` column yet — see the store's reconciliation note).
+ * The dataset doc the form reads — structural on purpose: the host passes a
+ * `#/lib/store/datasets` row adapter (the store has no `ui_schema` column
+ * yet — see the store's reconciliation note).
  */
 export interface PanelSchema {
   description?: string | null;
@@ -48,14 +46,6 @@ export interface PanelEntry {
   data: unknown;
   id: string;
 }
-
-/**
- * Which backend owns the dataset's rows — the transitional split (design doc
- * §14), keyed on where the dataset was created by the host. `"convex"` (the
- * default) keeps the original component mutations; `"pg"` writes through the
- * `#/lib/store/*` modules.
- */
-export type PanelBackend = "convex" | "pg";
 
 interface GeometryParseResult {
   geometry?: Geometry;
@@ -105,16 +95,12 @@ interface CandidateRow {
  * Candidates come from the target dataset's store page (design §14.6: each
  * reference field names its TARGET dataset; the store's `search_entries`
  * page — newest 200 — serves it, one query per target through `useQueries`
- * — N independent queries cannot loop as hooks). The Convex-target half of
- * the old split is archived with the stage-7 disconnect (issue #206): a
- * reference field pointing at a pre-migration Convex dataset gets no
- * candidates (the widget's "No entries in the target dataset yet" state)
- * rather than a live Convex read.
+ * — N independent queries cannot loop as hooks).
  */
 function useReferenceUiSchema(schema: PanelSchema): Record<string, unknown> {
   const referenceFields = getReferenceFields(schema.schema),
     targetSchemaIds = [...new Set(referenceFields.map((f) => f.meta.datasetId))],
-    pgTargetIds = targetSchemaIds.filter((id) => isPostgresDatasetId(id)),
+    pgTargetIds = targetSchemaIds,
     pgCandidateQueries = useQueries({
       queries: pgTargetIds.map((targetId) => ({
         ...searchEntriesQueryOptions({ datasetId: targetId, limit: 200 }),
@@ -155,14 +141,12 @@ function EntryFormBody({
   schema,
   entry,
   initialGeometry,
-  backend,
   onSaved,
 }: {
   schemaId: string;
   schema: PanelSchema;
   entry: PanelEntry | undefined;
   initialGeometry: Geometry | undefined;
-  backend: PanelBackend;
   onSaved: (mode: "created" | "updated") => void;
 }) {
   const isEditing = entry !== undefined,
@@ -172,8 +156,7 @@ function EntryFormBody({
     [geometryText, setGeometryText] = useState(() => geometryToText(initialGeometry)),
     [geometryError, setGeometryError] = useState<string | null>(null),
     [isSubmitting, setIsSubmitting] = useState(false),
-    // The PG writes invalidate the store's entry/dataset caches (row pages,
-    // counts) the way the Convex mutations' reactivity did.
+    // Writes invalidate the store's entry/dataset caches (row pages, counts).
     invalidatePg = () => {
       void queryClient.invalidateQueries({ queryKey: ["pg:entries"] });
       void queryClient.invalidateQueries({ queryKey: ["pg:datasets"] });
@@ -210,25 +193,12 @@ function EntryFormBody({
       setIsSubmitting(true);
 
       // `createEntry`/`updateEntry` carry geometry as a JSON string, not the
-      // nested-array `Geometry` shape directly — see `geometry_storage.ts`
-      // in the component for why (Convex's 8192-elements-per-array limit,
-      // which a hand-pasted ring can still exceed even for a single entry).
-      // The store's `update` keeps the same JSON-text contract.
+      // nested-array `Geometry` shape directly; the store's `update` keeps
+      // the same JSON-text contract.
       const geometryArg = geometry === undefined ? undefined : JSON.stringify(geometry);
 
       try {
-        if (backend === "pg") {
-          await submitPg(data.formData, geometryArg);
-        } else {
-          // The Convex entry mutations (`api.cms.entries.create`/`update`)
-          // are archived with the stage-7 disconnect (issue #206) — every
-          // live caller mounts this panel with `backend: "pg"`; any other
-          // value fails loudly instead of mutating a backend the shell no
-          // longer wires.
-          throw new Error(
-            "Convex datasets are archived in this build (stage 7 disconnect): entries write through the Postgres store.",
-          );
-        }
+        await submitPg(data.formData, geometryArg);
         if (isEditing) {
           toast.success("Entry updated successfully!");
           onSaved("updated");
@@ -319,7 +289,6 @@ export function EntryFormPanel({
   initialGeometry,
   open,
   onOpenChange,
-  backend = "convex",
 }: {
   schemaId: string;
   schema: PanelSchema;
@@ -327,8 +296,6 @@ export function EntryFormPanel({
   initialGeometry?: Geometry;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Which backend owns this dataset's rows — see `PanelBackend`. */
-  backend?: PanelBackend;
 }) {
   const isEditing = entry !== undefined,
     [fullscreen, setFullscreen] = useState(false);
@@ -359,7 +326,6 @@ export function EntryFormPanel({
         <div className="flex-1 overflow-y-auto p-6">
           <EntryFormBody
             key={entry === undefined ? "create" : entry.id}
-            backend={backend}
             initialGeometry={initialGeometry}
             schema={schema}
             schemaId={schemaId}

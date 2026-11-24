@@ -28,7 +28,7 @@ import {
  * Attribution is NOT sent: migration 0005 stamps `uploaded_by` (insert)
  * from `auth.uid()` with a BEFORE trigger — the 0003 rule that "identity
  * is stamped from the request, never claimed from a client payload".
- * Convex parity: uploads are shared with every signed-in user (ADR 0009) —
+ * Uploads are shared with every signed-in user (ADR 0009) —
  * RLS, not this module, draws the visibility line.
  *
  * NOTE: narrow local interfaces typed from the design doc's DDL (§3.4/§6),
@@ -46,8 +46,7 @@ export const MARKER_SPRITES_BUCKET = "marker-sprites";
  * One uploaded icon as the layer-styles UI reads it. `name` is the
  * `user-<id>` sprite name styles reference (docs/layer-styles.md);
  * `url` is a short-lived signed read URL (null when signing failed — the
- * icon renders as circles until the next list refresh, the same shape the
- * Convex read handed back).
+ * icon renders as circles until the next list refresh).
  */
 export interface UploadedIconRow {
   iconId: string;
@@ -74,7 +73,7 @@ interface MarkerSpriteRpcRow {
   width: number;
 }
 
-/** The uploads list width (the Convex picker listed up to 500). */
+/** The uploads list width. */
 export const DEFAULT_ICONS_LIMIT = 500;
 
 /** Lists every uploaded icon with a fresh signed read URL per row (§6: private bucket, signed reads). */
@@ -155,7 +154,7 @@ export type UploadIconResult = { ok: true; name: string } | { ok: false; error: 
  * `marker_sprites` row (§6's order — the URL is server-issued and
  * single-purpose, so a refused row can leave an orphan object, which is
  * inert: nothing references it). Returns `{ok: false}` instead of throwing,
- * matching the Convex `icons.create` contract the upload form renders.
+ * the contract the upload form renders.
  */
 export async function uploadIcon(
   args: UploadIconArgs,
@@ -228,8 +227,8 @@ export async function removeIcon(args: { iconId: string }, options?: StoreOption
   try {
     await client.storage.from(MARKER_SPRITES_BUCKET).remove([first.storagePath]);
   } catch {
-    // Orphan object; inert. (The Convex-era storage.delete rolled back with
-    // the row via the transaction — PostgREST is single-statement.)
+    // Orphan object; inert. (PostgREST is single-statement, so the delete
+    // cannot roll back with the row.)
   }
 }
 

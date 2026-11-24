@@ -208,7 +208,7 @@ export const DATASET_FULL_SELECT = [
   "updatedAt:updated_at",
 ].join(",");
 
-/** Widest bound one catalog list read may ask for (the `CATALOG_READ_LIMIT` parity — Convex's per-execution cap is gone, but an unbounded catalog select is still an unbounded read). */
+/** Widest bound one catalog list read may ask for (an unbounded catalog select is an unbounded read). */
 export const CATALOG_READ_LIMIT = 1000;
 
 export interface DatasetSummaryWire extends Omit<DatasetSummaryRow, "fieldCount"> {
@@ -240,7 +240,7 @@ export function listQueryOptions(options?: StoreOptions) {
   });
 }
 
-/** The published-view summary projection — `api.cms.schemas.listSummaries` parity. The `lifecycle eq 'published'` filter is LOAD-BEARING, not RLS: can_view_dataset ADMITS a draft to its creator, so without the filter the creator's own drafts would ride the browser/summary projection and the opt-in drafts toggle (listDraftSummariesQueryOptions + withPgDrafts) would double-count them. The Convex listSummaries genuinely gated drafts; this filter restores that gate (the stage-4 review's drafts-leak fix). */
+/** The published-view summary projection. The `lifecycle eq 'published'` filter is LOAD-BEARING, not RLS: can_view_dataset ADMITS a draft to its creator, so without the filter the creator's own drafts would ride the browser/summary projection and the opt-in drafts toggle (listDraftSummariesQueryOptions + withPgDrafts) would double-count them. This filter is the gate (the stage-4 review's drafts-leak fix). */
 export function listSummariesQueryOptions(options?: StoreOptions) {
   return queryOptions({
     queryKey: ["pg:datasets", "listSummaries", CATALOG_READ_LIMIT],
@@ -382,8 +382,7 @@ export function maxTileCacheVersionQueryOptions(options?: StoreOptions) {
 
 /**
  * One creator's datasets as the light summary projection — the profile
- * page's per-creator listing (`/users/$userId` keyed by `created_by`, the
- * pre-migration users-mirror shape). RLS scopes it like every catalog read:
+ * page's per-creator listing (`/users/$userId` keyed by `created_by`). RLS scopes it like every catalog read:
  * the creator's drafts and author-only rows appear only to their creator.
  */
 export function listByCreatorQueryOptions(args: { createdBy: string }, options?: StoreOptions) {

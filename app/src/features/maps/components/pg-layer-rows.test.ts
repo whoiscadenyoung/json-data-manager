@@ -37,7 +37,7 @@ function summaryRow(overrides: Partial<DatasetSummaryRow> = {}): DatasetSummaryR
 }
 
 describe("pgSummaryToDatasetSummary — the pipeline's projection", () => {
-  it("re-keys the summary onto the Convex doc shape (id → _id, isGeospatial → kind)", () => {
+  it("re-keys the summary onto the pipeline shape (id → _id, isGeospatial → kind)", () => {
     const row = summaryRow({ isGeospatial: true, geometryType: "Point", groupId: "g1" });
     const summary = pgSummaryToDatasetSummary(row);
     expect(summary._id).toBe(row.id);
@@ -49,7 +49,7 @@ describe("pgSummaryToDatasetSummary — the pipeline's projection", () => {
     expect(summary.boundingBox).toBeUndefined();
   });
 
-  it("maps the stored envelope to the flat tuple (the Convex summaries' shape)", () => {
+  it("maps the stored envelope to the flat tuple", () => {
     const row = summaryRow({
       bbox: {
         coordinates: [

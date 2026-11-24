@@ -254,8 +254,7 @@ export function useDatasetRecords(datasetId: string): {
 
 /**
  * One dataset's entry rows as a growing set of cursor-chained pages — the
- * table widget's streaming read (the Convex seam's `useDatasetEntryPages`
- * shape; frozen under the published view's provider). Unlike
+ * table widget's streaming read. Unlike
  * `useDatasetRecords` this does NOT auto-page: `loadMore` (wired to the
  * table's scroll-near-end and its button) appends the next page while
  * `canLoadMore`.

@@ -1,8 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { ArchivedConvexSurface } from "#/components/archived-convex-surface";
 import { PostgresCreateDatasetPage } from "#/features/datasets";
-import { isPostgresDatasetId } from "#/lib/dataset-source";
 
 /**
  * The in-project create/import flow (issue #256, the project-centric train's
@@ -17,14 +15,5 @@ export const Route = createFileRoute("/projects/$projectId/create")({
 
 function ProjectCreatePage() {
   const { projectId } = Route.useParams();
-  if (isPostgresDatasetId(projectId)) {
-    return <PostgresCreateDatasetPage projectId={projectId} />;
-  }
-  return (
-    <ArchivedConvexSurface
-      description="This workspace served projects created before the Postgres migration — its catalog is retired with the old backend."
-      homeTo="/projects"
-      title="Convex projects are archived in this build"
-    />
-  );
+  return <PostgresCreateDatasetPage projectId={projectId} />;
 }

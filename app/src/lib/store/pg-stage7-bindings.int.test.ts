@@ -155,7 +155,7 @@ describe("stage 7 — the §4 matrix rows", () => {
       await s().denied(`insert into public.imports (dataset_id) values (${sqlLit(datasetId)})`),
     ).toMatch(/read-only/);
     // can_edit_dataset is UNTOUCHED — metadata updates and binding CRUD keep
-    // open-dataset semantics (the Convex gate's split).
+    // open-dataset semantics.
     const editable = await s().expectOk(
       `select public.can_edit_dataset(${sqlLit(datasetId)}) as ok`,
     );

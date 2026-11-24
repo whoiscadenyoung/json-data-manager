@@ -156,7 +156,7 @@ function PgCollectionGroupCard({
 }
 
 /** The collection page's content, once the collection read has landed. */
-// oxlint-disable-next-line eslint/complexity -- the page reads both stores' catalog rows and composes the store seams; ad hoc splitting risks these render paths (the same #82 phase-2 note the sibling Convex pages carry).
+// oxlint-disable-next-line eslint/complexity -- the page composes the store seams; ad hoc splitting risks these render paths.
 function PgCollectionPageBody({ collectionId }: { collectionId: string }) {
   const queryClient = useQueryClient(),
     navigate = useNavigate(),

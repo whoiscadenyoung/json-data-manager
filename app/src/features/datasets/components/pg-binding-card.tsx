@@ -72,7 +72,7 @@ type BoundSourceTransport = "http" | "client";
  * (store/bindings.ts drives the definer RPCs from the browser), so Sync now
  * awaits the whole pass; the run rows carry the progress for a refresh.
  */
-// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup (the Convex SourceRow carries the same note).
+// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 function PgBindingCardBody({ binding, isCreator }: { binding: BindingRow; isCreator: boolean }) {
   const queryClient = useQueryClient();
   let transport: BoundSourceTransport | undefined;
@@ -87,8 +87,7 @@ function PgBindingCardBody({ binding, isCreator }: { binding: BindingRow; isCrea
       enabled: isRemote,
     }),
     runQuery = useQuery(bindingsStore.latestRunQueryOptions({ bindingId: binding.id })),
-    // `undefined` (still loading) reads the same as "no run yet" — the
-    // Convex sync card's normalization.
+    // `undefined` (still loading) reads the same as "no run yet".
     run: SyncRunRow | null = runQuery.data ?? null,
     [isStarting, setIsStarting] = useState<"check" | "reconcile" | "resume" | "sync" | undefined>(),
     [isUnbinding, setIsUnbinding] = useState(false),

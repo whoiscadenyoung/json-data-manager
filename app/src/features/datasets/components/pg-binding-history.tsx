@@ -83,14 +83,13 @@ function FieldDiff({ field }: { field: { after?: unknown; before?: unknown; name
 }
 
 /**
- * The History tab of a bound PG dataset (docs/bound-datasets-design.md §7,
- * issue #206's "History tab" surface — the PG edition of the Convex
- * DatasetHistoryPanel): a commit rail (the applied-commit mirror, git-log
+ * The History tab of a bound dataset (docs/bound-datasets-design.md §7,
+ * issue #206's "History tab" surface): a commit rail (the applied-commit mirror, git-log
  * style — selecting one highlights its affected features on the dedicated
  * GeoJSON overlay, never the tile source) beside the field-level
  * before/after panel, plus the per-sync summary list (dataset_activity).
  */
-// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup (the Convex DatasetHistoryPanel carries the same note).
+// oxlint-disable-next-line eslint/complexity -- ad hoc splitting risks these render paths; the real decomposition is the deferred #82 phase-2 cleanup.
 export function PgBindingHistory({
   binding,
   isGeospatial,

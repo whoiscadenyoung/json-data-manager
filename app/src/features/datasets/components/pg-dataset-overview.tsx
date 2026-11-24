@@ -55,8 +55,7 @@ import * as projectsStore from "@/lib/store/projects";
 import { isLockedForViewer } from "../lib/edit-policy";
 
 /**
- * The Overview tab of the Postgres dataset page — the Convex
- * `DatasetOverview`'s PG edition: the details card (type, fields, features,
+ * The Overview tab of the dataset page: the details card (type, fields, features,
  * created, created by, editing), inline collection membership management,
  * and the single-group management, all over `#/lib/store/{collections,
  * groups,profiles}`.
@@ -724,7 +723,7 @@ function PgCollectionsSection({
 }
 
 /** The dataset's single group (0–1), managed inline — standalone groups included, over the groups store. */
-// oxlint-disable-next-line eslint/complexity -- the page reads both stores' catalog rows and composes the store seams; ad hoc splitting risks these render paths (the same #82 phase-2 note the sibling Convex pages carry).
+// oxlint-disable-next-line eslint/complexity -- the page composes the store seams; ad hoc splitting risks these render paths.
 function PgGroupSection({ dataset, lockedHint }: { dataset: DatasetRow; lockedHint?: string }) {
   const queryClient = useQueryClient(),
     allGroupsQuery = useQuery(groupsStore.listQueryOptions()),
@@ -1033,10 +1032,8 @@ export function PgDatasetOverview({
   return (
     <div className="space-y-6">
       <PgDetailsCard dataset={dataset} />
-      {/* Stage 4 (#203): the version chain, tags, and consumers — the Convex
-          overview's version cards, PG edition. Mounted here (not on the
-          versions feature's own page) because the Convex overview is where
-          the version cards live. */}
+      {/* Stage 4 (#203): the version chain, tags, and consumers, mounted on the
+          Overview rather than the versions feature's own page. */}
       <PgVersionsCard datasetId={dataset.id} datasetTitle={dataset.title} />
       <PgConsumersCard datasetId={dataset.id} />
       <PgUsedInCard datasetId={dataset.id} />

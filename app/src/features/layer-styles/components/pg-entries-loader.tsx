@@ -12,9 +12,8 @@ import { listPageQueryOptions, type EntriesPage, type EntryRow } from "#/lib/sto
  * fan-out, the popup executor's join-side reader) running on the entries
  * store: one component per dataset, each PAGING the dataset's entry rows
  * (plain PostgREST keyset over `(created_at, id)` — the seam's bulk path,
- * NOT `search_entries`) and reporting {complete, rows} exactly like the
- * Convex loader: partial rows stream as pages land, `complete` only after a
- * full pass (`nextCursor === null`).
+ * NOT `search_entries`) and reporting {complete, rows}: partial rows stream as pages land,
+ * `complete` only after a full pass (`nextCursor === null`).
  *
  * Rows pass through the seam's `applyEntryRowSpecs` once per page arrival
  * (identity until stage 5's specs exist), and report in the seam's row

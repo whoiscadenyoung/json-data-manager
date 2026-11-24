@@ -17,7 +17,7 @@ import { supabase } from "./client";
  * The Supabase session state: the GoTrue session (null while signed out) and
  * whether the initial read has resolved. `isLoading` is the gate's "session
  * resolving" window — true during SSR too, which knows nothing of the
- * session and renders the gate's spinner, exactly as `useConvexAuth` did.
+ * session and renders the gate's spinner.
  */
 interface SupabaseAuthState {
   session: Session | null;
@@ -91,9 +91,7 @@ const SessionContext = createContext<SupabaseAuthState>({
 
 /**
  * Mounted once in the root document (inside the TanStack Query provider, so
- * cache side effects can run). The Convex provider stays mounted alongside
- * it until stage 7 (design doc §9): `useConvexAuth` keeps answering for the
- * Convex surfaces while this context answers for the PG ones.
+ * cache side effects can run).
  */
 export function SupabaseAuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient(),

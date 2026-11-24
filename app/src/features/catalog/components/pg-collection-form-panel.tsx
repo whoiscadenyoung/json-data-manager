@@ -19,11 +19,7 @@ import * as collectionsStore from "#/lib/store/collections";
 import type { CollectionRow } from "#/lib/store/collections";
 
 /**
- * Side panel for creating or editing a Postgres collection (name +
- * description) — the Convex `CollectionFormPanel`'s PG edition. New
- * collections are Postgres-native (the §14 transitional split: they organize
- * the PG datasets a PG collection can hold; a Convex collection can never
- * contain one).
+ * Side panel for creating or editing a collection (name + description).
  */
 export function PgCollectionFormPanel({
   collection,

@@ -119,10 +119,7 @@ function createArgs(
 /**
  * The datasets the schema editor's reference-field picker lists: the
  * Postgres catalog's full rows (the `pg:datasets` list projection, which
- * carries each dataset's `jsonSchema`). The picker's original Convex
- * catalog read — the stage-1 transitional split that predated the PG
- * browser — is archived with the stage-7 disconnect (issue #206); a fresh
- * dataset's reference fields target Postgres datasets.
+ * carries each dataset's `jsonSchema`).
  */
 function useAvailableDatasets(): Array<{ id: string; schema: unknown; title: string }> {
   const datasets = useQuery(datasetsStore.listQueryOptions()).data;

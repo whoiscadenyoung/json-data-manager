@@ -1,12 +1,9 @@
 /**
  * The pure version-row join rule (roadmap stage 6, #101) — deliberately
- * import-free so BOTH the server's delta machinery (app/convex/versions/versioning.ts,
- * which re-exports these) and the client's row-resolution seam
- * (app/src/lib/dataset-rows.ts) key version rows with ONE definition. The
- * diff's ops (the server's `diffVersionRows`) and the diff overlay's
- * positioning rows (the seam's version reader) only line up if both sides
- * derive the same key, which is why this lives in its own module instead of
- * either side.
+ * import-free so the delta machinery (`#/lib/store/versions`) and the
+ * diff overlay's positioning rows key version rows with ONE definition. The
+ * diff's ops and the overlay's rows only line up if both sides derive the
+ * same key, which is why this lives in its own module.
  */
 
 /** One light {key, data} version row — the diff's unit. */

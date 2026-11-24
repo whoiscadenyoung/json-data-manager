@@ -1,4 +1,3 @@
-import { isPostgresDatasetId } from "#/lib/dataset-source";
 import type { DatasetSummaryRow } from "#/lib/store/datasets";
 import type { GroupRow } from "#/lib/store/groups";
 
@@ -7,22 +6,12 @@ import type { GroupRow } from "#/lib/store/groups";
  * browser's PG items, the count labels, and the collection card counts. No
  * React, no queries: everything the routes and cards render is derived here
  * so the ui-polish parity rules (info parity across card types, counts next
- * to tags, hierarchical group presentation, split-brain merging) have ONE
+ * to tags, hierarchical group presentation) have ONE
  * testable home. Data access lives in the store modules (`#/lib/store/*`);
  * nothing here reads or writes.
  */
 
-/**
- * True when an id was minted by the Postgres backend. Every PG id —
- * datasets, collections, groups, profiles — is a `gen_random_uuid()`
- * (dashed), and every Convex document id is dash-free base32, so the
- * dataset-keyed predicate IS the general predicate (the two id spaces are
- * disjoint; see `#/lib/dataset-source`). Surfaces that serve both stores
- * branch on this, exactly as the dataset page does.
- */
-export const isPostgresCatalogId = isPostgresDatasetId;
-
-/** The browser's sort options — the Convex browser's same three, applied across both stores. */
+/** The browser's sort options — newest, oldest, or by title. */
 export type CatalogSortOption = "newest" | "oldest" | "title-asc";
 
 /** The browser's type filter — PG datasets are geospatial or regular (`is_geospatial`). */
@@ -82,7 +71,7 @@ export function buildPgBrowserItems(
   return items;
 }
 
-/** The item's created-at as milliseconds — PG timestamps are ISO strings; Convex items sort by `_creationTime` numbers, and the merged browser compares the two. */
+/** The item's created-at as milliseconds — timestamps are ISO strings. */
 export function pgBrowserItemSortTime(item: PgBrowserItem): number {
   const created = item.kind === "group" ? item.group.createdAt : item.dataset.createdAt;
   const parsed = Date.parse(created);
@@ -94,7 +83,7 @@ export function pgBrowserItemTitle(item: PgBrowserItem): string {
   return item.kind === "group" ? item.group.name : item.dataset.title;
 }
 
-/** Sorts PG items with the browser's sort options (the Convex route sorts its own items with the same semantics before the merge). */
+/** Sorts PG items with the browser's sort options. */
 export function sortPgBrowserItems(
   items: PgBrowserItem[],
   sort: CatalogSortOption,
@@ -110,13 +99,12 @@ export function sortPgBrowserItems(
 }
 
 /**
- * Applies the browser's search + type filter to PG items — the Convex
- * browser's exact semantics (ui-polish parity): a group matches when its own
+ * Applies the browser's search + type filter to browser items: a group matches when its own
  * name/description matches (then ALL its members show) or when any member
  * matches (then just those members show); an empty group stays visible only
  * on a self-match with no type filter.
  */
-// oxlint-disable-next-line eslint/complexity -- mirrors the Convex route's filterBrowserItems branch-for-branch; splitting the group/dataset arms would scatter the parity rules this function exists to keep in one place.
+// oxlint-disable-next-line eslint/complexity -- splitting the group/dataset arms would scatter the parity rules this function exists to keep in one place.
 export function filterPgBrowserItems(
   items: PgBrowserItem[],
   search: string,
@@ -156,50 +144,6 @@ export function filterPgBrowserItems(
 }
 
 /**
- * Merges two SAME-SEMANTICS sorted lists (each already sorted by the same
- * `sort`) into one sorted list — the split-brain browser's merge point
- * (§14.6). Stable pairwise merge, never a re-sort of the concatenation: the
- * two stores' comparators differ in shape (number vs ISO date), so each side
- * sorts itself and this only interleaves.
- */
-export function mergeSortedItems<T>(
-  a: T[],
-  b: T[],
-  sort: CatalogSortOption,
-  key: (item: T) => { time: number; title: string },
-): T[] {
-  const merged: T[] = [],
-    lessNeeded = (left: T, right: T): boolean => {
-      const leftKey = key(left),
-        rightKey = key(right);
-      if (sort === "title-asc") {
-        return leftKey.title.localeCompare(rightKey.title) <= 0;
-      }
-      return sort === "oldest" ? leftKey.time <= rightKey.time : leftKey.time >= rightKey.time;
-    };
-  let i = 0,
-    j = 0;
-  while (i < a.length && j < b.length) {
-    if (lessNeeded(a[i], b[j])) {
-      merged.push(a[i]);
-      i += 1;
-    } else {
-      merged.push(b[j]);
-      j += 1;
-    }
-  }
-  while (i < a.length) {
-    merged.push(a[i]);
-    i += 1;
-  }
-  while (j < b.length) {
-    merged.push(b[j]);
-    j += 1;
-  }
-  return merged;
-}
-
-/**
  * The magnitude label next to a PG dataset's type tags (ui-polish count
  * parity): geospatial datasets read "N features" from the trigger-maintained
  * `feature_count` summary column, regular datasets "N rows" from
@@ -215,7 +159,7 @@ export function datasetCountLabel(dataset: DatasetSummaryRow): string {
 /**
  * How many datasets a PG collection holds: direct joins plus every dataset
  * of a group living in the collection (a group joins as a single unit and
- * brings its members) — the Convex collection card's same count, deduped by
+ * brings its members), deduped by
  * dataset id so a dataset both joined and grouped never counts twice.
  */
 export function collectionDatasetCount(
@@ -245,9 +189,8 @@ export function collectionDatasetCount(
 }
 
 /**
- * The drafts toggle's PG merge — the `withDrafts` invariant (published and
- * draft reads are disjoint; the id guard keeps that observable), keyed on
- * the PG row's `id` instead of the Convex `_id`.
+ * The drafts toggle's merge — published and draft reads are disjoint; the id
+ * guard keeps that observable.
  */
 export function withPgDrafts(
   datasets: DatasetSummaryRow[] | undefined,

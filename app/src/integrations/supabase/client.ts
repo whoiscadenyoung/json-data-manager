@@ -13,8 +13,7 @@ import { env } from "#/env";
  * the whole reason this is not a plain `createClient`. At stage 0 the browser
  * is the only consumer: on the server this constructor is inert (token
  * auto-refresh and URL detection switch off outside the browser, cookie
- * reads see nothing), and SSR knows nothing of the session, exactly as with
- * the Convex gate.
+ * reads see nothing), and SSR knows nothing of the session.
  *
  * The `Database` generic is unwired until `integrations/supabase/types.ts`
  * is generated from the live stack (`supabase gen types typescript --local`,

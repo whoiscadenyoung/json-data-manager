@@ -20,10 +20,7 @@ import type { DatasetGeometryType } from "./datasets";
  * `public.geometries` table (DDL §3.2) and the `dataset_rows_for_tiles` RPC
  * (§5.5).
  *
- * Today's Convex surface has NO client-facing geometry writes (a geometry
- * always rode `entries.create`/`entries.update`'s `geometry` arg) — the
- * writes here are the design's PG-native counterparts for the same jobs:
- * entries.ts routes its geometry arg through them, and the import flow's
+ * A geometry rides an entry's `geometry` arg on create/update: entries.ts routes its geometry arg through them, and the import flow's
  * oversized-payload path (§10) uses the storage-backed mode directly.
  *
  * Row identity is the ENTRY (1:1 — `geometries.entry_id` is UNIQUE, the key
@@ -71,8 +68,7 @@ export interface GeometryRow {
 
 /**
  * Oversized-geometry threshold: geometry sources above this ride Storage
- * instead of the inline `source` jsonb (design §6 — "set at 256 KB, the
- * Convex INLINE_GEOMETRY_BYTE_LIMIT concept"). Exported for the import
+ * instead of the inline `source` jsonb (design §6 — set at 256 KB). Exported for the import
  * flow's splitter, which is what actually enforces it.
  */
 export const INLINE_GEOMETRY_SOURCE_BYTES = 256 * 1024;
@@ -153,9 +149,8 @@ export async function rowsForTiles(
 export const DEFAULT_GEOMETRY_ROWS_LIMIT = 5000;
 
 /**
- * The reactive geometry paging — `api.cms.geometries.list` parity. Same feed
- * as `rowsForTiles` (one RPC serves both; the Convex split was a
- * byte-budget artifact that Postgres does not have).
+ * The reactive geometry paging. Same feed as `rowsForTiles` (one RPC serves
+ * both).
  */
 export async function list(
   args: GeometryRowsArgs,
@@ -164,7 +159,7 @@ export async function list(
   return await rowsForTiles(args, options);
 }
 
-/** `api.cms.geometries.getEntryGeometry` parity: the entry's single geometry (1:1), or null when it has none. Storage-backed rows return `sourcePath` — resolve the payload via `resolveGeometryRows`/a signed URL, exactly as the Convex read handed back a `geometryUrl`. */
+/** The entry's single geometry (1:1), or null when it has none. Storage-backed rows return `sourcePath` — resolve the payload via `resolveGeometryRows`/a signed URL. */
 export async function getByEntry(
   args: { entryId: string },
   options?: StoreOptions,
@@ -211,8 +206,8 @@ export function getByEntryQueryOptions(args: { entryId: string }, options?: Stor
  * 0006 update/delete policies deny that for every editor but the original
  * uploader. Per-upload tokens make every attempt its own object set; a
  * failed attempt's leftovers are orphans a stage-later cleanup sweeps by
- * the `<datasetId>/` prefix + age (the recorded tile-flow difference — the
- * Convex flow deleted the incoming blob, a path-based flow cannot). The
+ * the `<datasetId>/` prefix + age (a path-based flow cannot delete the
+ * incoming blob). The
  * token stays INTERNAL (per call, not a new argument): each oversized row
  * uploads exactly once per import attempt, so per-call tokens carry the
  * same no-collision guarantee without a caller-signature change.
@@ -410,7 +405,7 @@ export const TILE_ARCHIVE_SIGNED_URL_TTL_SECONDS = 86_400;
  * The tile-relevant fields of the dataset row, read by the build worker
  * BEFORE it fetches any geometry (the expected-version snapshot — the guard's
  * liveness depends on capturing `mapTileCacheVersion` before paging). Mirrors
- * the fields the Convex worker read off `api.cms.schemas.get`.
+ * the fields the build worker needs.
  */
 export interface TileDatasetInfo {
   featureCount: number;

@@ -15,10 +15,7 @@ import { useState } from "react";
 import type { DatasetSummaryRow } from "#/lib/store/datasets";
 
 /**
- * Side panel listing PG datasets so the user can pick one for the app — the
- * builder's Postgres picker (the core `DatasetPickerSheet` is typed on the
- * Convex summary; the two id spaces can't share a prop — the catalog
- * feature's `PgDatasetPickerSheet` precedent). Rows carry the same kind tag
+ * Side panel listing datasets so the user can pick one for the app. Rows carry the same kind tag
  * as the app's own data list (info parity).
  */
 export function PgDatasetPickerSheet({

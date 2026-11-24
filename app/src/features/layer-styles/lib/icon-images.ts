@@ -5,8 +5,7 @@ import type * as MapLibreGL from "maplibre-gl";
  * the built-in SDF sprite served from our own origin
  * (`public/sprites/layer-styles/`, built by `sprite/build.ts`), the icon
  * catalog the picker searches, and uploaded icons from marker storage
- * (Convex file storage for pre-migration maps, the `marker-sprites` bucket
- * for Postgres maps — the transitional split). All of it loads lazily, on
+ * (the `marker-sprites` bucket). All of it loads lazily, on
  * the first style or picker that needs an icon.
  */
 

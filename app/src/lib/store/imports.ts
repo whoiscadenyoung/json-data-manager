@@ -11,9 +11,8 @@ import { clientOf, queryRow, queryRows, queryScalar, type StoreOptions } from ".
  * The pipeline itself is a client-side loop (§10): `@caden/importers` parses
  * the file, `chunkRowsForRpc` splits the rows into HTTP-sized chunks, and
  * each chunk is one `import_entries` call — one SQL statement per chunk,
- * atomic by itself, so the workflow machinery the Convex backend needed
- * (chunk blobs, a durable journal, server-side resume) collapses into a
- * sequential loop. The `imports` row is the durable record of every attempt:
+ * atomic by itself, so the whole import is
+ * a sequential loop. The `imports` row is the durable record of every attempt:
  * the RPC bumps `processed` per chunk server-side (the §5.3 progress
  * rule), and `complete`/`fail` close it out. One row PER ATTEMPT — a Retry
  * starts a fresh one.
@@ -41,14 +40,12 @@ const textEncoder = new TextEncoder();
 
 /**
  * Byte budget per chunk. The design's §10 band is ~1–2 MB of HTTP body per
- * `import_entries` call ("this bound is purely HTTP-shaped" — the Convex
- * action-size budgets do not apply); 1.5 MB sits mid-band.
+ * `import_entries` call ("this bound is purely HTTP-shaped"); 1.5 MB sits mid-band.
  */
 export const IMPORT_CHUNK_MAX_BYTES = 1_500_000;
 
 /**
- * Rows per chunk, whichever cap binds first — the Convex chunker's row cap
- * kept as an HTTP-shape guard so a chunk of tiny rows still travels as a
+ * Rows per chunk, whichever cap binds first — kept as an HTTP-shape guard so a chunk of tiny rows still travels as a
  * reasonable single request.
  */
 export const IMPORT_CHUNK_MAX_ROWS = 500;

@@ -77,8 +77,8 @@ import { VISIBILITY_LEVELS } from "./visibility";
  * cached rows don't carry).
  *
  * The persisted light state is untouched by construction: the persister only
- * dehydrates `convexQuery` hashes (`light-namespaces.isPersistableQueryHash`),
- * so PG cache patches never change a persisted shape.
+ * dehydrates the whitelisted namespaces (`light-namespaces.isPersistableQueryHash`),
+ * so cache patches never change a persisted shape.
  */
 
 /** The `postgres_changes` event kinds this layer dispatches. */

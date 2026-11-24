@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import type { DatasetEntryRow } from "#/lib/dataset-rows";
-import type { FeatureSelection } from "#/lib/dataset-rows-react";
+import type { FeatureSelection } from "#/lib/dataset-rows";
 import { getQueryOptions } from "#/lib/store/entries";
 import { versionEntryQueryOptions } from "#/lib/store/versions";
 import { liveViewRowsQueryOptions } from "#/lib/store/views";

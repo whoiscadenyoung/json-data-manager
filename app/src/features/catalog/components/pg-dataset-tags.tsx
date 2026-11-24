@@ -12,10 +12,6 @@ import { datasetCountLabel } from "../lib/pg-dataset-view";
  * `kind` union). Rendered by the browser cards, collection/group member
  * rows, and the profile page's dataset list alike — new PG list views keep
  * this component rather than re-deriving per-page badge markup.
- *
- * The Convex component's Synced/lineage badges have no PG state at this
- * stage (bindings are stage 7, versions stage 4) and are absent here rather
- * than dead.
  */
 export function PgDatasetTypeTags({ dataset }: { dataset: DatasetSummaryRow }) {
   return (

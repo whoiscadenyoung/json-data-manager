@@ -7,13 +7,11 @@ import type { VisibilityLevel } from "./visibility";
 
 /**
  * The projects store (design doc §8.1 "projects.ts # projects/artifacts";
- * stage 4, issue #203) — the PG counterpart of the Convex
- * `api.publishing.projects.*` domain over `public.projects` +
+ * stage 4, issue #203) over `public.projects` +
  * `public.project_artifacts` (DDL §3.5, migration 0009; catalog columns per
  * migration 0019 / ADR 0018, issue #256).
  *
- * Parity notes (each traces to `app/convex/publishing/projects.ts` unless
- * marked otherwise):
+ * Notes:
  *   - Projects are collaborative workspaces (0018/ADR 0017): reads are
  *     member-wide, content writes are editor+; a non-member's project reads
  *     as not-found and its writes answer 0 rows (the no-existence-leak
@@ -233,8 +231,7 @@ export async function update(
  * Deletes the project; memberships cascade with it (and their fork edges go
  * first — see removeArtifact). Returns the affected row count.
  *
- * The membership walk PAGINATES (the stage-7 parity fix for the tranche-3
- * finding): CATALOG_READ_LIMIT is a read cap, not a membership bound — a
+ * The membership walk PAGINATES: CATALOG_READ_LIMIT is a read cap, not a membership bound — a
  * project past 1000 artifacts used to leave its tail's fork edges dangling
  * (consumer_id is the membership row's id, a text column with no FK, so the
  * project cascade cannot reach them). Keyset by membership id; each page's
@@ -322,7 +319,7 @@ export interface AddArtifactResult {
  *     the floating state and the member can pin once a version exists (the
  *     versions card's "nothing to pin to yet" posture). A duplicate
  *     (project, kind, artifact) raises the 23505 constraint (the DB
- *     PK/UQ enforces what the Convex in-transaction re-check did) — the UI
+ *     PK/UQ enforces it) — the UI
  *     surfaces it verbatim.
  *
  * Returns the membership row (null = denied — not an editor of the

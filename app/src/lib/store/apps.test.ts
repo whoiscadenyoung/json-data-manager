@@ -579,16 +579,13 @@ describe("apps writes — rows-affected returns", () => {
     ],
   ];
 
-  it.each(refusedShapes)(
-    "%s — refused with the Convex error, before any query",
-    async (_name, content, message) => {
-      const { client, queries } = stubSupabase();
-      await expect(
-        saveContent({ appId: "a1", content, expectedRevision: 0 }, { supabase: client }),
-      ).rejects.toThrow(message);
-      expect(queries.length).toBe(0);
-    },
-  );
+  it.each(refusedShapes)("%s — refused before any query", async (_name, content, message) => {
+    const { client, queries } = stubSupabase();
+    await expect(
+      saveContent({ appId: "a1", content, expectedRevision: 0 }, { supabase: client }),
+    ).rejects.toThrow(message);
+    expect(queries.length).toBe(0);
+  });
 
   it("remove cleans up the membership, then deletes the app and returns the affected count", async () => {
     const stub = stubSupabase();
