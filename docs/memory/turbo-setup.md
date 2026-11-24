@@ -28,17 +28,21 @@ dists (cache hits, ~instant) before vite boots.
   merge** — a bare `{"outputs": [".output/**"]}` override silently dropped
   `dependsOn: ["^build"]`; restate dependencies inside any `pkg#task` block
   (verified via `turbo run build --dry=json`).
-- **Composite tsc buildinfo lives OUTSIDE dist**: json-cms →
-  `.cache/tsconfig.tsbuildinfo`, data-export → `tsconfig.build.tsbuildinfo`
-  (adjacent to the config, default for `-p tsconfig.build.json`). Deleting
-  `dist/` alone makes tsc exit 0 WITHOUT emitting (up-to-date skip) — this
-  crashed the first app build ("no output files found" warnings are the tell).
-  Turbo only CAPTURES declared outputs (it does not pre-delete them on a
-  cache miss), so `build.outputs` includes the buildinfo globs for cache-hit
-  consistency, but a manual `rm -rf dist` still needs the buildinfo removed
-  too: json-cms has `build:clean`/`build:codegen` (codegen works offline);
-  data-export's `build:codegen` needs CONVEX_DEPLOYMENT (Convex-era), so just
-  delete its `tsconfig.build.tsbuildinfo` then plain `build`.
+- **`composite: true` was REMOVED from json-cms + data-export (2026-11-24,
+  same day as the turbo setup)** — it was vestigial Convex-template
+  scaffolding (nothing uses `references` or `tsc -b`), and composite's
+  forced incremental wrote tsbuildinfo OUTSIDE dist (json-cms
+  `.cache/tsconfig.tsbuildinfo`, data-export `tsconfig.build.tsbuildinfo`
+  — the default for `-p tsconfig.build.json` is adjacent to the config, so
+  a plain `build` DOES write it). Stale buildinfo made tsc exit 0 WITHOUT
+  emitting after `rm -rf dist`, which crashed the app build. With composite
+  gone the packages match data-core/importers/geometry-archive (no
+  buildinfo anywhere, verified zero after build AND typecheck), and
+  turbo.json `build.outputs` is plain `dist/**` — no failsafe needed. If
+  composite ever returns, the silent-skip quirk returns with it. Cost:
+  json-cms' legacy `dev:build` chokidar loop does full (not incremental)
+  builds per change — irrelevant while the backend is Supabase. Turbo only
+  CAPTURES declared outputs; it does NOT pre-delete them on a cache miss.
 - `bun run dev` boots on :3001 when :3000 is held (usual), after replaying
   the dist cache hits; Ctrl-C tears down cleanly.
 - `globalPassThroughEnv` (SUPABASE_DB_URL, DATABASE_URL, JWT_SECRET,
