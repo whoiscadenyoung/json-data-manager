@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 
-import { PgProjectCatalog } from "#/features/publishing";
+import { ProjectCatalog } from "#/features/publishing";
 
 // `folder` = the open catalog folder's id (absent = the catalog root).
 const searchSchema = z.object({
@@ -10,6 +10,6 @@ const searchSchema = z.object({
 
 /** Catalog section of the project shell (issue #271): the project's file browser. */
 export const Route = createFileRoute("/projects/$projectId/catalog")({
-  component: PgProjectCatalog,
+  component: ProjectCatalog,
   validateSearch: searchSchema,
 });

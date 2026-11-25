@@ -129,12 +129,12 @@ export function wrapScratch(tables: readonly ScratchTable[], userSql: string): s
   return `${scratchPrelude(tables)}select * from (\n${userSql}\n) as scratch`;
 }
 
-interface PgErrorLike {
+interface ErrorLike {
   message: string;
   code?: string;
 }
 
-function pgErrorOf(error: unknown): PgErrorLike {
+function errorOf(error: unknown): ErrorLike {
   if (typeof error === "object" && error !== null && "message" in error) {
     const message = String(error.message);
     const code = "code" in error && typeof error.code === "string" ? error.code : undefined;
@@ -143,7 +143,7 @@ function pgErrorOf(error: unknown): PgErrorLike {
   return { message: String(error) };
 }
 
-function friendlyError(error: PgErrorLike, timeoutMs: number): string {
+function friendlyError(error: ErrorLike, timeoutMs: number): string {
   if (error.code === "57014" && /statement timeout/i.test(error.message)) {
     return `The query ran longer than ${Math.round(timeoutMs / 1000)} seconds and was cancelled (timeout). Add a filter or a LIMIT, or save it as a view and run it there.`;
   }
@@ -210,7 +210,7 @@ export async function scratchAs(
         outcome: { ok: true, ...result, rowCount: result.rows.length, elapsedMs } as const,
       };
     } catch (error) {
-      const pg = pgErrorOf(error);
+      const pg = errorOf(error);
       return {
         tables,
         outcome: {

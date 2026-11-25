@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { PgProjectsBrowser } from "#/features/publishing";
+import { ProjectsBrowser } from "#/features/publishing";
 
 /**
  * The project browser (roadmap 7a, #102; lifecycle doc §3): the working
@@ -15,7 +15,7 @@ export const Route = createFileRoute("/projects/")({
 function ProjectsRoutePage() {
   return (
     <main className="mx-auto max-w-6xl px-4 py-8">
-      <PgProjectsBrowser />
+      <ProjectsBrowser />
     </main>
   );
 }

@@ -130,9 +130,9 @@ export function NewViewPage({ projectId }: { projectId: string }) {
         projectId,
         title: title.trim(),
       });
-      void queryClient.invalidateQueries({ queryKey: ["pg:views"] });
-      void queryClient.invalidateQueries({ queryKey: ["pg:datasets"] });
-      void queryClient.invalidateQueries({ queryKey: ["pg:projects"] });
+      void queryClient.invalidateQueries({ queryKey: ["views"] });
+      void queryClient.invalidateQueries({ queryKey: ["datasets"] });
+      void queryClient.invalidateQueries({ queryKey: ["projects"] });
       await navigate({ params: { projectId, viewId }, to: "/projects/$projectId/views/$viewId" });
     } catch (error) {
       toast.error(errorMessage(error, "Couldn't create the view."));

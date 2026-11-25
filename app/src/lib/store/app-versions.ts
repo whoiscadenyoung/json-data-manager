@@ -23,7 +23,7 @@ import { clientOf, queryRow, queryRows, type StoreOptions } from "./client";
  *     frozenChildren), so the published render reads ONLY this snapshot and
  *     the immutable `version_entries`.
  *
- * Inserts happen through the publish walk (`#/features/publishing/lib/pg-
+ * Inserts happen through the publish walk (`#/features/publishing/lib/
  * app-publish`), not here — the store is reads only, exactly the shape the
  * RLS grants (append-only, no update/delete policies).
  *
@@ -163,14 +163,14 @@ export async function head(
 
 export function listQueryOptions(args: { appId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:appVersions", "list", args],
+    queryKey: ["appVersions", "list", args],
     queryFn: async () => await list(args, options),
   });
 }
 
 export function headQueryOptions(args: { appId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:appVersions", "head", args],
+    queryKey: ["appVersions", "head", args],
     queryFn: async () => await head(args, options),
   });
 }

@@ -18,7 +18,7 @@ import type { LayerRow } from "#/lib/store/layers";
 import * as mapsStore from "#/lib/store/maps";
 
 /** The add-child sheet for one group: owned project layers (the cycle guard refuses an ancestor at write time) + published versions to link. */
-export function PgAddChildSheet(props: {
+export function AddChildSheet(props: {
   groupLayerId: string;
   invalidate: () => void;
   layers: LayerRow[];
@@ -144,7 +144,7 @@ export function PgAddChildSheet(props: {
 }
 
 /** The map form (name + description) as a sheet — the old MapFormPanel's fields, the project route's back link. */
-export function PgMapFormDialog(props: {
+export function MapFormDialog(props: {
   map: mapsStore.MapRow;
   onOpenChange: (open: boolean) => void;
   open: boolean;
@@ -207,7 +207,7 @@ export function PgMapFormDialog(props: {
 }
 
 /** The add-dataset sheet: the project's drawable memberships not yet placed — picking one mints the owned default-style layer (the auto-layer) and places it. */
-export function PgAddDatasetSheet(props: {
+export function AddDatasetSheet(props: {
   /** Geospatial dataset ids, or undefined while the summaries load (no filtering then — never flash an empty sheet). */
   geospatialDatasetIds: ReadonlySet<string> | undefined;
   invalidate: () => void;
@@ -305,7 +305,7 @@ export function PgAddDatasetSheet(props: {
 }
 
 /** The link-layer sheet: recent published layer versions across the viewer's visible projects; linking pins one read-only. */
-export function PgLinkLayerSheet(props: {
+export function LinkLayerSheet(props: {
   invalidate: () => void;
   linkedVersionIds: ReadonlySet<string>;
   mapId: string;
@@ -391,7 +391,7 @@ export function PgLinkLayerSheet(props: {
 }
 
 /** The new-group dialog: a name is the only required field; the group lands placed on this map. */
-export function PgNewGroupDialog(props: {
+export function NewGroupDialog(props: {
   invalidate: () => void;
   mapId: string;
   onOpenChange: (open: boolean) => void;

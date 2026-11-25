@@ -85,7 +85,7 @@ const ARTIFACT_SELECT =
 /** The caller's own projects, newest first — `projects.list` parity (RLS scopes to the creator). */
 export function listQueryOptions(options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:projects", "list"],
+    queryKey: ["projects", "list"],
     queryFn: async () =>
       await queryRows<ProjectRow>(
         clientOf(options)
@@ -100,7 +100,7 @@ export function listQueryOptions(options?: StoreOptions) {
 /** One project by id, or null when it isn't the caller's (invisible reads as not-found). */
 export function getQueryOptions(args: { projectId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:projects", "get", args],
+    queryKey: ["projects", "get", args],
     queryFn: async () =>
       await queryRow<ProjectRow>(
         clientOf(options).from("projects").select(PROJECT_SELECT).eq("id", args.projectId).limit(1),
@@ -111,7 +111,7 @@ export function getQueryOptions(args: { projectId: string }, options?: StoreOpti
 /** The project that OWNS an artifact (the in-project create/import binds an owned draft at birth), or null — a dataset opens inside that project's shell (issue #271). */
 export function ownerOfArtifactQueryOptions(args: { artifactId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:projects", "ownerOf", args],
+    queryKey: ["projects", "ownerOf", args],
     queryFn: async () => {
       const rows = await queryRows<{ projectId: string }>(
         clientOf(options)
@@ -130,7 +130,7 @@ export function ownerOfArtifactQueryOptions(args: { artifactId: string }, option
 /** One project's membership rows — the workspace read. */
 export function listArtifactsQueryOptions(args: { projectId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:projects", "listArtifacts", args],
+    queryKey: ["projects", "listArtifacts", args],
     queryFn: async () =>
       await queryRows<ProjectArtifactRow>(
         clientOf(options)
@@ -153,7 +153,7 @@ export function listArtifactsQueryOptions(args: { projectId: string }, options?:
  */
 export function listVisibleArtifactMembershipsQueryOptions(options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:projects", "listVisibleArtifactMemberships"],
+    queryKey: ["projects", "listVisibleArtifactMemberships"],
     queryFn: async () =>
       await queryRows<ArtifactMembershipRow>(
         clientOf(options)
@@ -554,7 +554,7 @@ export interface CatalogRow {
  */
 export function listCatalogQueryOptions(args: { projectId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:projects", "catalog", args],
+    queryKey: ["projects", "catalog", args],
     queryFn: async (): Promise<CatalogRow[]> => {
       const client = clientOf(options);
       const artifacts = await queryRows<ProjectArtifactRow>(

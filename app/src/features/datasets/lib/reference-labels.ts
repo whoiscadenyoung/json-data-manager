@@ -7,19 +7,18 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * Resolves each reference field's target entry ids to a display label (its
  * `displayProperty`, when the target entry has one), grouped by field name.
- * `candidateEntries` is expected to be the flattened result of one
- * `api.cms.entries.listEntriesForSchemas` call covering every dataset any of
- * `referenceFields` points at — see `entries-table.tsx` and `$entryId.tsx`.
+ * `candidateEntries` is the label-lookup rows for every dataset any of
+ * `referenceFields` points at — see `entries-table.tsx` and `entry-details.tsx`.
  */
 export function buildLabelsByField(
   referenceFields: ReferenceField[],
-  candidateEntries: Array<{ _id: string; schemaId: string; data: unknown }>,
+  candidateEntries: Array<{ _id: string; datasetId: string; data: unknown }>,
 ): Map<string, Map<string, string>> {
   const entriesBySchema = new Map<string, Array<{ _id: string; data: unknown }>>();
   for (const entry of candidateEntries) {
-    const list = entriesBySchema.get(entry.schemaId) ?? [];
+    const list = entriesBySchema.get(entry.datasetId) ?? [];
     list.push(entry);
-    entriesBySchema.set(entry.schemaId, list);
+    entriesBySchema.set(entry.datasetId, list);
   }
 
   const labelsByField = new Map<string, Map<string, string>>();
@@ -76,4 +75,50 @@ export function collectReferencedIds(
     }
   }
   return [...ids].slice(0, LABEL_IDS_CAP);
+}
+
+// --- the reactive lookup (the store's batched read, one query per surface) ---
+
+import { useQuery } from "@tanstack/react-query";
+
+import * as entriesStore from "@/lib/store/entries";
+
+/**
+ * The reference-field label lookup (design §14.6): reference fields name
+ * their TARGET dataset, and the store's batched `listForIds` serves the
+ * labels (one query per surface, never per link). The result is the
+ * `labelsByField` map the shared table/entry-details renderers consume.
+ *
+ * Cap note: the id list is capped at the store's `LIST_FOR_IDS_MAX` (the
+ * documented bound) — links beyond the cap render their raw id.
+ */
+export function useReferenceLabels(
+  referenceFields: ReferenceField[],
+  entries: ReadonlyArray<{ data: unknown }>,
+): Map<string, Map<string, string>> {
+  const ids = new Set<string>();
+  if (referenceFields.length > 0) {
+    for (const entry of entries) {
+      const record = isRecord(entry.data) ? entry.data : {};
+      for (const field of referenceFields) {
+        for (const id of referencedEntryIds(record[field.name])) {
+          ids.add(id);
+        }
+      }
+    }
+  }
+  const cappedIds = [...ids].slice(0, entriesStore.LIST_FOR_IDS_MAX),
+    labels = useQuery({
+      ...entriesStore.listForIdsQueryOptions({ entryIds: cappedIds }),
+      enabled: cappedIds.length > 0,
+    });
+
+  return buildLabelsByField(
+    referenceFields,
+    (labels.data ?? []).map((row) => ({
+      _id: row.id,
+      data: row.data,
+      datasetId: row.datasetId,
+    })),
+  );
 }

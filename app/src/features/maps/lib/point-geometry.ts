@@ -1,6 +1,7 @@
-import type { BoundingBox, Geometry, GeometryType } from "@caden/json-cms/react";
+import type { BoundingBox, Geometry } from "@caden/json-cms/react";
 import type * as GeoJSON from "geojson";
 
+import type { DatasetGeometryType } from "#/lib/store/datasets";
 import type { DatasetBoundingBox } from "#/lib/store/datasets";
 
 /**
@@ -10,7 +11,7 @@ import type { DatasetBoundingBox } from "#/lib/store/datasets";
  * renders. Everything else (`LineString`, `MultiLineString`, `Polygon`,
  * `MultiPolygon`) keeps going through `MapGeoJSON`.
  */
-export function isPointLikeGeometryType(type: GeometryType): type is "Point" | "MultiPoint" {
+export function isPointLikeGeometryType(type: DatasetGeometryType): type is "Point" | "MultiPoint" {
   return type === "Point" || type === "MultiPoint";
 }
 
@@ -19,7 +20,7 @@ export function isPointLikeGeometryType(type: GeometryType): type is "Point" | "
  * everything else, using each row's denormalized top-level `type` field —
  * no need to touch `.geometry` itself to decide the split.
  */
-export function splitPointLikeGeometries<T extends { type: GeometryType }>(
+export function splitPointLikeGeometries<T extends { type: DatasetGeometryType }>(
   rows: T[],
 ): { pointRows: T[]; otherRows: T[] } {
   const pointRows: T[] = [],
@@ -75,7 +76,7 @@ export function asBoundingBox(value: number[] | undefined): BoundingBox | undefi
 /**
  * The Postgres dataset's stored extent (`datasets.bbox`, design §3.2 — the
  * trigger-maintained expand-only envelope, the stage-1 counterpart of
- * `schemas.boundingBox`), as PostgREST hands it back: the GeoJSON Polygon
+ * `datasets.bbox`), as PostgREST hands it back: the GeoJSON Polygon
  * the PostGIS envelope renders to. Unfolds the outer ring into the same
  * `[minLon, minLat, maxLon, maxLat]` tuple, so a
  * map surface can instant-open a dataset from its stored
@@ -86,7 +87,7 @@ export function asBoundingBox(value: number[] | undefined): BoundingBox | undefi
  * so the ring's coordinate extremes ARE the envelope; a malformed/absent
  * bbox reads as no stored extent (the full-skeleton fallback path).
  */
-export function pgBboxBounds(value: DatasetBoundingBox | undefined): BoundingBox | undefined {
+export function bboxBounds(value: DatasetBoundingBox | undefined): BoundingBox | undefined {
   if (value === undefined || value.type !== "Polygon") {
     return undefined;
   }
@@ -119,7 +120,7 @@ export function pgBboxBounds(value: DatasetBoundingBox | undefined): BoundingBox
  * which only accepts `GeoJSON.Point` features. Rows are expected to already
  * be point-like (see `splitPointLikeGeometries`); a `MultiPoint` geometry is
  * exploded into one `Point` feature per coordinate, duplicating `properties`
- * onto each exploded point so identifiers like `entryId`/`schemaId` survive
+ * onto each exploded point so identifiers like `entryId`/`datasetId` survive
  * for click handling. Any other geometry type is silently skipped (defensive
  * only — callers are expected to have already filtered to point-like rows).
  */

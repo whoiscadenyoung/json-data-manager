@@ -5,7 +5,7 @@
 --
 -- Seed set = the given project(s) and everything they own: datasets
 -- (project_artifacts rows), layers, maps, apps, versions, relations, plus the
--- accounts those rows reference. Everything else (pg-int fixtures, other
+-- accounts those rows reference. Everything else (int fixtures, other
 -- projects, scratch collections) goes. Deletes rely on the schema's FK
 -- cascades, so triggers must stay enabled.
 

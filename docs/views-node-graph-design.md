@@ -46,18 +46,22 @@ the structure.
 
 ```ts
 type ViewDefinition = {
-  nodes: Record<string, ViewNode>;   // key = stable node id (slug)
+  nodes: Record<string, ViewNode>; // key = stable node id (slug)
   result: { node: string; output: OutputSchema }; // the node the view saves
 };
 
 type ViewNode = { label?: string } & (
-  | { kind: "source"; ref: ViewInputRef }                 // a dataset or view (ref, optional pinned version)
+  | { kind: "source"; ref: ViewInputRef } // a dataset or view (ref, optional pinned version)
   | { kind: "filter"; from: string; where: Condition }
   | { kind: "columns"; from: string; edits: ColumnEdit[]; only?: string[] } // rename / drop many; `only` = optional keep list (no ordering; display order is the Output card's) applied after edits
   | { kind: "calculate"; from: string; fields: { field: string; expr: Expr }[] } // several new fields, evaluated in order (later ones may read earlier ones)
   | { kind: "groupBy"; from: string; by: string[]; measures: Measure[] }
-  | { kind: "sql"; from: string; reads?: string[]; query: string }          // `d` = from rows; `in_<id>` for each of `reads`
-  | { kind: "join"; left: string; right: string; /* on, matching, type, multiMatch, fields, prefix as today */ }
+  | { kind: "sql"; from: string; reads?: string[]; query: string } // `d` = from rows; `in_<id>` for each of `reads`
+  | {
+      kind: "join";
+      left: string;
+      right: string; /* on, matching, type, multiMatch, fields, prefix as today */
+    }
   | { kind: "stack"; inputs: StackInput[]; tagField?: string }
 );
 

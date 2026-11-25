@@ -25,8 +25,8 @@ import { toast } from "sonner";
 import { getContext } from "#/integrations/tanstack-query/root-provider";
 import { sharedClient } from "#/lib/store/client";
 
-import { isPgTileArchiveStale } from "./pg-tile-archives";
-import { usePgTileDatasetSummaries } from "./pg-tile-archives-react";
+import { isTileArchiveStale } from "./tile-archive-state";
+import { useTileDatasetSummaries } from "./tile-archive-state-react";
 
 /**
  * Which auth surface a worker token request is for: the Supabase access
@@ -37,7 +37,7 @@ export type TileTokenSource = "supabase";
 
 /** Main thread → worker: one build per message, plus token-fetch replies. */
 export type TileArchiveWorkerInbound =
-  | { schemaId: string; type: "build" }
+  | { datasetId: string; type: "build" }
   | {
       /** A FROZEN-version archive build (issue #261): pages the pinned
        * version's immutable `version_entries` rows — never the live dataset —
@@ -53,26 +53,26 @@ export type TileArchiveWorkerInbound =
 /** Worker → main thread: token requests, transient `phase` messages, then one terminal message. */
 export type TileArchiveWorkerOutbound =
   | { requestId: number; source?: TileTokenSource; type: "token-request" }
-  | { schemaId: string; type: "phase"; phase: TileArchiveBuildPhase }
-  | { done: number; schemaId: string; total: number; type: "progress" }
+  | { datasetId: string; type: "phase"; phase: TileArchiveBuildPhase }
+  | { done: number; datasetId: string; total: number; type: "progress" }
   | {
       builtVersion: number;
       bytes: number;
       maxZoom: number;
-      schemaId: string;
+      datasetId: string;
       type: "done";
     }
-  | { schemaId: string; type: "stale-discarded" }
+  | { datasetId: string; type: "stale-discarded" }
   | {
       reason: "not-geospatial" | "below-threshold";
-      schemaId: string;
+      datasetId: string;
       type: "skipped";
       /** The schema version the worker read (0 for not-geospatial, where the
        * schema was never readable). Lets the manager memoize a below-threshold
        * skip against the exact version it applies to. */
       version: number;
     }
-  | { message: string; schemaId: string; type: "error" }
+  | { message: string; datasetId: string; type: "error" }
   // The frozen-build protocol (issue #261): its own `frozen-` message types
   // so a one-shot worker's messages can never collide with the live
   // scheduler's build-state store. Same phase/terminal shape, dataset-keyed.
@@ -124,12 +124,12 @@ function notifyBuildListeners(): void {
 }
 
 /** Records a failed build; toasts only the first failure of a streak. */
-function recordBuildFailure(schemaId: string, message: string): void {
-  const previous = buildFailures.get(schemaId);
+function recordBuildFailure(datasetId: string, message: string): void {
+  const previous = buildFailures.get(datasetId);
   if (previous === undefined) {
-    toast.error(`Tile rebuild failed (${schemaId.slice(-6)}): ${message}`);
+    toast.error(`Tile rebuild failed (${datasetId.slice(-6)}): ${message}`);
   }
-  buildFailures.set(schemaId, {
+  buildFailures.set(datasetId, {
     failures: previous === undefined ? 0 : previous.failures,
     message,
     retryAt: undefined,
@@ -137,8 +137,8 @@ function recordBuildFailure(schemaId: string, message: string): void {
   notifyBuildListeners();
 }
 
-function clearBuildFailure(schemaId: string): void {
-  if (buildFailures.delete(schemaId)) notifyBuildListeners();
+function clearBuildFailure(datasetId: string): void {
+  if (buildFailures.delete(datasetId)) notifyBuildListeners();
 }
 
 const DEFAULT_FAILURE_MESSAGE = "Tile-archive build failed.";
@@ -147,17 +147,17 @@ const DEFAULT_FAILURE_MESSAGE = "Tile-archive build failed.";
  * Scheduler callback: attaches the backoff window to the failure record and
  * persists it, so a reload neither forgets the failure nor retries early.
  */
-function applyBackoff(schemaId: string, backoff: TileArchiveBackoff | undefined): void {
-  const failure = buildFailures.get(schemaId);
+function applyBackoff(datasetId: string, backoff: TileArchiveBackoff | undefined): void {
+  const failure = buildFailures.get(datasetId);
   writeStoredBackoff(
-    schemaId,
+    datasetId,
     backoff === undefined
       ? undefined
       : { ...backoff, message: failure === undefined ? DEFAULT_FAILURE_MESSAGE : failure.message },
   );
   if (failure === undefined) return;
   buildFailures.set(
-    schemaId,
+    datasetId,
     backoff === undefined
       ? { ...failure, retryAt: undefined }
       : { ...failure, failures: backoff.failures, retryAt: backoff.retryAt },
@@ -190,8 +190,8 @@ function readStoredBackoffs(): Map<string, StoredBackoff> {
   try {
     const parsed: unknown = JSON.parse(localStorage.getItem(BACKOFF_STORAGE_KEY) ?? "{}");
     if (!isRecord(parsed)) return stored;
-    for (const [schemaId, value] of Object.entries(parsed)) {
-      if (isStoredBackoff(value)) stored.set(schemaId, value);
+    for (const [datasetId, value] of Object.entries(parsed)) {
+      if (isStoredBackoff(value)) stored.set(datasetId, value);
     }
   } catch {
     // Storage unavailable or corrupt: start without persisted backoffs.
@@ -199,12 +199,12 @@ function readStoredBackoffs(): Map<string, StoredBackoff> {
   return stored;
 }
 
-function writeStoredBackoff(schemaId: string, backoff: StoredBackoff | undefined): void {
+function writeStoredBackoff(datasetId: string, backoff: StoredBackoff | undefined): void {
   const stored = readStoredBackoffs();
   if (backoff === undefined) {
-    if (!stored.delete(schemaId)) return;
+    if (!stored.delete(datasetId)) return;
   } else {
-    stored.set(schemaId, backoff);
+    stored.set(datasetId, backoff);
   }
   try {
     if (stored.size === 0) {
@@ -220,13 +220,13 @@ function writeStoredBackoff(schemaId: string, backoff: StoredBackoff | undefined
 /** Re-arms persisted backoffs in a new scheduler and restores their alerts. */
 function restoreStoredBackoffs(scheduler: TileArchiveScheduler): void {
   const stored = readStoredBackoffs();
-  for (const [schemaId, backoff] of stored) {
-    buildFailures.set(schemaId, {
+  for (const [datasetId, backoff] of stored) {
+    buildFailures.set(datasetId, {
       failures: backoff.failures,
       message: backoff.message,
       retryAt: backoff.retryAt,
     });
-    scheduler.restoreBackoff(schemaId, backoff);
+    scheduler.restoreBackoff(datasetId, backoff);
   }
   if (stored.size > 0) notifyBuildListeners();
 }
@@ -236,27 +236,27 @@ const buildRevertTimers = new Map<string, ReturnType<typeof setTimeout>>();
 /** Terminal states flash briefly, then the indicator returns to idle. */
 const BUILD_STATE_REVERT_MS = 4_000;
 
-function setBuildState(schemaId: string, state: TileArchiveBuildState): void {
+function setBuildState(datasetId: string, state: TileArchiveBuildState): void {
   // Progress belongs to the fetch phase only; any other state retires it.
-  if (state !== "fetching" && buildProgress.delete(schemaId)) notifyBuildListeners();
-  const revertTimer = buildRevertTimers.get(schemaId);
+  if (state !== "fetching" && buildProgress.delete(datasetId)) notifyBuildListeners();
+  const revertTimer = buildRevertTimers.get(datasetId);
   if (revertTimer !== undefined) {
     clearTimeout(revertTimer);
-    buildRevertTimers.delete(schemaId);
+    buildRevertTimers.delete(datasetId);
   }
   if (state === "done" || state === "stale-discarded" || state === "error") {
     buildRevertTimers.set(
-      schemaId,
+      datasetId,
       setTimeout(() => {
-        buildRevertTimers.delete(schemaId);
-        setBuildState(schemaId, "idle");
+        buildRevertTimers.delete(datasetId);
+        setBuildState(datasetId, "idle");
       }, BUILD_STATE_REVERT_MS),
     );
   }
-  if (buildStates.get(schemaId) === state) return;
-  buildStates.set(schemaId, state);
+  if (buildStates.get(datasetId) === state) return;
+  buildStates.set(datasetId, state);
   if (import.meta.env.DEV) {
-    console.debug(`[tile-archive] ${schemaId.slice(-6)} → ${state}`);
+    console.debug(`[tile-archive] ${datasetId.slice(-6)} → ${state}`);
   }
   notifyBuildListeners();
 }
@@ -269,39 +269,39 @@ export function subscribeTileArchiveBuildState(listener: () => void): () => void
   };
 }
 
-export function getTileArchiveBuildState(schemaId: string): TileArchiveBuildState {
-  return buildStates.get(schemaId) ?? "idle";
+export function getTileArchiveBuildState(datasetId: string): TileArchiveBuildState {
+  return buildStates.get(datasetId) ?? "idle";
 }
 
-export function getTileArchiveBuildFailure(schemaId: string): TileArchiveBuildFailure | undefined {
-  return buildFailures.get(schemaId);
+export function getTileArchiveBuildFailure(datasetId: string): TileArchiveBuildFailure | undefined {
+  return buildFailures.get(datasetId);
 }
 
 /** True while the dataset has a persistent build failure (snapshot for `useSyncExternalStore`). */
-export function hasTileArchiveBuildFailure(schemaId: string): boolean {
-  return buildFailures.has(schemaId);
+export function hasTileArchiveBuildFailure(datasetId: string): boolean {
+  return buildFailures.has(datasetId);
 }
 
 /** The dataset's persistent build failure, until a build succeeds. */
 export function useMapTileArchiveBuildFailure(
-  schemaId: string,
+  datasetId: string,
 ): TileArchiveBuildFailure | undefined {
   return useSyncExternalStore(subscribeTileArchiveBuildState, () =>
-    getTileArchiveBuildFailure(schemaId),
+    getTileArchiveBuildFailure(datasetId),
   );
 }
 
 /** Fetch progress of the dataset's running build, undefined when none is reported. */
 export function useMapTileArchiveBuildProgress(
-  schemaId: string,
+  datasetId: string,
 ): TileArchiveBuildProgress | undefined {
-  return useSyncExternalStore(subscribeTileArchiveBuildState, () => buildProgress.get(schemaId));
+  return useSyncExternalStore(subscribeTileArchiveBuildState, () => buildProgress.get(datasetId));
 }
 
 /** The current build state for one dataset (`"idle"` when nothing is running). */
-export function useMapTileArchiveBuildState(schemaId: string): TileArchiveBuildState {
+export function useMapTileArchiveBuildState(datasetId: string): TileArchiveBuildState {
   return useSyncExternalStore(subscribeTileArchiveBuildState, () =>
-    getTileArchiveBuildState(schemaId),
+    getTileArchiveBuildState(datasetId),
   );
 }
 
@@ -324,23 +324,23 @@ const BUILD_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 const BUILD_IDLE_CHECK_MS = 60 * 1000;
 const buildActivity = new Map<string, number>();
 
-function noteBuildActivity(schemaId: string): void {
-  buildActivity.set(schemaId, Date.now());
+function noteBuildActivity(datasetId: string): void {
+  buildActivity.set(datasetId, Date.now());
 }
 
 function reapSilentBuilds(): void {
   const now = Date.now();
-  for (const [schemaId, pending] of pendingBuilds) {
-    const last = buildActivity.get(schemaId);
+  for (const [datasetId, pending] of pendingBuilds) {
+    const last = buildActivity.get(datasetId);
     if (last !== undefined && now - last < BUILD_IDLE_TIMEOUT_MS) {
       continue;
     }
-    pendingBuilds.delete(schemaId);
-    buildActivity.delete(schemaId);
-    setBuildState(schemaId, "error");
+    pendingBuilds.delete(datasetId);
+    buildActivity.delete(datasetId);
+    setBuildState(datasetId, "error");
     const message =
       "Tile-archive worker stopped responding (possible out-of-memory crash) — the build will retry.";
-    recordBuildFailure(schemaId, message);
+    recordBuildFailure(datasetId, message);
     pending.reject(new Error(message));
     // Kill the wedged worker so the next build respawns a fresh one (the
     // `error`-event posture). Builds serialize, so at most one live entry.
@@ -420,22 +420,22 @@ function handleWorkerTokenRequest(event: MessageEvent<unknown>): void {
  * until stage 6's realtime), so without this the summaries — and with them
  * every layer-source decision and the OPFS pin feed — would stay on the
  * stale pre-build state until an unrelated refetch. Both feeds go stale
- * together on an install: the dataset summaries (`pg:datasets`, the
+ * together on an install: the dataset summaries (`datasets`, the
  * decision's fresh-candidate input) AND the signed-archive-URL metas
- * (`pg:tile-archives`, `usePgTileArchiveMetas`'s feed — its key's dataset
+ * (`tile-archives`, `useTileArchiveMetas`'s feed — its key's dataset
  * ids are unchanged by the install, so the query would keep answering "no
  * servable archive" and the OPFS pin would drop/prune until an unrelated
  * refetch otherwise). Fires for `done` (archive installed: decision flips
  * to tiles) and `stale-discarded` (the row moved under the build:
  * staleness re-evaluates).
  */
-function invalidatePgQueries(): void {
+function invalidateQueries(): void {
   try {
     const { queryClient } = getContext();
-    void queryClient.invalidateQueries({ queryKey: ["pg:datasets"] });
-    // Prefix match: hits every ["pg:tile-archives", "metas", datasetIds]
-    // key the maps page has mounted (pg-tile-archives-react.tsx).
-    void queryClient.invalidateQueries({ queryKey: ["pg:tile-archives"] });
+    void queryClient.invalidateQueries({ queryKey: ["datasets"] });
+    // Prefix match: hits every ["tile-archives", "metas", datasetIds]
+    // key the maps page has mounted (tile-archive-state-react.tsx).
+    void queryClient.invalidateQueries({ queryKey: ["tile-archives"] });
   } catch {
     // No client yet (SSR render, early mount): nothing cached to invalidate.
   }
@@ -443,94 +443,94 @@ function invalidatePgQueries(): void {
 
 /** Records a below-threshold skip against the version the worker read (kept
  * out of {@link handleWorkerMessage} for the complexity budget). */
-function recordSkipMemo(data: Record<string, unknown>, schemaId: string): void {
+function recordSkipMemo(data: Record<string, unknown>, datasetId: string): void {
   if (data.reason === "below-threshold" && typeof data.version === "number") {
-    rememberBelowThresholdSkip(schemaId, data.version);
+    rememberBelowThresholdSkip(datasetId, data.version);
   }
 }
 
 /** Tells the scheduler which version a build installed, so it can drop a
  * redundant queued rebuild for the same data. */
-function noteInstalledVersion(data: Record<string, unknown>, schemaId: string): void {
+function noteInstalledVersion(data: Record<string, unknown>, datasetId: string): void {
   if (rebuildScheduler !== undefined && typeof data.builtVersion === "number") {
-    rebuildScheduler.noteInstalled(schemaId, data.builtVersion);
+    rebuildScheduler.noteInstalled(datasetId, data.builtVersion);
   }
 }
 
 /** Stores a `progress` message; a new object per update so snapshots change identity. */
-function recordBuildProgress(data: Record<string, unknown>, schemaId: string): void {
+function recordBuildProgress(data: Record<string, unknown>, datasetId: string): void {
   if (typeof data.done !== "number" || typeof data.total !== "number") return;
-  buildProgress.set(schemaId, { done: data.done, total: data.total });
+  buildProgress.set(datasetId, { done: data.done, total: data.total });
   notifyBuildListeners();
 }
 
 /** Progress is its own listener; `handleWorkerMessage` below must not read it as a terminal message. */
 function handleWorkerProgress(event: MessageEvent<unknown>): void {
   const data: unknown = event.data;
-  if (isRecord(data) && data.type === "progress" && typeof data.schemaId === "string") {
-    noteBuildActivity(data.schemaId);
-    recordBuildProgress(data, data.schemaId);
+  if (isRecord(data) && data.type === "progress" && typeof data.datasetId === "string") {
+    noteBuildActivity(data.datasetId);
+    recordBuildProgress(data, data.datasetId);
   }
 }
 
 /** A build-state message (phase or terminal): has a schema id and is not a progress tick. */
 function isBuildStateMessage(data: unknown): data is Record<string, unknown> {
-  return isRecord(data) && typeof data.schemaId === "string" && data.type !== "progress";
+  return isRecord(data) && typeof data.datasetId === "string" && data.type !== "progress";
 }
 
 /** Settles one terminal build message (kept out of {@link handleWorkerMessage} for the complexity budget). */
 function settleTerminalBuild(
   data: Record<string, unknown>,
-  schemaId: string,
+  datasetId: string,
   pending: { reject: (error: Error) => void; resolve: (outcome: TileArchiveBuildOutcome) => void },
 ): void {
   if (data.type === "done") {
-    setBuildState(schemaId, "done");
-    clearBuildFailure(schemaId);
-    noteInstalledVersion(data, schemaId);
-    invalidatePgQueries();
+    setBuildState(datasetId, "done");
+    clearBuildFailure(datasetId);
+    noteInstalledVersion(data, datasetId);
+    invalidateQueries();
     pending.resolve("installed");
     return;
   }
   if (data.type === "stale-discarded") {
-    setBuildState(schemaId, "stale-discarded");
-    invalidatePgQueries();
+    setBuildState(datasetId, "stale-discarded");
+    invalidateQueries();
     pending.resolve("discarded");
     return;
   }
   if (data.type === "skipped") {
     // Memo first: the idle notification re-evaluates layer-source decisions,
     // which read the memo (#185).
-    recordSkipMemo(data, schemaId);
-    setBuildState(schemaId, "idle");
-    clearBuildFailure(schemaId);
+    recordSkipMemo(data, datasetId);
+    setBuildState(datasetId, "idle");
+    clearBuildFailure(datasetId);
     pending.resolve("skipped");
     return;
   }
-  setBuildState(schemaId, "error");
+  setBuildState(datasetId, "error");
   const message = typeof data.message === "string" ? data.message : DEFAULT_FAILURE_MESSAGE;
   // Issue #71 added the toast (the one surface that follows the user
   // across pages); #184 keeps the failure on the map until a build succeeds.
-  recordBuildFailure(schemaId, message);
+  recordBuildFailure(datasetId, message);
   pending.reject(new Error(message));
 }
 
 function handleWorkerMessage(event: MessageEvent<unknown>): void {
   const data: unknown = event.data;
-  if (isRecord(data) && typeof data["schemaId"] === "string") {
-    noteBuildActivity(data["schemaId"]);
+  if (isRecord(data) && typeof data["datasetId"] === "string") {
+    noteBuildActivity(data["datasetId"]);
   }
   if (!isBuildStateMessage(data)) return;
-  const schemaId = String(data.schemaId);
+  const datasetId = String(data.datasetId);
   if (data.type === "phase" && isBuildPhase(data.phase)) {
-    setBuildState(schemaId, data.phase);
+    setBuildState(datasetId, data.phase);
     return;
   }
-  const pending = pendingBuilds.get(schemaId);
+  const pending = pendingBuilds.get(datasetId);
   if (pending === undefined) return;
-  pendingBuilds.delete(schemaId);
-  buildActivity.delete(schemaId);
-  settleTerminalBuild(data, schemaId, pending);
+  pendingBuilds.delete(datasetId);
+  buildActivity.delete(datasetId);
+  settleTerminalBuild(data, datasetId, pending);
 }
 
 function isBuildPhase(value: unknown): value is TileArchiveBuildPhase {
@@ -550,11 +550,11 @@ function getWorker(): Worker {
     spawned.addEventListener("error", (event) => {
       // The worker itself died (not just one build): fail everything pending
       // so the scheduler unwedges, and respawn lazily on the next build.
-      for (const [schemaId, pending] of pendingBuilds) {
-        pendingBuilds.delete(schemaId);
-        setBuildState(schemaId, "error");
+      for (const [datasetId, pending] of pendingBuilds) {
+        pendingBuilds.delete(datasetId);
+        setBuildState(datasetId, "error");
         const message = event.message || "Tile-archive worker crashed.";
-        recordBuildFailure(schemaId, message);
+        recordBuildFailure(datasetId, message);
         pending.reject(new Error(message));
       }
       archiveWorker = undefined;
@@ -565,16 +565,16 @@ function getWorker(): Worker {
   return archiveWorker;
 }
 
-async function buildViaWorker(schemaId: string): Promise<TileArchiveBuildOutcome> {
-  setBuildState(schemaId, "scheduled");
-  noteBuildActivity(schemaId);
+async function buildViaWorker(datasetId: string): Promise<TileArchiveBuildOutcome> {
+  setBuildState(datasetId, "scheduled");
+  noteBuildActivity(datasetId);
   ensureReapTimer();
   return await new Promise<TileArchiveBuildOutcome>((resolve, reject) => {
-    pendingBuilds.set(schemaId, { reject, resolve });
+    pendingBuilds.set(datasetId, { reject, resolve });
     // `Worker.postMessage` takes (message, transfer) — there is no
     // `targetOrigin` parameter to pass at the worker boundary.
     // oxlint-disable-next-line unicorn/require-post-message-target-origin
-    getWorker().postMessage({ schemaId, type: "build" } satisfies TileArchiveWorkerInbound);
+    getWorker().postMessage({ datasetId, type: "build" } satisfies TileArchiveWorkerInbound);
   });
 }
 
@@ -596,7 +596,7 @@ function getScheduler(): TileArchiveScheduler {
  * Mounted once at the app root: watches every geospatial dataset and
  * schedules a debounced rebuild whenever one is observably stale. The
  * watch rides the store summaries, refetched by
- * `invalidatePgQueries` when a build settles (realtime cross-tab push is
+ * `invalidateQueries` when a build settles (realtime cross-tab push is
  * stage 6). Correctness rides on the expectedVersion guard (the SQL edition:
  * `install_tile_archive`) — this only decides when to attempt.
  *
@@ -606,13 +606,13 @@ function getScheduler(): TileArchiveScheduler {
  * `mapTileCacheVersion` server-side with no client hook.
  */
 export function useMapTileArchiveManager(): void {
-  const pgSummaries = usePgTileDatasetSummaries();
+  const summaries = useTileDatasetSummaries();
   useEffect(() => {
-    if (pgSummaries === undefined) return;
+    if (summaries === undefined) return;
     const scheduler = getScheduler();
-    for (const summary of pgSummaries) {
+    for (const summary of summaries) {
       const currentVersion = summary.mapTileCacheVersion;
-      if (isPgTileArchiveStale(summary)) {
+      if (isTileArchiveStale(summary)) {
         scheduler.schedule(summary.id, currentVersion);
       } else {
         // Current without our help (another tab or user built it): drop the
@@ -622,7 +622,7 @@ export function useMapTileArchiveManager(): void {
         clearBuildFailure(summary.id);
       }
     }
-  }, [pgSummaries]);
+  }, [summaries]);
 }
 
 /** Render-once app-shell component mounting the manager (renders nothing). */
@@ -638,6 +638,6 @@ export function TileArchiveManager(): null {
  * speculatively — the worker no-ops for datasets the
  * threshold doesn't warrant, and part 2's guard covers races.
  */
-export function ensureMapTileArchive(schemaId: string): void {
-  getScheduler().ensure(schemaId);
+export function ensureMapTileArchive(datasetId: string): void {
+  getScheduler().ensure(datasetId);
 }

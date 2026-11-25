@@ -1,23 +1,19 @@
 // Public API of the publishing feature (ADR 0014). Code outside `features/publishing/`
 // imports from here, never from its subfolders.
-export { PgProjectSettings } from "./components/pg-project-sections";
-export { PgProjectShell } from "./components/pg-project-shell";
-export { PgProjectCatalog } from "./components/pg-project-catalog";
-export { PgProjectApps, PgProjectMaps } from "./components/pg-project-lists";
+export { ProjectSettings } from "./components/project-sections";
+export { ProjectShell } from "./components/project-shell";
+export { ProjectCatalog } from "./components/project-catalog";
+export { ProjectApps, ProjectMaps } from "./components/project-lists";
+export { ProjectMembers, ProjectOverview, ProjectPublish } from "./components/project-workspace";
+export { ProjectsBrowser } from "./components/projects-browser";
+export { PublishBundleDialog } from "./components/publish-bundle-dialog";
+export { PublishDialog } from "./components/publish-dialog";
+export { useProjectShell } from "./components/project-context";
+export { VIEWER_REASON } from "./lib/viewer-posture";
 export {
-  PgProjectMembers,
-  PgProjectOverview,
-  PgProjectPublish,
-} from "./components/pg-project-workspace";
-export { PgProjectsBrowser } from "./components/pg-projects-browser";
-export { PgPublishBundleDialog } from "./components/pg-publish-bundle-dialog";
-export { PgPublishDialog } from "./components/pg-publish-dialog";
-export { useProjectShell } from "./components/pg-project-context";
-export { VIEWER_REASON } from "./lib/pg-viewer-posture";
-export {
-  PgAddToProjectSheet,
-  PgDatasetCardAddToProjectButton,
-} from "./components/pg-add-to-project-sheet";
-export { PgProjectTargetSheet } from "./components/pg-project-target-sheet";
-export { pgPublishProjectBundle } from "./lib/pg-bundle-publish";
-export { mintPublishKey } from "./lib/pg-publish";
+  AddToProjectSheet,
+  DatasetCardAddToProjectButton,
+} from "./components/add-to-project-sheet";
+export { ProjectTargetSheet } from "./components/project-target-sheet";
+export { publishProjectBundle } from "./lib/bundle-publish";
+export { mintPublishKey } from "./lib/publish";

@@ -13,8 +13,8 @@ import {
 } from "@caden/maps/archive-cache";
 import { useEffect, useMemo } from "react";
 
-import { isPgTileCandidate } from "./pg-tile-archives";
-import { usePgTileDatasetSummaries, usePgTileArchiveMetas } from "./pg-tile-archives-react";
+import { isTileCandidate } from "./tile-archive-state";
+import { useTileDatasetSummaries, useTileArchiveMetas } from "./tile-archive-state-react";
 
 /**
  * Mounted once at the app root (next to the rebuild manager): observes every
@@ -24,45 +24,45 @@ import { usePgTileDatasetSummaries, usePgTileArchiveMetas } from "./pg-tile-arch
  * `tile-archive.ts`.
  */
 export function TileArchiveCacheManager(): null {
-  const pgSummaries = usePgTileDatasetSummaries();
-  const pgGeospatialIds = useMemo(
-    () => (pgSummaries ?? []).filter((row) => isPgTileCandidate(row)).map((row) => row.id),
-    [pgSummaries],
+  const summaries = useTileDatasetSummaries();
+  const geospatialIds = useMemo(
+    () => (summaries ?? []).filter((row) => isTileCandidate(row)).map((row) => row.id),
+    [summaries],
   );
-  const pgMetas = usePgTileArchiveMetas(pgGeospatialIds);
+  const metas = useTileArchiveMetas(geospatialIds);
   useEffect(() => {
-    if (pgMetas === undefined) return; // wait for the first observation
+    if (metas === undefined) return; // wait for the first observation
     const cache = getTileArchiveCache();
     if (cache === undefined) return;
     void (async () => {
       await cache.init();
-      const geospatial = new Set(pgGeospatialIds);
+      const geospatial = new Set(geospatialIds);
       const wired = new Set(wiredSchemaIds());
-      for (const schemaId of wired) {
+      for (const datasetId of wired) {
         // Prune anything that is not a live geospatial pin.
-        if (!geospatial.has(schemaId)) {
+        if (!geospatial.has(datasetId)) {
           // oxlint-disable-next-line no-await-in-loop -- sequential pin drops; each observes then unwires.
-          await cache.observeMeta(schemaId, null);
-          unwireProtocolSources(schemaId);
+          await cache.observeMeta(datasetId, null);
+          unwireProtocolSources(datasetId);
         }
       }
-      for (const [datasetId, meta] of pgMetas) {
+      for (const [datasetId, meta] of metas) {
         wireProtocolSource(datasetId, meta.version, meta.url);
         unwireProtocolSources(datasetId, meta.version);
         // oxlint-disable-next-line no-await-in-loop -- sequential pin updates; ordering keeps the backfill generation sane.
         await cache.observeMeta(datasetId, { url: meta.url, version: meta.version });
       }
       // A geospatial PG dataset that LOST its servable archive (stale-on-view
-      // flip: the live version moved past the built one) drops out of pgMetas —
+      // flip: the live version moved past the built one) drops out of metas —
       // drop its pin in the same pass.
-      for (const schemaId of wired) {
-        if (geospatial.has(schemaId) && !pgMetas.has(schemaId)) {
+      for (const datasetId of wired) {
+        if (geospatial.has(datasetId) && !metas.has(datasetId)) {
           // oxlint-disable-next-line no-await-in-loop -- sequential pin drops; each observes then unwires.
-          await cache.observeMeta(schemaId, null);
-          unwireProtocolSources(schemaId);
+          await cache.observeMeta(datasetId, null);
+          unwireProtocolSources(datasetId);
         }
       }
     })();
-  }, [pgMetas, pgGeospatialIds]);
+  }, [metas, geospatialIds]);
   return null;
 }

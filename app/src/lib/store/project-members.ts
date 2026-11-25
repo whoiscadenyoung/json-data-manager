@@ -71,7 +71,7 @@ const MEMBER_SELECT =
 /** One project's membership rows, oldest first (the creator's owner row leads). */
 export function listMembersQueryOptions(args: { projectId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:project-members", "list", args],
+    queryKey: ["project-members", "list", args],
     queryFn: async () =>
       await queryRows<ProjectMemberRow>(
         clientOf(options)
@@ -87,7 +87,7 @@ export function listMembersQueryOptions(args: { projectId: string }, options?: S
 /** The caller's memberships across every visible project — the browser's per-project role badges. RLS answers only rows whose project admits the caller. */
 export function listMineQueryOptions(args: { userId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:project-members", "mine", args],
+    queryKey: ["project-members", "mine", args],
     queryFn: async () =>
       await queryRows<ProjectMemberRow>(
         clientOf(options)

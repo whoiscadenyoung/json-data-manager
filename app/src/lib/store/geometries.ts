@@ -178,7 +178,7 @@ export async function getByEntry(
 /** Read helper for the reactive layer's per-cursor geometry queries. */
 export function rowsForTilesQueryOptions(args: GeometryRowsArgs, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:geometries", "rowsForTiles", args],
+    queryKey: ["geometries", "rowsForTiles", args],
     queryFn: async () => await rowsForTiles(args, options),
   });
 }
@@ -186,7 +186,7 @@ export function rowsForTilesQueryOptions(args: GeometryRowsArgs, options?: Store
 /** Reactive point read of one entry's geometry row — the edit-panel prefill / entry-details feed. */
 export function getByEntryQueryOptions(args: { entryId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:geometries", "getByEntry", args],
+    queryKey: ["geometries", "getByEntry", args],
     queryFn: async () => await getByEntry(args, options),
   });
 }
@@ -200,7 +200,7 @@ export function getByEntryQueryOptions(args: { entryId: string }, options?: Stor
  * does not exist until the `import_entries` chunk generates one.
  *
  * The path carries a PER-UPLOAD random token (the tile flow's
- * `pgTileArchiveUploadPath` pattern, pg-tile-archives.ts:108): row-indexed
+ * `tileArchiveUploadPath` pattern, tile-archive-state.ts:108): row-indexed
  * paths are objects the FIRST uploader owns — a collaborator's retry after
  * a partial import would PUT (upsert) onto someone else's objects, and the
  * 0006 update/delete policies deny that for every editor but the original

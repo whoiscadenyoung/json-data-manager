@@ -14,7 +14,7 @@ import {
   updatedOn,
 } from "#/components/explorer";
 import { VisibilityBadge } from "#/components/visibility-badge";
-import { PgProjectTargetSheet } from "#/features/publishing";
+import { ProjectTargetSheet } from "#/features/publishing";
 import * as appsStore from "#/lib/store/apps";
 import * as mapsStore from "#/lib/store/maps";
 
@@ -127,7 +127,7 @@ function MapsPage() {
           ))}
         </ExplorerList>
       )}
-      <PgProjectTargetSheet
+      <ProjectTargetSheet
         description="Maps live in projects. Pick one, or name a new one, and add the map on its Maps page."
         onOpenChange={setTargeting}
         onTarget={async (projectId) => {

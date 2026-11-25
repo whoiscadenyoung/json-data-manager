@@ -1,11 +1,30 @@
-import type { Geometry } from "@caden/json-cms/react";
+import type { Geometry } from "@caden/data-core/geojson";
+
+import { fetchDatasetEntryRows, resolveDatasetGeometryRows } from "#/lib/dataset-rows";
+import type { StoreOptions } from "#/lib/store/client";
+import type { EntryRow } from "#/lib/store/entries";
 
 /**
  * Client-side export helpers shared by the dataset and group export
  * dialogs: GeoJSON / JSON payloads and Excel workbooks (via exceljs, the
- * same writer the xlsx import parser uses for reading). The "include joined
- * fields" step retired with the derived registry (#301): a view is a real
- * dataset, so its joined fields export as ordinary columns.
+ * same writer the xlsx import parser uses for reading), plus the data half
+ * that materializes a dataset's rows through the row-resolution seam
+ * (stage 5, #204). The "include joined fields" step retired with the
+ * derived registry (#301): a view is a real dataset, so its joined fields
+ * export as ordinary columns.
+ *
+ * Completeness rides the seam: `fetchDatasetEntryRows` pages
+ * `entries.listPage` to exhaustion (`nextCursor === null` is done — design
+ * §5 intro), so an export always writes the WHOLE dataset without a
+ * standing subscription. Oversized geometry payloads (the storage-backed
+ * rows, §6) resolve through `resolveDatasetGeometryRows`' short-lived
+ * signed URLs; a failed row leaves its geometry unresolved instead of
+ * failing the export.
+ *
+ * Store rows carry no `geometryId` — geometry rows are 1:1 with entries
+ * (keyed by `entryId`, the shape `dataset_rows_for_tiles` hands back), so
+ * the exported entry's geometry key IS its entry id and
+ * `exportDatasetGeometries`' map is keyed to match.
  */
 
 /** Minimal entry shape the exporters need. */
@@ -43,19 +62,19 @@ export function downloadText(content: string, filename: string, type = "applicat
  * rides along — entries without geometry export with `"geometry": null` so
  * row counts stay consistent with the other formats.
  *
- * `resolvedByGeometryRowId` is `useResolvedGeometries`' output, keyed by the
- * geometry row id — which is exactly what `entry.geometryId` points at.
+ * `resolvedByGeometryRowId` is `exportDatasetGeometries`' map, keyed by entry
+ * id — which is exactly what `entry.geometryId` points at.
  */
 export function buildGeoJsonCollection(
   entries: ExportableEntry[],
   resolvedByGeometryRowId: globalThis.Map<string, Geometry>,
-  schemaId: string,
+  datasetId: string,
 ): Record<string, unknown> {
   return {
     type: "FeatureCollection",
     // Identifies which dataset's schema the properties conform to — useful
     // when a group export writes several collections side by side.
-    id: schemaId,
+    id: datasetId,
     features: entries.map((entry) => ({
       type: "Feature",
       geometry: entry.geometryId ? (resolvedByGeometryRowId.get(entry.geometryId) ?? null) : null,
@@ -168,4 +187,31 @@ export async function exportExcelWorkbook(
     }),
     filename,
   );
+}
+
+/** One store entry row as the exporters' minimal entry shape — the geometry key is the entry id (see the module doc). */
+export function exportEntryOf(row: EntryRow): ExportableEntry {
+  return {
+    _id: row.id,
+    data: row.data,
+    geometryId: row.geometryType === null ? undefined : row.id,
+  };
+}
+
+/** The dataset's full entry set, materialized through the seam (specs applied inside it) and adapted for the export builders. */
+export async function exportDatasetEntries(
+  datasetId: string,
+  options?: StoreOptions,
+): Promise<ExportableEntry[]> {
+  const rows = await fetchDatasetEntryRows(datasetId, options);
+  return rows.map(exportEntryOf);
+}
+
+/** The dataset's geometry rows resolved to `Geometry` values, keyed by ENTRY id (1:1 with entries). Inline jsonb resolves synchronously; storage-backed payloads fetch through signed URLs, in parallel. */
+export async function exportDatasetGeometries(
+  datasetId: string,
+  options?: StoreOptions,
+): Promise<globalThis.Map<string, Geometry>> {
+  const resolved = await resolveDatasetGeometryRows(datasetId, options);
+  return new globalThis.Map(resolved);
 }

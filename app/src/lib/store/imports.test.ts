@@ -137,13 +137,13 @@ describe("imports reads — queryOptions carry the args in the key", () => {
   it("get and listForDataset key by their args", () => {
     const { client } = stubSupabase();
     expect(getQueryOptions({ importId: "imp-1" }, { supabase: client }).queryKey).toStrictEqual([
-      "pg:imports",
+      "imports",
       "get",
       { importId: "imp-1" },
     ]);
     expect(
       listForDatasetQueryOptions({ datasetId: "d1" }, { supabase: client }).queryKey,
-    ).toStrictEqual(["pg:imports", "listForDataset", { datasetId: "d1" }]);
+    ).toStrictEqual(["imports", "listForDataset", { datasetId: "d1" }]);
   });
 
   it("get resolves the row or null", async () => {

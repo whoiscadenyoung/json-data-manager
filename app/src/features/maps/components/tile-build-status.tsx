@@ -54,10 +54,10 @@ const retryTimeFormat = new Intl.DateTimeFormat(undefined, { timeStyle: "short" 
 
 function TileBuildFailure({
   failure,
-  schemaId,
+  datasetId,
 }: {
   failure: TileArchiveBuildFailure;
-  schemaId: string;
+  datasetId: string;
 }) {
   return (
     <div className="absolute top-3 left-3 z-5 w-72 max-w-[calc(100%-1.5rem)]">
@@ -79,7 +79,7 @@ function TileBuildFailure({
             size="xs"
             variant="outline"
             onClick={() => {
-              ensureMapTileArchive(schemaId);
+              ensureMapTileArchive(datasetId);
             }}
           >
             <RotateCw />
@@ -123,13 +123,13 @@ function BuildStateLabel({
   return STATE_LABELS[state];
 }
 
-export function TileBuildStatus({ schemaId }: { schemaId: string }) {
-  const state = useMapTileArchiveBuildState(schemaId),
-    failure = useMapTileArchiveBuildFailure(schemaId),
-    progress = useMapTileArchiveBuildProgress(schemaId),
+export function TileBuildStatus({ datasetId }: { datasetId: string }) {
+  const state = useMapTileArchiveBuildState(datasetId),
+    failure = useMapTileArchiveBuildFailure(datasetId),
+    progress = useMapTileArchiveBuildProgress(datasetId),
     active = ACTIVE_STATES.has(state);
   if (failure !== undefined && !active) {
-    return <TileBuildFailure failure={failure} schemaId={schemaId} />;
+    return <TileBuildFailure failure={failure} datasetId={datasetId} />;
   }
   if (state === "idle") {
     return null;

@@ -5,6 +5,6 @@ export {
   type DiffPoint,
   type DiffPointStatus,
 } from "./components/diff-overlay-map";
-export { PgConsumersCard, PgVersionsCard } from "./components/pg-versions-card";
+export { ConsumersCard, VersionsCard } from "./components/versions-card";
 export { VersionCompareView } from "./components/version-compare";
 export { isSyncStale } from "./lib/sync-staleness";

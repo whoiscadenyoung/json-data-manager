@@ -189,7 +189,7 @@ export const COMMITS_LIMIT = 50;
 /** The binding row for one dataset (one per dataset — the DDL's unique constraint), or null when the dataset is not bound. */
 export function bindingForDatasetQueryOptions(args: { datasetId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:bindings", "forDataset", args],
+    queryKey: ["bindings", "forDataset", args],
     queryFn: async (): Promise<BindingRow | null> =>
       await queryRow<BindingRow>(
         clientOf(options)
@@ -204,7 +204,7 @@ export function bindingForDatasetQueryOptions(args: { datasetId: string }, optio
 /** The binding row for one source key, or null when the source is not bound. */
 export function bindingForSourceQueryOptions(args: { source: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:bindings", "forSource", args],
+    queryKey: ["bindings", "forSource", args],
     queryFn: async (): Promise<BindingRow | null> =>
       await queryRow<BindingRow>(
         clientOf(options)
@@ -219,7 +219,7 @@ export function bindingForSourceQueryOptions(args: { source: string }, options?:
 /** The latest run of one binding, newest first — the sync card's progress row. */
 export function latestRunQueryOptions(args: { bindingId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:bindings", "latestRun", args],
+    queryKey: ["bindings", "latestRun", args],
     queryFn: async (): Promise<SyncRunRow | null> =>
       await queryRow<SyncRunRow>(
         clientOf(options)
@@ -239,7 +239,7 @@ export function latestRunQueryOptions(args: { bindingId: string }, options?: Sto
  */
 export function dueRunsQueryOptions(options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:bindings", "dueRuns"],
+    queryKey: ["bindings", "dueRuns"],
     queryFn: async (): Promise<ActiveRunRow[]> =>
       await queryRows<ActiveRunRow>(
         clientOf(options)
@@ -257,7 +257,7 @@ export function dueRunsQueryOptions(options?: StoreOptions) {
 /** The History feed for one binding — per-sync summaries, newest first (capped; `truncated` flags a capped ops array). */
 export function historyQueryOptions(args: { bindingId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:bindings", "history", args],
+    queryKey: ["bindings", "history", args],
     queryFn: async (): Promise<ActivityRow[]> =>
       await queryRows<ActivityRow>(
         clientOf(options)
@@ -273,7 +273,7 @@ export function historyQueryOptions(args: { bindingId: string }, options?: Store
 /** The applied-commit mirror for one binding, newest first — the History rail's data. */
 export function commitsQueryOptions(args: { bindingId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:bindings", "commits", args],
+    queryKey: ["bindings", "commits", args],
     queryFn: async (): Promise<CommitMirrorRow[]> =>
       await queryRows<CommitMirrorRow>(
         clientOf(options)
@@ -298,7 +298,7 @@ export interface RemoteSourceRow {
 
 export function remoteSourceQueryOptions(args: { source: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:bindings", "remoteSource", args],
+    queryKey: ["bindings", "remoteSource", args],
     queryFn: async (): Promise<RemoteSourceRow | null> =>
       await queryRow<RemoteSourceRow>(
         clientOf(options)
@@ -322,7 +322,7 @@ export function featuresForBindingQueryOptions(
   options?: StoreOptions,
 ) {
   return queryOptions({
-    queryKey: ["pg:bindings", "features", args],
+    queryKey: ["bindings", "features", args],
     queryFn: async (): Promise<Array<{ data: Record<string, unknown>; entryKey: string }>> =>
       await queryRows<{ data: Record<string, unknown>; entryKey: string }>(
         clientOf(options)

@@ -97,14 +97,14 @@ export function listQueryOptions(
   options?: StoreOptions,
 ) {
   return queryOptions({
-    queryKey: ["pg:groups", "list", args],
+    queryKey: ["groups", "list", args],
     queryFn: async () => await list(args, options),
   });
 }
 
 export function getQueryOptions(args: { groupId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:groups", "get", args],
+    queryKey: ["groups", "get", args],
     queryFn: async () => await get(args, options),
   });
 }

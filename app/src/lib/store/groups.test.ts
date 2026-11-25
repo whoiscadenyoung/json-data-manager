@@ -69,12 +69,12 @@ describe("groups.list — every group, or one collection's", () => {
   it("keys its query options with the args (the collection-filtered lists cache apart)", () => {
     const { client } = stubSupabase();
     expect(listQueryOptions({ collectionId: "c1" }, { supabase: client }).queryKey).toStrictEqual([
-      "pg:groups",
+      "groups",
       "list",
       { collectionId: "c1" },
     ]);
     expect(getQueryOptions({ groupId: "g1" }, { supabase: client }).queryKey).toStrictEqual([
-      "pg:groups",
+      "groups",
       "get",
       { groupId: "g1" },
     ]);

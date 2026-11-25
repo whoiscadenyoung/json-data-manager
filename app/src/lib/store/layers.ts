@@ -225,14 +225,14 @@ export async function getVersion(
 
 export function listForProjectQueryOptions(args: { projectId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:layers", "listForProject", args],
+    queryKey: ["layers", "listForProject", args],
     queryFn: async () => await listForProject(args, options),
   });
 }
 
 export function getQueryOptions(args: { layerId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:layers", "get", args],
+    queryKey: ["layers", "get", args],
     queryFn: async () => await get(args, options),
   });
 }
@@ -242,14 +242,14 @@ export function listChildrenForGroupsQueryOptions(
   options?: StoreOptions,
 ) {
   return queryOptions({
-    queryKey: ["pg:layers", "listChildrenForGroups", args],
+    queryKey: ["layers", "listChildrenForGroups", args],
     queryFn: async () => await listChildrenForGroups(args, options),
   });
 }
 
 export function listVersionsQueryOptions(args: { layerId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:layers", "listVersions", args],
+    queryKey: ["layers", "listVersions", args],
     queryFn: async () => await listVersions(args, options),
   });
 }
@@ -373,7 +373,7 @@ export async function listLinkableVersions(options?: StoreOptions): Promise<Link
 
 export function listLinkableVersionsQueryOptions(options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:layers", "listLinkableVersions"],
+    queryKey: ["layers", "listLinkableVersions"],
     queryFn: async () => await listLinkableVersions(options),
   });
 }
@@ -1148,7 +1148,7 @@ export function listDatasetMembershipsQueryOptions(
   options?: StoreOptions,
 ) {
   return queryOptions({
-    queryKey: ["pg:layers", "listDatasetMemberships", args],
+    queryKey: ["layers", "listDatasetMemberships", args],
     queryFn: async () => await listDatasetMemberships(args, options),
   });
 }

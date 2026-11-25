@@ -189,9 +189,9 @@ function DuplicateForm({
         projectId,
         title: newTitle.trim(),
       });
-      void queryClient.invalidateQueries({ queryKey: ["pg:views"] });
-      void queryClient.invalidateQueries({ queryKey: ["pg:datasets"] });
-      void queryClient.invalidateQueries({ queryKey: ["pg:projects"] });
+      void queryClient.invalidateQueries({ queryKey: ["views"] });
+      void queryClient.invalidateQueries({ queryKey: ["datasets"] });
+      void queryClient.invalidateQueries({ queryKey: ["projects"] });
       toast.success(`Created "${newTitle.trim()}". Open it and press Run to fill its rows.`);
       onDone();
       await navigate({

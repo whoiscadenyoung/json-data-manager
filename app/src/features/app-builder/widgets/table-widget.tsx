@@ -15,8 +15,9 @@ import {
 } from "@caden/ui/niko-table/core/data-table-virtualized-structure";
 import type { DataTableColumnDef } from "@caden/ui/niko-table/types";
 
-import { entryDataRecord, type DatasetEntryRow } from "#/lib/dataset-rows-pg";
+import { entryDataRecord } from "#/lib/dataset-rows";
 import { formatPropertyValue } from "#/lib/format";
+import type { EntryRow } from "#/lib/store/entries";
 
 import { useAppEntryPages } from "../data";
 import type { DatasetField } from "../lib/fields";
@@ -55,7 +56,7 @@ function Cell({ value }: { value: unknown }) {
   );
 }
 
-function buildColumns(columns: readonly string[]): DataTableColumnDef<DatasetEntryRow>[] {
+function buildColumns(columns: readonly string[]): DataTableColumnDef<EntryRow, unknown>[] {
   return columns.map((name) => ({
     accessorFn: (entry) => entryDataRecord(entry)[name],
     cell: (info) => <Cell value={info.getValue()} />,

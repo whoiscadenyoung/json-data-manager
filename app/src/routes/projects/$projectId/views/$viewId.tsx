@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { PgViewPage } from "#/features/views";
+import { ViewPage } from "#/features/views";
 
 /** The view editor (issue #301): steps, previews with diagnostics, Save, Run and run history. */
 export const Route = createFileRoute("/projects/$projectId/views/$viewId")({
@@ -9,5 +9,5 @@ export const Route = createFileRoute("/projects/$projectId/views/$viewId")({
 
 function ViewRoute() {
   const { projectId, viewId } = Route.useParams();
-  return <PgViewPage projectId={projectId} viewId={viewId} />;
+  return <ViewPage projectId={projectId} viewId={viewId} />;
 }

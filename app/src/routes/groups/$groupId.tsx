@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { PgGroupPage } from "#/features/catalog";
-import { PgGroupExport } from "#/features/datasets";
+import { GroupPage } from "#/features/catalog";
+import { GroupExport } from "#/features/datasets";
 
 export const Route = createFileRoute("/groups/$groupId")({
   component: GroupDetailPage,
@@ -15,9 +15,9 @@ export const Route = createFileRoute("/groups/$groupId")({
 function GroupDetailPage() {
   const { groupId } = Route.useParams();
   return (
-    <PgGroupPage
+    <GroupPage
       groupId={groupId}
-      renderExport={(group) => <PgGroupExport groupName={group.name} members={group.members} />}
+      renderExport={(group) => <GroupExport groupName={group.name} members={group.members} />}
     />
   );
 }

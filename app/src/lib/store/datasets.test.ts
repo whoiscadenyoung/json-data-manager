@@ -86,7 +86,7 @@ describe("datasets.listSummaries", () => {
   it("keys and bounds like the catalog read (newest first, CATALOG_READ_LIMIT)", async () => {
     const { client, queries } = stubSupabase(() => ({ data: [], error: null }));
     const options = listSummariesQueryOptions({ supabase: client });
-    expect(options.queryKey).toStrictEqual(["pg:datasets", "listSummaries", CATALOG_READ_LIMIT]);
+    expect(options.queryKey).toStrictEqual(["datasets", "listSummaries", CATALOG_READ_LIMIT]);
     await runQueryOptions(options);
     const first = queryAt(queries, 0);
     expect(firstArg(first, "order")).toBe("created_at");
@@ -131,7 +131,7 @@ describe("datasets.list / get", () => {
   it("get returns null when RLS hides the row (the not-found denial shape)", async () => {
     const { client } = stubSupabase(() => ({ data: null, error: null }));
     const options = getQueryOptions({ datasetId: "d1" }, { supabase: client });
-    expect(options.queryKey).toStrictEqual(["pg:datasets", "get", { datasetId: "d1" }]);
+    expect(options.queryKey).toStrictEqual(["datasets", "get", { datasetId: "d1" }]);
     await expect(runQueryOptions(options)).resolves.toBe(null);
   });
 });

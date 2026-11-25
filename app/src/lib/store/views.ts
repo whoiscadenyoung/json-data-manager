@@ -99,7 +99,7 @@ export interface ViewRunRow {
 /** A view's run history, newest first (editors and the creator only — RLS). */
 export function listRunsQueryOptions(viewId: string, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:view_runs", viewId],
+    queryKey: ["view_runs", viewId],
     queryFn: async () =>
       await queryRows<ViewRunRow>(
         clientOf(options)
@@ -144,7 +144,7 @@ export async function setViewRefreshMode(
 /** When the pending auto refresh becomes due (null = none queued). Editors and the creator only (RLS). */
 export function refreshQueueQueryOptions(viewId: string, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:view_runs", "queue", viewId],
+    queryKey: ["view_runs", "queue", viewId],
     queryFn: async (): Promise<{ dueAt: string; running: boolean } | null> => {
       const rows = await queryRows<{ dueAt: string; claimedAt: string | null }>(
         clientOf(options)
@@ -164,9 +164,9 @@ export function refreshQueueQueryOptions(viewId: string, options?: StoreOptions)
 export function liveDatasetIdsQueryOptions(datasetIds: string[], options?: StoreOptions) {
   return queryOptions({
     // "liveIdList" (not "liveIds"): the old key persisted a Set as `{}`.
-    queryKey: ["pg:datasets", "liveIdList", datasetIds.toSorted()],
+    queryKey: ["datasets", "liveIdList", datasetIds.toSorted()],
     enabled: datasetIds.length > 0,
-    // A plain array, never a Set: `pg:datasets` is a persisted light-state
+    // A plain array, never a Set: `datasets` is a persisted light-state
     // namespace and the persister round-trips through JSON, so a Set comes
     // back as `{}` (`.has is not a function` on the next page load).
     queryFn: async (): Promise<string[]> => {
@@ -185,7 +185,7 @@ export function liveDatasetIdsQueryOptions(datasetIds: string[], options?: Store
 /** A live view's rows for the table/map: one capped server read, no page chain. */
 export function liveViewRowsQueryOptions(viewId: string, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:live", viewId],
+    queryKey: ["live", viewId],
     queryFn: async () => await readLiveView(viewId, options),
   });
 }

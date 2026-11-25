@@ -12,7 +12,7 @@ import { Loader2, MapPin } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { fetchDatasetEntryRows } from "#/lib/dataset-rows-pg";
+import { fetchDatasetEntryRows } from "#/lib/dataset-rows";
 import { errorMessage } from "#/lib/errors";
 import * as datasetsStore from "#/lib/store/datasets";
 import type { DatasetRow } from "#/lib/store/datasets";
@@ -131,7 +131,7 @@ export function PointConversionCard({ dataset }: { dataset: DatasetRow }) {
     rowsQuery = useQuery({
       enabled: scanning,
       queryFn: async (): Promise<PointPlanRow[]> => await fetchDatasetEntryRows(dataset.id),
-      queryKey: ["pg:entries", "point-scan", dataset.id, dataset.updatedAt],
+      queryKey: ["entries", "point-scan", dataset.id, dataset.updatedAt],
       staleTime: 60_000,
     }),
     rows = rowsQuery.data,
@@ -168,9 +168,9 @@ export function PointConversionCard({ dataset }: { dataset: DatasetRow }) {
         );
       }
       toast.success(`${written.toLocaleString()} rows are now points on the map.`);
-      void queryClient.invalidateQueries({ queryKey: ["pg:datasets"] });
-      void queryClient.invalidateQueries({ queryKey: ["pg:entries"] });
-      void queryClient.invalidateQueries({ queryKey: ["pg:geometries"] });
+      void queryClient.invalidateQueries({ queryKey: ["datasets"] });
+      void queryClient.invalidateQueries({ queryKey: ["entries"] });
+      void queryClient.invalidateQueries({ queryKey: ["geometries"] });
     } catch (error) {
       toast.error(errorMessage(error, "Couldn't convert the dataset."));
     } finally {

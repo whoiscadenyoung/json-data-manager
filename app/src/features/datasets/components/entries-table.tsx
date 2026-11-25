@@ -30,20 +30,21 @@ import type { ColumnFiltersState, SortingState, Updater } from "@tanstack/react-
 import { Copy, Eye, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
-import { entryDataRecord, type DatasetEntryRow } from "#/lib/dataset-rows";
+import { entryDataRecord } from "#/lib/dataset-rows";
+import type { EntryRow } from "#/lib/store/entries";
 
 import { useDatasetLinks } from "../lib/dataset-project-context";
 import {
   resolveUpdater,
   SERVED_FILTER_OPERATORS,
   servedVariantOf,
-  type PgColumnFilter,
-  type PgPropertyType,
-} from "../lib/pg-entries-table";
+  type ColumnFilter,
+  type PropertyType,
+} from "../lib/entries-table";
 import { buildLabelsByField, referencedEntryIds } from "../lib/reference-labels";
 
 // One seam row (`entries.listPage` page item, via the row-resolution seam).
-type Entry = DatasetEntryRow;
+type Entry = EntryRow;
 
 /** A JSON value formatted for a table cell: quotes stripped from strings, everything else stringified as JSON. */
 function formatCellValue(value: unknown): string {
@@ -70,8 +71,8 @@ function ValueCell({ value, currency }: { value: unknown; currency?: string | un
   );
 }
 
-function GeometryCell({ geometryType }: { geometryType: string | undefined }) {
-  if (geometryType === undefined) {
+function GeometryCell({ geometryType }: { geometryType: string | null }) {
+  if (geometryType === null) {
     return <span className="text-xs italic text-muted-foreground">No geometry</span>;
   }
   return <span className="font-mono text-xs text-muted-foreground">{geometryType}</span>;
@@ -79,18 +80,18 @@ function GeometryCell({ geometryType }: { geometryType: string | undefined }) {
 
 /** One linked target entry's resolved label, or the raw id as a fallback when it isn't (yet) resolved. */
 function ReferenceLink({
-  targetSchemaId,
+  targetDatasetId,
   entryId,
   label,
 }: {
-  targetSchemaId: string;
+  targetDatasetId: string;
   entryId: string;
   label: string | undefined;
 }) {
   const links = useDatasetLinks();
   return (
     <Link
-      {...links.entry(targetSchemaId, entryId)}
+      {...links.entry(targetDatasetId, entryId)}
       className="text-primary hover:underline"
       onClick={(e) => {
         e.stopPropagation();
@@ -104,11 +105,11 @@ function ReferenceLink({
 /** Renders a reference field's value as link(s) to the referenced entry/entries, resolved via `labelsById`. */
 function ReferenceCell({
   value,
-  targetSchemaId,
+  targetDatasetId,
   labelsById,
 }: {
   value: unknown;
-  targetSchemaId: string;
+  targetDatasetId: string;
   labelsById: Map<string, string>;
 }) {
   const entryIds = referencedEntryIds(value);
@@ -122,7 +123,7 @@ function ReferenceCell({
       {entryIds.map((entryId, i) => (
         <span key={entryId}>
           <ReferenceLink
-            targetSchemaId={targetSchemaId}
+            targetDatasetId={targetDatasetId}
             entryId={entryId}
             label={labelsById.get(entryId)}
           />
@@ -135,14 +136,14 @@ function ReferenceCell({
 
 function RowActions({
   editDisabledHint,
-  schemaId,
+  datasetId,
   entry,
   onEdit,
   onDelete,
 }: {
   /** Set where editing is read-only (views, locked datasets): Edit Entry renders disabled with this reason instead of a dead click (#338, like Create Entry). */
   editDisabledHint: string | undefined;
-  schemaId: string;
+  datasetId: string;
   entry: Entry;
   onEdit: (entry: Entry) => void;
   /** Present only where the backend serves a single-entry delete (the Postgres store). */
@@ -169,7 +170,7 @@ function RowActions({
         <MoreHorizontal className="h-3.5 w-3.5" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem render={<Link {...links.entry(schemaId, entry._id)} />}>
+        <DropdownMenuItem render={<Link {...links.entry(datasetId, entry.id)} />}>
           <Eye className="h-3.5 w-3.5" />
           View Details
         </DropdownMenuItem>
@@ -229,7 +230,7 @@ const GEOMETRY_COLUMN_SIZE = 110,
 type ColumnSurfaces = "client" | "server";
 
 function buildColumns(
-  schemaId: string,
+  datasetId: string,
   properties: string[],
   isGeospatial: boolean,
   onEdit: (entry: Entry) => void,
@@ -239,7 +240,7 @@ function buildColumns(
   referenceFieldsByName: Map<string, ReferenceField>,
   labelsByField: Map<string, Map<string, string>>,
   surfaces: ColumnSurfaces,
-  columnTypes: ReadonlyMap<string, PgPropertyType>,
+  columnTypes: ReadonlyMap<string, PropertyType>,
   currencyByField: Readonly<Record<string, string>>,
 ): DataTableColumnDef<Entry>[] {
   const server = surfaces === "server",
@@ -263,7 +264,7 @@ function buildColumns(
         referenceField ? (
           <ReferenceCell
             value={info.getValue()}
-            targetSchemaId={referenceField.meta.datasetId}
+            targetDatasetId={referenceField.meta.datasetId}
             labelsById={labelsByField.get(name) ?? new Map()}
           />
         ) : (
@@ -303,18 +304,18 @@ function buildColumns(
     ...geometryColumn,
     ...propertyColumns,
     {
-      accessorFn: (entry) => entry._creationTime,
-      // Live rows carry no creation timestamp (the sentinel reads as 1969 — #331): say nothing instead.
+      accessorFn: (entry) => Date.parse(entry.createdAt),
+      // Live rows carry no creation timestamp (the epoch sentinel — #331): say nothing instead.
       cell: (info) =>
-        liveRows && info.row.original._creationTime === 0
+        liveRows && Date.parse(info.row.original.createdAt) === 0
           ? "—"
-          : new Date(info.row.original._creationTime).toLocaleString(),
+          : new Date(info.row.original.createdAt).toLocaleString(),
       enableColumnFilter: dataFilterable,
       // The RPC's only non-key order is its `created_at desc` default — there
       // is no ascending variant to serve, so the column opts out server-side.
       enableSorting: !server,
       header: () => <SortableHeader title="Created" />,
-      id: "_creationTime",
+      id: "createdAt",
       meta: { label: "Created" },
       size: CREATED_COLUMN_SIZE,
     },
@@ -322,7 +323,7 @@ function buildColumns(
       cell: (info) => (
         <RowActions
           editDisabledHint={editDisabledHint}
-          schemaId={schemaId}
+          datasetId={datasetId}
           entry={info.row.original}
           onDelete={onDelete}
           onEdit={onEdit}
@@ -344,7 +345,7 @@ const ESTIMATED_ROW_HEIGHT = 37;
 /** A niko-table (TanStack Table v9) view of a dataset's entries: one column per schema property, with search/sort/filter/column-visibility. */
 // oxlint-disable-next-line eslint/complexity -- the table's origin-split render paths (client/server modes, reference labels, load-more, row actions) are its real shape; the decomposition is the deferred #82 phase-2 cleanup.
 export function EntriesTable({
-  schemaId,
+  datasetId,
   schema,
   properties,
   entries,
@@ -361,7 +362,7 @@ export function EntriesTable({
   server,
   columnTypes,
 }: {
-  schemaId: string;
+  datasetId: string;
   /** The dataset's JSON schema — used to detect which of `properties` are reference fields (see `@caden/json-cms/react`). */
   schema: unknown;
   properties: string[];
@@ -390,7 +391,7 @@ export function EntriesTable({
    * schema). Server mode reads it for the per-column filter variant and the
    * served-operator restriction; client mode ignores it.
    */
-  columnTypes?: ReadonlyMap<string, PgPropertyType>;
+  columnTypes?: ReadonlyMap<string, PropertyType>;
   /**
    * Server-driven mode (design §8.4): sort/filter/search state is hoisted
    * into the caller's hands (URL search params → the `search_entries` RPC),
@@ -402,8 +403,8 @@ export function EntriesTable({
     onSearchChange: (value: string) => void;
     sorting: SortingState;
     onSortingChange: (updater: Updater<SortingState>) => void;
-    filters: PgColumnFilter[];
-    onFiltersChange: (filters: PgColumnFilter[] | null) => void;
+    filters: ColumnFilter[];
+    onFiltersChange: (filters: ColumnFilter[] | null) => void;
   };
 }) {
   const referenceFields = getReferenceFields(schema),
@@ -413,7 +414,7 @@ export function EntriesTable({
     // Without a passed-in map, reference links render their raw entry id.
     resolvedLabelsByField = labelsByField ?? buildLabelsByField(referenceFields, []),
     columns = buildColumns(
-      schemaId,
+      datasetId,
       properties,
       isGeospatial,
       onEdit,
@@ -485,7 +486,7 @@ export function EntriesTable({
               manualSorting: true,
             }
       }
-      getRowId={(entry) => entry._id}
+      getRowId={(entry) => entry.id}
       onColumnFiltersChange={server === undefined ? undefined : handleColumnFiltersChange}
       onGlobalFilterChange={server === undefined ? undefined : handleGlobalFilterChange}
       onSortingChange={server === undefined ? undefined : handleSortingChange}

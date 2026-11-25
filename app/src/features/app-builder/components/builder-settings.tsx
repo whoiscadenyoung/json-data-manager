@@ -74,7 +74,7 @@ import {
 import { MAX_HEIGHT, WIDTH_PRESETS } from "../lib/layout";
 import { allWidgets, pagesWithoutDataset, removePage, shiftPage, updatePage } from "../lib/pages";
 import { WIDGET_KINDS, widgetKindInfo, WidgetSettings } from "../widgets/registry";
-import { PgDatasetPickerSheet } from "./pg-dataset-picker-sheet";
+import { DatasetPickerSheet } from "./dataset-picker-sheet";
 
 /**
  * The builder's settings, docked right of the canvas: the selected page, the
@@ -242,8 +242,8 @@ function DatasetRow({
         <ItemTitle>
           {state.status === "ready" ? (
             <Link
-              to="/datasets/$schemaId"
-              params={{ schemaId: datasetId }}
+              to="/datasets/$datasetId"
+              params={{ datasetId: datasetId }}
               className="hover:underline"
             >
               {title}
@@ -378,7 +378,7 @@ function DataPanel({
           Import new data into this project
         </RouterButton>
       ) : null}
-      <PgDatasetPickerSheet
+      <DatasetPickerSheet
         title="Add a dataset"
         description="Pick a catalog dataset for this app's widgets to use."
         candidates={candidates}

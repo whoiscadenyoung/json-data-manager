@@ -18,7 +18,7 @@ import { isPersistableQueryHash } from "#/integrations/tanstack-query/light-name
  * enters the query cache, and the namespace filter below keeps the heavy
  * geometry-page queries out even when a dataset renders from rows.
  *
- * The light queries are the store modules' `pg:*` keys (each carries its
+ * The light queries are the store modules' keys (each carries its
  * own `queryFn` in its `queryOptions`, so the QueryClient needs no default
  * queryFn). The store keys revalidate on mount, so the buster is a plain
  * constant — a bump of `PERSIST_BUSTER` (or `PERSIST_KEY`) is the way to
@@ -39,7 +39,7 @@ const PERSIST_THROTTLE_MS = 5_000;
 const PERSIST_KEY = "light-query-cache-v3";
 /** See the doc comment: the cache-generation marker `persistQueryClient`
  * stores alongside the payload. */
-const PERSIST_BUSTER = "pg-v1";
+const PERSIST_BUSTER = "v2";
 const IDB_DB_NAME = "json-cms";
 const IDB_STORE_NAME = "tanstack-query";
 

@@ -25,7 +25,7 @@ import { VISIBILITY_LEVELS } from "./visibility";
  * last observer leaving closes it ("unsubscribed on unmount"). One channel
  * per active dataset, never app-wide — per-subscriber RLS is the documented
  * scaling limit, and per-active-dataset granularity is the mitigation. The
- * catalog-wide summaries (`pg:datasets` list projections) deliberately do NOT
+ * catalog-wide summaries (`datasets` list projections) deliberately do NOT
  * activate anything by themselves: one channel per visible dataset would BE
  * the app-wide subscription the design forbids. They update live instead
  * through the events of whichever datasets are active (their summary rows
@@ -50,10 +50,10 @@ import { VISIBILITY_LEVELS } from "./visibility";
  * keys, coalesced to one refetch per key per tick (a 20k-row import is 20k
  * events and ONE refetch). Three exceptions where an UPDATE also invalidates:
  * `searchEntries` (server-side sort/filter can MOVE the row the patch pinned),
- * the `pg:datasets` summary projections (the design doc's literal
+ * the `datasets` summary projections (the design doc's literal
  * "setQueryData … invalidate for summaries" — a lifecycle flip moves a row
  * between the draft/published lists, which a patch cannot express), and the
- * `pg:geometries` tiles feed (its rows carry `data` — the §5.5 RPC's JOINed
+ * `geometries` tiles feed (its rows carry `data` — the §5.5 RPC's JOINed
  * `entries.data`, the tile feed's feature properties — a column the
  * `geometries` table does not have, so a payload patch would wipe every
  * feature property it touched).
@@ -307,7 +307,7 @@ function entryRowOf(raw: Record<string, unknown>, datasetId: string): EntryRow |
 }
 
 /**
- * The point-read cached shape of a geometry (`pg:geometries getByEntry` —
+ * The point-read cached shape of a geometry (`geometries getByEntry` —
  * geometries.ts's queryFn selects `entry_id, dataset_id, geometry,
  * source_path, bbox, type` and NO `data`). The tiles-feed shape (`GeometryRow`
  * WITH `data`) is unreachable from realtime payloads: `data` is the §5.5
@@ -509,7 +509,7 @@ function remapRowArray(
 }
 
 /**
- * Patches a point-read cache (`pg:entries get`, `pg:datasets get`, …) when the
+ * Patches a point-read cache (`entries get`, `datasets get`, …) when the
  * cached row is the event's row. A loaded-but-absent cache (null) is filled
  * by an UPDATE only — the event itself proves the row is visible to this
  * subscriber (RLS filters the channel), so the authoritative row may land;
@@ -600,29 +600,29 @@ function applyEntriesChange(
     // INSERT bursts invalidate — the new row's page position is the server's
     // decision (created_at order, search filter, keyset cursor), never a
     // client-side guess. The row counts (entry_count) ride the datasets row.
-    invalidations.add(["pg:entries", "listPage", { datasetId }]);
-    invalidations.add(["pg:entries", "searchEntries", { datasetId }]);
-    invalidations.add(["pg:entries", "listForIds"]);
+    invalidations.add(["entries", "listPage", { datasetId }]);
+    invalidations.add(["entries", "searchEntries", { datasetId }]);
+    invalidations.add(["entries", "listForIds"]);
     return;
   }
   if (rowId === "") {
     return;
   }
   if (change.eventType === "DELETE") {
-    patchGetCache(queryClient, ["pg:entries", "get", { entryId: rowId }], rowId, idOf, null);
-    patchRowCaches(queryClient, ["pg:entries", "listPage", { datasetId }], rowId, idOf, () => null);
+    patchGetCache(queryClient, ["entries", "get", { entryId: rowId }], rowId, idOf, null);
+    patchRowCaches(queryClient, ["entries", "listPage", { datasetId }], rowId, idOf, () => null);
     patchRowCaches(
       queryClient,
-      ["pg:entries", "searchEntries", { datasetId }],
+      ["entries", "searchEntries", { datasetId }],
       rowId,
       idOf,
       () => null,
     );
-    patchRowCaches(queryClient, ["pg:entries", "listForIds"], rowId, idOf, () => null);
+    patchRowCaches(queryClient, ["entries", "listForIds"], rowId, idOf, () => null);
     // The removal leaves a page short of its width — a refetch repairs the
     // keyset pagination.
-    invalidations.add(["pg:entries", "listPage", { datasetId }]);
-    invalidations.add(["pg:entries", "searchEntries", { datasetId }]);
+    invalidations.add(["entries", "listPage", { datasetId }]);
+    invalidations.add(["entries", "searchEntries", { datasetId }]);
     return;
   }
   // UPDATE: patch in place …
@@ -631,19 +631,19 @@ function applyEntriesChange(
   if (entry === null) {
     return;
   }
-  patchGetCache(queryClient, ["pg:entries", "get", { entryId: rowId }], rowId, idOf, entry);
-  patchRowCaches(queryClient, ["pg:entries", "listPage", { datasetId }], rowId, idOf, () => entry);
+  patchGetCache(queryClient, ["entries", "get", { entryId: rowId }], rowId, idOf, entry);
+  patchRowCaches(queryClient, ["entries", "listPage", { datasetId }], rowId, idOf, () => entry);
   patchRowCaches(
     queryClient,
-    ["pg:entries", "searchEntries", { datasetId }],
+    ["entries", "searchEntries", { datasetId }],
     rowId,
     idOf,
     () => entry,
   );
-  patchRowCaches(queryClient, ["pg:entries", "listForIds"], rowId, idOf, () => entry);
+  patchRowCaches(queryClient, ["entries", "listForIds"], rowId, idOf, () => entry);
   // … then let the server re-rank the sorted/filtered table (the patch pinned
   // the row's VALUE; its position under the active sort is the RPC's answer).
-  invalidations.add(["pg:entries", "searchEntries", { datasetId }]);
+  invalidations.add(["entries", "searchEntries", { datasetId }]);
 }
 
 function applyGeometriesChange(
@@ -656,8 +656,8 @@ function applyGeometriesChange(
   if (change.eventType === "DELETE") {
     // The delete payload carries the geometry table's own uuid (default
     // replica identity), which no cached row carries — invalidate, don't patch.
-    invalidations.add(["pg:geometries", "getByEntry"]);
-    invalidations.add(["pg:geometries", "rowsForTiles", { datasetId }]);
+    invalidations.add(["geometries", "getByEntry"]);
+    invalidations.add(["geometries", "rowsForTiles", { datasetId }]);
     return;
   }
   const raw = newRowOf(change);
@@ -669,8 +669,8 @@ function applyGeometriesChange(
     return;
   }
   if (change.eventType === "INSERT") {
-    invalidations.add(["pg:geometries", "getByEntry", { entryId }]);
-    invalidations.add(["pg:geometries", "rowsForTiles", { datasetId }]);
+    invalidations.add(["geometries", "getByEntry", { entryId }]);
+    invalidations.add(["geometries", "rowsForTiles", { datasetId }]);
     return;
   }
   const row = geometryGetRowOf(raw, datasetId);
@@ -688,10 +688,10 @@ function applyGeometriesChange(
   // permanently corrupt if it fails) — the exact violation of the
   // byte-identical contract above the review caught. The invalidation below
   // is the whole feed's update.
-  patchGetCache(queryClient, ["pg:geometries", "getByEntry", { entryId }], entryId, idOf, row);
+  patchGetCache(queryClient, ["geometries", "getByEntry", { entryId }], entryId, idOf, row);
   // The reactive layer feeds redraw from these pages — reconcile by
   // invalidation (bbox/shape changed, so the rendered geometry must too).
-  invalidations.add(["pg:geometries", "rowsForTiles", { datasetId }]);
+  invalidations.add(["geometries", "rowsForTiles", { datasetId }]);
 }
 
 function applyDatasetsChange(
@@ -704,13 +704,13 @@ function applyDatasetsChange(
   if (change.eventType === "INSERT") {
     const raw = newRowOf(change);
     const createdBy = raw === null ? "" : columnString(raw, "created_by");
-    invalidations.add(["pg:datasets", "list"]);
-    invalidations.add(["pg:datasets", "listSummaries"]);
-    invalidations.add(["pg:datasets", "listDraftSummaries"]);
+    invalidations.add(["datasets", "list"]);
+    invalidations.add(["datasets", "listSummaries"]);
+    invalidations.add(["datasets", "listDraftSummaries"]);
     if (createdBy !== "") {
-      invalidations.add(["pg:datasets", "listByCreator", { createdBy }]);
+      invalidations.add(["datasets", "listByCreator", { createdBy }]);
     }
-    invalidations.add(["pg:datasets", "maxTileCacheVersion"]);
+    invalidations.add(["datasets", "maxTileCacheVersion"]);
     return;
   }
   const rowId = recordIdOf(oldRowOf(change));
@@ -718,22 +718,22 @@ function applyDatasetsChange(
     return;
   }
   if (change.eventType === "DELETE") {
-    patchGetCache(queryClient, ["pg:datasets", "get", { datasetId: rowId }], rowId, idOf, null);
-    patchRowCaches(queryClient, ["pg:datasets", "list"], rowId, idOf, () => null);
-    patchRowCaches(queryClient, ["pg:datasets", "listSummaries"], rowId, idOf, () => null);
-    patchRowCaches(queryClient, ["pg:datasets", "listDraftSummaries"], rowId, idOf, () => null);
-    patchRowCaches(queryClient, ["pg:datasets", "listByCreator"], rowId, idOf, () => null);
-    invalidations.add(["pg:datasets", "list"]);
-    invalidations.add(["pg:datasets", "listSummaries"]);
-    invalidations.add(["pg:datasets", "listDraftSummaries"]);
-    invalidations.add(["pg:datasets", "listByCreator"]);
-    invalidations.add(["pg:datasets", "maxTileCacheVersion"]);
-    invalidations.add(["pg:tile-archives", "metas"]);
+    patchGetCache(queryClient, ["datasets", "get", { datasetId: rowId }], rowId, idOf, null);
+    patchRowCaches(queryClient, ["datasets", "list"], rowId, idOf, () => null);
+    patchRowCaches(queryClient, ["datasets", "listSummaries"], rowId, idOf, () => null);
+    patchRowCaches(queryClient, ["datasets", "listDraftSummaries"], rowId, idOf, () => null);
+    patchRowCaches(queryClient, ["datasets", "listByCreator"], rowId, idOf, () => null);
+    invalidations.add(["datasets", "list"]);
+    invalidations.add(["datasets", "listSummaries"]);
+    invalidations.add(["datasets", "listDraftSummaries"]);
+    invalidations.add(["datasets", "listByCreator"]);
+    invalidations.add(["datasets", "maxTileCacheVersion"]);
+    invalidations.add(["tile-archives", "metas"]);
     // The delete cascades the dataset's children (§3.4) — their surfaces go with it.
-    invalidations.add(["pg:versions", "head", { datasetId: rowId }]);
-    invalidations.add(["pg:versions", "list", { datasetId: rowId }]);
-    invalidations.add(["pg:tags", "list", { datasetId: rowId }]);
-    invalidations.add(["pg:collections", "listCollectionsByDataset", { datasetId: rowId }]);
+    invalidations.add(["versions", "head", { datasetId: rowId }]);
+    invalidations.add(["versions", "list", { datasetId: rowId }]);
+    invalidations.add(["tags", "list", { datasetId: rowId }]);
+    invalidations.add(["collections", "listCollectionsByDataset", { datasetId: rowId }]);
     return;
   }
   // UPDATE: patch the row caches, then the design doc's "invalidate for
@@ -746,20 +746,20 @@ function applyDatasetsChange(
     return;
   }
   const summary = datasetSummaryRowOf(row);
-  patchGetCache(queryClient, ["pg:datasets", "get", { datasetId: rowId }], rowId, idOf, row);
-  patchRowCaches(queryClient, ["pg:datasets", "list"], rowId, idOf, () => row);
-  patchRowCaches(queryClient, ["pg:datasets", "listSummaries"], rowId, idOf, () => summary);
-  patchRowCaches(queryClient, ["pg:datasets", "listDraftSummaries"], rowId, idOf, () => summary);
-  patchRowCaches(queryClient, ["pg:datasets", "listByCreator"], rowId, idOf, () => summary);
-  invalidations.add(["pg:datasets", "list"]);
-  invalidations.add(["pg:datasets", "listSummaries"]);
-  invalidations.add(["pg:datasets", "listDraftSummaries"]);
+  patchGetCache(queryClient, ["datasets", "get", { datasetId: rowId }], rowId, idOf, row);
+  patchRowCaches(queryClient, ["datasets", "list"], rowId, idOf, () => row);
+  patchRowCaches(queryClient, ["datasets", "listSummaries"], rowId, idOf, () => summary);
+  patchRowCaches(queryClient, ["datasets", "listDraftSummaries"], rowId, idOf, () => summary);
+  patchRowCaches(queryClient, ["datasets", "listByCreator"], rowId, idOf, () => summary);
+  invalidations.add(["datasets", "list"]);
+  invalidations.add(["datasets", "listSummaries"]);
+  invalidations.add(["datasets", "listDraftSummaries"]);
   if (row.createdBy !== "") {
-    invalidations.add(["pg:datasets", "listByCreator", { createdBy: row.createdBy }]);
+    invalidations.add(["datasets", "listByCreator", { createdBy: row.createdBy }]);
   }
-  invalidations.add(["pg:datasets", "getSourceFileUrl", { datasetId: rowId }]);
-  invalidations.add(["pg:datasets", "maxTileCacheVersion"]);
-  invalidations.add(["pg:tile-archives", "metas"]);
+  invalidations.add(["datasets", "getSourceFileUrl", { datasetId: rowId }]);
+  invalidations.add(["datasets", "maxTileCacheVersion"]);
+  invalidations.add(["tile-archives", "metas"]);
 }
 
 function applyDatasetVersionsChange(
@@ -770,12 +770,12 @@ function applyDatasetVersionsChange(
 ): void {
   // Version rows are append-only (frozen materializations, §5 — no grants):
   // the chain only ever grows, so this surface invalidates and never patches.
-  invalidations.add(["pg:versions", "head", { datasetId }]);
-  invalidations.add(["pg:versions", "list", { datasetId }]);
+  invalidations.add(["versions", "head", { datasetId }]);
+  invalidations.add(["versions", "list", { datasetId }]);
   const rowId = change.eventType === "INSERT" ? "" : recordIdOf(oldRowOf(change));
   if (rowId !== "") {
-    invalidations.add(["pg:versions", "get", { versionId: rowId }]);
-    invalidations.add(["pg:versions", "versionEntries", { versionId: rowId }]);
+    invalidations.add(["versions", "get", { versionId: rowId }]);
+    invalidations.add(["versions", "versionEntries", { versionId: rowId }]);
   }
 }
 
@@ -785,10 +785,10 @@ function applyTagsChange(
   change: RealtimeChange,
   datasetId: string,
 ): void {
-  invalidations.add(["pg:tags", "list", { datasetId }]);
+  invalidations.add(["tags", "list", { datasetId }]);
   const rowId = change.eventType === "INSERT" ? "" : recordIdOf(oldRowOf(change));
   if (rowId !== "") {
-    invalidations.add(["pg:tags", "get", { tagId: rowId }]);
+    invalidations.add(["tags", "get", { tagId: rowId }]);
   }
 }
 
@@ -806,11 +806,11 @@ function applyConsumerReferencesChange(
   change: RealtimeChange,
   datasetId: string,
 ): void {
-  invalidations.add(["pg:versions", "consumedBy", { sourceDatasetId: datasetId }]);
+  invalidations.add(["versions", "consumedBy", { sourceDatasetId: datasetId }]);
   if (change.eventType !== "DELETE" && change.new !== null) {
     const consumerId = columnString(change.new, "consumer_id");
     if (consumerId !== "") {
-      invalidations.add(["pg:versions", "consumerReferences", { consumerId }]);
+      invalidations.add(["versions", "consumerReferences", { consumerId }]);
     }
   }
 }
@@ -822,7 +822,7 @@ function applyVersionPoliciesChange(
   _change: RealtimeChange,
   datasetId: string,
 ): void {
-  invalidations.add(["pg:versions", "retentionPolicy", { datasetKey: datasetId }]);
+  invalidations.add(["versions", "retentionPolicy", { datasetKey: datasetId }]);
 }
 
 function applyCollectionDatasetsChange(
@@ -836,14 +836,14 @@ function applyCollectionDatasetsChange(
   const row =
     change.eventType === "INSERT" || change.eventType === "UPDATE" ? change.new : change.old;
   const collectionId = row === null ? "" : columnString(row, "collection_id");
-  invalidations.add(["pg:collections", "list"]);
-  invalidations.add(["pg:collections", "listMemberships"]);
-  invalidations.add(["pg:collections", "listCollectionsByDataset", { datasetId }]);
+  invalidations.add(["collections", "list"]);
+  invalidations.add(["collections", "listMemberships"]);
+  invalidations.add(["collections", "listCollectionsByDataset", { datasetId }]);
   if (collectionId !== "") {
-    invalidations.add(["pg:collections", "listDatasets", { collectionId }]);
+    invalidations.add(["collections", "listDatasets", { collectionId }]);
     return;
   }
-  invalidations.add(["pg:collections", "listDatasets"]);
+  invalidations.add(["collections", "listDatasets"]);
 }
 
 function applyLayersChange(
@@ -855,7 +855,7 @@ function applyLayersChange(
   // Layer definition/tree events are project-scoped (no dataset column —
   // the matrix note): the owning keys invalidate broadly and TanStack's
   // dedupe makes that one refetch per key.
-  invalidations.add(["pg:layers"]);
+  invalidations.add(["layers"]);
 }
 
 function applyMapLayersChange(
@@ -870,12 +870,12 @@ function applyMapLayersChange(
   const row =
     change.eventType === "INSERT" || change.eventType === "UPDATE" ? change.new : change.old;
   const mapId = row === null ? "" : columnString(row, "map_id");
-  invalidations.add(["pg:maps", "listAllPlacements"]);
+  invalidations.add(["maps", "listAllPlacements"]);
   if (change.eventType === "DELETE" || mapId === "") {
-    invalidations.add(["pg:maps", "listPlacements"]);
+    invalidations.add(["maps", "listPlacements"]);
     return;
   }
-  invalidations.add(["pg:maps", "listPlacements", { mapId }]);
+  invalidations.add(["maps", "listPlacements", { mapId }]);
 }
 
 const TABLE_HANDLERS: Record<string, ChangeHandler> = {
@@ -908,13 +908,13 @@ function recordIdOf(row: Record<string, unknown> | null): string {
 function datasetIdOfKey(key: readonly unknown[]): string | null {
   const scope = key[0];
   if (
-    scope !== "pg:entries" &&
-    scope !== "pg:collections" &&
-    scope !== "pg:datasets" &&
-    scope !== "pg:geometries" &&
-    scope !== "pg:imports" &&
-    scope !== "pg:tags" &&
-    scope !== "pg:versions"
+    scope !== "entries" &&
+    scope !== "collections" &&
+    scope !== "datasets" &&
+    scope !== "geometries" &&
+    scope !== "imports" &&
+    scope !== "tags" &&
+    scope !== "versions"
   ) {
     return null;
   }

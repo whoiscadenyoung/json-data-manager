@@ -167,35 +167,35 @@ export async function listAllPlacements(options?: StoreOptions): Promise<MapPlac
 
 export function listQueryOptions(options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:maps", "list"],
+    queryKey: ["maps", "list"],
     queryFn: async () => await list(options),
   });
 }
 
 export function listForProjectQueryOptions(args: { projectId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:maps", "listForProject", args],
+    queryKey: ["maps", "listForProject", args],
     queryFn: async () => await listForProject(args, options),
   });
 }
 
 export function getQueryOptions(args: { mapId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:maps", "get", args],
+    queryKey: ["maps", "get", args],
     queryFn: async () => await get(args, options),
   });
 }
 
 export function listPlacementsQueryOptions(args: { mapId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:maps", "listPlacements", args],
+    queryKey: ["maps", "listPlacements", args],
     queryFn: async () => await listPlacements(args, options),
   });
 }
 
 export function listAllPlacementsQueryOptions(options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:maps", "listAllPlacements"],
+    queryKey: ["maps", "listAllPlacements"],
     queryFn: async () => await listAllPlacements(options),
   });
 }

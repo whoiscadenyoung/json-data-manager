@@ -22,10 +22,10 @@
 import { isBelowThresholdSkipMemoized } from "@caden/maps/build-scheduler";
 import { useSyncExternalStore } from "react";
 
-import type { PgTileArchiveMeta, PgTileSummaryRow } from "./pg-tile-archives";
-import { isPgFreshArchiveCandidate } from "./pg-tile-archives";
-import { usePgTileArchiveMetas } from "./pg-tile-archives-react";
 import { hasTileArchiveBuildFailure, subscribeTileArchiveBuildState } from "./tile-archive";
+import type { TileArchiveMeta, TileSummaryRow } from "./tile-archive-state";
+import { isFreshArchiveCandidate } from "./tile-archive-state";
+import { useTileArchiveMetas } from "./tile-archive-state-react";
 
 /**
  * Feature count at which a dataset with no archive yet waits for its first
@@ -34,16 +34,6 @@ import { hasTileArchiveBuildFailure, subscribeTileArchiveBuildState } from "./ti
  * ~500 MB heap vs ~1.3 s on tiles). Below it, rows are cheap and unchanged.
  */
 export const TILE_WAIT_MIN_FEATURES = 5000;
-
-/** The tile-relevant fields of one dataset, for the #185 pending rule. */
-interface TileSourceSchemaRow {
-  _id: string;
-  featureCount?: number;
-  geometryType?: string;
-  kind?: "standard" | "geospatial";
-  mapTileArchiveBuiltVersion?: number;
-  mapTileCacheVersion?: number;
-}
 
 /** How one dataset's layers are served right now. */
 export type TileSourceDecision =
@@ -65,12 +55,18 @@ const PENDING: TileSourceDecision = { kind: "pending" };
  * datasets keep rows (they show the truth while the rebuild runs), and a
  * below-threshold skip means no archive is coming.
  */
-function awaitsFirstArchive(schema: TileSourceSchemaRow): boolean {
-  if (schema.kind !== "geospatial" || schema.geometryType === undefined) return false;
-  if (schema.mapTileArchiveBuiltVersion !== undefined) return false;
-  const version = schema.mapTileCacheVersion ?? 0;
-  if (version === 0 || (schema.featureCount ?? 0) < TILE_WAIT_MIN_FEATURES) return false;
-  return !isBelowThresholdSkipMemoized(schema._id, version);
+/**
+ * True when a large dataset has never had an archive and one is on its way:
+ * the row path would double-fetch against the build (#185). Stale-but-built
+ * datasets keep rows (they show the truth while the rebuild runs), and a
+ * below-threshold skip means no archive is coming.
+ */
+function awaitsFirstArchive(row: TileSummaryRow): boolean {
+  if (!row.isGeospatial || row.geometryType === null) return false;
+  if (row.mapTileArchiveBuiltVersion !== null) return false;
+  const version = row.mapTileCacheVersion;
+  if (version === 0 || row.featureCount < TILE_WAIT_MIN_FEATURES) return false;
+  return !isBelowThresholdSkipMemoized(row.id, version);
 }
 
 /**
@@ -82,36 +78,24 @@ function awaitsFirstArchive(schema: TileSourceSchemaRow): boolean {
  * nothing servable (rows). A large never-built dataset holds pending (#185)
  * unless its build failed.
  */
-export function selectPgLayerSource(
-  row: PgTileSummaryRow,
-  archive: PgTileArchiveMetaView,
+export function selectLayerSource(
+  row: TileSummaryRow,
+  archive: TileArchiveMetaView,
   buildFailed = false,
 ): TileSourceDecision {
   if (!row.isGeospatial || row.geometryType === null) return ROWS;
-  if (!buildFailed && pgAwaitsFirstArchive(row)) return PENDING;
-  if (!isPgFreshArchiveCandidate(row)) return ROWS;
+  if (!buildFailed && awaitsFirstArchive(row)) return PENDING;
+  if (!isFreshArchiveCandidate(row)) return ROWS;
   if (archive === undefined) return PENDING;
   if (archive === null) return ROWS;
   return { kind: "vector", url: `pmtiles://${archive.url}` };
 }
 
-/** The #185 rule for a summary row: map its fields onto the decision input shape. */
-function pgAwaitsFirstArchive(row: PgTileSummaryRow): boolean {
-  return awaitsFirstArchive({
-    _id: row.id,
-    featureCount: row.featureCount,
-    geometryType: row.geometryType === null ? undefined : row.geometryType,
-    kind: row.isGeospatial ? "geospatial" : "standard",
-    mapTileArchiveBuiltVersion: row.mapTileArchiveBuiltVersion ?? undefined,
-    mapTileCacheVersion: row.mapTileCacheVersion,
-  });
-}
-
-/** The signed-URL state for one PG dataset: loading (undefined) / none (null) / servable. */
-export type PgTileArchiveMetaView = PgTileArchiveMeta | null | undefined;
+/** The signed-URL state for one dataset: loading (undefined) / none (null) / servable. */
+export type TileArchiveMetaView = TileArchiveMeta | null | undefined;
 
 /** One decision input row: a dataset summary from the store. */
-export type TileDecisionRow = PgTileSummaryRow;
+export type TileDecisionRow = TileSummaryRow;
 
 /**
  * Decisions for a list of dataset summaries, keyed by dataset id. Subscribes
@@ -131,7 +115,7 @@ export function useTileArchiveSources(
     geospatialIds = rows
       .filter((row) => row.isGeospatial && row.geometryType !== null)
       .map((row) => row.id),
-    metas = usePgTileArchiveMetas(geospatialIds),
+    metas = useTileArchiveMetas(geospatialIds),
     // Re-evaluates when a build fails or is skipped (the build-state store
     // notifies on both); a primitive snapshot keeps it referentially stable.
     failedKey = useSyncExternalStore(
@@ -145,40 +129,40 @@ export function useTileArchiveSources(
     ),
     failedIds = new globalThis.Set(failedKey === "" ? [] : failedKey.split(",")),
     decisions = new globalThis.Map<string, TileSourceDecision>();
-  decidePgRows(rows, metas, failedIds, decisions);
+  decideRows(rows, metas, failedIds, decisions);
   return decisions;
 }
 
 /** Fills the rows' decisions (kept out of the hook for the complexity budget). */
-function decidePgRows(
-  pgRows: ReadonlyArray<PgTileSummaryRow>,
-  pgMetas: globalThis.Map<string, PgTileArchiveMeta> | undefined,
+function decideRows(
+  rows: ReadonlyArray<TileSummaryRow>,
+  metas: globalThis.Map<string, TileArchiveMeta> | undefined,
   failedIds: globalThis.Set<string>,
   decisions: globalThis.Map<string, TileSourceDecision>,
 ): void {
-  for (const row of pgRows) {
-    const archive: PgTileArchiveMetaView =
-      pgMetas === undefined ? undefined : (pgMetas.get(row.id) ?? null);
-    decisions.set(row.id, selectPgLayerSource(row, archive, failedIds.has(row.id)));
+  for (const row of rows) {
+    const archive: TileArchiveMetaView =
+      metas === undefined ? undefined : (metas.get(row.id) ?? null);
+    decisions.set(row.id, selectLayerSource(row, archive, failedIds.has(row.id)));
   }
 }
 
 /** The single-dataset variant of `useTileArchiveSources` — the same decision for one summary row, or `undefined` while the row is still loading. */
 export function useTileArchiveSource(
   schema: TileDecisionRow | null | undefined,
-  schemaId: string,
+  datasetId: string,
 ): TileSourceDecision | undefined {
   return useTileArchiveSources(schema === null || schema === undefined ? [] : [schema]).get(
-    schemaId,
+    datasetId,
   );
 }
 
 /** Where a set of datasets' rendering goes, once their decisions are known. */
 export interface LayerSourceSplit {
   /** Datasets the row path serves (paginated geometry rows). */
-  rowSchemaIds: string[];
+  rowDatasetIds: string[];
   /** Datasets rendering from their fresh tile archive (`pmtiles://`). */
-  tileSources: Array<{ schemaId: string; url: string }>;
+  tileSources: Array<{ datasetId: string; url: string }>;
   /** True while any id's decision is still resolving — hold rather than render either path. */
   sourcesPending: boolean;
 }
@@ -189,27 +173,27 @@ export interface LayerSourceSplit {
  * to the rows/tiles lists — `sourcesPending` distinguishes "hold" from
  * "skip".
  */
-export function splitSchemaIdsByDecision(
-  schemaIds: string[],
+export function splitDatasetIdsByDecision(
+  datasetIds: string[],
   decisions: globalThis.Map<string, TileSourceDecision>,
 ): LayerSourceSplit {
   const rows: string[] = [],
-    tileSources: Array<{ schemaId: string; url: string }> = [];
+    tileSources: Array<{ datasetId: string; url: string }> = [];
   let sourcesPending = false;
-  for (const schemaId of schemaIds) {
-    const decision = decisions.get(schemaId);
+  for (const datasetId of datasetIds) {
+    const decision = decisions.get(datasetId);
     if (decision === undefined) {
       continue;
     }
     if (decision.kind === "vector") {
-      tileSources.push({ schemaId, url: decision.url });
+      tileSources.push({ datasetId, url: decision.url });
     } else if (decision.kind === "rows") {
-      rows.push(schemaId);
+      rows.push(datasetId);
     } else {
       sourcesPending = true;
     }
   }
-  return { rowSchemaIds: rows, sourcesPending, tileSources };
+  return { rowDatasetIds: rows, sourcesPending, tileSources };
 }
 
 /** The coarse kind of one dataset's rendering, for pages that branch on it. `"none"` = the dataset isn't geospatial (no decision exists). */

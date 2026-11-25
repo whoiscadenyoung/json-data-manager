@@ -228,7 +228,7 @@ export function summaryOf(row: DatasetSummaryWire): DatasetSummaryRow {
 /** The full catalog rows, newest first — `api.cms.schemas.list` parity. */
 export function listQueryOptions(options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:datasets", "list", CATALOG_READ_LIMIT],
+    queryKey: ["datasets", "list", CATALOG_READ_LIMIT],
     queryFn: async () =>
       await queryRows<DatasetRow>(
         clientOf(options)
@@ -240,10 +240,10 @@ export function listQueryOptions(options?: StoreOptions) {
   });
 }
 
-/** The published-view summary projection. The `lifecycle eq 'published'` filter is LOAD-BEARING, not RLS: can_view_dataset ADMITS a draft to its creator, so without the filter the creator's own drafts would ride the browser/summary projection and the opt-in drafts toggle (listDraftSummariesQueryOptions + withPgDrafts) would double-count them. This filter is the gate (the stage-4 review's drafts-leak fix). */
+/** The published-view summary projection. The `lifecycle eq 'published'` filter is LOAD-BEARING, not RLS: can_view_dataset ADMITS a draft to its creator, so without the filter the creator's own drafts would ride the browser/summary projection and the opt-in drafts toggle (listDraftSummariesQueryOptions + withDrafts) would double-count them. This filter is the gate (the stage-4 review's drafts-leak fix). */
 export function listSummariesQueryOptions(options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:datasets", "listSummaries", CATALOG_READ_LIMIT],
+    queryKey: ["datasets", "listSummaries", CATALOG_READ_LIMIT],
     queryFn: async () => {
       const rows = await queryRows<DatasetSummaryWire>(
         clientOf(options)
@@ -261,7 +261,7 @@ export function listSummariesQueryOptions(options?: StoreOptions) {
 /** The opt-in drafts view — `api.cms.schemas.listDraftSummaries` parity; creator scoping rides RLS. */
 export function listDraftSummariesQueryOptions(options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:datasets", "listDraftSummaries", CATALOG_READ_LIMIT],
+    queryKey: ["datasets", "listDraftSummaries", CATALOG_READ_LIMIT],
     queryFn: async () => {
       const rows = await queryRows<DatasetSummaryWire>(
         clientOf(options)
@@ -291,7 +291,7 @@ export function listDraftSummariesQueryOptions(options?: StoreOptions) {
  */
 export function tileWatchSummariesQueryOptions(options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:datasets", "tileWatch", CATALOG_READ_LIMIT],
+    queryKey: ["datasets", "tileWatch", CATALOG_READ_LIMIT],
     queryFn: async () => {
       const rows = await queryRows<DatasetSummaryWire>(
         clientOf(options)
@@ -310,7 +310,7 @@ export function tileWatchSummariesQueryOptions(options?: StoreOptions) {
 /** One dataset's full row, or null when RLS hides it — `api.cms.schemas.get` parity. */
 export function getQueryOptions(args: { datasetId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:datasets", "get", args],
+    queryKey: ["datasets", "get", args],
     queryFn: async () =>
       await queryRow<DatasetRow>(
         clientOf(options)
@@ -331,7 +331,7 @@ export function getQueryOptions(args: { datasetId: string }, options?: StoreOpti
  */
 export function getSourceFileUrlQueryOptions(args: { datasetId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:datasets", "getSourceFileUrl", args],
+    queryKey: ["datasets", "getSourceFileUrl", args],
     queryFn: async () => {
       const row = await queryRow<{
         sourceFileName: string | null;
@@ -366,7 +366,7 @@ export function getSourceFileUrlQueryOptions(args: { datasetId: string }, option
  */
 export function maxTileCacheVersionQueryOptions(options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:datasets", "maxTileCacheVersion"],
+    queryKey: ["datasets", "maxTileCacheVersion"],
     queryFn: async () => {
       const row = await queryRow<{ mapTileCacheVersion: number }>(
         clientOf(options)
@@ -387,7 +387,7 @@ export function maxTileCacheVersionQueryOptions(options?: StoreOptions) {
  */
 export function listByCreatorQueryOptions(args: { createdBy: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:datasets", "listByCreator", args],
+    queryKey: ["datasets", "listByCreator", args],
     queryFn: async () => {
       const rows = await queryRows<DatasetSummaryWire>(
         clientOf(options)

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // and the summaries query the manager hook reads.
 const mocks = vi.hoisted(() => ({
   invalidateQueries: vi.fn<(args: { queryKey: string[] }) => void>(),
-  pgSummaries: undefined as Array<Record<string, unknown>> | undefined,
+  summaries: undefined as Array<Record<string, unknown>> | undefined,
   toastError: vi.fn<(message: string) => void>(),
 }));
 
@@ -22,9 +22,9 @@ vi.mock("#/integrations/tanstack-query/root-provider", () => ({
   getContext: () => ({ queryClient: { invalidateQueries: mocks.invalidateQueries } }),
 }));
 // The PG feed: summaries scripted per test, metas irrelevant to the manager.
-vi.mock("./pg-tile-archives-react", () => ({
-  usePgTileDatasetSummaries: () => mocks.pgSummaries,
-  usePgTileArchiveMetas: () => new globalThis.Map(),
+vi.mock("./tile-archive-state-react", () => ({
+  useTileDatasetSummaries: () => mocks.summaries,
+  useTileArchiveMetas: () => new globalThis.Map(),
 }));
 
 type TileArchiveModule = typeof import("./tile-archive");
@@ -78,7 +78,7 @@ beforeEach(async () => {
   vi.useFakeTimers();
   vi.stubGlobal("Worker", FakeWorker);
   FakeWorker.instances = [];
-  mocks.pgSummaries = undefined;
+  mocks.summaries = undefined;
   mocks.invalidateQueries.mockReset();
   mocks.toastError.mockReset();
   // The manager logs every state change in dev; keep test output readable.
@@ -96,7 +96,7 @@ afterEach(() => {
 });
 
 async function failBuild(message = "listGeometries timed out"): Promise<void> {
-  worker().reply({ message, schemaId: SCHEMA, type: "error" });
+  worker().reply({ message, datasetId: SCHEMA, type: "error" });
   await flush();
 }
 
@@ -127,7 +127,7 @@ describe("tile-archive failure store (#184)", () => {
     expect(localStorage.getItem(STORAGE_KEY)).toContain(SCHEMA);
 
     tiles.ensureMapTileArchive(SCHEMA);
-    worker().reply({ builtVersion: 3, bytes: 1, maxZoom: 14, schemaId: SCHEMA, type: "done" });
+    worker().reply({ builtVersion: 3, bytes: 1, maxZoom: 14, datasetId: SCHEMA, type: "done" });
     await flush();
     expect(tiles.getTileArchiveBuildFailure(SCHEMA)).toBeUndefined();
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
@@ -137,7 +137,7 @@ describe("tile-archive failure store (#184)", () => {
     tiles.ensureMapTileArchive(SCHEMA);
     await failBuild();
     tiles.ensureMapTileArchive(SCHEMA);
-    worker().reply({ reason: "below-threshold", schemaId: SCHEMA, type: "skipped", version: 3 });
+    worker().reply({ reason: "below-threshold", datasetId: SCHEMA, type: "skipped", version: 3 });
     await flush();
     expect(tiles.getTileArchiveBuildFailure(SCHEMA)).toBeUndefined();
   });
@@ -146,7 +146,7 @@ describe("tile-archive failure store (#184)", () => {
     tiles.ensureMapTileArchive(SCHEMA);
     await failBuild();
     tiles.ensureMapTileArchive(SCHEMA);
-    worker().reply({ schemaId: SCHEMA, type: "stale-discarded" });
+    worker().reply({ datasetId: SCHEMA, type: "stale-discarded" });
     await flush();
     expect(tiles.getTileArchiveBuildFailure(SCHEMA)).toMatchObject({
       message: "listGeometries timed out",
@@ -155,7 +155,7 @@ describe("tile-archive failure store (#184)", () => {
 
   it("the manager clears a failure once the archive is current some other way", async () => {
     // The summaries feed drives the staleness/clear cycle.
-    mocks.pgSummaries = [pgSummaryRow({ mapTileArchiveBuiltVersion: 2, mapTileCacheVersion: 3 })];
+    mocks.summaries = [summaryRow({ mapTileArchiveBuiltVersion: 2, mapTileCacheVersion: 3 })];
     const { rerender } = renderHook(() => {
       tiles.useMapTileArchiveManager();
     });
@@ -165,7 +165,7 @@ describe("tile-archive failure store (#184)", () => {
     // one the scheduler keyed.
     worker().reply({
       message: "listGeometries timed out",
-      schemaId: PG_ID,
+      datasetId: PG_ID,
       type: "error",
     });
     await flush();
@@ -173,7 +173,7 @@ describe("tile-archive failure store (#184)", () => {
 
     // Another tab installs the archive at version 3: the next summaries
     // update shows it current.
-    mocks.pgSummaries = [pgSummaryRow({ mapTileArchiveBuiltVersion: 3, mapTileCacheVersion: 3 })];
+    mocks.summaries = [summaryRow({ mapTileArchiveBuiltVersion: 3, mapTileCacheVersion: 3 })];
     rerender();
     expect(tiles.getTileArchiveBuildFailure(PG_ID)).toBeUndefined();
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
@@ -195,7 +195,7 @@ describe("tile-archive failure store (#184)", () => {
         },
       }),
     );
-    mocks.pgSummaries = [pgSummaryRow()];
+    mocks.summaries = [summaryRow()];
     renderHook(() => {
       tiles.useMapTileArchiveManager();
     });
@@ -215,7 +215,7 @@ describe("tile-archive failure store (#184)", () => {
 
 const PG_ID = "a4882d70-0000-4000-8000-000000000001";
 
-function pgSummaryRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function summaryRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     featureCount: 10,
     geometryType: "Point",
@@ -230,7 +230,7 @@ function pgSummaryRow(overrides: Record<string, unknown> = {}): Record<string, u
 
 describe("the manager's PG summaries loop", () => {
   it("schedules a build for a stale PG dataset and posts it to the shared worker", async () => {
-    mocks.pgSummaries = [pgSummaryRow()];
+    mocks.summaries = [summaryRow()];
     renderHook(() => {
       tiles.useMapTileArchiveManager();
     });
@@ -243,21 +243,21 @@ describe("the manager's PG summaries loop", () => {
         message.type === "build",
     );
     expect(posted).toHaveLength(1);
-    expect(posted[0]).toStrictEqual({ schemaId: PG_ID, type: "build" });
+    expect(posted[0]).toStrictEqual({ datasetId: PG_ID, type: "build" });
   });
 
   it("a current PG dataset never schedules, and clears a prior failure", async () => {
     // Seed a failure first (ensure spawns the worker; a current summaries
     // loop never would — that is the point).
     tiles.ensureMapTileArchive(PG_ID);
-    worker().reply({ message: "pg rows failed", schemaId: PG_ID, type: "error" });
+    worker().reply({ message: "pg rows failed", datasetId: PG_ID, type: "error" });
     await flush();
     expect(tiles.getTileArchiveBuildFailure(PG_ID)).toBeDefined();
     const buildsBefore = worker().posted.length;
 
     // The next (fresh-array) summaries show it current: the failure and its
     // armed retry are dropped (#184 review), and NO new build is scheduled.
-    mocks.pgSummaries = [pgSummaryRow({ mapTileArchiveBuiltVersion: 3, mapTileCacheVersion: 3 })];
+    mocks.summaries = [summaryRow({ mapTileArchiveBuiltVersion: 3, mapTileCacheVersion: 3 })];
     renderHook(() => {
       tiles.useMapTileArchiveManager();
     });
@@ -268,36 +268,36 @@ describe("the manager's PG summaries loop", () => {
     expect(worker().posted.length).toBe(buildsBefore);
   });
 
-  it("a PG done message invalidates the pg:datasets queries (no push for Postgres)", async () => {
-    mocks.pgSummaries = [pgSummaryRow()];
+  it("a PG done message invalidates the datasets queries (no push for Postgres)", async () => {
+    mocks.summaries = [summaryRow()];
     renderHook(() => {
       tiles.useMapTileArchiveManager();
     });
     await vi.advanceTimersByTimeAsync(5000);
-    worker().reply({ builtVersion: 3, bytes: 1, maxZoom: 14, schemaId: PG_ID, type: "done" });
+    worker().reply({ builtVersion: 3, bytes: 1, maxZoom: 14, datasetId: PG_ID, type: "done" });
     await flush();
-    expect(mocks.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["pg:datasets"] });
+    expect(mocks.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["datasets"] });
     // The signed-archive-URL metas feed goes stale with the install: its key
-    // (["pg:tile-archives","metas",datasetIds]) is structurally unchanged, so
+    // (["tile-archives","metas",datasetIds]) is structurally unchanged, so
     // without the prefix invalidation the feed would keep reporting "no
     // servable archive" and the OPFS pin would drop until an unrelated
     // refetch.
-    expect(mocks.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["pg:tile-archives"] });
+    expect(mocks.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["tile-archives"] });
   });
 
   it("a stale-discarded message also invalidates", async () => {
-    mocks.pgSummaries = [pgSummaryRow()];
+    mocks.summaries = [summaryRow()];
     renderHook(() => {
       tiles.useMapTileArchiveManager();
     });
     await vi.advanceTimersByTimeAsync(5000);
-    worker().reply({ schemaId: PG_ID, type: "stale-discarded" });
+    worker().reply({ datasetId: PG_ID, type: "stale-discarded" });
     await flush();
     // Both PG feeds per settlement: summaries + the metas prefix.
     expect(mocks.invalidateQueries).toHaveBeenCalledTimes(2);
-    expect(mocks.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["pg:tile-archives"] });
+    expect(mocks.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["tile-archives"] });
 
-    worker().reply({ builtVersion: 1, bytes: 1, maxZoom: 14, schemaId: SCHEMA, type: "done" });
+    worker().reply({ builtVersion: 1, bytes: 1, maxZoom: 14, datasetId: SCHEMA, type: "done" });
     await flush();
     expect(mocks.invalidateQueries).toHaveBeenCalledTimes(2);
   });
@@ -305,7 +305,7 @@ describe("the manager's PG summaries loop", () => {
 
 describe("the hard-crash watchdog (#336)", () => {
   it("reaps a build whose worker went silent (OOM kills fire no error event), then retries on a fresh worker", async () => {
-    mocks.pgSummaries = [pgSummaryRow()];
+    mocks.summaries = [summaryRow()];
     renderHook(() => {
       tiles.useMapTileArchiveManager();
     });
@@ -331,7 +331,7 @@ describe("the hard-crash watchdog (#336)", () => {
   });
 
   it("a build with steady progress is never reaped; only silence trips the watchdog", async () => {
-    mocks.pgSummaries = [pgSummaryRow()];
+    mocks.summaries = [summaryRow()];
     renderHook(() => {
       tiles.useMapTileArchiveManager();
     });
@@ -342,7 +342,7 @@ describe("the hard-crash watchdog (#336)", () => {
     for (let minute = 0; minute < 120; minute += 1) {
       // oxlint-disable-next-line eslint/no-await-in-loop -- each tick must land before the next fake minute runs the reaper.
       await vi.advanceTimersByTimeAsync(60 * 1000);
-      worker().reply({ done: 1, schemaId: PG_ID, total: 10, type: "progress" });
+      worker().reply({ done: 1, datasetId: PG_ID, total: 10, type: "progress" });
     }
     expect(tiles.getTileArchiveBuildFailure(PG_ID)).toBeUndefined();
     // Then silence: the reap fires one window after the last tick.

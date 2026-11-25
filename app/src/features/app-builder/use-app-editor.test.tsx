@@ -87,7 +87,7 @@ function viewOf(reads: Array<EditorView>): EditorView {
   return last;
 }
 
-/** Reports each committed editor view upward (the dataset-rows-react test's probe shape). */
+/** Reports each committed editor view upward (the loader test's probe shape). */
 function EditorProbe({ app, onRender }: { app: AppDoc; onRender: (view: EditorView) => void }) {
   const view = useAppEditor(app);
   useEffect(() => {

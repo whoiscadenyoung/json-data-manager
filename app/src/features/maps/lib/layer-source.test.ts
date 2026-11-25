@@ -18,28 +18,28 @@ vi.mock("#/integrations/tanstack-query/root-provider", () => ({
 }));
 
 const mocks = vi.hoisted(() => ({
-  pgMetas: undefined as
+  metas: undefined as
     | globalThis.Map<string, { datasetId: string; url: string; version: number }>
     | undefined,
 }));
 
-vi.mock("./pg-tile-archives-react", () => ({
-  usePgTileDatasetSummaries: () => undefined,
-  usePgTileArchiveMetas: () => mocks.pgMetas,
+vi.mock("./tile-archive-state-react", () => ({
+  useTileDatasetSummaries: () => undefined,
+  useTileArchiveMetas: () => mocks.metas,
 }));
 
 import {
-  selectPgLayerSource,
+  selectLayerSource,
   TILE_WAIT_MIN_FEATURES,
-  splitSchemaIdsByDecision,
+  splitDatasetIdsByDecision,
   useTileArchiveSources,
   type TileSourceDecision,
 } from "./layer-source";
-import { MAP_TILE_ARCHIVE_FORMAT, type PgTileSummaryRow } from "./pg-tile-archives";
+import { MAP_TILE_ARCHIVE_FORMAT, type TileSummaryRow } from "./tile-archive-state";
 
 const PG_ID = "a4882d70-0000-4000-8000-000000000001";
 
-function pgDataset(overrides: Partial<PgTileSummaryRow> = {}): PgTileSummaryRow {
+function dataset(overrides: Partial<TileSummaryRow> = {}): TileSummaryRow {
   return {
     featureCount: 10,
     geometryType: "Point",
@@ -52,7 +52,7 @@ function pgDataset(overrides: Partial<PgTileSummaryRow> = {}): PgTileSummaryRow 
   };
 }
 
-describe("splitSchemaIdsByDecision", () => {
+describe("splitDatasetIdsByDecision", () => {
   const VECTOR: TileSourceDecision = { kind: "vector", url: "pmtiles://x" },
     ROWS: TileSourceDecision = { kind: "rows" },
     decisions = new Map<string, TileSourceDecision>([
@@ -61,9 +61,9 @@ describe("splitSchemaIdsByDecision", () => {
     ]);
 
   it("files component ids under the path their decision names", () => {
-    const split = splitSchemaIdsByDecision(["tiled", "rowish"], decisions);
-    expect(split.tileSources).toStrictEqual([{ schemaId: "tiled", url: "pmtiles://x" }]);
-    expect(split.rowSchemaIds).toStrictEqual(["rowish"]);
+    const split = splitDatasetIdsByDecision(["tiled", "rowish"], decisions);
+    expect(split.tileSources).toStrictEqual([{ datasetId: "tiled", url: "pmtiles://x" }]);
+    expect(split.rowDatasetIds).toStrictEqual(["rowish"]);
     expect(split.sourcesPending).toBe(false);
   });
 
@@ -72,60 +72,60 @@ describe("splitSchemaIdsByDecision", () => {
       ["tiled", VECTOR],
       ["pending", { kind: "pending" }],
     ]);
-    const split = splitSchemaIdsByDecision(["tiled", "pending"], withPending);
+    const split = splitDatasetIdsByDecision(["tiled", "pending"], withPending);
     expect(split.sourcesPending).toBe(true);
-    expect(split.rowSchemaIds).toStrictEqual([]);
+    expect(split.rowDatasetIds).toStrictEqual([]);
     expect(split.tileSources).toHaveLength(1);
   });
 
   it("still drops a component id without a decision (a non-geospatial dataset)", () => {
-    const split = splitSchemaIdsByDecision(["rowish", "standard"], decisions);
-    expect(split.rowSchemaIds).toStrictEqual(["rowish"]);
+    const split = splitDatasetIdsByDecision(["rowish", "standard"], decisions);
+    expect(split.rowDatasetIds).toStrictEqual(["rowish"]);
   });
 });
 
-describe("selectPgLayerSource", () => {
-  const large = pgDataset({
+describe("selectLayerSource", () => {
+  const large = dataset({
     featureCount: TILE_WAIT_MIN_FEATURES,
     mapTileCacheVersion: 3,
   });
 
   it("rows for standard datasets and geometry-less geospatial rows", () => {
-    expect(selectPgLayerSource(pgDataset({ isGeospatial: false }), undefined)).toStrictEqual({
+    expect(selectLayerSource(dataset({ isGeospatial: false }), undefined)).toStrictEqual({
       kind: "rows",
     });
-    expect(selectPgLayerSource(pgDataset({ geometryType: null }), undefined)).toStrictEqual({
+    expect(selectLayerSource(dataset({ geometryType: null }), undefined)).toStrictEqual({
       kind: "rows",
     });
   });
 
   it("holds pending for a large dataset with no archive yet (#185)", () => {
-    expect(selectPgLayerSource(large, undefined)).toStrictEqual({ kind: "pending" });
+    expect(selectLayerSource(large, undefined)).toStrictEqual({ kind: "pending" });
   });
 
   it("keeps rows for small datasets, stale-but-built archives and unwritten datasets", () => {
     expect(
-      selectPgLayerSource({ ...large, featureCount: TILE_WAIT_MIN_FEATURES - 1 }, undefined),
+      selectLayerSource({ ...large, featureCount: TILE_WAIT_MIN_FEATURES - 1 }, undefined),
     ).toStrictEqual({ kind: "rows" });
     expect(
-      selectPgLayerSource(
+      selectLayerSource(
         { ...large, mapTileArchiveBuiltVersion: 2, mapTileArchiveFormat: MAP_TILE_ARCHIVE_FORMAT },
         undefined,
       ),
     ).toStrictEqual({ kind: "rows" });
-    expect(selectPgLayerSource({ ...large, mapTileCacheVersion: 0 }, undefined)).toStrictEqual({
+    expect(selectLayerSource({ ...large, mapTileCacheVersion: 0 }, undefined)).toStrictEqual({
       kind: "rows",
     });
   });
 
   it("falls back to rows after a failed build", () => {
-    expect(selectPgLayerSource(large, undefined, true)).toStrictEqual({ kind: "rows" });
+    expect(selectLayerSource(large, undefined, true)).toStrictEqual({ kind: "rows" });
   });
 
   it("falls back to rows once the build was skipped as below-threshold", () => {
     const id = "a4882d70-0000-4000-8000-0000000000aa";
     rememberBelowThresholdSkip(id, 3);
-    expect(selectPgLayerSource({ ...large, id }, undefined)).toStrictEqual({ kind: "rows" });
+    expect(selectLayerSource({ ...large, id }, undefined)).toStrictEqual({ kind: "rows" });
   });
 
   it("a fresh archive holds pending until its signed URL lands, then goes vector", () => {
@@ -135,37 +135,34 @@ describe("selectPgLayerSource", () => {
       mapTileArchiveFormat: MAP_TILE_ARCHIVE_FORMAT,
     };
     // Metas still loading — withhold the row fetch rather than guess.
-    expect(selectPgLayerSource(fresh, undefined)).toStrictEqual({ kind: "pending" });
+    expect(selectLayerSource(fresh, undefined)).toStrictEqual({ kind: "pending" });
     // Loaded and nothing servable — rows.
-    expect(selectPgLayerSource(fresh, null)).toStrictEqual({ kind: "rows" });
+    expect(selectLayerSource(fresh, null)).toStrictEqual({ kind: "rows" });
     expect(
-      selectPgLayerSource(fresh, { datasetId: PG_ID, url: "https://signed.test/a", version: 3 }),
+      selectLayerSource(fresh, { datasetId: PG_ID, url: "https://signed.test/a", version: 3 }),
     ).toStrictEqual({ kind: "vector", url: "pmtiles://https://signed.test/a" });
   });
 
   it("the #125 format gate reads rows even when the built version matches", () => {
     expect(
-      selectPgLayerSource(
-        { ...large, mapTileArchiveBuiltVersion: 3, mapTileArchiveFormat: 1 },
-        null,
-      ),
+      selectLayerSource({ ...large, mapTileArchiveBuiltVersion: 3, mapTileArchiveFormat: 1 }, null),
     ).toStrictEqual({ kind: "rows" });
   });
 });
 
 describe("useTileArchiveSources", () => {
   it("keys decisions by dataset id, fresh+signed as vector", () => {
-    mocks.pgMetas = new globalThis.Map([
+    mocks.metas = new globalThis.Map([
       [PG_ID, { datasetId: PG_ID, url: "https://signed.test/pg", version: 3 }],
     ]);
     const { result } = renderHook(() =>
       useTileArchiveSources([
-        pgDataset({
+        dataset({
           mapTileArchiveBuiltVersion: 3,
           mapTileArchiveFormat: MAP_TILE_ARCHIVE_FORMAT,
           mapTileCacheVersion: 3,
         }),
-        pgDataset({
+        dataset({
           id: "a4882d70-0000-4000-8000-000000000002",
           mapTileCacheVersion: 3,
         }),
@@ -178,14 +175,14 @@ describe("useTileArchiveSources", () => {
     });
     // Second PG dataset: never built, small → rows.
     expect(decisions.get("a4882d70-0000-4000-8000-000000000002")).toStrictEqual({ kind: "rows" });
-    mocks.pgMetas = undefined;
+    mocks.metas = undefined;
   });
 
   it("a PG dataset whose metas are still loading holds pending while fresh", () => {
-    mocks.pgMetas = undefined;
+    mocks.metas = undefined;
     const { result } = renderHook(() =>
       useTileArchiveSources([
-        pgDataset({
+        dataset({
           mapTileArchiveBuiltVersion: 3,
           mapTileArchiveFormat: MAP_TILE_ARCHIVE_FORMAT,
           mapTileCacheVersion: 3,
@@ -196,10 +193,10 @@ describe("useTileArchiveSources", () => {
   });
 
   it("a PG dataset with no servable archive reads rows once metas are loaded", () => {
-    mocks.pgMetas = new globalThis.Map();
+    mocks.metas = new globalThis.Map();
     const { result } = renderHook(() =>
       useTileArchiveSources([
-        pgDataset({
+        dataset({
           mapTileArchiveBuiltVersion: 3,
           mapTileArchiveFormat: MAP_TILE_ARCHIVE_FORMAT,
           mapTileCacheVersion: 3,
@@ -207,6 +204,6 @@ describe("useTileArchiveSources", () => {
       ]),
     );
     expect(result.current.get(PG_ID)).toStrictEqual({ kind: "rows" });
-    mocks.pgMetas = undefined;
+    mocks.metas = undefined;
   });
 });

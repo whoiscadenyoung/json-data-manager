@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { PgCollectionPage } from "#/features/catalog";
+import { CollectionPage } from "#/features/catalog";
 
 export const Route = createFileRoute("/collections/$collectionId/")({
   component: CollectionDetailPage,
@@ -8,5 +8,5 @@ export const Route = createFileRoute("/collections/$collectionId/")({
 
 function CollectionDetailPage() {
   const { collectionId } = Route.useParams();
-  return <PgCollectionPage collectionId={collectionId} />;
+  return <CollectionPage collectionId={collectionId} />;
 }

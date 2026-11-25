@@ -205,14 +205,14 @@ export async function listForDataset(
 
 export function getQueryOptions(args: { importId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:imports", "get", args],
+    queryKey: ["imports", "get", args],
     queryFn: async () => await get(args, options),
   });
 }
 
 export function listForDatasetQueryOptions(args: { datasetId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:imports", "listForDataset", args],
+    queryKey: ["imports", "listForDataset", args],
     queryFn: async () => await listForDataset(args, options),
   });
 }

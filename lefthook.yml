@@ -20,6 +20,10 @@ pre-commit:
         - "packages/ui/src/components/**"
         - "packages/ui/src/niko-table/**"
         - "app/src/lib/supabase/database.types.ts"
+        # Standalone bun scripts: the staged-file lint checks them without a
+        # program context (no tsconfig at scripts/), so node/Bun globals
+        # never resolve; scripts/local-gate.sh still lints the full tree.
+        - "scripts/seed/**"
       run: bunx oxlint --no-error-on-unmatched-pattern --type-aware --type-check {staged_files}
     fmt:
       priority: 2

@@ -129,7 +129,7 @@ export function AppDetailsDialog({
             target = await projectsStore.create({
               title: newProjectTitle.trim() === "" ? "My project" : newProjectTitle.trim(),
             });
-            void queryClient.invalidateQueries({ queryKey: ["pg:projects"] });
+            void queryClient.invalidateQueries({ queryKey: ["projects"] });
           }
         }
         // `create` answers the full new row (the insert's RETURNING) and
@@ -143,7 +143,7 @@ export function AppDetailsDialog({
           return;
         }
       }
-      void queryClient.invalidateQueries({ queryKey: ["pg:apps"] });
+      void queryClient.invalidateQueries({ queryKey: ["apps"] });
       onOpenChange(false);
       if (onSaved !== undefined) {
         await onSaved(savedId);

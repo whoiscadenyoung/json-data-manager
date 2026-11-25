@@ -7,12 +7,12 @@ export { ExportDialog } from "./components/export-dialog";
 export type { ExportFormat, ExportFormatOption } from "./components/export-dialog";
 export { GeometryCard } from "./components/geometry-card";
 export type { GeometryCardRow } from "./components/geometry-card";
-export { PostgresCreateDatasetPage } from "./components/pg-create-flow";
-export { PostgresDatasetPage } from "./components/pg-dataset-page";
-export type { PgDatasetPageSearch } from "./components/pg-dataset-page";
-export { PgDatasetExport } from "./components/pg-dataset-export";
-export { PgGroupExport } from "./components/pg-group-export";
-export { PostgresEntryDetailsPage } from "./components/pg-entry-details";
+export { CreateDatasetPage } from "./components/create-flow";
+export { DatasetPage } from "./components/dataset-page";
+export type { DatasetPageSearch } from "./components/dataset-page";
+export { DatasetExport } from "./components/dataset-export";
+export { GroupExport } from "./components/group-export";
+export { EntryDetailsPage } from "./components/entry-details";
 export { SchemaVisualizer } from "./components/schema-visualizer";
 export { withDrafts } from "./lib/dataset-drafts";
 export { LOCKED_DATASET_HINT, isLockedForViewer } from "./lib/edit-policy";
@@ -26,10 +26,10 @@ export {
   slugify,
 } from "./lib/export";
 export {
-  pgTableParamsFromState,
-  pgTableStateFromParams,
+  tableParamsFromState,
+  tableStateFromParams,
   useSearchEntriesPages,
-} from "./lib/pg-entries-table";
+} from "./lib/entries-table";
 export {
   buildLabelsByField,
   collectReferencedIds,

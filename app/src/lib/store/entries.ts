@@ -424,14 +424,14 @@ export async function clearDatasetRows(
 
 export function listPageQueryOptions(args: EntriesPageArgs, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:entries", "listPage", args],
+    queryKey: ["entries", "listPage", args],
     queryFn: async () => await listPage(args, options),
   });
 }
 
 export function searchEntriesQueryOptions(args: SearchEntriesArgs, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:entries", "searchEntries", args],
+    queryKey: ["entries", "searchEntries", args],
     queryFn: async () => await searchEntries(args, options),
   });
 }
@@ -441,14 +441,14 @@ export function listForIdsQueryOptions(
   options?: StoreOptions,
 ) {
   return queryOptions({
-    queryKey: ["pg:entries", "listForIds", args],
+    queryKey: ["entries", "listForIds", args],
     queryFn: async () => await listForIds(args, options),
   });
 }
 
 export function getQueryOptions(args: { entryId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:entries", "get", args],
+    queryKey: ["entries", "get", args],
     queryFn: async () => await get(args, options),
   });
 }

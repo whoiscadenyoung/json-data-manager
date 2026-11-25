@@ -182,7 +182,7 @@ export async function publishDataset(
 /** One project's presses, newest first. */
 export function listBundlesQueryOptions(args: { projectId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:publishing", "listBundles", args],
+    queryKey: ["publishing", "listBundles", args],
     queryFn: async () =>
       await queryRows<PublishBundleRow>(
         clientOf(options)
@@ -201,7 +201,7 @@ export function listBundlesForCollectionQueryOptions(
   options?: StoreOptions,
 ) {
   return queryOptions({
-    queryKey: ["pg:publishing", "listBundlesForCollection", args],
+    queryKey: ["publishing", "listBundlesForCollection", args],
     queryFn: async () =>
       await queryRows<PublishBundleRow>(
         clientOf(options)
@@ -217,7 +217,7 @@ export function listBundlesForCollectionQueryOptions(
 /** The project's LATEST press (the join-or-revive read). */
 export function latestBundleQueryOptions(args: { projectId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:publishing", "latestBundle", args],
+    queryKey: ["publishing", "latestBundle", args],
     queryFn: async () =>
       await queryRow<PublishBundleRow>(
         clientOf(options)
@@ -233,7 +233,7 @@ export function latestBundleQueryOptions(args: { projectId: string }, options?: 
 /** One press's members, in the canonical order they were minted (the by_bundle scan IS the order). */
 export function listMembersQueryOptions(args: { bundleId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:publishing", "listMembers", args],
+    queryKey: ["publishing", "listMembers", args],
     queryFn: async () =>
       await queryRows<BundleMemberRow>(
         clientOf(options)

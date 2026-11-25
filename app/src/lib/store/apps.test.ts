@@ -127,12 +127,12 @@ describe("apps.listVisible — the /apps explorer", () => {
   it("queryOptions carry the store namespace and args in the key", () => {
     const { client } = stubSupabase();
     expect(listVisibleQueryOptions({ supabase: client }).queryKey).toStrictEqual([
-      "pg:apps",
+      "apps",
       "listVisible",
     ]);
     const args = { appId: "a1" };
     expect(getQueryOptions(args, { supabase: client }).queryKey).toStrictEqual([
-      "pg:apps",
+      "apps",
       "get",
       args,
     ]);

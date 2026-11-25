@@ -48,9 +48,6 @@ const config = defineConfig({
     viteReact(),
   ],
   resolve: { tsconfigPaths: true },
-  // @convex-dev/better-auth ships untranspiled — it must stay in the SSR
-  // bundle for Vite to process it.
-  //
   // react stays EXTERNAL end to end on purpose. The SSR service env
   // externalizes node_modules by default; the nitro env is pinned above.
   // That yields exactly ONE react instance per process — the real packages —
@@ -68,7 +65,6 @@ const config = defineConfig({
   // codeSplitting.groups take precedence over user chunk options in this
   // nitro build, so the pin had stopped applying entirely — it protected
   // nothing while claiming to.)
-  ssr: { noExternal: ["@convex-dev/better-auth"] },
   // Module workers (maplibre's, `tile-archive.worker.ts`) must build as ES —
   // the default iife wrap breaks `new Worker(url, { type: "module" })`.
   worker: { format: "es" },

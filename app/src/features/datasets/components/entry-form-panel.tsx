@@ -85,7 +85,7 @@ function geometryToText(geometry: Geometry | undefined): string {
 interface CandidateRow {
   _id: string;
   data: unknown;
-  schemaId: string;
+  datasetId: string;
 }
 
 /**
@@ -99,12 +99,12 @@ interface CandidateRow {
  */
 function useReferenceUiSchema(schema: PanelSchema): Record<string, unknown> {
   const referenceFields = getReferenceFields(schema.schema),
-    targetSchemaIds = [...new Set(referenceFields.map((f) => f.meta.datasetId))],
-    pgTargetIds = targetSchemaIds,
-    pgCandidateQueries = useQueries({
-      queries: pgTargetIds.map((targetId) => ({
+    targetDatasetIds = [...new Set(referenceFields.map((f) => f.meta.datasetId))],
+    targetIds = targetDatasetIds,
+    candidateQueries = useQueries({
+      queries: targetIds.map((targetId) => ({
         ...searchEntriesQueryOptions({ datasetId: targetId, limit: 200 }),
-        enabled: pgTargetIds.length > 0,
+        enabled: targetIds.length > 0,
       })),
     });
 
@@ -112,15 +112,15 @@ function useReferenceUiSchema(schema: PanelSchema): Record<string, unknown> {
     return {};
   }
   const entriesBySchema = new Map<string, CandidateRow[]>();
-  for (let index = 0; index < pgCandidateQueries.length; index += 1) {
-    const queryResult = pgCandidateQueries[index],
-      targetId = pgTargetIds[index];
+  for (let index = 0; index < candidateQueries.length; index += 1) {
+    const queryResult = candidateQueries[index],
+      targetId = targetIds[index];
     if (targetId === undefined || queryResult === undefined || queryResult.data === undefined) {
       continue;
     }
     for (const row of queryResult.data.rows) {
       const list = entriesBySchema.get(targetId) ?? [];
-      list.push({ _id: row.id, data: row.data, schemaId: row.datasetId });
+      list.push({ _id: row.id, data: row.data, datasetId: row.datasetId });
       entriesBySchema.set(targetId, list);
     }
   }
@@ -137,13 +137,13 @@ function useReferenceUiSchema(schema: PanelSchema): Record<string, unknown> {
 
 /** The geometry textarea + RJSF form, keyed by target entry so switching entries (or a fresh create) starts clean. */
 function EntryFormBody({
-  schemaId,
+  datasetId,
   schema,
   entry,
   initialGeometry,
   onSaved,
 }: {
-  schemaId: string;
+  datasetId: string;
   schema: PanelSchema;
   entry: PanelEntry | undefined;
   initialGeometry: Geometry | undefined;
@@ -158,22 +158,22 @@ function EntryFormBody({
     [isSubmitting, setIsSubmitting] = useState(false),
     // Writes invalidate the store's entry/dataset caches (row pages, counts).
     invalidatePg = () => {
-      void queryClient.invalidateQueries({ queryKey: ["pg:entries"] });
-      void queryClient.invalidateQueries({ queryKey: ["pg:datasets"] });
-      void queryClient.invalidateQueries({ queryKey: ["pg:geometries"] });
+      void queryClient.invalidateQueries({ queryKey: ["entries"] });
+      void queryClient.invalidateQueries({ queryKey: ["datasets"] });
+      void queryClient.invalidateQueries({ queryKey: ["geometries"] });
     },
     submitPg = async (formData: Record<string, unknown>, geometryArg: string | undefined) => {
       if (isEditing) {
         await entriesStore.update({
           data: formData,
-          datasetId: schemaId,
+          datasetId: datasetId,
           entryId: entry.id,
           geometry: geometryArg === undefined ? undefined : geometryArg,
         });
       } else {
         await entriesStore.create({
           data: formData,
-          datasetId: schemaId,
+          datasetId: datasetId,
           geometry: geometryArg,
         });
       }
@@ -283,14 +283,14 @@ function EntryFormBody({
  * several entries in a row); editing closes the panel on success.
  */
 export function EntryFormPanel({
-  schemaId,
+  datasetId,
   schema,
   entry,
   initialGeometry,
   open,
   onOpenChange,
 }: {
-  schemaId: string;
+  datasetId: string;
   schema: PanelSchema;
   entry?: PanelEntry;
   initialGeometry?: Geometry;
@@ -328,7 +328,7 @@ export function EntryFormPanel({
             key={entry === undefined ? "create" : entry.id}
             initialGeometry={initialGeometry}
             schema={schema}
-            schemaId={schemaId}
+            datasetId={datasetId}
             entry={entry}
             onSaved={(mode) => {
               if (mode === "updated") {

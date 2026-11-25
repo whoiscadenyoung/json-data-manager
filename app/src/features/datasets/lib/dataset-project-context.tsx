@@ -14,8 +14,8 @@ export interface DatasetLinks {
   projectId: string | null;
   /** Where "back to the list" goes: the project catalog, or the global explorer. */
   home: LinkProps;
-  dataset: (schemaId: string) => LinkProps;
-  entry: (schemaId: string, entryId: string) => LinkProps;
+  dataset: (datasetId: string) => LinkProps;
+  entry: (datasetId: string, entryId: string) => LinkProps;
 }
 
 /** Link props for the dataset surfaces, project-aware. */
@@ -23,23 +23,23 @@ export function useDatasetLinks(): DatasetLinks {
   const projectId = useContext(DatasetProjectContext);
   if (projectId === null) {
     return {
-      dataset: (schemaId) => ({ params: { schemaId }, to: "/datasets/$schemaId" }),
-      entry: (schemaId, entryId) => ({
-        params: { entryId, schemaId },
-        to: "/datasets/$schemaId/$entryId",
+      dataset: (datasetId) => ({ params: { datasetId }, to: "/datasets/$datasetId" }),
+      entry: (datasetId, entryId) => ({
+        params: { entryId, datasetId },
+        to: "/datasets/$datasetId/$entryId",
       }),
       home: { to: "/datasets" },
       projectId,
     };
   }
   return {
-    dataset: (schemaId) => ({
-      params: { projectId, schemaId },
-      to: "/projects/$projectId/datasets/$schemaId",
+    dataset: (datasetId) => ({
+      params: { projectId, datasetId },
+      to: "/projects/$projectId/datasets/$datasetId",
     }),
-    entry: (schemaId, entryId) => ({
-      params: { entryId, projectId, schemaId },
-      to: "/projects/$projectId/datasets/$schemaId/$entryId",
+    entry: (datasetId, entryId) => ({
+      params: { entryId, projectId, datasetId },
+      to: "/projects/$projectId/datasets/$datasetId/$entryId",
     }),
     home: { params: { projectId }, to: "/projects/$projectId/catalog" },
     projectId,
