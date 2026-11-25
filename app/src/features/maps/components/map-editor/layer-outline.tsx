@@ -216,8 +216,8 @@ function DatasetItems({ facts, props }: { facts: PlacementFacts; props: OutlineP
         <DropdownMenuItem
           render={
             <Link
-              params={{ projectId: props.projectId, schemaId: datasetId }}
-              to="/projects/$projectId/datasets/$schemaId"
+              params={{ projectId: props.projectId, datasetId: datasetId }}
+              to="/projects/$projectId/datasets/$datasetId"
             />
           }
         >

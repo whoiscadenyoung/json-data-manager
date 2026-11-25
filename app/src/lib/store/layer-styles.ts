@@ -238,7 +238,7 @@ export async function removeIcon(args: { iconId: string }, options?: StoreOption
 
 export function listIconsQueryOptions(options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:layer-styles", "listIcons"],
+    queryKey: ["layer-styles", "listIcons"],
     queryFn: async () => await listIcons(options),
   });
 }

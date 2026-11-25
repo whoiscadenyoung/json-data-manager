@@ -1,0 +1,71 @@
+/**
+ * The reactive feeds for the PG tile pipeline (the hooks half of
+ * `./tile-archive-state.ts`, kept out of that module so the worker can import
+ * the core without React): the PG dataset summaries (the staleness
+ * triggers', the decision's, and the pin's shared input — one TanStack
+ * subscription, deduped by key across every mounted consumer) and the
+ * signed-archive-URL metas (the `api.cms.tile_archives.metas` analogue:
+ * one query for N datasets, the hook-rules-safe fan-out).
+ *
+ * Loading states are two-valued ON PURPOSE: `undefined` means "still
+ * loading" (a fresh archive candidate holds `pending` rather than flashing
+ * the row path), while a LOADED map that lacks a dataset means "no servable
+ * archive" (rows).
+ */
+
+import { useQuery } from "@tanstack/react-query";
+
+import { tileWatchSummariesQueryOptions, type DatasetSummaryRow } from "#/lib/store/datasets";
+
+import { tileArchiveMetasOf, type TileArchiveMeta } from "./tile-archive-state";
+
+/**
+ * The PG dataset summaries the TILE pipeline watches (`datasets`/
+ * `tileWatch`) — drafts included ([remedies 1] / #287: the published-only
+ * catalog feed silently excluded project-held draft datasets from the
+ * manager's watch, so their maps rode the row path forever). Undefined
+ * while loading.
+ */
+export function useTileDatasetSummaries(): DatasetSummaryRow[] | undefined {
+  const query = useQuery(tileWatchSummariesQueryOptions());
+  return query.data;
+}
+
+/** The stable empty metas map (loaded, nothing servable) for zero-id callers. */
+const EMPTY_PG_METAS: globalThis.Map<string, TileArchiveMeta> = new globalThis.Map();
+
+/**
+ * Signed archive URLs for the given PG geospatial datasets, keyed by dataset
+ * id; `undefined` while the query is in flight. Only current-format,
+ * version-matched archives appear (the feed's filter — see
+ * `tileArchiveMetasOf`), so a missing key after load = rows. Errors read as loaded-and-empty (rows; the next
+ * summaries change refires the query).
+ */
+export function useTileArchiveMetas(
+  datasetIds: ReadonlyArray<string>,
+): globalThis.Map<string, TileArchiveMeta> | undefined {
+  const query = useQuery({
+    enabled: datasetIds.length > 0,
+    queryFn: async () => await tileArchiveMetasOf(datasetIds),
+    queryKey: ["tile-archives", "metas", datasetIds],
+    retry: 1,
+  });
+  if (datasetIds.length === 0) {
+    return EMPTY_PG_METAS;
+  }
+  const data = query.data;
+  if (data === undefined) {
+    if (query.isError) {
+      // A failed signing read must not hold fresh candidates pending
+      // forever — degrade to rows (loaded-and-empty); the next summaries
+      // change or remount refires the query.
+      return EMPTY_PG_METAS;
+    }
+    return undefined;
+  }
+  const metas = new globalThis.Map<string, TileArchiveMeta>();
+  for (const meta of data) {
+    metas.set(meta.datasetId, meta);
+  }
+  return metas;
+}

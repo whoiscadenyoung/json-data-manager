@@ -46,7 +46,7 @@ export async function get(
 
 export function getQueryOptions(args: { profileId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:profiles", "get", args],
+    queryKey: ["profiles", "get", args],
     queryFn: async () => await get(args, options),
   });
 }

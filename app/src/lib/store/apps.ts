@@ -8,7 +8,7 @@ import type { VisibilityLevel } from "./visibility";
  * (issue #259, the project-centric train's phase 5; ADR 0021 over migration
  * 0022). `listVisible` / `get` / `create` / `updateDetails` / `saveContent` /
  * `duplicate` / `remove` over `public.apps`; publish/freezing lives in
- * `#/features/publishing/lib/pg-app-publish` + `./app-versions`.
+ * `#/features/publishing/lib/app-publish` + `./app-versions`.
  *
  * The recorded shapes (ADR 0021):
  *   - Apps are PROJECT-OWNED rows (`project_id` NOT NULL): reads are
@@ -246,21 +246,21 @@ export async function listForProject(
 
 export function listVisibleQueryOptions(options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:apps", "listVisible"],
+    queryKey: ["apps", "listVisible"],
     queryFn: async () => await listVisible(options),
   });
 }
 
 export function getQueryOptions(args: { appId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:apps", "get", args],
+    queryKey: ["apps", "get", args],
     queryFn: async () => await get(args, options),
   });
 }
 
 export function listForProjectQueryOptions(args: { projectId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:apps", "listForProject", args],
+    queryKey: ["apps", "listForProject", args],
     queryFn: async () => await listForProject(args, options),
   });
 }
@@ -435,7 +435,7 @@ function assertChartWidgetOf(widget: AppWidgetConfig): void {
  * catalog reads (the layers-store pattern — the client-facing addArtifact
  * never sees kind 'app'). Returns the full row — the shipped
  * `.insert().select()` shape (RETURNING passes the flat SELECT policy on
- * the new row; the pg-apps int test pins the 0008 lesson).
+ * the new row; the apps int test pins the 0008 lesson).
  */
 export async function create(
   args: { projectId: string; title: string; description?: string },

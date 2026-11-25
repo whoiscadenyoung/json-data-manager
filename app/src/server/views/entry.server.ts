@@ -3,7 +3,6 @@ import postgres, { type Sql } from "postgres";
 import { defaultViewCompiler } from "#/lib/views/view-compiler-wiring";
 
 import { verifyAccessToken } from "./claims";
-import { jsonPassthroughTypes } from "./pg-types";
 import { drainRefreshQueue, readLiveAs, setRefreshModeAs, type RefreshMode } from "./refresh";
 import {
   DEFAULT_TIMEOUT_MS,
@@ -16,6 +15,7 @@ import {
   type RunnerDeps,
 } from "./runner";
 import { scratchAs, type ScratchResult } from "./scratch";
+import { jsonPassthroughTypes } from "./types";
 
 /**
  * Server-only wiring for the view runner: the environment, the Postgres

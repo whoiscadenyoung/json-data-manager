@@ -229,7 +229,7 @@ export async function readLineage(
 
 export function lineageQueryOptions(args: { projectId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:lineage", args.projectId],
+    queryKey: ["lineage", args.projectId],
     queryFn: async () => await readLineage(args, options),
   });
 }

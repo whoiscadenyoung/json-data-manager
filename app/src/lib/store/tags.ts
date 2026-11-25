@@ -56,7 +56,7 @@ const TAG_SELECT =
 /** One dataset's tags, newest first (live and retired — `retiredAt` tells them apart). */
 export function listQueryOptions(args: { datasetId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:tags", "list", args],
+    queryKey: ["tags", "list", args],
     queryFn: async () =>
       await queryRows<TagRow>(
         clientOf(options)
@@ -72,7 +72,7 @@ export function listQueryOptions(args: { datasetId: string }, options?: StoreOpt
 /** One tag by id, or null when gone/invisible. */
 export function getQueryOptions(args: { tagId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:tags", "get", args],
+    queryKey: ["tags", "get", args],
     queryFn: async () =>
       await queryRow<TagRow>(
         clientOf(options).from("tags").select(TAG_SELECT).eq("id", args.tagId).limit(1),

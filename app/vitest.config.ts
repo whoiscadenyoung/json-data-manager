@@ -15,7 +15,6 @@ export default defineConfig({
     alias: {
       "#/": new URL("./src/", import.meta.url).pathname,
       "@/": new URL("./src/", import.meta.url).pathname,
-      "#convex/": new URL("./convex/", import.meta.url).pathname,
     },
   },
   test: {
@@ -25,7 +24,7 @@ export default defineConfig({
     // sessions interleaved against the shared DB — RLS denials on
     // storage.objects that moved between file sets on every rerun, plus the
     // standing load-flaky pair (convex/versions/consumption,
-    // pg-realtime). Serializing files makes the class structurally
+    // realtime.int.test). Serializing files makes the class structurally
     // impossible and costs nothing: the suite is setup-dominated
     // (112 s serialized vs 114 s parallel, measured 2026-11-05), so no
     // wall-time is traded for the determinism.

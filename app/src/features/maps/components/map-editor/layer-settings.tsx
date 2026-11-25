@@ -68,8 +68,8 @@ function DataLayerSettings({
       <Section title="Dataset">
         <Link
           className="flex items-center gap-2 text-sm font-medium hover:underline"
-          params={{ projectId, schemaId: dataset.id }}
-          to="/projects/$projectId/datasets/$schemaId"
+          params={{ projectId, datasetId: dataset.id }}
+          to="/projects/$projectId/datasets/$datasetId"
         >
           <Database className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="truncate">{dataset.title}</span>

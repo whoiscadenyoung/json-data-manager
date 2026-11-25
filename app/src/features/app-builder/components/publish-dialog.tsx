@@ -19,7 +19,7 @@ import { headOfChainQueryOptions } from "#/lib/store/versions";
 
 import { datasetTitle, useAppDatasets } from "../data";
 import type { AppDoc } from "../lib/app-doc";
-import { publishApp } from "../lib/pg-app-publish";
+import { publishApp } from "../lib/app-publish";
 
 /**
  * The app publish dialog (issue #259; D6/D7): freezing the app's config
@@ -91,8 +91,8 @@ export function PublishDialog({
         toast.error("The app didn't publish — it may have been deleted.");
         return;
       }
-      void queryClient.invalidateQueries({ queryKey: ["pg:appVersions"] });
-      void queryClient.invalidateQueries({ queryKey: ["pg:apps"] });
+      void queryClient.invalidateQueries({ queryKey: ["appVersions"] });
+      void queryClient.invalidateQueries({ queryKey: ["apps"] });
       toast.success(
         `Published ${result.version.versionLabel}${
           result.unpinnedDatasetTitles.length === 0

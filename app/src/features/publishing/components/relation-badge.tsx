@@ -27,10 +27,10 @@ export function RelationBadge({
     <Link
       aria-label={`${label}: open the Related tab`}
       className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted"
-      params={{ projectId, schemaId: datasetId }}
+      params={{ projectId, datasetId: datasetId }}
       search={{ view: "related" }}
       title={ends.map((end) => relationPhrase(end, titleOf)).join("\n")}
-      to="/projects/$projectId/datasets/$schemaId"
+      to="/projects/$projectId/datasets/$datasetId"
     >
       <Waypoints className="h-3 w-3" />
       {label}

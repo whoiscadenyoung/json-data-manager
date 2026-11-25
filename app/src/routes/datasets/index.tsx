@@ -15,15 +15,15 @@ import { useState } from "react";
 
 import { PageHeader } from "#/components/page-header";
 import {
-  PgDatasetCard,
-  PgGroupCard,
-  buildPgBrowserItems,
-  filterPgBrowserItems,
-  sortPgBrowserItems,
-  withPgDrafts,
-  type PgBrowserItem,
+  DatasetCard,
+  GroupCard,
+  buildCatalogItems,
+  filterCatalogItems,
+  sortCatalogItems,
+  withDrafts,
+  type CatalogItem,
 } from "#/features/catalog";
-import { PgDatasetCardAddToProjectButton, PgProjectTargetSheet } from "#/features/publishing";
+import { DatasetCardAddToProjectButton, ProjectTargetSheet } from "#/features/publishing";
 import * as collectionsStore from "#/lib/store/collections";
 import * as datasetsStore from "#/lib/store/datasets";
 import * as groupsStore from "#/lib/store/groups";
@@ -36,7 +36,7 @@ import * as projectsStore from "#/lib/store/projects";
  * "In {collection}" line), and the visible artifact memberships (the
  * per-card "in project" chips; issue #262).
  */
-function usePgBrowserQueries(showDrafts: boolean) {
+function useBrowserQueries(showDrafts: boolean) {
   return {
     collections: useQuery(collectionsStore.listQueryOptions()).data,
     datasets: useQuery(datasetsStore.listSummariesQueryOptions()).data,
@@ -151,10 +151,10 @@ function DatasetsPage() {
     [showDrafts, setShowDrafts] = useState(false),
     [targeting, setTargeting] = useState(false),
     navigate = useNavigate(),
-    pg = usePgBrowserQueries(showDrafts),
-    pgCollectionNames = new Map<string, string>();
+    pg = useBrowserQueries(showDrafts),
+    collectionNames = new Map<string, string>();
   for (const collection of pg.collections ?? []) {
-    pgCollectionNames.set(collection.id, collection.name);
+    collectionNames.set(collection.id, collection.name);
   }
   // The per-dataset project chips: one membership read for every card —
   // dataset edges only (layer/app edges belong to their own
@@ -168,9 +168,9 @@ function DatasetsPage() {
     chips.push(membership.project);
     projectsByDataset.set(membership.artifactId, chips);
   }
-  const pgAllDatasets = withPgDrafts(pg.datasets, pg.drafts, showDrafts),
-    pgVisible = sortPgBrowserItems(
-      filterPgBrowserItems(buildPgBrowserItems(pgAllDatasets, pg.groups ?? []), search, typeFilter),
+  const allDatasets = withDrafts(pg.datasets, pg.drafts, showDrafts),
+    visible = sortCatalogItems(
+      filterCatalogItems(buildCatalogItems(allDatasets, pg.groups ?? []), search, typeFilter),
       sort,
     );
 
@@ -202,7 +202,7 @@ function DatasetsPage() {
         to="/datasets"
       />
 
-      {pgAllDatasets.length === 0 && (pg.groups ?? []).length === 0 ? (
+      {allDatasets.length === 0 && (pg.groups ?? []).length === 0 ? (
         <Empty className="min-h-80 border">
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -232,7 +232,7 @@ function DatasetsPage() {
             onTypeFilterChange={setTypeFilter}
             showDrafts={showDrafts}
             sort={sort}
-            total={pgVisible.length}
+            total={visible.length}
             typeFilter={typeFilter}
           />
 
@@ -249,7 +249,7 @@ function DatasetsPage() {
               />
             </div>
 
-            {pgVisible.length === 0 ? (
+            {visible.length === 0 ? (
               <div className="flex min-h-40 items-center justify-center rounded-lg border px-4 text-center text-sm text-muted-foreground">
                 {search
                   ? `Nothing matches "${search}".`
@@ -259,23 +259,23 @@ function DatasetsPage() {
               </div>
             ) : (
               <div className="flex flex-col gap-3">
-                {pgVisible.map((item: PgBrowserItem) =>
+                {visible.map((item: CatalogItem) =>
                   item.kind === "group" ? (
-                    <PgGroupCard
+                    <GroupCard
                       key={item.group.id}
                       collectionName={
                         item.group.collectionId === null
                           ? undefined
-                          : pgCollectionNames.get(item.group.collectionId)
+                          : collectionNames.get(item.group.collectionId)
                       }
                       item={item}
                     />
                   ) : (
-                    <PgDatasetCard
+                    <DatasetCard
                       key={item.dataset.id}
                       dataset={item.dataset}
                       projects={projectsByDataset.get(item.dataset.id)}
-                      trailing={<PgDatasetCardAddToProjectButton datasetId={item.dataset.id} />}
+                      trailing={<DatasetCardAddToProjectButton datasetId={item.dataset.id} />}
                     />
                   ),
                 )}
@@ -285,7 +285,7 @@ function DatasetsPage() {
         </div>
       )}
 
-      <PgProjectTargetSheet
+      <ProjectTargetSheet
         description="Creation happens inside projects — the dataset lands there as an owned draft."
         onOpenChange={setTargeting}
         onTarget={startFromHere}

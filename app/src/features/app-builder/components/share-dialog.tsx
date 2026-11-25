@@ -185,7 +185,7 @@ export function ShareDialog({
           toast.error("Couldn't change visibility — only a project editor can edit it.");
           return;
         }
-        void queryClient.invalidateQueries({ queryKey: ["pg:apps"] });
+        void queryClient.invalidateQueries({ queryKey: ["apps"] });
       } catch (error) {
         toast.error(errorMessage(error, "Couldn't change visibility."));
       } finally {
@@ -214,8 +214,8 @@ export function ShareDialog({
       }
       try {
         const outcome = await visibilityApply({ artifactId: appId, kind: "app", target: pending });
-        void queryClient.invalidateQueries({ queryKey: ["pg:apps"] });
-        void queryClient.invalidateQueries({ queryKey: ["pg:datasets"] });
+        void queryClient.invalidateQueries({ queryKey: ["apps"] });
+        void queryClient.invalidateQueries({ queryKey: ["datasets"] });
         if (outcome.blockers.length > 0) {
           toast.warning(
             `Shared, but effective access is “${outcome.effective}” — ${outcome.blockers.length} referenced artifact(s) cap it. Request access or pick different data.`,

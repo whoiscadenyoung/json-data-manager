@@ -9,11 +9,10 @@ import { listSummariesQueryOptions } from "#/lib/store/datasets";
 import * as layersStore from "#/lib/store/layers";
 import * as mapsStore from "#/lib/store/maps";
 
-import { splitSchemaIdsByDecision, useTileArchiveSources } from "../lib/layer-source";
+import { splitDatasetIdsByDecision, useTileArchiveSources } from "../lib/layer-source";
 import { popupInputsOf, usePopupFieldsFor } from "../lib/popup-fields";
+import { useGeometriesByDatasets } from "./geometries-loader";
 import { LayersMap } from "./layers-map";
-import { useGeometriesByPgDatasets } from "./pg-geometries-loader";
-import { pgSummaryToDatasetSummary } from "./pg-layer-rows";
 
 /**
  * A stored project map, rendered — the app builder's map widget canvas
@@ -68,11 +67,11 @@ function withEmptyRows<T>(rows: T[] | undefined): T[] {
 }
 
 /** The arrived-set update for one tile source's `idle` report (bails out when already present). */
-function withArrivedTileSchema(prev: Set<string>, schemaId: string): Set<string> {
-  if (prev.has(schemaId)) {
+function withArrivedTileSchema(prev: Set<string>, datasetId: string): Set<string> {
+  if (prev.has(datasetId)) {
     return prev;
   }
-  return new Set(prev).add(schemaId);
+  return new Set(prev).add(datasetId);
 }
 
 /** A style's stored fragment is drawable when it carries layer entries (an `{}` default is the assigned-color fallback). */
@@ -112,7 +111,7 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
     projectLayersQuery = useQuery({
       ...layersStore.listForProjectQueryOptions({ projectId }),
     }),
-    pgSummaries = useStoreQuery(listSummariesQueryOptions()),
+    summaries = useStoreQuery(listSummariesQueryOptions()),
     placements = placementsQuery.data ?? [],
     projectLayers = projectLayersQuery.data ?? [],
     layersById = new globalThis.Map(projectLayers.map((layer) => [layer.id, layer])),
@@ -128,7 +127,7 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
       ),
     ],
     membershipsQuery = useQuery({
-      queryKey: ["pg:layers", "artifactsByIds", { ids: membershipIds }],
+      queryKey: ["layers", "artifactsByIds", { ids: membershipIds }],
       queryFn: async () => await layersStore.artifactsByIds({ ids: membershipIds }),
       enabled: membershipIds.length > 0,
     }),
@@ -149,7 +148,7 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
       ),
     ],
     versionsQuery = useQuery({
-      queryKey: ["pg:layers", "versionsByIds", { ids: linkedVersionIds }],
+      queryKey: ["layers", "versionsByIds", { ids: linkedVersionIds }],
       queryFn: async () =>
         await Promise.all(
           linkedVersionIds.map(async (versionId) => {
@@ -181,11 +180,9 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
     childrenLists.set(child.groupId, list);
   }
 
-  const datasetsDocs =
-      pgSummaries.data === undefined ? undefined : pgSummaries.data.map(pgSummaryToDatasetSummary),
-    datasetTitleById = new globalThis.Map(
-      (pgSummaries.data ?? []).map((row) => [row.id, row.title]),
-    );
+  const datasetTitleById = new globalThis.Map(
+    (summaries.data ?? []).map((row) => [row.id, row.title]),
+  );
 
   /** Flattens one placed layer into its data entries (groups recurse; linked rows resolve through their frozen pin). */
   // The kind ladder (owned data / owned group / linked) plus the visibility
@@ -296,28 +293,31 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
       return entriesOfLayer(membership.artifactId, membership.role, placement.visible, 0);
     }),
     visibleEntries = dataEntries.filter((entry) => entry.visible),
-    schemaIds = [...new Set(visibleEntries.map((entry) => entry.renderId))],
+    datasetIds = [...new Set(visibleEntries.map((entry) => entry.renderId))],
     colorBySchema = new globalThis.Map<string, string>(
-      schemaIds.map((schemaId, index) => [schemaId, PALETTE[index % PALETTE.length] ?? "#3b82f6"]),
+      datasetIds.map((datasetId, index) => [
+        datasetId,
+        PALETTE[index % PALETTE.length] ?? "#3b82f6",
+      ]),
     ),
-    mapDatasets = (datasetsDocs ?? []).filter((dataset) => schemaIds.includes(dataset._id)),
-    pgDecisionRows = (pgSummaries.data ?? []).filter(
-      (row) => schemaIds.includes(row.id) && row.isGeospatial && row.geometryType !== null,
+    mapDatasets = (summaries.data ?? []).filter((row) => datasetIds.includes(row.id)),
+    decisionRows = (summaries.data ?? []).filter(
+      (row) => datasetIds.includes(row.id) && row.isGeospatial && row.geometryType !== null,
     ),
-    decisions = useTileArchiveSources(pgDecisionRows),
-    split = splitSchemaIdsByDecision(schemaIds, decisions),
+    decisions = useTileArchiveSources(decisionRows),
+    split = splitDatasetIdsByDecision(datasetIds, decisions),
     popupFieldsFor = usePopupFieldsFor(
       popupInputsOf(dataEntries, layersById),
-      new Set((pgSummaries.data ?? []).filter((row) => row.kind === "view").map((row) => row.id)),
+      new Set((summaries.data ?? []).filter((row) => row.kind === "view").map((row) => row.id)),
     ),
-    pgRowIds = split.rowSchemaIds,
-    pgFan = useGeometriesByPgDatasets(pgRowIds),
-    liveViewIds = pgFan.liveIds ?? NO_LIVE_IDS,
-    [arrivedTileSchemaIds, setArrivedTileSchemaIds] = useState<Set<string>>(() => new Set()),
+    rowIds = split.rowDatasetIds,
+    fan = useGeometriesByDatasets(rowIds),
+    liveViewIds = fan.liveIds ?? NO_LIVE_IDS,
+    [arrivedTileDatasetIds, setArrivedTileDatasetIds] = useState<Set<string>>(() => new Set()),
     geometriesComplete =
-      pgFan.geometries !== undefined &&
+      fan.geometries !== undefined &&
       !split.sourcesPending &&
-      split.tileSources.every((source) => arrivedTileSchemaIds.has(source.schemaId)),
+      split.tileSources.every((source) => arrivedTileDatasetIds.has(source.datasetId)),
     // The styling hook rides the layer adapter (ADR 0019): placed layers'
     // fragments, render-keyed by their dataset id. The canvas restyles
     // nothing — a styling write happens in the map editor.
@@ -325,7 +325,7 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
       colorBySchema,
       entrySourceFor: (renderId) => renderId,
       geometryTypeFor: (renderId) => {
-        const dataset = (datasetsDocs ?? []).find((item) => item._id === renderId);
+        const dataset = (summaries.data ?? []).find((item) => item.id === renderId);
         return dataset === undefined ? undefined : dataset.geometryType;
       },
       resetStyle: async () => {
@@ -343,24 +343,23 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
       saveStyle: async () => {
         throw new Error("Restyle this layer in the map editor — the app shows the saved map.");
       },
-      renderIds: schemaIds,
-      tileRenderIds: new Set(split.tileSources.map((source) => source.schemaId)),
+      renderIds: datasetIds,
+      tileRenderIds: new Set(split.tileSources.map((source) => source.datasetId)),
     }),
     styledColorBySchema = layerStyles.colorBySchema;
 
   if (
     placementsQuery.data === undefined ||
     projectLayersQuery.data === undefined ||
-    pgSummaries.data === undefined ||
-    datasetsDocs === undefined
+    summaries.data === undefined
   ) {
     return <Skeleton className="size-full rounded-none" />;
   }
 
-  const shouldMount = pgFan.servedGeometries !== undefined || split.tileSources.length > 0;
+  const shouldMount = fan.servedGeometries !== undefined || split.tileSources.length > 0;
   return (
     <div className="relative size-full overflow-hidden">
-      {pgFan.loaders}
+      {fan.loaders}
       {shouldMount ? (
         <LayersMap
           chainLayers={[]}
@@ -369,15 +368,15 @@ function StoredMapBody({ mapId, projectId }: { mapId: string; projectId: string 
           colorBySchema={styledColorBySchema}
           datasets={mapDatasets}
           extension={layerStyles.extension}
-          geometries={withEmptyRows(pgFan.servedGeometries)}
-          onTileSourceIdle={(schemaId) => {
-            setArrivedTileSchemaIds((prev) => withArrivedTileSchema(prev, schemaId));
+          geometries={withEmptyRows(fan.servedGeometries)}
+          onTileSourceIdle={(datasetId) => {
+            setArrivedTileDatasetIds((prev) => withArrivedTileSchema(prev, datasetId));
           }}
           relationRuntime={{ projectId }}
           sourcesPending={split.sourcesPending}
           tileSources={split.tileSources}
           titlesById={datasetTitleById}
-          visibleSchemaIds={new Set(visibleEntries.map((entry) => entry.renderId))}
+          visibleDatasetIds={new Set(visibleEntries.map((entry) => entry.renderId))}
         />
       ) : (
         <Skeleton className="size-full rounded-none" />

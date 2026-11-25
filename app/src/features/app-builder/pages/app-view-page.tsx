@@ -215,7 +215,7 @@ function AppMenu({ app }: { app: AppDoc }) {
         open={copying}
         onOpenChange={setCopying}
         onCopied={async (copyId) => {
-          void queryClient.invalidateQueries({ queryKey: ["pg:apps"] });
+          void queryClient.invalidateQueries({ queryKey: ["apps"] });
           await navigate({ params: { appId: copyId }, to: "/apps/$appId/edit" });
         }}
       />

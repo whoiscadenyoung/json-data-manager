@@ -14,7 +14,7 @@ import { Download, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { fetchDatasetEntryRows, resolveDatasetGeometryRows } from "#/lib/dataset-rows-pg";
+import { fetchDatasetEntryRows, resolveDatasetGeometryRows } from "#/lib/dataset-rows";
 import { errorMessage } from "#/lib/errors";
 import {
   createExportProfile,
@@ -142,7 +142,7 @@ export function ExportProfilesCard({
     [draft, setDraft] = useState<Draft | undefined>(),
     [busy, setBusy] = useState<string | undefined>(),
     refresh = (): void => {
-      void queryClient.invalidateQueries({ queryKey: ["pg:export_profiles", datasetId] });
+      void queryClient.invalidateQueries({ queryKey: ["export_profiles", datasetId] });
     },
     guard = async (id: string, job: () => Promise<void>, fallback: string): Promise<void> => {
       setBusy(id);

@@ -46,11 +46,10 @@ import type { LayerRow } from "#/lib/store/layers";
 import * as mapsStore from "#/lib/store/maps";
 import * as relationsStore from "#/lib/store/relations";
 
-import { splitSchemaIdsByDecision, useTileArchiveSources } from "../../lib/layer-source";
+import { splitDatasetIdsByDecision, useTileArchiveSources } from "../../lib/layer-source";
 import { popupInputsOf, usePopupFieldsFor } from "../../lib/popup-fields";
+import { useGeometriesByDatasets } from "../geometries-loader";
 import { LayersMap } from "../layers-map";
-import { useGeometriesByPgDatasets } from "../pg-geometries-loader";
-import { pgSummaryToDatasetSummary } from "../pg-layer-rows";
 import { PopupFieldsDialog } from "../popup-fields-dialog";
 import {
   RELATED_SET_PREFIX,
@@ -62,11 +61,11 @@ import {
 import { LayerOutline } from "./layer-outline";
 import { LayerSettings } from "./layer-settings";
 import {
-  PgAddChildSheet,
-  PgAddDatasetSheet,
-  PgLinkLayerSheet,
-  PgMapFormDialog,
-  PgNewGroupDialog,
+  AddChildSheet,
+  AddDatasetSheet,
+  LinkLayerSheet,
+  MapFormDialog,
+  NewGroupDialog,
 } from "./map-editor-sheets";
 import type { LayerSelection, PendingRemoval, RunWrite } from "./types";
 
@@ -119,11 +118,11 @@ function withEmptyRows<T>(rows: T[] | undefined): T[] {
 }
 
 /** The arrived-set update for one tile source's `idle` report (bails out when already present). */
-function withArrivedTileSchema(prev: Set<string>, schemaId: string): Set<string> {
-  if (prev.has(schemaId)) {
+function withArrivedTileSchema(prev: Set<string>, datasetId: string): Set<string> {
+  if (prev.has(datasetId)) {
     return prev;
   }
-  return new Set(prev).add(schemaId);
+  return new Set(prev).add(datasetId);
 }
 
 /** A style's stored fragment is drawable when it carries layer entries (an `{}` default is the assigned-color fallback). */
@@ -153,8 +152,8 @@ export function ProjectMapEditor({ mapId, projectId }: { mapId: string; projectI
   const queryClient = useQueryClient(),
     navigate = useNavigate(),
     invalidate = (): void => {
-      void queryClient.invalidateQueries({ queryKey: ["pg:maps"] });
-      void queryClient.invalidateQueries({ queryKey: ["pg:layers"] });
+      void queryClient.invalidateQueries({ queryKey: ["maps"] });
+      void queryClient.invalidateQueries({ queryKey: ["layers"] });
     },
     run: RunWrite = async (job, fallback) => {
       try {
@@ -170,9 +169,9 @@ export function ProjectMapEditor({ mapId, projectId }: { mapId: string; projectI
     map = useStoreQuery(mapsStore.getQueryOptions({ mapId })),
     placementsQuery = useStoreQuery(mapsStore.listPlacementsQueryOptions({ mapId })),
     projectLayersQuery = useQuery({ ...layersStore.listForProjectQueryOptions({ projectId }) }),
-    pgSummaries = useStoreQuery(listSummariesQueryOptions()),
+    summaries = useStoreQuery(listSummariesQueryOptions()),
     // Owned drafts (the project's in-flight datasets) carry titles too — the add-dataset picker names them.
-    pgDraftSummaries = useStoreQuery(listDraftSummariesQueryOptions()),
+    draftSummaries = useStoreQuery(listDraftSummariesQueryOptions()),
     linkableVersionsQuery = useQuery({ ...layersStore.listLinkableVersionsQueryOptions() }),
     projectDatasetsQuery = useQuery({
       ...layersStore.listDatasetMembershipsQueryOptions({
@@ -194,7 +193,7 @@ export function ProjectMapEditor({ mapId, projectId }: { mapId: string; projectI
       ),
     ],
     membershipsQuery = useQuery({
-      queryKey: ["pg:layers", "artifactsByIds", { ids: membershipIds }],
+      queryKey: ["layers", "artifactsByIds", { ids: membershipIds }],
       queryFn: async () => await layersStore.artifactsByIds({ ids: membershipIds }),
       enabled: membershipIds.length > 0,
     }),
@@ -241,7 +240,7 @@ export function ProjectMapEditor({ mapId, projectId }: { mapId: string; projectI
       ),
     ],
     versionsQuery = useQuery({
-      queryKey: ["pg:layers", "versionsByIds", { ids: linkedVersionIds }],
+      queryKey: ["layers", "versionsByIds", { ids: linkedVersionIds }],
       queryFn: async () =>
         await Promise.all(
           linkedVersionIds.map(async (versionId) => {
@@ -275,11 +274,9 @@ export function ProjectMapEditor({ mapId, projectId }: { mapId: string; projectI
 
   // Published + the project's owned drafts: a project map renders its in-flight datasets too.
   const allSummaries =
-      pgSummaries.data === undefined || pgDraftSummaries.data === undefined
+      summaries.data === undefined || draftSummaries.data === undefined
         ? undefined
-        : [...pgSummaries.data, ...pgDraftSummaries.data],
-    datasetsDocs =
-      allSummaries === undefined ? undefined : allSummaries.map(pgSummaryToDatasetSummary),
+        : [...summaries.data, ...draftSummaries.data],
     datasetTitleById = new globalThis.Map((allSummaries ?? []).map((row) => [row.id, row.title])),
     // The add-dataset picker only offers rows that can draw: geospatial
     // datasets.
@@ -417,30 +414,33 @@ export function ProjectMapEditor({ mapId, projectId }: { mapId: string; projectI
       return entriesOfLayer(membership.artifactId, membership.role, placement.visible, 0);
     }),
     visibleEntries = dataEntries.filter((entry) => entry.visible),
-    schemaIds = [...new Set(visibleEntries.map((entry) => entry.renderId))],
+    datasetIds = [...new Set(visibleEntries.map((entry) => entry.renderId))],
     colorBySchema = new globalThis.Map<string, string>(
-      schemaIds.map((schemaId, index) => [schemaId, PALETTE[index % PALETTE.length] ?? "#3b82f6"]),
+      datasetIds.map((datasetId, index) => [
+        datasetId,
+        PALETTE[index % PALETTE.length] ?? "#3b82f6",
+      ]),
     ),
-    mapDatasets = (datasetsDocs ?? []).filter((dataset) => schemaIds.includes(dataset._id)),
-    pgDecisionRows: DatasetSummaryRow[] = (allSummaries ?? []).filter(
-      (row) => schemaIds.includes(row.id) && row.isGeospatial && row.geometryType !== null,
+    mapDatasets = (allSummaries ?? []).filter((row) => datasetIds.includes(row.id)),
+    decisionRows: DatasetSummaryRow[] = (allSummaries ?? []).filter(
+      (row) => datasetIds.includes(row.id) && row.isGeospatial && row.geometryType !== null,
     ),
-    decisions = useTileArchiveSources(pgDecisionRows),
-    split = splitSchemaIdsByDecision(schemaIds, decisions),
+    decisions = useTileArchiveSources(decisionRows),
+    split = splitDatasetIdsByDecision(datasetIds, decisions),
     popupFieldsFor = usePopupFieldsFor(
       popupInputsOf(dataEntries, layersById),
       new Set((allSummaries ?? []).filter((row) => row.kind === "view").map((row) => row.id)),
     ),
-    pgRowIds = split.rowSchemaIds,
-    pgFan = useGeometriesByPgDatasets(pgRowIds),
-    liveViewIds = pgFan.liveIds ?? NO_LIVE_IDS,
-    geometries = pgFan.geometries,
-    servedGeometries = pgFan.servedGeometries,
-    [arrivedTileSchemaIds, setArrivedTileSchemaIds] = useState<Set<string>>(() => new Set()),
+    rowDatasetIds = split.rowDatasetIds,
+    fan = useGeometriesByDatasets(rowDatasetIds),
+    liveViewIds = fan.liveIds ?? NO_LIVE_IDS,
+    geometries = fan.geometries,
+    servedGeometries = fan.servedGeometries,
+    [arrivedTileDatasetIds, setArrivedTileDatasetIds] = useState<Set<string>>(() => new Set()),
     geometriesComplete =
       geometries !== undefined &&
       !split.sourcesPending &&
-      split.tileSources.every((source) => arrivedTileSchemaIds.has(source.schemaId)),
+      split.tileSources.every((source) => arrivedTileDatasetIds.has(source.datasetId)),
     // The styling hook rides the layer adapter (ADR 0019): owned placed
     // layers' fragments, render-keyed by their dataset id; linked rows are
     // read-only (the save/reset callbacks refuse them).
@@ -448,7 +448,7 @@ export function ProjectMapEditor({ mapId, projectId }: { mapId: string; projectI
       colorBySchema,
       entrySourceFor: (renderId) => renderId,
       geometryTypeFor: (renderId) => {
-        const dataset = (datasetsDocs ?? []).find((item) => item._id === renderId);
+        const dataset = (allSummaries ?? []).find((item) => item.id === renderId);
         return dataset === undefined ? undefined : dataset.geometryType;
       },
       resetStyle: async ({ renderId }) => {
@@ -474,8 +474,8 @@ export function ProjectMapEditor({ mapId, projectId }: { mapId: string; projectI
         }
         await layersStore.update({ layerId: entry.layerId, style });
       },
-      renderIds: schemaIds,
-      tileRenderIds: new Set(split.tileSources.map((source) => source.schemaId)),
+      renderIds: datasetIds,
+      tileRenderIds: new Set(split.tileSources.map((source) => source.datasetId)),
     }),
     styledColorBySchema = layerStyles.colorBySchema;
 
@@ -483,8 +483,7 @@ export function ProjectMapEditor({ mapId, projectId }: { mapId: string; projectI
     map.data === undefined ||
     placementsQuery.data === undefined ||
     projectLayersQuery.data === undefined ||
-    allSummaries === undefined ||
-    datasetsDocs === undefined
+    allSummaries === undefined
   ) {
     return (
       <div className="flex justify-center items-center min-h-100">
@@ -737,7 +736,7 @@ export function ProjectMapEditor({ mapId, projectId }: { mapId: string; projectI
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-          {pgFan.loaders}
+          {fan.loaders}
           <aside
             className={`${sidebarOpen ? "flex" : "hidden"} w-full shrink-0 flex-col overflow-y-auto border-b border-border bg-background p-2 md:w-[280px] md:border-r md:border-b-0`}
           >
@@ -788,10 +787,10 @@ export function ProjectMapEditor({ mapId, projectId }: { mapId: string; projectI
                 datasets={mapDatasets}
                 extension={layerStyles.extension}
                 geometries={withEmptyRows(servedGeometries)}
-                onTileSourceIdle={(schemaId) => {
-                  setArrivedTileSchemaIds((prev) => withArrivedTileSchema(prev, schemaId));
+                onTileSourceIdle={(datasetId) => {
+                  setArrivedTileDatasetIds((prev) => withArrivedTileSchema(prev, datasetId));
                 }}
-                rowsPending={geometries === undefined && pgRowIds.length > 0}
+                rowsPending={geometries === undefined && rowDatasetIds.length > 0}
                 relationRuntime={{ projectId }}
                 sourcesPending={split.sourcesPending}
                 tileSources={split.tileSources}
@@ -800,14 +799,14 @@ export function ProjectMapEditor({ mapId, projectId }: { mapId: string; projectI
                   // same read.
                   datasetTitleById
                 }
-                visibleSchemaIds={new Set(visibleEntries.map((entry) => entry.renderId))}
+                visibleDatasetIds={new Set(visibleEntries.map((entry) => entry.renderId))}
               />
             )}
             {!geometriesComplete && (
               <div className="absolute top-3 right-3 z-20 flex items-center gap-2 rounded-full border border-border bg-card/95 px-3 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur-sm">
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                {pgRowIds.length > 1
-                  ? `Loading features — ${pgFan.completedCount} of ${pgFan.datasetCount} layers…`
+                {rowDatasetIds.length > 1
+                  ? `Loading features — ${fan.completedCount} of ${fan.datasetCount} layers…`
                   : "Loading features…"}
               </div>
             )}
@@ -842,7 +841,7 @@ export function ProjectMapEditor({ mapId, projectId }: { mapId: string; projectI
         </div>
       )}
 
-      <PgMapFormDialog
+      <MapFormDialog
         map={mapData}
         onOpenChange={setEditingMap}
         open={editingMap}
@@ -852,7 +851,7 @@ export function ProjectMapEditor({ mapId, projectId }: { mapId: string; projectI
         }}
       />
 
-      <PgAddDatasetSheet
+      <AddDatasetSheet
         geospatialDatasetIds={geospatialDatasetIds}
         invalidate={invalidate}
         mapId={mapId}
@@ -865,7 +864,7 @@ export function ProjectMapEditor({ mapId, projectId }: { mapId: string; projectI
         titlesById={datasetTitleById}
       />
 
-      <PgLinkLayerSheet
+      <LinkLayerSheet
         invalidate={invalidate}
         linkedVersionIds={linkedPlacementVersionIds}
         mapId={mapId}
@@ -876,7 +875,7 @@ export function ProjectMapEditor({ mapId, projectId }: { mapId: string; projectI
         versions={linkableVersionsQuery.data ?? []}
       />
 
-      <PgNewGroupDialog
+      <NewGroupDialog
         invalidate={invalidate}
         mapId={mapId}
         onOpenChange={setGroupOpen}
@@ -885,7 +884,7 @@ export function ProjectMapEditor({ mapId, projectId }: { mapId: string; projectI
         run={run}
       />
 
-      <PgAddChildSheet
+      <AddChildSheet
         groupLayerId={childAddGroupId ?? ""}
         invalidate={invalidate}
         layers={projectLayers}

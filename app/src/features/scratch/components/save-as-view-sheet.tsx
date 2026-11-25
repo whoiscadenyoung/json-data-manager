@@ -64,7 +64,7 @@ export function SaveAsViewSheet({
         projectId,
         title: title.trim(),
       });
-      for (const key of ["pg:views", "pg:datasets", "pg:projects"]) {
+      for (const key of ["views", "datasets", "projects"]) {
         void queryClient.invalidateQueries({ queryKey: [key] });
       }
       await runOnce(viewId);

@@ -20,7 +20,7 @@ const SELECT = "id,datasetId:dataset_id,name,settings,createdAt:created_at";
 
 export function listExportProfilesQueryOptions(datasetId: string, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:export_profiles", datasetId],
+    queryKey: ["export_profiles", datasetId],
     queryFn: async (): Promise<ExportProfileRow[]> =>
       await queryRows<ExportProfileRow>(
         clientOf(options)

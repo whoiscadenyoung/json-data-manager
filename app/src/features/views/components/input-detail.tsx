@@ -67,9 +67,9 @@ export function InputDetail({
       </p>
       <RouterButton
         className="w-fit"
-        params={{ projectId, schemaId: info.datasetId }}
+        params={{ projectId, datasetId: info.datasetId }}
         size="sm"
-        to="/projects/$projectId/datasets/$schemaId"
+        to="/projects/$projectId/datasets/$datasetId"
         variant="outline"
       >
         <ExternalLink className="mr-1.5 h-3.5 w-3.5" />

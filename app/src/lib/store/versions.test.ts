@@ -268,7 +268,7 @@ describe("versions.getVersionDelta — the bounded on-demand read", () => {
     // The alpha row was severed (its origin entry deleted) on BOTH sides —
     // keyed on "" they would collide and read as a phantom update, and a
     // one-sided severed row would fabricate add/remove. They sit outside the
-    // join key, exactly like the overlay feed (pg-versioning.ts).
+    // join key, exactly like the overlay feed (versioning.ts).
     respond((query) => {
       const eqOp = query.operations.find((op) => op.method === "eq");
       const side = eqOp === undefined ? undefined : eqOp.args[1];

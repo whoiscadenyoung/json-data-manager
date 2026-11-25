@@ -1,4 +1,4 @@
-import { buildFeatureCollection, unionBbox, useResolvedGeometries } from "@caden/json-cms/react";
+import { buildFeatureCollection, unionBbox } from "@caden/json-cms/react";
 import type { BoundingBox, Geometry } from "@caden/json-cms/react";
 import { Button } from "@caden/ui/components/button";
 import { Map, MapClusterLayer, MapGeoJSON, MapVectorTiles, useMap } from "@caden/ui/components/map";
@@ -8,11 +8,17 @@ import type { Map as MapLibreMap } from "maplibre-gl";
 import { Fragment, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
-import type { DatasetEntryRow, DatasetGeometryRow } from "#/lib/dataset-rows";
+import type { ResolvedGeometryRow } from "#/lib/dataset-rows";
 import { formatPropertyValue } from "#/lib/format";
+import type { DatasetSummaryRow } from "#/lib/store/datasets";
+import type { EntryRow } from "#/lib/store/entries";
 
-import type { DatasetSummary } from "../lib/map-layers";
-import { keyedGeometryRows, toFeatureRow } from "../lib/map-layers";
+import {
+  extentBounds,
+  keyedGeometryRows,
+  resolvedGeometryOf,
+  toFeatureRow,
+} from "../lib/map-layers";
 import type { KeyedGeometryEntry } from "../lib/map-layers";
 import {
   asBoundingBox,
@@ -23,22 +29,22 @@ import type { PopupField } from "../lib/popup-fields";
 import {
   useFrozenVersionEntryRow,
   useLiveViewEntryRow,
-  usePgEnrichedDatasetEntryRow,
-} from "./pg-entry-popup";
+  useEnrichedDatasetEntryRow,
+} from "./entry-popup";
 import {
-  PgRelatedRecordsPanel,
-  PgRelationHighlight,
+  RelatedRecordsPanel,
+  RelationHighlight,
   sourceDatasetOfRenderId,
   useRelationsRuntime,
-} from "./pg-relations-runtime";
-import type { RelationRuntimeOptions, ViewportBbox } from "./pg-relations-runtime";
+} from "./relations-runtime";
+import type { RelationRuntimeOptions, ViewportBbox } from "./relations-runtime";
 
-type EntryDoc = DatasetEntryRow;
+type EntryDoc = EntryRow;
 
-// Layer rows come from the seam's fan-out (`useGeometriesBySchemas`).
-type GeometryEntry = DatasetGeometryRow;
+// Layer rows come from the seam's fan-out (the geometry loaders).
+type GeometryEntry = ResolvedGeometryRow;
 
-type FeatureProperties = { entryId: string; schemaId: string };
+type FeatureProperties = { entryId: string; datasetId: string };
 
 /** One legend class row an extension contributes for a styled dataset. */
 export interface LayersMapLegendClass {
@@ -62,8 +68,8 @@ export interface LayersMapLayerArgs {
   source:
     | { kind: "rows"; data: GeoJSON.FeatureCollection<GeoJSON.Geometry, FeatureProperties> }
     | { kind: "tiles"; url: string };
-  /** Opens the feature popup; `schemaId` defaults to the render id (tile features carry only `entryId`). */
-  onSelect: (selection: { entryId: string; schemaId?: string }) => void;
+  /** Opens the feature popup; `datasetId` defaults to the render id (tile features carry only `entryId`). */
+  onSelect: (selection: { entryId: string; datasetId?: string }) => void;
   /** Report the tile source's first post-load `idle` (the loading chip's completeness signal). */
   onTileIdle: () => void;
 }
@@ -84,12 +90,12 @@ export interface LayersMapExtension {
 }
 
 /** The dataset fields LayersMap reads (titles + stored extents) — any schema-row shape carrying them works. */
-type LayersMapDataset = Pick<DatasetSummary, "_id" | "boundingBox" | "title">;
+type LayersMapDataset = Pick<DatasetSummaryRow, "id" | "bbox" | "title">;
 
 function FeatureDetailsPanel({
   entry,
   entryId,
-  schemaId,
+  datasetId,
   datasetTitle,
   joinedPending,
   popupFields,
@@ -99,7 +105,7 @@ function FeatureDetailsPanel({
   /** `undefined` while the on-demand read is in flight, `null` if the entry is gone. */
   entry: EntryDoc | null | undefined;
   entryId: string;
-  schemaId: string;
+  datasetId: string;
   datasetTitle: string;
   /** True while the popup executor's spec/lookup-row reads are still streaming (issue #97). */
   joinedPending: boolean;
@@ -167,8 +173,8 @@ function FeatureDetailsPanel({
       {/* A live row's derived id names no entry page (#331) — the link would dead-end. */}
       {!entryId.startsWith("live:") && (
         <Link
-          to="/datasets/$schemaId/$entryId"
-          params={{ schemaId, entryId }}
+          to="/datasets/$datasetId/$entryId"
+          params={{ datasetId, entryId }}
           className="flex items-center justify-center gap-1.5 border-t border-border px-3 py-2 text-xs font-medium text-primary hover:bg-muted/50"
         >
           View details
@@ -180,7 +186,7 @@ function FeatureDetailsPanel({
 }
 
 type LegendDataset = {
-  schemaId: string;
+  datasetId: string;
   title: string;
   color: string;
   /** Styled datasets' classes (an extension's `legendFor`), listed under the title. */
@@ -232,7 +238,7 @@ function MapLegend({ datasets }: { datasets: LegendDataset[] }) {
       {datasets.map((dataset) =>
         dataset.classes === undefined ? (
           <div
-            key={dataset.schemaId}
+            key={dataset.datasetId}
             className="flex items-center gap-1.5 text-xs text-muted-foreground"
           >
             {dataset.swatch ?? (
@@ -244,7 +250,7 @@ function MapLegend({ datasets }: { datasets: LegendDataset[] }) {
             <span className="max-w-40 truncate">{dataset.title}</span>
           </div>
         ) : (
-          <LegendClasses key={dataset.schemaId} dataset={dataset} classes={dataset.classes} />
+          <LegendClasses key={dataset.datasetId} dataset={dataset} classes={dataset.classes} />
         ),
       )}
     </div>
@@ -273,16 +279,16 @@ function legendClassesFor(
 function getDatasetTitle(
   datasetById: globalThis.Map<string, LayersMapDataset>,
   titlesById: globalThis.Map<string, string> | undefined,
-  schemaId: string,
+  datasetId: string,
   fallback: string,
 ) {
   if (titlesById !== undefined) {
-    const titled = titlesById.get(schemaId);
+    const titled = titlesById.get(datasetId);
     if (titled !== undefined) {
       return titled;
     }
   }
-  const dataset = datasetById.get(schemaId);
+  const dataset = datasetById.get(datasetId);
   return dataset ? dataset.title : fallback;
 }
 
@@ -321,15 +327,15 @@ function MapInstanceSink({ token }: { token: object }) {
 }
 
 /** The stable empty list behind LayersMap's `chainLayers` default (the default-prop rule). */
-const NO_CHAIN_LAYERS: Array<{ renderId: string; sourceSchemaId: string }> = [];
+const NO_CHAIN_LAYERS: Array<{ renderId: string; sourceDatasetId: string }> = [];
 
 /** The 7b chain map: resolved row id → the render ids drawing it (render id → source, inverted once). */
 function chainSourceByRenderIdOf(
-  chainLayers: Array<{ renderId: string; sourceSchemaId: string }>,
+  chainLayers: Array<{ renderId: string; sourceDatasetId: string }>,
 ): globalThis.Map<string, string> {
   const byRender = new globalThis.Map<string, string>();
   for (const layer of chainLayers) {
-    byRender.set(layer.renderId, layer.sourceSchemaId);
+    byRender.set(layer.renderId, layer.sourceDatasetId);
   }
   return byRender;
 }
@@ -340,11 +346,11 @@ function geometryRowsBySchema(
 ): globalThis.Map<string, KeyedGeometryEntry[]> {
   const bySchema = new globalThis.Map<string, KeyedGeometryEntry[]>();
   for (const { g } of visibleGeometries) {
-    const existing = bySchema.get(g.schemaId);
+    const existing = bySchema.get(g.datasetId);
     if (existing) {
       existing.push(g);
     } else {
-      bySchema.set(g.schemaId, [g]);
+      bySchema.set(g.datasetId, [g]);
     }
   }
   return bySchema;
@@ -356,14 +362,14 @@ function geometryRowsBySchema(
  * circles), one stable color per dataset — geometries only, no extent
  * rectangles. Clicking a feature opens its entry's properties. Geometry rows
  * arrive for ALL layers (visible or not) so toggling a layer on is instant;
- * rows are filtered to `visibleSchemaIds` at render time.
+ * rows are filtered to `visibleDatasetIds` at render time.
  *
  * Above-threshold datasets with a fresh tile archive (issue #58 part 4)
  * arrive as `tileSources` instead of rows: each renders a `MapVectorTiles`
  * layer with the same per-dataset color, and visibility rides the layout
  * property so toggling show/hide keeps the source + its tile cache warm.
  * Tile features carry id-only properties (`entryId`), so both paths click
- * through the same `{entryId, schemaId}` pair.
+ * through the same `{entryId, datasetId}` pair.
  *
  * Entry properties load on demand (issue #52): clicking a feature starts one
  * indexed single-entry read (`entries.get`), subscribed — and live — only
@@ -397,7 +403,7 @@ export function LayersMap({
   frozenEntryVersions = NO_FROZEN_ENTRY_VERSIONS,
   geometries,
   titlesById,
-  visibleSchemaIds,
+  visibleDatasetIds,
   colorBySchema,
   tileSources,
   sourcesPending = false,
@@ -413,9 +419,9 @@ export function LayersMap({
    * version chain — render id (the layer's own target id, never rewritten) →
    * the resolved frozen row its geometry actually rides. The target's live
    * rows draw nothing; the resolved rows draw under the render id with
-   * `sourceSchemaId` landing click payloads on the published dataset.
+   * `sourceDatasetId` landing click payloads on the published dataset.
    */
-  chainLayers?: Array<{ renderId: string; sourceSchemaId: string }>;
+  chainLayers?: Array<{ renderId: string; sourceDatasetId: string }>;
   /** Published canvases only (#330): render id → the frozen `version_entries` source its rows page. */
   frozenEntryVersions?: ReadonlyMap<string, string>;
   /** The mapped datasets that are LIVE views (#331): their popups resolve rows from the shared live read, not the entries point read. */
@@ -423,10 +429,10 @@ export function LayersMap({
   geometries: GeometryEntry[];
   /** Titles for ids that aren't component datasets (derived registry rows), for legends and popup headers. */
   titlesById?: globalThis.Map<string, string>;
-  visibleSchemaIds: Set<string>;
+  visibleDatasetIds: Set<string>;
   colorBySchema: globalThis.Map<string, string>;
   /** Above-threshold datasets rendering from their fresh tile archive. */
-  tileSources: Array<{ schemaId: string; url: string }>;
+  tileSources: Array<{ datasetId: string; url: string }>;
   /** True while any layer's source decision is still resolving (suppresses the "nothing to draw" overlay). */
   sourcesPending?: boolean;
   /**
@@ -436,7 +442,7 @@ export function LayersMap({
    */
   rowsPending?: boolean;
   /** Fired once per tile source, after it loaded and the map reached `idle`. */
-  onTileSourceIdle?: (schemaId: string) => void;
+  onTileSourceIdle?: (datasetId: string) => void;
   /** Optional rendering extension (the map-styling module) — absent, every dataset draws by default. */
   extension?: LayersMapExtension;
   /**
@@ -451,23 +457,22 @@ export function LayersMap({
   relationRuntime?: RelationRuntimeOptions;
 }) {
   const [mapToken] = useState(() => ({})),
-    datasetById = new globalThis.Map(datasets.map((dataset) => [dataset._id, dataset])),
-    resolvedGeometries = useResolvedGeometries(geometries),
+    datasetById = new globalThis.Map(datasets.map((dataset) => [dataset.id, dataset])),
     // Chain layers re-key their resolved rows (see `keyedGeometryRows`):
     // the anchor's live rows draw nothing; each resolution draws the frozen
     // row's copy under the anchor's render id.
     keyedGeometries = keyedGeometryRows(geometries, chainSourceByRenderIdOf(chainLayers)),
-    // Most rows resolve synchronously (inline `geometryJson`); a row backed
+    // Most rows resolve synchronously (the inline jsonb); a row backed
     // by external storage is simply absent until its `fetch` completes.
     visibleGeometries = keyedGeometries.flatMap((g) => {
-      if (!visibleSchemaIds.has(g.schemaId)) {
+      if (!visibleDatasetIds.has(g.datasetId)) {
         return [];
       }
-      const resolved = resolvedGeometries.get(g._id);
+      const resolved = resolvedGeometryOf(g);
       return resolved === undefined ? [] : [{ g, resolved }];
     }),
     // Captured exactly once, at mount — but from each dataset's
-    // server-maintained `schemas.boundingBox`, NOT the served rows' per-row
+    // server-maintained extent, NOT the served rows' per-row
     // envelopes: the map mounts as soon as the FIRST schema's pagination
     // completes while the rest still stream, so row-derived bounds would
     // understate the extent and strand late-arriving features outside the
@@ -478,7 +483,10 @@ export function LayersMap({
     [initialBounds] = useState(() => {
       let bbox: BoundingBox | undefined;
       for (const dataset of datasets) {
-        bbox = unionBbox(bbox, asBoundingBox(dataset.boundingBox));
+        const flat = extentBounds(dataset.bbox);
+        if (flat !== undefined) {
+          bbox = unionBbox(bbox, asBoundingBox(flat));
+        }
       }
       if (bbox === undefined) {
         // No stored extent anywhere (a LIVE view mirrors no bbox — #331):
@@ -508,60 +516,57 @@ export function LayersMap({
     // lives only while the popup is open; closing drops every subscription.
     //
     // The clicked feature's entry rides the PG point-read with the seam's
-    // spec pass (pg-entry-popup).
-    pgPopup = usePgEnrichedDatasetEntryRow(selected === null ? undefined : selected),
+    // spec pass (entry-popup).
+    enrichedPopup = useEnrichedDatasetEntryRow(selected === null ? undefined : selected),
     // Both executors stay mounted; exactly one is live per selection (#330):
     // a render id with a frozen version reads the snapshot (signed-out
     // viewers), everything else reads live entries.
     frozenPopup = useFrozenVersionEntryRow({
       selected: selected === null ? undefined : selected,
-      versionByRenderId: frozenEntryVersions,
+      versionByDatasetId: frozenEntryVersions,
     }),
     // Three executors stay mounted; exactly one is live per selection
     // (#330 frozen, #331 live, else the plain entries point read).
     livePopup = useLiveViewEntryRow({
-      liveViewIds,
+      liveDatasetIds: liveViewIds,
       selected: selected === null ? undefined : selected,
     }),
     popup =
       selected === null
-        ? pgPopup
-        : frozenEntryVersions.has(selected.schemaId)
+        ? enrichedPopup
+        : frozenEntryVersions.has(selected.datasetId)
           ? frozenPopup
-          : liveViewIds.has(selected.schemaId)
+          : liveViewIds.has(selected.datasetId)
             ? livePopup
-            : pgPopup,
+            : enrichedPopup,
     selectedDatasetTitle = selected
-      ? getDatasetTitle(datasetById, titlesById, selected.schemaId, "")
+      ? getDatasetTitle(datasetById, titlesById, selected.datasetId, "")
       : "";
 
   const bySchema = geometryRowsBySchema(visibleGeometries);
   // Every dataset with something on the map right now: row-path schemas with
   // geometry, plus the tile-path sources — in a stable order for the legend.
-  const schemaIds = [...new Set([...bySchema.keys(), ...tileSources.map((s) => s.schemaId)])],
-    resolvedById = new globalThis.Map(
-      visibleGeometries.map(({ g, resolved }) => [g._id, resolved]),
-    ),
-    legendDatasets = schemaIds
+  const datasetIds = [...new Set([...bySchema.keys(), ...tileSources.map((s) => s.datasetId)])],
+    legendDatasets = datasetIds
       .filter(
-        (schemaId) =>
-          bySchema.has(schemaId) ||
-          (tileSources.some((source) => source.schemaId === schemaId) &&
-            visibleSchemaIds.has(schemaId)),
+        (datasetId) =>
+          bySchema.has(datasetId) ||
+          (tileSources.some((source) => source.datasetId === datasetId) &&
+            visibleDatasetIds.has(datasetId)),
       )
-      .map((schemaId) => ({
-        schemaId,
-        title: getDatasetTitle(datasetById, titlesById, schemaId, "Untitled dataset"),
-        color: colorBySchema.get(schemaId) ?? "#3b82f6",
-        classes: legendClassesFor(extension, schemaId),
-        swatch: legendSwatchFor(extension, schemaId),
+      .map((datasetId) => ({
+        datasetId,
+        title: getDatasetTitle(datasetById, titlesById, datasetId, "Untitled dataset"),
+        color: colorBySchema.get(datasetId) ?? "#3b82f6",
+        classes: legendClassesFor(extension, datasetId),
+        swatch: legendSwatchFor(extension, datasetId),
       })),
     visibleTileSources = tileSources.filter((source) =>
-      visibleSchemaIds.has(source.schemaId),
+      visibleDatasetIds.has(source.datasetId),
     ).length,
-    reportTileIdle = (schemaId: string) => {
+    reportTileIdle = (datasetId: string) => {
       if (onTileSourceIdle !== undefined) {
-        onTileSourceIdle(schemaId);
+        onTileSourceIdle(datasetId);
       }
     },
     // The relation runtime's read (issue #258): render ids resolve to their
@@ -576,15 +581,15 @@ export function LayersMap({
         }
       }
       for (const dataset of datasets) {
-        if (!merged.has(dataset._id)) {
-          merged.set(dataset._id, dataset.title);
+        if (!merged.has(dataset.id)) {
+          merged.set(dataset.id, dataset.title);
         }
       }
       return merged;
     })(),
     relations = useRelationsRuntime({
       chainLayers,
-      datasetIds: schemaIds.map((schemaId) => sourceDatasetOfRenderId(schemaId, chainLayers)),
+      datasetIds: datasetIds.map((datasetId) => sourceDatasetOfRenderId(datasetId, chainLayers)),
       runtime: relationRuntime,
       selected: selected === null ? undefined : selected,
       titlesById: runtimeTitles,
@@ -605,60 +610,60 @@ export function LayersMap({
     },
     // The extension's popup callback: tile features carry only `entryId`, so
     // the render id stands in for the dataset when the feature names none.
-    selectFrom = (schemaId: string) => (selection: { entryId: string; schemaId?: string }) => {
-      selectFeature({ entryId: selection.entryId, schemaId: selection.schemaId ?? schemaId });
+    selectFrom = (datasetId: string) => (selection: { entryId: string; datasetId?: string }) => {
+      selectFeature({ entryId: selection.entryId, datasetId: selection.datasetId ?? datasetId });
     };
 
   return (
     <div className="relative h-full w-full">
       <Map bounds={initialBounds} className="h-full w-full">
         <MapInstanceSink token={mapToken} />
-        {schemaIds.map((schemaId) => {
-          const color = colorBySchema.get(schemaId) ?? "#3b82f6",
-            tileSource = tileSources.find((source) => source.schemaId === schemaId);
+        {datasetIds.map((datasetId) => {
+          const color = colorBySchema.get(datasetId) ?? "#3b82f6",
+            tileSource = tileSources.find((source) => source.datasetId === datasetId);
           if (tileSource !== undefined) {
             const styled = extensionLayer(extension, {
               color,
-              onSelect: selectFrom(schemaId),
+              onSelect: selectFrom(datasetId),
               onTileIdle: () => {
-                reportTileIdle(schemaId);
+                reportTileIdle(datasetId);
               },
-              renderId: schemaId,
+              renderId: datasetId,
               source: { kind: "tiles", url: tileSource.url },
-              visible: visibleSchemaIds.has(schemaId),
+              visible: visibleDatasetIds.has(datasetId),
             });
             if (styled !== undefined) {
-              return <Fragment key={schemaId}>{styled}</Fragment>;
+              return <Fragment key={datasetId}>{styled}</Fragment>;
             }
             return (
               <MapVectorTiles<{ entryId: string }>
-                key={schemaId}
-                id={`layer-tiles-${schemaId}`}
+                key={datasetId}
+                id={`layer-tiles-${datasetId}`}
                 url={tileSource.url}
-                visible={visibleSchemaIds.has(schemaId)}
+                visible={visibleDatasetIds.has(datasetId)}
                 interactive
                 fillPaint={{ "fill-color": color, "fill-opacity": 0.2 }}
                 linePaint={{ "line-color": color, "line-width": 2 }}
                 fillHoverPaint={{ "fill-opacity": 0.35 }}
                 onIdle={() => {
-                  reportTileIdle(schemaId);
+                  reportTileIdle(datasetId);
                 }}
                 onClick={(e) => {
                   // Tiles carry id-only properties — the entry id is the join
                   // key; the dataset is known from this layer's wiring.
-                  selectFeature({ entryId: e.feature.properties.entryId, schemaId });
+                  selectFeature({ entryId: e.feature.properties.entryId, datasetId });
                 }}
               />
             );
           }
-          const schemaGeometries = bySchema.get(schemaId) ?? [],
+          const schemaGeometries = bySchema.get(datasetId) ?? [],
             // `MapGeoJSON` renders `fill`/`line` layers, which draw nothing
             // for Point/MultiPoint geometries — those go to `MapClusterLayer`
             // instead, which renders `circle` layers.
             { pointRows, otherRows } = splitPointLikeGeometries(schemaGeometries),
             withResolved = (rows: GeometryEntry[]) =>
               rows.flatMap((g) => {
-                const resolved = resolvedById.get(g._id);
+                const resolved = resolvedGeometryOf(g);
                 return resolved === undefined ? [] : [toFeatureRow(g, resolved)];
               }),
             otherCollection = buildFeatureCollection<FeatureProperties>(withResolved(otherRows)),
@@ -670,9 +675,9 @@ export function LayersMap({
             },
             styled = extensionLayer(extension, {
               color,
-              onSelect: selectFrom(schemaId),
+              onSelect: selectFrom(datasetId),
               onTileIdle: noop,
-              renderId: schemaId,
+              renderId: datasetId,
               // One collection for every geometry type — an extension's
               // layers filter by geometry type themselves.
               source: {
@@ -685,10 +690,10 @@ export function LayersMap({
               visible: true,
             });
           if (styled !== undefined) {
-            return <Fragment key={schemaId}>{styled}</Fragment>;
+            return <Fragment key={datasetId}>{styled}</Fragment>;
           }
           return (
-            <Fragment key={schemaId}>
+            <Fragment key={datasetId}>
               {otherCollection.features.length > 0 && (
                 <MapGeoJSON<FeatureProperties>
                   data={otherCollection}
@@ -720,7 +725,7 @@ export function LayersMap({
         {relationRuntime !== undefined &&
           selected !== null &&
           relations.touching.map((item) => (
-            <PgRelationHighlight
+            <RelationHighlight
               bbox={selectedBbox}
               item={item}
               key={item.relation.id}
@@ -748,13 +753,15 @@ export function LayersMap({
         <FeatureDetailsPanel
           entry={popup.entry}
           entryId={selected.entryId}
-          schemaId={selected.schemaId}
+          datasetId={selected.datasetId}
           datasetTitle={selectedDatasetTitle}
           joinedPending={popup.joinedPending}
-          popupFields={popupFieldsFor === undefined ? undefined : popupFieldsFor(selected.schemaId)}
+          popupFields={
+            popupFieldsFor === undefined ? undefined : popupFieldsFor(selected.datasetId)
+          }
           related={
             relationRuntime === undefined ? undefined : (
-              <PgRelatedRecordsPanel
+              <RelatedRecordsPanel
                 bbox={selectedBbox}
                 loading={relations.loading}
                 runtime={relationRuntime}

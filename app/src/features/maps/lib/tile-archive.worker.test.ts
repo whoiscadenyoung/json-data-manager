@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
  * flight — verified here against a mocked global fetch that counts
  * concurrency — across pages, with byte-exact payload accounting.
  */
-import { fetchAllPgGeometryFeatures } from "./tile-archive.worker";
+import { fetchAllGeometryFeatures } from "./tile-archive.worker";
 
 vi.mock("#/env", () => ({
   env: {
@@ -44,9 +44,9 @@ afterEach(() => {
 
 import { queryAt, stubSupabase } from "#/lib/store/test-support";
 
-const PG_ID = "a4882d70-0000-4000-8000-000000000001";
+const DATASET_ID = "a4882d70-0000-4000-8000-000000000001";
 
-function pgRpcRow(entryId: string, overrides: Record<string, unknown> = {}) {
+function rpcRow(entryId: string, overrides: Record<string, unknown> = {}) {
   return {
     bbox: [1, 2, 3, 4],
     data: { name: `Row ${entryId}` },
@@ -72,9 +72,9 @@ describe("worker PG geometry fetch pool + exhaustion loop", () => {
       if (query.rpc === "dataset_rows_for_tiles" && query.rpcArgs.p_cursor === null) {
         return {
           data: Array.from({ length: 25 }, (_, i) =>
-            pgRpcRow(`pg-${i}`, {
+            rpcRow(`row-${i}`, {
               geometry: null,
-              geometry_source_path: `${PG_ID}/row-${i}.json`,
+              geometry_source_path: `${DATASET_ID}/row-${i}.json`,
               next_cursor: "cursor-2",
             }),
           ),
@@ -83,13 +83,13 @@ describe("worker PG geometry fetch pool + exhaustion loop", () => {
       }
       return {
         data: [
-          pgRpcRow("pg-inline", {
+          rpcRow("inline", {
             geometry: { coordinates: [1, 2], type: "Point" },
             next_cursor: null,
           }),
-          pgRpcRow("pg-stored", {
+          rpcRow("stored", {
             geometry: null,
-            geometry_source_path: `${PG_ID}/row-25.json`,
+            geometry_source_path: `${DATASET_ID}/row-25.json`,
             next_cursor: null,
           }),
         ],
@@ -98,7 +98,7 @@ describe("worker PG geometry fetch pool + exhaustion loop", () => {
     });
     const { fetchMock, maxInFlight } = stubFetch();
 
-    const { features, payloadBytes } = await fetchAllPgGeometryFeatures(client, PG_ID);
+    const { features, payloadBytes } = await fetchAllGeometryFeatures(client, DATASET_ID);
 
     // The exhaustion loop: page 1 (25 rows, continuation) then page 2 (which
     // exhausts) — exactly two RPC round trips, the second resuming from the
@@ -113,7 +113,7 @@ describe("worker PG geometry fetch pool + exhaustion loop", () => {
     expect(signedUrls).toHaveLength(26);
     expect(signedUrls[0]).toStrictEqual({
       bucket: "geometries",
-      path: `${PG_ID}/row-0.json`,
+      path: `${DATASET_ID}/row-0.json`,
       ttlSeconds: 3600,
     });
     // The bound is the worker's GEOMETRY_FETCH_POOL_SIZE (12); and the test
@@ -124,8 +124,8 @@ describe("worker PG geometry fetch pool + exhaustion loop", () => {
     expect(features).toHaveLength(27);
     const first = features.at(0);
     const last = features.at(26);
-    expect(first === undefined ? undefined : first._id).toBe("pg-0");
-    expect(last === undefined ? undefined : last._id).toBe("pg-stored");
+    expect(first === undefined ? undefined : first._id).toBe("row-0");
+    expect(last === undefined ? undefined : last._id).toBe("stored");
     // Byte-exact accounting across both pages: oversized rows counted off
     // the wire, the inline row's JSON-encoded bytes stringified locally.
     const wireBytes = new TextEncoder().encode(GEOMETRY_JSON).byteLength;
@@ -137,7 +137,7 @@ describe("worker PG geometry fetch pool + exhaustion loop", () => {
 
   it("an exhausted single page with no rows completes empty", async () => {
     const { client, queries } = stubSupabase(() => ({ data: [], error: null }));
-    const { features, payloadBytes } = await fetchAllPgGeometryFeatures(client, PG_ID);
+    const { features, payloadBytes } = await fetchAllGeometryFeatures(client, DATASET_ID);
     // One round trip: an empty page is exhausted by definition.
     expect(queries).toHaveLength(1);
     expect(features).toStrictEqual([]);
@@ -147,9 +147,9 @@ describe("worker PG geometry fetch pool + exhaustion loop", () => {
   it("rejects when a storage-backed payload fetch fails, failing the build", async () => {
     const { client } = stubSupabase(() => ({
       data: [
-        pgRpcRow("pg-stored", {
+        rpcRow("stored", {
           geometry: null,
-          geometry_source_path: `${PG_ID}/row-1.json`,
+          geometry_source_path: `${DATASET_ID}/row-1.json`,
         }),
       ],
       error: null,
@@ -161,7 +161,7 @@ describe("worker PG geometry fetch pool + exhaustion loop", () => {
         arrayBuffer: async () => new ArrayBuffer(0),
       })),
     );
-    await expect(fetchAllPgGeometryFeatures(client, PG_ID)).rejects.toThrow(
+    await expect(fetchAllGeometryFeatures(client, DATASET_ID)).rejects.toThrow(
       /Geometry payload fetch failed with HTTP/,
     );
   });

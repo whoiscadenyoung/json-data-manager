@@ -1,10 +1,10 @@
-import { MAP_TILE_ARCHIVE_FORMAT } from "./pg-tile-archives";
 /* oxlint-disable unicorn/require-post-message-target-origin -- every postMessage here is the worker boundary, which takes (message, transfer); there is no `targetOrigin` argument (the tile-archive.ts posture). */
 import {
   fetchSupabaseAccessToken,
   type TileArchiveWorkerInbound,
   type TileArchiveWorkerOutbound,
 } from "./tile-archive";
+import { MAP_TILE_ARCHIVE_FORMAT } from "./tile-archive-state";
 
 /**
  * The publish walk's frozen-archive leg (issue #261) — the main-thread half
@@ -60,7 +60,7 @@ function settleFrozen(
     resolve({
       bytes: message.bytes,
       // The layout generation this builder produced — the read side's
-      // format gate compares exactly this stamp (pg-tile-archives.ts).
+      // format gate compares exactly this stamp (tile-archive-state.ts).
       format: MAP_TILE_ARCHIVE_FORMAT,
       maxZoom: message.maxZoom,
       path: message.path,

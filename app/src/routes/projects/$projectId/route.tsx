@@ -1,7 +1,7 @@
 import { Outlet, createFileRoute } from "@tanstack/react-router";
 
 import { AppDetailsDialog } from "#/features/app-builder";
-import { PgProjectShell } from "#/features/publishing";
+import { ProjectShell } from "#/features/publishing";
 
 /**
  * The /projects/$projectId LAYOUT = the project workspace SHELL (issue #271):
@@ -39,8 +39,8 @@ function CreateAppDialogSlot({
 function ProjectLayout() {
   const { projectId } = Route.useParams();
   return (
-    <PgProjectShell createAppDialog={CreateAppDialogSlot} projectId={projectId}>
+    <ProjectShell createAppDialog={CreateAppDialogSlot} projectId={projectId}>
       <Outlet />
-    </PgProjectShell>
+    </ProjectShell>
   );
 }

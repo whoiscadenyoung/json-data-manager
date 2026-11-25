@@ -9,18 +9,19 @@ import type { ReactElement } from "react";
 import { toast } from "sonner";
 
 import type { LayersMapExtension, LayersMapLayerArgs } from "#/features/maps";
-import type { DatasetEntryRow } from "#/lib/dataset-rows";
 import { errorMessage } from "#/lib/errors";
+import type { DatasetGeometryType } from "#/lib/store/datasets";
+import type { EntryRow } from "#/lib/store/entries";
 import {
   listIconsQueryOptions,
   removeIcon as removeIconStore,
   uploadIcon as uploadIconStore,
 } from "#/lib/store/layer-styles";
 
+import { useEntryRowsBySchemas } from "./components/entries-loader";
 import type { MarkerIcons } from "./components/marker-section";
 import type { MarkerIconActions, UploadIconMeta } from "./components/marker-section";
 import { MarkerSwatch } from "./components/marker-swatch";
-import { usePgEntryRowsBySchemas } from "./components/pg-entries-loader";
 import { StyleMenu } from "./components/style-menu";
 import { StylePanel } from "./components/style-panel";
 import { FIELD_SEPARATOR, StyledLayer } from "./components/styled-layer";
@@ -31,7 +32,7 @@ const SAVE_DEBOUNCE_MS = 400;
 
 const NON_POINT_TYPES = new Set(["LineString", "MultiLineString", "Polygon", "MultiPolygon"]);
 
-const NO_ROWS: readonly DatasetEntryRow[] = [];
+const NO_ROWS: readonly EntryRow[] = [];
 
 export interface UseLayerStylesOptions {
   /**
@@ -57,7 +58,7 @@ export interface UseLayerStylesOptions {
    * the Marker picker only shows for datasets that may have points
    * (unknown or mixed counts as "may").
    */
-  geometryTypeFor?: (renderId: string) => string | undefined;
+  geometryTypeFor?: (renderId: string) => DatasetGeometryType | null | undefined;
 }
 
 /**
@@ -201,12 +202,12 @@ export function useLayerStyles({
   geometryTypeFor,
 }: UseLayerStylesOptions): UseLayerStylesResult {
   // ---- saved styles (the caller's layer-keyed rows) + uploads (the store) ----
-  const pgUploadList = useStoreQuery({ ...listIconsQueryOptions() }),
+  const uploadsQuery = useStoreQuery({ ...listIconsQueryOptions() }),
     queryClient = useQueryClient(),
     actions: MarkerIconActions = {
       removeUpload: async (iconId) => {
         await removeIconStore({ iconId });
-        void queryClient.invalidateQueries({ queryKey: ["pg:layer-styles"] });
+        void queryClient.invalidateQueries({ queryKey: ["layer-styles"] });
       },
       uploadIcon: async (png: Blob, meta: UploadIconMeta) => {
         try {
@@ -221,7 +222,7 @@ export function useLayerStyles({
           if (!result.ok) {
             return { error: result.error, ok: false };
           }
-          void queryClient.invalidateQueries({ queryKey: ["pg:layer-styles"] });
+          void queryClient.invalidateQueries({ queryKey: ["layer-styles"] });
           return { name: result.name, ok: true };
         } catch (error) {
           return { error: errorMessage(error, "Couldn't upload the icon."), ok: false };
@@ -229,8 +230,8 @@ export function useLayerStyles({
       },
     },
     // ---- the uploads list as the pickers read it ----
-    uploads = new Map(uploadsOf(pgUploadList.data).map((icon) => [icon.name, icon])),
-    uploadsReady = pgUploadList.isSuccess,
+    uploads = new Map(uploadsOf(uploadsQuery.data).map((icon) => [icon.name, icon])),
+    uploadsReady = uploadsQuery.isSuccess,
     // ---- editor state (before the styles derivation the loaders need) ----
     [previews, setPreviews] = useState<Map<string, LayerStyle | null>>(() => new Map()),
     [editing, setEditing] = useState<{ renderId: string; title: string } | undefined>(undefined),
@@ -248,7 +249,7 @@ export function useLayerStyles({
       ]),
     ],
     // ---- field-value loaders ----
-    { loaders, reportsBySchema } = usePgEntryRowsBySchemas(loadSourceIds, true);
+    { loaders, reportsBySchema } = useEntryRowsBySchemas(loadSourceIds, true);
 
   const clearPreview = useCallback((renderId: string) => {
     setPreviews((prev) => {
@@ -331,7 +332,7 @@ export function useLayerStyles({
     };
 
   const effectiveColors = withSwatchColors(colorBySchema, styles),
-    rowsFor = (renderId: string): readonly DatasetEntryRow[] => {
+    rowsFor = (renderId: string): readonly EntryRow[] => {
       const report = reportsBySchema.get(entrySourceFor(renderId));
       return report === undefined ? NO_ROWS : report.rows;
     },
@@ -408,7 +409,7 @@ export function useLayerStyles({
       editing === undefined || geometryTypeFor === undefined
         ? undefined
         : geometryTypeFor(editing.renderId),
-    uploadList = uploadsOf(pgUploadList.data),
+    uploadList = uploadsOf(uploadsQuery.data),
     icons: MarkerIcons = { actions, uploadList, uploads },
     panel =
       editing === undefined ? null : (
@@ -420,7 +421,11 @@ export function useLayerStyles({
           }}
           title={editing.title}
           style={editingStyle}
-          mayHavePoints={editingGeometry === undefined || !NON_POINT_TYPES.has(editingGeometry)}
+          mayHavePoints={
+            editingGeometry === undefined ||
+            editingGeometry === null ||
+            !NON_POINT_TYPES.has(editingGeometry)
+          }
           uploads={icons.uploads}
           uploadList={icons.uploadList}
           actions={icons.actions}

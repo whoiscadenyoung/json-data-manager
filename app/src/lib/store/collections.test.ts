@@ -70,16 +70,13 @@ describe("collections.list / get — the catalog's collection feed", () => {
   it("get returns null on an empty read (the RLS not-found shape) and keys its query options", async () => {
     const { client } = stubSupabase(() => ({ data: null, error: null }));
     const options = getQueryOptions({ collectionId: "c1" }, { supabase: client });
-    expect(options.queryKey).toStrictEqual(["pg:collections", "get", { collectionId: "c1" }]);
+    expect(options.queryKey).toStrictEqual(["collections", "get", { collectionId: "c1" }]);
     await expect(runQueryOptions(options)).resolves.toBe(null);
   });
 
-  it("list keys its query options under pg:collections", () => {
+  it("list keys its query options under collections", () => {
     const { client } = stubSupabase();
-    expect(listQueryOptions({ supabase: client }).queryKey).toStrictEqual([
-      "pg:collections",
-      "list",
-    ]);
+    expect(listQueryOptions({ supabase: client }).queryKey).toStrictEqual(["collections", "list"]);
   });
 });
 

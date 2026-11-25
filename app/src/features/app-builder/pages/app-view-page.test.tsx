@@ -27,19 +27,19 @@ const storeState = vi.hoisted(() => ({
 vi.mock("#/lib/store/app-versions", () => ({
   headQueryOptions: (args: { appId: string }) => ({
     queryFn: async () => await Promise.resolve(storeState.headRow),
-    queryKey: ["pg:appVersions", "head", args],
+    queryKey: ["appVersions", "head", args],
   }),
 }));
 vi.mock("#/lib/store/apps", () => ({
   getQueryOptions: (args: { appId: string }) => ({
     queryFn: async () => await Promise.resolve(null),
-    queryKey: ["pg:apps", "get", args],
+    queryKey: ["apps", "get", args],
   }),
 }));
 vi.mock("#/lib/store/project-members", () => ({
   listMineQueryOptions: (args: { userId: string }) => ({
     queryFn: async () => await Promise.resolve([]),
-    queryKey: ["pg:project-members", "mine", args],
+    queryKey: ["project-members", "mine", args],
   }),
   resolveMyRole: () => null,
 }));

@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { PgProfilePage } from "#/features/catalog";
+import { ProfilePage } from "#/features/catalog";
 
 export const Route = createFileRoute("/users/$userId")({
   component: UserProfilePage,
@@ -8,5 +8,5 @@ export const Route = createFileRoute("/users/$userId")({
 
 function UserProfilePage() {
   const { userId } = Route.useParams();
-  return <PgProfilePage profileId={userId} />;
+  return <ProfilePage profileId={userId} />;
 }

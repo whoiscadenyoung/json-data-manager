@@ -171,7 +171,7 @@ describe("entries.listPage — the PostgREST keyset pager", () => {
     const { client } = stubSupabase();
     const args = { cursor: null, datasetId: "d1", numItems: 200 };
     const options = listPageQueryOptions(args, { supabase: client });
-    expect(options.queryKey).toStrictEqual(["pg:entries", "listPage", args]);
+    expect(options.queryKey).toStrictEqual(["entries", "listPage", args]);
   });
 });
 
@@ -238,7 +238,7 @@ describe("entries.searchEntries — the search_entries RPC (§5.1)", () => {
     const { client } = stubSupabase();
     const args = { datasetId: "d1", query: "x" };
     expect(searchEntriesQueryOptions(args, { supabase: client }).queryKey).toStrictEqual([
-      "pg:entries",
+      "entries",
       "searchEntries",
       args,
     ]);

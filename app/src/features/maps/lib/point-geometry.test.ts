@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildPointFeatureCollection,
   isPointLikeGeometryType,
-  pgBboxBounds,
+  bboxBounds,
   splitPointLikeGeometries,
 } from "./point-geometry";
 
@@ -76,7 +76,7 @@ describe("buildPointFeatureCollection", () => {
             [5, 6],
           ],
         },
-        properties: { entryId: "entry-2", schemaId: "schema-1" },
+        properties: { entryId: "entry-2", datasetId: "schema-1" },
       },
     ]);
 
@@ -86,19 +86,19 @@ describe("buildPointFeatureCollection", () => {
         type: "Feature",
         id: "entry-2:0",
         geometry: { type: "Point", coordinates: [1, 2] },
-        properties: { entryId: "entry-2", schemaId: "schema-1" },
+        properties: { entryId: "entry-2", datasetId: "schema-1" },
       },
       {
         type: "Feature",
         id: "entry-2:1",
         geometry: { type: "Point", coordinates: [3, 4] },
-        properties: { entryId: "entry-2", schemaId: "schema-1" },
+        properties: { entryId: "entry-2", datasetId: "schema-1" },
       },
       {
         type: "Feature",
         id: "entry-2:2",
         geometry: { type: "Point", coordinates: [5, 6] },
-        properties: { entryId: "entry-2", schemaId: "schema-1" },
+        properties: { entryId: "entry-2", datasetId: "schema-1" },
       },
     ]);
   });
@@ -143,10 +143,10 @@ describe("buildPointFeatureCollection", () => {
   });
 });
 
-describe("pgBboxBounds — the datasets.bbox stored extent (design §3.2)", () => {
+describe("bboxBounds — the datasets.bbox stored extent (design §3.2)", () => {
   it("unfolds the trigger-maintained envelope polygon into a bounds tuple", () => {
     expect(
-      pgBboxBounds({
+      bboxBounds({
         coordinates: [
           [
             [-122.5, 37.1],
@@ -165,7 +165,7 @@ describe("pgBboxBounds — the datasets.bbox stored extent (design §3.2)", () =
     // Ring winding must not matter: st_envelope's ring runs counterclockwise
     // in RFC 7946 order, but the extremes are winding-invariant.
     expect(
-      pgBboxBounds({
+      bboxBounds({
         coordinates: [
           [
             [0, 0],
@@ -181,13 +181,13 @@ describe("pgBboxBounds — the datasets.bbox stored extent (design §3.2)", () =
   });
 
   it("reads absent or malformed extents as no stored extent (the skeleton fallback)", () => {
-    expect(pgBboxBounds(undefined)).toBeUndefined();
-    expect(pgBboxBounds({ coordinates: [[]], type: "Polygon" })).toBeUndefined();
+    expect(bboxBounds(undefined)).toBeUndefined();
+    expect(bboxBounds({ coordinates: [[]], type: "Polygon" })).toBeUndefined();
     expect(
       // A wrong-typed payload (PostgREST returning something unexpected)
       // degrades to the fallback instead of throwing mid-render.
-      pgBboxBounds({ coordinates: "nope", type: "Polygon" } as unknown as Parameters<
-        typeof pgBboxBounds
+      bboxBounds({ coordinates: "nope", type: "Polygon" } as unknown as Parameters<
+        typeof bboxBounds
       >[0]),
     ).toBeUndefined();
   });

@@ -45,7 +45,7 @@ export function listReferencingEntriesQueryOptions(
   options?: StoreOptions,
 ) {
   return queryOptions({
-    queryKey: ["pg:references", "listReferencingEntries", args],
+    queryKey: ["references", "listReferencingEntries", args],
     queryFn: async () => await listReferencingEntries(args, options),
   });
 }

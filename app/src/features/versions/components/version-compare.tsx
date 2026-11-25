@@ -15,7 +15,7 @@ import type { VersionRow } from "#/lib/version-rows";
 
 import { DiffOverlayMap, type DiffPoint, type DiffPointStatus } from "./diff-overlay-map";
 
-type VersionOption = { label: string; schemaId: string; title: string };
+type VersionOption = { label: string; datasetId: string; title: string };
 
 /**
  * The truncation notice (#126): a delta whose sides sat at the server's
@@ -40,8 +40,8 @@ export function DeltaTruncationNotice({ truncated }: { truncated: boolean }) {
  * the pair.
  */
 interface ComparePair {
-  aSchemaId: string | undefined;
-  bSchemaId: string | undefined;
+  aDatasetId: string | undefined;
+  bDatasetId: string | undefined;
 }
 
 /**
@@ -64,15 +64,15 @@ export function VersionCompareView({
   pair: ComparePair;
   onPairChange: (pair: ComparePair) => void;
 }) {
-  const aSchemaId = pair.aSchemaId,
-    bSchemaId = pair.bSchemaId,
+  const aDatasetId = pair.aDatasetId,
+    bDatasetId = pair.bDatasetId,
     [base, setBase] = useState<"a" | "b">("b"),
     options = versions.map((version) => ({
       label: `${version.title} (${version.label})`,
-      value: version.schemaId,
+      value: version.datasetId,
     })),
-    aEntries = rows.get(aSchemaId ?? ""),
-    bEntries = rows.get(bSchemaId ?? "");
+    aEntries = rows.get(aDatasetId ?? ""),
+    bEntries = rows.get(bDatasetId ?? "");
 
   const points = useMemo<DiffPoint[]>(() => {
     if (delta === undefined || aEntries === undefined || bEntries === undefined) {
@@ -95,11 +95,11 @@ export function VersionCompareView({
     });
   }, [delta, aEntries, bEntries, base]);
 
-  const titleOf = (schemaId: string | undefined) => {
+  const titleOf = (datasetId: string | undefined) => {
     const match =
-      schemaId === undefined
+      datasetId === undefined
         ? undefined
-        : versions.find((version) => version.schemaId === schemaId);
+        : versions.find((version) => version.datasetId === datasetId);
     return match !== undefined ? match.title : "?";
   };
 
@@ -109,9 +109,9 @@ export function VersionCompareView({
         <GitCompareArrows className="h-4 w-4 text-muted-foreground" />
         <Select
           items={options}
-          value={aSchemaId}
+          value={aDatasetId}
           onValueChange={(value) => {
-            onPairChange({ aSchemaId: value ?? undefined, bSchemaId });
+            onPairChange({ aDatasetId: value ?? undefined, bDatasetId });
           }}
         >
           <SelectTrigger className="w-56">
@@ -128,9 +128,9 @@ export function VersionCompareView({
         <span className="text-xs text-muted-foreground">compared to</span>
         <Select
           items={options}
-          value={bSchemaId}
+          value={bDatasetId}
           onValueChange={(value) => {
-            onPairChange({ aSchemaId, bSchemaId: value ?? undefined });
+            onPairChange({ aDatasetId, bDatasetId: value ?? undefined });
           }}
         >
           <SelectTrigger className="w-56">
@@ -144,7 +144,7 @@ export function VersionCompareView({
             ))}
           </SelectContent>
         </Select>
-        {delta !== undefined && aSchemaId !== bSchemaId && (
+        {delta !== undefined && aDatasetId !== bDatasetId && (
           <div className="flex items-center gap-1.5">
             <Badge variant="default">+{delta.added}</Badge>
             <Badge variant="destructive">−{delta.removed}</Badge>
@@ -153,7 +153,7 @@ export function VersionCompareView({
         )}
       </div>
       <DeltaTruncationNotice truncated={delta !== undefined && delta.truncated} />
-      {aSchemaId === bSchemaId ? (
+      {aDatasetId === bDatasetId ? (
         <p className="text-sm text-muted-foreground">Pick two different versions to compare.</p>
       ) : delta === undefined || aEntries === undefined || bEntries === undefined ? (
         <p className="text-sm text-muted-foreground">Computing delta…</p>
@@ -168,7 +168,7 @@ export function VersionCompareView({
                 setBase("a");
               }}
             >
-              {titleOf(aSchemaId)} (before)
+              {titleOf(aDatasetId)} (before)
             </Button>
             <Button
               size="sm"
@@ -177,7 +177,7 @@ export function VersionCompareView({
                 setBase("b");
               }}
             >
-              {titleOf(bSchemaId)} (after)
+              {titleOf(bDatasetId)} (after)
             </Button>
           </div>
           <DiffOverlayMap points={points} />

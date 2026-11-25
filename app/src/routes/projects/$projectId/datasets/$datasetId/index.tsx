@@ -1,0 +1,41 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { z } from "zod";
+
+import { DatasetProjectContext, DatasetPage } from "#/features/datasets";
+
+// Same search contract as the standalone /datasets/$datasetId page.
+const searchSchema = z.object({
+  entryId: z.string().optional(),
+  panel: z.enum(["create", "edit"]).optional(),
+  view: z.enum(["overview", "entries", "history", "related", "structure"]).optional(),
+  q: z.string().optional(),
+  sort: z.string().optional(),
+  filters: z.string().optional(),
+});
+
+/**
+ * The dataset page inside the project shell (issue #271): the same page as
+ * `/datasets/$datasetId`, rendered in the shell's content area with every link
+ * it emits kept inside the project (via DatasetProjectContext).
+ */
+export const Route = createFileRoute("/projects/$projectId/datasets/$datasetId/")({
+  component: ProjectDatasetPage,
+  validateSearch: searchSchema,
+});
+
+function ProjectDatasetPage() {
+  const { projectId, datasetId } = Route.useParams(),
+    search = Route.useSearch(),
+    navigate = Route.useNavigate();
+  return (
+    <DatasetProjectContext.Provider value={projectId}>
+      <DatasetPage
+        onPatchSearch={(patch) => {
+          void navigate({ search: (prev) => ({ ...prev, ...patch }) });
+        }}
+        datasetId={datasetId}
+        search={search}
+      />
+    </DatasetProjectContext.Provider>
+  );
+}

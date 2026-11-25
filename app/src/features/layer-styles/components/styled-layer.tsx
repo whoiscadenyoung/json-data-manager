@@ -4,8 +4,8 @@ import { useMap } from "@caden/ui/components/map";
 import type * as MapLibreGL from "maplibre-gl";
 import { useEffect, useMemo, useRef } from "react";
 
-import type { DatasetEntryRow } from "#/lib/dataset-rows";
 import { entryDataRecord } from "#/lib/dataset-rows";
+import type { EntryRow } from "#/lib/store/entries";
 
 import { ensureMapImages, type UploadedIcon } from "../lib/icon-images";
 
@@ -18,7 +18,7 @@ type FeatureValues = ReadonlyMap<string, Record<string, unknown>>;
 export const FIELD_SEPARATOR = "\u0000";
 
 /** The style's fields of each loaded entry, keyed by entry id. */
-function valuesByEntry(rows: readonly DatasetEntryRow[], fieldsKey: string): FeatureValues {
+function valuesByEntry(rows: readonly EntryRow[], fieldsKey: string): FeatureValues {
   const fields = fieldsKey === "" ? [] : fieldsKey.split(FIELD_SEPARATOR),
     byEntry = new Map<string, Record<string, unknown>>();
   if (fields.length === 0) {
@@ -32,7 +32,7 @@ function valuesByEntry(rows: readonly DatasetEntryRow[], fieldsKey: string): Fea
         picked[field] = data[field];
       }
     }
-    byEntry.set(row._id, picked);
+    byEntry.set(row.id, picked);
   }
   return byEntry;
 }
@@ -40,7 +40,7 @@ function valuesByEntry(rows: readonly DatasetEntryRow[], fieldsKey: string): Fea
 export type StyledLayerSource =
   | {
       kind: "rows";
-      data: GeoJSON.FeatureCollection<GeoJSON.Geometry, { entryId: string; schemaId: string }>;
+      data: GeoJSON.FeatureCollection<GeoJSON.Geometry, { entryId: string; datasetId: string }>;
     }
   | { kind: "tiles"; url: string };
 
@@ -133,7 +133,7 @@ export function StyledLayer({
   layers: readonly StyleLayer[];
   source: StyledLayerSource;
   /** The entries holding the style's field values (stable per loaded page set). */
-  entryRows: readonly DatasetEntryRow[];
+  entryRows: readonly EntryRow[];
   /** The fields the style reads, joined by `FIELD_SEPARATOR` ("" = none). */
   fieldsKey: string;
   visible: boolean;
@@ -141,7 +141,7 @@ export function StyledLayer({
   uploads: ReadonlyMap<string, UploadedIcon>;
   /** Whether `uploads` has loaded — icon layers wait for it so uploads never draw blank. */
   uploadsReady: boolean;
-  onSelect: (selection: { entryId: string; schemaId?: string }) => void;
+  onSelect: (selection: { entryId: string; datasetId?: string }) => void;
   onTileIdle: () => void;
 }) {
   const { map, isLoaded } = useMap(),
@@ -281,10 +281,10 @@ export function StyledLayer({
         }
         const properties = feature.properties,
           entryId = typeof properties["entryId"] === "string" ? properties["entryId"] : feature.id,
-          schemaId =
-            typeof properties["schemaId"] === "string" ? properties["schemaId"] : undefined;
+          datasetId =
+            typeof properties["datasetId"] === "string" ? properties["datasetId"] : undefined;
         if (typeof entryId === "string") {
-          latestRef.current.onSelect({ entryId, schemaId });
+          latestRef.current.onSelect({ entryId, datasetId });
         }
       },
       handleEnter = () => {

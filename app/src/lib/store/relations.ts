@@ -213,7 +213,7 @@ export function listForDatasetsQueryOptions(
   options?: StoreOptions,
 ) {
   return queryOptions({
-    queryKey: ["pg:relations", "listForDatasets", { datasetIds: args.datasetIds.toSorted() }],
+    queryKey: ["relations", "listForDatasets", { datasetIds: args.datasetIds.toSorted() }],
     queryFn: async () => await listForDatasets(args, options),
   });
 }
@@ -221,7 +221,7 @@ export function listForDatasetsQueryOptions(
 export function relatedRecordsQueryOptions(args: RelatedRecordsArgs, options?: StoreOptions) {
   return queryOptions({
     queryKey: [
-      "pg:relations",
+      "relations",
       "relatedRecords",
       {
         bbox: args.bbox ?? null,

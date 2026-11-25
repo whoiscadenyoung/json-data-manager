@@ -6,8 +6,8 @@
  *
  * `<out-dir>` gets the page (as index.html), MapLibre's own ESM dist, the zip's
  * sprite files, its layers as `style.json`, and `data.geojson` built from the
- * seeded "Example: National Parks" sample (appBuilder/exampleData.ts) — the
- * dataset the docs' verification recipe styles.
+ * "Example: National Parks" sample (national-parks.ts) — the dataset the
+ * docs' verification recipe styles.
  */
 import { copyFileSync, cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 
 import { strFromU8, unzipSync } from "fflate";
 
-import { NATIONAL_PARKS } from "../../../../convex/appBuilder/exampleData";
+import { NATIONAL_PARKS } from "./national-parks";
 
 const [zipPath, outDir] = process.argv.slice(2);
 if (zipPath === undefined || outDir === undefined) {

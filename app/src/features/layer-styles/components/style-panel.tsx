@@ -24,8 +24,8 @@ import { Field, FieldLabel } from "@caden/ui/components/field";
 import { ToggleGroup, ToggleGroupItem } from "@caden/ui/components/toggle-group";
 import { Info, RotateCcw, X } from "lucide-react";
 
-import type { DatasetEntryRow } from "#/lib/dataset-rows";
 import { entryDataRecord } from "#/lib/dataset-rows";
+import type { EntryRow } from "#/lib/store/entries";
 
 import { AdvancedSection } from "./advanced-section";
 import { ColorField, RangeField, Section, SelectField, SwatchList } from "./controls";
@@ -665,7 +665,7 @@ export function StylePanel({
   style: LayerStyle | undefined;
   defaultColor: string;
   /** The dataset's entries (for fields and class values); `undefined` until the first page arrives. */
-  rows: readonly DatasetEntryRow[] | undefined;
+  rows: readonly EntryRow[] | undefined;
   rowsComplete: boolean;
   rendersFromTiles: boolean;
   saving: boolean;

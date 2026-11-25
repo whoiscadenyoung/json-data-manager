@@ -108,7 +108,7 @@ describe("geometries.rowsForTiles — the dataset_rows_for_tiles RPC (§5.5)", (
     const { client } = stubSupabase();
     const args = { cursor: null, datasetId: "d1" };
     expect(rowsForTilesQueryOptions(args, { supabase: client }).queryKey).toStrictEqual([
-      "pg:geometries",
+      "geometries",
       "rowsForTiles",
       args,
     ]);

@@ -29,7 +29,7 @@ interface ViewSummaryWire extends DatasetSummaryWire {
  */
 export function listViewSummariesQueryOptions(options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:views", "summaries"],
+    queryKey: ["views", "summaries"],
     queryFn: async (): Promise<ViewSummary[]> => {
       const rows = await queryRows<ViewSummaryWire>(
         clientOf(options)
@@ -58,7 +58,7 @@ export interface ViewLatestRun {
 /** The newest run per view, for the catalog cards. */
 export function latestRunsQueryOptions(viewIds: string[], options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:view_runs", "latest", viewIds],
+    queryKey: ["view_runs", "latest", viewIds],
     enabled: viewIds.length > 0,
     queryFn: async (): Promise<globalThis.Map<string, ViewLatestRun>> => {
       const rows = await queryRows<ViewLatestRun>(
@@ -98,7 +98,7 @@ export interface ViewHeaderRow {
 
 export function viewHeaderQueryOptions(viewId: string, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:views", "header", viewId],
+    queryKey: ["views", "header", viewId],
     queryFn: async () =>
       await queryRow<ViewHeaderRow>(
         clientOf(options)
@@ -122,7 +122,7 @@ export interface SavedViewDefinition {
 
 export function savedDefinitionQueryOptions(viewId: string, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:views", "definition", viewId],
+    queryKey: ["views", "definition", viewId],
     queryFn: async (): Promise<SavedViewDefinition | null> => {
       const { data, error } = await clientOf(options).rpc("view_definition", { p_view: viewId });
       if (error !== null) {
@@ -148,7 +148,7 @@ export function inputMetaQueryOptions(
   options?: StoreOptions,
 ) {
   return queryOptions({
-    queryKey: ["pg:views", "inputMeta", inputs],
+    queryKey: ["views", "inputMeta", inputs],
     enabled: inputs.length > 0,
     queryFn: async (): Promise<ViewInputMeta[]> => {
       const { data, error } = await clientOf(options).rpc("view_input_meta", { p_inputs: inputs });
@@ -178,7 +178,7 @@ export function distinctFieldValuesQueryOptions(
   options?: StoreOptions,
 ) {
   return queryOptions({
-    queryKey: ["pg:views", "distinctValues", datasetId, field],
+    queryKey: ["views", "distinctValues", datasetId, field],
     enabled: datasetId !== "" && field !== "",
     staleTime: 60_000,
     queryFn: async (): Promise<string[]> => {

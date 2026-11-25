@@ -1,4 +1,4 @@
-import { buildFeatureCollection, computeBbox, useResolvedGeometries } from "@caden/json-cms/react";
+import { buildFeatureCollection, computeBbox } from "@caden/json-cms/react";
 import type { BoundingBox, Geometry } from "@caden/json-cms/react";
 import { Button } from "@caden/ui/components/button";
 import {
@@ -16,11 +16,14 @@ import type * as GeoJSON from "geojson";
 import { ChevronRight, Loader2, Map as MapIcon, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { entryDataRecord, type DatasetEntryRow, type DatasetGeometryRow } from "#/lib/dataset-rows";
+import type { ResolvedGeometryRow } from "#/lib/dataset-rows";
+import { entryDataRecord } from "#/lib/dataset-rows";
 import { formatPropertyValue } from "#/lib/format";
+import type { EntryRow } from "#/lib/store/entries";
 
 import { layerSourceKind, layerSourceUrl } from "../lib/layer-source";
 import type { TileSourceDecision } from "../lib/layer-source";
+import { resolvedGeometryOf } from "../lib/map-layers";
 import {
   bboxFeature,
   buildPointFeatureCollection,
@@ -28,11 +31,10 @@ import {
 } from "../lib/point-geometry";
 
 // Row shapes come from the row-resolution seam: `geometries` below is a flat
-// array the caller already assembled from every page (via
-// `useDatasetGeometryRows` in `lib/dataset-rows-react.tsx`), and the popup's
+// array the caller already assembled from every loader page, and the popup's
 // entry docs are the same rows `entries.listPage` pages.
-type GeometryEntry = DatasetGeometryRow;
-type EntryDoc = DatasetEntryRow;
+type GeometryEntry = ResolvedGeometryRow;
+type EntryDoc = EntryRow;
 
 type FeatureProperties = { entryId: string };
 
@@ -44,7 +46,7 @@ const FEATURE_FILL_PAINT = { "fill-color": "#3b82f6", "fill-opacity": 0.2 },
   EXTENT_LINE_PAINT = { "line-color": "#3b82f6", "line-width": 1.5, "line-dasharray": [2, 1.5] },
   /**
    * How long the skeleton holds while some rows' geometries are still
-   * unresolved (external `geometryUrl` fetches in flight) before giving up on
+   * unresolved (storage-backed payload fetches in flight) before giving up on
    * a complete first paint — see `pendingCount` in `useEntriesRowReadiness`.
    */
   PENDING_GRACE_MS = 20_000;
@@ -79,8 +81,8 @@ function FeatureDetailsPanel({ entry, onClose }: { entry: EntryDoc; onClose: () 
         )}
       </dl>
       <Link
-        to="/datasets/$schemaId/$entryId"
-        params={{ schemaId: entry.schemaId, entryId: entry._id }}
+        to="/datasets/$datasetId/$entryId"
+        params={{ datasetId: entry.datasetId, entryId: entry.id }}
         className="flex items-center justify-center gap-1.5 border-t border-border px-3 py-2 text-xs font-medium text-primary hover:bg-muted/50"
       >
         View details
@@ -92,9 +94,9 @@ function FeatureDetailsPanel({ entry, onClose }: { entry: EntryDoc; onClose: () 
 
 /**
  * Builds a map-renderable feature row for one geometry entry, given its
- * already-resolved `Geometry` (see `useResolvedGeometries` — most rows
- * resolve synchronously from inline `geometryJson`; a rare large geometry
- * stored externally resolves via an async `fetch` instead, so a row can
+ * already-resolved `Geometry` (see `resolvedGeometryOf` — rows arrive
+ * with their payload inline (`geometry`) or worker-resolved
+ * (`geometryResolved`), so
  * briefly be absent from `resolved` right after the query first loads).
  */
 function toFeatureRow(g: GeometryEntry, resolved: Geometry) {
@@ -128,9 +130,9 @@ function resolveEntriesMapBounds(
  * The row path's per-row readiness state, extracted so `EntriesMap` itself
  * carries only the path decision (the repo's complexity budget).
  *
- * Rows resolve via `useResolvedGeometries` — most synchronously from inline
- * `geometryJson`; a row backed by external storage is absent until its
- * `fetch` completes. Rows still absent are either fetching or failed —
+ * Rows resolve via `resolvedGeometryOf` — inline jsonb and worker-resolved
+ * payloads answer synchronously; a storage-backed row is absent while its
+ * signed-URL `fetch` is in flight. Rows still absent are either fetching or failed —
  * indistinguishable here. Hold readiness while any are pending, but only
  * within a grace period (started once pagination itself is done, so a
  * multi-page dataset still streaming in can't hit the cap): a row whose
@@ -138,14 +140,13 @@ function resolveEntriesMapBounds(
  * over it.
  */
 function useEntriesRowReadiness(geometries: GeometryEntry[], isLoading: boolean) {
-  const resolvedGeometries = useResolvedGeometries(geometries),
-    resolvableGeometries = useMemo(
+  const resolvableGeometries = useMemo(
       () =>
         geometries.flatMap((g) => {
-          const resolved = resolvedGeometries.get(g._id);
+          const resolved = resolvedGeometryOf(g);
           return resolved === undefined ? [] : [{ g, resolved }];
         }),
-      [geometries, resolvedGeometries],
+      [geometries],
     ),
     pendingCount = geometries.length - resolvableGeometries.length,
     [graceElapsed, setGraceElapsed] = useState(false),
@@ -245,7 +246,7 @@ function entriesIsEmpty(
  * holds until the complete dataset has arrived (the caller's paginated query
  * finishing a full pass, then every geometry row resolving) so the viewport
  * is fitted to the full extent exactly once. With one — the server-
- * maintained `schemas.boundingBox` — the map opens immediately on that
+ * maintained `datasets.bbox` — the map opens immediately on that
  * extent with its dashed outline, and features stream in behind a small
  * corner spinner; once everything has landed, the viewport corrects to the
  * exact extent only if it differs (it can only be stale-wider, after
@@ -266,7 +267,7 @@ export function EntriesMap({
   isLoading?: boolean;
   /**
    * The dataset's server-maintained extent, `[minLon, minLat, maxLon, maxLat]`
-   * (`schemas.boundingBox`). Lets the map render immediately on the right
+   * (`datasets.bbox`). Lets the map render immediately on the right
    * viewport instead of waiting on the data — it's a best-effort envelope
    * (never shrinks on delete), so once everything is loaded the viewport
    * re-fits to the exact extent when that differs.
@@ -287,7 +288,7 @@ export function EntriesMap({
   source?: TileSourceDecision;
 }) {
   const entryById = useMemo(
-    () => new globalThis.Map(entries.map((entry) => [entry._id, entry])),
+    () => new globalThis.Map(entries.map((entry) => [entry.id, entry])),
     [entries],
   );
   const vectorUrl = layerSourceUrl(source),

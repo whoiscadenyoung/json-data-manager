@@ -69,7 +69,7 @@ export function useAppEditor(app: AppDoc) {
         expectedRevision: revision.current,
       });
       // The saved row feeds the viewer and the lists (titles, counts).
-      void queryClient.invalidateQueries({ queryKey: ["pg:apps"] });
+      void queryClient.invalidateQueries({ queryKey: ["apps"] });
       setStatus(dirty.current ? "pending" : "saved");
     } catch (error) {
       dirty.current = true;

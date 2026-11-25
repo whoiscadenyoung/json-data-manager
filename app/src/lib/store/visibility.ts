@@ -99,7 +99,7 @@ function parseReport<T extends PreflightReport | ApplyReport>(raw: unknown): T {
  * Throws the RPC's gate error when the caller cannot edit the root
  * artifact. The preflight is one of the store's imperative reads — run
  * through {@link preflightQueryOptions}.queryFn in client code (the
- * pg-bundle-publish posture).
+ * bundle-publish posture).
  */
 export async function visibilityPreflight(
   args: { kind: ClosureRootKind; artifactId: string; target: VisibilityLevel },
@@ -121,7 +121,7 @@ export function preflightQueryOptions(
   options?: StoreOptions,
 ) {
   return queryOptions({
-    queryKey: ["pg:visibility", "preflight", args],
+    queryKey: ["visibility", "preflight", args],
     queryFn: async () => await visibilityPreflight(args, options),
   });
 }

@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { PostgresCreateDatasetPage } from "#/features/datasets";
+import { CreateDatasetPage } from "#/features/datasets";
 
 /**
  * The in-project create/import flow (issue #256, the project-centric train's
@@ -15,5 +15,5 @@ export const Route = createFileRoute("/projects/$projectId/create")({
 
 function ProjectCreatePage() {
   const { projectId } = Route.useParams();
-  return <PostgresCreateDatasetPage projectId={projectId} />;
+  return <CreateDatasetPage projectId={projectId} />;
 }

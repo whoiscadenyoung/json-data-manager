@@ -302,7 +302,7 @@ function BuilderMenu({ app, embedded }: { app: AppDoc; embedded: boolean }) {
                       toast.error("Couldn't delete — editors of the app's project can delete it.");
                       return;
                     }
-                    void queryClient.invalidateQueries({ queryKey: ["pg:apps"] });
+                    void queryClient.invalidateQueries({ queryKey: ["apps"] });
                     toast.success("App deleted");
                     await leave();
                   } catch (error) {

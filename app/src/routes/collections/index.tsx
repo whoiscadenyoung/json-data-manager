@@ -23,7 +23,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { PageHeader } from "#/components/page-header";
-import { PgCollectionFormPanel, collectionDatasetCount } from "#/features/catalog";
+import { CollectionFormPanel, collectionDatasetCount } from "#/features/catalog";
 import { errorMessage } from "#/lib/errors";
 import * as collectionsStore from "#/lib/store/collections";
 import type { CollectionRow } from "#/lib/store/collections";
@@ -144,10 +144,10 @@ function CollectionCard({
 // oxlint-disable-next-line eslint/complexity -- the browser's list/edit/delete render paths are the page's real shape.
 function CollectionsPage() {
   const queryClient = useQueryClient(),
-    pgCollections = useQuery(collectionsStore.listQueryOptions()),
-    pgMemberships = useQuery(collectionsStore.listMembershipsQueryOptions()),
-    pgDatasets = useQuery(datasetsStore.listSummariesQueryOptions()),
-    pgGroups = useQuery(groupsStore.listQueryOptions()),
+    collections = useQuery(collectionsStore.listQueryOptions()),
+    memberships = useQuery(collectionsStore.listMembershipsQueryOptions()),
+    datasets = useQuery(datasetsStore.listSummariesQueryOptions()),
+    groups = useQuery(groupsStore.listQueryOptions()),
     [formCollection, setFormCollection] = useState<CollectionRow | undefined>(undefined),
     [formOpen, setFormOpen] = useState(false),
     [pendingDelete, setPendingDelete] = useState<CollectionListItem | undefined>(),
@@ -157,8 +157,8 @@ function CollectionsPage() {
       }
       try {
         await collectionsStore.remove({ collectionId: pendingDelete.collection.id });
-        void queryClient.invalidateQueries({ queryKey: ["pg:collections"] });
-        void queryClient.invalidateQueries({ queryKey: ["pg:groups"] });
+        void queryClient.invalidateQueries({ queryKey: ["collections"] });
+        void queryClient.invalidateQueries({ queryKey: ["groups"] });
         toast.success("Collection deleted.");
       } catch (error) {
         toast.error(errorMessage(error, "Failed to delete collection."));
@@ -169,36 +169,26 @@ function CollectionsPage() {
   // millisecond key the merged list sorted on.
   const items: CollectionListItem[] = [];
   if (
-    pgCollections.data !== undefined &&
-    pgMemberships.data !== undefined &&
-    pgDatasets.data !== undefined &&
-    pgGroups.data !== undefined
+    collections.data !== undefined &&
+    memberships.data !== undefined &&
+    datasets.data !== undefined &&
+    groups.data !== undefined
   ) {
-    for (const collection of pgCollections.data) {
+    for (const collection of collections.data) {
       items.push({
         collection: {
           description: collection.description,
           id: collection.id,
           name: collection.name,
         },
-        count: collectionDatasetCount(
-          pgMemberships.data,
-          pgDatasets.data,
-          pgGroups.data,
-          collection.id,
-        ),
+        count: collectionDatasetCount(memberships.data, datasets.data, groups.data, collection.id),
         createdTime: Date.parse(collection.createdAt),
       });
     }
   }
   items.sort((a, b) => b.createdTime - a.createdTime);
 
-  if (
-    pgCollections.isPending ||
-    pgMemberships.isPending ||
-    pgDatasets.isPending ||
-    pgGroups.isPending
-  ) {
+  if (collections.isPending || memberships.isPending || datasets.isPending || groups.isPending) {
     return (
       <div className="flex justify-center items-center min-h-100">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
@@ -254,7 +244,7 @@ function CollectionsPage() {
               collection={item.collection}
               datasetCount={item.count}
               onEdit={() => {
-                const match = (pgCollections.data ?? []).find(
+                const match = (collections.data ?? []).find(
                   (candidate) => candidate.id === item.collection.id,
                 );
                 if (match !== undefined) {
@@ -270,7 +260,7 @@ function CollectionsPage() {
         </div>
       )}
 
-      <PgCollectionFormPanel
+      <CollectionFormPanel
         collection={formCollection}
         onOpenChange={(open) => {
           if (!open) {

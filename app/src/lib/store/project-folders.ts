@@ -13,7 +13,7 @@ import { CATALOG_READ_LIMIT } from "./datasets";
  * answers 0 rows instead of throwing. The database's own refusals (a taken
  * name, a move into a descendant) throw with a readable message.
  *
- * Query keys sit under `pg:projects`, so the project shell's `invalidateAll`
+ * Query keys sit under `projects`, so the project shell's `invalidateAll`
  * refreshes the tree with the catalog.
  */
 
@@ -33,7 +33,7 @@ const FOLDER_SELECT =
 /** Every folder of one project (the whole tree is one small read). */
 export function listFoldersQueryOptions(args: { projectId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:projects", "folders", args],
+    queryKey: ["projects", "folders", args],
     queryFn: async () =>
       await queryRows<ProjectFolderRow>(
         clientOf(options)

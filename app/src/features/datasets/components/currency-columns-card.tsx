@@ -14,7 +14,7 @@ import { Coins, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { fetchDatasetEntryRows } from "#/lib/dataset-rows-pg";
+import { fetchDatasetEntryRows } from "#/lib/dataset-rows";
 import { errorMessage } from "#/lib/errors";
 import * as datasetsStore from "#/lib/store/datasets";
 import type { DatasetRow } from "#/lib/store/datasets";
@@ -130,7 +130,7 @@ export function CurrencyColumnsCard({ dataset }: { dataset: DatasetRow }) {
     rowsQuery = useQuery({
       enabled: scanning,
       queryFn: async (): Promise<CurrencyPlanRow[]> => await fetchDatasetEntryRows(dataset.id),
-      queryKey: ["pg:entries", "currency-scan", dataset.id, dataset.updatedAt],
+      queryKey: ["entries", "currency-scan", dataset.id, dataset.updatedAt],
       staleTime: 60_000,
     }),
     [field, setField] = useState<string | undefined>(),
@@ -170,8 +170,8 @@ export function CurrencyColumnsCard({ dataset }: { dataset: DatasetRow }) {
       toast.success(`"${plan.field}" is now a currency column.`);
       setField(undefined);
       setClearFailures(false);
-      void queryClient.invalidateQueries({ queryKey: ["pg:datasets"] });
-      void queryClient.invalidateQueries({ queryKey: ["pg:entries"] });
+      void queryClient.invalidateQueries({ queryKey: ["datasets"] });
+      void queryClient.invalidateQueries({ queryKey: ["entries"] });
     } catch (error) {
       toast.error(errorMessage(error, "Couldn't type the column."));
     } finally {

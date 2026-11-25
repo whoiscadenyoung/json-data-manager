@@ -3,8 +3,7 @@
   "private": true,
   "type": "module",
   "imports": {
-    "#/*": "./src/*",
-    "#convex/*": "./convex/*"
+    "#/*": "./src/*"
   },
   "scripts": {
     "dev": "vite dev",

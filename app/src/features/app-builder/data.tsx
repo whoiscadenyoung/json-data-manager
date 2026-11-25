@@ -1,10 +1,10 @@
 import { useInfiniteQuery, useQueries } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
 
-import { ENTRIES_PAGE_SIZE, entryDataRecord, type DatasetEntryRow } from "#/lib/dataset-rows-pg";
+import { ENTRIES_PAGE_SIZE, entryDataRecord } from "#/lib/dataset-rows";
 import type { AppVersionDefinition } from "#/lib/store/app-versions";
 import { getQueryOptions, type DatasetGeometryType, type DatasetRow } from "#/lib/store/datasets";
-import { listPage } from "#/lib/store/entries";
+import { listPage, type EntryRow } from "#/lib/store/entries";
 import { versionEntriesQueryOptions, type VersionEntryRow } from "#/lib/store/versions";
 
 import type { DataRecord } from "./lib/aggregate";
@@ -201,7 +201,7 @@ async function datasetPage(
     if (fn === undefined) {
       throw new Error("The version-entries read carries no queryFn.");
     }
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the store's queryFns never read the v5 context (the pg-app-publish note).
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the store's queryFns never read the v5 context (the app-publish note).
     return fn({} as never) as Promise<{ nextCursor: number | null; rows: VersionEntryRow[] }>;
   }
   return listPage({ cursor: pageParam as string | null, datasetId, numItems: ENTRIES_PAGE_SIZE });
@@ -216,7 +216,7 @@ async function datasetPage(
  * published view's frozen provider the read pages the pinned version's
  * frozen rows instead of the live dataset. The auto-chain rides the same
  * effect the PG geometry loader uses
- * (`features/maps/components/pg-geometries-loader.tsx`).
+ * (`features/maps/components/geometries-loader.tsx`).
  */
 export function useDatasetRecords(datasetId: string): {
   records: DataRecord[];
@@ -225,7 +225,7 @@ export function useDatasetRecords(datasetId: string): {
   const frozen = useAppFrozen(),
     versionId = pinnedVersionIdOf(frozen, datasetId);
   const page = useInfiniteQuery({
-    queryKey: ["pg:entries", "appBuilderRecords", { datasetId, versionId }],
+    queryKey: ["entries", "appBuilderRecords", { datasetId, versionId }],
     queryFn: async ({ pageParam }) => await datasetPage(pageParam, datasetId, versionId),
     initialPageParam: null as string | number | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
@@ -239,9 +239,7 @@ export function useDatasetRecords(datasetId: string): {
     () =>
       page.data === undefined
         ? EMPTY
-        : page.data.pages.flatMap((one) =>
-            one.rows.map((row) => entryDataRecord(row as DatasetEntryRow)),
-          ),
+        : page.data.pages.flatMap((one) => one.rows.map((row) => entryDataRecord(row as EntryRow))),
     [page.data],
   );
   return {
@@ -260,7 +258,7 @@ export function useDatasetRecords(datasetId: string): {
  * `canLoadMore`.
  */
 export function useAppEntryPages(datasetId: string): {
-  rows: DatasetEntryRow[];
+  rows: EntryRow[];
   /** True only while the FIRST page is pending — later pages stream below the fold. */
   isLoading: boolean;
   isLoadingMore: boolean;
@@ -270,16 +268,13 @@ export function useAppEntryPages(datasetId: string): {
   const frozen = useAppFrozen(),
     versionId = pinnedVersionIdOf(frozen, datasetId);
   const page = useInfiniteQuery({
-    queryKey: ["pg:entries", "appBuilderEntryPages", { datasetId, versionId }],
+    queryKey: ["entries", "appBuilderEntryPages", { datasetId, versionId }],
     queryFn: async ({ pageParam }) => await datasetPage(pageParam, datasetId, versionId),
     initialPageParam: null as string | number | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
   });
   const rows = useMemo(
-    () =>
-      page.data === undefined
-        ? []
-        : page.data.pages.flatMap((one) => one.rows as DatasetEntryRow[]),
+    () => (page.data === undefined ? [] : page.data.pages.flatMap((one) => one.rows as EntryRow[])),
     [page.data],
   );
   return {

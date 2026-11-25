@@ -1,3 +1,11 @@
+// The scripts run under bun (bun run scripts/seed/storage.ts ...); the narrow
+// global surface this file uses is declared here until a bun type package
+// becomes a dev dependency.
+declare const Bun: {
+  argv: string[];
+  write(path: string, data: Response): Promise<number>;
+  file(path: string): Blob & { size: number };
+};
 // Moves storage objects between a stack and a snapshot directory through the
 // storage-api REST interface (so it works against any backend and any
 // deployment, local or VPS).

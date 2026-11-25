@@ -69,14 +69,14 @@ export function CopyAppDialog({
         projectId = await projectsStore.create({
           title: newTitle.trim() === "" ? "My project" : newTitle.trim(),
         });
-        void queryClient.invalidateQueries({ queryKey: ["pg:projects"] });
+        void queryClient.invalidateQueries({ queryKey: ["projects"] });
       }
       const copy = await appsStore.duplicate({ appId: app.id, projectId });
       if (copy === null) {
         toast.error("Couldn't copy — this app doesn't exist.");
         return;
       }
-      void queryClient.invalidateQueries({ queryKey: ["pg:apps"] });
+      void queryClient.invalidateQueries({ queryKey: ["apps"] });
       toast.success("Copied into the project");
       onOpenChange(false);
       await onCopied(copy.id);

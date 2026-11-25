@@ -41,9 +41,9 @@ import {
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import { env } from "#/env";
-import type { DatasetGeometryRow } from "#/lib/dataset-rows-pg";
-import { forEachDatasetGeometryPage as forEachPgGeometryPage } from "#/lib/dataset-rows-pg";
-import { geometryTakeRowsFor } from "#/lib/pg-geometry-fetch";
+import { forEachDatasetGeometryPage as forEachGeometryPage } from "#/lib/dataset-rows";
+import { geometryTakeRowsFor } from "#/lib/geometry-fetch";
+import type { GeometryRow } from "#/lib/store/geometries";
 import {
   createGeometrySourceUrl,
   createTileArchiveUploadUrl,
@@ -51,21 +51,21 @@ import {
   tileDatasetInfo,
 } from "#/lib/store/geometries";
 
-import {
-  MAP_TILE_ARCHIVE_FORMAT,
-  MAP_TILE_ARCHIVE_MIN_BYTES,
-  pgFrozenTileArchiveUploadPath,
-  pgTileArchiveUploadPath,
-} from "./pg-tile-archives";
 import type {
   TileArchiveWorkerInbound,
   TileArchiveWorkerOutbound,
   TileTokenSource,
 } from "./tile-archive";
+import {
+  MAP_TILE_ARCHIVE_FORMAT,
+  MAP_TILE_ARCHIVE_MIN_BYTES,
+  frozenTileArchiveUploadPath,
+  tileArchiveUploadPath,
+} from "./tile-archive-state";
 
 /**
  * Minimum geometry-payload bytes an archive is worth building for — lives
- * next to the format constant in `pg-tile-archives.ts` (the keep-in-sync
+ * next to the format constant in `tile-archive-state.ts` (the keep-in-sync
  * comment there covers the mirrors). Applied here, after assembly, on the
  * exact payload size: a small dataset skips upload/install entirely and
  * reports `skipped` — the frozen-build path applies the same gate so a
@@ -91,8 +91,8 @@ function post(message: TileArchiveWorkerOutbound): void {
   self.postMessage(message);
 }
 
-function postPhase(schemaId: string, phase: TileArchiveBuildPhase): void {
-  post({ phase, schemaId, type: "phase" });
+function postPhase(datasetId: string, phase: TileArchiveBuildPhase): void {
+  post({ phase, datasetId, type: "phase" });
 }
 
 /**
@@ -145,9 +145,9 @@ self.addEventListener("message", (event: MessageEvent<TileArchiveWorkerInbound>)
     }
     return;
   }
-  const { schemaId } = message;
+  const { datasetId } = message;
   // The supabase client is built per build from a fresh token.
-  buildQueue = buildQueue.then(async () => runPgBuild(schemaId)).catch(() => undefined);
+  buildQueue = buildQueue.then(async () => runBuild(datasetId)).catch(() => undefined);
 });
 
 // ---------------------------------------------------------------------------
@@ -165,7 +165,7 @@ self.addEventListener("message", (event: MessageEvent<TileArchiveWorkerInbound>)
  * Authorization header, so RLS scopes the dataset read, the geometry RPC,
  * the signed upload URL, and the install exactly as the signed-in user.
  */
-async function pgSupabaseClient(): Promise<SupabaseClient> {
+async function supabaseClient(): Promise<SupabaseClient> {
   const token = await fetchTokenFromMain("supabase");
   if (token === null) {
     throw new Error("Sign in to build tiles for Postgres datasets.");
@@ -177,8 +177,7 @@ async function pgSupabaseClient(): Promise<SupabaseClient> {
 }
 
 /**
- * Resolves one PG geometry row for the archive builder — the PG edition of
- * `resolveRow` (whose row shape this backend does not share): inline `source`
+ * Resolves one geometry row for the archive builder: inline `source`
  * jsonb parses LOCALLY (stringified once for the #134 JSON-encoded byte
  * accounting, then validated), oversized payloads fetch through a Storage
  * signed URL (§6) resolved INSIDE the pool task so the URL round trip +
@@ -186,9 +185,9 @@ async function pgSupabaseClient(): Promise<SupabaseClient> {
  * failed row — a build with unreadable geometry must fail loudly, never
  * install a partial archive.
  */
-async function resolvePgRow(
+async function resolveRow(
   supabase: SupabaseClient,
-  row: DatasetGeometryRow,
+  row: GeometryRow,
 ): Promise<ResolvedGeometryRow | null> {
   if (row.geometry !== null && row.geometry !== undefined) {
     const json = JSON.stringify(row.geometry);
@@ -205,7 +204,7 @@ async function resolvePgRow(
 }
 
 /**
- * The PG edition of {@link fetchAllGeometryFeatures}: pages
+ * Pages
  * `dataset_rows_for_tiles` to exhaustion (`nextCursor === null`, the seam's
  * completeness rule) through the REAL seam (store RPC + cursor chain, on
  * this worker's client), resolving rows through {@link BoundedPool} so at
@@ -213,7 +212,7 @@ async function resolvePgRow(
  * across pages too. Exported for the pool-contract test (issue #134's PG
  * mirror).
  */
-export async function fetchAllPgGeometryFeatures(
+export async function fetchAllGeometryFeatures(
   supabase: SupabaseClient,
   datasetId: string,
   onProgress?: (fetchedRows: number) => void,
@@ -223,7 +222,7 @@ export async function fetchAllPgGeometryFeatures(
   const pool = new BoundedPool(GEOMETRY_FETCH_POOL_SIZE);
   const rowTasks: Array<Promise<ResolvedGeometryRow | null>> = [];
   let fetchedRows = 0;
-  await forEachPgGeometryPage(
+  await forEachGeometryPage(
     datasetId,
     (rows) => {
       fetchedRows += rows.length;
@@ -231,7 +230,7 @@ export async function fetchAllPgGeometryFeatures(
       for (const row of rows) {
         rowTasks.push(
           pool.run(async () => {
-            return await resolvePgRow(supabase, row);
+            return await resolveRow(supabase, row);
           }),
         );
       }
@@ -257,13 +256,13 @@ export async function fetchAllPgGeometryFeatures(
  * a signed URL, PUTs the bytes, then writes the row/RPC") for a path unique
  * to this attempt — the install RPC then claims it.
  */
-async function uploadPgArchive(
+async function uploadArchive(
   supabase: SupabaseClient,
   datasetId: string,
   expectedVersion: number,
   archive: Uint8Array,
 ): Promise<string> {
-  const path = pgTileArchiveUploadPath(datasetId, expectedVersion);
+  const path = tileArchiveUploadPath(datasetId, expectedVersion);
   const { signedUrl } = await createTileArchiveUploadUrl({ path }, { supabase });
   const response = await fetch(signedUrl, {
     body: new Blob([new Uint8Array(archive)], { type: "application/octet-stream" }),
@@ -302,7 +301,7 @@ async function buildAndInstallPg(
   });
 
   postPhase(datasetId, "uploading");
-  const path = await uploadPgArchive(supabase, datasetId, expectedVersion, archive);
+  const path = await uploadArchive(supabase, datasetId, expectedVersion, archive);
 
   postPhase(datasetId, "installing");
   const installed = await installTileArchive(
@@ -312,7 +311,7 @@ async function buildAndInstallPg(
       datasetId,
       expectedVersion,
       // The layout generation this builder produced — the #125 format gate
-      // compares exactly this stamp (see pg-tile-archives.ts).
+      // compares exactly this stamp (see tile-archive-state.ts).
       format: MAP_TILE_ARCHIVE_FORMAT,
       maxZoom,
       path,
@@ -324,34 +323,34 @@ async function buildAndInstallPg(
       builtVersion: expectedVersion,
       bytes: archive.byteLength,
       maxZoom,
-      schemaId: datasetId,
+      datasetId: datasetId,
       type: "done",
     });
   } else {
     // Edits landed during the build — the CAS rejected the install (the
     // uploaded object is never claimed); a queued/stale-on-view rebuild
     // converges to fresh.
-    post({ schemaId: datasetId, type: "stale-discarded" });
+    post({ datasetId: datasetId, type: "stale-discarded" });
   }
 }
 
-async function runPgBuild(datasetId: string): Promise<void> {
+async function runBuild(datasetId: string): Promise<void> {
   try {
     postPhase(datasetId, "fetching");
-    const supabase = await pgSupabaseClient();
+    const supabase = await supabaseClient();
     const info = await tileDatasetInfo({ datasetId }, { supabase });
     if (info === null || !info.isGeospatial || info.geometryType === null) {
-      post({ reason: "not-geospatial", schemaId: datasetId, type: "skipped", version: 0 });
+      post({ reason: "not-geospatial", datasetId: datasetId, type: "skipped", version: 0 });
       return;
     }
     const expectedVersion = info.mapTileCacheVersion;
     const total = info.featureCount,
-      { features, payloadBytes } = await fetchAllPgGeometryFeatures(
+      { features, payloadBytes } = await fetchAllGeometryFeatures(
         supabase,
         datasetId,
         (done) => {
           if (total > 0)
-            post({ done: Math.min(done, total), schemaId: datasetId, total, type: "progress" });
+            post({ done: Math.min(done, total), datasetId: datasetId, total, type: "progress" });
         },
         geometryTakeRowsFor(info.maxGeometryRowBytes),
       );
@@ -360,7 +359,7 @@ async function runPgBuild(datasetId: string): Promise<void> {
       // #134 rule).
       post({
         reason: "below-threshold",
-        schemaId: datasetId,
+        datasetId: datasetId,
         type: "skipped",
         version: expectedVersion,
       });
@@ -370,7 +369,7 @@ async function runPgBuild(datasetId: string): Promise<void> {
   } catch (error) {
     post({
       message: error instanceof Error ? error.message : String(error),
-      schemaId: datasetId,
+      datasetId: datasetId,
       type: "error",
     });
   }
@@ -384,7 +383,7 @@ async function runPgBuild(datasetId: string): Promise<void> {
 // as the published rows path skips them), and there is NO install: the
 // archive pointer rides the snapshot's pin (`frozen_archive`), never the
 // dataset row's live pointer, and the path convention (`frozen-` marker,
-// see pg-tile-archives.ts) is what migration 0024's anon policy matches.
+// see tile-archive-state.ts) is what migration 0024's anon policy matches.
 // ---------------------------------------------------------------------------
 
 /** One frozen-entries page's width (the versions store's page cap). */
@@ -422,7 +421,7 @@ function frozenFeaturesOfPage(rows: ReadonlyArray<Record<string, unknown>>): {
  * each row's inline geometry locally.
  */
 // The keyset cursor chains page to page — each await feeds the next (the
-// pg-app-publish walk's scoped suspension).
+// app-publish walk's scoped suspension).
 /* oxlint-disable eslint/no-await-in-loop -- the keyset paging is inherently sequential. */
 async function fetchAllFrozenFeatures(
   supabase: SupabaseClient,
@@ -476,7 +475,7 @@ async function uploadFrozenArchive(
   versionId: string,
   archive: Uint8Array,
 ): Promise<string> {
-  const path = pgFrozenTileArchiveUploadPath(datasetId, versionId);
+  const path = frozenTileArchiveUploadPath(datasetId, versionId);
   const { signedUrl } = await createTileArchiveUploadUrl({ path }, { supabase });
   const response = await fetch(signedUrl, {
     body: new Blob([new Uint8Array(archive)], { type: "application/octet-stream" }),
@@ -492,7 +491,7 @@ async function uploadFrozenArchive(
 async function runFrozenBuild(datasetId: string, versionId: string): Promise<void> {
   try {
     postFrozenPhase(datasetId, "fetching");
-    const supabase = await pgSupabaseClient();
+    const supabase = await supabaseClient();
     const { features, payloadBytes } = await fetchAllFrozenFeatures(supabase, versionId);
     if (payloadBytes < MAP_TILE_ARCHIVE_MIN_BYTES) {
       post({ datasetId, reason: "below-threshold", type: "frozen-skipped" });

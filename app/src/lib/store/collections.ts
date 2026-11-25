@@ -157,28 +157,28 @@ export async function listCollectionsByDataset(
 
 export function listQueryOptions(options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:collections", "list"],
+    queryKey: ["collections", "list"],
     queryFn: async () => await list(options),
   });
 }
 
 export function getQueryOptions(args: { collectionId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:collections", "get", args],
+    queryKey: ["collections", "get", args],
     queryFn: async () => await get(args, options),
   });
 }
 
 export function listDatasetsQueryOptions(args: { collectionId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:collections", "listDatasets", args],
+    queryKey: ["collections", "listDatasets", args],
     queryFn: async () => await listDatasets(args, options),
   });
 }
 
 export function listMembershipsQueryOptions(options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:collections", "listMemberships"],
+    queryKey: ["collections", "listMemberships"],
     queryFn: async () => await listMemberships(options),
   });
 }
@@ -188,7 +188,7 @@ export function listCollectionsByDatasetQueryOptions(
   options?: StoreOptions,
 ) {
   return queryOptions({
-    queryKey: ["pg:collections", "listCollectionsByDataset", args],
+    queryKey: ["collections", "listCollectionsByDataset", args],
     queryFn: async () => await listCollectionsByDataset(args, options),
   });
 }

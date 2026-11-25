@@ -10,19 +10,16 @@ import {
   LayersMap,
   MAP_TILE_ARCHIVE_FORMAT,
   outputSchemaOf,
-  pgGeometryToLayerRow,
-  pgSummaryToDatasetSummary,
   resolvePopupFields,
 } from "#/features/maps";
 import type { PopupField } from "#/features/maps";
-import type { DatasetGeometryRow } from "#/lib/dataset-rows";
 import type {
   AppMapSnapshot,
   AppSnapshotLayerVersion,
   AppVersionDefinition,
 } from "#/lib/store/app-versions";
 import { sharedClient } from "#/lib/store/client";
-import type { DatasetSummaryRow } from "#/lib/store/datasets";
+import type { DatasetGeometryType, DatasetSummaryRow } from "#/lib/store/datasets";
 import { createTileArchiveUrl } from "#/lib/store/geometries";
 import type { GeometryRow } from "#/lib/store/geometries";
 import { versionEntriesQueryOptions } from "#/lib/store/versions";
@@ -125,30 +122,30 @@ function frozenRowOf(
     entryId: row.entryId ?? "",
     geometry: row.geometry,
     sourcePath: null,
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the PG type union allows "GeometryCollection"; the app never writes one (the same narrowing posture as pgGeometryToLayerRow's).
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the PG type union allows "GeometryCollection"; the app never writes one (the same narrowing posture as `resolvedGeometryOf`'s).
     type: (row.geometryType ?? "Point") as GeometryRow["type"],
   };
 }
 
-/** One frozen entry's immutable rows, paged to exhaustion and reported up (the PgGeometriesLoader shape, scoped). */
+/** One frozen entry's immutable rows, paged to exhaustion and reported up (the GeometriesLoader shape, scoped). */
 function FrozenLayerRows({
   datasetId,
   onLoaded,
   versionId,
 }: {
   datasetId: string;
-  onLoaded: (datasetId: string, rows: DatasetGeometryRow[] | undefined) => void;
+  onLoaded: (datasetId: string, rows: GeometryRow[] | undefined) => void;
   versionId: string;
 }) {
   const page = useInfiniteQuery({
-    queryKey: ["pg:versions", "appFrozenRows", versionId],
+    queryKey: ["versions", "appFrozenRows", versionId],
     queryFn: async ({ pageParam }) => {
       const options = versionEntriesQueryOptions({ cursor: pageParam, versionId }),
         fn = options.queryFn;
       if (fn === undefined) {
         throw new Error("The version-entries read carries no queryFn.");
       }
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the store's queryFns never read the v5 context (the pg-app-publish note).
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the store's queryFns never read the v5 context (the app-publish note).
       return await fn({} as never);
     },
     initialPageParam: null as number | null,
@@ -164,7 +161,7 @@ function FrozenLayerRows({
       return;
     }
     const rows = page.data.pages.flatMap((one) =>
-      one.rows.map((row) => pgGeometryToLayerRow(frozenRowOf(row, datasetId), row.geometry)),
+      one.rows.map((row) => frozenRowOf(row, datasetId)),
     );
     onLoaded(datasetId, rows);
     return () => {
@@ -265,7 +262,7 @@ export function FrozenMapCanvas({
         // The 24 h TTL dwarfs staleTime; a re-sign on remount is one cheap
         // storage round trip.
         queryFn: async () => await createTileArchiveUrl(sharedClient(), archive.path),
-        queryKey: ["pg:tile-archives", "frozen-sign", archive.datasetId, archive.path],
+        queryKey: ["tile-archives", "frozen-sign", archive.datasetId, archive.path],
         retry: false,
         staleTime: 20 * 60 * 1000,
       })),
@@ -281,14 +278,14 @@ export function FrozenMapCanvas({
     tileDatasetIds = new Set(tileArchives.map((archive) => archive.datasetId)),
     tileSourcesPending = tileArchives.some((archive) => !signedUrlByDataset.has(archive.datasetId)),
     rowEntries = drawable.filter((entry) => !tileDatasetIds.has(entry.renderId)),
-    [rowsByDataset, setRowsByDataset] = useState<
-      globalThis.Map<string, DatasetGeometryRow[] | undefined>
-    >(() => new globalThis.Map()),
-    // Reference-stable across renders (the useGeometriesByPgDatasets doc
+    [rowsByDataset, setRowsByDataset] = useState<globalThis.Map<string, GeometryRow[] | undefined>>(
+      () => new globalThis.Map(),
+    ),
+    // Reference-stable across renders (the useGeometriesByDatasets doc
     // explains why a fresh identity here would loop the loaders' effects).
     // oxlint-disable-next-line react/preserve-manual-memoization -- the stable-setter + bail-out dedupe shape verbatim (see the loader); the compiler cannot prove the stable identity across the loaders' effects.
     handleLoaded = useCallback(
-      (datasetId: string, rows: DatasetGeometryRow[] | undefined) => {
+      (datasetId: string, rows: GeometryRow[] | undefined) => {
         setRowsByDataset((prev) => {
           const existing = prev.get(datasetId);
           if (existing === rows) {
@@ -337,7 +334,8 @@ export function FrozenMapCanvas({
       entrySourceFor: (renderId) => renderId,
       geometryTypeFor: (renderId) => {
         const pin = datasetPins.find((candidate) => candidate.datasetId === renderId);
-        return pin === undefined || pin.geometryType === null ? undefined : pin.geometryType;
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the pin rides the snapshot's shapeless jsonb; the same never-writes-GeometryCollection narrowing as the store rows.
+        return pin === undefined ? undefined : (pin.geometryType as DatasetGeometryType | null);
       },
       resetStyle: async () => {
         throw new Error("The published app shows the frozen map — republish to restyle it.");
@@ -369,7 +367,7 @@ export function FrozenMapCanvas({
       // MapVectorTiles' PMTiles sources ride the `pmtiles://` protocol scheme
       // (the layer-source decision's shape — the bare signed URL alone is
       // not a loadable maplibre URL).
-      return url === undefined ? [] : [{ schemaId: archive.datasetId, url: `pmtiles://${url}` }];
+      return url === undefined ? [] : [{ datasetId: archive.datasetId, url: `pmtiles://${url}` }];
     }),
     shouldMount =
       (rowDatasetIds.length === 0 && tileSources.length === 0 && !tileSourcesPending) ||
@@ -389,7 +387,7 @@ export function FrozenMapCanvas({
         <LayersMap
           chainLayers={[]}
           colorBySchema={layerStyles.colorBySchema}
-          datasets={summaries.map(pgSummaryToDatasetSummary)}
+          datasets={summaries}
           extension={layerStyles.extension}
           frozenEntryVersions={frozenEntryVersions}
           geometries={geometries}
@@ -405,7 +403,7 @@ export function FrozenMapCanvas({
           sourcesPending={tileSourcesPending}
           tileSources={tileSources}
           titlesById={pinTitleById}
-          visibleSchemaIds={new Set(drawable.map((entry) => entry.renderId))}
+          visibleDatasetIds={new Set(drawable.map((entry) => entry.renderId))}
         />
       ) : (
         <Skeleton className="size-full rounded-none" />

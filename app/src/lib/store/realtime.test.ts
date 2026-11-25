@@ -247,7 +247,7 @@ const CREATED_AT = "2026-11-04T00:00:00.000Z";
 
 /**
  * The realtime payload of an `entries` row: the TABLE's own columns verbatim
- * (verified against the live broker in pg-realtime.int.test.ts) — including
+ * (verified against the live broker in realtime.int.test.ts) — including
  * the `search` tsvector and `updated_at`.
  */
 function rawEntry(
@@ -277,7 +277,7 @@ function entryRow(
 
 /**
  * The realtime payload of a `geometries` row: the TABLE's own columns
- * verbatim, captured live in pg-realtime.int.test.ts — including the
+ * verbatim, captured live in realtime.int.test.ts — including the
  * generated `geom` (WKB hex on the wire) and `updated_at`. Notably NO
  * `data`: that is `entries.data`, joined in by the §5.5 tiles RPC only,
  * which is why the tiles feed reconciles by invalidation, never a patch.
@@ -478,7 +478,7 @@ describe("channel lifecycle (one per active dataset, open on observe, closed on 
     const stub = stubRealtimeClient();
     const detach = attachDatasetRealtime(queryClient, stub.client);
     const { unsubscribe } = observe(queryClient, [
-      "pg:entries",
+      "entries",
       "listPage",
       { cursor: null, datasetId: D1, numItems: 50 },
     ]);
@@ -506,9 +506,9 @@ describe("channel lifecycle (one per active dataset, open on observe, closed on 
     const queryClient = newClient();
     const stub = stubRealtimeClient();
     const detach = attachDatasetRealtime(queryClient, stub.client);
-    const first = observe(queryClient, ["pg:entries", "searchEntries", { datasetId: D1 }]);
+    const first = observe(queryClient, ["entries", "searchEntries", { datasetId: D1 }]);
     const second = observe(queryClient, [
-      "pg:geometries",
+      "geometries",
       "rowsForTiles",
       { cursor: null, datasetId: D1 },
     ]);
@@ -572,7 +572,7 @@ describe("channel lifecycle (one per active dataset, open on observe, closed on 
     const second = observe(queryClient, headOfChainQueryOptions({ datasetId: D1 }).queryKey);
     expect(stub.channels.length).toBe(1);
     second.unsubscribe();
-    const third = observe(queryClient, ["pg:imports", "listForDataset", { datasetId: D1 }]);
+    const third = observe(queryClient, ["imports", "listForDataset", { datasetId: D1 }]);
     expect(stub.channels.length).toBe(1);
     third.unsubscribe();
     expect(stub.channels.length).toBe(0);
@@ -593,11 +593,7 @@ describe("channel lifecycle (one per active dataset, open on observe, closed on 
     const queryClient = newClient();
     const stub = stubRealtimeClient();
     const detach = attachDatasetRealtime(queryClient, stub.client);
-    const { unsubscribe } = observe(queryClient, [
-      "pg:entries",
-      "searchEntries",
-      { datasetId: D1 },
-    ]);
+    const { unsubscribe } = observe(queryClient, ["entries", "searchEntries", { datasetId: D1 }]);
     expect(stub.channels.length).toBe(1);
     const listener = stub.authListeners[stub.authListeners.length - 1];
     if (listener === undefined) {
@@ -619,11 +615,7 @@ describe("channel lifecycle (one per active dataset, open on observe, closed on 
     const queryClient = newClient();
     const stub = stubRealtimeClient();
     const detach = attachDatasetRealtime(queryClient, stub.client);
-    const { unsubscribe } = observe(queryClient, [
-      "pg:entries",
-      "searchEntries",
-      { datasetId: D1 },
-    ]);
+    const { unsubscribe } = observe(queryClient, ["entries", "searchEntries", { datasetId: D1 }]);
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     onlyChannel(stub.channels).deliver("entries", {
       eventType: "INSERT",
@@ -635,7 +627,7 @@ describe("channel lifecycle (one per active dataset, open on observe, closed on 
     expect(stub.removedTopics).toStrictEqual([datasetChannelTopic(D1)]);
     expect(stub.authUnsubscribeCount()).toBe(1);
     expect(invalidate).toHaveBeenCalled();
-    observe(queryClient, ["pg:entries", "listPage", { cursor: null, datasetId: D1, numItems: 50 }]);
+    observe(queryClient, ["entries", "listPage", { cursor: null, datasetId: D1, numItems: 50 }]);
     expect(stub.channels.length).toBe(0);
   });
 });
@@ -677,7 +669,7 @@ describe("entries events (dataset table rows + entry details)", () => {
     // The update also reconciles the sorted/filtered table (the patch pinned
     // the row's VALUE; its position under the active sort is the RPC's answer).
     expect(invalidatedKeys(invalidate)).toStrictEqual([
-      ["pg:entries", "searchEntries", { datasetId: D1 }],
+      ["entries", "searchEntries", { datasetId: D1 }],
     ]);
     detach();
   });
@@ -701,17 +693,13 @@ describe("entries events (dataset table rows + entry details)", () => {
     expect(invalidate).not.toHaveBeenCalled();
     await tick();
     expect(invalidate).toHaveBeenCalledTimes(3);
+    expect(invalidatedKeys(invalidate)).toContainEqual(["entries", "listPage", { datasetId: D1 }]);
     expect(invalidatedKeys(invalidate)).toContainEqual([
-      "pg:entries",
-      "listPage",
-      { datasetId: D1 },
-    ]);
-    expect(invalidatedKeys(invalidate)).toContainEqual([
-      "pg:entries",
+      "entries",
       "searchEntries",
       { datasetId: D1 },
     ]);
-    expect(invalidatedKeys(invalidate)).toContainEqual(["pg:entries", "listForIds"]);
+    expect(invalidatedKeys(invalidate)).toContainEqual(["entries", "listForIds"]);
     await tick();
     detach();
   });
@@ -737,8 +725,8 @@ describe("entries events (dataset table rows + entry details)", () => {
     expect(queryClient.getQueryData(listPage)).toStrictEqual(page([entryRow("e2", D1)]));
     await tick();
     const keys = invalidatedKeys(invalidate);
-    expect(keys).toContainEqual(["pg:entries", "listPage", { datasetId: D1 }]);
-    expect(keys).toContainEqual(["pg:entries", "searchEntries", { datasetId: D1 }]);
+    expect(keys).toContainEqual(["entries", "listPage", { datasetId: D1 }]);
+    expect(keys).toContainEqual(["entries", "searchEntries", { datasetId: D1 }]);
     detach();
   });
 
@@ -793,7 +781,7 @@ describe("geometries events (entry geometry + maps layer data)", () => {
     expect(queryClient.getQueryData(tiles)).toStrictEqual(page([geometryTilesRow("e1")]));
     await tick();
     expect(invalidatedKeys(invalidate)).toStrictEqual([
-      ["pg:geometries", "rowsForTiles", { datasetId: D1 }],
+      ["geometries", "rowsForTiles", { datasetId: D1 }],
     ]);
     detach();
   });
@@ -816,14 +804,14 @@ describe("geometries events (entry geometry + maps layer data)", () => {
     channel.deliver("geometries", { eventType: "INSERT", new: rawGeometry("e1", D1), old: {} });
     await tick();
     let keys = invalidatedKeys(invalidate);
-    expect(keys).toContainEqual(["pg:geometries", "getByEntry", { entryId: "e1" }]);
-    expect(keys).toContainEqual(["pg:geometries", "rowsForTiles", { datasetId: D1 }]);
+    expect(keys).toContainEqual(["geometries", "getByEntry", { entryId: "e1" }]);
+    expect(keys).toContainEqual(["geometries", "rowsForTiles", { datasetId: D1 }]);
 
     channel.deliver("geometries", { eventType: "DELETE", new: {}, old: { id: "geom-uuid" } });
     await tick();
     keys = invalidatedKeys(invalidate);
-    expect(keys).toContainEqual(["pg:geometries", "getByEntry"]);
-    expect(keys).toContainEqual(["pg:geometries", "rowsForTiles", { datasetId: D1 }]);
+    expect(keys).toContainEqual(["geometries", "getByEntry"]);
+    expect(keys).toContainEqual(["geometries", "rowsForTiles", { datasetId: D1 }]);
     detach();
   });
 });
@@ -869,13 +857,13 @@ describe("datasets events (catalog summaries + the tile live signal)", () => {
     // a patch can't express that).
     await tick();
     const keys = invalidatedKeys(invalidate);
-    expect(keys).toContainEqual(["pg:datasets", "list"]);
-    expect(keys).toContainEqual(["pg:datasets", "listSummaries"]);
-    expect(keys).toContainEqual(["pg:datasets", "listDraftSummaries"]);
-    expect(keys).toContainEqual(["pg:datasets", "listByCreator", { createdBy: CREATOR }]);
-    expect(keys).toContainEqual(["pg:datasets", "maxTileCacheVersion"]);
-    expect(keys).toContainEqual(["pg:tile-archives", "metas"]);
-    expect(keys).toContainEqual(["pg:datasets", "getSourceFileUrl", { datasetId: D1 }]);
+    expect(keys).toContainEqual(["datasets", "list"]);
+    expect(keys).toContainEqual(["datasets", "listSummaries"]);
+    expect(keys).toContainEqual(["datasets", "listDraftSummaries"]);
+    expect(keys).toContainEqual(["datasets", "listByCreator", { createdBy: CREATOR }]);
+    expect(keys).toContainEqual(["datasets", "maxTileCacheVersion"]);
+    expect(keys).toContainEqual(["tile-archives", "metas"]);
+    expect(keys).toContainEqual(["datasets", "getSourceFileUrl", { datasetId: D1 }]);
     detach();
   });
 
@@ -900,11 +888,11 @@ describe("datasets events (catalog summaries + the tile live signal)", () => {
     expect(queryClient.getQueryData(summaries)).toStrictEqual([]);
     await tick();
     const keys = invalidatedKeys(invalidate);
-    expect(keys).toContainEqual(["pg:datasets", "list"]);
-    expect(keys).toContainEqual(["pg:datasets", "listSummaries"]);
-    expect(keys).toContainEqual(["pg:datasets", "listDraftSummaries"]);
-    expect(keys).toContainEqual(["pg:datasets", "listByCreator", { createdBy: CREATOR }]);
-    expect(keys).toContainEqual(["pg:datasets", "maxTileCacheVersion"]);
+    expect(keys).toContainEqual(["datasets", "list"]);
+    expect(keys).toContainEqual(["datasets", "listSummaries"]);
+    expect(keys).toContainEqual(["datasets", "listDraftSummaries"]);
+    expect(keys).toContainEqual(["datasets", "listByCreator", { createdBy: CREATOR }]);
+    expect(keys).toContainEqual(["datasets", "maxTileCacheVersion"]);
     detach();
   });
 
@@ -923,12 +911,12 @@ describe("datasets events (catalog summaries + the tile live signal)", () => {
 
     await tick();
     const keys = invalidatedKeys(invalidate);
-    expect(keys).toContainEqual(["pg:datasets", "maxTileCacheVersion"]);
-    expect(keys).toContainEqual(["pg:tile-archives", "metas"]);
-    expect(keys).toContainEqual(["pg:versions", "list", { datasetId: D1 }]);
-    expect(keys).toContainEqual(["pg:versions", "head", { datasetId: D1 }]);
-    expect(keys).toContainEqual(["pg:tags", "list", { datasetId: D1 }]);
-    expect(keys).toContainEqual(["pg:collections", "listCollectionsByDataset", { datasetId: D1 }]);
+    expect(keys).toContainEqual(["datasets", "maxTileCacheVersion"]);
+    expect(keys).toContainEqual(["tile-archives", "metas"]);
+    expect(keys).toContainEqual(["versions", "list", { datasetId: D1 }]);
+    expect(keys).toContainEqual(["versions", "head", { datasetId: D1 }]);
+    expect(keys).toContainEqual(["tags", "list", { datasetId: D1 }]);
+    expect(keys).toContainEqual(["collections", "listCollectionsByDataset", { datasetId: D1 }]);
     detach();
   });
 });
@@ -949,15 +937,15 @@ describe("versions / tags / catalog / maps events (invalidate-only surfaces)", (
     });
     await tick();
     let keys = invalidatedKeys(invalidate);
-    expect(keys).toContainEqual(["pg:versions", "list", { datasetId: D1 }]);
-    expect(keys).toContainEqual(["pg:versions", "head", { datasetId: D1 }]);
-    expect(keys).not.toContainEqual(["pg:versions", "get", { versionId: "v1" }]);
+    expect(keys).toContainEqual(["versions", "list", { datasetId: D1 }]);
+    expect(keys).toContainEqual(["versions", "head", { datasetId: D1 }]);
+    expect(keys).not.toContainEqual(["versions", "get", { versionId: "v1" }]);
 
     channel.deliver("dataset_versions", { eventType: "DELETE", new: {}, old: { id: "v1" } });
     await tick();
     keys = invalidatedKeys(invalidate);
-    expect(keys).toContainEqual(["pg:versions", "get", { versionId: "v1" }]);
-    expect(keys).toContainEqual(["pg:versions", "versionEntries", { versionId: "v1" }]);
+    expect(keys).toContainEqual(["versions", "get", { versionId: "v1" }]);
+    expect(keys).toContainEqual(["versions", "versionEntries", { versionId: "v1" }]);
     detach();
   });
 
@@ -976,8 +964,8 @@ describe("versions / tags / catalog / maps events (invalidate-only surfaces)", (
     });
     await tick();
     const keys = invalidatedKeys(invalidate);
-    expect(keys).toContainEqual(["pg:tags", "list", { datasetId: D1 }]);
-    expect(keys).toContainEqual(["pg:tags", "get", { tagId: "tag-1" }]);
+    expect(keys).toContainEqual(["tags", "list", { datasetId: D1 }]);
+    expect(keys).toContainEqual(["tags", "get", { tagId: "tag-1" }]);
     detach();
   });
 
@@ -997,8 +985,8 @@ describe("versions / tags / catalog / maps events (invalidate-only surfaces)", (
     });
     await tick();
     let keys = invalidatedKeys(invalidate);
-    expect(keys).toContainEqual(["pg:versions", "consumedBy", { sourceDatasetId: D1 }]);
-    expect(keys).toContainEqual(["pg:versions", "consumerReferences", { consumerId: "derived-1" }]);
+    expect(keys).toContainEqual(["versions", "consumedBy", { sourceDatasetId: D1 }]);
+    expect(keys).toContainEqual(["versions", "consumerReferences", { consumerId: "derived-1" }]);
 
     // DELETE carries the PK only (default replica identity): the source-side
     // key stays exact, the consumer-side key is not nameable.
@@ -1010,9 +998,9 @@ describe("versions / tags / catalog / maps events (invalidate-only surfaces)", (
     });
     await tick();
     keys = invalidatedKeys(invalidate);
-    expect(keys).toContainEqual(["pg:versions", "consumedBy", { sourceDatasetId: D1 }]);
+    expect(keys).toContainEqual(["versions", "consumedBy", { sourceDatasetId: D1 }]);
     expect(keys).not.toContainEqual([
-      "pg:versions",
+      "versions",
       "consumerReferences",
       { consumerId: "derived-1" },
     ]);
@@ -1034,7 +1022,7 @@ describe("versions / tags / catalog / maps events (invalidate-only surfaces)", (
     });
     await tick();
     const keys = invalidatedKeys(invalidate);
-    expect(keys).toContainEqual(["pg:versions", "retentionPolicy", { datasetKey: D1 }]);
+    expect(keys).toContainEqual(["versions", "retentionPolicy", { datasetKey: D1 }]);
     detach();
   });
 
@@ -1053,10 +1041,10 @@ describe("versions / tags / catalog / maps events (invalidate-only surfaces)", (
     });
     await tick();
     const keys = invalidatedKeys(invalidate);
-    expect(keys).toContainEqual(["pg:collections", "list"]);
-    expect(keys).toContainEqual(["pg:collections", "listMemberships"]);
-    expect(keys).toContainEqual(["pg:collections", "listDatasets", { collectionId: "c1" }]);
-    expect(keys).toContainEqual(["pg:collections", "listCollectionsByDataset", { datasetId: D1 }]);
+    expect(keys).toContainEqual(["collections", "list"]);
+    expect(keys).toContainEqual(["collections", "listMemberships"]);
+    expect(keys).toContainEqual(["collections", "listDatasets", { collectionId: "c1" }]);
+    expect(keys).toContainEqual(["collections", "listCollectionsByDataset", { datasetId: D1 }]);
     detach();
   });
 
@@ -1065,9 +1053,9 @@ describe("versions / tags / catalog / maps events (invalidate-only surfaces)", (
     const stub = stubRealtimeClient();
     const detach = attachDatasetRealtime(queryClient, stub.client);
     // The channel rides the dataset's layer-data query (a map workspace's
-    // layer rows keep its dataset active — pg-entries-loader's listPage keys).
-    observe(queryClient, ["pg:geometries", "rowsForTiles", { cursor: null, datasetId: D1 }]);
-    observe(queryClient, ["pg:maps", "listPlacements", { mapId: "m1" }]);
+    // layer rows keep its dataset active — entries-loader's listPage keys).
+    observe(queryClient, ["geometries", "rowsForTiles", { cursor: null, datasetId: D1 }]);
+    observe(queryClient, ["maps", "listPlacements", { mapId: "m1" }]);
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     const channel = onlyChannel(stub.channels);
 
@@ -1085,13 +1073,13 @@ describe("versions / tags / catalog / maps events (invalidate-only surfaces)", (
     });
     await tick();
     let keys = invalidatedKeys(invalidate);
-    expect(keys).toContainEqual(["pg:maps", "listAllPlacements"]);
-    expect(keys).toContainEqual(["pg:maps", "listPlacements", { mapId: "m1" }]);
+    expect(keys).toContainEqual(["maps", "listAllPlacements"]);
+    expect(keys).toContainEqual(["maps", "listPlacements", { mapId: "m1" }]);
 
     channel.deliver("map_layers", { eventType: "DELETE", new: {}, old: { id: "placement-1" } });
     await tick();
     keys = invalidatedKeys(invalidate);
-    expect(keys).toContainEqual(["pg:maps", "listPlacements"]);
+    expect(keys).toContainEqual(["maps", "listPlacements"]);
     detach();
   });
 
@@ -1099,7 +1087,7 @@ describe("versions / tags / catalog / maps events (invalidate-only surfaces)", (
     const queryClient = newClient();
     const stub = stubRealtimeClient();
     const detach = attachDatasetRealtime(queryClient, stub.client);
-    observe(queryClient, ["pg:geometries", "rowsForTiles", { cursor: null, datasetId: D1 }]);
+    observe(queryClient, ["geometries", "rowsForTiles", { cursor: null, datasetId: D1 }]);
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     const channel = onlyChannel(stub.channels);
 
@@ -1121,7 +1109,7 @@ describe("versions / tags / catalog / maps events (invalidate-only surfaces)", (
     });
     await tick();
     const keys = invalidatedKeys(invalidate);
-    expect(keys).toContainEqual(["pg:layers"]);
+    expect(keys).toContainEqual(["layers"]);
     detach();
   });
 });
@@ -1208,130 +1196,123 @@ describe("matcher mirror (invalidation matchers find the store modules' queries)
     );
     const found = queryClient
       .getQueryCache()
-      .findAll({ queryKey: ["pg:entries", "listPage", { datasetId: D1 }] })
+      .findAll({ queryKey: ["entries", "listPage", { datasetId: D1 }] })
       .map((query) => query.queryKey);
     expect(found).toStrictEqual([
       listPageQueryOptions({ datasetId: D1, cursor: null, numItems: 50 }).queryKey,
     ]);
     const foundSearch = queryClient
       .getQueryCache()
-      .findAll({ queryKey: ["pg:entries", "searchEntries", { datasetId: D1 }] })
+      .findAll({ queryKey: ["entries", "searchEntries", { datasetId: D1 }] })
       .map((query) => query.queryKey);
     expect(foundSearch).toStrictEqual([searchEntriesQueryOptions({ datasetId: D1 }).queryKey]);
   });
 
   it("the store modules' key shapes this layer patches/matches are pinned", () => {
     expect(entriesGetOptions({ entryId: "e1" }).queryKey).toStrictEqual([
-      "pg:entries",
+      "entries",
       "get",
       { entryId: "e1" },
     ]);
     expect(listForIdsQueryOptions({ entryIds: ["e1"] }).queryKey).toStrictEqual([
-      "pg:entries",
+      "entries",
       "listForIds",
       { entryIds: ["e1"] },
     ]);
     expect(getByEntryQueryOptions({ entryId: "e1" }).queryKey).toStrictEqual([
-      "pg:geometries",
+      "geometries",
       "getByEntry",
       { entryId: "e1" },
     ]);
     expect(rowsForTilesQueryOptions({ cursor: null, datasetId: D1 }).queryKey).toStrictEqual([
-      "pg:geometries",
+      "geometries",
       "rowsForTiles",
       { cursor: null, datasetId: D1 },
     ]);
     expect(datasetsGetOptions({ datasetId: D1 }).queryKey).toStrictEqual([
-      "pg:datasets",
+      "datasets",
       "get",
       { datasetId: D1 },
     ]);
-    expect(datasetsListOptions().queryKey).toStrictEqual(["pg:datasets", "list", 1000]);
-    expect(listSummariesQueryOptions().queryKey).toStrictEqual([
-      "pg:datasets",
-      "listSummaries",
-      1000,
-    ]);
+    expect(datasetsListOptions().queryKey).toStrictEqual(["datasets", "list", 1000]);
+    expect(listSummariesQueryOptions().queryKey).toStrictEqual(["datasets", "listSummaries", 1000]);
     expect(listDraftSummariesQueryOptions().queryKey).toStrictEqual([
-      "pg:datasets",
+      "datasets",
       "listDraftSummaries",
       1000,
     ]);
     expect(listByCreatorQueryOptions({ createdBy: "u1" }).queryKey).toStrictEqual([
-      "pg:datasets",
+      "datasets",
       "listByCreator",
       { createdBy: "u1" },
     ]);
     expect(getSourceFileUrlQueryOptions({ datasetId: D1 }).queryKey).toStrictEqual([
-      "pg:datasets",
+      "datasets",
       "getSourceFileUrl",
       { datasetId: D1 },
     ]);
     expect(maxTileCacheVersionQueryOptions().queryKey).toStrictEqual([
-      "pg:datasets",
+      "datasets",
       "maxTileCacheVersion",
     ]);
     expect(listVersionsQueryOptions({ datasetId: D1 }).queryKey).toStrictEqual([
-      "pg:versions",
+      "versions",
       "list",
       { datasetId: D1 },
     ]);
     expect(versionsGetOptions({ versionId: "v1" }).queryKey).toStrictEqual([
-      "pg:versions",
+      "versions",
       "get",
       { versionId: "v1" },
     ]);
     expect(headOfChainQueryOptions({ datasetId: D1 }).queryKey).toStrictEqual([
-      "pg:versions",
+      "versions",
       "head",
       { datasetId: D1 },
     ]);
     expect(versionEntriesQueryOptions({ versionId: "v1" }).queryKey).toStrictEqual([
-      "pg:versions",
+      "versions",
       "versionEntries",
       { versionId: "v1" },
     ]);
     expect(tagsListOptions({ datasetId: D1 }).queryKey).toStrictEqual([
-      "pg:tags",
+      "tags",
       "list",
       { datasetId: D1 },
     ]);
     expect(tagsGetOptions({ tagId: "t1" }).queryKey).toStrictEqual([
-      "pg:tags",
+      "tags",
       "get",
       { tagId: "t1" },
     ]);
-    expect(collectionsListOptions().queryKey).toStrictEqual(["pg:collections", "list"]);
+    expect(collectionsListOptions().queryKey).toStrictEqual(["collections", "list"]);
     expect(collectionsGetOptions({ collectionId: "c1" }).queryKey).toStrictEqual([
-      "pg:collections",
+      "collections",
       "get",
       { collectionId: "c1" },
     ]);
     expect(listDatasetsQueryOptions({ collectionId: "c1" }).queryKey).toStrictEqual([
-      "pg:collections",
+      "collections",
       "listDatasets",
       { collectionId: "c1" },
     ]);
     expect(listMembershipsQueryOptions().queryKey).toStrictEqual([
-      "pg:collections",
+      "collections",
       "listMemberships",
     ]);
     expect(listCollectionsByDatasetQueryOptions({ datasetId: D1 }).queryKey).toStrictEqual([
-      "pg:collections",
+      "collections",
       "listCollectionsByDataset",
       { datasetId: D1 },
     ]);
     expect(mapsGetOptions({ mapId: "m1" }).queryKey).toStrictEqual([
-      "pg:maps",
+      "maps",
       "get",
       { mapId: "m1" },
     ]);
-    expect(listAllPlacementsQueryOptions().queryKey).toStrictEqual([
-      "pg:maps",
-      "listAllPlacements",
-    ]);
+    expect(listAllPlacementsQueryOptions().queryKey).toStrictEqual(["maps", "listAllPlacements"]);
     expect(listPlacementsQueryOptions({ mapId: "m1" }).queryKey).toStrictEqual([
-      "pg:maps",
+      "maps",
       "listPlacements",
       { mapId: "m1" },
     ]);

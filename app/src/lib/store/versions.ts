@@ -122,7 +122,7 @@ export const VERSIONS_READ_LIMIT = CATALOG_READ_LIMIT;
 /** One dataset's frozen versions, newest first — `tags.listVersions` parity. */
 export function listVersionsQueryOptions(args: { datasetId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:versions", "list", args],
+    queryKey: ["versions", "list", args],
     queryFn: async () =>
       await queryRows<DatasetVersionRow>(
         clientOf(options)
@@ -138,7 +138,7 @@ export function listVersionsQueryOptions(args: { datasetId: string }, options?: 
 /** One version by id, or null when RLS hides it. */
 export function getVersionQueryOptions(args: { versionId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:versions", "get", args],
+    queryKey: ["versions", "get", args],
     queryFn: async () =>
       await queryRow<DatasetVersionRow>(
         clientOf(options)
@@ -162,7 +162,7 @@ export function versionEntryQueryOptions(
   options?: StoreOptions,
 ) {
   return queryOptions({
-    queryKey: ["pg:versions", "versionEntry", args],
+    queryKey: ["versions", "versionEntry", args],
     queryFn: async () =>
       await queryRow<VersionEntryRow>(
         clientOf(options)
@@ -199,7 +199,7 @@ export const VERSION_ENTRIES_PAGE_ROWS = 200;
 export function versionEntriesQueryOptions(args: VersionEntriesArgs, options?: StoreOptions) {
   const limit = args.limit ?? VERSION_ENTRIES_PAGE_ROWS;
   return queryOptions({
-    queryKey: ["pg:versions", "versionEntries", args],
+    queryKey: ["versions", "versionEntries", args],
     queryFn: async () => {
       let query = clientOf(options)
         .from("version_entries")
@@ -226,7 +226,7 @@ export function versionEntriesQueryOptions(args: VersionEntriesArgs, options?: S
  * One version's light diff rows, bounded at VERSION_DIFF_LIMIT (+ the exact
  * truncation answer) — the versionRowsBounded shape (versioning.ts:155).
  * Provenance-severed rows (`entry_id` nulled by a later origin delete) are
- * EXCLUDED here, exactly like the overlay feed (pg-versioning.ts): keyed on
+ * EXCLUDED here, exactly like the overlay feed (versioning.ts): keyed on
  * a fallback they'd all collide on one key in `diffVersionRows`' maps and
  * fabricate add/remove pairs — outside the join key they are honestly "not
  * comparable". Truncation still counts the raw read (the bound is the
@@ -310,7 +310,7 @@ export function versionDeltaQueryOptions(
   options?: StoreOptions,
 ) {
   return queryOptions({
-    queryKey: ["pg:versions", "delta", args],
+    queryKey: ["versions", "delta", args],
     queryFn: async () => await getVersionDelta(args, options),
   });
 }
@@ -364,7 +364,7 @@ export function headsOf(rows: ReadonlyArray<DatasetVersionRow>): Map<string, Cha
 /** The chain head of one dataset (newest version), or null when the chain is empty/invisible. */
 export function headOfChainQueryOptions(args: { datasetId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:versions", "head", args],
+    queryKey: ["versions", "head", args],
     queryFn: async () =>
       await queryRow<DatasetVersionRow>(
         clientOf(options)
@@ -384,7 +384,7 @@ export function headOfChainQueryOptions(args: { datasetId: string }, options?: S
  */
 export function retentionPolicyQueryOptions(args: { datasetKey: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:versions", "retentionPolicy", args],
+    queryKey: ["versions", "retentionPolicy", args],
     queryFn: async (): Promise<ResolvedRetentionPolicy> => {
       const row = await queryRow<VersionPolicyRow>(
         clientOf(options)
@@ -410,7 +410,7 @@ export function listConsumerReferencesQueryOptions(
   options?: StoreOptions,
 ) {
   return queryOptions({
-    queryKey: ["pg:versions", "consumerReferences", args],
+    queryKey: ["versions", "consumerReferences", args],
     queryFn: async () =>
       await queryRows<ConsumerReferenceRow>(
         clientOf(options)
@@ -425,7 +425,7 @@ export function listConsumerReferencesQueryOptions(
 /** Every consumer of one source — the consumed-by list (the notify leg). */
 export function consumedByQueryOptions(args: { sourceDatasetId: string }, options?: StoreOptions) {
   return queryOptions({
-    queryKey: ["pg:versions", "consumedBy", args],
+    queryKey: ["versions", "consumedBy", args],
     queryFn: async () =>
       await queryRows<ConsumerReferenceRow>(
         clientOf(options)
